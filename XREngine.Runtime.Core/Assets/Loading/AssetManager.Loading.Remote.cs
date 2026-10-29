@@ -185,6 +185,8 @@ namespace XREngine
         // synchronous publication or disposal finishes; waiting here could deadlock callbacks.
         private void RejectRemoteAssetLifecycleOverlap()
         {
+            if (_sourcePublications != 0)
+                throw new InvalidOperationException("AssetSource.SourcePublicationPending: retry asset owner teardown after source publication completes.");
             if (_remoteAssetPublications != 0)
                 throw new InvalidOperationException("AssetSource.PublicationPending: a remote asset is being published; retry after its callbacks complete.");
             if (_remoteAssetDisposalInProgress)

@@ -114,6 +114,9 @@ internal sealed partial class ImportedTextureStreamingManager
             generation,
             out detail);
 
+    internal float GetCurrentStreamingLodBias(XRTexture2D texture)
+        => _registry.GetCurrentStreamingLodBias(texture);
+
     internal bool TryAcquirePublicationAuthority(
         XRTexture2D texture,
         long streamingGeneration,

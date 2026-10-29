@@ -2257,11 +2257,11 @@ internal partial class Program
             if (File.Exists(outputPath))
                 File.Delete(outputPath);
 
-            long ramLimit = packRamLimit > 0 ? packRamLimit : AssetPacker.DefaultMaxMemoryBytes;
+            long ramLimit = packRamLimit > 0 ? packRamLimit : AssetArchiveAuthoring.DefaultMaxMemoryBytes;
             Console.WriteLine($"Pack RAM limit: {ramLimit / (1024 * 1024)} MB");
 
             using var packProgress = new ConsolePackProgress();
-            AssetPacker.Pack(cookedDirectory, outputPath, maxMemoryBytes: ramLimit, progress: packProgress.HandleProgress);
+            AssetArchiveAuthoring.Pack(cookedDirectory, outputPath, maxMemoryBytes: ramLimit, progress: packProgress.HandleProgress);
 
             sw.Stop();
             var fi = new FileInfo(outputPath);

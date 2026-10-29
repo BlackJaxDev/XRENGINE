@@ -413,7 +413,8 @@ public partial class XRTexture2D
                         mipmaps,
                         sourceWidth,
                         sourceHeight,
-                        residentMaxDimension);
+                        residentMaxDimension,
+                        new TextureSamplingSettings(scratch));
                     sampling = new TextureSamplingSettings(scratch);
                     return true;
             }
@@ -432,7 +433,7 @@ public partial class XRTexture2D
         out TextureStreamingResidentData residentData)
         => TryReadResidentDataFromTextureAssetFileBytes(assetFileBytes, maxResidentDimension, includeMipChain, out residentData, out _);
 
-    private static bool TryReadResidentDataFromTextureAssetFileBytes(
+    internal static bool TryReadResidentDataFromTextureAssetFileBytes(
         ReadOnlySpan<byte> assetFileBytes,
         uint maxResidentDimension,
         bool includeMipChain,
@@ -481,6 +482,7 @@ public partial class XRTexture2D
 
                 residentData = BuildResidentDataFromLoadedTexture(texture, maxResidentDimension, includeMipChain);
                 sampling = new TextureSamplingSettings(texture);
+                residentData = residentData with { Sampling = sampling };
                 return true;
             }
             catch

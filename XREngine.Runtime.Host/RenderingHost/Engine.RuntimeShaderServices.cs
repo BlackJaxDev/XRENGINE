@@ -51,6 +51,9 @@ internal sealed class EngineRuntimeShaderServices : IRuntimeShaderServices, IRun
 
     public int ShaderAssetCacheVersion => _assets.RuntimeSourceEpoch;
 
+    public IDisposable BeginSourcePublication(int expectedCacheVersion)
+        => _assets.BeginSourcePublication(expectedCacheVersion);
+
     public XRShader? GetCachedEngineShader(string assetRoot, string relativePath)
         => _assets.TryGetCachedEngineAsset(assetRoot, relativePath, out XRShader? shader) ? shader : null;
 
@@ -83,21 +86,24 @@ internal sealed class EngineRuntimeShaderServices : IRuntimeShaderServices, IRun
     private sealed class InstallationLease(EngineRuntimeShaderServices installed, IRuntimeShaderServices? previous) : IDisposable
     {
         private EngineRuntimeShaderServices? _installed = installed;
+        private int _disposing;
 
         public void Dispose()
         {
-            EngineRuntimeShaderServices? installed = Interlocked.Exchange(ref _installed, null);
-            if (installed is null)
-                return;
+            if (Interlocked.Exchange(ref _disposing, 1) != 0) return;
             try
             {
-                if (ReferenceEquals(RuntimeShaderServices.Current, installed))
+                if (Volatile.Read(ref _installed) is not { } current) return;
+                // A rejected restore leaves the installed service and this lease
+                // alive. The host can retry after the source commit finishes.
+                if (ReferenceEquals(RuntimeShaderServices.Current, current))
                     RuntimeShaderServices.Current = previous;
+                if (ReferenceEquals(RuntimeShaderServices.Current, current))
+                    throw new InvalidOperationException("ShaderService.RestoreIncomplete: retry disposal after the installed service can be detached.");
+                Volatile.Write(ref _installed, null);
+                current.Dispose();
             }
-            finally
-            {
-                installed.Dispose();
-            }
+            finally { Volatile.Write(ref _disposing, 0); }
         }
     }
 

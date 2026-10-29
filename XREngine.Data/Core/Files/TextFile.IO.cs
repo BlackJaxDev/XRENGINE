@@ -48,6 +48,14 @@ public partial class TextFile
         return true;
     }
 
+    /// <summary>Publishes already read bytes with their retained source, BOM, and disk provenance.</summary>
+    public void LoadTextBytes(string path, ReadOnlySpan<byte> bytes, RuntimeAssetReadLease read)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(read);
+        PublishText(read, path, BeginTextLoad(), bytes);
+    }
+
     public unsafe void LoadTextFileMapped(string path)
     {
         long version = BeginTextLoad();

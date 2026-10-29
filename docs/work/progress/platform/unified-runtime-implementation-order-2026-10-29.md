@@ -10,11 +10,11 @@ gate still apply to each code change.
 
 | Requirements | Remaining work and dependency |
 |---|---|
-| UR02.03b, UR03.02b2 | Finish the blocking, thread, synchronous asset and physical file inventories. Move reachable operations to an asynchronous owner, native leaf, or cook/editor boundary. Reduced search counts and admission guards do not complete physical separation. Preserve source lifetime and canonical shader recovery. |
-| UR03.03 | Complete platform cooking, including texture variants, audio delivery and per-asset device requirements. ASTC/ETC2 production needs a reviewed encoder supply; no pinned encoder is currently available in this environment. Preserve authored sampling during streaming. |
+| UR02.03b, UR03.02b2 | Finish the blocking, thread, synchronous asset and physical file inventories. Move reachable operations to an asynchronous owner, native leaf, or cook/editor boundary. Reduced search counts and admission guards do not complete physical separation. Archive writing now belongs to Editor. Canonical recovery retains one source installation through publication; successful shared generations still need a safe retirement contract. Continue with the asset-save transaction and the remaining physical boundaries. |
+| UR03.03 | Complete platform cooking, including texture variants, audio delivery and per-asset device requirements. ASTC/ETC2 production needs a reviewed encoder supply; no pinned encoder is currently available in this environment. Live streaming now preserves cooked sampling and retains raw-image target edits, with separate preview and fade state. |
 | UR06.09f2 | Connect the existing GPU LOD selector to normal renderable registration. Preserve native selected-variant coverage. The supported profile has one to four resident-table levels, equal primitive membership, admitted transforms/materials and coherent ownership. Do not remove rejection guards without the required producer data. |
 | UR11.04 | Include the engine assets in the packaged Editor. Keep the normal CLI and Editor action. Verify that the packaged publisher selects its sidecar build graph and produces the game bundle without changing source inputs. |
-| UR05.07 | Complete the remaining shader groups and fix known runtime defects. The UI player stall is an unresolved defect. Finish coherent groups before extending narrow sky coverage. Record each group's known-value milestone before closing the whole requirement. |
+| UR05.07 | Complete the remaining shader groups and fix known runtime defects. The saved UI player stall is fixed and its normal published bundle passes the unchanged software-browser harness. Finish coherent groups before extending narrow sky coverage. Record each group's known-value milestone before closing the whole requirement. |
 | UR13.03 | Complete trimming, lazy managed assembly loading and streamed delivery. Measure total published transfer. Retain the approved interpreter until the runtime-mode decision changes. |
 | UR15.05 | Finish user build, hosting, support and troubleshooting documentation when validated limits are known. |
 | UR16.01–UR16.07 | Remove the separate runtime only after unified replacements reach parity. Preserve the reference components, content, pipeline, animation, exporter and harness until that dependency is met. |
@@ -51,3 +51,26 @@ behavior. D11 keeps the interpreter until those measurements support a change.
 The [platform validation view](../../testing/platform/platform-validation.md#unified-runtime-ur-verification-view)
 retains the detailed acceptance conditions. No new dependency version, tracing
 approval or reference-runtime retirement follows from this scheduling change.
+
+## Current Boundary Evidence
+
+Archive authoring now resides in Editor. The shared Data assembly keeps the
+read API and archive format helpers. All 22 archive tests and the common-assets
+cook-and-pack test passed against the compiled Editor implementation. The
+archive format and the moved writer algorithms remain unchanged.
+
+Live texture publication now carries cooked sampling through resident payloads
+and cache reuse. Raw-image publication preserves target edits. The preview and
+promotion-fade lifetimes remain separate. The 20 preview/publication tests and
+50 related payload/cache tests passed.
+
+Canonical shader recovery passed 42 focused source-owner and publication checks.
+Successful shared generations still need borrower-aware retirement; the
+[canonical investigation](../../investigations/rendering/2026-10-29-uber-canonical-source-owner.md)
+records the measured retained objects and the remaining ownership gap. These
+increments do not close the whole portable I/O or platform-cooking requirements.
+
+The normal saved UI publication passes two fresh browser contexts with 72 and
+14 checkpoints. This includes image, glyph, input, resize and lifecycle checks.
+All 24 desktop/portable/native Browser publication gates passed with zero
+compiler warnings and errors. Physical-device acceptance remains open.

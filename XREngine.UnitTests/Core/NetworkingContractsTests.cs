@@ -1,3 +1,4 @@
+using XREngine.Editor;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -417,7 +418,7 @@ public sealed class NetworkingContractsTests
             File.WriteAllBytes(
                 Path.Combine(staging, AotRuntimeMetadataStore.MetadataFileName),
                 MemoryPackSerializer.Serialize(metadata));
-            AssetPacker.Pack(staging, archivePath);
+            AssetArchiveAuthoring.Pack(staging, archivePath);
 
             XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
             XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);

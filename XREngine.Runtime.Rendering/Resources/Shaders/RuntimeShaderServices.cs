@@ -9,6 +9,16 @@ public interface IRuntimeShaderServices
     bool SupportsSynchronousShaderWork => true;
     /// <summary>Changes when the host replaces the owner of cached shader assets.</summary>
     int ShaderAssetCacheVersion => 0;
+    /// <summary>
+    /// Reserves a cache epoch for a short source commit. Mutable cache owners must
+    /// override this method and reject teardown until the returned lease is released.
+    /// </summary>
+    IDisposable? BeginSourcePublication(int expectedCacheVersion)
+    {
+        if (ShaderAssetCacheVersion != expectedCacheVersion)
+            throw new OperationCanceledException("ShaderSource.StaleAssetOwner: the shader cache epoch changed during source preparation.");
+        return null;
+    }
     /// <summary>Returns an already published shader without starting asset work, or null when absent.</summary>
     XRShader? GetCachedEngineShader(string assetRoot, string relativePath) => null;
     T? LoadAsset<T>(string filePath) where T : XRAsset, new();
@@ -55,6 +65,7 @@ public static class RuntimeShaderServices
                 if (ReferenceEquals(_current, value))
                     return;
 
+                using IDisposable change = XREngine.Data.RuntimeSourcePublicationServices.BeginInstallationChange();
                 if (_current is IRuntimeShaderChangeSource previousChangeSource)
                     previousChangeSource.ShaderSourceFileChanged -= _sourceChangeHandler;
 

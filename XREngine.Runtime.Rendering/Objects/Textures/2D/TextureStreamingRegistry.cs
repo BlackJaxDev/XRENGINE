@@ -55,6 +55,15 @@ internal sealed class TextureStreamingRegistry
         }
     }
 
+    public float GetCurrentStreamingLodBias(XRTexture2D texture)
+    {
+        if (!_recordsByTexture.TryGetValue(texture, out ImportedTextureStreamingRecord? record))
+            return 0.0f;
+
+        lock (record.Sync)
+            return record.CurrentStreamingLodBias;
+    }
+
     public void RecordTerminalGenerationFailure(
         XRTexture2D texture,
         long generation,
@@ -143,6 +152,8 @@ internal sealed class TextureStreamingRegistry
                 record.Format = texture.SizedInternalFormat;
                 if (!string.Equals(record.FilePath, filePath, StringComparison.OrdinalIgnoreCase) || record.Source is null)
                 {
+                    if (!string.Equals(record.FilePath, filePath, StringComparison.OrdinalIgnoreCase))
+                        texture.ResetImportedStreamingSamplingState();
                     record.FilePath = filePath;
                     record.Source = deferAuthorityResolution
                         ? TextureStreamingSourceFactory.CreateDeferred(filePath)

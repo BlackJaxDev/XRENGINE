@@ -14,17 +14,21 @@ public sealed class RenderObjectPublicationScope : IDisposable
 {
     private readonly RenderObjectPublicationScope? _parent;
     private readonly RenderObjectPublicationBatch _batch;
+    private readonly bool _ownsBatch;
     private readonly ObjectCachePublicationScope _objectCacheScope;
     private readonly int _firstObjectIndex;
     private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
     private bool _closed;
 
-    internal RenderObjectPublicationScope(RenderObjectPublicationScope? parent)
+    internal RenderObjectPublicationScope(RenderObjectPublicationScope? parent, bool independentBatch = false)
     {
         _parent = parent;
-        _batch = parent?._batch ?? new RenderObjectPublicationBatch();
+        _ownsBatch = parent is null || independentBatch;
+        _batch = _ownsBatch ? new RenderObjectPublicationBatch() : parent!._batch;
         _firstObjectIndex = _batch.Objects.Count;
-        _objectCacheScope = XRObjectBase.BeginDeferredObjectCachePublication();
+        _objectCacheScope = independentBatch
+            ? XRObjectBase.BeginIndependentObjectCachePublication()
+            : XRObjectBase.BeginDeferredObjectCachePublication();
         GenericRenderObject.CurrentDeferredPublicationScope = this;
     }
 
@@ -50,7 +54,7 @@ public sealed class RenderObjectPublicationScope : IDisposable
         if (_batch.IsAborted)
             throw new InvalidOperationException("The render-object publication batch was aborted.");
 
-        if (_parent is not null)
+        if (!_ownsBatch)
         {
             if (beforeCachePublication is not null)
             {
@@ -87,7 +91,7 @@ public sealed class RenderObjectPublicationScope : IDisposable
             throw;
         }
         _closed = true;
-        GenericRenderObject.CurrentDeferredPublicationScope = null;
+        GenericRenderObject.CurrentDeferredPublicationScope = _parent;
         _batch.CompleteTransactions();
     }
 
@@ -120,7 +124,7 @@ public sealed class RenderObjectPublicationScope : IDisposable
         if (_batch.IsAborted)
             throw new InvalidOperationException("The render-object publication batch was aborted.");
 
-        if (_parent is not null)
+        if (!_ownsBatch)
         {
             _objectCacheScope.Complete();
             _batch.EnlistTransaction(
@@ -159,7 +163,7 @@ public sealed class RenderObjectPublicationScope : IDisposable
         }
 
         _closed = true;
-        GenericRenderObject.CurrentDeferredPublicationScope = null;
+        GenericRenderObject.CurrentDeferredPublicationScope = _parent;
         _batch.CompleteTransactions();
     }
 

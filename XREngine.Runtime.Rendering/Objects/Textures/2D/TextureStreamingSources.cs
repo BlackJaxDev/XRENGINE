@@ -91,8 +91,14 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             cancellationToken.ThrowIfCancellationRequested();
 
             long parseStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            if (XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(assetBytes.Span, maxResidentDimension, includeMipChain, out TextureStreamingResidentData residentData))
+            if (XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(
+                    assetBytes.Span,
+                    maxResidentDimension,
+                    includeMipChain,
+                    out TextureStreamingResidentData residentData,
+                    out TextureSamplingSettings sampling))
             {
+                residentData = residentData with { Sampling = sampling };
                 double cacheParseMilliseconds = XRTexture2D.CompleteImportedTextureTiming(parseStartTimestamp);
                 TextureRuntimeDiagnostics.LogCacheRead(
                     RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
@@ -403,7 +409,8 @@ internal static class TextureStreamingResidentDataReuseCache
             mipmaps,
             residentData.SourceWidth,
             residentData.SourceHeight,
-            residentData.ResidentMaxDimension);
+            residentData.ResidentMaxDimension,
+            residentData.Sampling);
     }
 
     private static void PruneNoLock()

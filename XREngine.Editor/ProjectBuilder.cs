@@ -90,10 +90,10 @@ internal static partial class ProjectBuilder
 
         var project = EnsureProjectLoaded();
         var settings = settingsOverride ?? SnapshotSettings();
-        AssetPacker.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
+        AssetArchiveAuthoring.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
         // Published archives keep incompressible entries uncompressed so the runtime can lease them
         // straight from the mapped file.
-        AssetPacker.StoreIncompressibleEntries = true;
+        AssetArchiveAuthoring.StoreIncompressibleEntries = true;
         var context = CreateBuildContext(project, settings);
         var steps = CreateSteps(settings, context);
 
@@ -168,8 +168,8 @@ internal static partial class ProjectBuilder
 
         var project = EnsureProjectLoaded();
         var settings = SnapshotSettings();
-        AssetPacker.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
-        AssetPacker.StoreIncompressibleEntries = true;
+        AssetArchiveAuthoring.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
+        AssetArchiveAuthoring.StoreIncompressibleEntries = true;
         var context = CreateBuildContext(project, settings);
         var steps = CreateSteps(settings, context);
 
@@ -335,7 +335,7 @@ internal static partial class ProjectBuilder
             if (File.Exists(context.ContentArchivePath))
                 File.Delete(context.ContentArchivePath);
 
-            AssetPacker.Pack(cookedDir, context.ContentArchivePath);
+            AssetArchiveAuthoring.Pack(cookedDir, context.ContentArchivePath);
             return;
         }
 
@@ -373,7 +373,7 @@ internal static partial class ProjectBuilder
                 if (File.Exists(context.ConfigArchivePath))
                     File.Delete(context.ConfigArchivePath);
 
-                AssetPacker.Pack(staging, context.ConfigArchivePath);
+                AssetArchiveAuthoring.Pack(staging, context.ConfigArchivePath);
                 return;
             }
 
@@ -563,7 +563,7 @@ internal static partial class ProjectBuilder
             if (File.Exists(commonAssetsArchivePath))
                 File.Delete(commonAssetsArchivePath);
 
-            AssetPacker.Pack(engineAssetsPath, commonAssetsArchivePath);
+            AssetArchiveAuthoring.Pack(engineAssetsPath, commonAssetsArchivePath);
             return;
         }
 
@@ -599,7 +599,7 @@ internal static partial class ProjectBuilder
         if (File.Exists(commonAssetsArchivePath))
             File.Delete(commonAssetsArchivePath);
 
-        AssetPacker.Pack(stagingDirectory, commonAssetsArchivePath);
+        AssetArchiveAuthoring.Pack(stagingDirectory, commonAssetsArchivePath);
     }
 
     internal static string PackageRuntimeShaderAssetsForTests(
@@ -784,7 +784,7 @@ internal static partial class ProjectBuilder
         {
             if (File.Exists(context.ConfigArchivePath))
                 File.Delete(context.ConfigArchivePath);
-            AssetPacker.Pack(stagingDirectory, context.ConfigArchivePath);
+            AssetArchiveAuthoring.Pack(stagingDirectory, context.ConfigArchivePath);
             return;
         }
 
@@ -831,7 +831,7 @@ internal static partial class ProjectBuilder
         if (changedPaths.Count == 0 && removedPaths.Count == 0)
             return;
 
-        AssetPacker.Repack(
+        AssetArchiveAuthoring.Repack(
             context.ConfigArchivePath,
             changedPaths.Count > 0 ? deltaDirectory : string.Empty,
             [.. removedPaths]);
@@ -855,13 +855,13 @@ internal static partial class ProjectBuilder
         {
             if (packFullSourceDirectly)
             {
-                AssetPacker.Pack(sourceDirectory, archivePath);
+                AssetArchiveAuthoring.Pack(sourceDirectory, archivePath);
                 return;
             }
 
             string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_Full");
             StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
-            AssetPacker.Pack(fullStagingDir, archivePath);
+            AssetArchiveAuthoring.Pack(fullStagingDir, archivePath);
             return;
         }
 
@@ -879,7 +879,7 @@ internal static partial class ProjectBuilder
                 if (File.Exists(archivePath))
                     File.Delete(archivePath);
 
-                AssetPacker.Pack(sourceDirectory, archivePath);
+                AssetArchiveAuthoring.Pack(sourceDirectory, archivePath);
                 return;
             }
 
@@ -887,7 +887,7 @@ internal static partial class ProjectBuilder
             StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
             if (File.Exists(archivePath))
                 File.Delete(archivePath);
-            AssetPacker.Pack(fullStagingDir, archivePath);
+            AssetArchiveAuthoring.Pack(fullStagingDir, archivePath);
             return;
         }
 
@@ -922,7 +922,7 @@ internal static partial class ProjectBuilder
         if (changedPaths.Count > 0)
             StageFiles(sourceDirectory, deltaDirectory, changedPaths, transformFile);
 
-        AssetPacker.Repack(
+        AssetArchiveAuthoring.Repack(
             archivePath,
             changedPaths.Count > 0 ? deltaDirectory : string.Empty,
             [.. removedPaths]);

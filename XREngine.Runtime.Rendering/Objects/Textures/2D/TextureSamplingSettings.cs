@@ -21,6 +21,10 @@ internal readonly struct TextureSamplingSettings(XRTexture2D source)
     private readonly bool _flipGreen = source.ImportedNormalMapFlipGreen;
     private readonly bool _alphaAsTransparency = source.AlphaAsTransparency;
 
+    public float LodBias => _lodBias;
+    public int MinLOD => _minLod;
+    public int MaxLOD => _maxLod;
+
     public void ApplyTo(XRTexture2D target)
     {
         target.SamplerName = _samplerName;

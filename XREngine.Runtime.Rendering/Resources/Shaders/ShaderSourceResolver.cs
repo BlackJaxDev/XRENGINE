@@ -57,6 +57,7 @@ internal static partial class ShaderSourceResolver
     private static bool HostShaderFilesAdmitted
         => !OperatingSystem.IsBrowser()
         && !RuntimeWorkScheduler.IsCallerThread
+        && !XREngine.Data.RuntimeAssetReadServices.IsCallerThread
         && DirectStorageIO.Source is not IRuntimeAssetCatalog
         && DirectStorageIO.Source is not { SupportsSynchronousReads: false }
         && RuntimeShaderServices.Current?.SupportsSynchronousShaderWork != false;

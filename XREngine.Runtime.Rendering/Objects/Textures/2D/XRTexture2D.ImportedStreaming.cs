@@ -20,6 +20,19 @@ public partial class XRTexture2D
     // also advance that generation, but their values do not carry seqlock parity.
     private readonly object _importedSourceMetadataWriteSync = new();
     private long _importedSourceMetadataEpoch = 2L;
+    private TextureSamplingSettings? _importedStreamingSamplingSettings;
+    private bool _importedStreamingPreviewLodClamped;
+    private string? _importedStreamingSamplingAuthorityPath;
+
+    internal void ResetImportedStreamingSamplingState()
+    {
+        lock (_importedSourceMetadataWriteSync)
+        {
+            _importedStreamingSamplingSettings = null;
+            _importedStreamingPreviewLodClamped = false;
+            _importedStreamingSamplingAuthorityPath = null;
+        }
+    }
 
     internal ulong CanonicalSourceContentGeneration
         => unchecked((ulong)Volatile.Read(ref _canonicalSourceContentGeneration));
@@ -260,11 +273,17 @@ public partial class XRTexture2D
                 residentMipmaps,
                 sourceMipmaps[0].Width,
                 sourceMipmaps[0].Height,
-                residentMaxDimension);
+                residentMaxDimension,
+                new TextureSamplingSettings(texture));
         }
 
         using RuntimeImage filler = FillerImage;
-        return BuildResidentDataFromImage(filler, maxResidentDimension, includeMipChain, cancellationToken: cancellationToken);
+        TextureStreamingResidentData fallbackData = BuildResidentDataFromImage(
+            filler,
+            maxResidentDimension,
+            includeMipChain,
+            cancellationToken: cancellationToken);
+        return fallbackData with { Sampling = new TextureSamplingSettings(texture) };
     }
 
     internal static TextureStreamingResidentData BuildResidentDataFromImage(
@@ -338,6 +357,9 @@ public partial class XRTexture2D
         bool includeMipChain,
         TextureSamplingSettings? previewSampling = null)
     {
+        float currentStreamingLodBias = previewSampling.HasValue
+            ? 0.0f
+            : ImportedTextureStreamingManager.Instance.GetCurrentStreamingLodBias(texture);
         lock (texture._importedSourceMetadataWriteSync)
         {
             texture.BeginImportedSourceMetadataWrite();
@@ -392,11 +414,11 @@ public partial class XRTexture2D
         texture.SmallestAllowedMipmapLevel = includeMipChain && residentData.Mipmaps.Length > 0
             ? residentData.Mipmaps.Length - 1
             : 0;
-        texture.MinFilter = includeMipChain && residentData.Mipmaps.Length > 1
-            ? ETexMinFilter.LinearMipmapLinear
-            : ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
-        previewSampling?.ApplyToPreview(texture);
+        ApplyResidentSamplingSettings(
+            texture,
+            residentData.Sampling ?? previewSampling,
+            preview: previewSampling.HasValue,
+            currentStreamingLodBias: currentStreamingLodBias);
         texture.PublishCanonicalSourceContentMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
@@ -419,6 +441,7 @@ public partial class XRTexture2D
         TextureStreamingResidentData residentData,
         bool includeMipChain)
     {
+        float currentStreamingLodBias = ImportedTextureStreamingManager.Instance.GetCurrentStreamingLodBias(texture);
         lock (texture._importedSourceMetadataWriteSync)
         {
             texture.BeginImportedSourceMetadataWrite();
@@ -465,10 +488,11 @@ public partial class XRTexture2D
             smallestAllowedMipmapLevel: includeMipChain && residentData.Mipmaps.Length > 0
                 ? residentData.Mipmaps.Length - 1
                 : 0);
-        texture.MinFilter = includeMipChain && residentData.Mipmaps.Length > 1
-            ? ETexMinFilter.LinearMipmapLinear
-            : ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
+        ApplyResidentSamplingSettings(
+            texture,
+            residentData.Sampling,
+            preview: false,
+            currentStreamingLodBias: currentStreamingLodBias);
         texture.PublishCanonicalSourceContentMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
@@ -484,6 +508,62 @@ public partial class XRTexture2D
                 texture.CompleteImportedSourceMetadataWrite();
             }
         }
+    }
+
+    private static void ApplyResidentSamplingSettings(
+        XRTexture2D texture,
+        TextureSamplingSettings? suppliedSampling,
+        bool preview,
+        float currentStreamingLodBias)
+    {
+        string? authorityPath = texture.FilePath;
+        if ((texture._importedStreamingSamplingSettings.HasValue || texture._importedStreamingPreviewLodClamped)
+            && !string.Equals(
+                texture._importedStreamingSamplingAuthorityPath,
+                authorityPath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            texture._importedStreamingSamplingSettings = null;
+            texture._importedStreamingPreviewLodClamped = false;
+        }
+
+        TextureSamplingSettings? previousSampling = texture._importedStreamingSamplingSettings;
+        TextureSamplingSettings sampling = suppliedSampling
+            ?? (preview && previousSampling.HasValue
+                ? previousSampling.Value
+                : new TextureSamplingSettings(texture));
+
+        if (preview)
+        {
+            // Keep the full authored snapshot before constraining the one-mip preview.
+            texture._importedStreamingSamplingSettings = sampling;
+            texture._importedStreamingPreviewLodClamped = true;
+            texture._importedStreamingSamplingAuthorityPath = authorityPath;
+            sampling.ApplyToPreview(texture);
+            return;
+        }
+
+        // Cooked metadata is authoritative for native texture assets. Raw-image
+        // sources have no sampler metadata, so snapshot the current target values
+        // on every publication to preserve live edits. A preview's LOD-0 clamp is
+        // the one exception: recover the saved authored limits before publishing
+        // the full resident state.
+        bool restorePreviewLodRange = !suppliedSampling.HasValue
+            && texture._importedStreamingPreviewLodClamped
+            && previousSampling.HasValue;
+        float publishedLodBias = suppliedSampling.HasValue
+            ? sampling.LodBias + currentStreamingLodBias
+            : sampling.LodBias;
+        sampling.ApplyTo(texture);
+        if (restorePreviewLodRange)
+        {
+            texture.MinLOD = previousSampling!.Value.MinLOD;
+            texture.MaxLOD = previousSampling.Value.MaxLOD;
+        }
+        texture.LodBias = publishedLodBias;
+        texture._importedStreamingPreviewLodClamped = false;
+        texture._importedStreamingSamplingSettings = suppliedSampling ?? new TextureSamplingSettings(texture);
+        texture._importedStreamingSamplingAuthorityPath = authorityPath;
     }
 
     internal static uint GetPreviewResidentSize(uint sourceMaxDimension)

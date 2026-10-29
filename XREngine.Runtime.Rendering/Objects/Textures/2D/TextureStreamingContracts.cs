@@ -7,7 +7,8 @@ internal readonly record struct TextureStreamingResidentData(
     Mipmap2D[] Mipmaps,
     uint SourceWidth,
     uint SourceHeight,
-    uint ResidentMaxDimension)
+    uint ResidentMaxDimension,
+    TextureSamplingSettings? Sampling = null)
 {
     public ESizedInternalFormat SizedInternalFormat
         => Mipmaps is { Length: > 0 }

@@ -38,7 +38,7 @@ public class CommonAssetsArchiveTests
             if (File.Exists(archiveOutputPath))
                 File.Delete(archiveOutputPath);
 
-            AssetPacker.Pack(cookedDirectory, archiveOutputPath);
+            AssetArchiveAuthoring.Pack(cookedDirectory, archiveOutputPath);
 
             File.Exists(archiveOutputPath).ShouldBeTrue($"Cooked archive was not created: {archiveOutputPath}");
             new FileInfo(archiveOutputPath).Length.ShouldBeGreaterThan(0, "Cooked archive is empty.");

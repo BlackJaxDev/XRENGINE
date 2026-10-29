@@ -53,6 +53,55 @@ Renderer backends
   adoption, and backend telemetry. They consume generated source; they do not
   rebuild Uber material intent.
 
+## Canonical Source Recovery
+
+A serialized generated fragment can recover its canonical source from its
+retained path. Recovery captures the raw byte owner before the shader-file
+probe. Provider changes remain allowed during probes and reads. A stale
+attempt retries against a new complete installation, up to three attempts.
+Repeated changes raise `UberVariant.CanonicalSourceChanged`; the caller can
+retry after installation settles. A missing file uses the normal canonical
+engine-shader fallback. Recovery does not publish an empty `TextFile` because
+a file probe succeeded before the file disappeared.
+
+`RuntimeSourcePublicationServices` coordinates only the short commit. It covers
+the raw source, shader-file backend, asset filesystem, runtime shader service,
+and caller-thread admission. The coordinator holds its gate only while it
+updates counters and generation numbers. It holds no gate during I/O, provider
+callbacks, object publication, or disposal. A host installation change during
+commit raises `SourcePublication.PublicationInProgress` before changing that
+installation. The host can retry after commit. The shader-service installation
+lease retains its installed service if restoring the previous service is
+rejected; it disposes the service only after detachment succeeds.
+
+Mutable shader cache owners implement
+`IRuntimeShaderServices.BeginSourcePublication`. The engine implementation
+reserves the `AssetManager` cache epoch through its existing lifecycle gate.
+Asset teardown and source replacement must retry while that reservation is
+active. Canonical cache stamps include the installation generation, shader
+service version, and asset cache epoch. They do not retain replaced service
+objects. Explicit, non-generated authored shaders keep their authored identity.
+
+Successful reads use `TextFile.LoadTextBytes` to preserve BOM decoding and disk
+refresh provenance without capturing a second byte owner. Rejected reads
+allocate no engine objects. Recovered shaders and shared engine-shader loads
+use an independent render/object publication batch. An unrelated outer batch
+can abort without destroying a returned cache-owned shader. Failed independent
+construction removes its temporary cache entries and does not abort the outer
+batch. Ordinary nested publication scopes continue to share their parent batch.
+The host must still give its shader and byte providers the same path identity.
+
+Successful recovered generations remain in the global object and render caches.
+Each direct recovery creates one shader and its existing source `TextFile`.
+The material does not destroy an old generation on replacement or teardown:
+other materials and generated variants can still borrow that shader. The current
+cache ownership API requires all users to stop before destruction and provides
+no shared shader lease. Safe retirement of these successful generations remains
+an open lifetime requirement. This does not affect rejected attempts, which
+publish no cache entries. Stale recovered shaders, including non-generated
+shaders installed directly in a material, must recover against the current
+source owner before reuse. Unstamped authored shaders retain their identity.
+
 ## Runtime State Model
 
 The material keeps requested and active variant state separate so the editor can
@@ -437,6 +486,8 @@ resolved-source optimization pipeline rather than in Uber-only helpers.
 - `Build/CommonAssets/Shaders/Uber/UberShader.frag`
 - `XREngine.Runtime.Rendering/Objects/Materials/UberMaterialState.cs`
 - `XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.Uber.cs`
+- `XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.UberCanonicalSource.cs`
+- `XREngine.Data/Core/Files/RuntimeSourcePublicationServices.cs`
 - `XREngine.Runtime.Rendering/Resources/Shaders/UberShaderVariantBuilder.cs`
 - `XREngine.Runtime.Rendering/Resources/Shaders/UberShaderVariantBuilder.Preprocessor.cs`
 - `XREngine.Runtime.Rendering/Resources/Shaders/UberShaderVariantTelemetry.cs`

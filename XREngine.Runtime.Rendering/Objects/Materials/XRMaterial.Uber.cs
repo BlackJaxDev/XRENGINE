@@ -1380,22 +1380,25 @@ public partial class XRMaterial
     private XRShader ResolveCanonicalUberFragmentShader(XRShader fragmentShader)
     {
         if (_uberCanonicalFragmentShader is not null &&
+            ShaderSourceResolver.IsCanonicalSourceCurrent(_uberCanonicalFragmentShader) &&
             !UberShaderVariantBuilder.IsGeneratedVariant(_uberCanonicalFragmentShader))
         {
             return _uberCanonicalFragmentShader;
         }
 
-        if (!UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader))
+        if (!UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader) &&
+            ShaderSourceResolver.IsCanonicalSourceCurrent(fragmentShader))
         {
-            _uberCanonicalFragmentShader = fragmentShader;
+            SetField(ref _uberCanonicalFragmentShader, fragmentShader, publishNotifications: false);
             return fragmentShader;
         }
 
         // A live generated variant knows the canonical shader it came from; a
         // Play snapshot restore that shares the cached variant lands here.
-        if (UberShaderVariantBuilder.TryGetCanonicalShader(fragmentShader, out XRShader? cachedCanonical))
+        if (UberShaderVariantBuilder.TryGetCanonicalShader(fragmentShader, out XRShader? cachedCanonical) &&
+            ShaderSourceResolver.IsCanonicalSourceCurrent(cachedCanonical))
         {
-            _uberCanonicalFragmentShader = cachedCanonical;
+            SetField(ref _uberCanonicalFragmentShader, cachedCanonical, publishNotifications: false);
             return cachedCanonical;
         }
 
@@ -1405,31 +1408,7 @@ public partial class XRMaterial
         // recognized as Uber-backed. This also keeps the lightweight pending
         // fallback active while a large OpenGL variant finishes linking.
         string? shaderPath = fragmentShader.Source?.FilePath ?? fragmentShader.FilePath;
-        ShaderSourceProviderOwner owner = ShaderSourceResolver.CaptureOwner();
-        if (owner.HostFileAccess &&
-            !string.IsNullOrWhiteSpace(shaderPath) && owner.FileBackend!.FileExists(shaderPath))
-        {
-            TextFile text = new(shaderPath);
-            text.LoadText(shaderPath);
-
-            _uberCanonicalFragmentShader = new XRShader(fragmentShader.Type, text)
-            {
-                Name = fragmentShader.Name,
-                GenerateAsync = fragmentShader.GenerateAsync,
-            };
-            return _uberCanonicalFragmentShader;
-        }
-
-        try
-        {
-            _uberCanonicalFragmentShader = ShaderHelper.UberFragForward();
-        }
-        catch (NotSupportedException ex) when (!ShaderSourceResolver.CanAccessHostShaderFiles)
-        {
-            throw new NotSupportedException(
-                "UberVariant.CanonicalSourceUnavailable: the canonical Uber shader must be published in the browser shader catalog before a generated material can be rehydrated.", ex);
-        }
-        return _uberCanonicalFragmentShader;
+        return RecoverCanonicalUberFragmentShader(fragmentShader, shaderPath);
     }
 
     private static string? ResolveShaderPathOrName(XRShader shader)

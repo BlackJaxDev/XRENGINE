@@ -60,9 +60,10 @@ UITextOutput uiTextVertex(UITextInput input)
 }
 float sampleGlyph(float2 uv, float4 bounds, float2 dx, float2 dy)
 {
-    if (uv.x < bounds.x || uv.x > bounds.z || uv.y < bounds.y || uv.y > bounds.w)
-        return 0.0;
-    return fontAtlas.SampleGrad(fontSampler, uv, dx, dy).r;
+    // Mask each atlas tap after sampling to keep outline sampling free of divergent branches.
+    float coverage = fontAtlas.SampleGrad(fontSampler, uv, dx, dy).r;
+    bool inside = all(uv >= bounds.xy) & all(uv <= bounds.zw);
+    return select(inside, coverage, 0.0);
 }
 float strokeRing(float2 uv, float4 bounds, float2 dx, float2 dy, float radius)
 {

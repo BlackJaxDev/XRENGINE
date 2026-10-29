@@ -1,3 +1,4 @@
+using XREngine.Editor;
 using MemoryPack;
 using NUnit.Framework;
 using Shouldly;
@@ -204,7 +205,7 @@ public sealed class PublishedCookedAssetTests
         File.WriteAllText(Path.Combine(staging, "placeholder.txt"), "no metadata");
 
         string archivePath = Path.Combine(_tempRoot, "config-without-metadata.archive");
-        AssetPacker.Pack(staging, archivePath);
+        AssetArchiveAuthoring.Pack(staging, archivePath);
 
         XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
         XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);
@@ -255,7 +256,7 @@ public sealed class PublishedCookedAssetTests
             MemoryPackSerializer.Serialize(metadata));
 
         string archivePath = Path.Combine(_tempRoot, "config.archive");
-        AssetPacker.Pack(staging, archivePath);
+        AssetArchiveAuthoring.Pack(staging, archivePath);
         return archivePath;
     }
 

@@ -11,6 +11,7 @@ public static class AssetFileSystemServices
         get => Volatile.Read(ref _current);
         set
         {
+            using IDisposable change = XREngine.Data.RuntimeSourcePublicationServices.BeginInstallationChange();
             lock (Gate)
             {
                 Volatile.Write(ref _current, value);

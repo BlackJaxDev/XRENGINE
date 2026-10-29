@@ -108,7 +108,7 @@ public static class ShaderHelper
         // An inline asset job belongs to the shared shader cache, never to a
         // caller's material-construction owner. Do not carry this thread-affine
         // publication scope across the asynchronous load.
-        using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+        using RenderObjectPublicationScope publication = GenericRenderObject.BeginIndependentPublication();
         Task<XRShader> task = LoadAndWarmEngineShaderAsync(cache, key, bypassJobThread: false);
         publication.Complete();
         return task;
@@ -116,7 +116,7 @@ public static class ShaderHelper
 
     private static XRShader LoadAndWarmEngineShader(EngineShaderTaskCache cache, EngineShaderCacheKey key, bool bypassJobThread)
     {
-        using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+        using RenderObjectPublicationScope publication = GenericRenderObject.BeginIndependentPublication();
         XRShader source = cache.Services.LoadEngineAsset<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath);
         publication.Complete();
         return ConfigureLoadedEngineShader(cache, key, source);

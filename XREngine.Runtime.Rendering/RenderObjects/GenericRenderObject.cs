@@ -51,6 +51,10 @@ public abstract partial class GenericRenderObject : XRAsset
     public static RenderObjectPublicationScope BeginDeferredPublication()
         => new(CurrentDeferredPublicationScope);
 
+    /// <summary>Publishes cache-owned resources independently of an enclosing construction batch.</summary>
+    internal static RenderObjectPublicationScope BeginIndependentPublication()
+        => new(CurrentDeferredPublicationScope, independentBatch: true);
+
     internal static RenderObjectPublicationScope? CurrentDeferredPublicationScope
     {
         get => _currentDeferredPublicationScope;

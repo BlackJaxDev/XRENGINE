@@ -63,8 +63,8 @@ internal sealed class ConsolePackProgress : IDisposable
         }
     }
 
-    /// <summary>Progress callback suitable for passing to <see cref="AssetPacker.Pack"/>.</summary>
-    public void HandleProgress(AssetPacker.PackProgress progress)
+    /// <summary>Progress callback suitable for passing to <see cref="AssetArchiveAuthoring.Pack"/>.</summary>
+    public void HandleProgress(AssetArchiveAuthoring.PackProgress progress)
     {
         if (progress.TotalFiles <= 0)
             return;
@@ -86,13 +86,13 @@ internal sealed class ConsolePackProgress : IDisposable
 
             switch (progress.Phase)
             {
-                case AssetPacker.PackPhase.Compressing:
+                case AssetArchiveAuthoring.PackPhase.Compressing:
                     OnCompressing(progress);
                     break;
-                case AssetPacker.PackPhase.CompressingLargeFile:
+                case AssetArchiveAuthoring.PackPhase.CompressingLargeFile:
                     OnLargeFile(progress);
                     break;
-                case AssetPacker.PackPhase.Staged:
+                case AssetArchiveAuthoring.PackPhase.Staged:
                     OnStaged(progress);
                     break;
             }
@@ -125,10 +125,10 @@ internal sealed class ConsolePackProgress : IDisposable
 
     // ──────────────────────── Phase handlers ────────────────────────
 
-    private void OnCompressing(AssetPacker.PackProgress p)
+    private void OnCompressing(AssetArchiveAuthoring.PackProgress p)
     {
         // Only track large files in the live dashboard.
-        if (p.SourceBytes < AssetPacker.LargeFileThreshold)
+        if (p.SourceBytes < AssetArchiveAuthoring.LargeFileThreshold)
             return;
 
         if (!_activeFiles.ContainsKey(p.RelativePath))
@@ -145,7 +145,7 @@ internal sealed class ConsolePackProgress : IDisposable
             ThrottledRedraw();
     }
 
-    private void OnLargeFile(AssetPacker.PackProgress p)
+    private void OnLargeFile(AssetArchiveAuthoring.PackProgress p)
     {
         int order = _activeFiles.TryGetValue(p.RelativePath, out var existing)
             ? existing.Order
@@ -164,7 +164,7 @@ internal sealed class ConsolePackProgress : IDisposable
             FallbackLargeFile(p);
     }
 
-    private void OnStaged(AssetPacker.PackProgress p)
+    private void OnStaged(AssetArchiveAuthoring.PackProgress p)
     {
         _activeFiles.Remove(p.RelativePath);
         _fallbackThrottle.Remove(p.RelativePath);
@@ -293,7 +293,7 @@ internal sealed class ConsolePackProgress : IDisposable
 
     // ──────────────────────── Fallback (non-interactive) ────────────────────────
 
-    private void FallbackLargeFile(AssetPacker.PackProgress p)
+    private void FallbackLargeFile(AssetArchiveAuthoring.PackProgress p)
     {
         int pct = p.SourceBytes > 0 ? (int)(p.CompressedBytes * 100L / p.SourceBytes) : 0;
         int bucket = pct / 10 * 10;

@@ -14,12 +14,21 @@ public static class RuntimeAssetReadServices
     public static bool IsCallerThread
     {
         get => Volatile.Read(ref _callerThread);
-        set => Volatile.Write(ref _callerThread, value);
+        set
+        {
+            lock (Gate)
+            {
+                if (_callerThread == value) return;
+                using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
+                Volatile.Write(ref _callerThread, value);
+            }
+        }
     }
 
     /// <summary>Replaces an installation, cancelling its pending reads without retargeting them.</summary>
     public static void SetSource(IRuntimeAssetReadSource? source)
     {
+        using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
         RuntimeAssetReadBinding previous;
         lock (Gate)
         {

@@ -1,3 +1,4 @@
+using XREngine.Editor;
 using MemoryPack;
 using NUnit.Framework;
 using XREngine.Core.Files;
@@ -104,7 +105,7 @@ public sealed class PublishedMetadataHostProbeTests
         File.WriteAllBytes(Path.Combine(staging, AotRuntimeMetadataStore.MetadataFileName),
             MemoryPackSerializer.Serialize(new AotRuntimeMetadata { KnownTypeAssemblyQualifiedNames = ["probe-type"] }));
         string archive = Path.Combine(_root, "config.archive");
-        AssetPacker.Pack(staging, archive);
+        AssetArchiveAuthoring.Pack(staging, archive);
         XRRuntimeEnvironment.ConfigurePublishedPaths(archive);
         Assert.That(AotRuntimeMetadataStore.RequireMetadata().KnownTypeAssemblyQualifiedNames, Does.Contain("probe-type"));
         Assert.That(_files.Calls, Is.GreaterThan(0));
@@ -118,7 +119,7 @@ public sealed class PublishedMetadataHostProbeTests
         Directory.CreateDirectory(staging);
         File.WriteAllText(Path.Combine(staging, "other.txt"), "other");
         string archive = Path.Combine(_root, "empty.archive");
-        AssetPacker.Pack(staging, archive);
+        AssetArchiveAuthoring.Pack(staging, archive);
         XRRuntimeEnvironment.ConfigurePublishedPaths(archive);
         var error = Assert.Throws<InvalidOperationException>(() => AotRuntimeMetadataStore.RequireMetadata());
         Assert.That(error!.Message, Does.Contain(AotRuntimeMetadataStore.MetadataFileName));

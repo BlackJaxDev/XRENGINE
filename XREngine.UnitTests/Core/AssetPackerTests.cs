@@ -1,3 +1,4 @@
+using XREngine.Editor;
 using NUnit.Framework;
 using Shouldly;
 using System;
@@ -20,14 +21,14 @@ public class AssetPackerTests
     {
         _tempRoot = Path.Combine(TestContext.CurrentContext.WorkDirectory, "AssetPacker", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempRoot);
-        _savedCodec = AssetPacker.DefaultCodec;
+        _savedCodec = AssetArchiveAuthoring.DefaultCodec;
     }
 
     [TearDown]
     public void TearDown()
     {
         // Always restore DefaultCodec so tests don't leak state.
-        AssetPacker.DefaultCodec = _savedCodec;
+        AssetArchiveAuthoring.DefaultCodec = _savedCodec;
 
         if (Directory.Exists(_tempRoot))
             Directory.Delete(_tempRoot, true);
@@ -69,7 +70,7 @@ public class AssetPackerTests
             ("nested/b.txt", "bravo"));
         string pak = ArchivePath();
 
-        AssetPacker.Pack(src, pak);
+        AssetArchiveAuthoring.Pack(src, pak);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
         info.Version.ShouldBe(5);
@@ -91,7 +92,7 @@ public class AssetPackerTests
         string deltaDir = Path.Combine(_tempRoot, "delta");
         string pak = ArchivePath("content.pak");
 
-        AssetPacker.Pack(sourceDir, pak);
+        AssetArchiveAuthoring.Pack(sourceDir, pak);
 
         // Verify initial content.
         var paths = AssetPacker.GetAssetPaths(pak).OrderBy(x => x).ToArray();
@@ -102,7 +103,7 @@ public class AssetPackerTests
         // Repack: modify a.txt, add c.txt, remove nested/b.txt.
         WriteUtf8(Path.Combine(deltaDir, "a.txt"), "alpha-v2");
         WriteUtf8(Path.Combine(deltaDir, "c.txt"), "charlie-v1");
-        AssetPacker.Repack(pak, deltaDir, "nested/b.txt");
+        AssetArchiveAuthoring.Repack(pak, deltaDir, "nested/b.txt");
 
         var infoAfterRepack = AssetPacker.ReadArchiveInfo(pak);
         infoAfterRepack.Version.ShouldBe(5);
@@ -113,7 +114,7 @@ public class AssetPackerTests
         Should.Throw<FileNotFoundException>(() => AssetPacker.GetAsset(pak, "nested/b.txt"));
 
         // Compact should reclaim dead space.
-        AssetPacker.Compact(pak);
+        AssetArchiveAuthoring.Compact(pak);
 
         var infoAfterCompact = AssetPacker.ReadArchiveInfo(pak);
         infoAfterCompact.DeadBytes.ShouldBe(0);
@@ -123,7 +124,7 @@ public class AssetPackerTests
 
         // Stale detection.
         WriteUtf8(Path.Combine(sourceDir, "a.txt"), "alpha-v3");
-        var stale = AssetPacker.GetStalePaths(pak, sourceDir);
+        var stale = AssetArchiveAuthoring.GetStalePaths(pak, sourceDir);
         stale.ShouldContain("a.txt");
     }
 
@@ -135,7 +136,7 @@ public class AssetPackerTests
             ("nested/b.txt", "bravo"));
         string pak = ArchivePath("reader-buckets.pak");
 
-        AssetPacker.Pack(src, pak, TocLookupMode.HashBuckets);
+        AssetArchiveAuthoring.Pack(src, pak, TocLookupMode.HashBuckets);
 
         AssetArchiveReader.GetAssetPaths(pak).OrderBy(x => x).ToArray()
             .ShouldBe(new[] { "a.txt", "nested/b.txt" });
@@ -151,7 +152,7 @@ public class AssetPackerTests
             ("nested/a.txt", "alpha"));
         string pak = ArchivePath("reader-sorted.pak");
 
-        AssetPacker.Pack(src, pak, TocLookupMode.SortedByHash);
+        AssetArchiveAuthoring.Pack(src, pak, TocLookupMode.SortedByHash);
 
         AssetArchiveReader.GetAssetPaths(pak).OrderBy(x => x).ToArray()
             .ShouldBe(new[] { "nested/a.txt", "z.txt" });
@@ -164,14 +165,14 @@ public class AssetPackerTests
     [Test]
     public void Pack_WithLz4Codec_RoundTrips()
     {
-        AssetPacker.DefaultCodec = CompressionCodec.Lz4;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Lz4;
 
         string src = MakeSourceDir("src-lz4",
             ("hello.txt", "Hello, LZ4 world!"),
             ("data/numbers.txt", "0123456789"));
         string pak = ArchivePath("lz4.pak");
 
-        AssetPacker.Pack(src, pak);
+        AssetArchiveAuthoring.Pack(src, pak);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
         info.Version.ShouldBe(5);
@@ -188,16 +189,16 @@ public class AssetPackerTests
     public void Repack_WithLz4Codec_PreservesExistingAndAddsNew()
     {
         // Pack initial with LZMA.
-        AssetPacker.DefaultCodec = CompressionCodec.Lzma;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Lzma;
         string src = MakeSourceDir("src-repack-lz4", ("original.txt", "lzma-content"));
         string pak = ArchivePath("repack-lz4.pak");
-        AssetPacker.Pack(src, pak);
+        AssetArchiveAuthoring.Pack(src, pak);
 
         // Repack with LZ4 codec for new files.
-        AssetPacker.DefaultCodec = CompressionCodec.Lz4;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Lz4;
         string delta = Path.Combine(_tempRoot, "delta-lz4");
         WriteUtf8(Path.Combine(delta, "added.txt"), "lz4-content");
-        AssetPacker.Repack(pak, delta);
+        AssetArchiveAuthoring.Repack(pak, delta);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
         info.FileCount.ShouldBe(2);
@@ -218,19 +219,19 @@ public class AssetPackerTests
     [Test]
     public void Compact_WithLz4_PreservesCodecAndContent()
     {
-        AssetPacker.DefaultCodec = CompressionCodec.Lz4;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Lz4;
         string src = MakeSourceDir("src-compact-lz4",
             ("keep.txt", "keep-me"),
             ("remove.txt", "remove-me"));
         string pak = ArchivePath("compact-lz4.pak");
-        AssetPacker.Pack(src, pak);
+        AssetArchiveAuthoring.Pack(src, pak);
 
         // Repack to remove one file (creates dead bytes).
-        AssetPacker.Repack(pak, null!, "remove.txt");
+        AssetArchiveAuthoring.Repack(pak, null!, "remove.txt");
         AssetPacker.ReadArchiveInfo(pak).DeadBytes.ShouldBeGreaterThan(0);
 
         // Compact.
-        AssetPacker.Compact(pak);
+        AssetArchiveAuthoring.Compact(pak);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
         info.DeadBytes.ShouldBe(0);
@@ -244,14 +245,14 @@ public class AssetPackerTests
     [Test]
     public void Pack_WithZstdCodec_RoundTrips()
     {
-        AssetPacker.DefaultCodec = CompressionCodec.Zstd;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Zstd;
 
         string src = MakeSourceDir("src-zstd",
             ("greeting.txt", "Hello, Zstd world!"),
             ("sub/payload.bin", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
         string pak = ArchivePath("zstd.pak");
 
-        AssetPacker.Pack(src, pak);
+        AssetArchiveAuthoring.Pack(src, pak);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
         info.Version.ShouldBe(5);
@@ -266,15 +267,15 @@ public class AssetPackerTests
     [Test]
     public void Repack_WithZstdCodec_PreservesExistingAndAddsNew()
     {
-        AssetPacker.DefaultCodec = CompressionCodec.Lzma;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Lzma;
         string src = MakeSourceDir("src-repack-zstd", ("file1.txt", "original-lzma"));
         string pak = ArchivePath("repack-zstd.pak");
-        AssetPacker.Pack(src, pak);
+        AssetArchiveAuthoring.Pack(src, pak);
 
-        AssetPacker.DefaultCodec = CompressionCodec.Zstd;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Zstd;
         string delta = Path.Combine(_tempRoot, "delta-zstd");
         WriteUtf8(Path.Combine(delta, "file2.txt"), "new-zstd");
-        AssetPacker.Repack(pak, delta);
+        AssetArchiveAuthoring.Repack(pak, delta);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
         info.Entries.First(e => e.Path == "file1.txt").Codec.ShouldBe(CompressionCodec.Lzma);
@@ -291,18 +292,18 @@ public class AssetPackerTests
         // Build an archive with LZMA entry, then repack add LZ4, then repack add Zstd.
         string src = MakeSourceDir("src-mixed", ("lzma.txt", "lzma-data"));
         string pak = ArchivePath("mixed.pak");
-        AssetPacker.DefaultCodec = CompressionCodec.Lzma;
-        AssetPacker.Pack(src, pak);
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Lzma;
+        AssetArchiveAuthoring.Pack(src, pak);
 
-        AssetPacker.DefaultCodec = CompressionCodec.Lz4;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Lz4;
         string d1 = Path.Combine(_tempRoot, "d1");
         WriteUtf8(Path.Combine(d1, "lz4.txt"), "lz4-data");
-        AssetPacker.Repack(pak, d1);
+        AssetArchiveAuthoring.Repack(pak, d1);
 
-        AssetPacker.DefaultCodec = CompressionCodec.Zstd;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Zstd;
         string d2 = Path.Combine(_tempRoot, "d2");
         WriteUtf8(Path.Combine(d2, "zstd.txt"), "zstd-data");
-        AssetPacker.Repack(pak, d2);
+        AssetArchiveAuthoring.Repack(pak, d2);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
         info.FileCount.ShouldBe(3);
@@ -334,18 +335,18 @@ public class AssetPackerTests
             ("keep-lzma.txt", "lzma-keep"),
             ("dead.txt", "will-die"));
         string pak = ArchivePath("compact-mix.pak");
-        AssetPacker.DefaultCodec = CompressionCodec.Lzma;
-        AssetPacker.Pack(src, pak);
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Lzma;
+        AssetArchiveAuthoring.Pack(src, pak);
 
         // Add an LZ4 entry and remove dead.txt.
-        AssetPacker.DefaultCodec = CompressionCodec.Lz4;
+        AssetArchiveAuthoring.DefaultCodec = CompressionCodec.Lz4;
         string d1 = Path.Combine(_tempRoot, "dmix");
         WriteUtf8(Path.Combine(d1, "keep-lz4.txt"), "lz4-keep");
-        AssetPacker.Repack(pak, d1, "dead.txt");
+        AssetArchiveAuthoring.Repack(pak, d1, "dead.txt");
 
         AssetPacker.ReadArchiveInfo(pak).DeadBytes.ShouldBeGreaterThan(0);
 
-        AssetPacker.Compact(pak);
+        AssetArchiveAuthoring.Compact(pak);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
         info.DeadBytes.ShouldBe(0);

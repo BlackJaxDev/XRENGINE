@@ -163,9 +163,9 @@ public static class RuntimeWorkScheduler
                     "A runtime job manager already exists. Shut down its owning host before configuring caller-thread execution.");
             }
 
+            XREngine.Data.RuntimeAssetReadServices.IsCallerThread = true;
             _configurationState = 1;
             _configuringCallerThread = true;
-            XREngine.Data.RuntimeAssetReadServices.IsCallerThread = true;
             try
             {
                 configureHooks?.Invoke();

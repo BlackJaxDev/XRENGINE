@@ -48,6 +48,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="XREngine.UnitTests" />
+    <InternalsVisibleTo Include="XREngine.Editor" />
   </ItemGroup>
   <Import Project="../Build/Registration/RuntimeContracts.props" />
 </Project>

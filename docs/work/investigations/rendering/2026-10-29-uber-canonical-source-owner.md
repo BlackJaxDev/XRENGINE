@@ -1,9 +1,11 @@
 # Uber canonical shader source ownership
 
-Status: open. A generated Uber shader can be rehydrated from a shader-file
-probe and a separate runtime asset-read installation. These owners can change
-between the probe and the text read. The current path can also accept an empty
-text object after a file disappears.
+Status: source recovery and publication fixes passed the focused runtime probe
+(42 checks). Successful-generation retirement remains open.
+The original defects mixed a shader-file probe with a replacement byte owner
+and accepted an unloaded text object after a file disappeared. The recovery
+path now captures the byte owner before probing, retries stale reads, and
+reserves the complete source installation for commit.
 
 ## Evidence
 
@@ -21,7 +23,7 @@ Linux without a renderer or network. The executable and output are disposable
 under `Build/_AgentValidation/20261028-120000-webgpu-io/` in
 `scratch/ShaderBoundaryProbe/` and `logs/shader-boundary-probe.log`.
 
-## Boundary and next work
+## Original boundary findings
 
 `ShaderSourceResolver.CaptureOwner` tracks the shader file backend and asset
 filesystem generations. `TextFile.LoadText` separately captures a
@@ -52,3 +54,53 @@ A new rejection there could leave the disposed service installed. Host-file
 admission also reads mutable caller-thread and shader-service state. The fix
 needs a coordinated lifetime and retry contract for these inputs, not only a
 second generation check.
+
+## Implemented boundary
+
+The implementation and host retry contract are specified in
+[Canonical Source Recovery](../../../architecture/rendering/uber-shader-varianting.md#canonical-source-recovery).
+The fix includes independent render publication for recovered and shared
+fallback shaders, numeric cache-owner stamps, a retained asset-cache epoch,
+and retry-safe disposal of the runtime shader service installation.
+
+The disposable probe is under
+`Build/_AgentValidation/20261029-205003-implementation/scratch/phase2/canonical-probe/`.
+It covers read-time replacements, BOM and provenance, missing files, owner
+cache invalidation, outer-scope failure, rejected-attempt cache counts, and
+installation/asset-owner retry behavior during commit.
+
+The corrected focused build passed with zero warnings and errors. The complete
+runtime probe passed 42 checks and exited with code zero. Its first run caught
+a missing `Source.FilePath` assignment after recovery switched to the shader's
+existing source object. The correction assigns the path before loading the
+bytes; BOM decoding and disk refresh provenance then passed together.
+
+The probe confirmed that source replacement can run during a blocked read and
+that recovery discards the old bytes. During the short commit it confirmed
+rejection and retry for the raw source, shader-file backend, asset filesystem,
+shader service, and caller-thread admission. A rejected real shader-service
+lease disposal left the installed owner alive; retry restored its predecessor.
+The real asset cache rejected teardown while its epoch was reserved. Independent
+recovery and shared fallback survived an outer abort. Failed recovery left its
+parent usable and added no object or render cache entries.
+
+Disposable evidence is in the same run root:
+`logs/phase2/canonical-probe-build-corrected.log`,
+`logs/phase2/canonical-probe-runtime-corrected.log`, and
+`reports/phase2/canonical-source/runtime-results.md`.
+
+## Remaining lifetime requirement
+
+Repeated successful recovery retains each old shader and source `TextFile` in
+the global caches. Each new generation now allocates exactly these two objects;
+it no longer abandons the shader constructor's default `TextFile`. A local
+material ownership list cannot safely destroy old generations because another
+material can borrow the canonical shader directly or through a generated
+variant. `ObjectCacheOwnership.Dispose` requires its caller to stop all users;
+the shader path has no shared borrower lease. Keep borrowed live shaders intact
+until a shared lifetime contract can prove retirement is safe. Material teardown
+and revival do not close this gap. The probe measures retained successful
+generations separately from rejected attempts, which must add no cache entries.
+Four successful replacements retained eight object-cache entries and four
+render-cache entries. The borrowed prior shader stayed alive. This measurement
+confirms the open lifetime gap; it is not a retirement acceptance result.

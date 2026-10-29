@@ -24,14 +24,14 @@ for the current design.
 │  CookContent()                                           │
 │    ├─ YAML .asset files → CookedBinarySerializer         │
 │    │    → CookedAssetBlob (AQN string type ref)          │
-│    │    → AssetPacker.Pack() → content.archive            │
+│    │    → AssetArchiveAuthoring.Pack() → content.archive  │
 │    │                                                     │
 │  GenerateConfigArchive()                                 │
 │    ├─ GameStartupSettings ─┐                             │
 │    ├─ EditorPreferences  ──┼─ CookedAssetBlob            │
 │    ├─ UserSettings ────────┘    (AOT index when native)  │
 │    ├─ AotRuntimeMetadata.bin                             │
-│    └─ AssetPacker.Pack() → config.archive                │
+│    └─ AssetArchiveAuthoring.Pack() → config.archive      │
 └──────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────┐
@@ -70,7 +70,8 @@ for the current design.
 | `AotRuntimeMetadataStore` | `Core/Engine/AotRuntimeMetadataStore.cs` | Lazy-loaded singleton that reads `AotRuntimeMetadata.bin` from the config archive |
 | `CookedBinarySerializer` | `Core/Files/CookedBinary/CookedBinarySerializer.cs` | Module-dispatched binary serializer for the engine's general native wire format |
 | `RuntimeCookedBinarySerializer` | `XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs` | Explicit runtime serializer used by registered published asset types |
-| `AssetPacker` | `Core/Files/AssetPacker/AssetPacker.cs` | Archive pack/repack/compact/read for cooked content and config |
+| `AssetArchiveAuthoring` | `XREngine.Editor/AssetArchiveAuthoring*.cs` | Editor-owned archive pack/repack/compact and stale-source checks |
+| `AssetPacker` | `XREngine.Data/Core/Files/AssetPacker/AssetPacker.cs` | Shared archive read API and format helpers |
 | `DirectStorageIO` | `Core/Files/DirectStorageIO.cs` | Windows DirectStorage abstraction for CPU and GPU I/O |
 
 ## 3. AOT Type Reference Encoding
@@ -233,7 +234,7 @@ by the Vulkan/DX12 texture upload path.
 ```
 Core/Files/
 ├── AssetPacker/
-│   ├── AssetPacker.cs              # Pack/Repack/Compact/GetAsset
+│   ├── AssetPacker.cs              # Read API and shared format helpers
 │   ├── ArchiveInfo.cs
 │   ├── ArchiveEntryInfo.cs
 │   ├── FooterInfo.cs
@@ -254,6 +255,12 @@ Core/Files/
 ├── CookedAssetTypeReference.cs     # Encode/Resolve shared helper
 ├── DirectStorageIO.cs              # Windows DirectStorage abstraction
 └── XRAsset.MemoryPack.cs           # Inner MemoryPack envelope for XRAsset
+
+XREngine.Editor/
+├── AssetArchiveAuthoring.cs        # Writer settings and shared state
+├── AssetArchiveAuthoring.Pack.cs   # Pack and compression
+├── AssetArchiveAuthoring.Updates.cs # Repack/Compact/GetStalePaths
+└── AssetArchiveAuthoring.Layout.cs # Archive layout writes
 ```
 
 ## Runtime catalog object ownership

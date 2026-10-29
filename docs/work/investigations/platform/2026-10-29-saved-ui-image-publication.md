@@ -68,6 +68,84 @@ The final build and regression results are recorded in
 Disposable logs, payload checks and before/after browser reports are under
 `Build/_AgentValidation/20261029-195227-saved-ui/`.
 
+## Bitmap text frame stall correction
+
+Focused comparisons used disposable copies of the saved-image publication and
+ordinary browser logs, snapshots and PNGs. No frame trace was recorded. The
+browser was Chromium 154.0.8037.57 with Playwright 1.63.0 and explicit
+SwiftShader execution. The five-second frame deadline and all UI assertions
+remained unchanged.
+
+Suppressing only `engine-ui-text-batched-bitmap` draws restored animation and
+produced the initial PNG. The expected glyph-ink assertion then failed. A
+constant fragment output also restored animation with the original vertex
+shader and storage inputs. Changing only gradient sampling to explicit mip-zero
+sampling retained the stall. Disabling the outline branch restored animation.
+Replacing only the glyph bounds early return with vector comparisons and a
+`select` restored animation with the full outline loop and gradient sampling.
+These comparisons isolate the failing source form to the bounds control flow
+repeated by outline taps. They do not establish a browser or driver defect.
+
+`UITextBatchedBitmap.slang` now samples each tap before it applies the inclusive
+glyph bounds mask. For finite glyph coordinates, samples outside the glyph
+remain zero and samples on either boundary remain included. The change retains
+explicit gradients, sampler behavior, outline radius and taps, fill and outline
+composition, linear offscreen output, and the vertex and storage contracts.
+It adds no fallback and removes no text feature.
+
+The focused canonical ShaderCooker run passed with the pinned Slang compiler.
+Its WGSL contains one `textureSampleGrad` and `select` in the tap helper, without
+conditional branches. The disposable comparison PNG shows readable screen and
+world text, saved image colors, clipping and transparency. The unchanged UI
+harness passed both fresh browser contexts in this comparison: 72 checkpoints
+in the first context and 14 in the second, including pixel, glyph, input,
+resize and lifecycle assertions. The complete run took approximately 157 seconds.
+This comparison isolates the source change. The normal publication check below
+qualifies the complete saved UI path without a shader substitution.
+
+Evidence is under
+`Build/_AgentValidation/20261029-205003-implementation/reports/phase2/ui-stall/`,
+with the focused cook log in `logs/phase2/ui-stall-canonical-cook.log`.
+The first `no-text` comparison used an exact label match that did not match the
+operation suffix. It changed no draws and is not suppression evidence.
+`no-text-corrected` uses the verified prefix match. All diagnostic substitutions
+remain in ignored copied sites; production JavaScript is unchanged.
+
+## Normal publication after the correction
+
+The complete canonical cook passed for 184 non-probe recipes and produced
+184 shader artifacts and 84 pipeline artifacts. The staged sample uses the
+current saved images and the new catalog. Hash checks preserved all twelve
+original sample files. The current Editor and native publisher then completed
+normal publication with 366 assets, 181 selected shaders and 84 pipeline passes.
+All 343 staged canonical input files remained unchanged.
+
+The published bitmap-text descriptor and WGSL exactly match the canonical cook:
+
+- Descriptor: `d473311133febcb9e78290ffb8226b1aac78d6eae25a0dbcbe309aae76d678d4`.
+- WGSL: `a4ec9e3dc1052e80b16b8882391df19a7f8d2a2fd5f8a069044ee83ed0edc83a`.
+
+The unchanged `Tools/BrowserSmoke` UI harness passed on this normal bundle with
+Chromium 154.0.8037.57, Playwright 1.63.0 and explicit SwiftShader execution.
+The run completed in approximately 103 seconds. Both fresh browser contexts
+passed: 72 checkpoints in the first context and 14 in the second. Each initial
+checkpoint passed 21 pixel samples and two glyph checks. Keyboard, mouse,
+touch, text editing, synthetic composition, clipping, target lifecycle, resize
+and fresh-context checks passed. Physical OS IME and device acceptance remain
+separate from these software browser checks.
+
+The initial PNG, resized PNG and second-context initial PNG were visually
+inspected. Screen and world text remain readable, with saved image colors,
+alpha blending and clipping intact after resize. The harness files and selected
+published runtime JavaScript retain their before-run hashes. No runtime edit,
+shader substitution, trace or assertion change was used for this run.
+
+Final evidence is under
+`Build/_AgentValidation/20261029-205003-implementation/reports/phase2/ui-final/`.
+`smoke-report.json` records the passing checks. `published-ui-identity.json`
+records the shader and runtime hashes. The staging report and before/after
+hash snapshots record preservation of source files and harness files.
+
 ## Native font prerequisites
 
 The first local baseline publication failed to load `freetype6`. The existing
@@ -87,8 +165,6 @@ installed Editor or a new redistribution package.
 
 ## Remaining work
 
-Find the existing initial UI frame stall through ordinary runtime evidence.
-Then run the unchanged pixel, glyph, input, resize and fresh-context checks.
 Non-primary sRGB/tint witnesses, broader shader coverage, complete platform
 cooking, physical-device and desktop comparison, and packaged Editor publishing
-remain open. This increment adds no completed requirement.
+remain open beyond the saved UI publication and software browser checks above.
