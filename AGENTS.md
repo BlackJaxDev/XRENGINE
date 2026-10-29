@@ -18,7 +18,7 @@ XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10,
 - Use STE for code comments and code member summaries, including XML documentation comments.
 - Use STE for documentation. This includes design documents, todo lists, architecture documents, developer guides, and user help documents.
 - Use short, clear sentences, active voice, and consistent technical terms. Give each instruction a clear action. Keep technical names, code identifiers, commands, and quoted source text exact.
-- Follow the [maintainer code and writing style](docs/developer-guides/ai/maintainer-style.md) when producing code, comments, XML summaries, commit messages, pull request text, documentation, or user summaries. It separates historical evidence from current rules. Current explicit instructions take priority.
+- Follow the [maintainer code and writing style](docs/developer-guides/ai/maintainer-style.md) when producing code, comments, XML summaries, commit messages, pull request text, documentation, or user summaries. Current explicit instructions take priority.
 
 ## Read On Demand
 
