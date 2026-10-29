@@ -349,7 +349,7 @@ namespace XREngine
                || string.Equals(scalar.Value, "null", StringComparison.OrdinalIgnoreCase)
                || (scalar.Value.Length == 0 && scalar.Style == ScalarStyle.Plain);
 
-        private static bool AssetPathExists(string path)
+        internal static bool AssetPathExists(string path)
         {
             using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
             IRuntimeAssetSource? source = DirectStorageIO.Source;

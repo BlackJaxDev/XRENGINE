@@ -1,5 +1,35 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Animation YAML reference probe (2026-10-29)
+
+An animation clip YAML reference asks its captured serialization service to
+check a resolved path before deferring or loading it. The engine service uses
+the existing catalog or admitted host-file path policy. A default interface
+implementation gives custom serialization services the host-file policy, and
+custom owners can override it. The runtime decorator forwards the policy.
+Missing paths still return no reference; a caller-thread host-file probe now
+fails admission before using the provider. Catalog metadata can be checked on
+the caller thread.
+
+The path probe rejects source and discovery changes observed during the check.
+It does not retain discovery or serialization-service ownership through the
+subsequent deferred or immediate load. Hosts must keep those owners usable and
+coordinate replacement. This does not resolve the separate YAML discovery or
+shader ownership issues.
+
+An end-to-end YAML probe passes for virtual and missing paths, provider changes,
+caller-thread rejection, and catalog metadata. Eight focused tests pass for
+those paths plus cached clips and immediate loading. Editor, Server, and
+VRClient Release builds pass on Linux with Windows targeting enabled. The
+desktop filesystem headless fixture passes. All 19 portable manifest projects
+compile for browser-wasm, and Browser publishes with native WASM and pinned
+Jolt inputs. These checks do not establish a live packaged-world load, Windows
+behavior, or browser rendering.
+
+The physical file check leaves Animation, outside the historical four-root scan.
+The four-root and blocking counts stay unchanged, and both inventory
+requirements remain open.
+
 ## Animation binary cache provider handoff (2026-10-29)
 
 Animation cache reads and writes use the asset file provider captured for cache

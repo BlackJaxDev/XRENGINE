@@ -35,6 +35,9 @@ public class RuntimeAssetSerializationServices(IAssetSerializationServices inner
         [NotNullWhen(true)] out string? assetPath)
         => _inner.TryResolveAssetPathById(assetId, referenceAssetPath, out assetPath);
 
+    public bool AssetPathExists(string assetPath)
+        => _inner.AssetPathExists(assetPath);
+
     public bool TryCreatePortableAssetReference(
         string assetPath,
         [NotNullWhen(true)] out string? reference)

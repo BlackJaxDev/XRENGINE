@@ -34,6 +34,13 @@ public interface IAssetSerializationServices
         string? referenceAssetPath,
         [NotNullWhen(true)] out string? assetPath);
 
+    /// <summary>Checks whether a resolved reference path is available to this owner.</summary>
+    bool AssetPathExists(string assetPath)
+    {
+        using XREngine.Data.RuntimeAssetReadLease read = XREngine.Data.RuntimeAssetReadServices.Capture();
+        return XREngine.Data.RuntimeFileDiscoveryServices.HostFileExists(read, assetPath, "YAML asset path lookup");
+    }
+
     bool TryCreatePortableAssetReference(
         string assetPath,
         [NotNullWhen(true)] out string? reference);

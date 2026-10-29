@@ -244,6 +244,14 @@ parsing and validation. UTF-8 is the default and byte-order marks select other
 supported encodings. The host must keep the captured source usable during the
 read; later caller-side profile migration is a separate operation.
 
+Animation YAML references ask the captured serialization service whether a
+resolved path exists before deferring or loading it. The engine service uses
+catalog metadata or the admitted host-file probe. Custom serialization services
+can override this policy; the default uses the admitted host-file probe. The
+probe rejects source or discovery changes it observes, but it does not pin the
+serialization service or discovery provider through the subsequent load. Hosts
+must keep those owners usable and coordinate replacement through the load.
+
 Animation binary cache codecs receive the file provider captured for their cache
 metadata checks. The same instance is retained for a queued background write.
 Custom asset file systems need `IHostBinaryCacheFileBackend` for animation cache

@@ -120,7 +120,7 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
         string? referenceAssetPath = services.CurrentDeserializationPath;
         if (!services.TryResolveAssetPathById(id, referenceAssetPath, out string? assetPath)
             || string.IsNullOrWhiteSpace(assetPath)
-            || !File.Exists(assetPath))
+            || !services.AssetPathExists(assetPath))
             return null;
 
         if (services.TryDeferAssetLoad(assetPath, typeof(AnimationClip), out XRAsset? deferredAsset))

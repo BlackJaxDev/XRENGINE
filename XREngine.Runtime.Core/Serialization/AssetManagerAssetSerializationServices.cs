@@ -30,6 +30,9 @@ public sealed class AssetManagerAssetSerializationServices(AssetManager assets) 
         [NotNullWhen(true)] out string? assetPath)
         => _assets.TryResolveAssetPathById(assetId, referenceAssetPath, out assetPath);
 
+    public bool AssetPathExists(string assetPath)
+        => XRAssetDeserializer.AssetPathExists(assetPath);
+
     public bool TryCreatePortableAssetReference(
         string assetPath,
         [NotNullWhen(true)] out string? reference)
