@@ -4,7 +4,7 @@ using XREngine.Rendering;
 using XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Provides local authored-file discovery, metadata operations, and direct reads for the publisher.</summary>
-internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, ITextureStreamingCacheFileBackend, ITextureStreamingCacheReplaceBackend
+internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, IHostBinaryCacheFileBackend, ITextureStreamingCacheFileBackend, ITextureStreamingCacheReplaceBackend
 {
     public bool SupportsChangeNotifications => false;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption option)
@@ -19,6 +19,7 @@ internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
     public bool FileExists(string path) => File.Exists(path);
     public Stream OpenRead(string path, FileShare share) => new FileStream(path, FileMode.Open, FileAccess.Read, share);
     public byte[] ReadAllBytes(string path) => File.ReadAllBytes(path);
+    public void WriteAllBytesAtomic(string path, byte[] bytes) => HostBinaryCacheFileWriter.WriteAllBytesAtomic(path, bytes);
     public Task<byte[]> ReadAllBytesAsync(string path, CancellationToken cancellationToken) => File.ReadAllBytesAsync(path, cancellationToken);
     public IEnumerable<string> ReadLines(string path) => File.ReadLines(path);
     public void PrepareDirectory(string cachePath) => TextureStreamingCacheFileWriter.PrepareDirectory(cachePath);

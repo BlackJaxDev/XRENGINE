@@ -8,7 +8,7 @@ using XREngine.Rendering;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Provides host file discovery, metadata operations, and direct reads under ordinary filesystem permissions.</summary>
-public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, IBvhDiskCacheBackend, ITextureStreamingCacheFileBackend, ITextureStreamingCacheReplaceBackend
+public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, IHostBinaryCacheFileBackend, IBvhDiskCacheBackend, ITextureStreamingCacheFileBackend, ITextureStreamingCacheReplaceBackend
 {
     public bool SupportsChangeNotifications => true;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption searchOption)
@@ -22,6 +22,7 @@ public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
     public bool FileExists(string path) => File.Exists(path);
     public Stream OpenRead(string path, FileShare share) => new FileStream(path, FileMode.Open, FileAccess.Read, share);
     public byte[] ReadAllBytes(string path) => File.ReadAllBytes(path);
+    public void WriteAllBytesAtomic(string path, byte[] bytes) => HostBinaryCacheFileWriter.WriteAllBytesAtomic(path, bytes);
     public Task<byte[]> ReadAllBytesAsync(string path, CancellationToken cancellationToken) => File.ReadAllBytesAsync(path, cancellationToken);
     public IEnumerable<string> ReadLines(string path) => File.ReadLines(path);
     public void PrepareDirectory(string cachePath) => TextureStreamingCacheFileWriter.PrepareDirectory(cachePath);

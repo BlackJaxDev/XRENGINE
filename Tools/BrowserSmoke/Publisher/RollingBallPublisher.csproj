@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../../XREngine.Runtime.Platform.Desktop/TextureStreamingCacheFileWriter.cs" Link="TextureStreamingCacheFileWriter.cs" />
+    <Compile Include="../../../XREngine.Runtime.Platform.Desktop/HostBinaryCacheFileWriter.cs" Link="HostBinaryCacheFileWriter.cs" />
     <ProjectReference Include="../../../Samples/RollingBall/RollingBall.csproj" />
     <ProjectReference Include="../../../XREngine.Runtime.Execution.Threads/XREngine.Runtime.Execution.Threads.csproj" />
     <ProjectReference Include="../../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />

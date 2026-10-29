@@ -244,6 +244,17 @@ parsing and validation. UTF-8 is the default and byte-order marks select other
 supported encodings. The host must keep the captured source usable during the
 read; later caller-side profile migration is a separate operation.
 
+Animation binary cache codecs receive the file provider captured for their cache
+metadata checks. The same instance is retained for a queued background write.
+Custom asset file systems need `IHostBinaryCacheFileBackend` for animation cache
+reads and writes. Missing capability rejects the read and fails the queued write;
+the existing background-write policy does not fall back to a generic write.
+The desktop and publisher adapters create a unique sibling file with create-new
+semantics, replace the cache path, and clean up a temporary file they created.
+A name collision fails without changing the colliding file. The provider has no
+retirement lease, and this handoff does not pin the raw source or discovery
+generation. Hosts must keep the captured provider usable through queued writes.
+
 The humanoid conformance source scanner requires admitted host-file access. It
 captures one discovery provider for directory probes, enumeration, and shared
 reads. That provider must implement `IAssetMetadataFileBackend` and

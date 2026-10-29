@@ -1,5 +1,38 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Animation binary cache provider handoff (2026-10-29)
+
+Animation cache reads and writes use the asset file provider captured for cache
+metadata. Background writes retain that same instance. The optional codec handoff
+leaves other cache codecs on their existing interface. Desktop and publisher
+adapters implement the new binary-cache capability. Custom hosts must implement
+it for animation cache payloads; a missing capability rejects the cache read and
+fails the background write, which does not fall back to generic cache output.
+
+The desktop writer keeps a unique sibling temporary file and overwrite move. It
+now creates that file exclusively and cleans it only after successful creation.
+A name collision fails without changing the colliding file. Failed moves clean
+the owned temporary file on a best-effort basis. The captured provider has no
+retirement lease, and the handoff does not pin the raw source or discovery
+generation. Hosts must retain the provider until queued work finishes.
+
+A production-method probe passes for a real clip payload, a provider swap during
+a background write, readback, and desktop replacement. Four focused tests pass
+for the provider handoff, missing read and write capabilities, concurrent
+replacement, and cleanup after a failed move. The Linux test runner links the
+production writer with a small desktop adapter; a separate production probe uses
+the actual desktop provider. The publisher Release build passes. The first gate
+attempt found that the headless project did not link the new writer with its
+linked desktop adapter. The project now links that writer; the existing desktop
+filesystem fixture passes in the rerun. Editor, Server, and VRClient Release
+builds pass on Linux with Windows targeting enabled. All 19 portable manifest
+projects compile for browser-wasm, and Browser publishes with native WASM and
+pinned Jolt inputs. These checks do not establish Windows behavior, live browser
+rendering, or a provider retirement guarantee.
+
+The four-root direct-file and blocking counts are unchanged. Both inventory
+requirements remain open, as do the separate shader and provider-lifetime issues.
+
 ## Humanoid conformance source scanner (2026-10-29)
 
 The scanner admits host-file access and captures one discovery provider for

@@ -22,6 +22,7 @@
     <!-- The narrow desktop filesystem adapter is OS-neutral BCL code; exercise it without the windowing/native desktop closure. -->
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetFileSystem.cs" Link="Platform/DesktopAssetFileSystem.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/TextureStreamingCacheFileWriter.cs" Link="Platform/TextureStreamingCacheFileWriter.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/HostBinaryCacheFileWriter.cs" Link="Platform/HostBinaryCacheFileWriter.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopBvhDiskCache.cs" Link="Platform/DesktopBvhDiskCache.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetChangeMonitor.cs" Link="Platform/DesktopAssetChangeMonitor.cs" />
     <Compile Include="../Platform/DesktopAssetFileSystemTests.cs" Link="Platform/DesktopAssetFileSystemTests.cs" />

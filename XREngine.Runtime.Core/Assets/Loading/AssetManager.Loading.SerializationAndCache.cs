@@ -1004,6 +1004,7 @@ namespace XREngine
                 originalPath,
                 sourceTimestampUtc,
                 typeof(T),
+                files,
                 out bool allowGenericFallback);
             if (registeredResult.Status == CacheReadStatus.Hit)
             {
@@ -1066,6 +1067,7 @@ namespace XREngine
                 originalPath,
                 sourceTimestampUtc,
                 type,
+                files,
                 out bool allowGenericFallback);
             if (registeredResult.Status == CacheReadStatus.Hit)
             {
@@ -1123,6 +1125,7 @@ namespace XREngine
                         originalPath,
                         sourceTimestampUtc,
                         typeof(T),
+                        files,
                         out bool allowGenericFallback);
                     return (result, allowGenericFallback);
                 })
@@ -1178,7 +1181,7 @@ namespace XREngine
                     files.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
-                if (ShouldSuppressGenericCacheWrite(cachePath, cacheAsset, asset))
+                if (ShouldSuppressGenericCacheWrite(cachePath, cacheAsset, asset, files))
                 {
                     // A registered codec handled or exclusively owns this cache write.
                 }
@@ -1210,7 +1213,7 @@ namespace XREngine
                     files.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
-                if (ShouldSuppressGenericCacheWrite(cachePath, cacheAsset, asset))
+                if (ShouldSuppressGenericCacheWrite(cachePath, cacheAsset, asset, files))
                 {
                     // A registered codec handled or exclusively owns this cache write.
                 }
@@ -1240,6 +1243,7 @@ namespace XREngine
             string originalPath,
             DateTime sourceTimestampUtc,
             Type assetType,
+            IAssetMetadataFileBackend files,
             out bool allowGenericFallback)
         {
             IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(assetType);
@@ -1255,7 +1259,9 @@ namespace XREngine
             CacheReadResult result;
             try
             {
-                result = codec.Read(cachePath, originalPath, sourceTimestampUtc);
+                result = codec is IHostFileCacheCodec hostCodec
+                    ? hostCodec.Read(cachePath, originalPath, sourceTimestampUtc, RequireBinaryCacheFiles(files))
+                    : codec.Read(cachePath, originalPath, sourceTimestampUtc);
             }
             catch (Exception ex)
             {
@@ -1276,7 +1282,8 @@ namespace XREngine
         private static bool ShouldSuppressGenericCacheWrite(
             string cachePath,
             XRAsset cacheAsset,
-            XRAsset originalAsset)
+            XRAsset originalAsset,
+            IAssetMetadataFileBackend files)
         {
             Type assetType = originalAsset.GetType();
             IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(assetType);
@@ -1286,11 +1293,11 @@ namespace XREngine
             CacheCodecOwnership ownership = codec.GetOwnership(assetType);
             if (codec.WriteMode == CacheWriteMode.Background)
             {
-                QueueRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset);
+                QueueRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset, files);
                 return true;
             }
 
-            CacheWriteResult result = ExecuteRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset);
+            CacheWriteResult result = ExecuteRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset, files);
             LogRegisteredCacheWriteDecision(cachePath, assetType, result);
             return ownership == CacheCodecOwnership.Exclusive
                 || result.Status == CacheWriteStatus.Written;
@@ -1300,11 +1307,14 @@ namespace XREngine
             IThirdPartyCacheCodec codec,
             string cachePath,
             XRAsset cacheAsset,
-            XRAsset originalAsset)
+            XRAsset originalAsset,
+            IAssetMetadataFileBackend files)
         {
             try
             {
-                return codec.Write(cachePath, cacheAsset, originalAsset);
+                return codec is IHostFileCacheCodec hostCodec
+                    ? hostCodec.Write(cachePath, cacheAsset, originalAsset, RequireBinaryCacheFiles(files))
+                    : codec.Write(cachePath, cacheAsset, originalAsset);
             }
             catch (Exception ex)
             {
@@ -1316,12 +1326,13 @@ namespace XREngine
             IThirdPartyCacheCodec codec,
             string cachePath,
             XRAsset cacheAsset,
-            XRAsset originalAsset)
+            XRAsset originalAsset,
+            IAssetMetadataFileBackend files)
         {
             _ = Task.Run(() =>
             {
                 long start = Stopwatch.GetTimestamp();
-                CacheWriteResult result = ExecuteRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset);
+                CacheWriteResult result = ExecuteRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset, files);
                 double elapsedMs = (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency;
                 LogRegisteredCacheWriteDecision(cachePath, originalAsset.GetType(), result);
                 if (elapsedMs >= 100.0)
@@ -1336,6 +1347,10 @@ namespace XREngine
                 }
             });
         }
+
+        private static IHostBinaryCacheFileBackend RequireBinaryCacheFiles(IAssetMetadataFileBackend files)
+            => files as IHostBinaryCacheFileBackend
+                ?? throw new NotSupportedException("AssetSource.BinaryCacheUnavailable: the captured asset file system does not provide binary cache files.");
 
         private static void LogRegisteredCacheReadDecision(
             string cachePath,
