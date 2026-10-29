@@ -98,6 +98,14 @@ non-canonical shader set, a reserved crop uniform, or an out-of-range crop keeps
 its unclipped draw. It reports `UI.WorldClip.OverrideUnsupported`,
 `UI.WorldClip.ShaderRequired`, `UI.WorldClip.UniformConflict`, or
 `UI.WorldClip.Range` through `UIFailureDiagnostics` once for each change of state.
+The Advanced pipeline admits a late-pass draw only when its material has
+explicit `AdvancedLatePassMetadata`. UI materials keep the opaque transparency
+mode that batch lowering requires, so a direct-world element gives its material
+the shared `EAdvancedLatePassKind.UserInterface` metadata when the material has
+none (`UIAdvancedLatePass`). The late-pass validator admits this kind in
+`TransparentForward` and `OnTopForward`, also for an opaque mode. The clip
+material copies the metadata of its source.
+
 Direct-world draws without checked
 indexed-draw proof increment `UIWorkCounter.WorldUncheckedDraws`. An offscreen
 framebuffer completion alone does not prove that a world-space quad reached a

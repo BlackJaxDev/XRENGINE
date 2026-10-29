@@ -50,6 +50,40 @@ public sealed class UIWorldLiveClipTests
     }
 
     [Test]
+    public void DirectWorldUiMaterialsEnterTheAdvancedLatePasses()
+    {
+        using UITestShaderScope shaders = new();
+        using IDisposable snippets = shaders.RegisterCanonicalCropSnippets();
+        using IDisposable materialTarget =
+            RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+                EngineMaterialConstructionTarget.DesktopGlsl);
+        LiveClipScene scene = CreateScene();
+        try
+        {
+            XRMaterial free = scene.Free.Mesh!.Material!;
+            XRMaterial source = scene.Clipped.Mesh!.Material!;
+            XRMaterial clip = scene.Clipped.LiveWorldClipMaterial.ShouldNotBeNull();
+            free.AdvancedLatePassMetadata.ShouldNotBeNull().Kind.ShouldBe(EAdvancedLatePassKind.UserInterface);
+            clip.AdvancedLatePassMetadata.ShouldBeSameAs(source.AdvancedLatePassMetadata);
+            foreach (XRMaterial material in new[] { free, clip })
+            {
+                AdvancedLatePassEligibilityValidator.TryValidateLatePass(
+                    material, (int)EDefaultRenderPass.TransparentForward, out string? reason).ShouldBeTrue(reason);
+                AdvancedLatePassEligibilityValidator.TryValidateLatePass(
+                    material, (int)EDefaultRenderPass.OnTopForward, out reason).ShouldBeTrue(reason);
+            }
+
+            XRMaterial unclassified = new() { TransparencyMode = ETransparencyMode.Opaque };
+            AdvancedLatePassEligibilityValidator.TryValidateLatePass(
+                unclassified, (int)EDefaultRenderPass.TransparentForward, out _).ShouldBeFalse();
+        }
+        finally
+        {
+            scene.Root.Destroy(true);
+        }
+    }
+
+    [Test]
     public void LiveWorldClipFollowsAncestorClipAndRegion()
     {
         using UITestShaderScope shaders = new();

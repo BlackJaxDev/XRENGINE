@@ -78,6 +78,9 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
+            // The Advanced pipeline drops a late-pass draw whose material has no late-pass lane.
+            UIAdvancedLatePass.ClassifyIfUnset(RenderCommand3D.MaterialOverride ?? RenderCommand3D.Mesh?.Material);
+
             // An element without area draws nothing. Its scaled matrix is not invertible yet, which is not a failure.
             BoundingRectangle? crop = bounds.ActualWidth > 0.0f && bounds.ActualHeight > 0.0f
                 ? UIClipRegion.ResolveCrop(bounds, ClipToBounds)
@@ -152,7 +155,8 @@ namespace XREngine.Rendering.UI
                 source.RenderPass != clip.RenderPass || source.TransparencyMode != clip.TransparencyMode ||
                 source.BillboardMode != clip.BillboardMode || source.AlphaCutoff != clip.AlphaCutoff ||
                 source.TransparentSortPriority != clip.TransparentSortPriority ||
-                source.TransparentTechniqueOverride != clip.TransparentTechniqueOverride)
+                source.TransparentTechniqueOverride != clip.TransparentTechniqueOverride ||
+                !ReferenceEquals(source.AdvancedLatePassMetadata, clip.AdvancedLatePassMetadata))
                 return false;
             for (int i = 0; i < _liveWorldClipSourceShaders.Length; i++)
                 if (!ReferenceEquals(source.Shaders[i], _liveWorldClipSourceShaders[i]) ||
@@ -213,6 +217,7 @@ namespace XREngine.Rendering.UI
                 RenderPass = source.RenderPass,
                 // The clip material shares the raster state, so a raster edit on the source applies to both.
                 RenderOptions = source.RenderOptions,
+                AdvancedLatePassMetadata = source.AdvancedLatePassMetadata,
             };
             // Constructor shader discovery must not add parameters. The uniform callback writes all values.
             clip.Parameters = [];

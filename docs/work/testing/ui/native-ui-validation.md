@@ -254,6 +254,23 @@ See the [investigation record](../../investigations/ui/retained-ui-integration.m
 for intermediate failures and repairs. Windows, OpenGL/Vulkan, visual, IME, native
 resource, benchmark, and equal-workload ImGui acceptance remain open.
 
+## Direct-World Clipping Checks (2026-10-29)
+
+The live direct-world route sets an owned crop-variant clip material on each
+element under a clipping ancestor. Before this change, the Advanced pipeline
+dropped every direct-world UI draw in `TransparentForward`, because UI materials
+had no late-pass metadata. Direct-world UI materials now get the
+`UserInterface` late-pass kind.
+
+| Check | Result |
+| --- | --- |
+| `UIWorldLiveClipTests`, `UIBatchCollectionTests`, `AdvancedTransparencyAndLatePassContractTests` and the standard filter on Windows at `2f987978` | 1032 of 1032 passed. |
+| Live OpenGL editor at `ec382554`: clip rectangle and clip material on the clipped elements | Correct values (`<150,150,250,250>`), but no world UI drew. |
+| Live OpenGL editor at `194f84ae`: one direct-world quad in `TransparentForward` | Not drawn. The log showed `[AdvancedLatePass] Rejected ... Opaque and masked surfaces must use native Advanced classification`. In `OpaqueForward`, the quad drew. This is the defect that `2f987978` fixes. |
+| Live OpenGL and Vulkan: overflowing bar and text cut at the parent bounds, and not cut with `ClipToBounds=false` | Open. The isolated MCP session needs 10 GiB free on the system drive. Run it at `2f987978` or later. |
+| Live Vulkan capture | Open. At `ec382554`, every Vulkan viewport capture was fully black, also without UI. |
+| No `[AdvancedLatePass] Rejected` warning for UI commands, and no `UI.WorldClip.*` code for canonical UI | Open, with the live check above. |
+
 ## Scrollable Menu Keyboard Checks (2026-10-25)
 
 Headless tests use accepted layout geometry and a presentation probe. They cover
