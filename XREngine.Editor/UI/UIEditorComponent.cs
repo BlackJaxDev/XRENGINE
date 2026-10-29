@@ -179,6 +179,12 @@ public partial class UIEditorComponent : UIComponent
             var splitChild = SceneNode.NewChildWithTransform(out UIDualSplitTransform splitTfm, "EditorRoot");
             _editorRoot = splitChild;
             if (StopTerminatedBuild(splitChild)) return;
+            UIMaterialComponent background = splitChild.AddComponent<UIMaterialComponent>()!;
+            if (StopTerminatedBuild(splitChild)) return;
+            EditorPanel.ApplyBackground(background);
+            if (StopTerminatedBuild(splitChild)) return;
+            background.RenderPass = (int)EDefaultRenderPass.Background;
+            if (StopTerminatedBuild(splitChild)) return;
             splitTfm.VerticalSplit = true;
             splitTfm.FirstFixedSize = true;
             splitTfm.FixedSize = MenuHeight;

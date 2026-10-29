@@ -182,7 +182,7 @@ public sealed partial class UITabStripComponent : UIComponent
         {
             UIBoundableTransform bounds = node.SetTransform<UIBoundableTransform>();
             bounds.MinAnchor = Vector2.Zero;
-            bounds.MaxAnchor = new Vector2(0, 1);
+            bounds.MaxAnchor = Vector2.Zero;
             bounds.Width = TabWidth;
             bounds.Height = TabHeight;
             node.AddComponent<UIMaterialComponent>()!.SetBatchSolidColor(new ColorF4(0.18f, 0.18f, 0.18f, 1));

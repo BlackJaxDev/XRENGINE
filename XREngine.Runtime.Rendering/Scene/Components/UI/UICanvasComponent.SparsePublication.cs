@@ -100,7 +100,8 @@ public partial class UICanvasComponent
         _publicationScrollScratch.Clear();
         _publicationFocusScopeScratch.Clear();
         _publicationRenderScratch.Clear();
-        CaptureHitRecords(canvas, canvas, layoutPages, default);
+        CaptureHitRecords(canvas, canvas, layoutPages,
+            new(canvas.ElementIdentity, default, default, default, 0, default));
         _sparseHitStarts[nodeCount] = _publicationHitScratch.Count;
         _sparseScrollStarts[nodeCount] = _publicationScrollScratch.Count;
         _sparseScopeStarts[nodeCount] = _publicationFocusScopeScratch.Count;

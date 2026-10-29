@@ -2999,3 +2999,8 @@ The preference setter checks its write intent and owner after callbacks. A refus
 save returns false. A failed save revokes only its own claim. Saves preserve other
 records and unknown fields in the selected record. This uses the existing JSON
 format; it does not rewrite user preferences at startup.
+
+### Native root and tab geometry
+
+The native editor root owns a background in the background render pass. Tab rows use fixed anchors so their explicit height does not also include the parent height. A full hit-publication capture starts with the canvas focus scope; sparse subtree captures retain the inherited scope.
+
