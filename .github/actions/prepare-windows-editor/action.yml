@@ -1,7 +1,8 @@
 name: Prepare the Windows Editor CLI toolchain
 description: >-
   Check out the pinned Editor submodules, stage the pinned shader compiler, set up .NET and the
-  WebAssembly workload from a cache when one exists, and optionally prepare browser physics and build the Editor.
+  WebAssembly workload from a cache when one exists, build the pinned native meshoptimizer, and optionally
+  prepare browser physics and build the Editor.
 inputs:
   browser-physics:
     description: Prepare the pinned Jolt browser sources that the Editor publisher reads.
@@ -89,6 +90,10 @@ runs:
       with:
         path: ${{ runner.temp }}\dotnet
         key: ${{ steps.dotnet-cache.outputs.cache-primary-key }}
+
+    - name: Build native meshoptimizer
+      shell: pwsh
+      run: ./Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
 
     - name: Prepare pinned browser physics sources
       if: ${{ inputs.browser-physics == 'true' }}

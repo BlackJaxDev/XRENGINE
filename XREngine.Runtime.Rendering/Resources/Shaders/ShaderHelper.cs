@@ -6,6 +6,7 @@ using XREngine;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Gaussian;
 
 namespace XREngine.Rendering.Models.Materials;
 
@@ -1209,11 +1210,17 @@ void main()
 
     #region Gaussian Splatting Shaders
 
-    public static XRShader? GaussianSplatVertex()
-        => LoadEngineShader(Path.Combine("Gaussian", "GaussianSplat.vs"));
+    /// <summary>Loads the compute shader that writes the depth sort keys of gaussian splats.</summary>
+    public static XRShader GaussianSplatKeysCompute()
+        => LoadEngineShader(GaussianSplatRenderer.KeysShaderPath, EShaderType.Compute);
 
-    public static XRShader? GaussianSplatFragment()
-        => LoadEngineShader(Path.Combine("Gaussian", "GaussianSplat.fs"));
+    /// <summary>Loads the vertex shader that projects sorted gaussian splats to screen-space quads.</summary>
+    public static XRShader GaussianSplatQuadVertex()
+        => LoadEngineShader(GaussianSplatRenderer.QuadVertexShaderPath, EShaderType.Vertex);
+
+    /// <summary>Loads the fragment shader that writes premultiplied gaussian splat color.</summary>
+    public static XRShader GaussianSplatQuadFragment()
+        => LoadEngineShader(GaussianSplatRenderer.QuadFragmentShaderPath, EShaderType.Fragment);
 
     #endregion
 

@@ -30,6 +30,8 @@ public enum MeshOptimizerSimplifyOptions : uint
     Regularize = 1u << 4,
     Permissive = 1u << 5,
     RegularizeLight = 1u << 6,
+    PreserveFolds = 1u << 7,
+    ErrorClamped = 1u << 8,
 }
 
 [Flags]

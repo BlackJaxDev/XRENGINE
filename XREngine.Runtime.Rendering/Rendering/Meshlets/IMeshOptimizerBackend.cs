@@ -14,4 +14,30 @@ public interface IMeshOptimizerBackend
     int SimplifyWithUpdate(uint[] indices, float[] positions, int vertexCount, float[] attributeBuffer, int attributeStride, float[] attributeWeights, int targetIndexCount, float targetError, MeshOptimizerSimplifyOptions options, byte[]? vertexLock, out float resultError);
     int SimplifySloppy(uint[] indices, float[] positions, int vertexCount, int targetIndexCount, float targetError, byte[]? vertexLock, out float resultError);
     float SimplifyScale(float[] positions, int vertexCount);
+
+    // Vertex codec. Sizes and strides are in bytes.
+    int EncodeVertexBufferBound(int vertexCount, int vertexSize);
+    int EncodeVertexBuffer(Span<byte> destination, ReadOnlySpan<byte> vertices, int vertexCount, int vertexSize, int level = 3, int version = 1);
+    void DecodeVertexBuffer(Span<byte> destination, int vertexCount, int vertexSize, ReadOnlySpan<byte> encoded);
+    int DecodeVertexVersion(ReadOnlySpan<byte> encoded);
+
+    // Index codec and vertex cache order.
+    int EncodeIndexBufferBound(int indexCount, int vertexCount);
+    int EncodeIndexBuffer(Span<byte> destination, ReadOnlySpan<uint> indices);
+    void DecodeIndexBuffer(Span<uint> destination, ReadOnlySpan<byte> encoded);
+    void OptimizeVertexCache(Span<uint> destination, ReadOnlySpan<uint> indices, int vertexCount);
+
+    // Vertex filters.
+    void EncodeFilterQuat(Span<byte> destination, int count, int stride, int bits, ReadOnlySpan<float> quaternionsXyzw);
+    void EncodeFilterExp(Span<byte> destination, int count, int stride, int bits, ReadOnlySpan<float> data, MeshOptimizerExpMode mode);
+    void EncodeFilterColor(Span<byte> destination, int count, int stride, int bits, ReadOnlySpan<float> rgba);
+    void DecodeFilterQuat(Span<byte> buffer, int count, int stride);
+    void DecodeFilterExp(Span<byte> buffer, int count, int stride);
+    void DecodeFilterColor(Span<byte> buffer, int count, int stride);
+
+    // Points and welding.
+    void SpatialSortRemap(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride);
+    void SpatialClusterPoints(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride, int clusterSize);
+    void GeneratePositionRemap(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride);
+    int FilterIndexBuffer(Span<uint> destination, ReadOnlySpan<uint> indices, ReadOnlySpan<float> vertices, int vertexCount, int vertexSize, int vertexStride);
 }
