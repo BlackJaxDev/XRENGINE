@@ -271,22 +271,24 @@ admission. Desktop registration supplies this capability. Custom authoring hosts
 must provide it. The provider capture does not reserve the selected name or
 make the subsequent save atomic.
 
-Texture streaming cache writes use the optional
-`ITextureStreamingCacheFileBackend` on the installed asset file system. The
-writer captures one backend, prepares the directory, serializes to leased
-storage, writes a staged file, releases the lease, and publishes the staged
-file. The backend consumes the supplied span before returning. Desktop and the
-smoke publisher use the same native helper: it writes `cachePath + ".tmp"`
-with exclusive sharing, deletes the prior cache, moves the staged file, and
-sets the source timestamp on a best-effort basis. Payload bytes and cache paths
-are unchanged. Missing capabilities or write errors follow the existing failed
-cache-write result. Custom authoring hosts that write these caches must provide
-the capability.
+Texture streaming cache writes capture one `ITextureStreamingCacheFileBackend`
+from the installed asset file system and prepare the parent before renting and
+serializing the payload. A backend can also implement
+`ITextureStreamingCacheReplaceBackend` to write and publish the borrowed span in
+one call. The span is consumed before return. Desktop and the smoke publisher
+use this capability: each write creates a unique temporary file in the target
+directory, writes the payload, applies the source timestamp on a best-effort
+basis, then moves it over the destination. The final cache path and binary bytes
+remain unchanged. Failed operations clean up their own temporary file when
+possible; output and timestamp failures retain their existing result behavior.
 
-The existing delete-then-move sequence has a replacement gap. A failed move can
-leave the previous cache deleted, and a failed write can leave a temporary file.
-Concurrent writes to one path can collide. Provider capture is not a retirement
-lease or an atomic file replacement.
+Concurrent desktop writes are last-writer-wins. An older cook can still finish
+last, and a host filesystem can reject a replacement while the old file is open.
+The filesystem determines the move's guarantees; Windows and network filesystem
+behavior require platform validation. Provider capture does not lease a backend.
+Custom hosts that implement only the existing staged-write interface retain its
+previous delete-then-move behavior and same-path collision risk. A missing cache
+write capability returns a failed cache-write result.
 
 Texture source import and streaming cache fallback use
 `IRuntimeHostFileReadBackend` for host-file existence probes after texture host

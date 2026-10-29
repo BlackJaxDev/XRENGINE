@@ -24,4 +24,31 @@ internal static class TextureStreamingCacheFileWriter
         try { File.SetLastWriteTimeUtc(cachePath, sourceLastWriteTimeUtc); }
         catch { /* The timestamp is best effort. */ }
     }
+
+    internal static void WriteAndReplace(string cachePath, ReadOnlySpan<byte> payload, DateTime sourceLastWriteTimeUtc)
+    {
+        string? directory = Path.GetDirectoryName(cachePath);
+        string stagedPath = Path.Combine(directory ?? string.Empty, $".xre-{Guid.NewGuid():N}.tmp");
+        bool created = false;
+        try
+        {
+            using (FileStream stream = new(stagedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.SequentialScan))
+            {
+                created = true;
+                stream.Write(payload);
+            }
+            try { File.SetLastWriteTimeUtc(stagedPath, sourceLastWriteTimeUtc); }
+            catch { /* The timestamp is best effort. */ }
+            File.Move(stagedPath, cachePath, overwrite: true);
+            created = false;
+        }
+        finally
+        {
+            if (created)
+            {
+                try { File.Delete(stagedPath); }
+                catch { /* Preserve the original write failure. */ }
+            }
+        }
+    }
 }

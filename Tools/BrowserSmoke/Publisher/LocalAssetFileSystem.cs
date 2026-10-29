@@ -4,7 +4,7 @@ using XREngine.Rendering;
 using XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Provides local authored-file discovery, metadata operations, and direct reads for the publisher.</summary>
-internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, ITextureStreamingCacheFileBackend
+internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, ITextureStreamingCacheFileBackend, ITextureStreamingCacheReplaceBackend
 {
     public bool SupportsChangeNotifications => false;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption option)
@@ -24,6 +24,7 @@ internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
     public void PrepareDirectory(string cachePath) => TextureStreamingCacheFileWriter.PrepareDirectory(cachePath);
     public void WriteStaged(string cachePath, ReadOnlySpan<byte> payload) => TextureStreamingCacheFileWriter.WriteStaged(cachePath, payload);
     public void PublishStaged(string cachePath, DateTime timestamp) => TextureStreamingCacheFileWriter.PublishStaged(cachePath, timestamp);
+    public void WriteAndReplace(string cachePath, ReadOnlySpan<byte> payload, DateTime timestamp) => TextureStreamingCacheFileWriter.WriteAndReplace(cachePath, payload, timestamp);
     public bool DirectoryExists(string path) => Directory.Exists(path);
     public void CreateDirectory(string path) => Directory.CreateDirectory(path);
     public void DeleteDirectory(string path) => Directory.Delete(path);

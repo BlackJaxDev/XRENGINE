@@ -114,18 +114,25 @@ public partial class XRTexture2D
             XREngine.Core.Files.CookedPayloadLease lease = XREngine.Core.Files.CookedPayloadBufferPool.Rent(
                 GetTextureStreamingPayloadSize(texture),
                 out Span<byte> payload);
+            bool replaced = false;
             try
             {
                 WriteTextureStreamingPayload(texture, payload);
-
-                files.WriteStaged(cachePath, lease.Span);
+                if (files is ITextureStreamingCacheReplaceBackend replacement)
+                {
+                    replacement.WriteAndReplace(cachePath, lease.Span, sourceLastWriteTimeUtc);
+                    replaced = true;
+                }
+                else
+                    files.WriteStaged(cachePath, lease.Span);
             }
             finally
             {
                 lease.Dispose();
             }
 
-            files.PublishStaged(cachePath, sourceLastWriteTimeUtc);
+            if (!replaced)
+                files.PublishStaged(cachePath, sourceLastWriteTimeUtc);
             return true;
         }
         catch (Exception ex)
