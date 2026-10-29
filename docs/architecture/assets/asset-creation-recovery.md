@@ -117,9 +117,14 @@ operations that pass the ownership check.
 
 ## Viewport File Drop
 
-`EditorFileDropHandler` resolves the target material before it creates any
-file. It imports the dropped image as an `XRTexture2D` asset. A source outside
-the assets root is copied in. The new files go through `NativeAssetCreation`,
+`EditorFileDropHandler` captures the presented pick and authored material in
+the focused drop window before it creates any file. The capture checks the
+window, pawn, world, source document, mesh, LOD and material identities again
+after callbacks. `NativeTextureFileImport` admits static PNG or JPEG data with
+at most 32 MiB of encoded bytes, 8,192 pixels per dimension and 4,194,304 total
+pixels. It verifies decoded dimensions before creating an `XRTexture2D` with
+embedded pixels. The source image is not copied into the project. The texture
+asset is limited to 64 MiB. The new files go through `NativeAssetCreation`,
 and the first material texture slot changes through
 `MaterialTextureSlotAction`. Both steps are one `Drop Texture` Undo action.
 Undo restores the slot first and then retains the files.
@@ -136,5 +141,8 @@ Compensation uses the same guarded path. It cannot replace a newer callback edit
 path checks, occupied paths, foreign changes, interrupted publication, accepted
 recovery, malformed manifests, changed originals, normal-edit release, path
 ownership, quota, and cleanup. `MaterialTextureSlotActionTests` covers the slot
-Undo contract. Windows asset-browser and viewport-drop workflows are in the
+Undo contract. `NativeTextureFileImportTests` covers header limits, rejected
+formats, changed owners and source-independent pixel serialization. These
+checks do not establish atomic cache ownership across a combined file and
+material failure. Windows asset-browser and viewport-drop workflows are in the
 [native UI validation plan](../../work/testing/ui/native-ui-validation.md).
