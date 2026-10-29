@@ -95,8 +95,8 @@ backing file is unreadable or unsupported. The generic converter preserves that
 decision. All 28 write-boundary tests, 11 path-admission tests and five existing
 material/reference tests pass. The 11 save tests also pass after integration.
 The four-root lexical file scan now finds 14 lines in eight files, including
-comments and working-directory lookups. The static Unity animation import and
-the separate mapping API still need placement work.
+comments and working-directory lookups. The static Unity animation import still needs placement work. The later mapped
+stream extraction removes native mapping creation from the shared asset type.
 
 Raw reads without an installed asset source now capture the host file provider
 for the lease lifetime. Missing synchronous or asynchronous read capabilities
@@ -107,3 +107,11 @@ their independent ownership. The focused headless checks pass, along with all
 22 existing scene, snapshot and metadata checks and five material/reference
 checks. This change removes the three direct file calls from the shared raw-read
 lease. It does not close the whole physical I/O inventory.
+
+Asset mapped streaming now uses an owned desktop mapping lease. The public
+stream API retains its whole-file read-write behavior. Open captures the backend
+and source owner; failed or stale publication disposes the candidate. Unsupported
+capabilities leave an existing view intact. Open and close reject overlapping
+operations. All 16 focused mapping checks pass, together with 70 related raw-read,
+YAML and save checks. This moves mapping creation and disposal into the desktop
+leaf; it does not close the remaining physical I/O inventory.

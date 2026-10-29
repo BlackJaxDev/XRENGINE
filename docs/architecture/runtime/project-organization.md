@@ -655,6 +655,17 @@ a saved asset path is present. Generic asset converters preserve that exact
 text object's inline decision. Source or provider replacement rejects the stale
 comparison; it does not grant a provider-disposal lease.
 
+`XRAsset.OpenForStreaming` requires `IFileMappedStreamBackend` on the installed
+file-mapping backend. The desktop lease owns the whole-file read-write view and
+its mapping, with the existing BCL creation defaults and no temporary-copy
+fallback. The asset retains the public `MemoryMappedViewStream` property. A
+failed admission or missing capability keeps an existing view; an attempted new
+open closes the previous view before opening its replacement. Source changes
+during open reject and dispose an unpublished view. Open and close operations
+cannot overlap or reenter. `CloseStreaming` clears ownership and disposes the
+captured lease once; replacing the backend does not retarget that cleanup.
+Callers must still close streaming explicitly and coordinate external view users.
+
 ## Native assets and source identity
 
 The owning module declares native build/copy/publish items. This does not require every binary's physical supply directory to match the module name: protected submodule and SDK sources, CoACD staging under Core, Steam Audio staging under Audio, and Rive staging under Rendering retain their established locations. A folder containing a native binary is not evidence that the portable project compiles or packages it. Consult the evaluated module project and [native dependency guide](../../developer-guides/runtime/native-dependencies.md) for supply and output ownership.

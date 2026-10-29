@@ -50,6 +50,12 @@
     <!-- The narrow desktop filesystem adapter is OS-neutral BCL code; exercise it without the windowing/native desktop closure. -->
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetFileSystem.cs" Link="Platform/DesktopAssetFileSystem.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopHostAssetFileOutput.cs" Link="Platform/DesktopHostAssetFileOutput.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Memory/DesktopFileMappingBackend.cs" Link="Platform/Memory/DesktopFileMappingBackend.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Memory/DesktopFileMappedStreamLease.cs" Link="Platform/Memory/DesktopFileMappedStreamLease.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Memory/CFileMap.cs" Link="Platform/Memory/CFileMap.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Memory/WFileMap.cs" Link="Platform/Memory/WFileMap.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Memory/Win32.cs" Link="Platform/Memory/Win32.cs" />
+    <Compile Include="../Core/XRAssetMappedStreamingTests.cs" Link="Core/XRAssetMappedStreamingTests.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/TextureStreamingCacheFileWriter.cs" Link="Platform/TextureStreamingCacheFileWriter.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/HostBinaryCacheFileWriter.cs" Link="Platform/HostBinaryCacheFileWriter.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopBvhDiskCache.cs" Link="Platform/DesktopBvhDiskCache.cs" />

@@ -200,16 +200,23 @@ namespace XREngine.Core.Files
         #region Properties - Memory Mapped File Access
 
         /// <summary>
-        /// Gets the memory-mapped file handle for direct memory access to the asset file.
+        /// Owns the mapped file and view used by asset streaming.
         /// </summary>
         /// <remarks>
-        /// This is used for unsafe pointer access to large asset data.
+        /// The native backend owns creation and disposal of both resources.
         /// Call <see cref="OpenForStreaming"/> to initialize.
         /// </remarks>
         [JsonIgnore]
         [YamlIgnore]
         [Browsable(false)]
-        private MemoryMappedFile? FileMap { get; set; }
+        private IFileMappedStreamLease? FileMap
+        {
+            get => _fileMap;
+            set => SetField(ref _fileMap, value, publishNotifications: false);
+        }
+        private IFileMappedStreamLease? _fileMap;
+        private MemoryMappedViewStream? _fileMapStream;
+        private int _streamingOperationInProgress;
 
         /// <summary>
         /// Gets the stream for sequential reading and writing of the memory-mapped file.
@@ -222,7 +229,11 @@ namespace XREngine.Core.Files
         [YamlIgnore]
         [Browsable(false)]
         [MemoryPackIgnore]
-        public MemoryMappedViewStream? FileMapStream { get; private set; }
+        public MemoryMappedViewStream? FileMapStream
+        {
+            get => _fileMapStream;
+            private set => SetField(ref _fileMapStream, value, publishNotifications: false);
+        }
 
         #endregion
 
@@ -253,29 +264,69 @@ namespace XREngine.Core.Files
         /// <remarks>
         /// This enables efficient random access to large asset files.
         /// Call <see cref="CloseStreaming"/> when finished to release resources.
+        /// Open and close operations must not overlap.
         /// </remarks>
         public void OpenForStreaming()
         {
-            RuntimeAssetReadServices.EnsureHostFileAccess("Asset memory mapping");
-            if (FilePath is null)
-                throw new InvalidOperationException("Cannot open a file for streaming without a file path.");
+            EnterStreamingOperation();
+            try
+            {
+                using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+                read.EnsureHostFileAccess("Asset memory mapping");
+                string path = FilePath
+                    ?? throw new InvalidOperationException("Cannot open a file for streaming without a file path.");
+                IFileMappedStreamBackend backend = FileMappingServices.Required as IFileMappedStreamBackend
+                    ?? throw new NotSupportedException("FileMapping.StreamUnavailable: the installed file-mapping backend does not provide asset streaming views.");
 
-            CloseStreaming();
-
-            FileMap = MemoryMappedFile.CreateFromFile(FilePath);
-            FileMapStream = FileMap.CreateViewStream();
+                CloseStreamingCore();
+                IFileMappedStreamLease? opened = null;
+                try
+                {
+                    opened = backend.OpenMappedStream(path)
+                        ?? throw new InvalidOperationException("FileMapping.StreamUnavailable: the file-mapping backend returned no streaming lease.");
+                    MemoryMappedViewStream stream = opened.Stream
+                        ?? throw new InvalidOperationException("FileMapping.StreamUnavailable: the file-mapping backend returned no streaming view.");
+                    using IDisposable installation = RuntimeSourcePublicationServices.BeginPublication(RuntimeSourcePublicationServices.Generation);
+                    using IDisposable publication = read.BeginPublication();
+                    read.EnsureHostFileAccess("Asset memory mapping");
+                    FileMap = opened;
+                    FileMapStream = stream;
+                    opened = null;
+                }
+                finally
+                {
+                    opened?.Dispose();
+                }
+            }
+            finally
+            {
+                Volatile.Write(ref _streamingOperationInProgress, 0);
+            }
         }
 
         /// <summary>
         /// Closes the memory-mapped file stream and releases associated resources.
+        /// Open and close operations must not overlap.
         /// </summary>
         public void CloseStreaming()
         {
-            FileMapStream?.Dispose();
-            FileMapStream = null;
+            EnterStreamingOperation();
+            try { CloseStreamingCore(); }
+            finally { Volatile.Write(ref _streamingOperationInProgress, 0); }
+        }
 
-            FileMap?.Dispose();
+        private void EnterStreamingOperation()
+        {
+            if (Interlocked.CompareExchange(ref _streamingOperationInProgress, 1, 0) != 0)
+                throw new InvalidOperationException("FileMapping.OperationInProgress: finish the current asset streaming operation before opening or closing it.");
+        }
+
+        private void CloseStreamingCore()
+        {
+            IFileMappedStreamLease? owned = FileMap;
+            FileMapStream = null;
             FileMap = null;
+            owned?.Dispose();
         }
 
         #endregion

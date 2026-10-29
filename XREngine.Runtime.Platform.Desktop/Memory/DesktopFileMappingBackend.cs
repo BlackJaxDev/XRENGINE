@@ -3,8 +3,10 @@ using XREngine.Data;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Opens desktop files and creates native mappings. The caller owns each stream.</summary>
-internal sealed class DesktopFileMappingBackend : IFileMappingBackend
+internal sealed class DesktopFileMappingBackend : IFileMappingBackend, IFileMappedStreamBackend
 {
+    public IFileMappedStreamLease OpenMappedStream(string path) => new DesktopFileMappedStreamLease(path);
+
     public bool FileExists(string path) => File.Exists(path);
 
     public bool TryGetFileLength(string path, out long length)
