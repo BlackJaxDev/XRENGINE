@@ -33,17 +33,52 @@ jobs:
           lfs: true
           submodules: recursive
 
+      # The SDK goes into a job folder, not Program Files. There the workload restore does not update the
+      # runner image's Visual Studio workloads, which the solution does not use.
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v6
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
         with:
           global-json-file: global.json
 
       - name: Restore pinned .NET workloads
         run: dotnet workload restore XRENGINE.slnx
 
+      - name: Read the Rive submodule commit
+        id: rive-commit
+        shell: pwsh
+        run: |
+          $entry = (& git ls-tree HEAD -- Build/Submodules/rive-sharp).Trim()
+          if ($LASTEXITCODE -ne 0 -or $entry -notmatch '^160000 commit ([0-9a-f]{40})\s+') {
+            throw 'No recorded gitlink commit for Build/Submodules/rive-sharp.'
+          }
+          "sha=$($Matches[1])" >> $env:GITHUB_OUTPUT
+
+      # Most of the submodule step is the native Rive compile. OpenVR.NET and OscCore are project references,
+      # so the later builds compile them when a cache hit skips this step.
+      - name: Restore cached Rive build
+        id: rive-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            Build/Submodules/rive-sharp/native/bin
+            Build/Submodules/rive-sharp/RiveSharp/bin
+          key: rive-build-release-${{ runner.os }}-${{ steps.rive-commit.outputs.sha }}-${{ hashFiles('Tools/Build-Submodules.bat', 'Tools/Patches/rive-sharp/**', 'global.json', 'Directory.Build.props', 'Directory.Build.targets') }}
+
       - name: Build managed and native submodules
+        if: steps.rive-cache.outputs.cache-hit != 'true'
         shell: cmd
         run: Tools\Build-Submodules.bat Release AnyCPU
+
+      - name: Save Rive build
+        if: steps.rive-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            Build/Submodules/rive-sharp/native/bin
+            Build/Submodules/rive-sharp/RiveSharp/bin
+          key: ${{ steps.rive-cache.outputs.cache-primary-key }}
 
       - name: Stage pinned Streamline runtime and license files
         shell: pwsh
