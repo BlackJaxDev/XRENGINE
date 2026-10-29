@@ -409,6 +409,37 @@ Three-face corner weights, implicit/fractional LOD, mip generation, anisotropy,
 imported images, serialization, hardware, desktop parity, and integrated cooking
 remain open. Other procedural and full shader requirements remain open.
 
+### Procedural moon radiance bounds — 2026-10-29
+
+The moon profile uses the real component, cooked procedural shader, and shared
+HDR pipeline. Twelve cases cover day/night visibility, disc size, HDR intensity,
+translation, authored rotation, and restoration. Two sessions and resize produce
+28 samples. Each checks eleven HDR/canvas regions: 208 exact off-disc/daytime
+regions and 100 regions with analytic surface-plus-corona bounds.
+
+The initial fixed float32 noise reference failed. The accepted surface bounds
+come from value-noise ranges and the authored albedo/crater formulas, not captured
+pixels. Exact surface-pattern parity remains open. The shared checker requires
+explicit opt-in and marks bounded regions; other profiles retain exact references
+and the same comparisons, tolerances, and ownership checks. The
+[moon bounds record](../../investigations/rendering/archive/2026-10-29-moon-radiance-bounds-qualification.md)
+records the failed comparison, formulas, and scope.
+
+All 28 targeted samples pass. Each settled sample has 27 live resources and zero
+retiring resources. Maximum measured HDR radiance is 2.255859375. Phase lighting
+clamps to zero and soft-edge falloff is inactive in these cases; they remain
+unqualified. All 24 build and publication gates pass with zero compiler
+warnings/errors. Fresh cooking packages 57 shaders and 112 assets; metadata and
+bundle checks pass. Full browser regression passes all 23 selected checks,
+including 324 sky samples and 24 strict indirect lifecycle/resize stages. Three
+optional checks are skipped explicitly. Final publication corrects the manual
+moon page's help text. Only that page and its compressed copies differ from the
+full-suite bundle; all binaries and content are byte-identical. All 28 moon
+samples and a separate page-title/help check pass against the final output.
+
+Exact moon detail, other procedural terms, lighting, serialization, hardware,
+desktop parity, and complete shader/cooking requirements remain open.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

@@ -136,8 +136,17 @@ camera changes, intensity, resize, and restart. The
 [filtered cube record](../../work/investigations/rendering/archive/2026-10-29-filtered-cubemap-qualification.md)
 separates two-face blending from corner weights and imported-image quality.
 
+The `engine-sky-moon` profile checks exact off-disc corona and daytime values,
+plus analytic bounds for the noisy moon surface and its combined corona.
+Twelve authored cases cover day/night visibility, size, HDR intensity, camera
+translation, sky rotation, resize, and restart. The report marks bounded regions;
+this does not establish exact maria/crater-pattern parity. The
+[moon bounds record](../../work/investigations/rendering/archive/2026-10-29-moon-radiance-bounds-qualification.md)
+records the failed float32 noise comparison and the unexercised phase/edge terms.
+
 Known-value GPU acceptance remains open for implicit and fractional LOD,
 automatic mip generation, anisotropy, filtering across octahedral seams,
 three-face cube corner filtering, sky bloom, sorted transparency over sky, procedural
-clouds, stars, moon-disc shading, automatic cycling, retained sun/moon/ambient
+clouds, stars, exact moon surface detail, nonzero lunar phase and soft-edge falloff,
+automatic cycling, retained sun/moon/ambient
 behavior, and hardware devices.

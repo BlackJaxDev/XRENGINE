@@ -8,18 +8,29 @@ function display(hdr) {
     return [...hdr.slice(0, 3).map(value => Math.round(255 * Math.min(1, value * 1.6 / (value + 0.6)) ** (1 / 2.2))), 255];
 }
 
-function expectedRegion(reference, sampleCase, x, y, width, height, foreground) {
+function expectedRegion(reference, sampleCase, x, y, width, height, foreground, allowBounds = false) {
     const hdr = [], pixels = [];
+    let bounded = false;
     for (let row = y - 2; row <= y + 2; row++)
         for (let column = x - 2; column <= x + 2; column++) {
             const values = reference(sampleCase, column, row, width, height, foreground);
-            hdr.push(values); pixels.push(display(values));
+            if (Array.isArray(values)) {
+                hdr.push(values); pixels.push(display(values));
+            } else {
+                assert(allowBounds && Array.isArray(values?.min) && Array.isArray(values?.max) &&
+                    values.min.length === 4 && values.max.length === 4 &&
+                    values.min.every((value, channel) => Number.isFinite(value) && Number.isFinite(values.max[channel]) &&
+                        value >= 0 && value <= values.max[channel]),
+                'BrowserSmoke.SkyReferenceBounds: expected finite, ordered RGBA bounds from an admitted profile.');
+                bounded = true;
+                hdr.push(values.min, values.max); pixels.push(display(values.min), display(values.max));
+            }
         }
     const range = values => ({
         min: [0, 1, 2, 3].map(channel => Math.min(...values.map(pixel => pixel[channel]))),
         max: [0, 1, 2, 3].map(channel => Math.max(...values.map(pixel => pixel[channel]))),
     });
-    return { hdr: range(hdr), pixels: range(pixels) };
+    return { hdr: range(hdr), pixels: range(pixels), bounded };
 }
 
 async function settled(page) {
@@ -147,7 +158,7 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
                     const pixels = await capturePixels(page, png, samples);
                     assert(pixels.width === width && pixels.height === height, 'BrowserSmoke.SkyCanvasExtent: unexpected canvas capture extent.');
                     const expected = samples.map(({ x, y }, index) => expectedRegion(profile.reference, sampleCase, x, y, width, height,
-                        index === 4 && profile.foregroundCases.includes(sampleCase)));
+                        index === 4 && profile.foregroundCases.includes(sampleCase), profile.allowReferenceBounds));
                     const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
                     result.cases.push({ iteration, sampleCase, name: names[sampleCase], width, height, state, hdr, pixels, expected, statistics });
                     for (let index = 0; index < samples.length; index++) {

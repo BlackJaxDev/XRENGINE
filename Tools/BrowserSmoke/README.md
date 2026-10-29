@@ -95,6 +95,14 @@ counts, retained texture handles, native programs, and resources are checked.
 These nearest-sampling profiles do not qualify filtered seams, mip chains,
 sRGB image decoding, or procedural sky behavior.
 
+The `engine-sky-moon` check uses the cooked procedural sky artifact and a camera
+aimed at the component's moon direction. Twelve cases and two sessions produce
+28 samples, including size, day/night visibility, HDR intensity, translation,
+authored rotation, resize, and restoration. Off-disc corona and daytime values
+are exact references. Surface regions use analytic albedo/crater bounds and are
+marked `bounded` in the report. This does not qualify the exact noise pattern,
+nonzero phase lighting, or soft-edge falloff. The manual page uses `probe=sky-moon`.
+
 Unlit sampling also waits for every retained indexed draw to finish pipeline
 preparation. A browser pipeline handle can exist before its managed acceptance
 continuation runs. The diagnostic pause keeps frames progressing until that

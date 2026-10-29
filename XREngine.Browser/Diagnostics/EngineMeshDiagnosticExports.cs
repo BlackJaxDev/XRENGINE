@@ -94,6 +94,13 @@ public static partial class EngineMeshDiagnosticExports
         => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
             null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.Sun);
 
+    /// <summary>Starts the procedural moon through the shared HDR pipeline.</summary>
+    [JSExport]
+    public static Task<int> CreateSkyMoonAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string tonemapDescriptorJson, string tonemapWgsl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
+            null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.Moon);
+
     /// <summary>Starts a six-face HDR cube sky through the shared pipeline.</summary>
     [JSExport]
     public static Task<int> CreateSkyCubemapAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
@@ -272,7 +279,7 @@ public static partial class EngineMeshDiagnosticExports
                     skyProfile switch
                     {
                         EngineSkyDiagnosticProfile.Gradient => EngineMaterialSemanticIdentity.SkyboxGradientV1,
-                        EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun => EngineMaterialSemanticIdentity.SkyboxDynamicProceduralV1,
+                        EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun or EngineSkyDiagnosticProfile.Moon => EngineMaterialSemanticIdentity.SkyboxDynamicProceduralV1,
                         EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap => EngineMaterialSemanticIdentity.SkyboxCubemapV1,
                         EngineSkyDiagnosticProfile.Equirectangular or EngineSkyDiagnosticProfile.FilteredEquirectangular => EngineMaterialSemanticIdentity.SkyboxEquirectangularV1,
                         EngineSkyDiagnosticProfile.Octahedral or EngineSkyDiagnosticProfile.FilteredOctahedral => EngineMaterialSemanticIdentity.SkyboxOctahedralV1,

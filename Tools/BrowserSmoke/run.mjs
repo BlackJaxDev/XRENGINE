@@ -21,6 +21,7 @@ import { unlitMaterialsCheck } from './unlit-materials.mjs';
 import { unlitMsaaCheck, unlitIndirectCheck } from './unlit-msaa.mjs';
 import { skyEquirectangularFilteredCheck, skyOctahedralFilteredCheck } from './sky-filtered-images.mjs';
 import { skySunCheck } from './sky-sun.mjs';
+import { skyMoonCheck } from './sky-moon.mjs';
 import { skyProceduralCheck } from './sky-procedural.mjs';
 import { skyGradientCheck } from './sky-gradient.mjs';
 import { skyCubemapCheck } from './sky-cubemap.mjs';
@@ -1317,6 +1318,8 @@ async function main() {
                 instrumentedPage, capturePixels, assertNoBrowserErrors));
             await check('engine-sky-sun', () => skySunCheck(browser, hosted.origin, report, config,
                 instrumentedPage, capturePixels, assertNoBrowserErrors));
+            await check('engine-sky-moon', () => skyMoonCheck(browser, hosted.origin, report, config,
+                instrumentedPage, capturePixels, assertNoBrowserErrors));
             await check('engine-sky-cubemap', () => skyCubemapCheck(browser, hosted.origin, report, config,
                 instrumentedPage, capturePixels, assertNoBrowserErrors));
             await check('engine-sky-cubemap-filtered', () => skyCubemapFilteredCheck(browser, hosted.origin, report, config,
@@ -1338,7 +1341,7 @@ async function main() {
             await check('engine-shared-gtao-bloom', () => effectsCheck(browser, hosted.origin, report, config));
             await check('engine-directional-shadow', () => shadowCheck(browser, hosted.origin, report, config));
             await check('engine-shared-debug-overlay', () => debugOverlayCheck(browser, hosted.origin, report, config));
-        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-sky-gradient', 'engine-sky-procedural', 'engine-sky-sun', 'engine-sky-cubemap', 'engine-sky-cubemap-filtered', 'engine-sky-equirectangular', 'engine-sky-octahedral', 'engine-sky-equirectangular-filtered', 'engine-sky-octahedral-filtered', 'engine-unlit-materials', 'engine-unlit-msaa', 'engine-unlit-indirect', 'engine-shared-gtao-bloom',
+        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-sky-gradient', 'engine-sky-procedural', 'engine-sky-sun', 'engine-sky-moon', 'engine-sky-cubemap', 'engine-sky-cubemap-filtered', 'engine-sky-equirectangular', 'engine-sky-octahedral', 'engine-sky-equirectangular-filtered', 'engine-sky-octahedral-filtered', 'engine-unlit-materials', 'engine-unlit-msaa', 'engine-unlit-indirect', 'engine-shared-gtao-bloom',
             'engine-directional-shadow', 'engine-shared-debug-overlay'])
             report.checks.push({ name, status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.gpuDiagnostics) {

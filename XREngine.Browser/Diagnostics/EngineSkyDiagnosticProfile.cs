@@ -6,6 +6,7 @@ internal enum EngineSkyDiagnosticProfile
     Gradient,
     Procedural,
     Sun,
+    Moon,
     Cubemap,
     Equirectangular,
     Octahedral,

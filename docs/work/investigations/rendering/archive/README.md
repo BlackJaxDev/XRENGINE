@@ -116,3 +116,7 @@ current owner below explicitly adopts it.
 - [Filtered sRGB cubemap qualification](2026-10-29-filtered-cubemap-qualification.md)
   records authored cube mip selection and all twelve two-face edges.
   Current limits are in [platform validation](../../../testing/platform/platform-validation.md#filtered-srgb-cubemap--2026-10-29).
+
+- [Procedural moon radiance bounds](2026-10-29-moon-radiance-bounds-qualification.md)
+  records exact off-disc values, bounded surface radiance, and a failed exact noise model.
+  Current limits are in [platform validation](../../../testing/platform/platform-validation.md#procedural-moon-radiance-bounds--2026-10-29).
