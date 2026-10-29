@@ -335,7 +335,8 @@ public partial class XRTexture2D
     internal static void ApplyResidentData(
         XRTexture2D texture,
         TextureStreamingResidentData residentData,
-        bool includeMipChain)
+        bool includeMipChain,
+        TextureSamplingSettings? previewSampling = null)
     {
         lock (texture._importedSourceMetadataWriteSync)
         {
@@ -395,6 +396,7 @@ public partial class XRTexture2D
             ? ETexMinFilter.LinearMipmapLinear
             : ETexMinFilter.Linear;
         texture.MagFilter = ETexMagFilter.Linear;
+        previewSampling?.ApplyToPreview(texture);
         texture.PublishCanonicalSourceContentMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;

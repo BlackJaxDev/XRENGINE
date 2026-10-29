@@ -28,10 +28,21 @@ image cooking keeps its existing default settings. The cache variant key is
 are rebuilt because their generated textures can lack authored sampling values.
 Explicit import variant keys remain part of the cache path.
 
-Texture asset copies use the same sampling copier, including comparison and
-sampler binding settings. The resident-data preview path still applies its own
-filter and mip-range policy and does not restore all authored sampling metadata.
-This cache change does not establish preview or live streaming sampling parity.
+Texture asset copies use the same value snapshot, including comparison and
+sampler binding settings. Cooked texture previews carry that snapshot with the
+selected resident mip. Raw payloads, custom-object envelopes, and YAML cooked
+envelopes use the same reader and need no source image decoder. The loaded-asset
+preview fallback keeps the same sampling values when it resizes the image.
+
+A preview exposes one mip as level zero. Its storage mip limits and sampler LOD
+clamps are zero, with automatic mip generation disabled. Authored filters remain
+intact, including mip filters needed for valid anisotropic sampling. Pixel
+interpretation, wrapping, comparison, anisotropy, and sampler binding remain
+authored values. Existing backend admission rules still apply. Preview settings
+are applied within the resident-data publication transaction. Failed reads and
+empty or unusable mip data do not change the target. Live streaming promotions
+retain their existing filter and mip policy; this preview path does not change
+that policy.
 
 Streamed media playback uses `HlsReferenceRuntime` as a renderer-facing entry point. The desktop composition installs the FFmpeg backend, which owns decoder/session implementation, native binary loading, and the existing HLS reference binary supply. The renderer's video component keeps the GPU upload and presentation logic. A missing media backend reports its registration requirement.
 

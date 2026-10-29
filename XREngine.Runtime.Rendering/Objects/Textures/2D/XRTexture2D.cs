@@ -1087,11 +1087,8 @@ namespace XREngine.Rendering
             try
             {
                 using XREngine.Core.Files.CookedPayloadOwner assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytesOwned(filePath);
-                if (TryReadResidentDataFromTextureAssetFileBytes(assetBytes.Span, maxPreviewSize, includeMipChain: false, out TextureStreamingResidentData residentData))
-                {
-                    ApplyResidentData(target, residentData, includeMipChain: false);
+                if (TryApplyTexturePreviewPayload(assetBytes.Span, target, maxPreviewSize))
                     return true;
-                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
@@ -1120,7 +1117,7 @@ namespace XREngine.Rendering
             }
         }
 
-        private static bool TryPreparePreviewFromLoadedTexture(XRTexture2D target, uint maxPreviewSize)
+        internal static bool TryPreparePreviewFromLoadedTexture(XRTexture2D target, uint maxPreviewSize)
         {
             var sourceMipmaps = target.Mipmaps;
             if (sourceMipmaps is null || sourceMipmaps.Length == 0)
@@ -1134,7 +1131,13 @@ namespace XREngine.Rendering
             {
                 using RuntimeImage baseImage = baseMipmap.GetImage();
                 using RuntimeImage previewImage = ResizePreviewIfNeeded(baseImage, maxPreviewSize);
-                target.Mipmaps = [new Mipmap2D(previewImage)];
+                TextureSamplingSettings sampling = new(target);
+                TextureStreamingResidentData residentData = new(
+                    [new Mipmap2D(previewImage)],
+                    baseMipmap.Width,
+                    baseMipmap.Height,
+                    Math.Max(previewImage.Width, previewImage.Height));
+                ApplyResidentData(target, residentData, includeMipChain: false, previewSampling: sampling);
                 return true;
             }
             catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or NotSupportedException)
@@ -1182,23 +1185,7 @@ namespace XREngine.Rendering
         }
 
         private static void CopyTextureSamplingSettings(XRTexture2D source, XRTexture2D target)
-        {
-            target.SamplerName = source.SamplerName;
-            target.MagFilter = source.MagFilter;
-            target.MinFilter = source.MinFilter;
-            target.UWrap = source.UWrap;
-            target.VWrap = source.VWrap;
-            target.MinLOD = source.MinLOD;
-            target.MaxLOD = source.MaxLOD;
-            target.LodBias = source.LodBias;
-            target.MaxAnisotropy = source.MaxAnisotropy;
-            target.EnableComparison = source.EnableComparison;
-            target.CompareFunc = source.CompareFunc;
-            target.ImportedColorSpace = source.ImportedColorSpace;
-            target.ImportedUsage = source.ImportedUsage;
-            target.ImportedNormalMapFlipGreen = source.ImportedNormalMapFlipGreen;
-            target.AlphaAsTransparency = source.AlphaAsTransparency;
-        }
+            => new TextureSamplingSettings(source).ApplyTo(target);
 
         private static bool IsTextureAssetLoadFailure(Exception ex)
             => ex is YamlException

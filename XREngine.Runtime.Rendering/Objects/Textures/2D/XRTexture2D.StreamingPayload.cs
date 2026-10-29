@@ -372,8 +372,17 @@ public partial class XRTexture2D
         uint maxResidentDimension,
         bool includeMipChain,
         out TextureStreamingResidentData residentData)
+        => TryReadResidentDataFromTextureStreamingPayload(payload, maxResidentDimension, includeMipChain, out residentData, out _);
+
+    private static bool TryReadResidentDataFromTextureStreamingPayload(
+        ReadOnlySpan<byte> payload,
+        uint maxResidentDimension,
+        bool includeMipChain,
+        out TextureStreamingResidentData residentData,
+        out TextureSamplingSettings sampling)
     {
         residentData = default;
+        sampling = default;
         // Reject non-binary payloads early (e.g. BOM-prefixed YAML asset bytes)
         // to avoid throwing/catching NotSupportedException as control flow.
         if (!LooksLikeBinaryTextureStreamingPayload(payload))
@@ -405,6 +414,7 @@ public partial class XRTexture2D
                         sourceWidth,
                         sourceHeight,
                         residentMaxDimension);
+                    sampling = new TextureSamplingSettings(scratch);
                     return true;
             }
         }
@@ -420,13 +430,22 @@ public partial class XRTexture2D
         uint maxResidentDimension,
         bool includeMipChain,
         out TextureStreamingResidentData residentData)
+        => TryReadResidentDataFromTextureAssetFileBytes(assetFileBytes, maxResidentDimension, includeMipChain, out residentData, out _);
+
+    private static bool TryReadResidentDataFromTextureAssetFileBytes(
+        ReadOnlySpan<byte> assetFileBytes,
+        uint maxResidentDimension,
+        bool includeMipChain,
+        out TextureStreamingResidentData residentData,
+        out TextureSamplingSettings sampling)
     {
         residentData = default;
+        sampling = default;
         if (assetFileBytes.IsEmpty)
             return false;
 
         if (LooksLikeBinaryTextureStreamingPayload(assetFileBytes))
-            return TryReadResidentDataFromTextureStreamingPayload(assetFileBytes, maxResidentDimension, includeMipChain, out residentData);
+            return TryReadResidentDataFromTextureStreamingPayload(assetFileBytes, maxResidentDimension, includeMipChain, out residentData, out sampling);
 
         string assetYaml;
         try
@@ -447,7 +466,7 @@ public partial class XRTexture2D
             ReadOnlySpan<byte> payload = payloadSource.AsReadOnlySpan();
             try
             {
-                if (TryReadResidentDataFromTextureStreamingPayload(payload, maxResidentDimension, includeMipChain, out residentData))
+                if (TryReadResidentDataFromTextureStreamingPayload(payload, maxResidentDimension, includeMipChain, out residentData, out sampling))
                     return true;
             }
             catch
@@ -461,6 +480,7 @@ public partial class XRTexture2D
                     return false;
 
                 residentData = BuildResidentDataFromLoadedTexture(texture, maxResidentDimension, includeMipChain);
+                sampling = new TextureSamplingSettings(texture);
                 return true;
             }
             catch
