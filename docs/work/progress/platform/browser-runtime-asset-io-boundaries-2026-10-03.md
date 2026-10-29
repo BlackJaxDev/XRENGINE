@@ -1,5 +1,47 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Texture source probe placement (2026-10-29)
+
+Implementation commit `f85fb46daca8856a5ec242f10d43243dceb38854` moves
+texture source, batch, cache-preparation, and streaming fallback existence
+probes to `IRuntimeHostFileReadBackend`. Source fallback retains its captured
+probe provider through recursion. Texture-asset marker inspection uses the read
+provider with `FileShare.ReadWrite`, and replays the first byte without seeking
+so a non-seekable stream and byte-order mark work. The source stream is disposed
+once. Cache usability obtains its length from the existing file-mapping backend.
+The [composition contract](../../../architecture/runtime/project-organization.md)
+records the custom-host requirements and limits of separate providers.
+
+A disposable executable against compiled Rendering passes 17 checks. They cover
+cache preparation and mip count; missing and empty source paths; binary and YAML
+marker inspection, shared stream disposal, non-seekable UTF-8 BOM input and I/O
+failure; provider retention across source fallback; batch decoding and cancellation;
+valid, missing and empty mapped cache usability; fallback resident data and its
+provider-free repeat; missing read provider; and async-only host admission. The
+harness uses a proxy rendering host, linked Magick codec, test mapping backend,
+and local files. It does not establish desktop GPU texture rendering, actual
+DirectStorage performance, or full application behavior. No tracked tests changed.
+The final harness builds with zero warnings and errors. Independent review found
+and prompted the non-seekable stream fix, then found no defect in that fix.
+Evidence is in `Build/_AgentValidation/20261028-120000-webgpu-io/logs/texture-probe-smoke-build.log`,
+`logs/texture-probe-smoke.log`, and `reports/texture-probe-inventory.json`.
+
+The full local publication gate passes. Editor, Server, and VRClient Release
+builds report zero warnings and errors with `EnableWindowsTargeting=true` on
+Linux. The unchanged desktop filesystem fixture passes one test. All 19
+manifest projects compile for `browser-wasm`; Browser publishes with native
+WASM and pinned Jolt inputs. The browser gate reports no warning or error
+diagnostics. Logs use the `texture-probe-` prefix under the same run's `logs/`;
+the fresh output is `texture-probe-browser-publish/wwwroot/`. These checks do
+not establish Windows startup, rendered browser parity, actual GPU texture
+appearance, or post-push CI. Shader sources and recipes did not change.
+
+The scan reports 24 files / 82 direct-file matching lines across the four roots.
+Core plus Rendering total 9 files / 23 lines. It removes six matching lines and
+two files. Two target-typed file constructions moved by this batch were not
+counted by the historical expression. Blocking counts are unchanged. Both broad
+inventory requirements remain open.
+
 ## Send-local-copy source consistency (2026-10-29)
 
 Implementation commit `31c38ac57ad29b2e5459be3219fa61a55bfe51c4` keeps
