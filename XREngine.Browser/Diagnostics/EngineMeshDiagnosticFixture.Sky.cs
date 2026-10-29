@@ -10,19 +10,20 @@ internal sealed partial class EngineMeshDiagnosticFixture
 {
     private readonly EngineSkyDiagnosticProfile _skyProfile;
     private XRTexture? _skyTexture;
+    private readonly bool _skyTextureBorrowed;
     private SkyboxComponent? _skyComponent;
     private VisualScene3D? _skyVisual;
     private Transform? _skyCameraTransform;
     private XRPerspectiveCameraParameters? _skyCameraParameters;
     private int _skyCase;
 
-    private void InitializeSkyScene()
+    private void InitializeSkyScene(XRTextureCube? cookedSkyTexture)
     {
         _skyTexture = _skyProfile switch
         {
             EngineSkyDiagnosticProfile.Gradient or EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun or EngineSkyDiagnosticProfile.Moon => null,
-            EngineSkyDiagnosticProfile.Cubemap => CreateSkyCube(),
-            EngineSkyDiagnosticProfile.FilteredCubemap => CreateFilteredSkyCube(),
+            EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap => cookedSkyTexture
+                ?? throw new InvalidOperationException("EngineMeshDiagnostic.CookedCubeRequired: load the authored cube through the asset source before drawing."),
             EngineSkyDiagnosticProfile.Equirectangular => CreateSkyImage(false),
             EngineSkyDiagnosticProfile.Octahedral => CreateSkyImage(true),
             EngineSkyDiagnosticProfile.FilteredEquirectangular => CreateFilteredSkyImage(false),
@@ -115,7 +116,8 @@ internal sealed partial class EngineMeshDiagnosticFixture
     {
         if (!_sky || _skyComponent?.Material is not { } material)
             throw new InvalidOperationException("EngineMeshDiagnostic.SkyCaseRequired.");
-        return FormattableString.Invariant($"{{\"sampleCase\":{_skyCase},\"semantic\":\"{material.EngineSemantic.Semantic}\",\"semanticVersion\":{material.EngineSemantic.Version},\"authoredShaderCount\":{material.Shaders.Count},\"intensity\":{_skyComponent.Intensity},\"mode\":\"{_skyComponent.Mode}\",\"projection\":\"{_skyComponent.Projection}\",\"rotation\":{_skyComponent.Rotation},\"timeOfDay\":{_skyComponent.TimeOfDay},\"cloudCoverage\":{_skyComponent.CloudCoverage},\"starIntensity\":{_skyComponent.StarIntensity},\"sunDiscSize\":{_skyComponent.SunDiscSize},\"moonDiscSize\":{_skyComponent.MoonDiscSize},\"verticalFieldOfView\":{_skyCameraParameters!.VerticalFieldOfView},\"textureMinLod\":{_skyTexture?.MinLOD ?? 0},\"textureMaxLod\":{_skyTexture?.MaxLOD ?? 0},\"pipeline\":\"DefaultRenderPipeline\"}}");
+        string assetPath = System.Text.Json.JsonSerializer.Serialize(_skyTextureBorrowed ? _skyTexture?.FilePath : null);
+        return FormattableString.Invariant($"{{\"textureAssetPath\":{assetPath},\"textureSource\":\"{(_skyTextureBorrowed ? "cooked-asset" : "runtime-fixture")}\",\"buildKind\":\"{XRRuntimeEnvironment.BuildKind}\",\"sampleCase\":{_skyCase},\"semantic\":\"{material.EngineSemantic.Semantic}\",\"semanticVersion\":{material.EngineSemantic.Version},\"authoredShaderCount\":{material.Shaders.Count},\"intensity\":{_skyComponent.Intensity},\"mode\":\"{_skyComponent.Mode}\",\"projection\":\"{_skyComponent.Projection}\",\"rotation\":{_skyComponent.Rotation},\"timeOfDay\":{_skyComponent.TimeOfDay},\"cloudCoverage\":{_skyComponent.CloudCoverage},\"starIntensity\":{_skyComponent.StarIntensity},\"sunDiscSize\":{_skyComponent.SunDiscSize},\"moonDiscSize\":{_skyComponent.MoonDiscSize},\"verticalFieldOfView\":{_skyCameraParameters!.VerticalFieldOfView},\"textureMinLod\":{_skyTexture?.MinLOD ?? 0},\"textureMaxLod\":{_skyTexture?.MaxLOD ?? 0},\"pipeline\":\"DefaultRenderPipeline\"}}");
     }
 
     private void SetSkyProceduralCase(int sampleCase)

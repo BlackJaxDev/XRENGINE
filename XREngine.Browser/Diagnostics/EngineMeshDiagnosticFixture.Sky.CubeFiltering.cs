@@ -6,37 +6,6 @@ namespace XREngine.Browser.Diagnostics;
 
 internal sealed partial class EngineMeshDiagnosticFixture
 {
-    private static XRTextureCube CreateFilteredSkyCube()
-    {
-        XRTextureCube cube = new(4, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, false, mipCount: 3)
-        {
-            Name = "Diagnostic filtered sRGB cube sky",
-            SizedInternalFormat = ESizedInternalFormat.Srgb8Alpha8,
-            AutoGenerateMipmaps = false,
-            MinFilter = ETexMinFilter.LinearMipmapLinear,
-            MagFilter = ETexMagFilter.Linear,
-            MinLOD = 0,
-            MaxLOD = 0,
-        };
-        for (int level = 0; level < 3; level++)
-            for (int face = 0; face < 6; face++)
-            {
-                int extent = 4 >> level;
-                byte[] bytes = new byte[extent * extent * 4];
-                for (int offset = 0; offset < bytes.Length; offset += 4)
-                {
-                    // The final mip is uniform across faces. It checks mip
-                    // selection without a three-face corner reference.
-                    bytes[offset] = level == 2 ? (byte)112 : (byte)(32 + face * 28 + level * 20);
-                    bytes[offset + 1] = level == 2 ? (byte)144 : (byte)(180 - face * 20 + level * 10);
-                    bytes[offset + 2] = level == 2 ? (byte)192 : (byte)(64 + face * 16 + level * 24);
-                    bytes[offset + 3] = 96;
-                }
-                cube.Mipmaps[level].Sides[face].DataBytes = bytes;
-            }
-        return cube;
-    }
-
     private void SetSkyFilteredCubeCase(int sampleCase)
     {
         if (sampleCase is < 0 or > 40)

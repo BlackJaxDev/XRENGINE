@@ -34,9 +34,11 @@ function reference(sampleCase, x, y, width, height, foreground) {
 export async function skyCubemapCheck(...args) {
     await skyCheck(...args, {
         checkName: 'engine-sky-cubemap', reportKey: 'skyCubemap', probe: 'sky-cube', capturePrefix: 'engine-sky-cube',
-        scope: 'Six authored RGBA16F cube faces with nearest sampling; filtered seams, mip chains, and other image projections remain unqualified.',
+        scope: 'Published canonical cube asset loading and six authored RGBA16F faces with nearest sampling; filtered seams, mip chains, and other image projections remain unqualified.',
         names: ['negative-z', 'positive-x', 'negative-x', 'positive-y', 'negative-y', 'positive-z',
             'translated', 'sky-rotation', 'hdr-intensity', 'restored'],
+        cookedAsset: { path: '/game/SkyCubeHdr.asset', nativeBytes: 768 },
+        cubeStorage: { label: 'SkyCubeHdr', extent: 4, format: 'rgba16float', mipLevels: 1 },
         semantic: 'SkyboxCubemap', artifact: 'engine-skybox-cubemap', reference,
         foregroundCases: [0, 7, 8, 9],
         expectedState: sampleCase => ({ mode: 'Texture', projection: 'Cubemap', intensity: sampleCase === 8 ? 2 : 1,

@@ -75,6 +75,8 @@ byte[] worldPayload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
 CookedAssetBlob worldBlob = new(typeof(XRWorld).AssemblyQualifiedName!, CookedAssetFormat.BinaryV2, worldPayload);
 File.WriteAllBytes(Path.Combine(outputDirectory, "EngineSmokeWorld.bin"), CookedAssetEnvelope.Serialize(worldBlob));
 
+BrowserSkyTextureFixtures.Write(outputDirectory);
+
 AotRuntimeMetadata metadata = AotRuntimeMetadataBuilder.Build(
     [typeof(AotRuntimeMetadata).Assembly, typeof(XRWorld).Assembly,
         typeof(XRMesh).Assembly, typeof(RuntimeAssetBootstrap).Assembly], [typeof(FontGlyphSet)],

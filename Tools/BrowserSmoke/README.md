@@ -85,6 +85,16 @@ The camera excludes the foreground in this profile. Three-face corner weights,
 implicit/fractional LOD, automatic mip generation, and imported-image quality
 remain separate. The manual page selects this fixture with `probe=sky-cube-filtered`.
 
+Both cube profiles load canonical cooked assets through the production async
+asset source in `Published` mode. The metadata fixture cooker emits their pixels
+and sampler settings; the recipe packages them as `/game/SkyCubeHdr.asset` and
+`/game/SkyCubeFiltered.asset`. The checks require the actual asset path, one
+retained asset/object, drained staging, and 768 or 504 retained native pixel
+bytes. Stop must remove every asset source. These counts describe retention,
+not immediate native heap reclamation. Other sky image profiles still construct
+their images locally. This does not qualify an AOT cube codec or full Editor
+publication. See the [published cube record](../../docs/work/investigations/rendering/archive/2026-10-29-published-cube-sky-qualification.md).
+
 The `engine-sky-equirectangular` and `engine-sky-octahedral` checks use asymmetric
 RGBA16F images through the corresponding cooked sky shaders. Their independent
 coordinate references cover longitude/latitude, the octahedral lower-hemisphere

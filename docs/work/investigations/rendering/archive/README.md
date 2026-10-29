@@ -124,3 +124,7 @@ current owner below explicitly adopts it.
 - [Sky texture storage admission](2026-10-29-sky-texture-cook-storage.md)
   records cook-time rejection of unavailable pixels and preservation of cube mip bytes.
   Current limits are in [platform validation](../../../testing/platform/platform-validation.md#sky-storage-admission-and-mip-serialization--2026-10-29).
+
+- [Published cube sky qualification](2026-10-29-published-cube-sky-qualification.md)
+  connects canonical cube cooking to production browser loading and sky drawing.
+  Current limits are in [platform validation](../../../testing/platform/platform-validation.md#published-cube-sky-loading--2026-10-29).

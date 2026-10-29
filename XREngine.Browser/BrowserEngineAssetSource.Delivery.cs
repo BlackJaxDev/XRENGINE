@@ -120,6 +120,10 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetIntegrationS
             if (value is XRDataBuffer buffer) { Count(buffer.ClientSideSource); Count(buffer.GpuCompressedSource); }
             if (value is XRTexture2D texture)
                 foreach (Mipmap2D mip in texture.Mipmaps) Count(mip.Data);
+            if (value is XRTextureCube { Mipmaps: { } levels })
+                foreach (var level in levels)
+                    if (level?.Sides is { } faces)
+                        foreach (Mipmap2D? face in faces) Count(face?.Data);
         }
         _retainedNativeSources.Add(path, nativeSources);
         foreach (BrowserAssetNativeEstimate tracked in nativeSources)

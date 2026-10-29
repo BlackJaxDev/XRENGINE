@@ -17,6 +17,20 @@
       "encoding": "cooked-binary",
       "source": "AotRuntimeMetadata.bin",
       "dependencies": []
+    },
+    {
+      "path": "/game/SkyCubeHdr.asset",
+      "type": "XREngine.Rendering.XRTextureCube, XREngine.Runtime.Rendering",
+      "encoding": "cooked-binary",
+      "source": "SkyCubeHdr.bin",
+      "dependencies": []
+    },
+    {
+      "path": "/game/SkyCubeFiltered.asset",
+      "type": "XREngine.Rendering.XRTextureCube, XREngine.Runtime.Rendering",
+      "encoding": "cooked-binary",
+      "source": "SkyCubeFiltered.bin",
+      "dependencies": []
     }
   ]
 }

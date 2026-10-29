@@ -81,6 +81,27 @@ and runtime constructors for published loading. Existing reflection payloads can
 still be read, but their omitted pixels cannot be recovered. The separate
 `XRTexture2D` streamable mip format and YAML/MemoryPack contracts are unchanged.
 
+## Published cube asset path
+
+The two cube diagnostics use authored assets from the engine content package.
+`BrowserSkyTextureFixtures` cooks `SkyCubeHdr.bin` and `SkyCubeFiltered.bin` through
+the canonical `BinaryV2` envelope with MemoryPack suppressed. The package exposes
+`/game/SkyCubeHdr.asset` and `/game/SkyCubeFiltered.asset` as immutable payloads.
+The browser installs verified type metadata, catalog providers, and asset
+services, then calls `Engine.Assets.LoadFromRuntimeSourceAsync` in `Published`
+mode. It passes the loaded cube to the shared sky fixture; no local cube image
+is generated as a fallback. The fixture borrows the asset until its source owner
+ends the session.
+
+The browser delivery ledger counts distinct owned cube-face `DataSource` buffers
+across all mips. The HDR fixture retains 768 pixel bytes; the three-level sRGB
+fixture retains 504. The checks require drained staging, one retained asset and
+object, the exact asset path, and zero surviving asset sources after stop.
+These are source-retention estimates, not measurements of immediate native heap
+reclamation. The route uses the browser interpreter and canonical reflection
+loading; it does not establish an AOT cube codec or packaged Editor publication.
+See the [published cube record](../../work/investigations/rendering/archive/2026-10-29-published-cube-sky-qualification.md).
+
 ## Explicit limits
 
 Preflight and runtime diagnostics identify the missing contract:

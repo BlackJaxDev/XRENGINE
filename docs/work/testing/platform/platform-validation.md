@@ -466,6 +466,37 @@ Platform texture encoders, integrated platform cooking, path-only sky dependency
 resolution, complete packaged Editor publication, and hardware acceptance remain
 open. The existing shader coverage limits also remain open.
 
+### Published cube sky loading — 2026-10-29
+
+The HDR and filtered cube diagnostics now load canonical `BinaryV2` assets from
+the content package through `Engine.Assets.LoadFromRuntimeSourceAsync`. Verified
+metadata enables published interpreter type resolution. Local cube generation
+is removed from the browser fixture. The
+[published cube record](../../investigations/rendering/archive/2026-10-29-published-cube-sky-qualification.md)
+records the package route, ownership, and scope.
+
+First live probes rendered ten HDR cases and 41 filtered cases. Selected face,
+edge, and final-mip captures were viewed. After that validation, the targeted
+regression suite passed all 110 samples across two starts and resize. Checks
+require the exact virtual asset path, `Published` mode, one retained asset/object,
+768 HDR or 504 filtered pixel bytes, drained staging, and zero surviving asset
+sources after stop. The production loader derives the texture label from its
+file path; the existing storage checks now require that label. Numeric references,
+tolerances, mip/format checks, and resource identity checks are unchanged.
+
+All 24 build/publication gates pass with zero compiler warnings/errors. Fresh
+cooking packages 57 shaders and 114 assets. Repeated cube cooking produces
+byte-identical payloads. Metadata verification, compiled browser-closure scanning,
+and bundle checks pass. Full browser regression passes 23 selected checks with
+three explicit optional skips, 324 sky samples, and 24 strict indirect lifecycle
+stages. Cube samples retain 72 HDR or 30 filtered live GPU resources and zero
+retiring resources. Both sessions release their asset sources.
+
+This is software-adapter evidence. Native retention estimates do not prove
+immediate heap reclamation. Packaged Editor export, path-only sky dependencies,
+platform encoders, AOT cube decoding, hardware acceptance, and remaining shader
+coverage stay open. Requirement counts are unchanged.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

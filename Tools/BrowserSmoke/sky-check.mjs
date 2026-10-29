@@ -88,6 +88,18 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
                         state.authoredShaderCount === 0 && state.pipeline === 'DefaultRenderPipeline' &&
                         Object.entries(profile.expectedState(sampleCase)).every(([key, value]) => state[key] === value),
                     'BrowserSmoke.SkyIdentity: the real engine sky or its authored case changed.');
+                    if (profile.cookedAsset) {
+                        const delivery = state.assetDelivery;
+                        assert(state.textureSource === 'cooked-asset' && state.buildKind === 'Published' &&
+                            state.textureAssetPath === profile.cookedAsset.path,
+                        'BrowserSmoke.SkyCookedAsset: the sky must use its published asset through the production loader.');
+                        assert(delivery?.retainedAssets === 1 && delivery.retainedObjects === 1 &&
+                            delivery.retainedNativeEstimateBytes === profile.cookedAsset.nativeBytes &&
+                            delivery.failedReads === 0 && delivery.activeRequests === 0 && delivery.queuedReads === 0 &&
+                            delivery.javascriptStagingBytes === 0 && delivery.managedIntegrationStagingBytes === 0 &&
+                            delivery.managedCompanionStagingBytes === 0 && delivery.integrationQueued === 0 && delivery.integrating === 0,
+                        'BrowserSmoke.SkyCookedOwnership: retain exactly the authored cube pixels after staging drains.');
+                    }
                     if (profile.cubeStorage || profile.probe === 'sky-cube') {
                         const storage = profile.cubeStorage ?? { label: 'Diagnostic six-face HDR sky', extent: 4,
                             format: 'rgba16float', mipLevels: 1 };
@@ -183,6 +195,11 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
             await page.locator('#stop').click();
             assert(await page.evaluate(() => window.engineMeshDiagnostic.session === 0 && window.engineMeshDiagnostic.statistics() === null),
                 'BrowserSmoke.SkyTeardown: the diagnostic renderer survived stop.');
+            if (profile.cookedAsset) {
+                const sources = await page.evaluate(async () => (await import('/engine-assets.js')).engineAssetImports.getProgress());
+                assert(sources.length === 0, 'BrowserSmoke.SkyCookedTeardown: an asset source survived stop.');
+                (result.assetTeardown ??= []).push({ iteration, sources });
+            }
         }
         assertNoBrowserErrors(events);
     } catch (error) {

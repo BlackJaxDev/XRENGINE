@@ -42,7 +42,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false, bool debug = false,
         WebPipelineArtifactCatalog? effectArtifacts = null, bool unlit = false,
         EngineUnlitDiagnosticProfile? unlitProfile = null, bool sky = false,
-        EngineSkyDiagnosticProfile skyProfile = EngineSkyDiagnosticProfile.Gradient)
+        EngineSkyDiagnosticProfile skyProfile = EngineSkyDiagnosticProfile.Gradient, XRTextureCube? cookedSkyTexture = null)
     {
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");
@@ -55,6 +55,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _debug = debug;
         _sky = sky;
         _skyProfile = skyProfile;
+        _skyTextureBorrowed = cookedSkyTexture is not null;
         _effects = effectArtifacts is not null && !unlit && !sky;
         if (_sky && (!_lit || unlit || shadow || debug || effectArtifacts is null))
             throw new ArgumentException("A sky fixture requires the verified lit, sky, and presentation catalog.", nameof(sky));
@@ -157,7 +158,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
                 else InitializeLights();
                 if (_debug) InitializeDebugScene();
                 if (_effects) InitializeEffectsScene();
-                if (_sky) InitializeSkyScene();
+                if (_sky) InitializeSkyScene(cookedSkyTexture);
             }
             else
             {
@@ -346,7 +347,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         DisposeEffectsScene();
         DisposeUnlitScene();
         _skyVisual?.Destroy();
-        _skyTexture?.Destroy();
+        if (!_skyTextureBorrowed) _skyTexture?.Destroy();
         _material.Destroy();
         _texture?.Destroy();
         _vertex?.Destroy();
