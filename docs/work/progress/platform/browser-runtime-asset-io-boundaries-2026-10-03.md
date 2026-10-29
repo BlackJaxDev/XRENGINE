@@ -1,5 +1,22 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Directory helper compatibility review (2026-10-29)
+
+The previous public `XREngine.Core.Utility.EnsureDirPathExists` method is absent
+from Data. Existing binaries that call it must be rebuilt, and source callers
+must reference the desktop platform assembly and call
+`DesktopPathUtility.EnsureDirPathExists`. A reflection check confirms the old
+method is absent and the replacement is public. The desktop helper works without
+host-service registration. All eight tracked C# call sites use the replacement.
+
+A portable forwarding method backed only by an installed host service would still
+fail before service registration, unlike the former method. It would not give
+full behavioral compatibility. No such partial shim was added. The conformance
+source scanner still mixes directory probes, discovery and file reads, and the
+animation binary cache owns staged writes and replacement. Their placement needs
+coherent provider and lifetime decisions; this review does not change them or
+close either inventory.
+
 ## Desktop directory preparation (2026-10-29)
 
 The directory helper moves from portable Data to `DesktopPathUtility` in the

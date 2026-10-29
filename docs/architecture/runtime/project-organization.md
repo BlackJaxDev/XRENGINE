@@ -224,7 +224,10 @@ mapping uses an unnamed map for the file stream.
 Desktop diagnostic and editor directory preparation uses
 `DesktopPathUtility.EnsureDirPathExists` in the desktop platform assembly. It
 keeps the former path and extension handling from `Utility.EnsureDirPathExists`.
-Callers of the former public helper must use the desktop API.
+This is a source and binary API break: callers must reference the desktop
+platform assembly, replace calls to `XREngine.Core.Utility.EnsureDirPathExists`
+with `XREngine.Runtime.Platform.Desktop.DesktopPathUtility.EnsureDirPathExists`,
+and rebuild. The desktop helper does not require host-service registration.
 
 Synchronous VMD animation loading requires host-file admission and an installed
 `IRuntimeHostFileReadBackend`. It opens the file with `FileShare.Read` and
