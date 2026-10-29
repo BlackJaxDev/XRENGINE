@@ -1405,8 +1405,9 @@ public partial class XRMaterial
         // recognized as Uber-backed. This also keeps the lightweight pending
         // fallback active while a large OpenGL variant finishes linking.
         string? shaderPath = fragmentShader.Source?.FilePath ?? fragmentShader.FilePath;
-        if (ShaderSourceResolver.CanAccessHostShaderFiles &&
-            !string.IsNullOrWhiteSpace(shaderPath) && File.Exists(shaderPath))
+        ShaderSourceProviderOwner owner = ShaderSourceResolver.CaptureOwner();
+        if (owner.HostFileAccess &&
+            !string.IsNullOrWhiteSpace(shaderPath) && owner.FileBackend!.FileExists(shaderPath))
         {
             TextFile text = new(shaderPath);
             text.LoadText(shaderPath);

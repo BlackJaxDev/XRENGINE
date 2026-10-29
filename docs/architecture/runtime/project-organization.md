@@ -271,6 +271,19 @@ admission. Desktop registration supplies this capability. Custom authoring hosts
 must provide it. The provider capture does not reserve the selected name or
 make the subsequent save atomic.
 
+Renderer module assembly hashes capture `IRuntimeHostFileReadBackend` after
+host-file admission. Locationless assemblies return an empty hash without a
+provider. The captured provider owns the existence probe and shared read used
+for SHA-256; the stream is disposed after hashing. Desktop composition installs
+this capability before registering renderer modules. A custom native module host
+must supply it when an assembly has a location.
+
+Uber canonical shader recovery uses the shader resolver's captured file backend
+for its existence probe after host admission. Non-generated shaders and cached
+canonical shaders return before this probe. Text loading retains its separate
+runtime read lease; the probe capture does not make probe and text read an atomic
+snapshot. Hosts must keep shader file and asset read path identities consistent.
+
 Texture streaming cache writes capture one `ITextureStreamingCacheFileBackend`
 from the installed asset file system and prepare the parent before renting and
 serializing the payload. A backend can also implement

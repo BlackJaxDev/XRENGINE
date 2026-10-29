@@ -19,10 +19,11 @@ public static class RendererBackendModuleIdentity
             return string.Empty;
 
         RuntimeAssetReadServices.EnsureHostFileAccess("Renderer module assembly hash");
-        if (!File.Exists(location))
+        IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+        if (!files.FileExists(location))
             return string.Empty;
 
-        using FileStream stream = File.OpenRead(location);
+        using Stream stream = files.OpenRead(location, FileShare.Read);
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
