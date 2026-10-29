@@ -35,7 +35,7 @@ export class EngineMeshDiagnosticHost {
     async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe', executionProfile = 'cpu-x1') {
         if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color',
             'engine-standard-lit-color-directional-shadow', 'engine-standard-lit-color-debug',
-            'engine-standard-lit-color-effects', 'engine-sky-gradient', 'engine-unlit-materials'].includes(artifactName))
+            'engine-standard-lit-color-effects', 'engine-sky-gradient', 'engine-sky-cubemap', 'engine-unlit-materials'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
         if (!['cpu-x1', 'cpu-x4', 'cpu-x4-blended', 'cpu-x4-ao',
             'gpu-indirect-x1', 'gpu-indirect-x4', 'gpu-indirect-x4-blended', 'gpu-indirect-x4-ao'].includes(executionProfile) ||
@@ -53,7 +53,7 @@ export class EngineMeshDiagnosticHost {
         this.readyFrames = 0;
         this.settleFrames = 0;
         this.lastReadySession = 0;
-        this.kind = artifactName === 'engine-sky-gradient' ? 'sky' :
+        this.kind = ['engine-sky-gradient', 'engine-sky-cubemap'].includes(artifactName) ? 'sky' :
             artifactName === 'engine-unlit-materials' ? 'unlit' :
             artifactName === 'engine-standard-lit-color-effects' ? 'effects' :
             artifactName === 'engine-standard-lit-color-debug' ? 'debug' :
@@ -96,7 +96,7 @@ export class EngineMeshDiagnosticHost {
                     ? this.exports.CreateUnlitAsync(this.canvas.id, String(assetManifestUrl))
                     : this.exports.CreateUnlitProfileAsync(this.canvas.id, String(assetManifestUrl), executionProfile)
                 : this.kind === 'sky'
-                ? this.exports.CreateSkyAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
+                ? (artifactName === 'engine-sky-cubemap' ? this.exports.CreateSkyCubemapAsync : this.exports.CreateSkyAsync)(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
                     tonemap.descriptorJson, tonemap.source)
                 : this.kind === 'effects'
                 ? this.exports.CreateEffectsAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
@@ -466,6 +466,19 @@ export class EngineMeshDiagnosticHost {
             if (entry?.generation !== resource.generation) throw new Error('The engine sky program owner changed during sampling.');
             resource.nativeId = this.nativeProgramId(entry.value.native);
         }
+        state.cubeTextures = [];
+        state.cubeViews = [];
+        this.renderer._resources.slots.forEach((entry, slot) => {
+            if (entry?.owner !== this.session || entry.value.retired) return;
+            const value = entry.value;
+            const identity = { slot, generation: entry.generation, label: value.label ?? '',
+                width: value.width, height: value.height, format: value.format, arrayLayerCount: value.arrayLayerCount };
+            if (entry.kind === 'texture' && value.arrayLayerCount === 6)
+                state.cubeTextures.push({ ...identity, mipLevelCount: value.mipLevelCount, sampleCount: value.sampleCount });
+            if (entry.kind === 'texture-view' && value.dimension === 'cube')
+                state.cubeViews.push({ ...identity, dimension: value.dimension, baseArrayLayer: value.baseArrayLayer,
+                    baseMip: value.baseMip, mipCount: value.mipCount });
+        });
         return state;
     }
 

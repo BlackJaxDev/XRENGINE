@@ -64,6 +64,16 @@ the material but must drain retired resources without live-count growth.
 This covers gradient and solid sky output only. Other projections, procedural
 controls, transparency over sky, and sky bloom remain separate checks.
 
+The `engine-sky-cubemap` check uses six asymmetric 4x4 RGBA16F faces through
+`SkyboxComponent` and the cooked `engine-skybox-cubemap` artifact. Face, row,
+and column values check all six camera directions, camera translation, authored
+sky rotation, intensity above one, foreground occlusion, and display output.
+Two sessions each cover ten cases and non-square resize with restoration.
+The shared sky qualification checks HDR and canvas regions against independent
+camera rays and cube coordinates. It checks the actual six-layer texture and
+cube view, retained program and texture ownership, and bounded resources.
+Filtered seams, mip chains, sRGB cubes, and other projections remain separate.
+
 The `engine-unlit-materials` check starts a separate nine-tile board through the
 packaged material and pipeline catalogs. Factory-created V1 color, V2 linear and
 sRGB texture, V3 forced-opaque texture, V4 cutoff-boundary texture, and V5
@@ -239,7 +249,8 @@ Cook `Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json`,
 `engine-standard-lit-color-directional-shadow.recipe.json`,
 `engine-shadow-depth.recipe.json`, `engine-tonemap.recipe.json`,
 `engine-debug-point.recipe.json`, `engine-debug-line.recipe.json`,
-`engine-debug-triangle.recipe.json`, and `engine-skybox-gradient.recipe.json`
+`engine-debug-triangle.recipe.json`, `engine-skybox-gradient.recipe.json`, and
+`engine-skybox-cubemap.recipe.json`
 with `Tools/ShaderCooker`; supply the directory
 containing its schema 3 `manifest.json`, hashed descriptors, and hashed WGSL. The
 shader artifacts are explicit runtime inputs to the smoke, not dependencies on

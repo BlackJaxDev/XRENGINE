@@ -32,7 +32,8 @@ const status=document.querySelector('#status'), manifest=document.querySelector(
 const params=new URLSearchParams(location.search);
 const texture=params.get('probe')==='texture';
 const lit=params.get('probe')==='lit';
-const sky=params.get('probe')==='sky';
+const skyCube=params.get('probe')==='sky-cube';
+const sky=params.get('probe')==='sky'||skyCube;
 const shadow=params.get('probe')==='shadow';
 const debug=params.get('probe')==='debug';
 const effects=params.get('probe')==='effects';
@@ -50,10 +51,10 @@ if(lit){
  document.querySelector('#expected').textContent='StandardLitColorV1 ModelComponent with vertex normals and actual directional, point and spot engine lights. DefaultRenderPipeline writes linear RGBA16F then applies Mobius tonemapping. Numeric surface and light changes retain their material and shader identity. Shadows, RuntimeWorld play and gameplay are outside this diagnostic.';
 }
 if(sky){
- document.title='Engine gradient sky diagnostic';
- document.querySelector('h1').textContent='Engine gradient sky diagnostic';
+ document.title=skyCube?'Engine HDR cubemap sky diagnostic':'Engine gradient sky diagnostic';
+ document.querySelector('h1').textContent=document.title;
  document.querySelector('#description').textContent='A real SkyboxComponent and a lit foreground use the shared DefaultRenderPipeline and cooked sky catalog.';
- document.querySelector('#expected').textContent='An asymmetric linear HDR gradient responds to camera rotation, retains its directions after camera translation, and stays behind the foreground. Solid color and intensity changes use the same cooked sky program.';
+ document.querySelector('#expected').textContent=skyCube?'Six HDR cube faces encode face, column, and row colors. Camera and sky rotation preserve their orientation and foreground depth.':'An asymmetric linear HDR gradient responds to camera rotation, retains its directions after camera translation, and stays behind the foreground. Solid color and intensity changes use the same cooked sky program.';
 }
 if(shadow){
  document.title='Engine directional shadow diagnostic';
@@ -86,7 +87,7 @@ manifest.value=params.get('manifest') ?? '';
 assets.value=params.get('assets') ?? '';
 const createHost=await createBrowserRuntime();
 const host=createHost.createEngineMeshDiagnostics(document.querySelector('canvas'), text=>{status.textContent=text;});
-document.querySelector('#start').onclick=()=>host.start(manifest.value ? new URL(manifest.value,location.href) : null, assets.value ? new URL(assets.value,location.href) : null, sky?'engine-sky-gradient':unlit?'engine-unlit-materials':effects?'engine-standard-lit-color-effects':debug?'engine-standard-lit-color-debug':shadow?'engine-standard-lit-color-directional-shadow':lit?'engine-standard-lit-color':texture?'engine-texture-probe':'engine-depth-probe', unlit?document.querySelector('#execution-profile').value:'cpu-x1').catch(error=>{status.textContent=String(error);});
+document.querySelector('#start').onclick=()=>host.start(manifest.value ? new URL(manifest.value,location.href) : null, assets.value ? new URL(assets.value,location.href) : null, skyCube?'engine-sky-cubemap':sky?'engine-sky-gradient':unlit?'engine-unlit-materials':effects?'engine-standard-lit-color-effects':debug?'engine-standard-lit-color-debug':shadow?'engine-standard-lit-color-directional-shadow':lit?'engine-standard-lit-color':texture?'engine-texture-probe':'engine-depth-probe', unlit?document.querySelector('#execution-profile').value:'cpu-x1').catch(error=>{status.textContent=String(error);});
 document.querySelector('#stop').onclick=()=>host.stop().catch(error=>{status.textContent=String(error);});
 window.engineMeshDiagnostic=host;
 window.addEventListener('pagehide',()=>{void host.stop().catch(()=>{});});

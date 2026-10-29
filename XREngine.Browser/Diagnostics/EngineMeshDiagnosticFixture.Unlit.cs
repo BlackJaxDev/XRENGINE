@@ -339,6 +339,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
         if (_renderWorld is { } renderWorld) Attempt(renderWorld.Dispose);
         if (_unlitVisual is { } visual) Attempt(visual.Destroy);
         if (_skyVisual is { } skyVisual) Attempt(skyVisual.Destroy);
+        if (_skyTexture is { } skyTexture) Attempt(() => skyTexture.Destroy());
         Attempt(_scene.Dispose);
         if (_mesh is { } mesh) Attempt(() => mesh.Destroy());
         if (_unlitBackgroundMesh is { } background) Attempt(() => background.Destroy());

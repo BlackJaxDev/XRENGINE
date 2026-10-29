@@ -236,6 +236,33 @@ Other projections, procedural controls, sky bloom, transparency over sky,
 authored world serialization, desktop parity, and hardware acceptance remain
 open. It does not close the whole shader requirement.
 
+### HDR cubemap sky — 2026-10-29
+
+`Tools/BrowserSmoke/run.mjs` includes `engine-sky-cubemap` when an engine
+manifest is supplied. The real sky component consumes six asymmetric 4-by-4
+RGBA16F faces through the cooked cubemap shader and shared default pipeline.
+The first live Chromium / SwiftShader run renders all six camera directions,
+camera translation, authored sky rotation, doubled intensity, and restoration.
+HDR reads retain values up to 3.0 and opaque sky alpha. The lit foreground
+retains its color and alpha. Forward, upward, and non-square captures were viewed.
+Both targeted and full runs pass all 24 cubemap and 18 gradient samples over
+two sessions each. Cubemap samples retain 72 live resources and zero retiring
+resources. Resize preserves the authored cube texture/view and native programs.
+
+The full BrowserSmoke run passes all 15 selected checks. Bare-host shipping
+autostart, the optional published game, and the separate Jolt spike are skipped.
+All 24 build and publish gates pass: four desktop builds, 19 portable builds,
+and native-WASM publication. Builds report zero warnings and errors. Fresh
+cooking packages 57 shaders and 112 assets. The separate publish bundle passes
+required-page, desktop-dependency exclusion, native-WASM, Jolt license and pin,
+and browser restore-graph checks.
+The [qualification record](../../investigations/rendering/archive/2026-10-29-cubemap-sky-qualification.md)
+records pixel checks, resource ownership, and the corrected placeholder count.
+This is single-mip, nearest-filtered, single-sample software coverage.
+Filtered seams, mip chains, sRGB cubes, other projections, procedural controls,
+sky bloom, transparency, world serialization, hardware, and desktop parity
+remain unqualified.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

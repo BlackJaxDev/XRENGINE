@@ -24,6 +24,7 @@ public static partial class EngineMeshDiagnosticExports
     private static bool _shadow;
     private static bool _debug;
     private static bool _sky;
+    private static EngineSkyDiagnosticProfile _skyProfile;
     private static bool _unlit;
     private static EngineUnlitDiagnosticProfile _unlitProfile = EngineUnlitDiagnosticProfile.Baseline;
     private static EngineMaterialVariantCatalog? _unlitVariants;
@@ -79,6 +80,13 @@ public static partial class EngineMeshDiagnosticExports
         => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
             null, null, null, sky: true);
 
+    /// <summary>Starts a six-face HDR cube sky through the shared pipeline.</summary>
+    [JSExport]
+    public static Task<int> CreateSkyCubemapAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string tonemapDescriptorJson, string tonemapWgsl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
+            null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.Cubemap);
+
     [JSExport]
     public static Task<int> CreateShadowAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
         string tonemapDescriptorJson, string tonemapWgsl, string shadowDepthDescriptorJson, string shadowDepthWgsl)
@@ -100,7 +108,8 @@ public static partial class EngineMeshDiagnosticExports
     private static async Task<int> CreateCoreAsync(string canvasId, string assetManifestUrl, string? descriptorJson, string? wgsl,
         string? tonemapDescriptorJson, string? tonemapWgsl, string? shadowDepthDescriptorJson, string? shadowDepthWgsl,
         DebugShaderInputs? debugSources, bool effects = false, bool unlit = false,
-        EngineUnlitDiagnosticProfile? unlitProfile = null, bool sky = false)
+        EngineUnlitDiagnosticProfile? unlitProfile = null, bool sky = false,
+        EngineSkyDiagnosticProfile skyProfile = EngineSkyDiagnosticProfile.Gradient)
     {
         if (_session != 0)
             throw new InvalidOperationException("EngineMeshDiagnostic.AlreadyActive: stop the existing diagnostic session first.");
@@ -224,9 +233,10 @@ public static partial class EngineMeshDiagnosticExports
                     !effectArtifacts.TryResolve("tonemap", out ShaderProgramArtifact? packagedTonemap) ||
                     packagedTonemap.Identity != tonemap!.Identity)
                     throw new InvalidDataException("EngineMeshDiagnostic.EffectCatalogMismatch: the verified package must own the selected material and tonemap identities.");
-                if (sky && !variants.TryResolve(new EngineMaterialVariantKey(EngineMaterialSemanticIdentity.SkyboxGradientV1,
+                if (sky && !variants.TryResolve(new EngineMaterialVariantKey(
+                    skyProfile == EngineSkyDiagnosticProfile.Cubemap ? EngineMaterialSemanticIdentity.SkyboxCubemapV1 : EngineMaterialSemanticIdentity.SkyboxGradientV1,
                     ShaderCompileTarget.WebGPUWgsl, "background", "fullscreen-sky-v1", "linear-hdr-v1"), out _))
-                    throw new InvalidDataException("EngineMeshDiagnostic.SkyVariantMissing: the package must contain the gradient sky artifact.");
+                    throw new InvalidDataException("EngineMeshDiagnostic.SkyVariantMissing: the package must contain the selected sky artifact.");
                 if (effects)
                     foreach (string pass in new[] { "depth-normal", "gtao-generate", "gtao-blur-horizontal",
                         "gtao-blur-vertical", "bloom-copy", "bloom-downsample", "bloom-upsample", "bloom-combine" })
@@ -277,6 +287,7 @@ public static partial class EngineMeshDiagnosticExports
             _shadow = shadow;
             _debug = debug;
             _sky = sky;
+            _skyProfile = skyProfile;
             _unlit = unlit;
             _unlitProfile = selectedUnlitProfile;
             _unlitVariants = unlit ? variants : null;
@@ -336,7 +347,7 @@ public static partial class EngineMeshDiagnosticExports
             _renderer.Initialize();
             stage = "construct engine fixture";
             _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact, checked((uint)width), checked((uint)height),
-                _tonemapArtifact, _shadow, _debug, _effectArtifacts, _unlit, _unlitProfile, _sky);
+                _tonemapArtifact, _shadow, _debug, _effectArtifacts, _unlit, _unlitProfile, _sky, _skyProfile);
             if (_unlit)
                 _fixture.BindUnlitVariantIdentities(_unlitVariants!);
         }
@@ -553,6 +564,7 @@ public static partial class EngineMeshDiagnosticExports
         _shadow = false;
         _debug = false;
         _sky = false;
+        _skyProfile = EngineSkyDiagnosticProfile.Gradient;
         _unlit = false;
         _unlitProfile = EngineUnlitDiagnosticProfile.Baseline;
         _unlitVariants = null;

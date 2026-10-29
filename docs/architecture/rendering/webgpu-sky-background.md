@@ -88,6 +88,12 @@ It also checks non-square resize, restoration, two device sessions, and bounded
 resource retention. The [qualification record](../../work/investigations/rendering/archive/2026-10-29-gradient-sky-qualification.md)
 separates measured software results from broader acceptance.
 
-Known-value GPU acceptance remains open for labeled cube faces and seams,
-panorama/octahedral mapping, sky bloom, sorted transparency over sky, procedural
+`engine-sky-cubemap` uses six asymmetric RGBA16F faces. Camera rays select each
+face and check its row/column orientation. Translation, authored rotation, HDR
+intensity, foreground depth, restart, and resize use the same retained scene.
+The [cubemap qualification record](../../work/investigations/rendering/archive/2026-10-29-cubemap-sky-qualification.md)
+records the raw half-float and nearest-sampling boundary.
+
+Known-value GPU acceptance remains open for filtered cube seams and mip chains,
+sRGB cube decoding, panorama/octahedral mapping, sky bloom, sorted transparency over sky, procedural
 day/night controls, retained sun/moon/ambient behavior, and hardware devices.

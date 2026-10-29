@@ -8,6 +8,8 @@ namespace XREngine.Browser.Diagnostics;
 
 internal sealed partial class EngineMeshDiagnosticFixture
 {
+    private readonly EngineSkyDiagnosticProfile _skyProfile;
+    private XRTextureCube? _skyTexture;
     private SkyboxComponent? _skyComponent;
     private VisualScene3D? _skyVisual;
     private Transform? _skyCameraTransform;
@@ -15,9 +17,13 @@ internal sealed partial class EngineMeshDiagnosticFixture
 
     private void InitializeSkyScene()
     {
-        _skyComponent = CreateLightNode("Gradient sky background").AddComponent(static () => new SkyboxComponent
+        if (_skyProfile == EngineSkyDiagnosticProfile.Cubemap)
+            _skyTexture = CreateSkyCube();
+        _skyComponent = CreateLightNode("Diagnostic sky background").AddComponent(() => new SkyboxComponent
         {
-            Mode = ESkyboxMode.Gradient,
+            Mode = _skyTexture is null ? ESkyboxMode.Gradient : ESkyboxMode.Texture,
+            Projection = ESkyboxProjection.Cubemap,
+            Texture = _skyTexture,
             TopColor = new Vector3(1.2f, 0.15f, 0.05f),
             BottomColor = new Vector3(0.05f, 0.2f, 0.9f),
             AutoCycle = false,
@@ -41,6 +47,11 @@ internal sealed partial class EngineMeshDiagnosticFixture
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_sky || _skyComponent is null || _skyCameraTransform is null)
             throw new InvalidOperationException("EngineMeshDiagnostic.SkyCaseRequired.");
+        if (_skyProfile == EngineSkyDiagnosticProfile.Cubemap)
+        {
+            SetSkyCubeCase(sampleCase);
+            return;
+        }
         if (sampleCase is < 0 or > 6)
             throw new ArgumentOutOfRangeException(nameof(sampleCase));
         _skyCase = sampleCase;
@@ -59,6 +70,6 @@ internal sealed partial class EngineMeshDiagnosticFixture
     {
         if (!_sky || _skyComponent?.Material is not { } material)
             throw new InvalidOperationException("EngineMeshDiagnostic.SkyCaseRequired.");
-        return FormattableString.Invariant($"{{\"sampleCase\":{_skyCase},\"semantic\":\"{material.EngineSemantic.Semantic}\",\"semanticVersion\":{material.EngineSemantic.Version},\"authoredShaderCount\":{material.Shaders.Count},\"intensity\":{_skyComponent.Intensity},\"mode\":\"{_skyComponent.Mode}\",\"pipeline\":\"DefaultRenderPipeline\"}}");
+        return FormattableString.Invariant($"{{\"sampleCase\":{_skyCase},\"semantic\":\"{material.EngineSemantic.Semantic}\",\"semanticVersion\":{material.EngineSemantic.Version},\"authoredShaderCount\":{material.Shaders.Count},\"intensity\":{_skyComponent.Intensity},\"mode\":\"{_skyComponent.Mode}\",\"projection\":\"{_skyComponent.Projection}\",\"rotation\":{_skyComponent.Rotation},\"pipeline\":\"DefaultRenderPipeline\"}}");
     }
 }

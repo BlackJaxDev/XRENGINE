@@ -92,3 +92,7 @@ current owner below explicitly adopts it.
   records live pixels and the distinction between rebuilt engine handles and
   retained native GPU programs. Current acceptance limits are in
   [platform validation](../../../testing/platform/platform-validation.md#gradient-and-solid-sky--2026-10-29).
+
+- [HDR cubemap sky qualification](2026-10-29-cubemap-sky-qualification.md)
+  records six-face orientation and half-float rendering. Current acceptance
+  limits are in [platform validation](../../../testing/platform/platform-validation.md#hdr-cubemap-sky--2026-10-29).
