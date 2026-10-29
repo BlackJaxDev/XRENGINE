@@ -105,13 +105,12 @@ public partial class XRTexture2D
         RuntimeTextureSourceAccess.RequireHostFiles();
         try
         {
-            string? dir = Path.GetDirectoryName(cachePath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
+            ITextureStreamingCacheFileBackend files = XREngine.Core.Files.AssetFileSystemServices.Required as ITextureStreamingCacheFileBackend
+                ?? throw new NotSupportedException("TextureCache.HostFileWriteUnavailable: the installed file system does not provide staged texture cache writes.");
+            files.PrepareDirectory(cachePath);
 
             // The payload is built in leased storage, which is native for anything at or above the
             // large-object threshold, so writing a cache file never allocates a transient LOH array.
-            string tempPath = cachePath + ".tmp";
             XREngine.Core.Files.CookedPayloadLease lease = XREngine.Core.Files.CookedPayloadBufferPool.Rent(
                 GetTextureStreamingPayloadSize(texture),
                 out Span<byte> payload);
@@ -119,19 +118,14 @@ public partial class XRTexture2D
             {
                 WriteTextureStreamingPayload(texture, payload);
 
-                // Atomic-ish write: stage to .tmp then rename so a crash mid-write can't leave a torn cache file.
-                using FileStream stream = new(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 1, FileOptions.SequentialScan);
-                stream.Write(lease.Span);
+                files.WriteStaged(cachePath, lease.Span);
             }
             finally
             {
                 lease.Dispose();
             }
 
-            if (File.Exists(cachePath))
-                File.Delete(cachePath);
-            File.Move(tempPath, cachePath);
-            try { File.SetLastWriteTimeUtc(cachePath, sourceLastWriteTimeUtc); } catch { /* mtime stamp is best-effort */ }
+            files.PublishStaged(cachePath, sourceLastWriteTimeUtc);
             return true;
         }
         catch (Exception ex)

@@ -8,7 +8,7 @@ using XREngine.Rendering;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Provides host file discovery, metadata operations, and direct reads under ordinary filesystem permissions.</summary>
-public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, IBvhDiskCacheBackend
+public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, IBvhDiskCacheBackend, ITextureStreamingCacheFileBackend
 {
     public bool SupportsChangeNotifications => true;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption searchOption)
@@ -24,6 +24,9 @@ public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
     public byte[] ReadAllBytes(string path) => File.ReadAllBytes(path);
     public Task<byte[]> ReadAllBytesAsync(string path, CancellationToken cancellationToken) => File.ReadAllBytesAsync(path, cancellationToken);
     public IEnumerable<string> ReadLines(string path) => File.ReadLines(path);
+    public void PrepareDirectory(string cachePath) => TextureStreamingCacheFileWriter.PrepareDirectory(cachePath);
+    public void WriteStaged(string cachePath, ReadOnlySpan<byte> payload) => TextureStreamingCacheFileWriter.WriteStaged(cachePath, payload);
+    public void PublishStaged(string cachePath, DateTime timestamp) => TextureStreamingCacheFileWriter.PublishStaged(cachePath, timestamp);
     public bool DirectoryExists(string path) => Directory.Exists(path);
     public void CreateDirectory(string path) => Directory.CreateDirectory(path);
     public void DeleteDirectory(string path) => Directory.Delete(path);

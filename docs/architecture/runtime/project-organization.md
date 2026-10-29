@@ -271,6 +271,23 @@ admission. Desktop registration supplies this capability. Custom authoring hosts
 must provide it. The provider capture does not reserve the selected name or
 make the subsequent save atomic.
 
+Texture streaming cache writes use the optional
+`ITextureStreamingCacheFileBackend` on the installed asset file system. The
+writer captures one backend, prepares the directory, serializes to leased
+storage, writes a staged file, releases the lease, and publishes the staged
+file. The backend consumes the supplied span before returning. Desktop and the
+smoke publisher use the same native helper: it writes `cachePath + ".tmp"`
+with exclusive sharing, deletes the prior cache, moves the staged file, and
+sets the source timestamp on a best-effort basis. Payload bytes and cache paths
+are unchanged. Missing capabilities or write errors follow the existing failed
+cache-write result. Custom authoring hosts that write these caches must provide
+the capability.
+
+The existing delete-then-move sequence has a replacement gap. A failed move can
+leave the previous cache deleted, and a failed write can leave a temporary file.
+Concurrent writes to one path can collide. Provider capture is not a retirement
+lease or an atomic file replacement.
+
 Texture source import and streaming cache fallback use
 `IRuntimeHostFileReadBackend` for host-file existence probes after texture host
 admission. A failed asset load retains its captured probe provider through the
