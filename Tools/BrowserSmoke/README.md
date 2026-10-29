@@ -223,6 +223,19 @@ resume, resizes the canvas, and starts a second fresh lifecycle. Saved game
 screenshots and pixel summaries are bounded visual/input evidence; they do not
 establish numeric rigid-body parity or native-GPU performance.
 
+The publisher driver also accepts a fourth argument, `rendering-parity`. The
+three-argument command keeps the RollingBall profile. The optional profile
+checks the RenderingParity startup identity, sky variant, mapped surface and
+packed-skinning artifacts. The driver composes the existing managed rendering
+host with empty backend catalogs so saved sky materials and pipelines can load
+their shader sources. The production Editor still compiles and loads the game
+assembly before it reads the world. Stage the canonical shader catalog in the
+project's ignored `Assets/Shaders/WebGPU` directory before either command.
+The snapshot driver requires a prepared project with `Assets` and `Config`
+directories. As in CI, copy RenderingParity into an owned staging directory and
+create an empty `Config` there when the source has none. Copy `Metadata` only
+when the source has it; an absent metadata directory is generated output.
+
 The separate `rendering-parity-editor-published-game` check opens the shipping
 player for the saved RenderingParity world. Its static mapped panel and animated
 skeletal/morph ribbon must both occupy the canvas interior. Captures check
@@ -232,6 +245,13 @@ with the pinned Slang release and verifies the packed-skinning and tangent-mater
 artifacts in the genuine Editor bundle. These broad pixel/artifact checks do not
 by themselves prove GPU dispatch or known-value mapped-lighting semantics; those
 remain separate acceptance evidence.
+
+The saved HDR panorama adds four 5×5 sky regions at initial size and after
+resize in each context. The expected display values, RGB 70 and 157, derive
+from the saved 1/8 and 3/8 texels and explicit exposure/gamma/Mobius settings.
+All sampled channels must stay within two byte values of the reference. This
+checks the saved component graph through the shipping player; the wider camera,
+projection and filtering matrix remains in the separate sky diagnostics.
 
 The `static-meshlet-parity-editor-published-world` check uses the saved single
 mapped panel from RenderingParity with meshlets enabled. Windows publishes two

@@ -140,3 +140,5 @@ current owner below explicitly adopts it.
 - [Implicit cubemap mip qualification](2026-10-29-implicit-cubemap-mips.md)
   records saved cube loading, camera-driven mip selection, and decoded-linear mip blends.
   Current limits are in [platform validation](../../../testing/platform/platform-validation.md#implicit-cubemap-mips--2026-10-29).
+
+- [Authored sky publication](2026-10-29-authored-sky-publication.md): saved component/texture cooking and shipping-player display checks.

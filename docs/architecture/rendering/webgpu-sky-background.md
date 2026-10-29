@@ -8,6 +8,14 @@ No browser-owned scene or substitute unlit material is involved.
 
 ## Authored modes and shader identity
 
+`Samples/RenderingParity` saves a real sky component and an embedded 2×2
+RGBA16F panorama in its startup world. The Editor's ordinary graph cooker keeps
+the texture inside that graph; it does not need a separate catalog texture
+entry. The shipping player hydrates the saved component and pixels. Fixed
+camera post-processing gives independent upper/lower display references of
+RGB 70 and 157. The sample keeps its mapped foreground and animated ribbon.
+See the [authored publication record](../../work/investigations/rendering/archive/2026-10-29-authored-sky-publication.md).
+
 The cooked material catalog has five version-one semantic identities:
 
 - `SkyboxGradient`: world-Y gradient; solid color publishes the top color into

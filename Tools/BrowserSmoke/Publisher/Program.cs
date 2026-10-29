@@ -9,10 +9,19 @@ using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Diagnostics.Native;
+using XREngine.Scene.Physics;
 
 NativeDebugBackendRegistration.EnsureRegistered();
-if (args.Length != 3)
-    throw new ArgumentException("Usage: RollingBallPublisher <canonical-project.xrproj> <editor.dll> <validation-root>");
+if (args.Length is not (3 or 4))
+    throw new ArgumentException("Usage: RollingBallPublisher <canonical-project.xrproj> <editor.dll> <validation-root> [rollingball|rendering-parity]");
+
+string fixture = args.Length == 4 ? args[3] : "rollingball";
+string worldName = fixture switch
+{
+    "rollingball" => "RollingBallWorld",
+    "rendering-parity" => "RenderingParityWorld",
+    _ => throw new ArgumentException($"Unsupported publisher fixture: {fixture}"),
+};
 
 string canonicalProjectFile = Path.GetFullPath(args[0]);
 string editorDll = Path.GetFullPath(args[1]);
@@ -29,13 +38,19 @@ try
     ShaderSourceFileBackendServices.Current = new LocalShaderSourceFileBackend();
     RuntimePlatformPaths.Current = new LocalPlatformPaths(validationRoot);
     using IDisposable services = RuntimeAssetBootstrap.InstallEngineAssetServices();
-    RollingBallRuntimeRegistration.Register();
+    // Saved sky materials and pipelines need managed shader access during loading.
+    // No native renderer or physics backend is needed to cook the object graph.
+    using RendererBackendCatalog renderers = new();
+    using IDisposable rendering = RuntimeCallerThreadRenderingBootstrap.Install(
+        renderers, new PhysicsBackendCatalog(), static _ => new DefaultRenderPipeline());
+    if (fixture == "rollingball")
+        RollingBallRuntimeRegistration.Register();
 
     string projectFile = snapshot.ProjectFile;
     XRProject project = AssetManager.Deserializer.Deserialize<XRProject>(File.ReadAllText(projectFile));
     project.FilePath = projectFile;
     if (!Engine.LoadProject(project))
-        throw new InvalidOperationException("Canonical RollingBall project load failed.");
+        throw new InvalidOperationException($"Canonical {fixture} project load failed.");
     string startupFile = Path.Combine(project.AssetsDirectory!, "startup.asset");
     Engine.GameSettings = AssetManager.Deserializer.Deserialize<GameStartupSettings>(File.ReadAllText(startupFile));
 
@@ -84,13 +99,30 @@ try
         throw new InvalidDataException("The Editor activated an unsupported browser game descriptor.");
     using JsonDocument manifest = JsonDocument.Parse(File.ReadAllBytes(manifestFile));
     JsonElement catalog = manifest.RootElement;
-    if (catalog.GetProperty("startupWorld").GetString() != "/game/Worlds/RollingBallWorld.asset")
-        throw new InvalidDataException("The published startup world is not the canonical RollingBall world.");
+    if (catalog.GetProperty("startupWorld").GetString() != $"/game/Worlds/{worldName}.asset")
+        throw new InvalidDataException($"The published startup world is not the canonical {fixture} world.");
     int assets = catalog.GetProperty("assets").GetArrayLength();
     int shaders = catalog.GetProperty("shaderArtifacts").GetArrayLength();
     int passes = catalog.GetProperty("pipelineArtifacts").GetArrayLength();
     if (assets < 32 || shaders < 15 || passes < 9)
         throw new InvalidDataException($"The published game content is incomplete: {assets} assets, {shaders} shaders, {passes} pipeline passes.");
+    if (fixture == "rendering-parity")
+    {
+        bool sky = catalog.GetProperty("materialVariants").EnumerateArray().Any(entry =>
+            entry.GetProperty("semantic").GetString() == "SkyboxEquirectangular" &&
+            entry.GetProperty("semanticVersion").GetInt32() == 1 &&
+            entry.GetProperty("pass").GetString() == "background" &&
+            entry.GetProperty("vertexProfile").GetString() == "fullscreen-sky-v1" &&
+            entry.GetProperty("outputProfile").GetString() == "linear-hdr-v1");
+        bool mapped = catalog.GetProperty("materialVariants").EnumerateArray().Any(entry =>
+            entry.GetProperty("semantic").GetString() == "StandardLitTexture" &&
+            entry.GetProperty("pass").GetString() == "opaque-forward" &&
+            entry.GetProperty("vertexProfile").GetString() == "position-normal-tangent-uv-v1");
+        bool skinning = catalog.GetProperty("computeArtifacts").EnumerateArray().Any(entry =>
+            entry.GetProperty("kernel").GetString() == "packed-skinning");
+        if (!sky || !mapped || !skinning)
+            throw new InvalidDataException("The RenderingParity bundle requires authored sky, mapped surface, and packed deformation artifacts.");
+    }
 
     Console.WriteLine($"PRODUCTION_PUBLISH_PASS output={output} assets={assets} shaders={shaders} pipelinePasses={passes}");
 }

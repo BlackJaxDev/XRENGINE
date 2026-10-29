@@ -12,6 +12,15 @@ normals, UV0 and handed tangents. The authored game mode retains the marker
 `lit-textured-deformed-v1` so hydration can distinguish it from the engine's
 fallback game mode.
 
+The world also saves an equirectangular `SkyboxComponent` with an embedded 2×2
+RGBA16F texture. Its four neutral texels are 1/8, 2/8, 3/8 and 4/8, with nearest
+sampling and zero LOD clamps. The fixed camera sees the left column. It saves
+exposure 1, gamma 1 and Mobius transition 0.6, with bloom, vignette, ambient
+occlusion and depth of field disabled. The upper and lower sky therefore present
+RGB 70 and 157. Neutral RGB keeps the colored foreground checks independent.
+These explicit settings change the fixture baseline; desktop comparison must
+use this same saved world. The browser creates no replacement sky or pixels.
+
 Space pauses only the ribbon animation; R returns to its bind pose. The camera
 is fixed to keep desktop/browser captures comparable. The engine's normal play
 pause controls still suspend simulation independently.

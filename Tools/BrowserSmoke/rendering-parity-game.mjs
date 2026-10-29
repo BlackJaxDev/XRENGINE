@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { capture, captureUntil } from './canvas-capture.mjs';
+import { renderingParitySky } from './rendering-parity-sky.mjs';
 
 function assert(condition, message) { if (!condition) throw new Error(message); }
 const hasSurfaces = pixels => pixels.colorfulLeft > 100 && pixels.colorfulRight > 100;
@@ -46,6 +47,7 @@ export async function renderingParityGameCheck(browser, origin, report, config, 
             const initial = await captureUntil(page, config, `rendering-parity-${iteration}-playing`, null, hasSurfaces,
                 'BrowserSmoke.RenderingParitySurfacesMissing: both authored mapped surfaces must reach the canvas interior.');
             const result = { iteration, detail, playing: initial.pixels };
+            result.sky = await renderingParitySky(page, initial.image);
             const canvas = page.locator('#input-surface');
             await canvas.focus();
             assert(await canvas.evaluate(element => document.activeElement === element),
@@ -79,6 +81,7 @@ export async function renderingParityGameCheck(browser, origin, report, config, 
             const resized = await captureUntil(page, config, `rendering-parity-${iteration}-resized`, null, hasSurfaces,
                 'BrowserSmoke.RenderingParityResize: resized output lost an authored mapped surface.');
             result.resized = resized.pixels;
+            result.resizedSky = await renderingParitySky(page, resized.image);
             result.canvasSizes = { before: beforeSize, after: await canvas.evaluate(element => [element.width, element.height]) };
             report.renderingParityIterations.push(result);
             assertNoBrowserErrors(events);

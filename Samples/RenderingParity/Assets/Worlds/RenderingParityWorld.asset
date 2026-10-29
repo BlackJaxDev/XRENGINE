@@ -17,8 +17,111 @@ Scenes:
     Name: Rendering Inspection
     ChildNodes:
     - Components:
+      - __type: XREngine.Components.Scene.Mesh.SkyboxComponent
+        Mode: Texture
+        Projection: Equirectangular
+        AutoCycle: false
+        SyncDirectionalLightWithSun: false
+        SyncDirectionalLightWithMoon: false
+        SyncGlobalAmbientLighting: false
+        Texture:
+          __assetType: XREngine.Rendering.XRTexture2D
+          ID: 5f99c9fb-395c-4243-b1bc-23f211f7da01
+          Format: CookedBinary
+          Version: 1
+          Payload:
+            Length: 884
+            Encoding: ZstdHex
+            Bytes: 28B52FFD607402950900B24E3633704D73F0B17AAE72C52E55F4FFBA7F0624936293B465ABECCC107D225EEDEA0AEADC8D9629F883D9FDCBE0AC33A87042FD530AD3524B2DB553C324B95D69772BBB20088BBD6BB33C51B8FDCC48E8DFD425B2FE889BB70C3033EF2E57989701389D4D8D07BE05C7E37E5319331AD47CFAC2449042AB63E1DD001381851BFCE9D0E39E15E15CD63F37687D4820E012148313851111888BC3054608494A8194D52BEFCEBC3C7A4223CA8C4AE120099FD6F64AD68B83A468A1F2193BBE2B1CB445EAD54116437FA59FBE1E16691EBF33EF17B547CD310FE33808242070023354D30308715D712C64AEED2762733656BB8EC420A1D5B8F714081AE772F66A879D413DBBBD4743E6323B28C330F1A9F19B71C6FCE54CB502A6518986A434C569AB60B368552EE1AE69D9FE75A335B6F304
+        TopColor: 0.52 0.74 1
+        BottomColor: 0.05 0.06 0.08
+        Intensity: 1
+        TimeOfDay: 0.25
+        DayLengthSeconds: 240
+        CloudCoverage: 0.45
+        CloudScale: 1.4
+        CloudSpeed: 0.02
+        CloudSharpness: 1.75
+        StarIntensity: 1
+        HorizonHaze: 1
+        SunDiscSize: 0.9994
+        MoonDiscSize: 0.99965
+        HorizonAutoDisable: true
+        HorizonDisableThreshold: -0.05
+        HorizonFadeRange: 0.15
+        SunIntensity: 6
+        MoonIntensity: 0.35
+        SunGlobalAmbientScale: 0.018
+        MoonGlobalAmbientScale: 0.08
+        MinimumGlobalAmbientIntensity: 0.006
+        MinimumGlobalAmbientColor: 0.119999997 0.159999996 0.280000001
+        AnimateSunColorTemperature: true
+        SunColorTemperatureKelvin: 5800
+        SunHorizonColorTemperatureKelvin: 2200
+        SunZenithColorTemperatureKelvin: 5800
+        AnimateMoonColorTemperature: true
+        MoonColorTemperatureKelvin: 7500
+        MoonHorizonColorTemperatureKelvin: 4500
+        MoonZenithColorTemperatureKelvin: 7500
+        Name: Authored neutral HDR sky
+        ID: 5f99c9fb-395c-4243-b1bc-23f211f7da02
+      Transform:
+        ID: 5f99c9fb-395c-4243-b1bc-23f211f7da03
+      ID: 5f99c9fb-395c-4243-b1bc-23f211f7da04
+      Name: Authored HDR Sky
+    - Components:
       - &o0
         __type: XREngine.Components.CameraComponent
+        RenderPipelineSource:
+          __type: "XREngine.Rendering.DefaultRenderPipeline"
+          __assetType: "XREngine.Rendering.DefaultRenderPipeline"
+          ID: "5f99c9fb-395c-4243-b1bc-23f211f7da05"
+        PostProcessStates:
+          Pipelines:
+            5f99c9fb-395c-4243-b1bc-23f211f7da05:
+              __type: "XREngine.Rendering.PostProcessing.PipelinePostProcessState"
+              PipelineId: "5f99c9fb-395c-4243-b1bc-23f211f7da05"
+              PipelineName: "DefaultRenderPipeline"
+              Stages:
+                tonemapping:
+                  __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                  StageKey: "tonemapping"
+                  Values:
+                    Tonemapping: "Mobius"
+                    MobiusTransition: 0.6
+                colorGrading:
+                  __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                  StageKey: "colorGrading"
+                  Values:
+                    Tint: "1 1 1"
+                    ExposureMode: "Artist"
+                    AutoExposure: false
+                    Exposure: 1
+                    Contrast: 1
+                    Gamma: 1
+                    Hue: 1
+                    Saturation: 1
+                    Brightness: 1
+                bloom:
+                  __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                  StageKey: "bloom"
+                  Values:
+                    Enabled: false
+                vignette:
+                  __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                  StageKey: "vignette"
+                  Values:
+                    Enabled: false
+                ambientOcclusion:
+                  __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                  StageKey: "ambientOcclusion"
+                  Values:
+                    Enabled: false
+                depthOfField:
+                  __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                  StageKey: "depthOfField"
+                  Values:
+                    Enabled: false
         CameraParameters:
           __type: XREngine.Rendering.XRPerspectiveCameraParameters
           VerticalFieldOfView: 48

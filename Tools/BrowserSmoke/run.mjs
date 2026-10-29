@@ -1246,6 +1246,10 @@ async function publishedGameCheck(browser, origin, report, config) {
             'BrowserSmoke.ModularArtifactMissing: custom::custom-pass was not published.');
         await modularPipelineGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
     } else if (parity) {
+        assert(manifest.materialVariants?.some(entry => entry.semantic === 'SkyboxEquirectangular' &&
+            entry.semanticVersion === 1 && entry.pass === 'background' &&
+            entry.vertexProfile === 'fullscreen-sky-v1' && entry.outputProfile === 'linear-hdr-v1'),
+            'BrowserSmoke.RenderingParitySkyArtifact: the saved HDR sky requires its exact cooked variant.');
         assert(manifest.computeArtifacts?.some(entry => entry.kernel === 'packed-skinning') &&
             manifest.materialVariants?.some(entry => entry.semantic === 'StandardLitTexture' &&
                 entry.pass === 'opaque-forward' && entry.vertexProfile === 'position-normal-tangent-uv-v1'),

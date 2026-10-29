@@ -576,6 +576,30 @@ tested source. Final captures were also viewed. Broader derivative coverage,
 platform cooking, and packaged Editor publication remain open. Requirement
 counts are unchanged.
 
+### Saved sky through the project publisher — 2026-10-29
+
+RenderingParity now saves its sky component, embedded HDR panorama and fixed
+camera post-processing. The source-checkout Editor builder publishes the
+canonical graph into the shipping player. Native inspection of the final
+payload confirms both persistent IDs, all 32 pixel bytes and the sampling
+settings. The software player passes 16 independent 5×5 display regions across
+two starts and two resizes, with RGB 70/157 references and two-byte tolerance.
+The mapped surfaces, animation, pause/reset/resume, focus and resize checks
+also pass. Initial and resized captures were viewed.
+
+The [authored sky record](../../investigations/rendering/archive/2026-10-29-authored-sky-publication.md)
+records the exact payload hash, source guards and host-composition failures.
+RenderingParity publishes 365 assets, 181 shader artifacts and 84 pipeline
+artifacts from the full canonical catalog. This proves the embedded saved
+component route, not a separate texture dependency, all panorama directions,
+resource teardown, packaged Editor CLI/UI, physical GPUs or desktop parity.
+The fixture's explicit post-processing changes its comparison baseline.
+The original three-argument RollingBall publish and both shipping-player
+contexts also pass with the shared tool host. All 24 build/publication gates
+pass without compiler warnings or errors. Full software regression passes 24
+selected checks, with three optional skips and 356 sky cases. Both game
+packages pass separately. Requirement counts remain unchanged.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.
