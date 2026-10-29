@@ -366,6 +366,10 @@ function Materialize-LicenseLink([string]$licLink, [string]$entityName, [string]
 function Format-LicenseCell([string]$licenseText, [string]$licenseLink) {
     $lt = if ($licenseText) { $licenseText } else { '(unknown)' }
     if ($licenseLink) {
+        # A Markdown link target cannot contain spaces or parentheses. Encode them in local license paths.
+        if (-not (Is-AbsoluteHttpUrl -s $licenseLink)) {
+            $licenseLink = $licenseLink.Replace(' ', '%20').Replace('(', '%28').Replace(')', '%29')
+        }
         return ('[{0}]({1})' -f $lt, $licenseLink)
     }
     return $lt
@@ -1280,6 +1284,20 @@ try {
                 License = '(unknown)'
             })
         }
+    }
+
+    $meshoptLockPath = Join-Path $root 'Tools\Dependencies\Meshoptimizer.lock.json'
+    if (Test-Path -LiteralPath $meshoptLockPath) {
+        $meshoptLock = Get-Content -Raw -LiteralPath $meshoptLockPath | ConvertFrom-Json
+        $meshoptLicensePath = Join-Path $root 'Build\Dependencies\Meshoptimizer\source\LICENSE.md'
+        $nested.Add([pscustomobject]@{
+            Name = "meshoptimizer $($meshoptLock.tag)"
+            UsedBy = 'XREngine.Runtime.MeshProcessing.Meshoptimizer'
+            Owner = 'Arseny Kapoulkine'
+            Url = "$($meshoptLock.repository)/tree/$($meshoptLock.tag)"
+            License = $meshoptLock.license
+            LicenseSourcePath = if (Test-Path -LiteralPath $meshoptLicensePath) { $meshoptLicensePath } else { $null }
+        })
     }
 
     $fastGltfVendorDir = Join-Path $root 'Build\Native\FastGltfBridge\vendor\fastgltf'

@@ -50,6 +50,7 @@
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Fbx\XREngine.Fbx.csproj" />
+    <ProjectReference Include="..\XREngine.GaussianBaking\XREngine.GaussianBaking.csproj" />
     <ProjectReference Include="..\XREngine.Gltf\XREngine.Gltf.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
     <ProjectReference Include="..\XREngine.Modeling\XREngine.Modeling.csproj" />

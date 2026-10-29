@@ -33,6 +33,7 @@ Notes:
 | JoltPhysicsSharp 2.22.0 (browser source) | Jolt browser managed binding | Amer Koleci and Contributors | [MIT](licenses/nested/JoltPhysicsSharp%202.22.0%20%28browser%20source%29-MIT.txt) | https://github.com/amerkoleci/JoltPhysicsSharp/tree/77a5be2dd30d587c1981dfcaf15851f18041b39c |
 | KaTeX v0.18.4 (including fonts and mhchem) | LocalAgentBroker.Tray | Khan Academy and contributors | [MIT AND Apache-2.0](licenses/nested/KaTeX v0.18.4 (including fonts and mhchem)-MIT AND Apache-2.0.txt) | https://github.com/KaTeX/KaTeX/tree/v0.18.4 |
 | markdown-it v15.0.0 (browser bundle) | LocalAgentBroker.Tray | Vitaly Puzrin, Alex Kocharin and contributors | [MIT AND BSD-2-Clause](licenses/nested/markdown-it v15.0.0 (browser bundle)-MIT AND BSD-2-Clause.txt) | https://github.com/markdown-it/markdown-it/tree/15.0.0 |
+| meshoptimizer v1.3 | XREngine.Runtime.MeshProcessing.Meshoptimizer | Arseny Kapoulkine | [MIT](licenses/nested/meshoptimizer%20v1.3-MIT.md) | https://github.com/zeux/meshoptimizer/tree/v1.3 |
 | Playwright 1.63.0 (browser validation tooling) | Tools/BrowserSmoke; development and CI only | Microsoft Corporation | [Apache-2.0](licenses/Playwright-1.63.0.txt) | https://github.com/microsoft/playwright/tree/v1.63.0 |
 | Slang 2026.8 (shader compiler tooling) | Tools/ShaderCooker; cook time only | Slang project contributors | [Apache-2.0 WITH LLVM-exception](licenses/Slang-2026.8.txt) | https://github.com/shader-slang/slang/tree/v2026.8 |
 | simdjson v3.12.3 | FastGltfBridge | simdjson authors | [Apache-2.0](licenses/nested/simdjson v3.12.3-Apache-2.0.txt) | https://github.com/simdjson/simdjson/tree/v3.12.3 |
@@ -57,7 +58,6 @@ Notes:
 | MagicPhysX | 1.0.0 | Cysharp | [MIT](licenses/nuget/MagicPhysX-1.0.0-MIT.txt) | XREngine.Runtime.Physics.PhysX.csproj |
 | MathNet.Numerics | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Editor.csproj |
 | MemoryPack | 1.21.4 | Cysharp | [MIT](licenses/nuget/MemoryPack-1.21.4-MIT.txt) | XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.Host.csproj, XREngine.Runtime.Rendering.csproj, XREngine.Server.csproj |
-| Meshoptimizer.NET | 1.0.7 | BoyBaykiller | [MIT](licenses/nuget/Meshoptimizer.NET-1.0.7-MIT.txt) | XREngine.Runtime.MeshProcessing.Meshoptimizer.csproj |
 | MIConvexHull | 1.1.19.1019 | DesignEngrLab | [MIT](licenses/nuget/MIConvexHull-1.1.19.1019-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | Microsoft.Build | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build-18.8.2-MIT.txt) | XREngine.Editor.csproj |
 | Microsoft.Build.Framework | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build.Framework-18.8.2-MIT.txt) | XREngine.Editor.csproj |

@@ -189,6 +189,7 @@ public static class MeshOptimizerIntegration
             settings);
 
         int finalMeshletCount = (int)meshletCount;
+        PadMeshletTrianglesToFourBytes(meshoptMeshlets, meshletTriangles, finalMeshletCount);
         if (settings.OptimizeMeshlets)
         {
             for (int i = 0; i < finalMeshletCount; i++)
@@ -204,9 +205,8 @@ public static class MeshOptimizerIntegration
 
         MeshOptimizerMeshlet last = meshoptMeshlets[finalMeshletCount - 1];
         int vertexReferenceCount = (int)(last.VertexOffset + last.VertexCount);
-        // meshoptimizer's per-meshlet spans are tightly sized. The persisted GPU stream,
-        // however, retains the final four-byte padding required by descriptor offsets and
-        // the shader's byte-addressed loads.
+        // The persisted GPU stream keeps every meshlet triangle offset on a four-byte boundary,
+        // as descriptor offsets and the shader's byte-addressed loads require.
         int triangleByteCount = checked((int)AlignToFour((ulong)last.TriangleOffset + (last.TriangleCount * 3UL)));
 
         Array.Resize(ref meshletVertices, vertexReferenceCount);
@@ -355,7 +355,6 @@ public static class MeshOptimizerIntegration
             MeshOptimizerMeshlet meshlet = meshlets[(int)meshletIndex];
             ulong vertexEnd = checked((ulong)meshlet.VertexOffset + meshlet.VertexCount);
             ulong triangleEnd = checked((ulong)meshlet.TriangleOffset + ((ulong)meshlet.TriangleCount * 3UL));
-            ulong paddedTriangleEnd = AlignToFour(triangleEnd);
             if (meshlet.VertexCount is 0u || meshlet.VertexCount > settings.MaxVertices ||
                 meshlet.TriangleCount is 0u || meshlet.TriangleCount > settings.MaxTriangles)
             {
@@ -363,14 +362,13 @@ public static class MeshOptimizerIntegration
                     $"meshoptimizer returned invalid meshlet {meshletIndex} counts: vertices={meshlet.VertexCount}/{settings.MaxVertices}, triangles={meshlet.TriangleCount}/{settings.MaxTriangles}.");
             }
 
-            if (vertexEnd > (ulong)vertexReferences.Length || paddedTriangleEnd > (ulong)triangleReferences.Length)
+            if (vertexEnd > (ulong)vertexReferences.Length || triangleEnd > (ulong)triangleReferences.Length)
             {
                 throw new InvalidDataException(
-                    $"meshoptimizer returned out-of-range meshlet {meshletIndex}: vertexEnd={vertexEnd}/{vertexReferences.Length}, paddedTriangleEnd={paddedTriangleEnd}/{triangleReferences.Length}.");
+                    $"meshoptimizer returned out-of-range meshlet {meshletIndex}: vertexEnd={vertexEnd}/{vertexReferences.Length}, triangleEnd={triangleEnd}/{triangleReferences.Length}.");
             }
 
-            if ((meshlet.TriangleOffset & 3u) != 0u ||
-                (ulong)meshlet.VertexOffset < priorVertexEnd ||
+            if ((ulong)meshlet.VertexOffset < priorVertexEnd ||
                 (ulong)meshlet.TriangleOffset < priorTriangleEnd)
                 throw new InvalidDataException($"meshoptimizer returned overlapping or non-monotonic ranges at meshlet {meshletIndex}.");
 
@@ -386,7 +384,46 @@ public static class MeshOptimizerIntegration
                     throw new InvalidDataException($"Meshlet {meshletIndex} local triangle index {triangleReferences[triangleOffset + triangleByteIndex]} exceeds vertex count {meshlet.VertexCount}.");
 
             priorVertexEnd = vertexEnd;
-            priorTriangleEnd = paddedTriangleEnd;
+            priorTriangleEnd = triangleEnd;
+        }
+    }
+
+    /// <summary>
+    /// Moves each meshlet triangle span to a four-byte aligned offset.
+    /// Newer meshoptimizer releases write the spans without padding.
+    /// </summary>
+    private static void PadMeshletTrianglesToFourBytes(MeshOptimizerMeshlet[] meshlets, byte[] triangles, int meshletCount)
+    {
+        ulong[] paddedOffsets = new ulong[meshletCount];
+        ulong cursor = 0UL;
+        bool alreadyPadded = true;
+        for (int i = 0; i < meshletCount; i++)
+        {
+            cursor = AlignToFour(cursor);
+            paddedOffsets[i] = cursor;
+            alreadyPadded &= cursor == meshlets[i].TriangleOffset;
+            cursor += (ulong)meshlets[i].TriangleCount * 3UL;
+        }
+
+        if (alreadyPadded)
+            return;
+
+        if (AlignToFour(cursor) > (ulong)triangles.Length)
+            throw new InvalidDataException($"Padded meshlet triangle data needs {AlignToFour(cursor)} bytes but only {triangles.Length} are available.");
+
+        // Padded offsets are never lower than the tight offsets, so a reverse copy cannot overwrite unread data.
+        for (int i = meshletCount - 1; i >= 0; i--)
+        {
+            int byteCount = GetTriangleByteCount(meshlets[i].TriangleCount);
+            int source = (int)meshlets[i].TriangleOffset;
+            int destination = (int)paddedOffsets[i];
+            Buffer.BlockCopy(triangles, source, triangles, destination, byteCount);
+
+            int gapStart = i == 0 ? 0 : (int)(paddedOffsets[i - 1] + (ulong)meshlets[i - 1].TriangleCount * 3UL);
+            if (destination > gapStart)
+                Array.Clear(triangles, gapStart, destination - gapStart);
+
+            meshlets[i].TriangleOffset = (uint)destination;
         }
     }
 

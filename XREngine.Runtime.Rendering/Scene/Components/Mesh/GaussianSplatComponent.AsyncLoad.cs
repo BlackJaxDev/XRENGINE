@@ -1,7 +1,5 @@
 using XREngine.Data;
 using XREngine.Execution;
-using XREngine.Rendering;
-using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Gaussian;
 
 namespace XREngine.Components.Scene.Mesh;
@@ -74,7 +72,6 @@ public partial class GaussianSplatComponent
             long externalCloudSerial = Volatile.Read(ref _externalCloudAssignmentSerial);
             try
             {
-                _deferredCloudRequest = request;
                 _adoptingCloudRequest = request;
                 try { Cloud = candidate; }
                 finally { _adoptingCloudRequest = null; }
@@ -90,14 +87,10 @@ public partial class GaussianSplatComponent
                 if (!ReferenceEquals(_pendingCloudLoad, request) || !ReferenceEquals(_cloud, candidate) ||
                     request.Read.CancellationToken.IsCancellationRequested)
                 {
+                    // A notification may have changed SourcePath while publishing. Restore only
+                    // state that this request still owns.
                     if (ReferenceEquals(_cloud, candidate))
-                    {
-                        // A notification may have changed SourcePath or Model while
-                        // publishing. Restore only state still owned by this request.
-                        SetField(ref _cloud, priorCloud);
-                        if (ReferenceEquals(_cloud, priorCloud))
-                            RestorePriorModelAfterRejectedLoad(request);
-                    }
+                        RestoreCloud(priorCloud);
                     return;
                 }
                 request.Adopted = true;
@@ -114,17 +107,16 @@ public partial class GaussianSplatComponent
                 {
                     try
                     {
-                        SetField(ref _cloud, priorCloud);
+                        RestoreCloud(priorCloud);
                         if (ReferenceEquals(_cloud, priorCloud))
                         {
                             _ownedCloud = priorOwned;
                             _loadedCloudPath = priorPath;
-                            RestorePriorModelAfterRejectedLoad(request);
                         }
                     }
                     catch (Exception rollbackError)
                     {
-                        System.Diagnostics.Trace.TraceError("Failed to restore a Gaussian model after load adoption error: {0}", rollbackError);
+                        System.Diagnostics.Trace.TraceError("Failed to restore a Gaussian cloud after load adoption error: {0}", rollbackError);
                     }
                 }
                 throw;
@@ -137,12 +129,6 @@ public partial class GaussianSplatComponent
         }
         finally
         {
-            if (ReferenceEquals(_deferredCloudRequest, request))
-                _deferredCloudRequest = null;
-            if (!ReferenceEquals(Model, request.PriorModelBinding) &&
-                !ReferenceEquals(_ownedGeneratedModel, request.PriorGeneratedModel))
-                RetireGeneratedModel(request.PriorGeneratedModel, request.PriorGeneratedSubMesh,
-                    request.PriorGeneratedMesh);
             if (!request.BorrowedByExternal && request.Cloud is { } candidate && ReferenceEquals(_cloud, candidate))
             {
                 GaussianSplatCloud? previousOwned = _ownedCloud;
@@ -157,69 +143,18 @@ public partial class GaussianSplatComponent
         }
     }
 
-    private void RestorePriorModelAfterRejectedLoad(CloudLoadRequest request)
+    /// <summary>Puts back the cloud that was current before a rejected load, and its GPU upload.</summary>
+    private void RestoreCloud(GaussianSplatCloud? priorCloud)
     {
-        GeneratedOwnership prior = new(request.PriorGeneratedModel, request.PriorGeneratedSubMesh,
-            request.PriorGeneratedMesh, request.PriorInstanceCount);
-        GeneratedOwnership candidate = CurrentGeneratedOwnership;
-        int candidateCount = _activeInstanceCount;
-        if (!candidate.SameAssets(prior) && ReferenceEquals(Model, candidate.Model))
-        {
-            _activeInstanceCount = request.PriorInstanceCount;
-            try { PublishGeneratedModel(request.PriorModelBinding); }
-            finally { SettleRejectedModelRollback(request.PriorModelBinding, prior, candidate, candidateCount); }
-        }
-        else
-            SettleRejectedModelRollback(request.PriorModelBinding, prior, candidate, candidateCount);
-    }
-
-    private void SettleRejectedModelRollback(Model? priorBinding, GeneratedOwnership prior,
-        GeneratedOwnership candidate, int candidateCount)
-    {
-        GeneratedOwnership installed = CurrentGeneratedOwnership;
-        if (ReferenceEquals(Model, priorBinding))
-        {
-            if (ReferenceEquals(priorBinding, prior.Model))
-            {
-                CurrentGeneratedOwnership = prior;
-                _activeInstanceCount = prior.InstanceCount;
-            }
-            else
-            {
-                CurrentGeneratedOwnership = default;
-                _activeInstanceCount = 0;
-            }
-        }
-        else if (!candidate.IsEmpty && ReferenceEquals(Model, candidate.Model))
-        {
-            CurrentGeneratedOwnership = candidate;
-            _activeInstanceCount = candidateCount;
-        }
-        else if (installed.IsEmpty || !ReferenceEquals(Model, installed.Model))
-        {
-            CurrentGeneratedOwnership = default;
-            _activeInstanceCount = 0;
-        }
-
-        QueueGeneratedIfUnbound(prior);
-        if (!candidate.SameAssets(prior))
-            QueueGeneratedIfUnbound(candidate);
-        if (!installed.SameAssets(prior) && !installed.SameAssets(candidate))
-            QueueGeneratedIfUnbound(installed);
-        FlushGeneratedRetirements();
-    }
-
-    private void QueueGeneratedIfUnbound(GeneratedOwnership ownership)
-    {
-        if (!ownership.IsEmpty && !ReferenceEquals(Model, ownership.Model))
-            QueueGeneratedRetirement(ownership.Model, ownership.SubMesh, ownership.Mesh);
+        if (SetField(ref _cloud, priorCloud, nameof(Cloud)) && ReferenceEquals(_cloud, priorCloud))
+            QueueCloudUpload(priorCloud);
     }
 
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
         if (!_cloudLoadTeardown && !string.IsNullOrWhiteSpace(_sourcePath) &&
-            !_externalModelBinding && !_externalCloudBinding &&
+            !_externalCloudBinding &&
             !string.Equals(_loadedCloudPath, _sourcePath, StringComparison.Ordinal) &&
             _pendingCloudLoad is null)
             LoadFromFile(_sourcePath);
@@ -235,24 +170,16 @@ public partial class GaussianSplatComponent
     {
         _cloudLoadTeardown = true;
         CancelPendingCloudLoad();
+        ReleaseGpuResources();
         if (_ownedCloud is { } owned)
         {
             _ownedCloud = null;
             RetireOwnedCloud(owned);
         }
-        // The cloud's decoded records are independent of already built meshes.
-        // Base retirement may fail; retain geometry until its wrappers retire.
         RetireOwnedCloud(null);
         base.OnDestroying();
-        Meshes.PostAnythingAdded -= MeshAdded;
-        Meshes.PostAnythingRemoved -= MeshRemoved;
-        PropertyChanged -= ModelBindingChanged;
-        RetireGeneratedModel(_ownedGeneratedModel, _ownedGeneratedSubMesh, _ownedGeneratedMesh);
-        _ownedGeneratedModel = null;
-        _ownedGeneratedSubMesh = null;
-        _ownedGeneratedMesh = null;
-        if (_retiredOwnedClouds.Count != 0 || _retiredGeneratedModels.Count != 0)
-            throw new InvalidOperationException("Gaussian assets could not be fully retired; destruction can be retried.");
+        if (_retiredOwnedClouds.Count != 0)
+            throw new InvalidOperationException("Gaussian clouds could not be fully retired; destruction can be retried.");
     }
 
     private void RetireOwnedCloud(GaussianSplatCloud? cloud)
@@ -306,21 +233,6 @@ public partial class GaussianSplatComponent
         internal Exception? Error { get; private set; }
         internal bool Adopted { get; set; }
         internal bool BorrowedByExternal { get; set; }
-        internal Model? PriorModelBinding { get; private set; }
-        internal Model? PriorGeneratedModel { get; private set; }
-        internal SubMesh? PriorGeneratedSubMesh { get; private set; }
-        internal XRMesh? PriorGeneratedMesh { get; private set; }
-        internal int PriorInstanceCount { get; private set; }
-
-        internal void CapturePriorModel(Model? binding, Model? generated, SubMesh? subMesh, XRMesh? mesh,
-            int instanceCount)
-        {
-            PriorModelBinding = binding;
-            PriorGeneratedModel = generated;
-            PriorGeneratedSubMesh = subMesh;
-            PriorGeneratedMesh = mesh;
-            PriorInstanceCount = instanceCount;
-        }
 
         internal void Cancel()
         {
@@ -393,11 +305,6 @@ public partial class GaussianSplatComponent
                 _cancellation.Dispose();
                 Cloud = null;
                 Error = null;
-                PriorModelBinding = null;
-                PriorGeneratedModel = null;
-                PriorGeneratedSubMesh = null;
-                PriorGeneratedMesh = null;
-                PriorInstanceCount = 0;
                 _dispatch = default;
                 if (_owner.TryGetTarget(out GaussianSplatComponent? owner))
                     Interlocked.CompareExchange(ref owner._pendingCloudLoad, null, this);
