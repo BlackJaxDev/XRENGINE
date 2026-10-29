@@ -44,7 +44,7 @@ public sealed class XRTextureVulkanParityContractTests
     public void VkImageBackedTexture_SeparatesGeneratedUploadedLayoutAndDescriptorReadiness()
     {
         string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string source = ReadImageBackedTextureSource();
 
         source.ShouldContain("public override bool IsGenerated");
         source.ShouldContain("return _image.Handle != 0 || _view.Handle != 0 || _sampler.Handle != 0;");
@@ -64,7 +64,7 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VkImageBackedTexture_SamplerChangesRecreateSamplerAndDirtyDescriptors()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string source = ReadImageBackedTextureSource();
         string textureArraySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2DArray.cs");
 
         textureArraySource.ShouldContain("public float LodBias");
@@ -86,7 +86,7 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VkImageBackedTexture_TracksRectangleResizeAndChildArrayTextureChanges()
     {
-        string vkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string vkSource = ReadImageBackedTextureSource();
         string rectangleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/Rectangle/XRTextureRectangle.cs");
 
         rectangleSource.ShouldContain("public event Action? Resized;");
@@ -120,13 +120,14 @@ public sealed class XRTextureVulkanParityContractTests
     public void VkTexturePushData_ExposesOpenGlCompatiblePreAndPostCallbacks()
     {
         string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
-        string imageSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string callbackSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VulkanPrePushDataCallback.cs");
+        string imageSource = ReadImageBackedTextureSource();
         string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureBuffer.cs");
         string viewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
 
-        baseSource.ShouldContain("public class VulkanPrePushDataCallback");
-        baseSource.ShouldContain("public bool ShouldPush { get; set; } = true;");
-        baseSource.ShouldContain("public bool AllowPostPushCallback { get; set; } = true;");
+        callbackSource.ShouldContain("internal sealed class VulkanPrePushDataCallback");
+        callbackSource.ShouldContain("public bool ShouldPush { get; set; } = true;");
+        callbackSource.ShouldContain("public bool AllowPostPushCallback { get; set; } = true;");
         baseSource.ShouldContain("public XREvent<VulkanPrePushDataCallback>? PrePushData;");
         baseSource.ShouldContain("public XREvent<VkTexture<T>>? PostPushData;");
         baseSource.ShouldContain("protected virtual void OnPrePushData(out bool shouldPush, out bool allowPostPushCallback)");
@@ -146,7 +147,7 @@ public sealed class XRTextureVulkanParityContractTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
 
-        source.ShouldContain(": VkTexture<XRTextureViewBase>(api, data)");
+        source.ShouldContain(": VkTexture<XRTextureViewBase>(backendContext, owner, data)");
         source.ShouldContain("protected override void LinkTextureData()");
         source.ShouldContain("SubscribeViewedTextureEvents(Data.GetViewedTexture());");
         source.ShouldContain("texture.PropertyChanged += OnViewedTexturePropertyChanged;");
@@ -161,7 +162,7 @@ public sealed class XRTextureVulkanParityContractTests
     public void VulkanTexturesExposeNativeReadinessUsageResidencyAndViewDiagnostics()
     {
         string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
-        string imageSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string imageSource = ReadImageBackedTextureSource();
         string texture2DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture2D.cs");
         string viewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
         string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureBuffer.cs");
@@ -178,7 +179,7 @@ public sealed class XRTextureVulkanParityContractTests
         imageSource.ShouldContain("Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, ResolvedFormat, out FormatProperties props);");
         imageSource.ShouldContain("FormatFeatureFlags.SampledImageFilterLinearBit");
         imageSource.ShouldContain("protected void GenerateMipmapsWithBlit()");
-        imageSource.ShouldContain("using var scope = Renderer.NewCommandScope();");
+        imageSource.ShouldContain("ResourceCommandPort.GenerateMipmaps(");
         imageSource.ShouldContain("SrcQueueFamilyIndex = Vk.QueueFamilyIgnored");
         imageSource.ShouldContain("DstQueueFamilyIndex = Vk.QueueFamilyIgnored");
         imageSource.ShouldContain("IVkImageDescriptorSource.GetDepthOnlyDescriptorView()");
@@ -198,6 +199,14 @@ public sealed class XRTextureVulkanParityContractTests
         bufferSource.ShouldContain("DescriptorBufferView");
         bufferSource.ShouldContain("DescriptorBufferFormat");
     }
+
+    /// <summary>
+    /// Reads every partial file of <c>VkImageBackedTexture</c>. The type is split
+    /// into focused partial files, so a contract can be in any one of them.
+    /// </summary>
+    private static string ReadImageBackedTextureSource()
+        => SourceContractWorkspace.ReadPartialType(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
 
     private static string ReadWorkspaceFile(string relativePath)
         => SourceContractWorkspace.ReadFile(relativePath);

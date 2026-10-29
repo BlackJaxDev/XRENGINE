@@ -2,7 +2,7 @@
 
 This guide tells you how to isolate Vulkan rendering failures. It lists the diagnostic environment variables, a black-frame triage procedure, GPU capture recipes, the pipeline prewarm workflow, and the lifecycle evidence collector.
 
-Architecture: [Vulkan Renderer](../../architecture/rendering/vulkan-renderer.md), [Vulkan Pipeline Compilation](../../architecture/rendering/vulkan-pipeline-compilation.md). Validation checks: [Vulkan Core Validation](../../work/testing/rendering/vulkan-core-validation.md).
+Architecture: [Vulkan Renderer](../../architecture/rendering/vulkan-renderer.md), [Vulkan Pipeline Compilation](../../architecture/rendering/vulkan-pipeline-compilation.md).
 
 The constants for all variables are in `XREngine.Data/Environment/XREngineEnvironmentVariables.cs`. Several variables also seed an editor preference (`EditorPreferences`) and a `RenderDiagnosticsFlags` value. The environment variable sets the start value for the process.
 

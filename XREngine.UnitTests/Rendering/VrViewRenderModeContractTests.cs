@@ -960,7 +960,9 @@ public sealed class VrViewRenderModeContractTests
         openXr.ShouldNotContain("using OpenXR per-eye swapchain compatibility path");
         openXr.ShouldContain("Strict SinglePassStereo render failed");
         openXr.ShouldContain("requestSequentialFallback = permitSequentialFallback");
-        openXr.ShouldContain("stereoViewport.RenderStereo");
+        // True stereo renders one captured backend-ready frame package for both eyes.
+        openXr.ShouldContain("stereoViewport.TryCaptureRenderingBackendReadyFramePackageAuthority(");
+        openXr.ShouldContain("stereoViewport.TryRenderOpenXrStereoFramePackage(");
         openXr.ShouldContain("stereoViewport.MeshRenderCommandsOverride = null");
         openXr.ShouldNotContain("stereoViewport.MeshRenderCommandsOverride = sharedMeshCommands");
         openXr.ShouldContain("RendersExternalSwapchainTarget: false");
@@ -999,8 +1001,13 @@ public sealed class VrViewRenderModeContractTests
         openXrFoveation.ShouldContain("BuildOpenXrFoveationBackendCapabilities");
         openXrFoveation.ShouldContain("CreateOpenXrEyeFoveationContext");
         openXrFoveation.ShouldContain("BuildOpenXrFoveationResourceKey");
-        openXr.ShouldContain("Foveation: CreateOpenXrEyeFoveationContext(0)");
-        openXr.ShouldContain("Foveation: CreateOpenXrEyeFoveationContext(1)");
+        // Each direct eye request carries the foveation context of its own view.
+        string openXrEyeRequest = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.EyeFrameOpEmission.cs");
+        openXrEyeRequest.ShouldContain("OpenXrViewIndex: viewIndex,");
+        openXrEyeRequest.ShouldContain("Foveation: CreateOpenXrEyeFoveationContext(viewIndex),");
+        openXr.ShouldContain("extent,\n                    0,\n                    leftImageIndex,");
+        openXr.ShouldContain("extent,\n                    1,\n                    rightImageIndex,");
         smoke.ShouldContain("FoveationEffectiveMode");
         smoke.ShouldContain("ViewRenderModeEffective");
         smoke.ShouldContain("ViewRenderImplementationPath");

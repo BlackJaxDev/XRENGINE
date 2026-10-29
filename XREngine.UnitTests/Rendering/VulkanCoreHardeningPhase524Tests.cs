@@ -48,12 +48,10 @@ public sealed class VulkanCoreHardeningPhase524Tests
     [Test]
     public void DeferredComputeDispatchCapturesImmutableBufferGenerationsWithoutExtraSnapshotMaps()
     {
-        string snapshot = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/ComputeDispatchSnapshot.cs");
-        string binding = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanComputeBufferBinding.cs");
-        string program = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string snapshot = ReadWorkspaceFile(VulkanRoot + "Commands/FrameOps/ComputeDispatchSnapshot.cs");
+        string binding = ReadWorkspaceFile(VulkanRoot + "Commands/FrameOps/VulkanComputeBufferBinding.cs");
+        string program = SourceContractWorkspace.ReadPartialType(
+            VulkanRoot + "BackendObjects/Programs/VkRenderProgram.cs");
 
         snapshot.ShouldContain("Dictionary<uint, VulkanComputeBufferBinding> Buffers");
         snapshot.ShouldContain("Dictionary<string, VulkanComputeBufferBinding> BuffersByName");
@@ -70,7 +68,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void VulkanIndirectGeometryUsesRobustAccessAndRejectsInvalidAtlasIndices()
     {
         string logicalDevice = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+            VulkanRoot + "Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs");
         string atlas = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AtlasManagement.cs");
 
@@ -83,16 +81,20 @@ public sealed class VulkanCoreHardeningPhase524Tests
     [Test]
     public void RecordingUsesCapacityBackedCommandLocalDependencyAndLayoutStorage()
     {
-        string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+        string batch = ReadWorkspaceFile(TrackingBatchPath);
+        string tracking = ReadWorkspaceFile(TrackingBatchServicesPath);
+        string coordination = ReadWorkspaceFile(ResourceCoordinationPath);
 
-        source.ShouldContain("HashSet<VulkanResourceLifetimeKey> Dependencies = new(64)");
-        source.ShouldContain("List<VulkanImageAccessRangeDelta> ImageAccessDeltas = new(32)");
-        source.ShouldContain("VulkanCommandBufferImageAccessIndex LatestImageAccessStates = new(32)");
-        source.ShouldContain("TryRecordCommandBufferDependency");
-        source.ShouldContain("TryRecordImageAccessDelta");
-        source.ShouldContain("FlushCommandBufferTrackingBatch");
-        source.ShouldNotContain("for (int i = batch.ImageAccessDeltas.Count - 1;");
+        batch.ShouldContain("HashSet<VulkanResourceLifetimeKey> Dependencies = new(64)");
+        batch.ShouldContain("List<VulkanImageAccessRangeDelta> ImageAccessDeltas = new(32)");
+        batch.ShouldContain("VulkanCommandBufferImageAccessIndex LatestImageAccessStates = new(32)");
+        coordination.ShouldContain("internal void TrackCommandBufferResource(");
+        coordination.ShouldContain("batch.RecordDependency(resourceKey);");
+        tracking.ShouldContain("private bool TryRecordImageAccessDelta(");
+        tracking.ShouldContain("batch.RecordImageAccess(new VulkanImageAccessRangeDelta(image.Handle, range, resolved));");
+        tracking.ShouldContain("private void FlushCommandBufferTrackingBatch(CommandBuffer commandBuffer)");
+        batch.ShouldNotContain("for (int i = batch.ImageAccessDeltas.Count - 1;");
+        tracking.ShouldNotContain("for (int i = batch.ImageAccessDeltas.Count - 1;");
     }
 
     [Test]
@@ -200,11 +202,12 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void FramebufferRecordingReusesAttachmentAndLayoutScratchStorage()
     {
         string frameBuffer = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
-        string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            VulkanRoot + "BackendObjects/Framebuffers/VkFrameBuffer.cs");
         string scratch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecordingScratch.cs");
+            VulkanRoot + "Commands/CommandBuffers/Recording/Scratch/VulkanRenderer.CommandBufferRecordingScratch.cs");
+        string recording = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "GetFboAttachmentLayoutScratch(",
+            "FboLayoutTracking.Clear()");
 
         frameBuffer.ShouldContain("AttachmentBuildInfo[] _attachmentBuildScratch = []");
         frameBuffer.ShouldContain("_attachmentBuildScratch.AsSpan(0, colorAttachmentCount)");
@@ -218,127 +221,165 @@ public sealed class VulkanCoreHardeningPhase524Tests
         frameBuffer.ShouldNotContain("string slot = usage.ResourceName[prefix.Length..]");
 
         scratch.ShouldContain("Dictionary<XRFrameBuffer, FboAttachmentLayoutScratch>");
+        scratch.ShouldContain("Dictionary<XRFrameBuffer, ImageLayout[]> FboLayoutTracking");
         recording.ShouldContain("GetFboAttachmentLayoutScratch(fbo, count)");
         recording.ShouldContain("recordingScratch.FboAttachmentLayouts.TryGetValue");
-        recording.ShouldContain("fboLayoutTracking.Clear()");
-        recording.ShouldContain("VkFrameBuffer.WriteFinalLayouts(activeFboAttachmentSignature, finalLayouts)");
+        recording.ShouldContain("recordingState.FboLayoutTracking = recordingState.RecordingScratch.FboLayoutTracking;");
+        recording.ShouldContain("recordingState.FboLayoutTracking.Clear()");
+        recording.ShouldContain("VkFrameBuffer.WriteFinalLayouts(recordingState.RenderScope.AttachmentSignature, finalLayouts)");
         recording.ShouldNotContain("ImageLayout[] layouts = new ImageLayout[count]");
     }
+
     [Test]
     public void HotDependencyAndBarrierPathsAvoidGlobalLocks()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string layouts = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string coordination = ReadWorkspaceFile(ResourceCoordinationPath);
+        string encoder = ReadWorkspaceFile(VulkanRoot + "Commands/Authority/VulkanTrackedCommandEncoder.cs");
+        string barriers = ReadWorkspaceFile(VulkanRoot + "Commands/Authority/VulkanCommandRuntime.BarrierServices.cs");
 
-        int dependencyStart = lifetime.IndexOf("private void TrackVulkanCommandBufferResource(", StringComparison.Ordinal);
-        int dependencyEnd = lifetime.IndexOf("private void TrackVulkanCommandBufferResource_NoLock(", dependencyStart, StringComparison.Ordinal);
-        string dependencyMethod = lifetime[dependencyStart..dependencyEnd];
-        dependencyMethod.ShouldContain("TryRecordCommandBufferDependency");
-        dependencyMethod.IndexOf("TryRecordCommandBufferDependency", StringComparison.Ordinal)
-            .ShouldBeLessThan(dependencyMethod.IndexOf("lock (_vulkanResourceLifetimeLock)", StringComparison.Ordinal));
+        // The dependency fast path records into the command-local batch. Only a
+        // generation race with retirement takes the shared lifetime path.
+        string dependencyMethod = Slice(
+            coordination,
+            "internal void TrackCommandBufferResource(",
+            "private void LinkNativeCommandArtifactDependency(");
+        dependencyMethod.ShouldContain("batch.RecordDependency(resourceKey);");
+        dependencyMethod.IndexOf("batch.RecordDependency(resourceKey);", StringComparison.Ordinal)
+            .ShouldBeLessThan(dependencyMethod.IndexOf("PublishCommandBufferDependencyAfterGenerationRace(", StringComparison.Ordinal));
+        dependencyMethod.ShouldNotContain("Tracker.SyncRoot");
 
-        int layoutStart = layouts.IndexOf("private void RecordImageAccess(", StringComparison.Ordinal);
-        int layoutEnd = layouts.IndexOf("private bool FlushCommandBufferImageAccessBatch(", layoutStart, StringComparison.Ordinal);
-        string layoutMethod = layouts[layoutStart..layoutEnd];
-        layoutMethod.ShouldContain("TryRecordImageAccessDelta");
+        string layoutMethod = Slice(
+            barriers,
+            "private void RecordImageAccess(",
+            "private static VulkanImageAccessState ResolveCommandImageAccessState(");
+        layoutMethod.ShouldContain("PrimaryCommandEncoder.RecordImageAccess(commandBuffer, image, in range, in next);");
+        layoutMethod.ShouldNotContain("_vulkanImageLayoutLock");
+
+        string encoderImageAccess = Slice(
+            encoder,
+            "internal void RecordImageAccess(",
+            "internal void BindPipeline(");
+        encoderImageAccess.ShouldContain("lock (batch)");
+        encoderImageAccess.ShouldContain("batch.RecordImageAccess(new VulkanImageAccessRangeDelta(");
+        encoderImageAccess.ShouldNotContain("_vulkanImageLayoutLock");
+        encoderImageAccess.ShouldNotContain("Tracker.SyncRoot");
     }
 
     [Test]
     public void DescriptorReferencesPublishImmutableGenerationsAndExpandOncePerRecording()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+        string manager = ReadWorkspaceFile(VulkanRoot + "Descriptors/VulkanDescriptorManager.cs");
+        string tracker = ReadWorkspaceFile(VulkanRoot + "Resources/Lifetime/VulkanResourceLifetimeTracker.cs");
+        string submission = ReadWorkspaceFile(VulkanRoot + "Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs");
+        string batch = ReadWorkspaceFile(TrackingBatchPath);
 
-        lifetime.ShouldContain("VulkanPublishedDescriptorSetSnapshot");
-        lifetime.ShouldContain("PublishVulkanDescriptorSetSnapshot_NoLock");
-        lifetime.ShouldContain("MarkDescriptorExpanded(descriptorSet.Handle, snapshot.Generation)");
+        manager.ShouldContain("VulkanPublishedDescriptorSetSnapshot snapshot = new(");
+        manager.ShouldContain("tracker.PublishDescriptorSnapshotNoLock(");
+        tracker.ShouldContain("internal void PublishDescriptorSnapshotNoLock(");
+        tracker.ShouldContain("PublishedDescriptorSets[descriptorSetHandle] = snapshot;");
         batch.ShouldContain("ExpandedDescriptorGenerations");
         batch.ShouldContain("MarkDescriptorExpanded");
 
-        int propagationStart = lifetime.IndexOf("private void ValidateAndPropagateVulkanDescriptorReference_NoLock(", StringComparison.Ordinal);
-        int propagationEnd = lifetime.IndexOf("private static void PropagateVulkanDescriptorSetSubmission_NoLock(", propagationStart, StringComparison.Ordinal);
-        lifetime[propagationStart..propagationEnd].ShouldNotContain("_vulkanCommandBufferLifetimes");
+        // Descriptor contents can change per frame slot. The submission gateway
+        // expands each published snapshot once into the command's touched list.
+        string propagation = Slice(
+            submission,
+            "private static bool RefreshSubmittedDescriptorDependencies_NoLock(",
+            "private static bool CanRestoreSealedSubmissionContractAfterRefreshNoLock(");
+        propagation.ShouldContain("commandLifetime.RefreshTouchedDependencies();");
+        propagation.ShouldContain("out VulkanPublishedDescriptorSetSnapshot snapshot)");
+        propagation.ShouldContain("for (int referenceIndex = 0; referenceIndex < snapshot.References.Length; referenceIndex++)");
+        propagation.ShouldContain("TryAppendSubmittedDescriptorDependency_NoLock(");
+        propagation.ShouldNotContain("CommandBufferLifetimes");
     }
 
     [Test]
     public void RetirementPublishesCommandLocalDependenciesBeforeCapturingPins()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+        string tracking = ReadWorkspaceFile(TrackingBatchServicesPath);
+        string resourceRuntime = ReadWorkspaceFile(VulkanRoot + "Resources/Authority/VulkanResourceRuntime.cs");
+        string ledger = ReadWorkspaceFile(VulkanRoot + "Resources/Authority/VulkanResourceRuntime.LifetimeLedger.cs");
+        string port = ReadWorkspaceFile(VulkanRoot + "Resources/Authority/VulkanRetirementDependencyPublicationPort.cs");
+        string descriptors = ReadWorkspaceFile(VulkanRoot + "Descriptors/VulkanDescriptorLifetimeAuthority.cs");
 
-        batch.ShouldContain("PublishCommandBufferTrackingDependenciesBeforeResourceRetirement");
-        batch.ShouldContain("batch.Dependencies.Contains(resourceKey)");
-        batch.ShouldContain("TryFlushCommandBufferTrackingBatch(commandBuffer, out string failureReason)");
-        batch.ShouldContain("batch.Dependencies.Clear();");
-        batch.ShouldNotContain("PublishedDependencyCount");
+        tracking.ShouldContain("internal void PublishTrackingDependenciesBeforeResourceRetirement(");
+        tracking.ShouldContain("batch.Dependencies.Contains(resourceKey)");
+        tracking.ShouldContain("TryFlushCommandBufferTrackingBatch(commandBuffer, out string failureReason)");
+        resourceRuntime.ShouldContain("batch.Dependencies.Clear();");
+        tracking.ShouldNotContain("PublishedDependencyCount");
+        resourceRuntime.ShouldNotContain("PublishedDependencyCount");
+        port.ShouldContain("_commandRuntime.PublishTrackingDependenciesBeforeResourceRetirement(");
 
-        int retirementStart = lifetime.IndexOf("private VulkanRetirementTicket CaptureVulkanRetirementTicket(", StringComparison.Ordinal);
-        int retirementLock = lifetime.IndexOf("lock (_vulkanResourceLifetimeLock)", retirementStart, StringComparison.Ordinal);
-        int publication = lifetime.IndexOf("PublishCommandBufferTrackingDependenciesBeforeResourceRetirement(key)", retirementStart, StringComparison.Ordinal);
+        int retirementStart = ledger.IndexOf("internal VulkanRetirementTicket CaptureRetirementTicket(", StringComparison.Ordinal);
+        int publication = ledger.IndexOf("Lifetime.PublishTrackingDependenciesBeforeRetirement(key);", retirementStart, StringComparison.Ordinal);
+        int retirementLock = ledger.IndexOf("lock (Lifetime.Tracker.SyncRoot)", retirementStart, StringComparison.Ordinal);
         retirementStart.ShouldBeGreaterThanOrEqualTo(0);
         publication.ShouldBeGreaterThan(retirementStart);
         publication.ShouldBeLessThan(retirementLock);
 
-        int poolRetirementStart = lifetime.IndexOf("private VulkanRetirementTicket CaptureVulkanDescriptorPoolRetirementTicket(", StringComparison.Ordinal);
-        int poolSetRetirement = lifetime.IndexOf("PublishCommandBufferTrackingDependenciesBeforeResourceRetirement(", poolRetirementStart, StringComparison.Ordinal);
-        int poolPendingState = lifetime.IndexOf("setResource.State |= EVulkanResourceLifetimeState.PendingRetirement", poolRetirementStart, StringComparison.Ordinal);
+        int poolRetirementStart = descriptors.IndexOf("private VulkanRetirementTicket CaptureDescriptorPoolRetirementTicket(", StringComparison.Ordinal);
+        int poolSetRetirement = descriptors.IndexOf("CaptureRetirementTicket(\n                setKey,", poolRetirementStart, StringComparison.Ordinal);
+        int setRetirementStart = descriptors.IndexOf("private VulkanRetirementTicket CaptureRetirementTicket(", StringComparison.Ordinal);
+        int setPublication = descriptors.IndexOf("_lifetime.PublishTrackingDependenciesBeforeRetirement(key);", setRetirementStart, StringComparison.Ordinal);
+        int setPendingState = descriptors.IndexOf("resource.State |= EVulkanResourceLifetimeState.PendingRetirement", setRetirementStart, StringComparison.Ordinal);
         poolSetRetirement.ShouldBeGreaterThan(poolRetirementStart);
-        poolSetRetirement.ShouldBeLessThan(poolPendingState);
+        setPublication.ShouldBeGreaterThan(setRetirementStart);
+        setPublication.ShouldBeLessThan(setPendingState);
     }
 
     [Test]
     public void DebugDescriptorValidationCachesDescriptorAndLayoutGenerations()
     {
-        string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string batch = ReadWorkspaceFile(TrackingBatchPath);
 
         batch.ShouldContain("ValidatedDescriptorGenerations");
         batch.ShouldContain("(ulong DescriptorGeneration, ulong LayoutVersion)");
-        lifetime.ShouldContain("batch.MarkDescriptorValidated(descriptorSet.Handle, snapshot.Generation)");
-        lifetime.ShouldContain("Vulkan descriptor image layout mismatch at command recording");
+        batch.ShouldContain("public bool MarkDescriptorValidated(ulong descriptorSetHandle, ulong descriptorGeneration)");
+        batch.ShouldContain("(ulong DescriptorGeneration, ulong LayoutVersion) key = (descriptorGeneration, LayoutVersion);");
+
+        // Each recorded image access advances the layout version, so a cached
+        // validation result is invalid after any later layout change.
+        string recordImageAccess = Slice(
+            batch,
+            "public void RecordImageAccess(in VulkanImageAccessRangeDelta delta)",
+            "public void RecordExecutedSecondaryImageAccess(");
+        recordImageAccess.ShouldContain("LayoutVersion++;");
+        batch.ShouldContain("ValidatedDescriptorGenerations.Clear();");
     }
 
     [Test]
     public void ImageRangesCoalesceBeforeOneBulkPublication()
     {
-        string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
-        string layouts = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string batch = ReadWorkspaceFile(TrackingBatchPath);
+        string layouts = ReadWorkspaceFile(VulkanRoot + "Commands/Authority/VulkanCommandRuntime.ImageLayouts.cs");
 
         batch.ShouldContain("TryMergeRanges");
         batch.ShouldContain("LevelCount = Math.Max(left.LevelCount, 1u) + Math.Max(right.LevelCount, 1u)");
         batch.ShouldContain("LayerCount = Math.Max(left.LayerCount, 1u) + Math.Max(right.LayerCount, 1u)");
-        layouts.ShouldContain("for (int deltaIndex = batch.PublishedImageDeltaCount;");
+        layouts.ShouldContain("for (int index = batch.PublishedImageDeltaCount; index < batch.ImageAccessDeltas.Count; index++)");
         layouts.ShouldContain("recorded.RefreshTouchedSubresources()");
+        layouts.ShouldContain("batch.PublishedImageDeltaCount = batch.ImageAccessDeltas.Count;");
     }
 
     [Test]
     public void SubmissionConsumesTouchedArraysInsteadOfGlobalDictionaryScans()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string submission = ReadWorkspaceFile(VulkanRoot + "Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs");
         string lifetimeRecord = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.VulkanCommandBufferLifetimeRecord.cs");
-        string layouts = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            VulkanRoot + "Frame/Resources/Lifetime/VulkanRenderer.VulkanCommandBufferLifetimeRecord.cs");
+        string layoutState = ReadWorkspaceFile(
+            VulkanRoot + "Frame/Synchronization/VulkanRenderer.VulkanRecordedImageLayoutState.cs");
 
-        lifetime.ShouldContain("TouchedDependencies");
         lifetimeRecord.ShouldContain("List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> TouchedDependencies = new(64)");
-        lifetime.ShouldNotContain("TouchedDependencies = lifetime.Dependencies.ToArray()");
-        lifetime.ShouldContain("foreach ((VulkanResourceLifetimeKey key, ulong recordedGeneration) in commandLifetime.TouchedDependencies)");
-        layouts.ShouldContain("TouchedSubresources");
-        layouts.ShouldContain("List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> TouchedSubresources = new(32)");
-        layouts.ShouldNotContain("TouchedSubresources = recorded.Subresources.ToArray()");
-        layouts.ShouldContain("foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in recorded.TouchedSubresources)");
+        lifetimeRecord.ShouldContain("TouchedDependencies.EnsureCapacity(Dependencies.Count);");
+        lifetimeRecord.ShouldNotContain("TouchedDependencies = Dependencies.ToArray()");
+        submission.ShouldContain("foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.TouchedDependencies)");
+        submission.ShouldNotContain("lifetime.Dependencies.ToArray()");
+        layoutState.ShouldContain("List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> TouchedSubresources = new(32)");
+        layoutState.ShouldContain("TouchedSubresources.EnsureCapacity(Subresources.Count);");
+        layoutState.ShouldNotContain("TouchedSubresources = Subresources.ToArray()");
+        submission.ShouldContain("foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> touched in\n                         recorded.TouchedSubresources)");
+        submission.ShouldNotContain("recorded.Subresources.ToArray()");
     }
 
     [Test]
@@ -402,16 +443,16 @@ public sealed class VulkanCoreHardeningPhase524Tests
     [Test]
     public void DynamicBufferDescriptorsNeverRequestUpdateAfterBind()
     {
-        string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs");
+        string source = ReadWorkspaceFile(VulkanRoot + "Resources/Authority/VulkanDescriptorLayoutCache.cs");
         int switchStart = source.IndexOf("return descriptorType switch", StringComparison.Ordinal);
         int switchEnd = source.IndexOf("};", switchStart, StringComparison.Ordinal);
         switchStart.ShouldBeGreaterThanOrEqualTo(0);
         switchEnd.ShouldBeGreaterThan(switchStart);
 
+        // Each non-dynamic buffer type follows its own device feature bit.
         string capabilitySwitch = source[switchStart..switchEnd];
-        capabilitySwitch.ShouldContain("DescriptorType.UniformBuffer => true");
-        capabilitySwitch.ShouldContain("DescriptorType.StorageBuffer => true");
+        capabilitySwitch.ShouldContain("DescriptorType.UniformBuffer =>\n                DeviceContext.MutableCapabilities._supportsDescriptorBindingUniformBufferUpdateAfterBind");
+        capabilitySwitch.ShouldContain("DescriptorType.StorageBuffer =>\n                DeviceContext.MutableCapabilities._supportsDescriptorBindingStorageBufferUpdateAfterBind");
         capabilitySwitch.ShouldNotContain("DescriptorType.UniformBufferDynamic");
         capabilitySwitch.ShouldNotContain("DescriptorType.StorageBufferDynamic");
         source.ShouldContain("bool hasDynamicBufferBinding = Array.Exists(");
@@ -432,8 +473,23 @@ public sealed class VulkanCoreHardeningPhase524Tests
         program.ShouldContain("DescriptorSetUsesUpdateAfterBind(uint setIndex)");
     }
 
+    private const string VulkanRoot = "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/";
+    private const string TrackingBatchPath = VulkanRoot + "Commands/Authority/VulkanCommandBufferTrackingBatch.cs";
+    private const string TrackingBatchServicesPath = VulkanRoot + "Commands/CommandBuffers/Tracking/VulkanRenderer.CommandBufferTrackingBatch.cs";
+    private const string ResourceCoordinationPath = VulkanRoot + "Commands/Authority/VulkanCommandRuntime.ResourceCoordination.cs";
+
     private static string ReadWorkspaceFile(string relativePath)
         => SourceContractWorkspace.ReadFile(relativePath);
+
+    /// <summary>Returns the source text from the start marker up to the end marker.</summary>
+    private static string Slice(string source, string startMarker, string endMarker)
+    {
+        int start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, $"Missing start marker '{startMarker}'.");
+        int end = source.IndexOf(endMarker, start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, $"Missing end marker '{endMarker}'.");
+        return source[start..end];
+    }
 
     private static string ResolveRepoRoot()
     {

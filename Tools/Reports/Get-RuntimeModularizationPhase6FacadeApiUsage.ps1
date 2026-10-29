@@ -5,7 +5,7 @@ param(
     [ValidateSet("AnyCPU", "x64")]
     [string]$Platform = "AnyCPU",
 
-    [string]$OutputPath = "docs/work/progress/runtime/runtime-modularization-phase6-consumer-api-baseline.tsv"
+    [string]$OutputPath = "XREngine.UnitTests/TestData/RuntimeModularization/runtime-modularization-phase6-consumer-api-baseline.tsv"
 )
 
 $ErrorActionPreference = "Stop"

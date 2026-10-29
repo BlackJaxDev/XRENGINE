@@ -529,8 +529,8 @@ limit remains: cached local tiles do not include all material input revisions
 in their content hash. These paths require further work before full tile-discard
 shadow parity is available.
 
-- The Advanced pipeline still builds the classic GBuffer and `DeferredLightCombine` resources for its opaque path. Removal is open work in the [Vulkan XR And Advanced Rendering TODO](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md).
-- `AdvancedRenderPipeline` is the source default for new desktop cameras, but it is not yet certified production-ready for every backend, material, and output profile. Promotion gates are in the [Vulkan master TODO](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md).
+- The Advanced pipeline still builds the classic GBuffer and `DeferredLightCombine` resources for its opaque path. Their removal is open work.
+- `AdvancedRenderPipeline` is the source default for new desktop cameras, but it is not yet certified production-ready for every backend, material, and output profile.
 
 ## Related Documentation
 
@@ -538,4 +538,3 @@ shadow parity is available.
 - [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md)
 - [Mesh Submission Strategies](mesh-submission-strategies.md)
 - [GPU Record Layouts](gpu-record-layouts.md)
-- [Default And Advanced Pipeline Validation](../../work/testing/rendering/default-and-advanced-pipeline-validation.md)

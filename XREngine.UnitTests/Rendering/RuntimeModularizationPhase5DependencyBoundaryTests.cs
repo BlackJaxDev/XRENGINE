@@ -306,7 +306,7 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
             .Descendants("ProjectReference")
             .Select(element => (string?)element.Attribute("Include"))
             .Where(static include => !string.IsNullOrWhiteSpace(include))
-            .Select(static include => Path.GetFileNameWithoutExtension(include!))
+            .Select(static include => Path.GetFileNameWithoutExtension(include!.Replace('\\', '/')))
             .Order(StringComparer.Ordinal)
             .ToArray();
 

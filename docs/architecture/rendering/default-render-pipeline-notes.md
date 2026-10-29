@@ -455,8 +455,7 @@ pipeline factory. Every request carries an explicit output purpose:
   `AdvancedRenderPipeline` with the OpenXR eye profile, or an
   `RvcRenderPipeline`. The desktop Advanced policy does not affect eyes. An
   unsupported view mode and family pair submits no XR projection layer; no
-  other family runs (see the
-  [VR pipeline selection design](../../work/design/rendering/vr-pipeline-selection-design.md));
+  other family runs;
 - offscreen-capture requests use the standard capability policy and are not
   redirected by desktop debug or RVC settings.
 
@@ -473,14 +472,11 @@ shading, bounded skin/morph deformation and per-sample x4 MSAA. Each selected
 operation must satisfy its concrete program, resource and deformation contract;
 exact generated local material vertex functions have retained current/previous
 geometry and matching raster auxiliary companions. Unknown displacement and
-other unavailable profiles retain named failures; the
-[material vertex contract](../../work/progress/rendering/browser-native-material-vertices-2026-10-03.md)
-records the admitted inputs and the generic deformation source-equivalence limit.
+other unavailable profiles retain named failures. The generic deformation path
+is limited by source equivalence.
 Physical browser evidence currently covers bounded static materials
 and directional shadows; deformation and MSAA still need their own rendered
-acceptance. See [native-family admission](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)
-and [the recovered integration](../../work/progress/rendering/browser-advanced-static-integration-2026-10-03.md)
-for implementation and runtime evidence boundaries.
+acceptance.
 Explicit game calls to `RuntimeEngine.Rendering.NewRenderPipeline(...)` must
 therefore resolve the same host recipe as an unconfigured camera. Browser hosts
 bind cooked WebGPU programs through the authored pipeline's shared operation
@@ -488,8 +484,7 @@ contracts. The default-source factory rejects stereo and XR requests explicitly,
 while mono offscreen capture uses the same authored operation admission and
 Required Advanced requests preserve the Advanced source. Browser scene capture
 owns a private output/scene publication and accepted asynchronous texture-layer
-readback; its [capture ownership contract](../../work/progress/platform/browser-hlod-impostor-capture-boundary-2026-10-03.md)
-records the memory and physical-validation boundaries. Scoped
+readback. Scoped
 recipes see every request before desktop offscreen selection. Teardown and
 startup rollback skip disposed installations, including out-of-order scopes,
 and preserve newer factories without restoring an expired callback. With no
@@ -545,11 +540,10 @@ decal flag remains bit 16. Native and surface-export mono and x4 recipes declare
 them before use. The SH append adds no binding. Regenerate the shared record
 include when its C# record changes.
 
-The September 4–8 [Advanced acceptance records](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md)
+The September 4–8 Advanced acceptance runs
 include bounded shaded-output, AO/IBL, temporal, post-processing, and OpenGL
 stereo cohorts. These establish implemented and exercised paths, not universal
-backend/material/output-profile certification. Consult the individual runtime
-acceptance rows for remaining coverage. The earlier August 29 description of
+backend/material/output-profile certification. The earlier August 29 description of
 an empty-output-only skeleton is obsolete. A rejected frame's diagnostic or
 recovery clear is not evidence that the shaded-output producer is missing.
 Physical outputs still require their backend capability/reservation checks.
@@ -1687,7 +1681,7 @@ Advanced light records use the light emitter's render transform. Do not use `Lig
 
 Retired render-resource generations require a Signaled completion fence before disposal. Missing fences remain pending; failed fences may be replaced but cannot authorize disposal. A request to wait for GPU progress is not itself a completion proof.
 
-A minimized desktop window is not a new 1x1 render profile. Suspend managed resource preparation and preserve the last complete generation until restoration; externally owned swapchain outputs remain independent. See the [Vulkan resize investigation](../../work/investigations/rendering/vulkan-default-world-resize-2026-09-14.md) for the reproduction, exact validation and missing-texture diagnosis.
+A minimized desktop window is not a new 1x1 render profile. Suspend managed resource preparation and preserve the last complete generation until restoration; externally owned swapchain outputs remain independent.
 
 ## Restored Window Extents
 

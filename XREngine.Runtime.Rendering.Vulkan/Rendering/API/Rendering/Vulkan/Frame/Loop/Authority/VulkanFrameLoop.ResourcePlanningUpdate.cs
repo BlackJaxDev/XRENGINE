@@ -246,6 +246,15 @@ internal sealed partial class VulkanFrameLoop
                 PhysicalPlanAliasReuses: result.AliasReuseCount,
                 PlannerArenaHighWater: ActiveFrameOpResourcePlannerSwitchingState.States.Count,
                 RenderGraphPlanGeneration: ClampGenerationToInt64(planningInputs.CompiledGraph.Plan.Generation)));
+
+        // Replaced physical resources retire through frame-slot and timeline
+        // completion. Publish the count so that the profiler shows them.
+        if (result.RetiredImageCount > 0 || result.RetiredBufferCount > 0)
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(
+                result.RetiredImageCount,
+                result.RetiredBufferCount);
+        }
     }
 
     /// <summary>

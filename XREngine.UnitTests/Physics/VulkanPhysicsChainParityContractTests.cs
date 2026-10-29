@@ -92,6 +92,13 @@ public sealed class VulkanPhysicsChainParityContractTests
         ShouldContainCode(recorder, "RegisterSubmissionMarkersNoLock(commandBuffer, frameOps);");
         ShouldContainCode(recorder, "RegisterSubmissionMarkersNoLock(commandBuffer, dynamicUiFrameOps);");
 
+        // A rolled-back ordered batch fails each captured submission marker.
+        string queue = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOps/VulkanFrameOperationQueue.cs");
+        string rollback = SliceMethod(queue, "internal void RollbackOrderedBatch()", "internal bool RequiredOrderedBatchHasWriter(");
+        rollback.ShouldContain("if (capture.Buffer[index] is SubmissionMarkerOp marker)");
+        rollback.ShouldContain("marker.Fence.Fail(EGpuFenceFailureSite.QueueRollback,");
+        markers.ShouldContain("marker.Fence.Fail(EGpuFenceFailureSite.UnsubmittedMarker,");
+
         markers.ShouldContain("RentTimelineGpuFence()");
         markers.ShouldContain("_timelineGpuFencePool");
         markers.ShouldContain("markers.Clear()");
@@ -240,6 +247,15 @@ public sealed class VulkanPhysicsChainParityContractTests
     /// </summary>
     private static void ShouldContainCode(string source, string code)
         => RemoveWhiteSpace(source).ShouldContain(RemoveWhiteSpace(code));
+
+    private static string SliceMethod(string source, string startToken, string endToken)
+    {
+        int start = source.IndexOf(startToken, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        int end = source.IndexOf(endToken, start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start);
+        return source[start..end];
+    }
 
     private static string RemoveWhiteSpace(string text)
         => new(text.Where(static character => !char.IsWhiteSpace(character)).ToArray());

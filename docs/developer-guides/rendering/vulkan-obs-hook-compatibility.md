@@ -117,4 +117,3 @@ Primary implementation:
 Related docs:
 
 - [Vulkan Renderer](../../architecture/rendering/vulkan-renderer.md)
-- [Vulkan Core Validation](../../work/testing/rendering/vulkan-core-validation.md)

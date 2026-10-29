@@ -36,8 +36,8 @@ This deliberately uses the currently admitted Mobius output route.
 
 Use the repository's pinned SDK in `global.json`, its `wasm-tools` workload,
 PowerShell, existing pinned Slang setup and reviewed browser Jolt staging.
-Follow [browser publishing](../../docs/work/progress/rendering/browser-project-publishing.md)
-for those existing prerequisites. Run from the repository root:
+Prepare browser Jolt with `Tools/Dependencies/Prepare-JoltBrowserManaged.ps1`
+and `Tools/Dependencies/Build-JoltBrowser.ps1`. Run from the repository root:
 
 ```powershell
 dotnet build Samples/BrowserUiParity/BrowserUiParity.csproj -c Release

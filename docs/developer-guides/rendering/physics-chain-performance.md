@@ -11,10 +11,7 @@ coverage, retained canonical GPU bounds, committed CPU spatial snapshots,
 mapped input pages, world-owned clocks, and reused rest-input ranges.
 Covered untextured identity-world draws retain static plans. Strict canonical
 submission uses GPU collection and indexed instance groups in the main view.
-Directional shadows and the remaining world input work are tracked in the
-[implementation todo](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md).
-Runtime evidence and acceptance checks remain in
-[Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md).
+Directional shadows and the remaining world input work are open.
 
 ## GPU skinned scale measurement
 
@@ -244,8 +241,7 @@ dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -c Release -- `
 
 Work index `0` is the first CPU-strict, no-rendering steady-state point. The
 environment file is a serialized `PhysicsChainBenchmarkEnvironment` with the
-named-hardware metadata. The [validation plan](../../work/testing/physics/physics-validation.md#physics-chain-scale)
-lists the required matrix.
+named-hardware metadata.
 
 ## Rigid rest input cache
 
@@ -295,8 +291,7 @@ three-row layout, with independent current/previous history for motion vectors.
 
 The compute dispatcher talks through `IPhysicsChainComputeBackend`. The Math
 Intersections skinned dispatcher scenario has live Vulkan Advanced-pipeline
-evidence. See the [skinned chain investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
-for scope, repairs, and current scale limits. Unsupported backend capabilities
+evidence. Unsupported backend capabilities
 fail explicitly instead of switching to CPU. Templates and collider shape
 topology upload once, dynamic headers and poses upload by dirty range, and
 resident arenas retain stable generation-tagged offsets across frames.
@@ -357,9 +352,7 @@ Retrieve timestamp diagnostics asynchronously without a stall. Strict
 zero-readback forbids solved physics-data readback; it does not forbid these
 timing queries. The approximately 20 Hz full-grid result warrants further CPU
 analysis, but does not by itself identify an exclusive CPU or GPU bottleneck.
-Keep diagnostic runs separate from unobserved acceptance windows. The
-[async experiment checks](../../work/testing/physics/physics-validation.md#vulkan-asynchronous-physics-experiment)
-define the comparison and correctness evidence.
+Keep diagnostic runs separate from unobserved acceptance windows.
 
 ## Shared collision data
 
@@ -427,7 +420,7 @@ Physics-chain per-tree parameter updates no longer allocate through `ToArray()`,
 
 ### Transfer Bandwidth
 
-The GPU path separates static particle metadata from dynamic state. Stable scenes avoid static-data uploads. The direct upload path skips unchanged colliders by version. The mapped input-page path does not: it writes every collider and the full transform catalog into each page. A per-bank version record is an open [code item](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md#physics-inputs-at-the-render-rate).
+The GPU path separates static particle metadata from dynamic state. Stable scenes avoid static-data uploads. The direct upload path skips unchanged colliders by version. The mapped input-page path does not: it writes every collider and the full transform catalog into each page. A per-bank version record is open work.
 
 Batched mode has been reevaluated around resident-buffer copy churn so combined-buffer work can be measured separately from upload and readback bandwidth.
 
@@ -483,11 +476,7 @@ counted. In a steady-state window the miss counters should not change.
 
 ### Frame-loop profiling method
 
-Use these tools in this order. The 2026-10-12 work in the
-[investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
-used them, and the
-[critical-path mapping](../../work/investigations/physics/physics-chain-critical-path-mapping-2026-10-12.md)
-records the code paths they point to.
+Use these tools in this order.
 
 1. **Phase timings and stage differences.** Every harness summary has
    `phaseTimings` and `stageDifferences`. The frame interval is the longer of
@@ -666,8 +655,7 @@ particles. It does no CPU readback and creates no debug work when selection
 is off. Read `GPUPhysicsChainDispatcher.GetGpuDebugDiagnosticsSnapshot()` for
 selected counts, the limit flag, dispatches, draw submissions, and readback
 use. A foreign renderer, a busy retained batch, or a retired native source
-rejects work with a diagnostic. Native debug and teardown checks remain in the
-[validation plan](../../work/testing/physics/physics-validation.md#gpu-skinned-chain-scale).
+rejects work with a diagnostic. Native debug and teardown checks remain open.
 
 `GPUPhysicsChainDispatcher.Instance.GpuBoundsDiagnostics` reports GPU bounds
 slots, dispatches, copied commands, material-contract rejections, and
@@ -756,10 +744,6 @@ the flag for final performance acceptance.
 
 ## Related Documentation
 
-- [Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md)
-- [Physics Chain Steady-State CPU Design](../../work/design/physics/physics-chain-steady-state-cpu-design.md)
-- [Skinned GPU Chain Benchmark Investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
-- [Distance Cadence and GPU Pose Presentation](../../work/design/physics/distance-cadence-gpu-presentation.md)
 - [Physics-chain output and readback](../../architecture/physics/physics-chain-output-and-readback.md)
 - [Skinning](skinning.md)
 - [Physics](../../user-guide/physics.md)

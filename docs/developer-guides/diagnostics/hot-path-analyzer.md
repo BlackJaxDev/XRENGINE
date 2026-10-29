@@ -4,6 +4,12 @@
 with `Engine.Diagnostics.HotPathAttribute`. Unknown behavior produces an error.
 See the [project setup](../../../XREngine.Diagnostics.Analyzers/README.md).
 
+The current implementation has known gaps in dynamic operations, generated-callee
+classification, and from-end index construction. These gaps can accept operations
+that violate the checked-call contract below. Generic constant and relational
+patterns also require a lowering audit. Do not treat an accepted method as proof
+that these cases are checked.
+
 ## Contract and scope
 
 `[HotPath]` is a checked source contract. Every call must reach a statically

@@ -58,11 +58,17 @@ UITextOutput uiTextVertex(UITextInput input)
     output.outlineThickness = thickness;
     return output;
 }
+// Sample without branches. The outline loop inlines this function 16 times
+// per ring. A branch for each bounds test makes SwiftShader control-flow
+// analysis of the loop body take exponential time at draw time, and the GPU
+// queue then stops. SampleGrad uses explicit gradients, so it is valid
+// outside uniform control flow. The result of an out-of-bounds sample is not
+// used.
 float sampleGlyph(float2 uv, float4 bounds, float2 dx, float2 dy)
 {
-    if (uv.x < bounds.x || uv.x > bounds.z || uv.y < bounds.y || uv.y > bounds.w)
-        return 0.0;
-    return fontAtlas.SampleGrad(fontSampler, uv, dx, dy).r;
+    float coverage = fontAtlas.SampleGrad(fontSampler, uv, dx, dy).r;
+    bool inside = all(uv >= bounds.xy) & all(uv <= bounds.zw);
+    return select(inside, coverage, 0.0);
 }
 float strokeRing(float2 uv, float4 bounds, float2 dx, float2 dy, float radius)
 {

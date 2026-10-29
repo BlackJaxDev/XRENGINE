@@ -7,9 +7,10 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
 {
     /// <summary>
     /// Publishes the mesh frame-data capacity shared by every command stream in one
-    /// engine render frame. The first recorder seals the generation. A stream that
-    /// introduces a new family or larger renderer requirement after that boundary is
-    /// rejected and teaches the next frame's generation instead of mutating state
+    /// engine render frame. The first recorder seals the generation. After that
+    /// boundary, a stream can append a new family or grow a family in place when no
+    /// published base offset moves. A requirement that would move a published family
+    /// is rejected and teaches the next frame's generation instead of mutating state
     /// captured by an already recorded or submitted output.
     /// </summary>
         // Draw counts within an output family vary slightly with bounded work such as

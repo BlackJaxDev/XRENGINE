@@ -81,7 +81,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         string layoutSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/MaterialBindingLayout.cs");
         string tableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.cs");
         string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
-        string vulkanTableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.BindlessMaterialTextureTable.cs");
+        string vulkanTableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanRenderer.BindlessMaterialTextureTable.cs");
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
 
         layoutSource.ShouldContain("public sealed class MaterialBindingLayout");
@@ -103,7 +103,8 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         vulkanTableSource.ShouldContain("ResolveMaterialTextureDescriptorReference");
         vulkanTableSource.ShouldContain("MaterialTextureReferenceResolution.Pending");
         vulkanTableSource.ShouldContain("MaterialTextureReferenceResolution.Failed");
-        vulkanTableSource.ShouldContain("_dirtyGlobalMaterialTextureDescriptorSlots");
+        vulkanTableSource.ShouldContain("_globalMaterialTextureDescriptorPublication.AppendDirty(descriptorIndex);");
+        vulkanTableSource.ShouldContain("uint descriptorIndex = publication.DirtySlotIds[dirtyIndex];");
         vulkanTableSource.ShouldContain("FlushGlobalMaterialTextureDescriptorUpdates");
         vulkanTableSource.ShouldContain("GlobalMaterialTextureDescriptorFallbackReferencesTotal");
         vulkanTableSource.ShouldContain("RecordVulkanDescriptorFallback");

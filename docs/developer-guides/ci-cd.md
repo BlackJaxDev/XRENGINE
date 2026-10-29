@@ -8,6 +8,8 @@ XRENGINE uses GitHub Actions for pull-request validation and a gated `deploy` to
 
 All build workflows select the SDK through `global.json`. Windows CI, deploy, and release jobs run `dotnet workload restore XRENGINE.slnx` before building submodules so a fresh runner installs the pinned workload set before MSBuild evaluates any projects. Installing the SDK alone does not provision that workload set. The browser workflow installs `wasm-tools` from the repository root, honoring the same pin.
 
+The Editor clears its in-process MSBuild paths, including `MSBuildSDKsPath`, when it starts a child `dotnet msbuild` process. The child selects its SDK from its working directory and the applicable `global.json`. This prevents an installed newer SDK selected by the Editor from overriding the child build's SDK imports and task hosts.
+
 The submodule script discovers Visual Studio MSBuild and C++ targets through `vswhere`, including Enterprise and standalone Build Tools installations. On runners without the Vulkan SDK, the Vulkan project reuses its packaged native bridge DLL; a generated PDB is optional. Native builds register available symbols after bridge preparation so the first clean build, consuming projects, and publish outputs can include them.
 
 Before compiling native Rive, the script applies the tracked patch in
@@ -16,11 +18,11 @@ the source does not match. The patch fixes the two Clang unused-variable
 errors without disabling compiler warnings. See the
 [patch notes](../../Tools/Patches/rive-sharp/README.md) before updating Rive.
 
-Pull requests authored by Codex, Claude, or Copilot are intentionally skipped by Windows CI. The workflow recognizes both bot login names containing `codex`, `claude`, or `copilot` and head branches under `codex/`, `claude/`, or `copilot/`. Dependency review still runs on these pull requests so automated dependency or agent changes are checked for newly introduced vulnerabilities.
+Windows CI runs for every pull request, regardless of its author or branch name. Dependency review runs separately to check for newly introduced vulnerabilities.
 
 `dependency-review.yml` rejects pull requests that introduce dependencies with known vulnerabilities at moderate severity or higher. GitHub's dependency graph must be enabled. Private repositories also require the applicable GitHub Code Security entitlement.
 
-`portable-browser-compile.yml` is a separate compile-only workflow for pull requests, pushes to `master`, and manual dispatch. It installs the .NET 10 WebAssembly workload on an Ubuntu runner and runs `Tools/Test-PortableBrowserCompile.ps1` over the complete portable project manifest. It does not launch a browser or qualify gameplay, trimming, or browser AOT. See [Portable Project Rules](runtime/portable-projects.md) for the enforced boundaries.
+`portable-browser-compile.yml` compiles the portable project manifest, publishes the browser host, and runs browser qualification. Its Windows jobs publish game bundles through the Editor CLI. One job cooks the shared browser shader catalog and uploads it as the `editor-browser-shader-catalog` artifact. Parallel publish jobs download that catalog, and each job prepares the Editor toolchain through the `.github/actions/prepare-windows-editor` composite action. A separate Windows job runs the runtime unit tests and the benchmark builds. Downstream Linux jobs qualify the exact bundles in Chromium. On `codex/webgpu-readiness-audit` pushes, `Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1` can select bundles from an earlier run when every producer job in that run passed. These checks cover the untrimmed interpreter; they do not qualify trimming or browser AOT. See [Portable Project Rules](runtime/portable-projects.md) for the enforced boundaries.
 
 ## Deploy Gate
 
@@ -53,6 +55,8 @@ Because the GPU workflow only runs for pushes to the trusted `deploy` branch, un
 ## Release Branch And Tags
 
 Every update to `release` builds and archives the DocFX site. Promotions use `workflow_dispatch` after pushing because GitHub intentionally does not start another push-triggered workflow for commits pushed with the repository `GITHUB_TOKEN`.
+
+DocFX evaluates managed projects in design-time mode. The glTF and Vulkan native bridge targets do not compile C++ in this mode; normal builds still prepare the native bridges. Before local metadata generation, build `XREngine.SourceGenerators/XREngine.SourceGenerators.csproj` in `Release` so DocFX can load the source generator.
 
 Tags are deliberate rather than generated automatically. Push a semantic-version tag that points to a commit reachable from `release`, for example:
 

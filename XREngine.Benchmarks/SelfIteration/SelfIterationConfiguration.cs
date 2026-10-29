@@ -69,11 +69,11 @@ public sealed class SelfIterationConfiguration
         ProgressDocument = NormalizeDocumentPath(
             workspaceRoot,
             ProgressDocument,
-            $"docs/work/progress/rendering/{CampaignId}-self-improvement.md");
+            $"Build/_AgentValidation/00000000-000000-shared/self-iteration/{CampaignId}/accepted-attempts.md");
         RejectedAttemptsDocument = NormalizeDocumentPath(
             workspaceRoot,
             RejectedAttemptsDocument,
-            $"docs/work/investigations/rendering/{CampaignId}-rejected-attempts.md");
+            $"Build/_AgentValidation/00000000-000000-shared/self-iteration/{CampaignId}/rejected-attempts.md");
 
         AllowedPathPrefixes = AllowedPathPrefixes
             .Select(path => NormalizeAllowedPath(workspaceRoot, path))

@@ -200,7 +200,13 @@ public static class UnitTestingWorldSettingsStore
             startupSettings.VulkanPresentationTargetRefreshHzOverride = new(settings.Rendering.Vulkan.TargetRefreshHz, true);
         }
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.GPURenderDispatch)))
+        {
             startupSettings.GPURenderDispatch = settings.GPURenderDispatch;
+            // Keep the startup aggregate equal to the session values: CPU-direct Vulkan
+            // launches use the non-diagnostic DevParity GPU-driven profile.
+            if (!settings.GPURenderDispatch && ResolveRenderBackend(settings) == ERenderLibrary.Vulkan)
+                startupSettings.VulkanGpuDrivenProfileOverride = new(EVulkanGpuDrivenProfile.DevParity, true);
+        }
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.UpdateFPS)))
             startupSettings.TargetUpdatesPerSecond = settings.UpdateFPS;
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderFPS)))

@@ -77,7 +77,7 @@ Keep presentation, external-image, transfer, initialization, queue ownership,
 and resource lifetime transitions in the comparison. Do not infer benefit from
 fewer transitions or from a single FPS/timing sample.
 
-The [September 14 comparison](../../work/investigations/rendering/vulkan14-phase-i-policy-validation-2026-09-14.md)
+The September 14 comparison
 ran six fresh processes per policy on RTX 3090 / driver 610.88. All runs passed
 the gates and produced identical output hashes. The pooled GPU median/p95 was
 107.328/224.576 microseconds for specialized and 107.040/338.656 for GENERAL.
@@ -98,4 +98,3 @@ Related contracts:
 - `VulkanPhysicalImageGroup` and `VulkanDescriptorImageLayouts` own tracked and descriptor image layouts.
 - `VulkanDeviceCapabilityReporter` records available/enabled capability state.
 - `VulkanDeviceContext.FeatureQueries.cs` queries unified image-layout features.
-- The phase I and D4 evidence gates are recorded in [the Vulkan master TODO decisions](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#decisions-needed) and [the barrier investigation](../../work/investigations/rendering/vulkan14-phase-d-waits-and-barriers-2026-09-09.md).

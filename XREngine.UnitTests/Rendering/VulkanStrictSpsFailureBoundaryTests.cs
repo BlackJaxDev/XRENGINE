@@ -42,53 +42,61 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
     [Test]
     public void FaultHooks_AreOrderedAcrossRecordingValidationAndQueueDispatch()
     {
+        // The strict-SPS mirror path records the eye, checks the recording fault
+        // seam, and then records the publish blit.
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.OpenXR.MirrorPreview.cs");
+        // The command runtime takes the submission gateway pins, checks the
+        // lifetime fault seam, validates lifetimes, then checks the submit seam
+        // before the native queue dispatch.
+        string submission = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs");
 
-        int recorded = openXr.IndexOf(
-            "hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer",
-            StringComparison.Ordinal);
         int recordingFault = openXr.IndexOf(
-            "EOpenXrStrictSpsFaultInjectionStage.Recording",
-            recorded,
+            "EOpenXrStrictSpsFaultInjectionStage.Recording))",
+            StringComparison.Ordinal);
+        int recorded = openXr.LastIndexOf(
+            "hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(",
+            Math.Max(recordingFault, 0),
             StringComparison.Ordinal);
         int publishRecord = openXr.IndexOf(
-            "hasPublish = TryRecordStereoLayerBlitCommandBuffer",
-            recorded,
+            "hasPublish = TryRecordStereoLayerBlitCommandBuffer(",
+            Math.Max(recordingFault, 0),
             StringComparison.Ordinal);
         recorded.ShouldBeGreaterThanOrEqualTo(0);
         recordingFault.ShouldBeGreaterThan(recorded);
         publishRecord.ShouldBeGreaterThan(recordingFault);
 
-        int gatewayPins = lifetime.IndexOf(
-            "TryAcquireVulkanSubmissionGatewayPins",
+        int lifetimeMethod = submission.IndexOf(
+            "private unsafe bool TryAcquireSubmissionLifetimePins(",
             StringComparison.Ordinal);
-        int lifetimeFault = lifetime.IndexOf(
-            "EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation",
-            gatewayPins,
+        int gatewayPins = submission.IndexOf(
+            "lifetime.QueuedSubmissionCount++;",
+            Math.Max(lifetimeMethod, 0),
             StringComparison.Ordinal);
-        int lifetimeValidationLoop = lifetime.IndexOf(
+        int lifetimeFault = submission.IndexOf(
+            "EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation)",
+            Math.Max(gatewayPins, 0),
+            StringComparison.Ordinal);
+        int lifetimeValidationLoop = submission.IndexOf(
             "for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)",
-            lifetimeFault,
+            Math.Max(lifetimeFault, 0),
             StringComparison.Ordinal);
-        gatewayPins.ShouldBeGreaterThanOrEqualTo(0);
+        lifetimeMethod.ShouldBeGreaterThanOrEqualTo(0);
+        gatewayPins.ShouldBeGreaterThan(lifetimeMethod);
         lifetimeFault.ShouldBeGreaterThan(gatewayPins);
         lifetimeValidationLoop.ShouldBeGreaterThan(lifetimeFault);
 
-        int lifetimeCall = synchronization.IndexOf(
-            "ValidateVulkanSubmissionResourceLifetimes",
+        int lifetimeCall = submission.IndexOf(
+            "lifetimePinsValid = TryAcquireSubmissionLifetimePins(",
             StringComparison.Ordinal);
-        int submitFault = synchronization.IndexOf(
-            "EOpenXrStrictSpsFaultInjectionStage.Submit",
-            lifetimeCall,
+        int submitFault = submission.IndexOf(
+            "EOpenXrStrictSpsFaultInjectionStage.Submit)",
+            Math.Max(lifetimeCall, 0),
             StringComparison.Ordinal);
-        int queueDispatch = synchronization.IndexOf(
-            "SubmitToQueueSync2",
-            submitFault,
+        int queueDispatch = submission.IndexOf(
+            "result = SubmitNative(queue, ref submitInfo, fence);",
+            Math.Max(submitFault, 0),
             StringComparison.Ordinal);
         lifetimeCall.ShouldBeGreaterThanOrEqualTo(0);
         submitFault.ShouldBeGreaterThan(lifetimeCall);
@@ -99,13 +107,16 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
     public void UnsubmittedRecording_InvalidatesCachedCommandsBeforeCanceledUploadsRetireResources()
     {
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.OpenXR.MirrorPreview.cs");
+        string openXrOwners = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.OpenXrMirrorPreview.cs");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Transfers/VulkanRenderer.TextureUploadRecording.cs");
 
-        openXr.ShouldContain("MarkUnsubmittedOpenXrPrimaryCommandBufferDirty");
+        openXr.ShouldContain("_commandRuntime.MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(");
         openXr.ShouldContain("submissionDisposition == EVulkanQueueSubmissionDisposition.NotSubmitted");
-        openXr.ShouldContain("variant.DirtyReason = reason");
+        openXrOwners.ShouldContain("internal void MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(");
+        openXrOwners.ShouldContain("owner.DirtyReason = reason");
 
         int cancel = recording.IndexOf("private void CancelRecordedTextureUploads", StringComparison.Ordinal);
         int invalidateChains = recording.IndexOf(
@@ -121,8 +132,9 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
     [Test]
     public void StrictSpsTransferPublish_RegistersRuntimeOwnedSwapchainImages()
     {
+        // The frame loop owns the strict-SPS stereo publish blit preparation.
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.OpenXR.Blit.cs");
 
         int prepare = openXr.IndexOf("private bool TryPrepareStereoLayerBlit(", StringComparison.Ordinal);
         int leftRegistration = openXr.IndexOf(
