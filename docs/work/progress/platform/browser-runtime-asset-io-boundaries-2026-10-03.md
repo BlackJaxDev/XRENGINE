@@ -1,5 +1,50 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Remote download output placement (2026-10-29)
+
+Implementation commit `fed0e8a33b008856e62d462083b276f50244ae28` moves
+remote path and ID download persistence to `IHostAssetFileAsyncOutput`, an
+optional capability on the installed `IHostAssetFileOutput`. The desktop
+adapter creates the parent directory and delegates to `File.WriteAllBytesAsync`
+with the caller's token. Output is captured after a successful, nonempty remote
+response and after host-file admission. Existing catches keep output errors and
+write cancellation as false or null. The
+[composition contract](../../../architecture/runtime/project-organization.md)
+records the custom-host requirement and provider-lifetime limit.
+
+A disposable executable uses compiled Core, a real one-worker job manager, a
+controlled remote transport, and the desktop output source linked into the harness. Nine
+checks pass: path and ID downloads write expected bytes; replacement of output
+during a write does not retarget it; empty or failed responses do not call the
+output; missing output or async capability follows the existing failure route;
+cancellation reaches both write routes and produces their existing false or
+null result; and desktop output creates the parent before a pre-cancelled write.
+The fake transport does not use network sockets. No tracked tests changed.
+Core and the harness build in Release with zero warnings and errors. Evidence
+is in `Build/_AgentValidation/20261028-120000-webgpu-io/logs/remote-output-build.log`,
+`logs/remote-output-smoke-build.log`, `logs/remote-output-smoke.log`, and
+`reports/remote-output-inventory.json`.
+
+Review identified that moving the separate send-local-copy probe alone could
+mix a host-file provider with the existing DirectStorage byte owner. That probe
+remains unchanged. The output extraction preserves the existing host admission,
+response checks, path normalization, cancellation handling, and failure catches.
+No output provider retirement lease or atomic write was added.
+
+The full local publication gate passes. Editor, Server, and VRClient Release
+builds report zero warnings and errors with `EnableWindowsTargeting=true` on
+Linux. The unchanged desktop filesystem fixture passes one test. All 19
+manifest projects compile for `browser-wasm`; Browser publishes with native
+WASM and pinned Jolt inputs. The browser gate reports no warning or error
+diagnostics. Logs use the `remote-output-` prefix under the same run's `logs/`;
+the fresh output is `remote-output-browser-publish/wwwroot/`. These checks do
+not establish Windows startup, rendered browser parity, or post-push CI.
+Shader sources and recipes did not change.
+
+The committed-source scan reports 27 files / 89 direct-file matching lines in
+the four roots. Core plus Rendering total 12 files / 30 lines. Blocking counts
+are unchanged. Both broad inventory requirements remain open.
+
 ## Remote asset serving file placement (2026-10-29)
 
 Implementation commit `db24bf998c8a49ba3725dda3800a5f9696dbb9fe` moves the
