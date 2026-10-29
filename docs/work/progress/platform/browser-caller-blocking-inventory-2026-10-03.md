@@ -2,6 +2,15 @@
 
 Updated: 2026-10-28. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-28. Earlier sections retain their dated call-path and validation evidence.
 
+## Published archive probe follow-up (2026-10-29)
+
+The scan at `1ac20558d3b8177afd11d1719f64e9d3bce6647b` uses the same roots
+and expressions. Direct-file counts are Core **6 / 20**, Rendering **7 / 18**,
+Host **2 / 5**, and Data **13 / 54**, for **28 files / 97 lines**. Core plus
+Rendering total **13 files / 38 lines**. Blocking counts remain unchanged. The
+[archive probe record](browser-runtime-asset-io-boundaries-2026-10-03.md#published-archive-probe-placement-2026-10-29)
+records provider compatibility and runtime checks. Neither broad inventory is complete.
+
 ## Asset save-name follow-up (2026-10-29)
 
 The scan at `4c469c75ab6f39ec123e993d09a92c05fbbdaf3e` uses the same roots

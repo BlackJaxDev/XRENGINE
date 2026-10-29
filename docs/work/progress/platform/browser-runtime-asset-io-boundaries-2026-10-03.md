@@ -1,5 +1,46 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Published archive probe placement (2026-10-29)
+
+Implementation commit `1ac20558d3b8177afd11d1719f64e9d3bce6647b` moves
+published archive existence probes to the host-file read capability. One provider
+serves all three roots. Empty configuration needs no provider. A nonempty
+configuration with no read capability now fails before any root is changed,
+including when a supplied path is malformed. The
+[composition contract](../../../architecture/runtime/project-organization.md)
+records this custom-host requirement. Per-path invalid or inaccessible results
+still clear that path. Archive opening and lifetime remain unchanged.
+
+A disposable executable checks the compiled Core path: three root probes retain
+one provider through replacement and preserve missing-root behavior; missing
+capability leaves existing roots unchanged; empty configuration clears roots
+without a provider. Independent source review found no concrete internal
+regression. Core builds in Release with zero warnings and errors. Evidence is in
+`Build/_AgentValidation/20261028-120000-webgpu-io/logs/archive-probe-build.log`,
+`logs/archive-probe-smoke-build.log`, `logs/archive-probe-smoke.log`, and
+`reports/archive-probe-inventory.json`.
+
+The executable also exercises the save overwrite callback added in the preceding
+batch. The callback replaces the global provider and denies overwrite. The
+existing save path selects `item (2).asset` using its captured provider and
+passes that path to an overridden serialization method. This checks the actual
+callback and save-name flow; it does not test the physical serialization write.
+No tracked tests changed.
+
+The full local publication gate passes. Editor, Server, and VRClient Release
+builds report zero warnings and errors with `EnableWindowsTargeting=true` on
+Linux. The unchanged desktop filesystem fixture passes one test. All 19
+manifest projects compile for `browser-wasm`; Browser publishes with native
+WASM and pinned Jolt inputs. The browser gate reports no warning or error
+diagnostics. Logs use the `archive-probe-` prefix under the same run's `logs/`;
+the fresh output is `archive-probe-browser-publish/wwwroot/`. These checks do
+not establish Windows startup, rendered browser parity, or post-push CI.
+Shader sources and recipes did not change.
+
+The committed-source scan reports 28 files / 97 direct-file matching lines in
+the four roots. Core plus Rendering total 13 files / 38 lines. Blocking counts
+are unchanged. Both broad inventory requirements remain open.
+
 ## Asset save-name probe placement (2026-10-29)
 
 Implementation commit `4c469c75ab6f39ec123e993d09a92c05fbbdaf3e` moves
@@ -14,8 +55,8 @@ name advances past two existing files while retaining its provider through a
 global replacement; an unused name returns unchanged; and an absent provider
 fails explicitly. Core and the executable build in Release with zero warnings
 and errors. Independent source review found no concrete regression and confirms
-the callback order and retained provider. The callback path was reviewed, not
-executed by this harness. No tracked tests changed. Evidence is in
+the callback order and retained provider. The original harness did not execute the callback path. The later
+archive-probe executable above exercises it. No tracked tests changed. Evidence is in
 `Build/_AgentValidation/20261028-120000-webgpu-io/logs/save-probe-build.log`,
 `logs/save-probe-smoke-build.log`, `logs/save-probe-smoke.log`, and
 `reports/save-probe-inventory.json`.
