@@ -1,5 +1,29 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Humanoid pose-audit host I/O (2026-10-29)
+
+Pose-audit report reads and writes use admitted host services. A reference check
+and its read retain one discovery installation and raw-read lease. The report
+writer uses the optional shared-output capability so desktop files keep
+`FileShare.Read`, UTF-8 without a BOM, and the existing gzip format. The
+discovery and output providers have no retirement lease; hosts must keep them
+usable during the operation.
+
+Ten focused tests pass, including JSON and gzip round trips, component reference
+loading, missing reports, caller-thread rejection, source and discovery swaps,
+and output error disposal. Editor, Server, and VRClient Release builds pass on
+Linux with Windows targeting enabled. The desktop filesystem headless fixture
+passes. All 19 portable manifest projects compile for browser-wasm, and Browser
+publishes with native WASM and pinned Jolt inputs. Gate logs contain no warning
+or error diagnostics. These checks do not establish a live pose audit, Windows
+startup, or browser rendering.
+
+Four lexical direct-file matches were removed from AnimationIntegration, outside
+the historical four-root count. That count and the blocking counts are unchanged;
+both broad inventory requirements remain open. The [Unity static animation
+investigation](../../investigations/animation/2026-10-29-unity-static-anim-import.md)
+records the generator feasibility results and remaining compile and model gaps.
+
 ## VR screenshot output placement (2026-10-29)
 
 The VR player screenshot path checks host-file admission and captures the

@@ -151,7 +151,7 @@ namespace XREngine.Components.Animation
         }
 
         private HumanoidPoseAuditReport? LoadReferenceReportIfAvailable()
-            => string.IsNullOrWhiteSpace(ReferencePath) || !File.Exists(ReferencePath) ? (HumanoidPoseAuditReport?)null : HumanoidPoseAuditIO.LoadReport(ReferencePath);
+            => string.IsNullOrWhiteSpace(ReferencePath) || !HumanoidPoseAuditIO.TryLoadReport(ReferencePath, out HumanoidPoseAuditReport? report) ? null : report;
 
         private int ResolveSampleRate(HumanoidPoseAuditReport? reference)
         {

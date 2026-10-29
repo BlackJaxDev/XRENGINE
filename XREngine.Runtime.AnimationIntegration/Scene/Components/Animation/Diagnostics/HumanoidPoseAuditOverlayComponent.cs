@@ -542,10 +542,10 @@ namespace XREngine.Components.Animation
 
             try
             {
-                if (!File.Exists(ReferencePath))
+                if (!HumanoidPoseAuditIO.TryLoadReport(ReferencePath, out HumanoidPoseAuditReport? report))
                     throw new FileNotFoundException("Reference audit report was not found.", ReferencePath);
 
-                _referenceReport = HumanoidPoseAuditIO.LoadReport(ReferencePath);
+                _referenceReport = report;
                 _loadedReferencePath = ReferencePath;
                 _referenceLoadFailed = false;
                 _resolvedReferenceScale = null;

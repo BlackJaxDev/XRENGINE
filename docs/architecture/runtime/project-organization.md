@@ -230,6 +230,13 @@ installed output service. It opens at offset zero without truncation, sharing,
 or parent directory creation. The caller disposes the stream. The provider must
 remain usable for the save.
 
+Humanoid pose-audit reports use admitted host reads and the optional
+`IHostAssetFileSharedOutput` capability. The desktop writer creates the parent
+directory and opens the report with `FileShare.Read`. JSON remains UTF-8 without
+a BOM; `.gz` reports use gzip. A report read captures one discovery installation
+and raw-read lease for its existence check and content read. The output and
+discovery providers have no retirement lease; hosts must retain them during use.
+
 Native public asset loads capture `IRuntimeHostFileReadBackend` after load-route
 admission. The same instance performs the preflight existence check and the
 scheduled core-load existence check, including after a remote-download await.

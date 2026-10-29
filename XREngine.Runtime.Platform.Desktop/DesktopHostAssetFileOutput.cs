@@ -4,9 +4,17 @@ using XREngine.Data;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Writes authoring asset files to desktop host paths.</summary>
-public sealed class DesktopHostAssetFileOutput : IHostAssetFileOutput, IHostAssetFileAsyncOutput, IHostAssetFileOpenWrite
+public sealed class DesktopHostAssetFileOutput : IHostAssetFileOutput, IHostAssetFileAsyncOutput, IHostAssetFileOpenWrite, IHostAssetFileSharedOutput
 {
     public Stream OpenWrite(string path) => File.OpenWrite(path);
+
+    public Stream CreateFileWithParentDirectory(string path, FileShare share)
+    {
+        string? directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            Directory.CreateDirectory(directory);
+        return new FileStream(path, FileMode.Create, FileAccess.Write, share);
+    }
 
     public Stream CreateFileWithParentDirectory(string path)
     {
