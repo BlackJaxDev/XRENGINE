@@ -5,6 +5,13 @@
     <JoltBrowserArchiveDirectory Condition="'$(JoltBrowserArchiveDirectory)' == ''">$(BrowserPublisherSourceRoot)Build/Dependencies/JoltBrowser/native/archives</JoltBrowserArchiveDirectory>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Content Include="$(BrowserPublisherSourceRoot)Build/CommonAssets/**/*">
+      <Link>Build/CommonAssets/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
   <!-- Copy an allowlisted, source-only browser build graph beside the published Editor.
        The browser build retains the same projects, guards, generated registrations,
        WebGPU assets, and reviewed Jolt supply as the checkout build. -->
@@ -118,6 +125,8 @@
       <_BrowserPublisherPowerShell Condition="'$(OS)' != 'Windows_NT'">pwsh -NoProfile</_BrowserPublisherPowerShell>
     </PropertyGroup>
     <Error Condition="'$(PublishDir)' == ''" Text="BrowserPublisher.PublishDirectoryMissing: Editor publish output is required." />
+    <Error Condition="!Exists('$(BrowserPublisherSourceRoot)Build/CommonAssets/Shaders') or !Exists('$(BrowserPublisherSourceRoot)Build/CommonAssets/Fonts/Roboto/LICENSE.txt')"
+           Text="BrowserPublisher.EngineAssetsMissing: the Editor engine asset tree is required." />
     <Error Condition="!Exists('$(JoltBrowserManagedSourceDirectory)/managed-source-files.props') or !Exists('$(JoltBrowserManagedSourceDirectory)/managed-source-pin.json') or !Exists('$(JoltBrowserManagedSourceDirectory)/LICENSE')"
            Text="BrowserPublisher.ManagedSourceMissing: prepare the reviewed Jolt browser managed source and pass JoltBrowserManagedSourceDirectory when publishing the Editor." />
     <Error Condition="!Exists('$(JoltBrowserArchiveDirectory)/libJolt.a') or !Exists('$(JoltBrowserArchiveDirectory)/libjoltc.a') or !Exists('$(JoltBrowserArchiveDirectory)/native-build-pin.json') or !Exists('$(JoltBrowserArchiveDirectory)/Jolt-LICENSE.txt') or !Exists('$(JoltBrowserArchiveDirectory)/joltc-LICENSE.txt')"

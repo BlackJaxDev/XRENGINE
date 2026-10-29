@@ -301,7 +301,7 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>
         /// Fills the registration scratch with one submesh's LOD levels in list order:
-        /// the renderable's levels when the owner is a <see cref="RenderableMesh"/>,
+        /// the associated <see cref="RenderableMesh"/> levels when available,
         /// otherwise the command mesh alone. Thresholds resolve to their effective
         /// values and the last level always carries a zero threshold so LOD selection
         /// never culls it. Returns the level count. Caller holds the scene lock and
@@ -309,7 +309,7 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         private int CollectRegistrationLevels(RenderInfo renderInfo, XRMesh mesh, uint submeshIndex, out RenderableMesh? renderable)
         {
-            renderable = renderInfo.Owner as RenderableMesh;
+            renderable = ResolveLodRenderable(renderInfo);
             int count = renderable?.CollectLodMeshes(submeshIndex, _registrationScratchMeshes, _registrationScratchRadii) ?? 0;
             if (count == 0)
             {

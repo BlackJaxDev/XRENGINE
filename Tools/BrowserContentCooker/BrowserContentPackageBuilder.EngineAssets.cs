@@ -17,12 +17,15 @@ public static partial class BrowserContentPackageBuilder
         JsonElement[] assets = Array(recipe, "assets", 4096, 1);
         Dictionary<string, JsonElement> byPath = new(StringComparer.Ordinal);
         Dictionary<string, string[]> dependencies = new(StringComparer.Ordinal);
+        Dictionary<string, EngineAssetDeviceRequirements> deviceRequirements = new(StringComparer.Ordinal);
         HashSet<string> foldedPaths = new(StringComparer.OrdinalIgnoreCase);
         foreach (JsonElement asset in assets)
         {
-            Members(asset, "path", "type", "encoding", "source", "dependencies");
+            MembersOptional(asset, ["path", "type", "encoding", "source", "dependencies"], ["deviceRequirements"]);
             string path = EngineAssetPath(asset.GetProperty("path"));
             Require(byPath.TryAdd(path, asset) && foldedPaths.Add(path), $"Duplicate or case-colliding engine asset '{path}'.");
+            if (ReadEngineAssetDeviceRequirements(asset, path) is { } requirements)
+                deviceRequirements.Add(path, requirements);
             string? type = asset.GetProperty("type").GetString();
             Require(!string.IsNullOrWhiteSpace(type) && type.Length <= 1024, $"Invalid type for '{path}'.");
             Choice(asset, "encoding", "cooked-binary", "yaml", "utf8-text");
@@ -98,16 +101,23 @@ public static partial class BrowserContentPackageBuilder
             Require(totalBytes <= AggregateLimit, "Engine content exceeds 64 MiB; split optional content into streamed catalogs.");
             string hash = Convert.ToHexStringLower(SHA256.HashData(bytes));
             payloads.TryAdd(hash, bytes);
-            cookedAssets.Add(new
+            Dictionary<string, object?> cookedAsset = new(StringComparer.Ordinal)
             {
-                path,
-                type = asset.GetProperty("type").GetString(),
-                encoding = asset.GetProperty("encoding").GetString(),
-                bytes = bytes.Length,
-                hash,
-                url = $"payload/{hash}.bin",
-                dependencies = dependencies[path]
-            });
+                ["path"] = path,
+                ["type"] = asset.GetProperty("type").GetString(),
+                ["encoding"] = asset.GetProperty("encoding").GetString(),
+                ["bytes"] = bytes.Length,
+                ["hash"] = hash,
+                ["url"] = $"payload/{hash}.bin",
+                ["dependencies"] = dependencies[path],
+            };
+            if (deviceRequirements.TryGetValue(path, out EngineAssetDeviceRequirements? requirements))
+                cookedAsset["deviceRequirements"] = new
+                {
+                    requiredFeatures = requirements.RequiredFeatures,
+                    requiredLimits = requirements.RequiredLimits,
+                };
+            cookedAssets.Add(cookedAsset);
         }
         List<object> shaderArtifacts = [];
         Dictionary<string, JsonElement> shaderDescriptors = new(StringComparer.Ordinal);

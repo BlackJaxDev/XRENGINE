@@ -85,6 +85,7 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
         foreach (JsonElement item in root.GetProperty("assets").EnumerateArray())
         {
             string path = item.GetProperty("path").GetString()!;
+            ReadAssetDeviceRequirements(path, item);
             string type = item.GetProperty("type").GetString()!;
             RuntimeAssetEncoding encoding = item.GetProperty("encoding").GetString() switch
             {
@@ -301,6 +302,7 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
         RetireShaderDelivery();
         if (session != 0) BrowserEngineAssetImports.Dispose(session);
         _assets.Clear();
+        _assetDeviceRequirements.Clear();
         _shaderArtifacts.Clear();
         _materialVariants.Clear();
         _pipelineArtifactIdentities.Clear();

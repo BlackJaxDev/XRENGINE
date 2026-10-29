@@ -1,6 +1,6 @@
 # Build and publish a browser game
 
-Updated: 2026-10-07
+Updated: 2026-10-29
 
 Use this guide to publish a project as a static BrowserWebGPU site. The Editor builds the project code, checks the saved startup world, cooks its required assets, and writes a complete WebAssembly site.
 
@@ -8,7 +8,7 @@ The current browser profile uses untrimmed, interpreted .NET 10 WebAssembly with
 
 ## Before you publish
 
-Use an XRENGINE source checkout. The standalone Editor package does not yet include its normal `Build/CommonAssets` tree, so it cannot publish a project by itself. The repository pins the .NET SDK to 10.0.401 in `global.json`. Browser restore and publish also need the pinned `wasm-tools` workload and Jolt source and archive inputs. Use the `Prepare-JoltBrowserManaged.ps1` and `Build-JoltBrowser.ps1` steps and exact pins in the [browser publishing record](../work/progress/rendering/browser-project-publishing.md); do not substitute tool or native-library versions. That record's final `dotnet publish` command prepares an Editor package. It is not the project build command below.
+Use an XRENGINE source checkout or a published Editor package that contains both `Build/CommonAssets` and `BrowserPublishing` beside the Editor executable. The package keeps the normal engine assets outside the source-only browser sidecar. The repository pins the .NET SDK to 10.0.401 in `global.json`. Browser builds need that SDK, its `wasm-tools` workload, and PowerShell. A published Editor package carries the reviewed Jolt source and archives in its sidecar. To create that package from a checkout, prepare those Jolt inputs with the exact steps and pins in the [browser publishing record](../work/progress/rendering/browser-project-publishing.md). That record's `dotnet publish` command prepares the Editor package; it is not the project build command below.
 
 Save one startup world as a `.asset` file inside the project's `Assets` folder. Select that same world for each startup window in the saved `Assets/startup.asset` settings. If the saved settings have no startup windows, set the project `StartupScenePath` to the saved asset. Browser publishing does not support `RunWithoutWindows`, multiple different startup worlds, or a startup world outside `Assets`.
 
@@ -31,6 +31,8 @@ dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -c Release -p:Plat
 ```
 
 The Editor prints `Browser static bundle ready: ...` when the build finishes and the output contains `index.html`. With the standard project layout, the output is `<project-root>/Build/Browser`. The browser CLI requires `--build-project`; the managed-only `--build-project-code` command does not publish the browser application.
+
+On Windows, the packaged Editor uses the same project-build flags. Run `XREngine.Editor.exe --build-project <project-file> --build-platform BrowserWebGPU --build-configuration Release --output-subfolder Browser` from the package directory. The published Editor DLL has passed a native-host build through its packaged browser source and assets. The direct packaged Windows CLI and live Editor menu still need validation.
 
 The output is a complete static site. It includes the player page and JavaScript, WebAssembly runtime files, `browser-publish.json`, `content/manifest.json`, content payloads, and any required font notices. Keep the directory layout intact.
 

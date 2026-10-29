@@ -110,8 +110,24 @@ internal static partial class ProjectBuilder
         dependencyCooker.Cook(settings, "/game/startup.asset", "startup-settings.bin");
         List<object> assets = [.. dependencyCooker.Entries
             .OrderBy(static entry => entry.Key, StringComparer.Ordinal)
-            .Select(static entry => (object)new { path = entry.Key, type = entry.Value.TypeName, encoding = "cooked-binary",
-                source = entry.Value.Source, dependencies = entry.Value.Dependencies })];
+            .Select(entry =>
+            {
+                Dictionary<string, object?> catalogEntry = new(StringComparer.Ordinal)
+                {
+                    ["path"] = entry.Key,
+                    ["type"] = entry.Value.TypeName,
+                    ["encoding"] = "cooked-binary",
+                    ["source"] = entry.Value.Source,
+                    ["dependencies"] = entry.Value.Dependencies,
+                };
+                if (dependencyCooker.TryGetDeviceRequirements(entry.Key, out IReadOnlyDictionary<string, int> requiredLimits))
+                    catalogEntry["deviceRequirements"] = new
+                    {
+                        requiredFeatures = Array.Empty<string>(),
+                        requiredLimits,
+                    };
+                return (object)catalogEntry;
+            })];
         const string runtimeMetadataPath = "/engine/Metadata/AotRuntimeMetadata.bin";
         assets.Add(new { path = runtimeMetadataPath, type = typeof(AotRuntimeMetadata).AssemblyQualifiedName!,
             encoding = "cooked-binary", source = AotRuntimeMetadataStore.MetadataFileName,

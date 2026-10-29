@@ -22,6 +22,7 @@ const shaderCompilationBudgetMs = 45_000;
 const pipelineCreationBudgetMs = 45_000;
 const optionalDeviceFeatures = Object.freeze(['texture-compression-astc', 'texture-compression-etc2',
     'indirect-first-instance', 'depth32float-stencil8']);
+const assetDeviceLimits = new Set(['maxTextureArrayLayers']);
 
 function includeSupportedOptionalFeatures(adapter, requirements) {
     for (const feature of optionalDeviceFeatures)
@@ -425,7 +426,7 @@ export class WebGpuCanvasRenderer {
     }
 
     /** Initializes only the canvas/device executor used by authored engine command plans. */
-    async initializeEngine(signal) {
+    async initializeEngine(signal, assetRequirementsJson = null) {
         if (this._disposed || this._failed || this.device || this._initializing)
             throw new Error('WebGPU renderer cannot be initialized again.');
         this._initializing = true;
@@ -443,7 +444,24 @@ export class WebGpuCanvasRenderer {
             const adapter = await navigator.gpu.requestAdapter();
             this._assertActive(signal);
             if (!adapter) throw new Error('No WebGPU adapter is available.');
-            const requirements = { requiredFeatures: [], requiredLimits: {} };
+            let authoredRequirements = { requiredFeatures: [], requiredLimits: {} };
+            if (assetRequirementsJson !== null) {
+                if (typeof assetRequirementsJson !== 'string' || assetRequirementsJson.length > 32768)
+                    throw new RangeError('Cooked asset device requirements exceed their metadata budget.');
+                try { authoredRequirements = JSON.parse(assetRequirementsJson); }
+                catch { throw new TypeError('Cooked asset device requirements are invalid JSON.'); }
+            }
+            if (!authoredRequirements || typeof authoredRequirements !== 'object' || Array.isArray(authoredRequirements)
+                || Object.keys(authoredRequirements).length !== 2
+                || !Array.isArray(authoredRequirements.requiredFeatures) || authoredRequirements.requiredFeatures.length !== 0
+                || !authoredRequirements.requiredLimits || typeof authoredRequirements.requiredLimits !== 'object'
+                || Array.isArray(authoredRequirements.requiredLimits) || Object.keys(authoredRequirements.requiredLimits).length > 1)
+                throw new TypeError('Cooked asset device requirements have an invalid shape.');
+            for (const [name, value] of Object.entries(authoredRequirements.requiredLimits))
+                if (!assetDeviceLimits.has(name) || !Number.isSafeInteger(value) || value <= 256 || value > 0x7fffffff)
+                    throw new TypeError(`Cooked asset device requirement ${name} is invalid.`);
+            const validatedRequirements = shaderDeviceRequirements(adapter, authoredRequirements, 'cooked asset graph');
+            const requirements = validatedRequirements;
             includeSupportedOptionalFeatures(adapter, requirements);
             this.onState('requesting-device');
             this._startup.stage = 'requesting-device';

@@ -198,6 +198,12 @@ public static partial class BrowserEngineExports
     [JSExport]
     public static int GetRendererSession() => _session?.RendererSession ?? 0;
 
+    /// <summary>Returns device requirements for the active startup and streamed asset graph.</summary>
+    [JSExport]
+    public static string GetStartupDeviceRequirementsJson()
+        => _source?.GetStartupDeviceRequirementsJson()
+            ?? "{\"requiredFeatures\":[],\"requiredLimits\":{}}";
+
     [JSExport]
     public static bool HasPresentedCanvasFrame() => _session?.HasPresentedCanvasFrame ?? false;
 

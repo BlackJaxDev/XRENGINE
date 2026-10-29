@@ -4,6 +4,7 @@ layout(local_size_x = 256) in;
 
 const uint LOD_TABLE_FLOATS = 12u;
 const uint FLAG_LOD_ENABLED = 1u << 15u;
+const uint FLAG_NATIVE_LOD_SELECTION_DISABLED = 1u << 7u;
 const uint LOD_TRANSITION_UINTS = 4u;
 const uint LOD_TRANSITION_ACTIVE = 1u;
 const uint LOD_POLICY_PER_VIEW_EXACT = 0u;
@@ -193,8 +194,19 @@ void main()
         return;
     DrawMetadata draw = Draws[drawID];
 
+    uint transitionBase = drawID * LOD_TRANSITION_UINTS;
+    if (transitionBase + 3u >= uint(lodTransitions.length()))
+        return;
+
+    // Every eligible row starts with its current geometry and full coverage.
+    // Early returns must not retain an alternate mesh from an earlier dispatch.
+    lodTransitions[transitionBase + 0u] = draw.MeshID;
+    lodTransitions[transitionBase + 1u] = draw.LodPolicy;
+    lodTransitions[transitionBase + 2u] = 0u;
+    lodTransitions[transitionBase + 3u] = floatBitsToUint(1.0);
+
     uint flags = draw.Flags;
-    if ((flags & FLAG_LOD_ENABLED) == 0u)
+    if ((flags & FLAG_LOD_ENABLED) == 0u || (flags & FLAG_NATIVE_LOD_SELECTION_DISABLED) != 0u)
         return;
 
     uint logicalMeshID = draw.LogicalMeshID;
@@ -238,15 +250,12 @@ void main()
 
     uint currentMeshID = draw.MeshID;
     uint currentLodLevel = draw.LodPolicy;
-    uint transitionBase = drawID * LOD_TRANSITION_UINTS;
-    if (transitionBase + 3u >= uint(lodTransitions.length()))
-        return;
-
     // LodTransitionBuffer is the mutable per-draw selection state. Metadata stays
-    // immutable for the publication generation: {selectedMesh, selectedLod, flags, _}.
+    // immutable for the publication generation. The fourth word supplies completed
+    // coverage because discrete selection emits only the current variant.
     lodTransitions[transitionBase + 0u] = selectedMeshID;
     lodTransitions[transitionBase + 1u] = resolvedLevel;
     lodTransitions[transitionBase + 2u] = selectedMeshID != currentMeshID || resolvedLevel != currentLodLevel
         ? LOD_TRANSITION_ACTIVE : 0u;
-    lodTransitions[transitionBase + 3u] = 0u;
+    lodTransitions[transitionBase + 3u] = floatBitsToUint(1.0);
 }

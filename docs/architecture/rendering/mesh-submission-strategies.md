@@ -40,6 +40,39 @@ record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-0
 describes ownership, conservative bounds, capacities, and pending runtime
 acceptance.
 
+### Authored LOD Registration And Selection
+
+`GPUScene` resolves normal component-owned commands through
+`RenderInfo3D.OwnerRenderableMesh`. Legacy commands can retain a renderable as
+their direct owner. Registration and frozen candidate capture use the same
+lookup, so their LOD counts agree.
+
+The generic WebGPU routes support one to four resident-table levels with equal
+primitive membership and admitted material/transform contracts. The GPU selects
+the mesh and authored level from projected-radius thresholds. Expansion requires
+both identities to match. Reusing a mesh at two levels does not emit it twice.
+Candidate data stays pinned until the submitting frame completes. No visibility,
+count or LOD decision is read back to choose geometry.
+
+Native batch construction substitutes geometry while retaining the source
+material and deformation bindings. At each scene swap, `GPUScene` checks all
+levels for equal effective material identity, equal primitive membership,
+static geometry and no candidate-owned buffers or callbacks. It sets
+`NativeLodSelectionDisabled` when that proof fails. The native selector starts
+each valid draw with the CPU-authored current mesh and level. Ineligible draws
+and early returns cannot retain an old alternate selection.
+It continues to submit that geometry through the native GPU route. The full
+LOD table and `LODEnabled` flag remain available to WebGPU, whose candidate
+records carry their own materials and deformation owners. Changes to a
+non-current level are checked at the next swap too.
+
+The native selector uses discrete selection too. Its fourth selection word is
+the float bit pattern for completed coverage, `1.0`. The active flag still tells
+batch construction to use the selected mesh. Only the current variant is emitted,
+so a zero coverage value would incorrectly discard the selected draw. This does
+not add animated transitions. Browser residency request consumption, unequal
+primitive membership and more than four levels need separate producer support.
+
 Zero-readback passes execute from configured GPU-pass topology even when CPU
 visibility collection publishes no mesh commands. The GPU scene and the pass
 culling mask own mesh membership; CPU visibility must not suppress a default,

@@ -18,6 +18,7 @@ internal static partial class ProjectBuilder
         private readonly string _gameRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(gameRoot));
         private readonly string? _engineRoot = engineRoot is null ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(engineRoot));
         private readonly Dictionary<string, (string TypeName, string Source, string[] Dependencies)> _entries = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, IReadOnlyDictionary<string, int>> _deviceRequirements = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Type> _assetTypes = new(StringComparer.Ordinal);
         private readonly HashSet<string> _visiting = new(StringComparer.Ordinal);
         private readonly Dictionary<XRMesh, (MeshletGenerationSettings Meshlets, MeshLodGenerationSettings Lods,
@@ -30,10 +31,14 @@ internal static partial class ProjectBuilder
         private readonly Assembly _gameAssembly = GameCSProjLoader.GetLoadedAssembly("GAME")
             ?? throw new InvalidOperationException("BrowserCook.GameAssemblyMissing: the compiled game must be loaded before cooking.");
         private CookedBinarySerializationCallbacks? _cookCallbacks;
+        private Publishing.BrowserCookedDeviceRequirements? _currentDeviceRequirements;
 
         public void Dispose() => _materialProjection.Dispose();
 
         public IReadOnlyDictionary<string, (string TypeName, string Source, string[] Dependencies)> Entries => _entries;
+
+        public bool TryGetDeviceRequirements(string catalogPath, out IReadOnlyDictionary<string, int> requiredLimits)
+            => _deviceRequirements.TryGetValue(catalogPath, out requiredLimits!);
 
         /// <summary>Resolves the host's portable scene spelling to an admitted project asset.</summary>
         public (string Identity, string Path) ResolveStreamedScene(string authoredPath)
@@ -77,7 +82,7 @@ internal static partial class ProjectBuilder
             if (!declared.SequenceEqual(existing.Dependencies, StringComparer.Ordinal))
                 throw new InvalidDataException($"BrowserCook.StreamedSceneDependencyChanged: '{catalogPath}'.");
             _materialProjection.PrepareMaterialConsumers(scene, catalogPath, cancellationToken);
-            WriteMeshletCookedAsset(scene, Path.Combine(sourceDirectory, existing.Source));
+            WriteMeshletCookedAsset(scene, Path.Combine(sourceDirectory, existing.Source), catalogPath);
             return existing.Source;
         }
 
@@ -167,7 +172,7 @@ internal static partial class ProjectBuilder
 
                 string typeName = asset.GetType().AssemblyQualifiedName
                     ?? throw new InvalidOperationException($"Browser asset '{catalogPath}' has no stable runtime type identity.");
-                WriteMeshletCookedAsset(asset, Path.Combine(sourceDirectory, sourceName));
+                WriteMeshletCookedAsset(asset, Path.Combine(sourceDirectory, sourceName), catalogPath);
                 _entries.Add(catalogPath, (typeName, sourceName, [.. references.Keys]));
                 _assetTypes.Add(catalogPath, asset.GetType());
                 return catalogPath;
@@ -183,21 +188,28 @@ internal static partial class ProjectBuilder
             OnSerializingValue = ValidateAndProject,
         };
 
-        private void WriteMeshletCookedAsset(XRAsset asset, string destination)
+        private void WriteMeshletCookedAsset(XRAsset asset, string destination, string catalogPath)
         {
             _meshletPolicies.Clear();
             _cookedMeshletPayloads.Clear();
             _plannedSubMeshes.Clear();
+            _currentDeviceRequirements = new Publishing.BrowserCookedDeviceRequirements();
             try
             {
                 PrepareMeshletPayloads(asset);
                 WriteCookedAsset(asset, destination, callbacks: CookCallbacks);
+                IReadOnlyDictionary<string, int> requiredLimits = _currentDeviceRequirements.GetRequiredLimits();
+                if (requiredLimits.Count > 0)
+                    _deviceRequirements[catalogPath] = requiredLimits;
+                else
+                    _deviceRequirements.Remove(catalogPath);
             }
             finally
             {
                 _meshletPolicies.Clear();
                 _cookedMeshletPayloads.Clear();
                 _plannedSubMeshes.Clear();
+                _currentDeviceRequirements = null;
             }
         }
 
@@ -315,7 +327,8 @@ internal static partial class ProjectBuilder
                     throw new InvalidDataException($"BrowserCook.MeshletSourceChanged: mesh '{source.Name}' ({source.ID}) changed during browser serialization.");
                 payload.ValidateForMesh(source, payload.SourceMeshIdentity);
             }
-            return _materialProjection.Callbacks.OnSerializingValue?.Invoke(value) ?? value;
+            object? projected = _materialProjection.Callbacks.OnSerializingValue?.Invoke(value) ?? value;
+            return _currentDeviceRequirements?.Observe(projected) ?? projected;
         }
 
         private void EnsureMeshletBackend()

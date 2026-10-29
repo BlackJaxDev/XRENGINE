@@ -51,6 +51,7 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
+                RefreshNativeLodCompatibilityAtFrameBoundary();
                 long currentVersion = System.Threading.Interlocked.Read(ref _updatingCommandsContentVersion);
                 bool commandSnapshotDirty = _lastSwappedCommandsContentVersion != currentVersion ||
                     _updatingCommandCount != _totalCommandCount;

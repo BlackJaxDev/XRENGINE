@@ -112,9 +112,53 @@ This producer implements discrete geometric LOD selection, matching the current 
 
 The selected view is one immutable pass selection shared by GPU LOD, meshlet rejection, authored raster uniforms and outline expansion. It reuses captured logical/temporal views or a camera descriptor captured at an auxiliary camera scope boundary, including shadow faces and nested UI/offscreen cameras. The pass freezes its jittered/unjittered family, matching temporal history, viewport, layer mask, orthographic screen dimensions and time before callbacks. Default WebGPU temporal accumulation exposes its updated immutable temporal sample. A disposable real-assembly witness passes 23 view/history/scope checks with zero allocation across 1,000 warmed selections; the combined Core/Rendering/WebGPU graph builds with zero warnings/errors. Stereo/multiview remains an explicit view-profile rejection; conservative-highest-detail multiview union is not approximated by one camera. No selected geometry hysteresis, shadow bias or functioning transition mode is silently replaced by this discrete policy.
 
-### Shared registration compatibility review remains open
+### Shared registration compatibility correction (2026-10-29)
 
-Resolving normal component-owned renderables into the existing shared LOD table also exposes that table to desktop consumers. The current desktop selector writes zero in its fourth word (`GPURenderLODSelect.comp`, final selection publication), while `HybridRenderingManager.TryAugmentIndirectFragmentShader` interprets that word as progress and discards current-variant fragments at zero coverage. `GPURenderBuildBatches.comp` emits only one selected variant. Thus a changed selection can meet incompatible legacy coverage semantics. The desktop GLSL and binding contract are unchanged by this work. The shared owner-resolution change requires a compatibility decision before promotion; the proposed completed-coverage repair has not been included.
+The earlier owner-resolution description above was ahead of the published
+source. `CollectRegistrationLevels` still cast the ordinary component owner to
+`RenderableMesh`, while candidate capture used `OwnerRenderableMesh`. Normal
+multi-LOD components therefore registered one level and failed the browser's
+`LodPublicationChanged` check. Registration now calls the same
+`ResolveLodRenderable` helper as candidate capture.
+
+This exposes the existing table to native consumers too. The native selector
+now writes `floatBitsToUint(1.0)` in its fourth word.
+`HybridRenderingManager.TryAugmentIndirectFragmentShader` interprets that word
+as coverage. `GPURenderBuildBatches.comp` emits only the selected current
+variant, so zero discarded the new selection. The active flag remains set for
+a changed selection because batch construction uses it to retain the selected
+mesh. This is completed coverage for discrete selection, not transition
+animation. The binding layout and reference browser runtime are unchanged.
+
+Final review also found that native batch construction replaces only the mesh
+ID while retaining the source material and deformation bindings. The shared
+registration fix must not expose incompatible alternate geometry to that
+consumer. A native-only admission bit now restricts substitution to matching
+effective materials and primitive membership, static geometry, and absent
+candidate-owned buffers or callbacks. Scene swap refreshes this bit before
+stream publication, including changes to non-current candidates. An
+incompatible source overwrites old native selection state with its current
+mesh and level, zero transition flags and complete coverage. WebGPU retains
+the full table and common LOD flag, and uses its exact candidate bindings.
+
+A focused probe against the rebuilt Rendering assembly passes 81 checks. It
+creates normal component-owned renderables with two authored levels, first
+with distinct meshes and then with one mesh reused at both levels. It checks
+the shared and authored level counts, normalized thresholds, resident IDs,
+exact candidate geometry/materials, level ordinals and GPU source ownership.
+It also checks native admission for matching static materials and rejection
+of different materials, skinning, morphs and primitive membership. Mutating
+non-current candidates and restoring them changes admission at the next swap
+without a command update. One hundred warmed scene swaps allocate zero managed
+bytes. The build has zero warnings and errors. The native selector compiles to
+24,452 bytes of OpenGL 450 SPIR-V. Source checks confirm that the selected
+current variant receives full coverage, retains the selected-mesh flag and
+resets every prior selection word before eligibility checks. Disabled LOD,
+single-level tables, missing tables/bounds/residency and native admission
+failures cannot retain an old alternate selection.
+These checks establish producer and shader compilation behavior. They do not
+establish browser threshold raster output, queue lifetime or physical-device
+acceptance.
 
 ## Authored traditional indexed-indirect submission
 
@@ -128,7 +172,7 @@ The scoped `indirect::cull-primitive` companion now uses four storage bindings, 
 
 The producer replaces all five argument words every time, zeroing disabled/unselected/rejected geometry and keeping first index, base vertex and first instance zero. It neither expands nor reorders source indices. A CPU loop records the upper-bound resident candidates; GPU LOD/visibility decides their argument contents. No count, index, bounds or visibility buffer is mapped back to the CPU. Instrumented mode currently uses this same no-readback algorithm and reports its accurate strategy identity; it does not imply unavailable GPU diagnostic counters.
 
-The shared budget remains three completion-owned scene slots, 256 source/view selections and 256 candidate draws per slot, counting repeated passes, resident LODs and modeled outlines. Whole-primitive refit adds a bounded GPU position scan per admitted finite candidate/pass, unlike meshlet-local culling; no performance equivalence is claimed without device measurements. Renderer-local primitive instance semantics, unproven source-order contracts, billboard/stereo profiles, and other explicitly rejected source profiles remain open. The existing desktop LOD compatibility decision above is unchanged.
+The shared budget remains three completion-owned scene slots, 256 source/view selections and 256 candidate draws per slot, counting repeated passes, resident LODs and modeled outlines. Whole-primitive refit adds a bounded GPU position scan per admitted finite candidate/pass, unlike meshlet-local culling; no performance equivalence is claimed without device measurements. Renderer-local primitive instance semantics, unproven source-order contracts, billboard/stereo profiles, and other explicitly rejected source profiles remain open. The native coverage correction above retains the discrete LOD policy.
 
 The new companion passes production offline cooking. Source review identified and repaired stale-bounds rejection, unfrozen cached indices, indefinite terminal-index warmup, mismatched original-index scalar shape and storage-limit rejection before conservative refit. The managed and Browser build results and disposable production-method evidence are tracked separately from real GPU acceptance; this section does not establish rendered output, device timing, zero-readback runtime traces, queue reuse, or device-recovery acceptance.
 

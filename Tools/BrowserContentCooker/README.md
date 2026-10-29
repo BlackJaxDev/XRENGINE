@@ -64,6 +64,26 @@ written. Omitted or empty catalogs do not
 select a shader implicitly by its name or source path. These engine catalogs
 are independent of the frozen forward-renderer recipe format below.
 
+Engine asset entries may carry an optional `deviceRequirements` object. The
+current editor producer emits it when the serialized asset graph contains an
+`XRTexture2DArray` with more than 256 layers:
+
+```json
+"deviceRequirements": {
+  "requiredFeatures": [],
+  "requiredLimits": { "maxTextureArrayLayers": 300 }
+}
+```
+
+The layer count comes from a texture array observed by the generic cooked
+serializer, including arrays embedded in another asset. A registered custom
+asset codec writes an opaque payload and does not expose its nested values to
+this producer. The packager validates and retains the field. The browser
+combines requirements from startup assets and streamed roots before it requests
+a WebGPU device. It rejects an adapter that cannot meet the declared layer
+limit. Entries without the field remain valid, so existing bundles keep their
+current behavior. This metadata does not declare ASTC or ETC2 texture variants.
+
 ## Service requirements
 
 Schema 1 recipes remain supported unchanged. Schema 2 adds exactly one required root property:

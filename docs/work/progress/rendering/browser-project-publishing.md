@@ -45,8 +45,9 @@ directory so installed source files can remain read-only. The game project's
 existing compiled assembly path is preserved. The sidecar excludes build
 caches, launch profiles, and desktop native binaries. It uses the Editor's
 ordinary `Build/CommonAssets` asset tree rather than carrying another copy.
-The sidecar target does not yet copy that normal asset tree; standalone Editor
-packaging must supply it separately before the installation is complete.
+The Editor publish also copies the normal `Build/CommonAssets` tree beside the
+Editor. The source-only sidecar does not carry a second copy. The publish fails
+if the shader directory or the Roboto license is missing.
 
 To prepare an Editor package that supports browser publishing, use the pinned
 SDK in `global.json`, install its `wasm-tools` workload, and prepare the approved
@@ -84,11 +85,37 @@ installed-source manifest remains valid afterward.
 
 This portable Linux invocation exercises the production publisher methods; it
 is not the Windows Editor CLI or a browser-render acceptance run. Normal engine
-assets are supplied explicitly for this check. Standalone Editor packaging still
-needs to include its ordinary `Build/CommonAssets` tree. The pinned browser SDK
+assets were supplied explicitly for this check. The pinned browser SDK
 uses the configuration-only managed output pivot, such as
 `Artifacts/bin/XREngine.Browser/release`; assuming a `_browser-wasm` suffix was
 rejected by the actual closure check and corrected.
+
+### Packaged Editor layout and builder check (2026-10-29)
+
+A fresh Editor publish copied all 1,334 tracked `Build/CommonAssets` files to
+`Build/CommonAssets` beside the published Editor DLL. Every copied file matched
+its source SHA-256 hash. The separate `BrowserPublishing` sidecar had 5,617
+manifest-listed files, and every manifest hash matched after the run.
+
+The native publisher host loaded that published Editor DLL, used the published
+engine assets, and selected a copy of the published sidecar. Browser build
+artifacts appeared under the project's `Intermediate/BrowserPublishing/Artifacts`
+directory, which confirms the packaged source path. The production
+`BuildCurrentProjectSynchronously` method activated a RollingBall static site
+with 365 assets, 181 shader artifacts, and 84 pipeline passes. All 493
+canonical input files were unchanged. The sidecar manifest remained valid.
+
+The direct packaged Editor CLI could not start on the Linux validation host.
+It exited before `Main` with code 150 because the host does not have
+`Microsoft.WindowsDesktop.App 10.0`. This check does not establish a Windows
+CLI or live Editor UI result. Run those paths on Windows before claiming full
+packaged Editor acceptance.
+
+The final combined source also passes Editor publication. It contains the
+current LOD selector and the new device-requirements source. All 1,334 packaged
+CommonAssets files match the current source, and all 5,619 sidecar manifest
+hashes pass. This later package check does not repeat or broaden the native
+game-publication result above.
 
 ## Same assets and game code
 

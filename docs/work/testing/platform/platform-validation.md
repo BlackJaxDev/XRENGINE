@@ -635,6 +635,47 @@ See the [saved image investigation](../../investigations/platform/2026-10-29-sav
 for the cook defect, native font prerequisites and exact evidence limits.
 Requirement counts remain unchanged.
 
+### LOD, device requirements and packaged Editor — 2026-10-29
+
+The combined source passes all 24 publication gates: managed WebGPU, Editor
+publish, Server, VRClient, all 19 portable projects and native Browser publish.
+The successful logs have zero compiler warnings and errors. The initial
+Editor gate found a missing compile include for the new packager partial;
+adding it to `BrowserContentPublishing.props` made the affected publish pass.
+
+The focused LOD probe passes 81 checks, including normal component ownership,
+reused geometry at two levels, exact candidate materials, native compatibility
+and changes to non-current levels without command updates. One hundred warmed
+scene swaps allocate zero managed bytes. The final native selector compiles
+to 24,452 bytes of OpenGL SPIR-V. Its current-selection defaults precede all
+eligibility returns. This closes the bounded implementation in UR06.09f2.
+Browser threshold raster, queue, device and broader producer acceptance remain
+in their existing verification rows.
+
+The device-requirements probe round-trips embedded texture arrays with 300 and
+384 layers, packages their real payloads, and aggregates startup and streamed
+dependencies to 384. The actual JavaScript initializer requests that limit on
+a mock 512-layer adapter and rejects a 256-layer adapter before device creation.
+Six malformed or unsupported metadata cases fail before publication. An older
+recipe retains its original metadata shape. These are focused contract checks;
+custom opaque codecs and complete platform cooking remain open in UR03.03.
+
+The final Editor package has 1,334 source-matched engine asset files and 5,619
+valid browser sidecar hashes. The preceding native-host invocation of the
+published Editor builder completed RollingBall publication with 365 assets,
+181 shaders, 84 passes and 493 unchanged source inputs. The direct packaged
+CLI cannot enter `Main` on this Linux host because the Windows Desktop runtime
+is absent. UR11.04 remains open for direct Windows CLI and menu acceptance.
+
+Broad visual, performance and device matrices were deferred under the user's
+implementation-first priority. The known UI stall remains open. See the
+[implementation order](../../progress/platform/unified-runtime-implementation-order-2026-10-29.md),
+[LOD record](../../progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md#shared-registration-compatibility-correction-2026-10-29),
+[device-requirements record](../../progress/platform/browser-asset-device-requirements-2026-10-29.md),
+and [packaged builder record](../../progress/rendering/browser-project-publishing.md#packaged-editor-layout-and-builder-check-2026-10-29).
+The requirement ledger now has 123 complete and 40 open rows. Verification
+counts remain 13 complete and 25 open.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

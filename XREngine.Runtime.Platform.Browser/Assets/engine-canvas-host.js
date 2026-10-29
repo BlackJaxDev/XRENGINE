@@ -58,6 +58,7 @@ export class EngineCanvasHost {
             const detail = await this.engine.StartCanvasAsync(manifestUrl, this.canvas.id);
             if (epoch !== this.epoch || controller.signal.aborted) return;
             this.detail = detail;
+            this.deviceRequirements = this.engine.GetStartupDeviceRequirementsJson();
             this.quality = JSON.parse(this.engine.GetCanvasQualitySettingsJson());
             const session = this.engine.GetRendererSession();
             if (!Number.isInteger(session) || session <= 0)
@@ -98,7 +99,7 @@ export class EngineCanvasHost {
         if (signal.aborted) cancel();
         else signal.addEventListener('abort', cancel, { once: true });
         try {
-            await boundedOperation(renderer.initializeEngine(controller.signal), controller.signal,
+            await boundedOperation(renderer.initializeEngine(controller.signal, this.deviceRequirements), controller.signal,
                 deviceStartupTimeoutMs, 'WebGPU device acquisition');
         } catch (error) {
             controller.abort();

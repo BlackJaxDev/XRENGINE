@@ -174,6 +174,8 @@ namespace XREngine.Rendering.Commands
         Skinned = 1 << 2,
         Dynamic = 1 << 3,
         DoubleSided = 1 << 4,
+        /// <summary>Native mesh substitution retains the current geometry when candidate draw state differs.</summary>
+        NativeLodSelectionDisabled = 1 << 7,
         ReceiveShadows = 1 << 8,
         Wireframe = 1 << 9,
         Instanced = 1 << 10,
