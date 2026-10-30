@@ -128,7 +128,7 @@ materials do not claim temporal replay until matching velocity and reactive
 variants exist. Unsupported scene-color dependencies return a diagnostic.
 
 Runtime and image acceptance are tracked in the
-[avatar validation matrix](../../work/testing/rendering/jax2031-advanced-parity-validation.md).
+avatar validation matrix.
 
 ### Source Dissolve And Detail Color
 

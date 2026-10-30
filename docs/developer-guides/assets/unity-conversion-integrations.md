@@ -44,7 +44,7 @@ working directory, Desktop, and engine assets. For example:
 {
   "Enabled": true,
   "Kind": "Static",
-  "Path": "misc/Aryia_By_Mimiiu_V1.3.unitypackage",
+  "Path": "misc/ExampleAvatar.unitypackage",
   "SourceProjectRoot": null,
   "MaterialMode": "Uber",
   "AllowPartialImport": true,
