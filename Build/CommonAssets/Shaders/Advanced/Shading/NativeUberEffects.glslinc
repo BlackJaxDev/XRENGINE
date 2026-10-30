@@ -34,10 +34,13 @@ void XR_UBER_ApplySourceGlitter(XRUberCoordinates c, vec3 geometric, vec3 normal
             UBER_V(_GlitterColor), mask * globalSample.g, emission);
         return;
     }
+    vec3 colorMap = XR_UBER_CoverageTexture(UBER_T(_GlitterColorMap),
+        UBER_I(_GlitterColorMapUV), UBER_V(_GlitterColorMap_ST),
+        UBER_V(_GlitterColorMapPan).xy * 0.05, c, vec4(1.0)).rgb;
     xrApplySourceGlitter(uv, dx, dy, c.uv0Dx, c.uv0Dy, c.time,
         geometric, normal, viewDirection,
         lightDirection, lightColor, rampedLight, dot(lightColor, vec3(0.299, 0.587, 0.114)),
-        UBER_V(_GlitterColor), mask, baseColor, emission);
+        UBER_V(_GlitterColor), colorMap, mask, baseColor, emission);
 }
 
 // The including shader supplies XRUberCoordinates and coverage texture helpers.

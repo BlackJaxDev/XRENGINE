@@ -77,19 +77,37 @@ void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy,
     vec2 shapeDx, vec2 shapeDy, float time,
     vec3 geometricNormal, vec3 shadingNormal, vec3 viewDirection,
     vec3 lightDirection, vec3 lightColor, float rampedLight, float directLuminance,
-    vec4 tint, float mask, inout vec3 baseColor, inout vec3 emission)
+    vec4 tint, vec3 colorMap, float mask, inout vec3 baseColor, inout vec3 emission)
 {
     float frequency = XR_GLITTER_F(_GlitterFrequency);
     vec2 position = (uv + XR_GLITTER_V2(_GlitterUVPanning) * time * 0.05) * frequency;
     dx *= frequency;
     dy *= frequency;
+    bool source10 = XR_GLITTER_I(_SourceGlitterVersion) == 100;
+    vec2 footprint = abs(dx) + abs(dy);
+#ifdef XR_GLITTER_FRAGMENT_DERIVATIVES
+    footprint = fwidth(position);
+#endif
+    float sourceWidth = clamp(length(footprint), 0.0001, 1.0);
+    if (source10 && XR_GLITTER_F(_GlitterDistanceLOD) > 0.5)
+    {
+        // Reduce cell density from the unmodified surface footprint. Keep the
+        // source cell hash and offset so the two shading paths select one grid.
+        vec2 seed = floor(position / floor(footprint + vec2(3.0)));
+        float jitter = fract(sin(dot(seed, vec2(12.9898, 78.233))) * 46203.4357) + 0.5;
+        vec2 lodScale = floor(footprint + jitter * 0.5);
+        vec2 divisor = max(vec2(1.0), lodScale);
+        position = position / divisor + frequency * lodScale;
+        dx /= divisor;
+        dy /= divisor;
+    }
     vec3 normal = mix(geometricNormal, shadingNormal, XR_GLITTER_F(_GlitterUseNormals));
     mask *= tint.a * mix(1.0, rampedLight, XR_GLITTER_F(_GlitterHideInShadow)) *
         mix(1.0, directLuminance, XR_GLITTER_F(_GlitterScaleWithLighting));
     if (mask <= 0.0 || (XR_GLITTER_I(_GlitterBlendType) == 0 && XR_GLITTER_F(_GlitterBrightness) <= 0.0))
         return;
 
-    for (int layer = 0; layer < min(XR_GLITTER_I(_GlitterLayers), 8); ++layer)
+    for (int layer = 0; layer < min(XR_GLITTER_I(_GlitterLayers), source10 ? 4 : 8); ++layer)
     {
         vec2 displacement;
         vec3 cell = xrGlitterCell(position, float(layer), displacement);
@@ -98,10 +116,12 @@ void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy,
         vec2 adjacentDisplacement;
         float width = abs(xrGlitterCell(position + dx, float(layer), adjacentDisplacement).z - cell.z) +
             abs(xrGlitterCell(position + dy, float(layer), adjacentDisplacement).z - cell.z);
+        if (source10)
+            width = sourceWidth;
         float alpha = clamp((XR_GLITTER_F(_GlitterSize) - cell.z) / clamp(width, 0.0001, 1.0), 0.0, 1.0);
         int mode = XR_GLITTER_I(_GlitterMode);
         float strength;
-        vec3 color = tint.rgb * mix(vec3(1.0), baseColor, XR_GLITTER_F(_GlitterUseSurfaceColor));
+        vec3 color = tint.rgb * mix(vec3(1.0), baseColor, XR_GLITTER_F(_GlitterUseSurfaceColor)) * colorMap;
         vec2 shapeUv = clamp(displacement / max(XR_GLITTER_F(_GlitterSize) * 2.0, 1.0e-6) + 0.5,
             vec2(0.0), vec2(1.0));
         vec4 shapeTransform = XR_GLITTER_V4(_GlitterTexture_ST);

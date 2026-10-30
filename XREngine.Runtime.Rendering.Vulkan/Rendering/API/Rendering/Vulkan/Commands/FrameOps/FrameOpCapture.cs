@@ -6,12 +6,16 @@ internal sealed class FrameOpCapture
     public bool ExcludeTextureUploads { get; private set; }
     public FrameOp[] Buffer { get; private set; } = new FrameOp[256];
     public int Count { get; private set; }
+    public ulong BatchGeneration { get; private set; }
+    private int _insertionCursor = -1;
 
     public void Begin(FrameOpCapture? previous, bool excludeTextureUploads)
     {
         Previous = previous;
         ExcludeTextureUploads = excludeTextureUploads;
         Count = 0;
+        BatchGeneration = BatchGeneration == ulong.MaxValue ? 1UL : BatchGeneration + 1UL;
+        _insertionCursor = -1;
     }
 
     public void Add(FrameOp op)
@@ -20,8 +24,30 @@ internal sealed class FrameOpCapture
         if ((uint)count >= (uint)Buffer.Length)
             Grow();
 
-        Buffer[count] = op;
+        if (_insertionCursor >= 0)
+        {
+            Array.Copy(Buffer, _insertionCursor, Buffer, _insertionCursor + 1, count - _insertionCursor);
+            Buffer[_insertionCursor++] = op;
+        }
+        else
+        {
+            Buffer[count] = op;
+        }
         Count = count + 1;
+    }
+
+    internal void BeginInsertion(int index)
+    {
+        if (_insertionCursor >= 0 || index < 0 || index > Count)
+            throw new InvalidOperationException("The required producer insertion position is invalid.");
+        _insertionCursor = index;
+    }
+
+    internal void EndInsertion()
+    {
+        if (_insertionCursor < 0)
+            throw new InvalidOperationException("The required producer insertion scope is not active.");
+        _insertionCursor = -1;
     }
 
     private void Grow()

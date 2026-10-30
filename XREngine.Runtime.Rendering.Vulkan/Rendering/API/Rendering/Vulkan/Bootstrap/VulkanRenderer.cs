@@ -869,7 +869,14 @@ public sealed partial class VulkanRenderer :
         return _frameLoop.TryEnqueueBufferCopy(source, sourceOffset, destination,
             destinationOffset, byteCount, label, authoringLease);
     }
-    public override ERendererComputeEnqueueStatus TryEnqueueGpuBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label) => _frameLoop.TryEnqueueGpuBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label);
+    public override ERendererComputeEnqueueStatus TryEnqueueGpuBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label, IRenderResourceLeaseOwner? authoringLease = null)
+    {
+        if (GetOrCreateAPIRenderObject(source) is not VkDataBuffer
+            || GetOrCreateAPIRenderObject(destination) is not VkDataBuffer)
+            return ERendererComputeEnqueueStatus.InvalidResource;
+
+        return _frameLoop.TryEnqueueGpuBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label, authoringLease);
+    }
     public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, XRDataBuffer destination, nuint byteCount, string label)
         => _frameLoop.TryEnqueueGpuDiagnosticBufferSnapshot(source, destination, byteCount, label) == ERendererComputeEnqueueStatus.Enqueued;
     public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, nuint sourceByteOffset, XRDataBuffer destination, nuint destinationByteOffset, nuint byteCount, string label)

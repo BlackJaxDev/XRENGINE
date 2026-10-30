@@ -11,7 +11,8 @@ public static partial class SerializedMaterialImporter
     private static void BindSourceToonGlitter(
         XRMaterial material,
         SerializedMaterialDocument document,
-        SourceToonShaderVersion? sourceVersion)
+        SourceToonShaderVersion? sourceVersion,
+        ICollection<MaterialConversionDiagnostic> diagnostics)
     {
         bool enabled = SourceToonFeatureStateResolver.IsEnabled(
             document,
@@ -25,6 +26,15 @@ public static partial class SerializedMaterialImporter
         bool legacy81 = sourceVersion == SourceToon81Catalog.Version;
         if (legacy81)
             VerifySource81Glitter(document);
+        bool source10 = sourceVersion == SourceToon10Catalog.Version;
+        SetFloat(material, "_GlitterDistanceLOD", source10 ? GetFloat(document, "_GlitterDistanceLOD", 1.0f) : 0.0f);
+        if (source10)
+        {
+            RejectGlitterOption(document, "_GlitterFullCoverage");
+            RejectGlitterOption(document, "_GlitterSpriteSheetEnabled");
+            if (GetFloat(document, "_GlitterMode") == 1.0f)
+                throw new SourceVisualImportException("The source linear glitter mode requires a separate directional response mapping.");
+        }
 
         RejectGlitterOption(document, "_GlitterRandomSize");
         RejectGlitterOption(document, "_GlitterRandomColors");
@@ -43,8 +53,8 @@ public static partial class SerializedMaterialImporter
 
         if (HasExternalTexture(document, "_GlitterShapeTex") && !HasExternalTexture(document, "_GlitterTexture"))
             throw new SourceVisualImportException("Active glitter shape texture is not supported: _GlitterShapeTex.");
-        if (HasExternalTexture(document, "_GlitterColorMap", "_GlitterColorTex"))
-            throw new SourceVisualImportException("Active glitter color texture is not supported: _GlitterColorMap.");
+        if (HasExternalTexture(document, "_GlitterColorTex"))
+            throw new SourceVisualImportException("Active glitter color texture is not supported: _GlitterColorTex.");
 
         int uv = GetSupportedGlitterValue(document, "_GlitterUV", 0, 0, 3);
         int mode = GetSupportedGlitterValue(document, "_GlitterMode", 0, 0, 2);
@@ -55,14 +65,18 @@ public static partial class SerializedMaterialImporter
         int layers = legacy81 ? 1 : GetSupportedGlitterValue(document, "_GlitterLayers", 2, 1, 8);
         int maskUv = GetSupportedGlitterValue(document, "_GlitterMaskUV", 0, 0, 3);
         int maskChannel = GetSupportedGlitterValue(document, "_GlitterMaskChannel", 0, 0, 3);
+        int colorMapUv = HasExternalTexture(document, "_GlitterColorMap")
+            ? GetSupportedGlitterValue(document, "_GlitterColorMapUV", 0, 0, 3)
+            : 0;
 
         SetInt(material, "_GlitterUV", uv);
         SetInt(material, "_GlitterMode", mode);
         SetInt(material, "_GlitterShape", shape);
         SetInt(material, "_GlitterBlendType", blendType);
         SetInt(material, "_GlitterLayers", layers);
-        SetInt(material, "_SourceGlitterVersion", legacy81 ? 81 : 92);
+        SetInt(material, "_SourceGlitterVersion", legacy81 ? 81 : sourceVersion == SourceToon10Catalog.Version ? 100 : 92);
         SetInt(material, "_GlitterMaskChannel", maskChannel);
+        SetInt(material, "_GlitterColorMapUV", colorMapUv);
         SetFloat(material, "_GlitterFrequency", GetFloat(document, "_GlitterFrequency", legacy81 ? 100.0f : 300.0f));
         SetFloat(material, "_GlitterSize", GetFloat(document, "_GlitterSize", legacy81 ? 0.25f : 0.3f));
         SetFloat(material, "_GlitterSpeed", GetFloat(document, "_GlitterSpeed", 10.0f));
@@ -86,11 +100,16 @@ public static partial class SerializedMaterialImporter
             : Vector4.One);
         SetVector4(material, "_GlitterMask_ST", new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
         SetVector4(material, "_GlitterTexture_ST", new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
+        SetVector4(material, "_GlitterColorMap_ST", new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
         ApplyTextureTransform(material, document, "_GlitterMask", "_GlitterMask");
         ApplyTextureTransform(material, document, "_GlitterTexture", "_GlitterTexture");
+        ApplyTextureTransform(material, document, "_GlitterColorMap", "_GlitterColorMap");
         SetInt(material, "_GlitterMaskUV", maskUv);
         SetVector2(material, "_GlitterMaskPan", document.TryGetVector("_GlitterMaskPan", out Vector4 maskPan)
             ? new Vector2(maskPan.X, maskPan.Y)
+            : Vector2.Zero);
+        SetVector2(material, "_GlitterColorMapPan", document.TryGetVector("_GlitterColorMapPan", out Vector4 colorMapPan)
+            ? new Vector2(colorMapPan.X, colorMapPan.Y)
             : Vector2.Zero);
     }
 

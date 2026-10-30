@@ -13,6 +13,8 @@ public sealed record SourceToonMaterialDescriptor
     public bool IsLocked { get; init; }
     public required SerializedMaterialDocument SourceDocument { get; init; }
     public required SourceResolvedAsset ShaderAsset { get; init; }
+    public IReadOnlyDictionary<string, SourceToonPropertyDefinition> PropertyDefinitions { get; init; } =
+        new Dictionary<string, SourceToonPropertyDefinition>(StringComparer.Ordinal);
     public IReadOnlyDictionary<string, SourceToonPropertyBinding> PropertyBindings { get; init; } =
         new Dictionary<string, SourceToonPropertyBinding>(StringComparer.Ordinal);
     public IReadOnlyDictionary<string, SourceToonTextureDescriptor> Textures { get; init; } =

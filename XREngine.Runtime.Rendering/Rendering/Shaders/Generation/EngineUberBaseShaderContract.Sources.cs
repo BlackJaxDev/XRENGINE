@@ -29,7 +29,7 @@ public static partial class EngineUberBaseShaderContract
         new("Snippets/ScreenSpaceUtils.glsl", "a7a855fae8dfeddd22ead2ae94eaca8a41897459c9c933099c678497e1e6731b"),
         new("Snippets/ShadowMomentEncoding.glsl", "b0ad566842e7e9ea654685bcadba629cf2000c88088251cffc5792a9ddf1b17b"),
         new("Snippets/ShadowSampling.glsl", "f404d3585da7d87332a019d9190c56b7c8aeb82d61679fa40d2aa742d876e726"),
-        new("Uber/UberShader.frag", "ac53058b54e0f906861f24cdd48440b6d2a4d6222c8188b0ccb8d0d1eb807967"),
+        new("Uber/UberShader.frag", "506de2a54c89e58a66a4151e8d0cb057ad8f7ff223d571b03ed41e7797689cab"),
         new("Uber/UberShader.vert", "0a304c2b877f9011cd976081f51ae8bfaae03f325609889c1fbac14749af8ff8"),
         new("Uber/common.glsl", "98756dfd4a3370919006101de98c1adb99efabc6aac6c126a1476bd817281446"),
         new("Uber/dissolve.glsl", "dae8e92050de22e2be55e2b19b50000eb92fb8e259c0e4230bfbe9fd9d9b5d65"),
@@ -38,9 +38,9 @@ public static partial class EngineUberBaseShaderContract
         new("Uber/flipbook.glsl", "f68fe46ff678556d70cf263b0e35982564af495b39d180afbfac40a14d43ab2e"),
         new("Uber/glitter.glsl", "7972d07af60a4a46dde99c4a78123a1e488562848f1319cfb51e486486e04380"),
         new("Uber/parallax.glsl", "082cd0f043763c192995a66067bce797c46116578f6740ec748d9fbebd17d2dd"),
-        new("Uber/surface_extensions.glsl", "f200b1689b41197f7d8648c9a9eb0691e60691da9cfe025f5807565773ac8e52"),
-        new("Uber/surface_extensions_uniforms.glsl", "0b8b5f313c04f5572efb0a1c0f32745d755ef4ed988b5c4469a6c6460a0eb703"),
-        new("Uber/uniforms.glsl", "6a40c01dac8ad25b4a3f446e94980ed494dc84f63d9d4cd4ec0d560c438cde96"),
+        new("Uber/surface_extensions.glsl", "96924e75734d0c12f8ef614cea3bef5e287a264195b012e97673b80d240fffff"),
+        new("Uber/surface_extensions_uniforms.glsl", "661227bfc77635672d5e44240f64b6d26563c73ed327e34673af4c8eca851d3a"),
+        new("Uber/uniforms.glsl", "f792f8e7847f8c0f8c1ac51a6b5735d86e5588e012aef0a7e1bee09144d4cd1f"),
         new("Uber/vertex_effects.glsl", "c35bed02889627b905c7d7328f455c7960268632bfb28b7f268c0548777a2a76"),
     ];
 }

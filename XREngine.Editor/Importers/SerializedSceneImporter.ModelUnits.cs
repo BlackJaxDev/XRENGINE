@@ -48,17 +48,7 @@ internal static partial class SerializedSceneImporter
             throw new SourceVisualImportException("The centimetre model hierarchy does not match the source hierarchy.");
 
         for (int index = 0; index < targets.Length; index++)
-        {
-            SceneNode node = targets[index];
-            oldWorlds[index] = node.Transform.WorldMatrix;
-            foreach (ModelComponent component in node.Components.OfType<ModelComponent>())
-                if (component.Model is { } model)
-                    foreach (SubMesh subMesh in model.Meshes)
-                        foreach (SubMeshLOD lod in subMesh.LODs)
-                            if (lod.Mesh is { } mesh && (mesh.HasSkinning || mesh.BindRootMatrix is not null))
-                                throw new SourceVisualImportException(
-                                    $"Centimetre mesh '{mesh.Name}' requires unsupported source-local bind conversion.");
-        }
+            oldWorlds[index] = targets[index].Transform.WorldMatrix;
 
         var previousState = CaptureImportedRootState(syntheticRoot);
         Matrix4x4 chart = Matrix4x4.CreateScale(-1.0f, 1.0f, -1.0f) *
@@ -85,15 +75,48 @@ internal static partial class SerializedSceneImporter
             if (!Matrix4x4.Invert(node.Transform.WorldMatrix, out Matrix4x4 inverseWorld) ||
                 !ModelMatricesMatch(node.Transform.WorldMatrix * inverseWorld, Matrix4x4.Identity))
                 throw new SourceVisualImportException($"Source node '{node.Name}' has a singular local-unit chart.");
-            Matrix4x4 conversion = oldWorlds[index] * inverseWorld;
+            Matrix4x4 ownerConversion = oldWorlds[index] * inverseWorld;
             foreach (ModelComponent component in node.Components.OfType<ModelComponent>())
                 if (component.Model is { } model)
                     foreach (SubMesh subMesh in model.Meshes)
                         foreach (SubMeshLOD lod in subMesh.LODs)
-                            if (lod.Mesh is { } mesh && !meshConversions.TryAdd(mesh, conversion) &&
+                        {
+                            if (lod.Mesh is not { } mesh)
+                                continue;
+                            // Native skin vertices retain source units. Assimp skin vertices
+                            // already include the mesh bind transform and metre conversion.
+                            Matrix4x4 conversion = mesh.HasSkinning
+                                ? native ? Matrix4x4.CreateScale(sourceUnitToMeters) : Matrix4x4.Identity
+                                : ownerConversion;
+                            if (!meshConversions.TryAdd(mesh, conversion) &&
                                 !ModelMatricesMatch(meshConversions[mesh], conversion))
                                 throw new SourceVisualImportException(
                                     $"Shared mesh '{mesh.Name}' requires different source-local unit conversions.");
+                        }
+        }
+        foreach ((XRMesh mesh, (TransformBase Bone, Matrix4x4 Product)[] slots) in previousState.Palettes)
+        {
+            Matrix4x4 conversion = meshConversions[mesh];
+            Matrix4x4 bindRoot = mesh.BindRootMatrix ?? Matrix4x4.Identity;
+            if (!Matrix4x4.Invert(conversion, out Matrix4x4 inverseConversion) ||
+                !ModelMatricesMatch(conversion * inverseConversion, Matrix4x4.Identity) ||
+                !Matrix4x4.Invert(bindRoot, out Matrix4x4 inverseBindRoot) ||
+                !ModelMatricesMatch(bindRoot * inverseBindRoot, Matrix4x4.Identity))
+                throw new SourceVisualImportException(
+                    $"Skinned mesh '{mesh.Name}' has a singular or non-finite source-local unit chart.");
+
+            // Preserve G * R * I_new * B_new = R * I_old * B_old.
+            // Geometry conversion G must cancel before the unchanged bind root R.
+            Matrix4x4 paletteConversion = inverseBindRoot * inverseConversion * bindRoot;
+            for (int slot = 0; slot < slots.Length; slot++)
+            {
+                (TransformBase bone, Matrix4x4 oldProduct) = slots[slot];
+                Matrix4x4 product = paletteConversion * oldProduct;
+                if (!ModelMatricesMatch(conversion * bindRoot * product, bindRoot * oldProduct))
+                    throw new SourceVisualImportException(
+                        $"Skinned mesh '{mesh.Name}' cannot preserve palette slot {slot} during unit conversion.");
+                slots[slot] = (bone, product);
+            }
         }
         foreach ((XRMesh mesh, Matrix4x4 conversion) in meshConversions)
         {

@@ -51,7 +51,7 @@ public sealed class SourceToonConversionBaselineTests
             CreateTexture(projectRoot, "_2nd_ShadeMap", 4),
             CreateTexture(projectRoot, "_MochieMetallicMaps", 5, srgb: false),
             CreateTexture(projectRoot, "_RGBASmoothnessMaps", 6, srgb: false),
-            CreateTexture(projectRoot, "_RimColorTex", 7),
+            CreateTexture(projectRoot, "_RimTex", 7),
             CreateTexture(projectRoot, "_RimMask", 8, srgb: false),
             CreateTexture(projectRoot, "_DissolveNoiseTexture", 9, srgb: false),
             CreateTexture(projectRoot, "_DissolveDetailNoise", 10, srgb: false),
@@ -73,7 +73,7 @@ public sealed class SourceToonConversionBaselineTests
                 ("_MochieMetallicMapsUV", 2),
                 ("_RGBASmoothnessMapsUV", 3),
                 ("_MochieMetallicMapsMetallicChannel", 2),
-                ("_RimColorTexUV", 1),
+                ("_RimTexUV", 1),
                 ("_RimMaskUV", 2),
                 ("_DissolveNoiseTextureUV", 0),
                 ("_DissolveDetailNoiseUV", 1),
@@ -115,6 +115,7 @@ public sealed class SourceToonConversionBaselineTests
         material.Parameter<ShaderInt>("_PBRSmoothnessMapsUV")?.Value.ShouldBe(3);
         material.Parameter<ShaderInt>("_PBRMetallicMapsMetallicChannel")?.Value.ShouldBe(2);
         material.Parameter<ShaderInt>("_PBRSmoothnessMapsChannel")?.Value.ShouldBe(0);
+        material.Parameter<ShaderInt>("_RimColorTextureUV")?.Value.ShouldBe(1);
         material.Parameter<ShaderFloat>("_DissolveDetailStrength")?.Value.ShouldBe(0.35f, 0.0001f);
         material.Parameter<ShaderFloat>("_DissolveMaskInvert")?.Value.ShouldBe(1.0f, 0.0001f);
 

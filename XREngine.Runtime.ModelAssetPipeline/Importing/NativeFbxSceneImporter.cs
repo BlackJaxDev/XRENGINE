@@ -281,6 +281,7 @@ internal static class NativeFbxSceneImporter
                 Array.Sort(meshes, static (left, right) => left.ObjectIndex.CompareTo(right.ObjectIndex));
                 bool flipUvY = importOptions?.ImportSteps.HasFlag(ModelImportSteps.FlipUVs) ?? true;
                 bool calculateTangents = importOptions?.ImportSteps.HasFlag(ModelImportSteps.CalculateTangentSpace) ?? true;
+                bool importBlendShapeNormals = importOptions?.ImportBlendShapeNormals ?? true;
 
                 List<MeshBuildWorkItem> workItems = [];
                 using (IDisposable? buildWorkItemsScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.BuildWorkItems"))
@@ -388,6 +389,7 @@ internal static class NativeFbxSceneImporter
                             materialCacheSync,
                             createdAssetsSync,
                             flipUvY,
+                            importBlendShapeNormals,
                             calculateTangents,
                             cancellationToken,
                             rootNode.Transform,
@@ -623,6 +625,7 @@ internal static class NativeFbxSceneImporter
         object materialCacheSync,
         object createdAssetsSync,
         bool flipUvY,
+        bool importBlendShapeNormals,
         bool calculateTangents,
         CancellationToken cancellationToken,
         TransformBase rootTransform,
@@ -637,6 +640,7 @@ internal static class NativeFbxSceneImporter
         IReadOnlyList<int> polygonVertexIndices = meshGeometry.PolygonVertexIndices;
         FbxLayerElement<Vector3>? normalLayer = meshGeometry.Normals.Count > 0 ? meshGeometry.Normals[0] : null;
         FbxLayerElement<Vector3>? tangentLayer = meshGeometry.Tangents.Count > 0 ? meshGeometry.Tangents[0] : null;
+        FbxLayerElement<Vector3>? binormalLayer = meshGeometry.Binormals is { Count: > 0 } ? meshGeometry.Binormals[0] : null;
         string[]? blendShapeNames = blendShapeChannels.Count > 0 ? BuildBlendshapeNames(blendShapeChannels) : null;
         int[] shapeIndexByChannel = BuildShapeIndexByChannel(blendShapeChannels, blendShapeNames);
         PackedVertexScratch scratch = new(meshGeometry, blendShapeNames?.Length ?? 0);
@@ -656,6 +660,10 @@ internal static class NativeFbxSceneImporter
                     ? chunks[^1]
                     : CreateChunk(chunks, materialSlot, polygonVertexIndices.Count - polygonVertexStart, polygonVertexCount);
                 int baseVertex = chunk.Source.VertexCount;
+                Vector3 polygonBitangent = Vector3.Zero;
+                bool hasPolygonBitangent = tangentLayer is not null && binormalLayer is null && TryReconstructPolygonBitangent(
+                    meshGeometry, polygonVertexStart, polygonVertexCount, polygonIndex, intermediateNode.GeometryTransform,
+                    flipUvY, out polygonBitangent);
                 int polygonVertexIndex = polygonVertexStart;
                 int localPolygonVertexIndex = 0;
                 while (polygonVertexIndex < polygonVertexIndices.Count)
@@ -673,7 +681,11 @@ internal static class NativeFbxSceneImporter
                         polygonIndex,
                         normalLayer,
                         tangentLayer,
+                        binormalLayer,
+                        polygonBitangent,
+                        hasPolygonBitangent,
                         flipUvY,
+                        importBlendShapeNormals,
                         skinWeightsByControlPoint,
                         blendShapeChannels,
                         shapeIndexByChannel);
@@ -688,6 +700,10 @@ internal static class NativeFbxSceneImporter
                 polygonIndex++;
             }
         }
+
+        if (scratch.UnresolvedTangentFrameCount > 0)
+            XREngine.Fbx.FbxTrace.Warning("NativeImporter",
+                $"Mesh '{meshGeometry.Name}' has {scratch.UnresolvedTangentFrameCount} authored tangent corners without a valid normal, tangent, binormal, or UV-derived bitangent. Their tangent sign uses the positive default.");
 
         List<SubMesh> subMeshes = [];
         using (IDisposable? materializeSubMeshesScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "BuildSubMeshesForNode.MaterializeSubMeshes"))
@@ -886,6 +902,87 @@ internal static class NativeFbxSceneImporter
         return polygonVertexCount;
     }
 
+    /// <summary>
+    /// Reconstructs a polygon bitangent from the first valid fan triangle and the final UV orientation.
+    /// </summary>
+    private static bool TryReconstructPolygonBitangent(
+        FbxMeshGeometry meshGeometry,
+        int polygonVertexStart,
+        int polygonVertexCount,
+        int polygonIndex,
+        Matrix4x4 geometryTransform,
+        bool flipUvY,
+        out Vector3 bitangent)
+    {
+        bitangent = Vector3.Zero;
+        if (polygonVertexCount < 3 || meshGeometry.TextureCoordinates.Count == 0)
+            return false;
+
+        if (!TryGetPolygonCorner(meshGeometry, polygonVertexStart, polygonIndex, geometryTransform, flipUvY,
+            out Vector3 position0, out Vector2 uv0))
+            return false;
+
+        for (int triangle = 1; triangle < polygonVertexCount - 1; triangle++)
+        {
+            if (!TryGetPolygonCorner(meshGeometry, polygonVertexStart + triangle, polygonIndex, geometryTransform, flipUvY,
+                out Vector3 position1, out Vector2 uv1)
+                || !TryGetPolygonCorner(meshGeometry, polygonVertexStart + triangle + 1, polygonIndex, geometryTransform, flipUvY,
+                    out Vector3 position2, out Vector2 uv2))
+                continue;
+
+            Vector2 delta1 = uv1 - uv0;
+            Vector2 delta2 = uv2 - uv0;
+            float determinant = delta1.X * delta2.Y - delta1.Y * delta2.X;
+            if (!float.IsFinite(determinant) || MathF.Abs(determinant) <= 1.0e-20f)
+                continue;
+
+            Vector3 edge1 = position1 - position0;
+            Vector3 edge2 = position2 - position0;
+            Vector3 candidate = (edge2 * delta1.X - edge1 * delta2.X) / determinant;
+            if (!IsValidDirection(candidate))
+                continue;
+
+            bitangent = Vector3.Normalize(candidate);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetPolygonCorner(
+        FbxMeshGeometry meshGeometry,
+        int polygonVertexIndex,
+        int polygonIndex,
+        Matrix4x4 geometryTransform,
+        bool flipUvY,
+        out Vector3 position,
+        out Vector2 uv)
+    {
+        int encodedControlPointIndex = meshGeometry.PolygonVertexIndices[polygonVertexIndex];
+        int controlPointIndex = encodedControlPointIndex < 0 ? ~encodedControlPointIndex : encodedControlPointIndex;
+        if ((uint)controlPointIndex >= (uint)meshGeometry.ControlPoints.Count
+            || !TryResolveLayerValue(meshGeometry.TextureCoordinates[0], controlPointIndex,
+                polygonVertexIndex, polygonIndex, out uv)
+            || !float.IsFinite(uv.X) || !float.IsFinite(uv.Y))
+        {
+            position = Vector3.Zero;
+            uv = Vector2.Zero;
+            return false;
+        }
+
+        position = Vector3.Transform(meshGeometry.ControlPoints[controlPointIndex], geometryTransform);
+        if (flipUvY)
+            uv.Y = 1.0f - uv.Y;
+        return float.IsFinite(position.X) && float.IsFinite(position.Y) && float.IsFinite(position.Z);
+    }
+
+    private static bool IsValidDirection(Vector3 value)
+    {
+        float lengthSquared = value.LengthSquared();
+        return float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z)
+            && float.IsFinite(lengthSquared) && lengthSquared > 1.0e-20f;
+    }
+
     private static string[] BuildBlendshapeNames(IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels)
     {
         HashSet<string> uniqueNames = new(StringComparer.Ordinal);
@@ -905,6 +1002,7 @@ internal static class NativeFbxSceneImporter
     {
         public Vector2[] TexCoords { get; } = new Vector2[meshGeometry.TextureCoordinates.Count];
         public Vector4[] Colors { get; } = new Vector4[meshGeometry.Colors.Count];
+        public int UnresolvedTangentFrameCount { get; set; }
         /// <summary>Shapes already added for the current vertex; the first channel of a name wins.</summary>
         public bool[] ShapeAdded { get; } = new bool[shapeCount];
     }
@@ -939,7 +1037,11 @@ internal static class NativeFbxSceneImporter
         int polygonIndex,
         FbxLayerElement<Vector3>? normalLayer,
         FbxLayerElement<Vector3>? tangentLayer,
+        FbxLayerElement<Vector3>? binormalLayer,
+        Vector3 polygonBitangent,
+        bool hasPolygonBitangent,
         bool flipUvY,
+        bool importBlendShapeNormals,
         IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint,
         IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels,
         int[] shapeIndexByChannel)
@@ -951,16 +1053,52 @@ internal static class NativeFbxSceneImporter
         Vector3 baseNormal = Vector3.Zero;
         bool hasNormal = false;
         if (TryResolveLayerValue(normalLayer, controlPointIndex, polygonVertexIndex, polygonIndex, out Vector3 normal)
-            && normal.LengthSquared() > 0.0f)
+            && IsValidDirection(normal))
         {
-            baseNormal = Vector3.Normalize(Vector3.TransformNormal(normal, geometryTransform));
-            hasNormal = true;
+            Vector3 transformedNormal = Vector3.TransformNormal(normal, geometryTransform);
+            if (IsValidDirection(transformedNormal))
+            {
+                baseNormal = Vector3.Normalize(transformedNormal);
+                hasNormal = true;
+            }
         }
 
         Vector3 baseTangent = Vector3.Zero;
         if (TryResolveLayerValue(tangentLayer, controlPointIndex, polygonVertexIndex, polygonIndex, out Vector3 tangent)
-            && tangent.LengthSquared() > 0.0f)
-            baseTangent = Vector3.Normalize(Vector3.TransformNormal(tangent, geometryTransform));
+            && IsValidDirection(tangent))
+        {
+            Vector3 transformedTangent = Vector3.TransformNormal(tangent, geometryTransform);
+            if (IsValidDirection(transformedTangent))
+                baseTangent = Vector3.Normalize(transformedTangent);
+        }
+
+        float bitangentSign = 1.0f;
+        if (tangentLayer is not null)
+        {
+            Vector3 bitangent = polygonBitangent;
+            bool hasBitangent = hasPolygonBitangent;
+            bool usesSourceBinormal = false;
+            if (TryResolveLayerValue(binormalLayer, controlPointIndex, polygonVertexIndex, polygonIndex, out Vector3 binormal)
+                && IsValidDirection(binormal))
+            {
+                Vector3 transformedBinormal = Vector3.TransformNormal(binormal, geometryTransform);
+                if (IsValidDirection(transformedBinormal))
+                {
+                    bitangent = transformedBinormal;
+                    hasBitangent = true;
+                    usesSourceBinormal = true;
+                }
+            }
+
+            Vector3 cross = Vector3.Cross(baseNormal, baseTangent);
+            float handedness = Vector3.Dot(cross, bitangent);
+            if (hasNormal && IsValidDirection(baseTangent) && hasBitangent
+                && float.IsFinite(handedness) && MathF.Abs(handedness) > 1.0e-8f)
+                bitangentSign = (handedness < 0.0f ? -1.0f : 1.0f)
+                    * (usesSourceBinormal && flipUvY ? -1.0f : 1.0f);
+            else
+                scratch.UnresolvedTangentFrameCount++;
+        }
 
         for (int set = 0; set < scratch.TexCoords.Length; set++)
         {
@@ -972,7 +1110,7 @@ internal static class NativeFbxSceneImporter
         for (int set = 0; set < scratch.Colors.Length; set++)
             scratch.Colors[set] = ResolveLayerValue(meshGeometry.Colors[set], controlPointIndex, polygonVertexIndex, polygonIndex, Vector4.One);
 
-        source.AddVertex(position, baseNormal, new Vector4(baseTangent, 1.0f), scratch.TexCoords, scratch.Colors);
+        source.AddVertex(position, baseNormal, new Vector4(baseTangent, bitangentSign), scratch.TexCoords, scratch.Colors);
 
         if (skinWeightsByControlPoint is not null
             && controlPointIndex >= 0
@@ -1002,7 +1140,7 @@ internal static class NativeFbxSceneImporter
             Vector3 shapePositionDelta = hasPositionDelta ? Vector3.TransformNormal(positionDelta, geometryTransform) : Vector3.Zero;
             // A shape normal is the renormalized base normal plus its delta; the
             // stored delta is its difference to the base normal.
-            Vector3 shapeNormalDelta = hasNormal
+            Vector3 shapeNormalDelta = hasNormal && importBlendShapeNormals
                 ? Vector3.Normalize(baseNormal + (hasNormalDelta ? Vector3.TransformNormal(normalDelta, geometryTransform) : Vector3.Zero)) - baseNormal
                 : Vector3.Zero;
             source.AddBlendshapeDelta(shapeIndex, shapePositionDelta, shapeNormalDelta, Vector3.Zero);
@@ -1633,7 +1771,27 @@ internal static class NativeFbxSceneImporter
             return false;
         }
 
-        value = ResolveLayerValue(layer, controlPointIndex, polygonVertexIndex, polygonIndex, default!);
+        int lookupIndex = layer.MappingType switch
+        {
+            FbxLayerElementMappingType.ByControlPoint => controlPointIndex,
+            FbxLayerElementMappingType.ByPolygonVertex => polygonVertexIndex,
+            FbxLayerElementMappingType.ByPolygon => polygonIndex,
+            FbxLayerElementMappingType.AllSame => 0,
+            _ => -1,
+        };
+        int directIndex = layer.ReferenceType switch
+        {
+            FbxLayerElementReferenceType.Index or FbxLayerElementReferenceType.IndexToDirect
+                => (uint)lookupIndex < (uint)layer.Indices.Count ? layer.Indices[lookupIndex] : -1,
+            _ => lookupIndex,
+        };
+        if ((uint)directIndex >= (uint)layer.DirectValues.Count)
+        {
+            value = default!;
+            return false;
+        }
+
+        value = layer.DirectValues[directIndex];
         return true;
     }
 

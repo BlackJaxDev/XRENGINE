@@ -39,7 +39,8 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_SourceCubeMap", IsCubemapEnabled(document) ? 1 : 0);
 
         BindExactSurfaceParameters(material, document);
-        BindSourceToonGlitter(material, document, sourceVersion);
+        BindSourceToonGlitter(material, document, sourceVersion, diagnostics);
+        BindSourceToonFlipbook(material, document);
         BindSourceToonDissolve(material, document, diagnostics);
         MapInt(document, material, "_RimLightColorThemeIndex", "_RimLightColorThemeIndex");
         BindCompositeSurfaceParameters(material, document, sourceVersion);
@@ -333,12 +334,9 @@ public static partial class SerializedMaterialImporter
             if (matcapEnabled)
             {
                 SetFloat(material, "_SourceMatcap", 1.0f);
-                // A zero hue shift with zero speed is neutral in shift mode.
                 if (document.TryGetPositive($"{matcapPrefix}HueShiftEnabled") &&
-                    (GetFloat(document, $"{matcapPrefix}HueShift") != 0.0f ||
-                     GetFloat(document, $"{matcapPrefix}HueShiftSpeed") != 0.0f ||
-                     GetInt(document, $"{matcapPrefix}HueSelectOrShift", 1) != 1))
-                    throw new SourceVisualImportException($"Source matcap hue conversion is not supported on '{document.Name}'.");
+                    GetInt(document, $"{matcapPrefix}HueSelectOrShift", 1) != 1)
+                    throw new SourceVisualImportException($"Source matcap hue selection is not supported on '{document.Name}'.");
                 foreach (string unsupported in new[] { "ApplyToAlphaEnabled", "AlphaOverride", "TPSDepthEnabled" })
                 {
                     if (document.TryGetPositive($"{matcapPrefix}{unsupported}"))
@@ -414,6 +412,11 @@ public static partial class SerializedMaterialImporter
                 GetFloat(document, $"{matcapPrefix}BaseColorMix"),
                 GetFloat(document, $"{matcapPrefix}AddToLight"),
                 GetFloat(document, $"{matcapPrefix}MaskSmoothnessApply")));
+            SetVector4(material, $"_MatcapSlotHue{slot}", new Vector4(
+                matcapEnabled && document.TryGetPositive($"{matcapPrefix}HueShiftEnabled") ? 1.0f : 0.0f,
+                GetFloat(document, $"{matcapPrefix}HueShift"),
+                GetFloat(document, $"{matcapPrefix}HueShiftSpeed"),
+                GetFloat(document, $"{matcapPrefix}HueShiftColorSpace")));
             SetVector4(material, $"_MatcapSlotMask{slot}", new Vector4(
                 GetInt(document, $"{matcapPrefix}MaskChannel"),
                 GetFloat(document, $"{matcapPrefix}MaskInvert"),
@@ -452,11 +455,13 @@ public static partial class SerializedMaterialImporter
             GetFloat(document, "_RimLightingInvert"),
             GetFloat(document, "_RimPower", 1.0f),
             GetFloat(document, "_Is_NormalMapToRimLight", 1.0f)));
+        float rimBlur = GetFloat(document, "_RimBlur", -1.0f);
         SetVector4(material, "_SourceRimColorSettings", new Vector4(
             GetFloat(document, "_RimBaseColorMix"),
             GetFloat(document, "_RimBrightness", 1.0f),
             GetInt(document, "_RimPoiBlendMode"),
-            0.0f));
+            // Zero selects the older sharpness edge. Other values store the source blur plus one.
+            rimBlur >= 0.0f ? rimBlur + 1.0f : 0.0f));
     }
 
     private static bool SupportsExactSourceRim(SerializedMaterialDocument document)
@@ -721,11 +726,15 @@ public static partial class SerializedMaterialImporter
             return;
         }
 
-        SerializedTextureImportDocument? settings = SerializedTextureImportDocumentParser.ParseFile(texturePath);
         try
         {
+            SerializedTextureImportDocument? settings = SerializedTextureImportDocumentParser.ParseFile(texturePath);
             XRTexture2DArray texture;
-            if (Path.GetExtension(texturePath).Equals(".gif", StringComparison.OrdinalIgnoreCase))
+            if (Path.GetExtension(texturePath).Equals(".asset", StringComparison.OrdinalIgnoreCase))
+            {
+                texture = SerializedTexture2DArrayDecoder.DecodeFile(texturePath);
+            }
+            else if (Path.GetExtension(texturePath).Equals(".gif", StringComparison.OrdinalIgnoreCase))
             {
                 texture = new XRTexture2DArray();
                 texture.Load3rdParty(texturePath);
@@ -741,7 +750,7 @@ public static partial class SerializedMaterialImporter
 
             texture.Name = "_FlipbookTexArray";
             texture.SamplerName = "_FlipbookTexArray";
-            if (settings is not null)
+            if (settings is not null && !Path.GetExtension(texturePath).Equals(".asset", StringComparison.OrdinalIgnoreCase))
             {
                 foreach (XRTexture2D frame in texture.Textures)
                     ApplySerializedTextureImportSettings(frame, settings, "_FlipbookTexArray");
@@ -749,7 +758,7 @@ public static partial class SerializedMaterialImporter
             ReplaceMaterialSampler(material, "_FlipbookTexArray", texture);
             ApplyTextureTransform(material, document, "_FlipbookTexArray", "_FlipbookTexArray");
         }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException or OverflowException)
         {
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.UnsupportedTextureAsset,

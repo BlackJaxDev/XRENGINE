@@ -144,6 +144,17 @@ float XR_UBER_GlitterLightMap(XRUberCoordinates c, vec3 N, vec3 Nx, vec3 Ny, vec
     return mix(1.0, ramp, clamp(UBER_F(_ShadowStrength) * mask, 0.0, 1.0));
 }
 
+// Source 10 matcap and glitter light masks multiply the ramped light map by the unramped light map.
+float XR_UBER_SourceMaskLightMap(XRUberCoordinates c, vec3 N, vec3 Nx, vec3 Ny, vec3 L, float mask,
+    XrSourceShCoefficients sh, vec3 rawPrimary, vec3 selectedDirect, float visibility)
+{
+    float ramped = XR_UBER_GlitterLightMap(c, N, Nx, Ny, L, mask, sh, rawPrimary, selectedDirect, visibility);
+    int direction = UBER_I(_LightingDirectionMode);
+    if (direction == 1) L = N;
+    else if (direction == 3) L = vec3(0.0, 1.0, 0.0);
+    return ramped * XR_UBER_PrimaryLightMap(c, N, L, sh, rawPrimary, selectedDirect, visibility);
+}
+
 vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
     vec3 V, vec3 L, vec3 radiance, vec3 ambient, float visibility, float mask,
     bool primary, vec3 rawPrimary, vec3 rawSelectedDirect,

@@ -1,0 +1,42 @@
+#ifndef XR_NATIVE_UBER_FLIPBOOK_GLSLINC
+#define XR_NATIVE_UBER_FLIPBOOK_GLSLINC
+
+XRAdvancedEncodedTextureReference XR_UBER_FlipbookReference;
+#define XR_FLIP_F(name) UBER_F(name)
+#define XR_FLIP_I(name) UBER_I(name)
+#define XR_FLIP_V(name) UBER_V(name)
+#define XR_FLIP_V2(name) UBER_V(name).xy
+#define XR_FLIP_SAMPLE(uv, layer, dx, dy) XR_ADV_SampleTexture2DArrayGrad(XR_UBER_FlipbookReference, vec3(uv, layer), dx, dy)
+#define XR_FLIP_BLEND(base, layer, mode) XR_UBER_Blend(base, layer, mode)
+#define XR_FLIP_RGB_TO_HSV(value) XR_UBER_rgbToHsv(value)
+#define XR_FLIP_HSV_TO_RGB(value) XR_UBER_hsvToRgb(value)
+#define XR_FLIP_RGB_TO_OKLAB(value) XR_UBER_rgbToOklab(value)
+#define XR_FLIP_OKLAB_TO_RGB(value) XR_UBER_oklabToRgb(value)
+#include "Uber/source_flipbook.glsl"
+#undef XR_FLIP_F
+#undef XR_FLIP_I
+#undef XR_FLIP_V
+#undef XR_FLIP_V2
+#undef XR_FLIP_SAMPLE
+#undef XR_FLIP_BLEND
+#undef XR_FLIP_RGB_TO_HSV
+#undef XR_FLIP_HSV_TO_RGB
+#undef XR_FLIP_RGB_TO_OKLAB
+#undef XR_FLIP_OKLAB_TO_RGB
+
+void XR_UBER_ApplyFlipbook(XRUberCoordinates c, bool shadowPass, inout vec4 base, inout vec3 emission)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_TEXTURE_ARRAY_FLIPBOOK) || UBER_I(_SourceFlipbook) == 0)
+        return;
+    if (shadowPass && UBER_I(_FlipbookAlphaControlsFinalAlpha) != 1)
+        return;
+    XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(XR_UBER_Material,
+        UBER_T(_FlipbookTexArray)), XR_UBER_FlipbookReference);
+    vec2 uv, dx, dy;
+    XR_UBER_CoverageUv(c, UBER_I(_FlipbookTexArrayUV), uv, dx, dy);
+    vec4 mask = XR_UBER_CoverageTexture(UBER_T(_FlipbookMask), UBER_I(_FlipbookMaskUV),
+        UBER_V(_FlipbookMask_ST), UBER_V(_FlipbookMaskPan).xy * 0.05, c, vec4(1.0));
+    xrApplySourceFlipbook(uv, dx, dy, vec3(XR_ADV_Texture2DArraySize(XR_UBER_FlipbookReference)),
+        mask[clamp(int(UBER_V(_SourceFlipbookFlags).z), 0, 3)], c.time, shadowPass, base, emission);
+}
+#endif

@@ -8,6 +8,8 @@ public sealed class SerializedModelImporterDocument
     public string SourceMetaPath { get; init; } = string.Empty;
     public int FileIdsGeneration { get; init; } = 2;
     public bool ImportBlendShapes { get; init; } = true;
+    /// <summary>The source mode: 0 imports, 1 calculates, and 2 ignores blendshape normals.</summary>
+    public int BlendShapeNormalImportMode { get; init; }
     public bool ImportAnimation { get; init; } = true;
     public int AnimationType { get; init; }
     public float GlobalScale { get; init; } = 1.0f;

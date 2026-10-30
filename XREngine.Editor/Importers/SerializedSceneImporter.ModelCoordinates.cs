@@ -46,18 +46,22 @@ internal static partial class SerializedSceneImporter
         if (axes.UnitScaleFactor == 1.0d && !metadata.UseFileScale)
             throw new SourceVisualImportException(
                 $"Unity FBX model '{modelPath}' uses centimetre source units without file-scale import. This coordinate contract is not supported.");
-        if (axes.UnitScaleFactor == 1.0d && source.IntermediateScene.Skins.Count != 0)
-            throw new SourceVisualImportException(
-                $"Unity FBX model '{modelPath}' uses centimetre units with skinning. Its source-local bind conversion is not supported.");
-
+        // A geometric transform applies only to attached geometry and does not reach child nodes.
+        HashSet<long> meshOwnerIds = [.. source.IntermediateScene.Meshes.SelectMany(static mesh => mesh.ModelObjectIds)];
         foreach (FbxIntermediateNode node in source.IntermediateScene.Nodes)
         {
             FbxTransformSemantics transform = node.TransformSemantics;
-            if (transform.HasPivotData || transform.InheritType != 1 ||
-                transform.RotationOrder != FbxRotationOrder.XYZ ||
-                !ModelMatricesMatch(node.GeometryTransform, Matrix4x4.Identity))
+            bool hasPivotOffsets = transform.RotationOffset != Vector3.Zero ||
+                transform.RotationPivot != Vector3.Zero || transform.ScalingOffset != Vector3.Zero ||
+                transform.ScalingPivot != Vector3.Zero;
+            if (hasPivotOffsets || transform.InheritType != 1 ||
+                transform.RotationOrder is not (FbxRotationOrder.XYZ or FbxRotationOrder.XZY or
+                    FbxRotationOrder.YZX or FbxRotationOrder.YXZ or FbxRotationOrder.ZXY or FbxRotationOrder.ZYX) ||
+                (meshOwnerIds.Contains(node.ObjectId) && !ModelMatricesMatch(node.GeometryTransform, Matrix4x4.Identity)))
                 throw new SourceVisualImportException(
-                    $"Unity FBX node '{node.Name}' in '{modelPath}' requires unsupported pivot, inheritance, rotation-order, or geometric-transform conversion.");
+                    $"Unity FBX node '{node.Name}' in '{modelPath}' requires unsupported transform conversion: " +
+                    $"hasPivotOffsets={hasPivotOffsets}, inheritType={transform.InheritType}, " +
+                    $"rotationOrder={transform.RotationOrder}, identityGeometry={ModelMatricesMatch(node.GeometryTransform, Matrix4x4.Identity)}.");
         }
 
         return axes.UpAxis.AxisIndex == 2;

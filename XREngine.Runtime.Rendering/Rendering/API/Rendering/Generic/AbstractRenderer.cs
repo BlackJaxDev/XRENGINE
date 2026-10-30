@@ -1226,7 +1226,8 @@ namespace XREngine.Rendering
             XRDataBuffer destination,
             nint destinationOffset,
             nuint byteCount,
-            string label)
+            string label,
+            IRenderResourceLeaseOwner? authoringLease = null)
             => ERendererComputeEnqueueStatus.Unsupported;
 
         /// <summary>

@@ -137,7 +137,7 @@ public sealed class MaterialConversionReportRegistry
 public static class MaterialConversionReportBuilder
 {
     public const string ConverterId = "xrengine.poiyomi-toon";
-    public const string ConverterVersion = "1.2.0";
+    public const string ConverterVersion = "1.3.0";
     public const int SourceDescriptorVersion = 1;
 
     private static readonly Lazy<IReadOnlySet<string>> PreservedRuntimeProperties =

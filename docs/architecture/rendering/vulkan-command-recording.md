@@ -602,6 +602,19 @@ A static auxiliary pipeline can have no declared output framebuffer, so the
 active batch is an independent ordering condition. A completion fence confirms
 that the batch recorded and completed; it cannot repair an incorrect draw order.
 
+Each accepted deferred request in a required batch retains its capture
+generation and its position among directly authored operations. Materialization
+inserts that request's uploads, transitions, and draw at the retained position.
+Thus a callback barrier between two draws stays between them. A token from a
+different capture generation is invalid. This ordering applies inside the
+required batch; it does not replace normal frame-operation sorting.
+
+One required capture can use the free nested slot inside an ordinary capture.
+This permits OpenXR eye emission to prepare its required BRDF resources. Nested
+required captures and reuse of an occupied nested slot remain invalid. Batch
+cleanup releases indirect-draw authoring leases even when the callback rejects
+its work before materialization.
+
 ### 3. Prepare resources on the render thread
 
 Resource creation, descriptor mutation, pipeline lookup, dynamic-state

@@ -438,6 +438,10 @@ uniform vec4 _MatcapSlotUvControl0;
 uniform vec4 _MatcapSlotUvControl1;
 uniform vec4 _MatcapSlotUvControl2;
 uniform vec4 _MatcapSlotUvControl3;
+uniform vec4 _MatcapSlotHue0;
+uniform vec4 _MatcapSlotHue1;
+uniform vec4 _MatcapSlotHue2;
+uniform vec4 _MatcapSlotHue3;
 
 //@property(name="_Rim2Color", display="Rim 2 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _Rim2Color;
@@ -655,6 +659,16 @@ uniform vec4 _EmissionSlotSampling3;
 #ifndef XRENGINE_UBER_DISABLE_TEXTURE_ARRAY_FLIPBOOK
 //@property(name="_FlipbookTexArray", display="Flipbook Texture Array", slot=texture)
 uniform sampler2DArray _FlipbookTexArray;
+uniform int _SourceFlipbook;
+uniform vec4 _SourceFlipbookLayout;
+uniform vec4 _SourceFlipbookSides;
+uniform vec4 _SourceFlipbookOptions;
+uniform vec4 _SourceFlipbookMotion;
+uniform vec4 _SourceFlipbookFlags;
+uniform vec4 _SourceFlipbookHue;
+uniform vec4 _FlipbookMask_ST;
+uniform vec2 _FlipbookMaskPan;
+uniform int _FlipbookMaskUV;
 //@property(name="_FlipbookMask", display="Flipbook Mask", slot=texture, semantic=mask)
 uniform sampler2D _FlipbookMask;
 //@property(name="_FlipbookColor", display="Flipbook Color", mode=animated, default="vec4(1.0)")

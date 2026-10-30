@@ -45,7 +45,8 @@ emission color with a zero factor does not emit light. Inactive emission leaves
 the optional emission overrides unset, so eligible materials retain their exact
 `StandardLitTextureV1` contract. After all FBX overrides, the importer checks
 that contract again. A material that no longer satisfies it uses its authored
-shader path. Native FBX cache version 9 invalidates older converted materials.
+shader path. Native FBX cache version 11 invalidates older converted materials and
+mesh tangent signs.
 
 An absent FBX `Roughness` property retains the material factory default.
 With `CalculateTangentSpace` enabled, meshes without authored tangents generate
@@ -57,6 +58,13 @@ Authored tangents remain unchanged. Degenerate UV triangles use a finite
 normal-based fallback if the mesh contains other valid UV triangles. This
 generation covers the base mesh; it does not synthesize blendshape tangent
 deltas or smooth across chunk boundaries.
+
+Authored tangent layers use the FBX binormal layer to set the tangent sign.
+The sign uses the transformed normal, tangent, and binormal, and follows
+`FlipUVs`. If a binormal layer is absent, the importer reconstructs a
+bitangent from the first valid triangle in each polygon fan and the final UVs.
+It reports corners with an invalid tangent frame and uses a positive sign for
+those corners.
 
 Enabled trace lines also use the engine `Meshes` category and `log_meshes.log`.
 

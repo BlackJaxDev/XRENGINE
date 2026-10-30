@@ -429,14 +429,21 @@ vec3 xrSourceMochieDirect(vec3 normal, vec3 view, vec3 light, vec3 baseColor,
     return max(main, extra);
 }
 
+// Sources with a rim blur use a linear ramp below the border. Older sources use a sharpness edge.
 float xrSourceRimAmount(vec3 vertexNormal, vec3 pixelNormal, vec3 view,
-    float width, float sharpness, vec4 settings)
+    float width, float sharpness, vec4 settings, bool usesBlur)
 {
     vec3 normal = mix(vertexNormal, pixelNormal, settings.w);
     float angle = abs(dot(view, normal));
     if (settings.y > 0.5) angle = 1.0 - angle;
     angle = pow(angle, settings.z);
     float border = mix(-0.05, 1.0, width);
+    if (usesBlur)
+    {
+        if (border <= 0.0) return 0.0;
+        float borderMin = clamp(border - sharpness, 0.0, 1.0);
+        return 1.0 - clamp((angle - borderMin) / max(border - borderMin, 1.0e-4), 0.0, 1.0);
+    }
     return 1.0 - smoothstep(min(sharpness, border), border, angle);
 }
 

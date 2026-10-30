@@ -12,5 +12,7 @@ public sealed record SourceToonShaderMatchResult
     public bool IsAccepted { get; init; }
     public bool IsDowngradeSource { get; init; }
     public bool IsLocked { get; init; }
+    public IReadOnlyDictionary<string, SourceToonPropertyDefinition> PropertyDefinitions { get; init; } =
+        new Dictionary<string, SourceToonPropertyDefinition>(StringComparer.Ordinal);
     public IReadOnlyList<MaterialConversionDiagnostic> Diagnostics { get; init; } = [];
 }

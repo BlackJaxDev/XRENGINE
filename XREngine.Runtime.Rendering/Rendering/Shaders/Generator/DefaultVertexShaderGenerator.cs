@@ -100,7 +100,7 @@ namespace XREngine.Rendering.Shaders.Generator
             else
                 _useSkinningInputs = false;
 
-            bool needBlendshapeAttr = Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
+            bool needBlendshapeAttr = Mesh.HasBlendshapeDeformation && !UseComputeBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
             _useBlendshapeInput = needBlendshapeAttr && location < MaxVertexAttribs;
             if (_useBlendshapeInput)
                 location++;
@@ -190,7 +190,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 UniformNames.Add("skinningInfluenceCap", (EShaderVarType._int, false));
             }
 
-            if (Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+            if (Mesh.HasBlendshapeDeformation && !UseComputeBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
             {
                 UniformNames.Add("blendshapeActiveCount", (EShaderVarType._int, false));
                 UniformNames.Add("blendshapeWeightThreshold", (EShaderVarType._float, false));
@@ -267,12 +267,12 @@ namespace XREngine.Rendering.Shaders.Generator
             && !RuntimeEngine.Rendering.State.IsVulkan
             && Mesh.HasSkinning
             && RuntimeEngine.Rendering.Settings.AllowSkinning;
-        private bool UseComputeBlendshapes => Mesh.BlendshapeCount > 0
+        private bool UseComputeBlendshapes => Mesh.HasBlendshapeDeformation
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
             && !RuntimeEngine.Rendering.State.IsVulkan
             && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || UseComputeSkinning);
         private bool UseComputeDeformation => UseComputeSkinning || UseComputeBlendshapes;
-        private bool UsePrecombinedDirectBlendshapes => Mesh.BlendshapeCount > 0
+        private bool UsePrecombinedDirectBlendshapes => Mesh.HasBlendshapeDeformation
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
             && !RuntimeEngine.Rendering.State.IsVulkan
             && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
@@ -476,7 +476,7 @@ namespace XREngine.Rendering.Shaders.Generator
             bool wroteAnything = false;
 
             int binding = 0;
-            if (Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+            if (Mesh.HasBlendshapeDeformation && !UseComputeBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
             {
                 EShaderVarType intVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
                     ? EShaderVarType._ivec4
@@ -785,7 +785,7 @@ namespace XREngine.Rendering.Shaders.Generator
             => Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
 
         private bool NeedsBlendshapeCalc()
-            => Mesh.BlendshapeCount > 0 && RuntimeEngine.Rendering.Settings.AllowBlendshapes && !UseComputeBlendshapes;
+            => Mesh.HasBlendshapeDeformation && RuntimeEngine.Rendering.Settings.AllowBlendshapes && !UseComputeBlendshapes;
 
         private bool WriteSkinningCalc()
         {
@@ -889,7 +889,7 @@ namespace XREngine.Rendering.Shaders.Generator
         
         private bool WriteBlendshapeCalc()
         {
-            if (UseComputeBlendshapes || Mesh.BlendshapeCount == 0 || !RuntimeEngine.Rendering.Settings.AllowBlendshapes || !_useBlendshapeInput)
+            if (UseComputeBlendshapes || !Mesh.HasBlendshapeDeformation || !RuntimeEngine.Rendering.Settings.AllowBlendshapes || !_useBlendshapeInput)
                 return false;
 
             bool hasNormals = _useNormals;

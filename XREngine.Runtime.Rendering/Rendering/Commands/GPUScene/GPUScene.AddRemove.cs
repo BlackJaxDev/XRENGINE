@@ -221,7 +221,7 @@ namespace XREngine.Rendering.Commands
                         _transparencyDirtyRange.Mark(index);
                         if (_useInternalBvh)
                             WriteTightCommandAabb(index, snapshot.Owner, mesh.Bounds, modelMatrix);
-                                                LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
+                        QueueLodTransitionReset(index);
                         AcquireLogicalMeshResidency(commandValue.LogicalMeshID);
 
                         if (IsGpuSceneLoggingEnabled())
@@ -260,7 +260,6 @@ namespace XREngine.Rendering.Commands
                     // Pushing the full buffer can hitch when high-detail meshes/submeshes stream in later.
                     uint addedCount = UpdatingCommandCount - startCommandCount;
                     FlushDrawIndexedSoARange(startCommandCount, addedCount);
-                    LodTransitionBuffer.CommitDirtyBytes(startCommandCount * LodTransitionBuffer.ElementSize, addedCount * LodTransitionBuffer.ElementSize);
                     MarkUpdatingCommandsDirty();
                     SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in draw-indexed streams");
 
@@ -958,7 +957,6 @@ namespace XREngine.Rendering.Commands
                 if (anyRemoved)
                 {
                     FlushDrawIndexedSoARange(0u, UpdatingCommandCount);
-                    FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 
                     FlushMeshDataDirtyRange();
@@ -1007,8 +1005,7 @@ namespace XREngine.Rendering.Commands
                 MoveCommandAabb(lastIndex, targetIndex);
                 UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(targetIndex, lastMetadata);
                 _transparencyDirtyRange.Mark(targetIndex);
-                LodTransitionBuffer.SetDataRawAtIndex(targetIndex, default(GPULodTransitionState));
-                QueueCpuLodTransitionWrite(targetIndex);
+                QueueLodTransitionReset(targetIndex);
 
                 if (_commandIndexLookup.TryGetValue(lastIndex, out var movedCommand))
                 {
@@ -1040,8 +1037,7 @@ namespace XREngine.Rendering.Commands
             }
 
             RemoveUpdatingMeshSubmission(targetIndex, lastIndex);
-            LodTransitionBuffer.SetDataRawAtIndex(lastIndex, default(GPULodTransitionState));
-            QueueCpuLodTransitionWrite(lastIndex);
+            QueueLodTransitionReset(lastIndex);
             ClearDrawIndexedSoA(lastIndex);
             ReleaseTransformId(removedTransformId);
             ReleaseSkinId(removedSkinId);
@@ -1208,18 +1204,9 @@ namespace XREngine.Rendering.Commands
             if (count == 0)
                 return;
 
-            var blank = default(GPULodTransitionState);
             uint end = startIndex + count;
             for (uint i = startIndex; i < end; ++i)
-                LodTransitionBuffer.SetDataRawAtIndex(i, blank);
-
-            uint elementSize = LodTransitionBuffer.ElementSize;
-            if (elementSize == 0)
-                elementSize = LodTransitionUIntCount * sizeof(uint);
-
-            uint byteOffset = startIndex * elementSize;
-            uint byteCount = count * elementSize;
-            LodTransitionBuffer.CommitDirtyBytes(byteOffset, byteCount);
+                QueueLodTransitionReset(i);
         }
 
     }

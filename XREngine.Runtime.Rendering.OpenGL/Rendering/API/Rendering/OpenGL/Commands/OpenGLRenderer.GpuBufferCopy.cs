@@ -8,7 +8,8 @@ public partial class OpenGLRenderer
         XRDataBuffer destination,
         nint destinationOffset,
         nuint byteCount,
-        string label)
+        string label,
+        IRenderResourceLeaseOwner? authoringLease = null)
     {
         if (!RuntimeEngine.IsRenderThread)
             return ERendererComputeEnqueueStatus.NoPassContext;

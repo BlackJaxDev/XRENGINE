@@ -294,6 +294,11 @@ Transform, and renderer proxy records from the outer prefab. This preserves
 duplicate-name hierarchies, root parenting, nested insertion order, skinned
 renderer ownership, and transform/renderer overrides.
 
+Nested prefab instances also register inherited local file IDs when the YAML
+omits a stripped proxy. Outer scene overrides can therefore target those
+objects. Explicit proxy mappings retain authority, and conflicting inherited
+identities fail import.
+
 FBX `.meta` data supplies material import mode, external-object remaps, and
 relevant `ModelImporter` settings. Renderer material resolution follows this
 precedence:
@@ -305,6 +310,37 @@ precedence:
 Prefab modifications also cover local transform, active state, enabled state,
 material slots, root order, and blendshape defaults. Stale source-object
 modifications are diagnosed and ignored.
+
+### Blendshape Normals
+
+`tangentSpace.blendShapeNormalImportMode` in the `ModelImporter` metadata sets `ModelImportOptions.ImportBlendShapeNormals`. Mode 2 ignores blendshape normals: shapes then move positions only and keep the base normals and tangents. Other modes use the authored normal deltas; mode 1 does not recalculate them. Both FBX producers honor this setting, and it is part of the model cache identity.
+
+### Forced Anisotropic Filtering
+
+When the current quality level in `ProjectSettings/QualitySettings.asset` sets `anisotropicTextures: 2`, the importer raises mipmapped, non-point textures to at least anisotropy level 9. A texture with level 0 keeps anisotropy off.
+
+### Source Rim Blur
+
+A material with `_RimBlur` uses the linear rim ramp of the source. A material without it keeps the older `_RimSharpness` edge.
+
+### FBX Units And Skin Binds
+
+The Unity model entry supports metre and centimetre FBX charts with the declared
+source axes. Centimetre models require file-scale import. Geometry, local
+translations, inverse binds, and source animation use the same metre chart
+before prefab overrides apply. Native skin vertices need the unit scale;
+Assimp skin vertices already contain the mesh bind and unit conversion.
+The importer adjusts each palette product with the inverse geometry conversion
+and retains the bind-root basis. A prefab scale override does not replace the
+file-unit conversion.
+
+Euler rotation orders and pre/post rotations use the shared FBX transform
+composer. Pre/post rotations use XYZ order. The row-vector matrix factors follow
+the reverse order of the [FBX column-vector formula](https://help.autodesk.com/cloudhelp/2020/ENU/FBX-Developer-Help/files/nodes_and_scene_graph/fbx_nodes/FBX_Developer_Help_nodes_and_scene_graph_fbx_nodes_computing_transformation_matrix_html.html).
+The Unity entry still rejects pivot offsets, nonidentity geometric transforms,
+unsupported inheritance, and unmatched producer hierarchies. In particular,
+retained Assimp helper nodes can fail the source-hierarchy check when
+`preserveHierarchy` is enabled. The importer does not approximate these cases.
 
 ## Animation Clip Import
 

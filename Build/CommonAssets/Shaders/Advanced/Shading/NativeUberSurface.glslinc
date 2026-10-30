@@ -94,7 +94,7 @@ float XR_UBER_MaterialAo(XRUberCoordinates c)
     if (!XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_STYLIZED_LIGHTING))
         return mix(1.0, sampleValue.r, clamp(UBER_F(_LightDataAOStrengthR), 0.0, 1.0));
     vec4 weighted = mix(vec4(1.0), sampleValue, clamp(UBER_V(_LightDataAOStrengths), 0.0, 1.0));
-    return weighted.r * weighted.g * weighted.b * weighted.a;
+    return min(min(weighted.r, weighted.g), min(weighted.b, weighted.a));
 }
 
 float XR_UBER_ShadowMask(XRUberCoordinates c)
@@ -159,7 +159,7 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
     vec3 viewDir, vec3 viewDx, vec3 viewDy, mat3 viewMatrix, vec3 lightColor, float lightMap,
     uint textureSlot, uint maskSlot, uint normalSlot, uint globalMaskSlot,
     vec4 tint, vec4 parameters, vec4 projection, vec4 blend,
-    vec4 source, vec4 maskParams, vec4 uvBlend, vec4 uvControl,
+    vec4 source, vec4 maskParams, vec4 uvBlend, vec4 uvControl, vec4 hue,
     vec4 texSt, vec2 texPan, vec4 maskSt, vec2 maskPan, vec4 normalSt, vec2 normalPan,
     inout vec3 color, inout vec3 emission, inout vec3 lightAdd)
 {
@@ -236,6 +236,12 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
         sampleValue *= tint;
         sampleValue.rgb *= mix(vec3(1.0), lightColor, clamp(projection.w, 0.0, 1.0)) * max(parameters.x, 0.0);
         sampleValue.rgb = mix(sampleValue.rgb, sampleValue.rgb * color, clamp(source.y, 0.0, 1.0));
+        if (hue.x > 0.5)
+        {
+            float shift = hue.y + hue.z * c.time * 0.05;
+            sampleValue.rgb = mix(XR_UBER_hueShiftOklab(sampleValue.rgb, shift),
+                XR_UBER_hueShift(sampleValue.rgb, shift), clamp(hue.w, 0.0, 1.0));
+        }
         mask *= mix(1.0, clamp(lightMap, 0.0, 1.0), clamp(parameters.y, 0.0, 1.0)) * sampleValue.a;
         if (uvControl.z > 0.5)
         {

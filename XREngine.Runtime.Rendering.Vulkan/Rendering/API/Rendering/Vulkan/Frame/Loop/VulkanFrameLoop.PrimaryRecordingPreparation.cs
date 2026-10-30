@@ -981,7 +981,8 @@ internal sealed partial class VulkanFrameLoop
         long readinessDeadlineTimestamp = long.MaxValue,
         ulong sourceFrameId = 0UL,
         bool requireCompleteCohort = false,
-        bool allowFrameOwnedAuthoringOperations = false)
+        bool allowFrameOwnedAuthoringOperations = false,
+        int requiredSourceOperationCount = -1)
     {
         VulkanPresentNowReadinessWatchdog inactiveWatchdog = default;
         return MaterializeQueuedMeshRenderRequestsCore(
@@ -997,6 +998,7 @@ internal sealed partial class VulkanFrameLoop
             trackPresentNowProgress: false,
             sliceColdPreparation: false,
             allowFrameOwnedAuthoringOperations,
+            requiredSourceOperationCount,
             ref inactiveWatchdog);
     }
 
@@ -1023,6 +1025,7 @@ internal sealed partial class VulkanFrameLoop
             trackPresentNowProgress: true,
             sliceColdPreparation: sliceColdPreparation,
             allowFrameOwnedAuthoringOperations,
+            requiredSourceOperationCount: -1,
             ref watchdog);
 
     private bool MaterializeQueuedMeshRenderRequestsCore(
@@ -1038,6 +1041,7 @@ internal sealed partial class VulkanFrameLoop
         bool trackPresentNowProgress,
         bool sliceColdPreparation,
         bool allowFrameOwnedAuthoringOperations,
+        int requiredSourceOperationCount,
         ref VulkanPresentNowReadinessWatchdog watchdog)
     {
         deferredReason = string.Empty;
@@ -1263,6 +1267,13 @@ internal sealed partial class VulkanFrameLoop
                 bool materialized;
                 VulkanMeshOperationRequest operationRequest;
                 string plannerGenerationDetail;
+                VulkanRequiredProducerInsertionToken sourceToken = request.RequiredProducerInsertionToken;
+                using VulkanRequiredProducerInsertionScope insertionScope =
+                    requiredSourceOperationCount >= 0
+                        ? _frameOperationQueue.BeginRequiredProducerInsertion(
+                            in sourceToken,
+                            requiredSourceOperationCount)
+                        : default;
                 do
                 {
                     if (request.Context.CaptureOwnerToken is { IsOpen: false })

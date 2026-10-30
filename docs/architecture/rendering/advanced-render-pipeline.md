@@ -425,6 +425,16 @@ batch reuse, so a later frame can skip debug output. The hook adds no CPU
 readback. Buffer ownership, barriers, and indirect draw rules are defined in
 the [physics-chain compute contract](../physics/physics-chain-compute-backends.md#global-gpu-chain-debug).
 
+### Transparent motion-vector matrices
+
+Motion blur can require transparent velocity when temporal AA is disabled.
+`AdvancedColoredAlphaTemporalVariantFactory` uses the active temporal authoring
+view when it is available. Otherwise, it uses the current output's unjittered
+frame matrices. A retained `FrameViewSet` must contain one matching camera and
+eye. A missing or duplicate match disables history for that eye and sets its
+previous matrix to its current matrix. It must not reuse camera-global history
+from another output. Vulkan draw snapshots retain these matrices until replay.
+
 ### Synchronization boundaries
 
 OpenGL and Vulkan lower the same four logical boundaries (`EAdvancedSynchronizationBoundary`) through their own encodings:

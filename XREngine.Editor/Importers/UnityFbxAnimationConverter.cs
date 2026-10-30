@@ -188,8 +188,12 @@ internal sealed class UnityFbxAnimationConverter
                     Value(binding.RotationY, transform.LocalRotationDegrees.Y), Value(binding.RotationZ, transform.LocalRotationDegrees.Z));
                 Vector3 scale = new(Value(binding.ScaleX, transform.LocalScaling.X),
                     Value(binding.ScaleY, transform.LocalScaling.Y), Value(binding.ScaleZ, transform.LocalScaling.Z));
-                local = Matrix4x4.CreateScale(scale) * FbxTransformSemantics.CreateRotationMatrix(rotation, transform.RotationOrder) *
-                    Matrix4x4.CreateTranslation(translation);
+                local = (transform with
+                {
+                    LocalTranslation = translation,
+                    LocalRotationDegrees = rotation,
+                    LocalScaling = scale,
+                }).CreateNodeLocalTransform(FbxPivotImportPolicy.PreservePivotSemantics);
             }
             sourceWorlds[index] = local * (node.ParentNodeIndex is { } parent ? sourceWorlds[parent] : Matrix4x4.Identity);
             // The correction maps the canonical source rest to the metadata rest.

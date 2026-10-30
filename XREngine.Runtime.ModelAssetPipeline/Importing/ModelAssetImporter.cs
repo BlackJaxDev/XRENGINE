@@ -2931,7 +2931,8 @@ namespace XREngine
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            XRMesh xrMesh = AssimpMeshFactory.Create(mesh, _nodeCache, dataTransform);
+            bool importBlendShapeNormals = (_currentImportOptions.Value ?? ImportOptions)?.ImportBlendShapeNormals ?? true;
+            XRMesh xrMesh = AssimpMeshFactory.Create(mesh, _nodeCache, dataTransform, importBlendShapeNormals);
             cancellationToken.ThrowIfCancellationRequested();
             var xrMaterial = ResolveMaterial(mesh, scene, cancellationToken);
             return (xrMesh, xrMaterial);

@@ -66,7 +66,7 @@ void main()
             XR_ADV_LoadView(0u).renderTimeBits);
         vec4 baseColor;
         vec3 edgeEmission;
-        if (!XR_UBER_ApplyCoverage(coordinates, baseColor, edgeEmission)) discard;
+        if (!XR_UBER_ApplyCoverage(coordinates, baseColor, edgeEmission, true)) discard;
     }
     else
     {

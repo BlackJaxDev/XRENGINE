@@ -648,9 +648,11 @@ uniform float _GlitterRainbow;
 uniform sampler2D _GlitterMask;
 //@property(name="_GlitterTexture", display="Glitter Shape", slot=texture)
 uniform sampler2D _GlitterTexture;
+uniform sampler2D _GlitterColorMap;
 uniform int _SourceGlitter;
 uniform int _SourceGlitterVersion;
 uniform float _GlitterFrequency;
+uniform float _GlitterDistanceLOD;
 uniform int _GlitterLayers;
 uniform int _GlitterUV;
 uniform int _GlitterMode;
@@ -674,6 +676,9 @@ uniform vec2 _GlitterMaskPan;
 uniform vec4 _GlitterTexture_ST;
 uniform vec2 _GlitterTexturePan;
 uniform int _GlitterMaskUV;
+uniform vec4 _GlitterColorMap_ST;
+uniform vec2 _GlitterColorMapPan;
+uniform int _GlitterColorMapUV;
 #endif
 
 // ============================================

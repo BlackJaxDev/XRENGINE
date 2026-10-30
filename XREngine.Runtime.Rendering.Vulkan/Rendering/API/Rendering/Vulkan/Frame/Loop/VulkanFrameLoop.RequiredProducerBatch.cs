@@ -32,6 +32,7 @@ internal sealed partial class VulkanFrameLoop
             capturedRequestCount = MeshOperationRequests.CaptureTo(
                 producer,
                 _meshOperationRequestScratch,
+                _frameOperationQueue,
                 out bool producerComplete,
                 out captureLeaseToken,
                 out VulkanMeshRequestLaneCapacityFailure capacityFailure);
@@ -45,12 +46,15 @@ internal sealed partial class VulkanFrameLoop
             if (!producerComplete)
                 return false;
 
+            int directOperationCount = _frameOperationQueue.GetRequiredProducerDirectOperationCount();
+
             if (!MaterializeQueuedMeshRenderRequests(
                     capturedRequestCount,
                     allowPreparedCohort: false,
                     out string materializationFailure,
                     foregroundRequired: false,
-                    requireCompleteCohort: true))
+                    requireCompleteCohort: true,
+                    requiredSourceOperationCount: directOperationCount))
             {
                 failure = new InvalidOperationException(
                     string.IsNullOrEmpty(materializationFailure)
@@ -125,9 +129,8 @@ internal sealed partial class VulkanFrameLoop
 
             if (capturedRequestCount > 0)
             {
-                _meshOperationRequestScratch
-                    .AsSpan(0, capturedRequestCount)
-                    .Clear();
+                VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                    _meshOperationRequestScratch.AsSpan(0, capturedRequestCount));
                 _meshOperationMaterializationScratch
                     .AsSpan(0, capturedRequestCount)
                     .Clear();

@@ -469,8 +469,7 @@ namespace XREngine.Rendering.Commands
                         }
                         if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
                         {
-                            LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
-                            QueueCpuLodTransitionWrite(index);
+                            QueueLodTransitionReset(index);
                         }
                         if (_useInternalBvh)
                             WriteTightCommandAabb(index, snapshot.Owner, mesh.Bounds, modelMatrix);
@@ -503,7 +502,6 @@ namespace XREngine.Rendering.Commands
                         uint byteCount = (maxIndex - minIndex + 1) * elementSize;
                         UpdatingDrawMetadataBuffer.CommitDirtyBytes(byteOffset, byteCount);
                     }
-                    FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 
                     FlushMeshDataDirtyRange();
@@ -599,7 +597,6 @@ namespace XREngine.Rendering.Commands
             UntrackRegisteredMeshCommand(meshCmd);
             VerifyUpdatingBufferSize(UpdatingCommandCount);
             FlushDrawIndexedSoARange(0u, UpdatingCommandCount);
-            FlushCpuLodTransitionWrites();
             FlushMeshDataDirtyRange();
             MarkUpdatingCommandsDirty();
             if (_gpuBvhTree is not null)

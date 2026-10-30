@@ -9,6 +9,8 @@ namespace XREngine.Scene.Importers;
 /// </summary>
 public sealed class SourceProjectImportContext
 {
+    private int? _minimumTextureAnisotropy;
+
     private readonly Dictionary<string, XRMaterial> _materialCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, XRTexture2D> _textureCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (long Length, long LastWriteTicks)> _validatedTextures = new(StringComparer.OrdinalIgnoreCase);
@@ -46,6 +48,8 @@ public sealed class SourceProjectImportContext
 
     public string EntrySourcePath { get; }
     public string ProjectRoot => ProjectLocation.ProjectRoot;
+    /// <summary>The lowest texture anisotropy level that the source project quality settings allow.</summary>
+    public int MinimumTextureAnisotropy => _minimumTextureAnisotropy ??= SourceProjectQualitySettings.ReadMinimumAnisotropy(ProjectRoot);
     public string? OutputDestination { get; }
     public SourceProjectLocation ProjectLocation { get; }
     public SourceGuidIndex GuidIndex { get; }
@@ -69,6 +73,16 @@ public sealed class SourceProjectImportContext
     public bool HasPartialContent => _recoveredPartialContent ||
         DependencyGraph?.UnresolvedEdges.Any(static edge => edge.Kind == SourceImportDependencyKind.RequiredVisual) == true;
     public DateTime ImportStartedAtUtc { get; }
+
+    /// <summary>Checks a missing texture proof made from this import's source material and shader.</summary>
+    internal bool IsInactiveMaterialTexture(string? materialPath, string slot, SourceAssetReference reference)
+        => materialPath is not null && DependencyGraph?.UnresolvedEdges.Any(edge =>
+            edge.InactiveTextureReason is not null &&
+            string.Equals(edge.SourcePath, materialPath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(edge.ReferringMaterialTextureSlot, slot, StringComparison.Ordinal) &&
+            edge.TargetFileId == reference.FileId &&
+            string.Equals(edge.TargetGuid, reference.Guid, StringComparison.OrdinalIgnoreCase) &&
+            SourceMaterialDependencyClassifier.IsProofCurrent(edge)) == true;
 
     /// <summary>Checks whether this import already decoded the same texture revision.</summary>
     internal bool IsTextureValidated(string sourcePath, long length, long lastWriteTicks)
@@ -161,7 +175,8 @@ public sealed class SourceProjectImportContext
         {
             string summary = string.Join(
                 "; ",
-                requiredMissing.Select(static edge => $"{edge.TargetGuid} ({edge.ReferringProperty})"));
+                requiredMissing.Select(static edge =>
+                    $"{Path.GetFileName(edge.SourcePath)}:{edge.ReferringPropertyPath} -> {edge.TargetGuid}/{edge.TargetFileId}"));
             throw new SourceVisualImportException(
                 $"Unity prefab import cannot continue because required visual dependencies are missing: {summary}");
         }
@@ -305,7 +320,7 @@ public sealed class SourceProjectImportContext
                 LocalFileId = inboundEdge?.TargetFileId,
                 NormalizedPath = node.PortablePath,
                 Kind = node.Kind,
-                ReferringProperty = inboundEdge?.ReferringProperty,
+                ReferringProperty = inboundEdge?.ReferringPropertyPath,
                 LastWriteTimeUtcTicks = fileInfo.Exists ? fileInfo.LastWriteTimeUtc.Ticks : 0,
                 Length = fileInfo.Exists ? fileInfo.Length : 0,
                 Sha256 = fileInfo.Exists ? SourceDependencyGraphBuilder.ComputeSha256(node.SourcePath) : string.Empty,
@@ -326,8 +341,10 @@ public sealed class SourceProjectImportContext
                 LocalFileId = missing.TargetFileId,
                 NormalizedPath = $"missing://{missing.TargetGuid}/{missing.TargetFileId}",
                 Kind = missing.Kind,
-                ReferringProperty = missing.ReferringProperty,
-                Outcome = SourceImportConversionOutcome.Missing,
+                ReferringProperty = missing.ReferringPropertyPath,
+                Outcome = missing.InactiveTextureReason is null
+                    ? SourceImportConversionOutcome.Missing
+                    : SourceImportConversionOutcome.IgnoredOptional,
             });
         }
 

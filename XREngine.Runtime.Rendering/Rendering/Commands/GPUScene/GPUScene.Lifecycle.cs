@@ -70,10 +70,9 @@ namespace XREngine.Rendering.Commands
             _lodTableBuffer = MakeLodTableBuffer();
             _lodRequestBuffer?.Destroy();
             _lodRequestBuffer = MakeLodRequestBuffer();
-            _lodTransitionBuffer?.Destroy();
+            ReleaseLodTransitionPublicationState();
+            _lodTransitionBuffer?.RetireBindingStorage();
             _lodTransitionBuffer = null;
-            Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
-            _lodTransitionCpuDirtyIndices.Clear();
             _lodStreamingLastDrainFrameId = 0;
             _lodStreamingHasDrained = false;
             _lodStreamingFailedRequests.Clear();
@@ -211,10 +210,9 @@ namespace XREngine.Rendering.Commands
             _lodTableBuffer = null;
             _lodRequestBuffer?.Destroy();
             _lodRequestBuffer = null;
-            _lodTransitionBuffer?.Destroy();
+            ReleaseLodTransitionPublicationState();
+            _lodTransitionBuffer?.RetireBindingStorage();
             _lodTransitionBuffer = null;
-            Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
-            _lodTransitionCpuDirtyIndices.Clear();
             _lodStreamingLastDrainFrameId = 0;
             _lodStreamingHasDrained = false;
             _lodStreamingFailedRequests.Clear();

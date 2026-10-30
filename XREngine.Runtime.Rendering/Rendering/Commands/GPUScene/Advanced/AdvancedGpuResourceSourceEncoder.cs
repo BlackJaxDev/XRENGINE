@@ -49,7 +49,7 @@ public static class AdvancedGpuResourceSourceEncoder
             record.MipCount = automaticArrayMips
                 ? checked((uint)(1 + System.Numerics.BitOperations.Log2(Math.Max(textureArray.Width, textureArray.Height))))
                 : checked((uint)textureArray.Mipmaps!.Length);
-            source = new(textureArray, record, layer.SamplerRecord, fallback, 0u);
+            source = new(textureArray, record, layer.SamplerRecord, fallback, textureArray.CanonicalLayerContentWitness);
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
             reason = string.Empty;
             return true;

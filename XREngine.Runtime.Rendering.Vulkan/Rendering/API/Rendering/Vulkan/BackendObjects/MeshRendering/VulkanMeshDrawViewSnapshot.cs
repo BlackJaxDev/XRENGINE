@@ -88,6 +88,8 @@ internal sealed class VulkanMeshDrawViewSnapshot
         Matrix4x4 previousRightEyeProjectionMatrix,
         Matrix4x4 previousRightEyeViewProjectionMatrix,
         Matrix4x4 previousRightEyeViewProjectionMatrixUnjittered,
+        bool leftEyeHistoryReady,
+        bool rightEyeHistoryReady,
         Vector3 cameraPosition,
         Vector3 cameraForward,
         Vector3 cameraUp,
@@ -128,6 +130,8 @@ internal sealed class VulkanMeshDrawViewSnapshot
             previousRightEyeViewProjectionMatrix;
         PreviousRightEyeViewProjectionMatrixUnjittered =
             previousRightEyeViewProjectionMatrixUnjittered;
+        LeftEyeHistoryReady = leftEyeHistoryReady;
+        RightEyeHistoryReady = rightEyeHistoryReady;
         CameraPosition = cameraPosition;
         CameraForward = cameraForward;
         CameraUp = cameraUp;
@@ -165,6 +169,8 @@ internal sealed class VulkanMeshDrawViewSnapshot
     internal Matrix4x4 PreviousRightEyeProjectionMatrix { get; }
     internal Matrix4x4 PreviousRightEyeViewProjectionMatrix { get; }
     internal Matrix4x4 PreviousRightEyeViewProjectionMatrixUnjittered { get; }
+    internal bool LeftEyeHistoryReady { get; }
+    internal bool RightEyeHistoryReady { get; }
     internal Vector3 CameraPosition { get; }
     internal Vector3 CameraForward { get; }
     internal Vector3 CameraUp { get; }
@@ -299,7 +305,48 @@ internal sealed class VulkanMeshDrawViewSnapshot
         Matrix4x4 previousRightEyeViewProjectionMatrixUnjittered =
             rightEyeCamera?.ViewProjectionMatrixUnjittered ??
             rightEyeViewProjectionMatrix;
+        bool leftEyeHistoryReady = camera?.HasPreviousViewProjectionMatrix == true;
+        bool rightEyeHistoryReady = rightEyeCamera?.HasPreviousViewProjectionMatrix == true;
+        if (leftEyeHistoryReady)
+            previousViewProjectionMatrixUnjittered = camera!.PreviousViewProjectionMatrixUnjittered;
+        if (rightEyeHistoryReady)
+            previousRightEyeViewProjectionMatrixUnjittered = rightEyeCamera!.PreviousViewProjectionMatrixUnjittered;
+        if (pipeline?.RenderState.FrameViewSet is { } frameViews)
+        {
+            leftEyeHistoryReady = false;
+            rightEyeHistoryReady = false;
+            previousViewMatrix = viewMatrix;
+            previousProjectionMatrix = projectionMatrix;
+            previousViewProjectionMatrix = viewProjectionMatrix;
+            previousViewProjectionMatrixUnjittered = viewProjectionMatrixUnjittered;
+            previousRightEyeViewMatrix = rightEyeViewMatrix;
+            previousRightEyeProjectionMatrix = rightEyeProjectionMatrix;
+            previousRightEyeViewProjectionMatrix = rightEyeViewProjectionMatrix;
+            previousRightEyeViewProjectionMatrixUnjittered = rightEyeViewProjectionMatrixUnjittered;
+            if (RenderFrameViewMatch.TryGetExactEyeView(in frameViews, camera, rightEye: false, out RenderFrameViewDescriptor leftView))
+            {
+                Matrix4x4 unjitteredProjection = leftView.ProjectionMatrixUnjittered == default
+                    ? leftView.ProjectionMatrix : leftView.ProjectionMatrixUnjittered;
+                viewProjectionMatrixUnjittered = leftView.ViewMatrix * unjitteredProjection;
+                leftEyeHistoryReady = leftView.HasValidTemporalHistory &&
+                    leftView.PreviousViewProjectionMatrixUnjittered != default;
+                previousViewProjectionMatrixUnjittered = leftEyeHistoryReady
+                    ? leftView.PreviousViewProjectionMatrixUnjittered : viewProjectionMatrixUnjittered;
+            }
+            if (RenderFrameViewMatch.TryGetExactEyeView(in frameViews, rightEyeCamera, rightEye: true, out RenderFrameViewDescriptor rightView))
+            {
+                Matrix4x4 unjitteredProjection = rightView.ProjectionMatrixUnjittered == default
+                    ? rightView.ProjectionMatrix : rightView.ProjectionMatrixUnjittered;
+                rightEyeViewProjectionMatrixUnjittered = rightView.ViewMatrix * unjitteredProjection;
+                rightEyeHistoryReady = rightView.HasValidTemporalHistory &&
+                    rightView.PreviousViewProjectionMatrixUnjittered != default;
+                previousRightEyeViewProjectionMatrixUnjittered = rightEyeHistoryReady
+                    ? rightView.PreviousViewProjectionMatrixUnjittered : rightEyeViewProjectionMatrixUnjittered;
+            }
+        }
         if (pipeline is not null &&
+            (pipeline.RenderState.FrameViewSet is null ||
+             pipeline.RenderState.TemporalAuthoringViewSet is not null) &&
             VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(
                 pipeline,
                 out var temporalData))
@@ -308,7 +355,9 @@ internal sealed class VulkanMeshDrawViewSnapshot
                 temporalData.CurrViewProjectionUnjittered;
             rightEyeViewProjectionMatrixUnjittered =
                 temporalData.RightEyeCurrViewProjectionUnjittered;
-            if (temporalData.HistoryReady)
+            leftEyeHistoryReady = temporalData.LeftEyeHistoryReady;
+            rightEyeHistoryReady = temporalData.RightEyeHistoryReady;
+            if (leftEyeHistoryReady || rightEyeHistoryReady)
             {
                 previousViewMatrix = temporalData.PrevViewMatrix;
                 previousProjectionMatrix = temporalData.PrevProjection;
@@ -325,6 +374,10 @@ internal sealed class VulkanMeshDrawViewSnapshot
                 previousRightEyeViewProjectionMatrixUnjittered =
                     temporalData.RightEyePrevViewProjectionUnjittered;
             }
+            if (!leftEyeHistoryReady)
+                previousViewProjectionMatrixUnjittered = viewProjectionMatrixUnjittered;
+            if (!rightEyeHistoryReady)
+                previousRightEyeViewProjectionMatrixUnjittered = rightEyeViewProjectionMatrixUnjittered;
         }
 
         // One immutable snapshot is allocated per distinct view/pass/frame and
@@ -358,6 +411,8 @@ internal sealed class VulkanMeshDrawViewSnapshot
             previousRightEyeProjectionMatrix,
             previousRightEyeViewProjectionMatrix,
             previousRightEyeViewProjectionMatrixUnjittered,
+            leftEyeHistoryReady,
+            rightEyeHistoryReady,
             camera?.Transform.RenderTranslation ?? Vector3.Zero,
             camera?.Transform.RenderForward ?? Vector3.UnitZ,
             camera?.Transform.RenderUp ?? Vector3.UnitY,

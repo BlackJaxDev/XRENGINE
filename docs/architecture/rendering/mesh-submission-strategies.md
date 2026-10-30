@@ -78,6 +78,24 @@ The strategy also owns scene visibility acceleration. `CpuDirect` uses the CPU s
 
 The CPU hierarchy's snapshot publication, mutation, traversal, and diagnostics contracts are documented in [CPU Scene BVH](cpu-scene-bvh.md).
 
+## LOD Transition Storage
+
+Collection publishes required capacity and structural reset indices with the
+scene command snapshot. It does not map the GPU-authored LOD transition buffer.
+Updating and published reset cohorts keep each command index once. Repeated
+structural edits cannot grow a pending cohort beyond command capacity when no
+LOD consumer runs. Resets published during a copy remain in the next cohort.
+The render owner prepares a zeroed candidate when capacity grows, copies the
+old rows on the GPU, and clears affected existing rows. A transfer barrier
+separates the preserve copy from overlapping resets. A final storage barrier
+precedes LOD consumers.
+
+The scene publishes the candidate only after its required producer fence proves
+completion. Copy operations retain both buffer generations until their native
+use completes. A batch discarded before native submission can retry. A partial
+submission without proven completion remains unavailable and reports a failure.
+The implementation is in `GPUScene.LodTransitionPublication.cs`.
+
 ## Shared Opaque Shadow Submission
 
 Shadow submission has a separate frozen owner from main-view material

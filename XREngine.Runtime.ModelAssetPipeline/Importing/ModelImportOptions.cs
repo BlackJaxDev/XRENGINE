@@ -203,6 +203,11 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public float ScaleConversion { get; set; } = 1.0f;
 
     /// <summary>
+    /// If false, blendshapes move positions only and keep the base normals and tangents.
+    /// </summary>
+    public bool ImportBlendShapeNormals { get; set; } = true;
+
+    /// <summary>
     /// If true, treat the source file as Z-up (common in some DCCs).
     /// </summary>
     public bool ZUp { get; set; } = false;

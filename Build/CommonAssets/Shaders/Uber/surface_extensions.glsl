@@ -469,6 +469,7 @@ vec4 uberMatcapSlot(
     vec4 maskOptions,
     vec4 uvBlend,
     vec4 uvControl,
+    vec4 hue,
     vec4 sourceSt,
     vec2 sourcePan,
     vec4 maskSt,
@@ -525,6 +526,12 @@ vec4 uberMatcapSlot(
     sampleColor.rgb *= max(parameters.x, 0.0);
     if (sourceMatcap)
         sampleColor.rgb = mix(sampleColor.rgb, sampleColor.rgb * baseColor, clamp(sourceOptions.y, 0.0, 1.0));
+    if (sourceMatcap && hue.x > 0.5)
+    {
+        float shift = hue.y + hue.z * u_Time * 0.05;
+        sampleColor.rgb = mix(hueShiftOklab(sampleColor.rgb, shift),
+            hueShift(sampleColor.rgb, shift), clamp(hue.w, 0.0, 1.0));
+    }
     mask *= sampleColor.a;
     if (sourceMatcap) lightAdd += sampleColor.rgb * sourceOptions.z * mask;
     emission += sampleColor.rgb * max(parameters.z, 0.0) * mask;
@@ -550,7 +557,7 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
         vec4 value = uberMatcapSlot(
             _Matcap0Tex, _Matcap0Mask, _MatcapSlotColor0, _MatcapSlotTheme0,
             _MatcapSlotParams0, _MatcapSlotExtra0, _MatcapSlotSource0, _MatcapSlotMask0,
-            _MatcapSlotUvBlend0, _MatcapSlotUvControl0,
+            _MatcapSlotUvBlend0, _MatcapSlotUvControl0, _MatcapSlotHue0,
             _Matcap0Tex_ST, _Matcap0TexPan, _Matcap0Mask_ST, _Matcap0MaskPan,
             mesh, light, finalColor, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend0, _MatcapSlotExtra0.x);
@@ -560,7 +567,7 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
         vec4 value = uberMatcapSlot(
             _Matcap1Tex, _Matcap1Mask, _MatcapSlotColor1, _MatcapSlotTheme1,
             _MatcapSlotParams1, _MatcapSlotExtra1, _MatcapSlotSource1, _MatcapSlotMask1,
-            _MatcapSlotUvBlend1, _MatcapSlotUvControl1,
+            _MatcapSlotUvBlend1, _MatcapSlotUvControl1, _MatcapSlotHue1,
             _Matcap1Tex_ST, _Matcap1TexPan, _Matcap1Mask_ST, _Matcap1MaskPan,
             mesh, light, finalColor, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend1, _MatcapSlotExtra1.x);
@@ -570,7 +577,7 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
         vec4 value = uberMatcapSlot(
             _Matcap2Tex, _Matcap2Mask, _MatcapSlotColor2, _MatcapSlotTheme2,
             _MatcapSlotParams2, _MatcapSlotExtra2, _MatcapSlotSource2, _MatcapSlotMask2,
-            _MatcapSlotUvBlend2, _MatcapSlotUvControl2,
+            _MatcapSlotUvBlend2, _MatcapSlotUvControl2, _MatcapSlotHue2,
             _Matcap2Tex_ST, _Matcap2TexPan, _Matcap2Mask_ST, _Matcap2MaskPan,
             mesh, light, finalColor, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend2, _MatcapSlotExtra2.x);
@@ -580,7 +587,7 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
         vec4 value = uberMatcapSlot(
             _Matcap3Tex, _Matcap3Mask, _MatcapSlotColor3, _MatcapSlotTheme3,
             _MatcapSlotParams3, _MatcapSlotExtra3, _MatcapSlotSource3, _MatcapSlotMask3,
-            _MatcapSlotUvBlend3, _MatcapSlotUvControl3,
+            _MatcapSlotUvBlend3, _MatcapSlotUvControl3, _MatcapSlotHue3,
             _Matcap3Tex_ST, _Matcap3TexPan, _Matcap3Mask_ST, _Matcap3MaskPan,
             mesh, light, finalColor, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend3, _MatcapSlotExtra3.x);
@@ -779,9 +786,56 @@ vec3 uberApplySourceEnviroRim(ToonMesh mesh, vec3 baseColor,
 #endif
 }
 
+#ifndef XRENGINE_UBER_DISABLE_TEXTURE_ARRAY_FLIPBOOK
+#define XR_FLIP_F(name) name
+#define XR_FLIP_I(name) name
+#define XR_FLIP_V(name) name
+#define XR_FLIP_V2(name) name
+#define XR_FLIP_SAMPLE(uv, layer, dx, dy) textureGrad(_FlipbookTexArray, vec3(uv, layer), dx, dy)
+#define XR_FLIP_BLEND(base, layer, mode) uberBlendRgb(base, layer, mode)
+#define XR_FLIP_RGB_TO_HSV(value) rgbToHsv(value)
+#define XR_FLIP_HSV_TO_RGB(value) hsvToRgb(value)
+#define XR_FLIP_RGB_TO_OKLAB(value) rgbToOklab(value)
+#define XR_FLIP_OKLAB_TO_RGB(value) oklabToRgb(value)
+#include "Uber/source_flipbook.glsl"
+#undef XR_FLIP_F
+#undef XR_FLIP_I
+#undef XR_FLIP_V
+#undef XR_FLIP_V2
+#undef XR_FLIP_SAMPLE
+#undef XR_FLIP_BLEND
+#undef XR_FLIP_RGB_TO_HSV
+#undef XR_FLIP_HSV_TO_RGB
+#undef XR_FLIP_RGB_TO_OKLAB
+#undef XR_FLIP_OKLAB_TO_RGB
+#endif
+
+void uberApplySourceFlipbook(inout FragmentData fragData, ToonMesh mesh)
+{
+#ifndef XRENGINE_UBER_DISABLE_TEXTURE_ARRAY_FLIPBOOK
+    if (_SourceFlipbook == 0) return;
+#if defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS) || defined(XRENGINE_OUTLINE_PASS)
+    const bool shadowPass = true;
+    if (_FlipbookAlphaControlsFinalAlpha != 1) return;
+#else
+    const bool shadowPass = false;
+#endif
+    vec2 uv = getUV(_FlipbookTexArrayUV, mesh);
+    vec2 maskUv = getUV(_FlipbookMaskUV, mesh) * _FlipbookMask_ST.xy +
+        _FlipbookMask_ST.zw + _FlipbookMaskPan * u_Time * 0.05;
+    vec4 mask = texture(_FlipbookMask, maskUv);
+    vec4 base = vec4(fragData.baseColor, fragData.alpha);
+    xrApplySourceFlipbook(uv, dFdx(uv), dFdy(uv), vec3(textureSize(_FlipbookTexArray, 0)),
+        mask[clamp(int(_SourceFlipbookFlags.z), 0, 3)], u_Time, shadowPass, base, fragData.emission);
+    fragData.baseColor = base.rgb;
+    fragData.alpha = base.a;
+#endif
+}
+
 void uberApplyFlipbookArray(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_TEXTURE_ARRAY_FLIPBOOK
+    if (_SourceFlipbook != 0) return;
     int layerCount = max(textureSize(_FlipbookTexArray, 0).z, 1);
     float firstFrame = clamp(_FlipbookStartFrame, 0.0, float(layerCount - 1));
     float lastFrame = _FlipbookEndFrame > firstFrame

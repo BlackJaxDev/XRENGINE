@@ -606,8 +606,7 @@ vec3 resolveSurfaceRms(PBRData pbr) {
         resolveSpecularIntensity(pbr));
 }
 
-// Samples a material-baked AO map (crevices, contact shadows) and lerps it
-// toward fully lit by _LightDataAOStrengthR.
+// Use the least lit AO channel after each channel's strength is applied.
 float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
 #ifdef XRENGINE_UBER_DISABLE_MATERIAL_AO
     return 1.0;
@@ -619,7 +618,7 @@ float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
     return mix(1.0, aoSample.r, saturate(_LightDataAOStrengthR));
 #else
     vec4 weighted = mix(vec4(1.0), aoSample, saturate(_LightDataAOStrengths));
-    return weighted.r * weighted.g * weighted.b * weighted.a;
+    return min(min(weighted.r, weighted.g), min(weighted.b, weighted.a));
 #endif
 #endif
 }
@@ -2127,6 +2126,7 @@ void main() {
 
     fragData.baseColor = baseColor.rgb;
     uberApplyDecals(fragData, mesh);
+    uberApplySourceFlipbook(fragData, mesh);
     uberApplySurfaceEffects(mesh, fragData.baseColor, fragData.emission, fragData.alpha);
 
     // ---- 5. Dissolve + early prepass/shadow outputs -------------------------
@@ -2265,7 +2265,8 @@ void main() {
         vec2 maskUv = transformUV(getUV(_RimMaskUV, mesh), _RimMask_ST);
         float mask = texture(_RimMask, maskUv)[clamp(_RimMaskChannel, 0, 3)];
         float rim = xrSourceRimAmount(mesh.vertexNormal, mesh.worldNormal, mesh.viewDir,
-            _RimWidth, _RimSharpness, _SourceRimSettings) * _RimLightColor.a *
+            _RimWidth, _SourceRimColorSettings.w > 0.5 ? _SourceRimColorSettings.w - 1.0 : _RimSharpness,
+            _SourceRimSettings, _SourceRimColorSettings.w > 0.5) * _RimLightColor.a *
             _RimLightColor.a * rimTexel.a * mask;
         vec3 rimColor = rimTexel.rgb * uberResolveThemeColor(_RimLightColorThemeIndex,
             _RimLightColor.rgb) * mix(vec3(1.0), fragData.baseColor,
@@ -2367,10 +2368,15 @@ void main() {
                 mesh.vertexNormal, mesh.viewDir, _GlitterColor, mask * globalMask,
                 fragData.emission);
         } else {
+            vec2 colorMapUv = getUV(_GlitterColorMapUV, mesh) * _GlitterColorMap_ST.xy +
+                _GlitterColorMap_ST.zw + _GlitterColorMapPan * u_Time * 0.05;
+            vec3 colorMap = textureGrad(_GlitterColorMap, colorMapUv,
+                dFdx(colorMapUv), dFdy(colorMapUv)).rgb;
             xrApplySourceGlitter(uv, dFdx(uv), dFdy(uv),
                 dFdx(mesh.uv[0]), dFdy(mesh.uv[0]), u_Time, mesh.vertexNormal, mesh.worldNormal,
-                mesh.viewDir, light.direction, light.color, ramp, luminance(light.color),
-                _GlitterColor, mask, fragData.baseColor, fragData.emission);
+                mesh.viewDir, light.direction, light.color,
+                _SourceGlitterVersion == 100 ? ramp * saturate(light.lightMap) : ramp, luminance(light.color),
+                _GlitterColor, colorMap, mask, fragData.baseColor, fragData.emission);
         }
         if (_GlitterBlendType == 1) {
             surfacePbr.F0 = mix(vec3(0.04), fragData.baseColor, surfacePbr.metallic);

@@ -452,6 +452,51 @@ internal static partial class SerializedSceneImporter
                     break;
             }
         }
+
+        // A nested prefab can inherit an object without a stripped proxy record.
+        // Its local file ID still names the object in a later prefab override.
+        BindInheritedMappings(importedHierarchy.NodesByGameObjectId,
+            ownerHierarchy.NodesByGameObjectId, prefabInstance.FileId, "GameObject");
+        BindInheritedMappings(importedHierarchy.NodesByTransformId,
+            ownerHierarchy.NodesByTransformId, prefabInstance.FileId, "Transform");
+        BindInheritedMappings(importedHierarchy.ComponentsByFileId,
+            ownerHierarchy.ComponentsByFileId, prefabInstance.FileId, "Component");
+        BindInheritedMappings(importedHierarchy.SerializedAnimatorsByFileId,
+            ownerHierarchy.SerializedAnimatorsByFileId, prefabInstance.FileId, "Animator");
+        BindInheritedMappings(importedHierarchy.AvatarAnimationGraphsByFileId,
+            ownerHierarchy.AvatarAnimationGraphsByFileId, prefabInstance.FileId, "Avatar animation graph");
+        foreach (SerializedAnimatorRecord animator in importedHierarchy.SerializedAnimatorsByFileId.Values)
+            ownerHierarchy.SerializedAnimatorOwners[animator] = importedHierarchy.SerializedAnimatorOwners[animator];
+        foreach (SerializedAvatarAnimationGraphRecord graph in importedHierarchy.AvatarAnimationGraphsByFileId.Values)
+            ownerHierarchy.AvatarAnimationGraphOwners[graph] = importedHierarchy.AvatarAnimationGraphOwners[graph];
+    }
+
+    /// <summary>Registers inherited prefab objects that have no serialized stripped proxy.</summary>
+    private static void BindInheritedMappings<T>(
+        IReadOnlyDictionary<long, T> source,
+        Dictionary<long, T> destination,
+        long prefabInstanceFileId,
+        string objectKind) where T : class
+    {
+        foreach ((long sourceFileId, T value) in source)
+        {
+            if (sourceFileId == 0)
+                continue;
+
+            long localFileId = (sourceFileId ^ prefabInstanceFileId) & long.MaxValue;
+            if (localFileId == 0)
+                throw new SourceVisualImportException(
+                    $"Inherited {objectKind} fileID '{sourceFileId}' has no valid local identity.");
+            if (destination.TryGetValue(localFileId, out T? existing))
+            {
+                if (!ReferenceEquals(existing, value))
+                    throw new SourceVisualImportException(
+                        $"Inherited {objectKind} fileID '{localFileId}' resolves to multiple objects.");
+                continue;
+            }
+
+            destination.Add(localFileId, value);
+        }
     }
 
     private static void ReportUnresolvedProxy(ParsedStrippedProxy proxy, ImportState state)

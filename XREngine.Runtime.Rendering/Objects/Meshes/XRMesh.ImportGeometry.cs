@@ -38,7 +38,9 @@ public partial class XRMesh
 
         ValidateImportAttributeBuffers();
         XRMeshBlendshapeActiveListReader blendshapeReader = default;
-        if (HasBlendshapes)
+        // A named shape can have no deltas. Keep its name while converting the base mesh.
+        bool hasNamedEmptyBlendshapes = HasNamedEmptyBlendshapes;
+        if (HasBlendshapes && !hasNamedEmptyBlendshapes)
         {
             const BlendshapeShaderVariant supported =
                 BlendshapeShaderVariant.ActiveList |

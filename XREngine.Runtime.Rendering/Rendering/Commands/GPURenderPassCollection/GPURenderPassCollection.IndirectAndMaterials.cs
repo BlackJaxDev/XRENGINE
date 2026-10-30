@@ -157,6 +157,21 @@ namespace XREngine.Rendering.Commands
                 ? RenderGraphPassIndexOverride
                 : RenderPass;
             using var renderGraphPassScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(renderGraphPassIndex);
+            if (!scene.TryPrepareLodTransitionBuffer(
+                    AbstractRenderer.Current ?? throw new InvalidOperationException("GPU LOD publication requires a renderer."),
+                    out string lodPublicationReason))
+            {
+                GpuProgramsPendingThisFrame = true;
+                ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException(lodPublicationReason);
+                Debug.RenderingWarningEvery(
+                    "GPUScene.LodTransitionPublication",
+                    TimeSpan.FromSeconds(2),
+                    "GPU LOD transition publication is deferred: {0}",
+                    lodPublicationReason);
+                return;
+            }
             ResetZeroReadbackProgramPendingState();
             bool useTwoPassGpuHiZ = TryPrepareGpuHiZTwoPass(scene, camera, out GpuHiZDepthInput twoPassDepthInput);
             Stopwatch resetStopwatch = Stopwatch.StartNew();
@@ -845,7 +860,6 @@ namespace XREngine.Rendering.Commands
             const EMemoryBarrierMask postLodBarrier = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command;
             _lodSelectComputeShader.DispatchCompute(dispatchGroups, 1, 1, postLodBarrier);
             AbstractRenderer.Current?.MemoryBarrier(postLodBarrier);
-            scene.MarkLodTransitionBufferGpuWritten();
             // Turn GPU-raised LOD residency requests (from earlier frames) into atlas loads.
             // Internally frame-throttled and a no-op unless StreamMeshLodsOnDemand is enabled.
             scene.ServiceLodStreamingRequests();

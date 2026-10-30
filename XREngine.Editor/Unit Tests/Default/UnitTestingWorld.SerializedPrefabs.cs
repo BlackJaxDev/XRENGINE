@@ -350,15 +350,16 @@ public static partial class EditorUnitTests
                 {
                     throw new SourceVisualImportException(
                         $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' uses an unsupported " +
-                        $"shader version ({report.SourceShaderVersion}); supported Poiyomi Toon versions are " +
-                        $"{SourceToon92Catalog.Version66}, {SourceToon92Catalog.Version79}, and {SourceToon93Catalog.VersionText}.");
+                        $"shader source ({report.SourceShaderVersion}). No verified source profile matched. " +
+                        "Inspect the material conversion report for its source identity.");
                 }
 
                 if (report.Outcome is EMaterialConversionOutcome.GenericFallback or EMaterialConversionOutcome.Failed)
                 {
                     throw new SourceVisualImportException(
                         $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' did not convert to the " +
-                        $"native Uber shader (outcome: {report.Outcome}).");
+                        $"native Uber shader (outcome: {report.Outcome}). " +
+                        string.Join(" ", report.Failures.Count > 0 ? report.Failures : report.Warnings));
                 }
 
                 if (!material.TryGetUberMaterialState(out _, out _))

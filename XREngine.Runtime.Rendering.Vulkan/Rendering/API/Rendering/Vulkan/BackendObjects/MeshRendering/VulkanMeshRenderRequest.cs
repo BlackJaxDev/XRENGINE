@@ -37,6 +37,7 @@ internal readonly record struct VulkanMeshRenderRequest(
 {
     internal Vector4 SourceFlatDirection { get; init; }
     internal VulkanMeshIndexedIndirectPayload? IndexedIndirect { get; init; }
+    internal VulkanRequiredProducerInsertionToken RequiredProducerInsertionToken { get; init; }
 
     internal static void ReleaseAuthoringLease(ref VulkanMeshRenderRequest request)
     {

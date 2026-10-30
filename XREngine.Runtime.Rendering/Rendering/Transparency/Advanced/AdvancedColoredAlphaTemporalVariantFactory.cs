@@ -41,17 +41,67 @@ public static class AdvancedColoredAlphaTemporalVariantFactory
 
     private static void BindTemporalMatrices(XRMaterialBase material, XRRenderProgram program)
     {
-        if (!VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var data))
-            throw new InvalidOperationException("Advanced transparent velocity requires a published temporal snapshot.");
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline is null)
+            throw new InvalidOperationException("Advanced transparent velocity requires an active pipeline output.");
 
-        program.Uniform("CurrViewProjection", data.CurrViewProjectionUnjittered);
-        program.Uniform("PrevViewProjection", data.LeftEyeHistoryReady
-            ? data.PrevViewProjectionUnjittered : data.CurrViewProjectionUnjittered);
-        program.Uniform("RightEyeCurrViewProjection", data.RightEyeCurrViewProjectionUnjittered);
-        program.Uniform("RightEyePrevViewProjection", data.RightEyeHistoryReady
-            ? data.RightEyePrevViewProjectionUnjittered : data.RightEyeCurrViewProjectionUnjittered);
-        program.Uniform("LeftEyeHistoryReady", data.LeftEyeHistoryReady);
-        program.Uniform("RightEyeHistoryReady", data.RightEyeHistoryReady);
+        if (pipeline.RenderState.TemporalAuthoringViewSet is not null &&
+            VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(pipeline, out var data))
+        {
+            program.Uniform("CurrViewProjection", data.CurrViewProjectionUnjittered);
+            program.Uniform("PrevViewProjection", data.LeftEyeHistoryReady
+                ? data.PrevViewProjectionUnjittered : data.CurrViewProjectionUnjittered);
+            program.Uniform("RightEyeCurrViewProjection", data.RightEyeCurrViewProjectionUnjittered);
+            program.Uniform("RightEyePrevViewProjection", data.RightEyeHistoryReady
+                ? data.RightEyePrevViewProjectionUnjittered : data.RightEyeCurrViewProjectionUnjittered);
+            program.Uniform("LeftEyeHistoryReady", data.LeftEyeHistoryReady);
+            program.Uniform("RightEyeHistoryReady", data.RightEyeHistoryReady);
+            return;
+        }
+
+        XRCamera? camera = pipeline.RenderState.RenderingCamera ?? pipeline.LastRenderingCamera;
+        if (camera is null)
+            throw new InvalidOperationException("Advanced transparent velocity requires an active camera for its output.");
+
+        XRCamera? rightCamera = pipeline.RenderState.StereoRightEyeCamera;
+        var current = camera.ViewProjectionMatrixUnjittered;
+        var rightCurrent = rightCamera?.ViewProjectionMatrixUnjittered ?? current;
+        bool leftReady = camera.HasPreviousViewProjectionMatrix;
+        bool rightReady = rightCamera?.HasPreviousViewProjectionMatrix == true;
+        var previous = leftReady ? camera.PreviousViewProjectionMatrixUnjittered : current;
+        var rightPrevious = rightReady
+            ? rightCamera!.PreviousViewProjectionMatrixUnjittered : rightCurrent;
+        if (pipeline.RenderState.FrameViewSet is { } frameViews)
+        {
+            leftReady = false;
+            rightReady = false;
+            previous = current;
+            rightPrevious = rightCurrent;
+            if (RenderFrameViewMatch.TryGetExactEyeView(in frameViews, camera, rightEye: false, out RenderFrameViewDescriptor leftView))
+            {
+                var projection = leftView.ProjectionMatrixUnjittered == default
+                    ? leftView.ProjectionMatrix : leftView.ProjectionMatrixUnjittered;
+                current = leftView.ViewMatrix * projection;
+                leftReady = leftView.HasValidTemporalHistory &&
+                    leftView.PreviousViewProjectionMatrixUnjittered != default;
+                previous = leftReady ? leftView.PreviousViewProjectionMatrixUnjittered : current;
+            }
+            if (RenderFrameViewMatch.TryGetExactEyeView(in frameViews, rightCamera, rightEye: true, out RenderFrameViewDescriptor rightView))
+            {
+                var projection = rightView.ProjectionMatrixUnjittered == default
+                    ? rightView.ProjectionMatrix : rightView.ProjectionMatrixUnjittered;
+                rightCurrent = rightView.ViewMatrix * projection;
+                rightReady = rightView.HasValidTemporalHistory &&
+                    rightView.PreviousViewProjectionMatrixUnjittered != default;
+                rightPrevious = rightReady ? rightView.PreviousViewProjectionMatrixUnjittered : rightCurrent;
+            }
+        }
+        program.Uniform("CurrViewProjection", current);
+        program.Uniform("PrevViewProjection", previous);
+        program.Uniform("RightEyeCurrViewProjection", rightCurrent);
+        program.Uniform("RightEyePrevViewProjection", rightPrevious);
+        program.Uniform("LeftEyeHistoryReady", leftReady);
+        program.Uniform("RightEyeHistoryReady", rightReady);
     }
 
     private static XRMaterial CreateVariant(ShaderVar[] sourceParameters, string fragmentShader)

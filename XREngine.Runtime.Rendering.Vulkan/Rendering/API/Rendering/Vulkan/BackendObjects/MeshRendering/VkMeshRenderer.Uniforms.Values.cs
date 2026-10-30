@@ -30,6 +30,13 @@ internal unsafe partial class VkMeshRenderer
 		bool wrote;
 		if (TryWriteTemporalViewProjectionUniform(data, member, draw, out wrote))
 			return wrote;
+		if (member.Name is "LeftEyeHistoryReady" or "RightEyeHistoryReady")
+		{
+			EngineUniformValue ready = member.Name == "LeftEyeHistoryReady"
+				? draw.LeftEyeHistoryReady ? 1 : 0
+				: draw.RightEyeHistoryReady ? 1 : 0;
+			return TryWriteAutoUniformValue(data, member, in ready, EShaderVarType._bool);
+		}
 
 		if (TryResolveEngineUniformValue(member.Name, draw, out EngineUniformValue engineValue, out EShaderVarType engineType))
 		{

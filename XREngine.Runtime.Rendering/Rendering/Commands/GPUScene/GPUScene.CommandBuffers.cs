@@ -109,6 +109,8 @@ namespace XREngine.Rendering.Commands
                         "GpuIndirect.GPUScene.SwapCommandBuffers.TransparencyPublication");
                     CopyDirtyRange(UpdatingTransparencyMetadataBuffer, AllLoadedTransparencyMetadataBuffer, ref _transparencyDirtyRange);
                 }
+
+                PublishLodTransitionChangesAtSwap();
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
@@ -431,12 +433,14 @@ namespace XREngine.Rendering.Commands
             return buffer;
         }
 
-        private static XRDataBuffer MakeLodTransitionBuffer()
+        private static XRDataBuffer MakeLodTransitionBuffer(
+            uint capacity,
+            string name = "RenderLodTransitionBuffer")
         {
             var buffer = new XRDataBuffer(
-                "RenderLodTransitionBuffer",
+                name,
                 EBufferTarget.ShaderStorageBuffer,
-                InitialCommandCapacity,
+                capacity,
                 EComponentType.UInt,
                 LodTransitionUIntCount,
                 false,
@@ -448,78 +452,26 @@ namespace XREngine.Rendering.Commands
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
                 RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
             };
-            // Scene mirroring prepares CPU state even for CPU-only draw submission.
-            // The caller commits initialized rows through the owner-first write contract;
-            // only an actual backend binding should create and allocate its API wrapper.
+            for (uint index = 0; index < capacity; index++)
+                buffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
+            buffer.CommitDirtyBytes(0u, buffer.Length);
             return buffer;
         }
 
+        private static XRDataBuffer MakeLodTransitionBuffer()
+            => MakeLodTransitionBuffer(InitialCommandCapacity);
+
         private void EnsureLodTransitionBufferCapacity(uint requiredSize)
         {
-            XRDataBuffer buffer = LodTransitionBuffer;
-            if (requiredSize <= buffer.ElementCount)
-                return;
-
-            SyncLodTransitionBufferFromGpu();
-            buffer.Resize(requiredSize);
-            buffer.CommitDirtyBytes(0u, buffer.Length);
+            _lodTransitionUpdatingCapacity = Math.Max(
+                _lodTransitionUpdatingCapacity,
+                requiredSize);
         }
 
-        private void SyncLodTransitionBufferFromGpu()
+        private void QueueLodTransitionReset(uint index)
         {
-            if (_lodTransitionBuffer is null || Volatile.Read(ref _lodTransitionGpuWritePending) == 0)
-                return;
-
-            if (_lodTransitionBuffer.ActivelyMapping.Count == 0)
-                _lodTransitionBuffer.MapBufferData();
-
-            if (!_lodTransitionBuffer.TryGetAddress(out VoidPtr cpuAddress) || !cpuAddress.IsValid)
-                return;
-
-            // Collect-visible mutates the CPU-side command buffers too, but only the render thread
-            // may issue GL barriers. Off-thread callers fall back to the persistently mapped view.
-            if (RuntimeEngine.IsRenderThread)
-                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.ShaderStorage);
-
-            if (_lodTransitionBuffer.TryReadMapped(bytes =>
-            {
-                unsafe
-                {
-                    fixed (byte* source = bytes)
-                        Memory.Move(cpuAddress, source, _lodTransitionBuffer.Length);
-                }
-                return true;
-            }))
-                Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
-        }
-
-        /// <summary>
-        /// Marks the LOD transition storage as GPU-authored so a later structural CPU edit
-        /// preserves those transition states. Initial scene population remains upload-only
-        /// and therefore does not map a readback buffer before the first GPU dispatch.
-        /// </summary>
-        internal void MarkLodTransitionBufferGpuWritten()
-            => Volatile.Write(ref _lodTransitionGpuWritePending, 1);
-
-        private void QueueCpuLodTransitionWrite(uint index)
-            => _lodTransitionCpuDirtyIndices.Add(index);
-
-        private void FlushCpuLodTransitionWrites()
-        {
-            if (_lodTransitionCpuDirtyIndices.Count == 0 || _lodTransitionBuffer is null)
-                return;
-
-            uint elementSize = _lodTransitionBuffer.ElementSize;
-            if (elementSize == 0u)
-                elementSize = LodTransitionUIntCount * sizeof(uint);
-
-            for (int i = 0; i < _lodTransitionCpuDirtyIndices.Count; ++i)
-            {
-                uint index = _lodTransitionCpuDirtyIndices[i];
-                _lodTransitionBuffer.CommitDirtyBytes(index * elementSize, elementSize);
-            }
-
-            _lodTransitionCpuDirtyIndices.Clear();
+            if (_lodTransitionUpdatingResetIndexSet.Add(index))
+                _lodTransitionUpdatingResetIndices.Add(index);
         }
 
         /// <summary>
@@ -866,8 +818,12 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _allLoadedTransparencyMetadataBuffer;
     /// <summary>Per-command LOD transition state shared across frames.</summary>
     private XRDataBuffer? _lodTransitionBuffer;
-    private int _lodTransitionGpuWritePending;
-    private readonly List<uint> _lodTransitionCpuDirtyIndices = [];
+    private readonly List<uint> _lodTransitionUpdatingResetIndices = [];
+    private readonly HashSet<uint> _lodTransitionUpdatingResetIndexSet = [];
+    private uint _lodTransitionUpdatingCapacity;
+    private uint _lodTransitionPublishedCapacity;
+    private readonly List<uint> _lodTransitionPublishedResetIndices = [];
+    private readonly HashSet<uint> _lodTransitionPublishedResetIndexSet = [];
 
         /// <summary>Updating buffer - written by Add/Remove operations. Swapped to render buffer.</summary>
         private XRDataBuffer? _updatingTransparencyMetadataBuffer;

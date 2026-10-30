@@ -97,7 +97,7 @@ public static class NativeUberMaterialSourceEncoder
                 reason = $"Native Uber feature '{feature.Id}' has no canonical bit.";
                 return false;
             }
-            if (index > 17 && feature.Id is not ("glitter" or "global-masks-themes" or "layered-decals"))
+            if (index > 17 && feature.Id is not ("glitter" or "global-masks-themes" or "layered-decals" or "texture-array-flipbook"))
             {
                 compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
                 reason = $"Native Uber feature '{feature.Id}' has no matching native operation.";
@@ -208,6 +208,12 @@ public static class NativeUberMaterialSourceEncoder
 
     private static bool ValidateModes(XRMaterial material, out string reason)
     {
+        if (material.IsUberFeatureEnabled("texture-array-flipbook", false) &&
+            material.Parameter<ShaderInt>("_SourceFlipbook") is not { Value: 1 })
+        {
+            reason = "Native Uber array flipbook requires the source playback contract.";
+            return false;
+        }
         if (!Allowed(material, "_LightingMode", [0, 1, 2, 5, 6], out reason) ||
             !Allowed(material, "_Mode", [0, 1, 9], out reason) ||
             !Allowed(material, "_MatcapUVMode", [0, 1, 2], out reason) ||

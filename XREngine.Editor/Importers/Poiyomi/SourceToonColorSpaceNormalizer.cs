@@ -25,7 +25,8 @@ public static partial class SourceToonColorSpaceNormalizer
             return source;
 
         // Older sources use their own declarations. Do not apply 9.3 color flags to them.
-        Dictionary<string, bool> conversions = SourceToon92Catalog.Supports(version) || version == SourceToon81Catalog.Version
+        Dictionary<string, bool> conversions = SourceToon92Catalog.Supports(version) ||
+            version == SourceToon81Catalog.Version || version == SourceToon10Catalog.Version
             ? new(StringComparer.Ordinal)
             : new(CatalogConversions, StringComparer.Ordinal);
         if (shaderPath is not null && File.Exists(shaderPath))

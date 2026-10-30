@@ -109,6 +109,7 @@ vec3 XR_UBER_AdjustBaseColor(XRUberCoordinates coordinates, vec3 color)
 }
 
 #include "Advanced/Shading/NativeUberEffects.glslinc"
+#include "Advanced/Shading/NativeUberFlipbook.glslinc"
 
 bool XR_UBER_ApplyDissolve(XRUberCoordinates coordinates, inout vec4 baseColor, out vec3 edgeEmission)
 {
@@ -233,7 +234,8 @@ bool XR_UBER_ApplyDissolve(XRUberCoordinates coordinates, inout vec4 baseColor, 
 bool XR_UBER_ApplyCoverage(
     XRUberCoordinates coordinates,
     out vec4 baseColor,
-    out vec3 edgeEmission)
+    out vec3 edgeEmission,
+    bool shadowPass)
 {
     baseColor = vec4(0.0);
     edgeEmission = vec3(0.0);
@@ -311,12 +313,21 @@ bool XR_UBER_ApplyCoverage(
 
     base.a = alpha;
     XR_UBER_ApplyDecals(coordinates, base, edgeEmission);
+    XR_UBER_ApplyFlipbook(coordinates, shadowPass, base, edgeEmission);
     int blendMode = UBER_I(_Mode);
     baseColor = base;
     vec3 dissolveEmission;
     bool keep = XR_UBER_ApplyDissolve(coordinates, baseColor, dissolveEmission);
     edgeEmission += dissolveEmission;
     return keep && (blendMode != 1 || baseColor.a >= UBER_F(_Cutoff));
+}
+
+bool XR_UBER_ApplyCoverage(
+    XRUberCoordinates coordinates,
+    out vec4 baseColor,
+    out vec3 edgeEmission)
+{
+    return XR_UBER_ApplyCoverage(coordinates, baseColor, edgeEmission, false);
 }
 
 #endif

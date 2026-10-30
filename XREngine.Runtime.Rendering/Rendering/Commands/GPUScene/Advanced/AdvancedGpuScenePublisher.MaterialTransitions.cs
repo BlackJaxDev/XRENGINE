@@ -1322,11 +1322,11 @@ public sealed partial class AdvancedGpuScenePublisher
                 {
                     ref readonly AdvancedGpuResourceBindingSource source =
                         ref _reuseStandardLitSources[index];
-                    // Array and GPU-authored cube sources have no complete content witness.
+                    // GPU-authored array and cube sources have no complete content witness.
                     if (source.Texture is not null &&
                         (source.Texture.IsDestroyed ||
                          source.Texture is not XRTexture2D &&
-                         (source.Texture is not XRTextureCube ||
+                         (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
                           source.SourceContentGeneration == 0UL)))
                         return false;
                     AdvancedMaterialTextureBinding binding = index < 4
@@ -1361,12 +1361,12 @@ public sealed partial class AdvancedGpuScenePublisher
                 {
                     ref readonly AdvancedGpuResourceBindingSource source =
                         ref _reuseNativeUberSources[role];
-                    // Arrays and GPU-authored cubes do not have a complete
+                    // GPU-authored arrays and cubes do not have a complete
                     // source-content witness. Keep them on the full plan.
                     if (source.Texture is not null &&
                         (source.Texture.IsDestroyed ||
                          source.Texture is not XRTexture2D &&
-                         (source.Texture is not XRTextureCube ||
+                         (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
                           source.SourceContentGeneration == 0UL)))
                         return false;
                     if (!_resourcePublisher.BindingMatches(in bindings[role], in source))

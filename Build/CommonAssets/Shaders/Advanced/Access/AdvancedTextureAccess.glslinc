@@ -250,6 +250,33 @@ vec4 XR_ADV_SampleTexture2DArray(
 #endif
 }
 
+ivec3 XR_ADV_Texture2DArraySize(XRAdvancedEncodedTextureReference reference)
+{
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return ivec3(1);
+#if defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
+    return textureSize(sampler2DArray(uvec2(reference.payload0, reference.payload1)), 0);
+#elif defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    return textureSize(sampler2DArray(XR_ADV_Texture2DArrayDescriptors[nonuniformEXT(reference.payload0)], XR_ADV_SamplerDescriptors[nonuniformEXT(reference.payload1)]), 0);
+#else
+    return ivec3(1);
+#endif
+}
+
+vec4 XR_ADV_SampleTexture2DArrayGrad(XRAdvancedEncodedTextureReference reference,
+    vec3 uvLayer, vec2 dx, vec2 dy)
+{
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(reference.payload2);
+#if defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
+    return textureGrad(sampler2DArray(uvec2(reference.payload0, reference.payload1)), uvLayer, dx, dy);
+#elif defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    return textureGrad(sampler2DArray(XR_ADV_Texture2DArrayDescriptors[nonuniformEXT(reference.payload0)], XR_ADV_SamplerDescriptors[nonuniformEXT(reference.payload1)]), uvLayer, dx, dy);
+#else
+    return XR_ADV_TextureFallback(reference.payload2);
+#endif
+}
+
 vec4 XR_ADV_SampleTexture2DArrayLod(
     XRAdvancedEncodedTextureReference textureReference,
     vec3 uvLayer,

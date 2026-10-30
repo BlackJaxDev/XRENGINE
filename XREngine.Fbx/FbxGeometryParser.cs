@@ -37,7 +37,7 @@ public static class FbxGeometryParser
                     {
                         FbxTrace.Verbose(
                             "GeometryParser",
-                            $"Mesh '{parsedGeometry.Name}' (objectId={parsedGeometry.ObjectId}) parsed with controlPoints={parsedGeometry.ControlPoints.Count:N0}, polygonVertexIndices={parsedGeometry.PolygonVertexIndices.Count:N0}, normalLayers={parsedGeometry.Normals.Count}, tangentLayers={parsedGeometry.Tangents.Count}, uvLayers={parsedGeometry.TextureCoordinates.Count}, colorLayers={parsedGeometry.Colors.Count}, hasMaterialLayer={parsedGeometry.Materials is not null}.");
+                            $"Mesh '{parsedGeometry.Name}' (objectId={parsedGeometry.ObjectId}) parsed with controlPoints={parsedGeometry.ControlPoints.Count:N0}, polygonVertexIndices={parsedGeometry.PolygonVertexIndices.Count:N0}, normalLayers={parsedGeometry.Normals.Count}, tangentLayers={parsedGeometry.Tangents.Count}, binormalLayers={parsedGeometry.Binormals?.Count ?? 0}, uvLayers={parsedGeometry.TextureCoordinates.Count}, colorLayers={parsedGeometry.Colors.Count}, hasMaterialLayer={parsedGeometry.Materials is not null}.");
                     }
                 }
 
@@ -59,6 +59,7 @@ public static class FbxGeometryParser
 
         List<FbxLayerElement<Vector3>> normals = [];
         List<FbxLayerElement<Vector3>> tangents = [];
+        List<FbxLayerElement<Vector3>> binormals = [];
         List<FbxLayerElement<Vector2>> textureCoordinates = [];
         List<FbxLayerElement<Vector4>> colors = [];
         FbxLayerElement<int>? materials = null;
@@ -74,6 +75,9 @@ public static class FbxGeometryParser
                     break;
                 case "LayerElementTangent":
                     tangents.Add(ParseVector3Layer(structural, childrenByNode, arrayWorkItemsByPropertyIndex, childIndex, "Tangents", "TangentIndex"));
+                    break;
+                case "LayerElementBinormal":
+                    binormals.Add(ParseVector3Layer(structural, childrenByNode, arrayWorkItemsByPropertyIndex, childIndex, "Binormals", "BinormalIndex"));
                     break;
                 case "LayerElementUV":
                     textureCoordinates.Add(ParseVector2Layer(structural, childrenByNode, arrayWorkItemsByPropertyIndex, childIndex, "UV", "UVIndex"));
@@ -99,7 +103,8 @@ public static class FbxGeometryParser
             Tangents: tangents,
             TextureCoordinates: textureCoordinates,
             Colors: colors,
-            Materials: materials);
+            Materials: materials,
+            Binormals: binormals);
     }
 
     private static int[][] BuildChildrenByNode(IReadOnlyList<FbxNodeRecord> nodes)
