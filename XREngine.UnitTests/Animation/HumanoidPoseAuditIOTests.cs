@@ -70,6 +70,16 @@ public sealed class HumanoidPoseAuditIOTests
     }
 
     [Test]
+    public void HostCapableSourceStillUsesCapturedDiscovery()
+    {
+        string path = SaveReport();
+        RuntimeAssetReadServices.SetSource(new ProbeSource());
+        HumanoidPoseAuditReport report = HumanoidPoseAuditIO.LoadReport(path);
+        Assert.That(report.ClipName, Is.EqualTo("test"));
+        Assert.That(_files.Reads, Is.EqualTo(1));
+    }
+
+    [Test]
     public void AuditComponentLoadsReferenceThroughHostProvider()
     {
         string path = SaveReport();

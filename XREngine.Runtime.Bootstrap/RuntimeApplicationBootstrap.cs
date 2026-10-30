@@ -31,10 +31,11 @@ public static class RuntimeApplicationBootstrap
     {
         ArgumentNullException.ThrowIfNull(profile);
         Validate(profile);
-        DesktopRuntimeBackendBootstrap.EnsureRegistered();
 
         lock (Sync)
         {
+            using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
+            DesktopRuntimeBackendBootstrap.EnsureRegistered();
             ApplicationInstallation? previous = _current;
             _current = null;
             previous?.DisposeWithoutLock();
@@ -49,6 +50,7 @@ public static class RuntimeApplicationBootstrap
     {
         lock (Sync)
         {
+            using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
             ApplicationInstallation? current = _current;
             _current = null;
             current?.DisposeWithoutLock();
@@ -106,6 +108,7 @@ public static class RuntimeApplicationBootstrap
         {
             lock (Sync)
             {
+                using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
                 if (ReferenceEquals(_current, this))
                     _current = null;
                 DisposeWithoutLock();

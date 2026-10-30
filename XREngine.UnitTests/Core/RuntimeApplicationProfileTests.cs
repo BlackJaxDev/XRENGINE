@@ -4,6 +4,7 @@ using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.InputIntegration;
+using XREngine.Data;
 
 namespace XREngine.UnitTests.Core;
 
@@ -75,5 +76,31 @@ public sealed class RuntimeApplicationProfileTests
         RuntimeStartupPlan invalid = RuntimeStartupPolicy.Normalize(settings);
         Should.Throw<InvalidOperationException>(() =>
             RuntimeStartupPolicy.ValidateProfile(RuntimeApplicationProfile.HeadlessServer, invalid));
+    }
+
+    [Test]
+    public void HeadlessInstallationRetainsOwnershipWhenPublicationRejectsTeardown()
+    {
+        IDisposable lease = RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.HeadlessServer);
+        try
+        {
+            IRuntimePlayerControllerServices? installed = RuntimePlayerControllerServices.Current;
+            using (RuntimeSourcePublicationServices.BeginPublication(RuntimeSourcePublicationServices.Generation))
+            {
+                Should.Throw<InvalidOperationException>(RuntimeApplicationBootstrap.Uninstall);
+                Should.Throw<InvalidOperationException>(lease.Dispose);
+                Should.Throw<InvalidOperationException>(() => RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.HeadlessServer));
+                RuntimeApplicationBootstrap.CurrentProfile.ShouldBeSameAs(RuntimeApplicationProfile.HeadlessServer);
+                RuntimePlayerControllerServices.Current.ShouldBeSameAs(installed);
+            }
+
+            lease.Dispose();
+            RuntimeApplicationBootstrap.CurrentProfile.ShouldBeNull();
+        }
+        finally
+        {
+            lease.Dispose();
+            RuntimeApplicationBootstrap.Uninstall();
+        }
     }
 }

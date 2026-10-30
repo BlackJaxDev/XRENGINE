@@ -33,6 +33,7 @@ public static class RuntimeRenderingBootstrap
     public static IDisposable InstallEngineHostServices(RuntimeApplicationProfile profile)
     {
         ArgumentNullException.ThrowIfNull(profile);
+        using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
 
         // Retire old worlds while their rendering, input and VR providers are still installed.
         RuntimeAdapterBootstrap.UninstallEngineHostServices();
@@ -181,6 +182,7 @@ public static class RuntimeRenderingBootstrap
 
         public void Dispose()
         {
+            using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 return;
 

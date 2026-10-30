@@ -307,9 +307,22 @@ The humanoid conformance source scanner requires admitted host-file access. It
 captures one discovery provider for directory probes, enumeration, and shared
 reads. That provider must implement `IAssetMetadataFileBackend` and
 `IRuntimeHostFileReadBackend`. A raw-read lease and discovery generation check
-reject changes observed before return. Discovery has no retirement lease or
-atomic publication guard: the host must keep the captured provider usable and
-coordinate replacement until the scan returns.
+reject changes observed before return. Discovery has no retirement lease, so
+the host must keep the captured provider usable during the scan. A short
+publication reservation rejects replacement while the result returns, even
+when a host-capable raw source is installed.
+
+Humanoid conformance manifest and mapping-correction reads capture one raw-read
+lease and host-file discovery provider for each operation. The manifest uses
+host file reads for its JSON and streamed SHA-256 checks, and metadata directory
+probes to find the repository root. A mapping correction uses the host file
+reader for its JSON and source FBX hash. It carries the observed FBX hash into
+the avatar definition without a second file read. Both operations check source
+and discovery ownership before returning a result. A mapping correction reserves
+both the raw source and host installation before it changes the humanoid.
+Synchronous host-file admission
+rejects browser and caller-thread access. Missing read or directory capabilities
+fail explicitly when required.
 
 Humanoid pose-audit reports use admitted host reads and the optional
 `IHostAssetFileSharedOutput` capability. The desktop writer creates the parent
@@ -317,6 +330,8 @@ directory and opens the report with `FileShare.Read`. JSON remains UTF-8 without
 a BOM; `.gz` reports use gzip. A report read captures one discovery installation
 and raw-read lease for its existence check and content read. The output and
 discovery providers have no retirement lease; hosts must retain them during use.
+The read reserves host publication while it returns the parsed report, even
+when a host-capable raw source is installed.
 
 Native public asset loads capture `IRuntimeHostFileReadBackend` after load-route
 admission. The same instance performs the preflight existence check and the
@@ -701,3 +716,12 @@ The owning module declares native build/copy/publish items. This does not requir
 Public namespaces and type names generally remain stable when source moves between assemblies. Runtime-facing vendor signatures use neutral contracts, so this is not a binary compatibility guarantee for old callers. Serialized backend enum values remain stable; moved CLR names and persisted-name searches are recorded in the [type identity audit](../../work/progress/platform/native-subsystem-type-identities.md).
 
 Package versions, notices, and review status are recorded in [DEPENDENCIES.md](../../DEPENDENCIES.md), not inferred from this project map. Application build/publish layouts and feature behavior require integration acceptance in [Platform Validation](../../work/testing/platform/platform-validation.md).
+
+### Host composition and source publication
+
+Audio host installation uses the shared source-publication reservation. Adapter,
+rendering and application composition reserve installation changes before they
+replace owners or begin disposal. An active source publication rejects that
+operation before teardown starts; the owner remains available for a later retry.
+Browser startup releases its setup reservation before world activation and
+asynchronous startup. Browser stop reserves the change before service cleanup.

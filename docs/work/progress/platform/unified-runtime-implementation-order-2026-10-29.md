@@ -177,3 +177,27 @@ establish complete browser reachability.
 The render-worker move passes all 24 publication gates with zero compiler
 warnings and errors. The Editor package contains 1,335 engine assets and 5,633
 publisher sidecar files, with every recorded hash verified.
+
+Conformance manifest and mapping-correction reads now use captured host providers
+for JSON, file probes, repository metadata and streamed SHA-256. Correction
+application uses the already validated source hash. Conformance and pose-audit
+publication reserve both the raw source and discovery installation, including
+an installed host-capable source. Eleven loader checks and nineteen scanner
+and pose-audit checks pass.
+
+Audio2Face CSV reload now captures file and audio host installations, path and
+project directory. A newer reload supersedes older results and diagnostics.
+Adapter, rendering, application and browser composition reserve host changes
+before mutation or teardown; publication rejection retains ownership for retry.
+Ten CSV-owner checks, eight existing component checks and eight composition/profile
+checks pass. The separate Linux integration harness has nineteen platform
+annotation warnings from Windows-only bootstrap APIs; all 27 checks execute.
+The headless build has zero warnings and errors and all 29 checks pass. External
+mutation that restores a host project-directory property to its prior value
+remains outside the installation signal. Broader browser and device lifecycle
+acceptance stays deferred.
+
+The conformance and audio increment passes all 24 publication gates with zero
+compiler warnings and errors. The Editor package contains 1,335 engine assets
+and 5,635 publisher sidecar files; all recorded hashes match. These changes do
+not close the full portable file and blocking-operation requirement.

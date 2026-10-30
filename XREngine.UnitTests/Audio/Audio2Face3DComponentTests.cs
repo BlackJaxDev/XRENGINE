@@ -9,9 +9,11 @@ public sealed class Audio2Face3DComponentTests
     [Test]
     public void ResolveAnimationCsvPath_UsesProjectDirectoryForRelativePaths()
     {
-        string resolved = Audio2Face3DComponent.ResolveAnimationCsvPath("Assets/Audio2Face/test.csv", @"C:\Projects\Demo", @"C:\Fallback");
+        string project = Path.GetFullPath(Path.Combine("Projects", "Demo"));
+        string fallback = Path.GetFullPath("Fallback");
+        string resolved = Audio2Face3DComponent.ResolveAnimationCsvPath("Assets/Audio2Face/test.csv", project, fallback);
 
-        resolved.ShouldBe(@"C:\Projects\Demo\Assets\Audio2Face\test.csv");
+        resolved.ShouldBe(Path.Combine(project, "Assets", "Audio2Face", "test.csv"));
     }
 
     [Test]
@@ -37,7 +39,8 @@ public sealed class Audio2Face3DComponentTests
         bool connected = component.TryConnectLiveClient();
 
         connected.ShouldBeFalse();
-        component.LastLiveError.ShouldContain("Add Audio2Face3DNativeBridgeComponent to the same scene node");
+        component.LastLiveError.ShouldContain("No Audio2Face-3D live client adapter is registered");
+        component.LastLiveError.ShouldContain("Register an adapter in the host application");
     }
 
     [Test]

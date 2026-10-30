@@ -17,6 +17,9 @@
     <ProjectReference Include="../../XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Animation/HumanoidPoseAuditIOTests.cs" Link="Animation/HumanoidPoseAuditIOTests.cs" />
+    <Compile Include="../Animation/HumanoidConformanceSourceScanHostTests.cs" Link="Animation/HumanoidConformanceSourceScanHostTests.cs" />
+    <Compile Include="../Audio/Audio2Face3DCsvHostReadTests.cs" Link="Audio/Audio2Face3DCsvHostReadTests.cs" />
     <Compile Include="../Audio/BrowserAudioCookingTests.cs" Link="Audio/BrowserAudioCookingTests.cs" />
     <Compile Include="../Audio/PcmRecordingTransport.cs" Link="Audio/PcmRecordingTransport.cs" />
     <Compile Include="../../XREngine.Editor/Publishing/BrowserAudioCookProfile.cs" Link="Publishing/BrowserAudioCookProfile.cs" />

@@ -69,6 +69,7 @@ public static class HumanoidConformanceSourceDependencyScanner
     private static HumanoidConformanceDependencyScanResult Complete(RuntimeAssetReadLease read,
         IRuntimeFileDiscovery? discovery, long generation, HumanoidConformanceDependencyScanResult result)
     {
+        using IDisposable hostPublication = RuntimeSourcePublicationServices.BeginPublication(RuntimeSourcePublicationServices.Generation);
         using IDisposable publication = read.BeginPublication();
         if (!RuntimeFileDiscoveryServices.IsCurrent(discovery, generation))
             throw new OperationCanceledException("AssetSource.StaleFileDiscovery: the source scan provider changed during the scan.");

@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Text;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Reflection.Attributes;
 using XREngine.Data;
@@ -46,6 +47,11 @@ namespace XREngine.Components
         /// Gets or sets the path to the CSV file exported by NVIDIA Audio2Face-3D sample tooling.
         /// </summary>
         private string _animationCsvPath = string.Empty;
+        private readonly object _animationLoadGate = new();
+        private long _animationPathVersion;
+        private long _animationLoadVersion;
+        private int _animationPathChangeDepth;
+        private bool _animationPublicationActive;
         /// <summary>
         /// Gets or sets the endpoint URL used by an externally registered Audio2Face-3D live adapter.
         /// Format: "http://hostname:port" or "https://hostname:port"
@@ -289,10 +295,23 @@ namespace XREngine.Components
             set
             {
                 string path = value?.Trim() ?? string.Empty;
-                if (!SetField(ref _animationCsvPath, path))
-                    return;
-
-                ClearAnimationState(clearWeights: SourceMode == EAudio2Face3DSourceMode.CsvPlayback);
+                lock (_animationLoadGate)
+                {
+                    if (_animationPublicationActive)
+                        throw new InvalidOperationException("Audio2Face3D.PublicationInProgress: retry the path change after animation publication completes.");
+                    _animationPathVersion++;
+                    _animationPathChangeDepth++;
+                    try
+                    {
+                        if (!SetField(ref _animationCsvPath, path))
+                            return;
+                        ClearAnimationState(clearWeights: SourceMode == EAudio2Face3DSourceMode.CsvPlayback);
+                    }
+                    finally
+                    {
+                        _animationPathChangeDepth--;
+                    }
+                }
                 if (IsActive && ReloadOnActivation && SourceMode == EAudio2Face3DSourceMode.CsvPlayback)
                     ReloadAnimation();
             }
@@ -605,33 +624,87 @@ namespace XREngine.Components
         /// <returns>True if the animation was successfully reloaded; otherwise, false.</returns>
         public bool ReloadAnimation()
         {
-            if (string.IsNullOrWhiteSpace(AnimationCsvPath))
+            string animationCsvPath;
+            long pathVersion;
+            long loadVersion;
+            lock (_animationLoadGate)
             {
-                LastLoadError = "AnimationCsvPath is empty.";
+                animationCsvPath = AnimationCsvPath;
+                pathVersion = _animationPathVersion;
+                loadVersion = ++_animationLoadVersion;
+            }
+            if (string.IsNullOrWhiteSpace(animationCsvPath))
+            {
+                SetLoadErrorIfCurrent(loadVersion, "AnimationCsvPath is empty.");
                 return false;
             }
 
-            string resolvedPath = ResolveAnimationCsvPath(AnimationCsvPath, RuntimeAudioIntegrationServices.Current.ProjectDirectory, Directory.GetCurrentDirectory());
-
-            if (!File.Exists(resolvedPath))
-            {
-                LastLoadError = $"Animation CSV not found: {resolvedPath}";
-                return false;
-            }
-
+            IRuntimeAudioIntegrationServices audioHost = RuntimeAudioIntegrationServices.Capture(out long audioGeneration);
+            string resolvedPath = string.Empty;
             try
             {
-                string csvText = File.ReadAllText(resolvedPath);
+                using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+                read.EnsureHostFileAccess("Audio2Face3D animation CSV read");
+                IRuntimeFileDiscovery? discovery = RuntimeFileDiscoveryServices.Capture(out long generation);
+                IRuntimeHostFileReadBackend files = discovery as IRuntimeHostFileReadBackend
+                    ?? throw new NotSupportedException("AssetSource.HostFileReadUnavailable: the installed file system does not provide direct host-file reads.");
+                string? projectDirectory = audioHost.ProjectDirectory;
+                string? currentDirectory = string.IsNullOrWhiteSpace(projectDirectory) && !Path.IsPathRooted(animationCsvPath)
+                    ? Directory.GetCurrentDirectory()
+                    : null;
+                resolvedPath = ResolveAnimationCsvPath(animationCsvPath, projectDirectory, currentDirectory);
+                read.EnsureCurrent();
+                if (!RuntimeFileDiscoveryServices.HostFileExists(read, resolvedPath, "Audio2Face3D animation CSV read", discovery, generation))
+                {
+                    SetLoadErrorIfCurrent(loadVersion, $"Animation CSV not found: {resolvedPath}");
+                    return false;
+                }
+
+                using Stream input = files.OpenRead(resolvedPath, FileShare.Read);
+                using StreamReader reader = new(input, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                string csvText = reader.ReadToEnd();
+                read.EnsureCurrent();
                 Audio2Face3DAnimation animation = ParseCsvText(csvText);
-                SetAnimation(animation);
-                LastLoadError = string.Empty;
+                using IDisposable hostPublication = RuntimeSourcePublicationServices.BeginPublication(RuntimeSourcePublicationServices.Generation);
+                using IDisposable publication = read.BeginPublication();
+                lock (_animationLoadGate)
+                {
+                    if (!RuntimeFileDiscoveryServices.IsCurrent(discovery, generation)
+                        || !RuntimeAudioIntegrationServices.IsCurrent(audioHost, audioGeneration)
+                        || !string.Equals(audioHost.ProjectDirectory, projectDirectory, StringComparison.Ordinal)
+                        || _animationPathChangeDepth != 0
+                        || _animationPublicationActive
+                        || _animationPathVersion != pathVersion
+                        || _animationLoadVersion != loadVersion
+                        || !string.Equals(AnimationCsvPath, animationCsvPath, StringComparison.Ordinal))
+                        throw new OperationCanceledException("Audio2Face3D.StaleCsvRead: the animation path or host changed during the CSV read.");
+                    _animationPublicationActive = true;
+                    try
+                    {
+                        SetAnimation(animation);
+                        LastLoadError = string.Empty;
+                    }
+                    finally
+                    {
+                        _animationPublicationActive = false;
+                    }
+                }
                 return true;
             }
             catch (Exception ex)
             {
-                LastLoadError = ex.Message;
+                SetLoadErrorIfCurrent(loadVersion, ex.Message);
                 Debug.AudioWarning($"[Audio2Face3D] Failed to load '{resolvedPath}': {ex.Message}");
                 return false;
+            }
+        }
+
+        private void SetLoadErrorIfCurrent(long loadVersion, string error)
+        {
+            lock (_animationLoadGate)
+            {
+                if (_animationLoadVersion == loadVersion)
+                    LastLoadError = error;
             }
         }
 

@@ -66,6 +66,8 @@ That split keeps the editor build stable while still giving the runtime a real b
 3. Set `AnimationCsvPath` to the exported CSV.
 4. Play or stream the matching audio through the sibling audio source.
 
+CSV playback uses the installed host file read service. A relative CSV path uses the project directory when the audio host supplies it. Otherwise, it uses the current directory. `ReloadAnimation()` reports a missing host file read capability in `LastLoadError`. A failed reload keeps the current animation unless the path property changes. Reload captures the audio host installation, file provider, path and project directory. A newer reload supersedes an older pending result. Hosts must notify installation changes through the service setter; changes inside a host property that restore the same value cannot be detected by this boundary.
+
 For live inference with the native bridge:
 
 1. Add `Audio2Face3DComponent`, `Audio2Face3DNativeBridgeComponent`, and `MicrophoneComponent` to the same scene node.

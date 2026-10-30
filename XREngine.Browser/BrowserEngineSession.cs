@@ -12,6 +12,7 @@ using XREngine.Components;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Data.Rendering;
 using XREngine.Data.Core;
+using XREngine.Data;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources;
 
@@ -209,6 +210,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             throw new NotSupportedException("Browser startup accepts one configured canvas world; preconstructed GameState windows or worlds are unsupported.");
         int requestedEpoch = Interlocked.Increment(ref _epoch);
         await _lifecycle.WaitAsync(cancellationToken);
+        bool setupAdmitted = false;
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -217,6 +219,8 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             if (_running || _engineInitialized)
                 throw new InvalidOperationException("A browser engine world is already active.");
 
+            using IDisposable setupChange = RuntimeSourcePublicationServices.BeginInstallationChange();
+            setupAdmitted = true;
             GameStartupSettings settings = OwnConstruction(() => ProjectBrowserStartup(authoredSettings, world,
                 out _canvasWidth, out _canvasHeight));
             if (canvasId is not null)
@@ -281,6 +285,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
                 RuntimeAdapterProfile.Animation | RuntimeAdapterProfile.Audio | RuntimeAdapterProfile.Input,
                 CreatePhysicsScene,
                 composeRenderedWorlds: canvasId is not null);
+            setupChange.Dispose();
             _world = world;
             // Establish the caller's physics ownership before attaching components
             // whose activation may allocate native bodies. No frame is dispatched here.
@@ -320,6 +325,8 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         }
         catch (Exception startupError)
         {
+            if (!setupAdmitted)
+                throw;
             try
             {
                 StopCore();
@@ -560,7 +567,6 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     public async Task StopAsync()
     {
         Interlocked.Increment(ref _epoch);
-        SuspendNetwork();
         await _lifecycle.WaitAsync();
         try
         {
@@ -580,6 +586,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
 
     private void StopCore()
     {
+        using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
         List<Exception> errors = [];
         static void Capture(List<Exception> failures, Action action)
         {

@@ -50,6 +50,7 @@ namespace XREngine.Components.Animation
                 : input;
             using StreamReader reader = new(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             string json = reader.ReadToEnd();
+            using IDisposable hostPublication = RuntimeSourcePublicationServices.BeginPublication(RuntimeSourcePublicationServices.Generation);
             using IDisposable publication = read.BeginPublication();
             if (!RuntimeFileDiscoveryServices.IsCurrent(discovery, generation))
                 throw new OperationCanceledException("AssetSource.StaleFileDiscovery: the audit file provider changed during the read.");

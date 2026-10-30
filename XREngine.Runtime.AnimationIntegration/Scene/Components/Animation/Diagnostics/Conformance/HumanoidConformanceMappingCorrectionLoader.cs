@@ -45,19 +45,27 @@ public static class HumanoidConformanceMappingCorrectionLoader
         string fullSidecarPath = Path.GetFullPath(sidecarPath);
         string fullSourceFbxPath = Path.GetFullPath(sourceFbxPath);
         var result = new HumanoidConformanceMappingCorrectionResult { SidecarPath = fullSidecarPath };
-        HumanoidConformanceMappingCorrection? correction = Load(fullSidecarPath, result);
+        using var files = new HumanoidConformanceFileRead("Humanoid conformance mapping correction read");
+        HumanoidConformanceMappingCorrection? correction = Load(fullSidecarPath, result, files);
         if (correction is null)
+        {
+            using IDisposable publication = files.BeginPublication();
             return result;
+        }
 
         result.Correction = correction;
-        Validate(correction, fullSidecarPath, fullSourceFbxPath, humanoid, result);
+        string? sourceHash = Validate(correction, fullSidecarPath, fullSourceFbxPath, humanoid, result, files);
         result.MappingSignature = ComputeCanonicalSignature(correction);
         if (result.Issues.Count > 0)
+        {
+            using IDisposable publication = files.BeginPublication();
             return result;
+        }
 
         // The observed source bytes, not the sidecar declaration, are authoritative.
         // Validation above proves that the declaration matches before any mapping mutates.
-        humanoid.SetSourceModelContentSha256(ComputeFileSha256(fullSourceFbxPath));
+        using IDisposable appliedPublication = files.BeginPublication();
+        humanoid.SetSourceModelContentSha256(sourceHash!);
 
         var resolved = new List<(EHumanoidAvatarBoneRole Role, SceneNode Node)>(correction.Roles.Count);
         foreach ((string roleName, string path) in correction.Roles.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
@@ -125,9 +133,10 @@ public static class HumanoidConformanceMappingCorrectionLoader
 
     private static HumanoidConformanceMappingCorrection? Load(
         string fullSidecarPath,
-        HumanoidConformanceMappingCorrectionResult result)
+        HumanoidConformanceMappingCorrectionResult result,
+        HumanoidConformanceFileRead files)
     {
-        if (!File.Exists(fullSidecarPath))
+        if (!files.FileExists(fullSidecarPath))
         {
             Add(result, "SidecarMissing", $"Mapping correction '{fullSidecarPath}' does not exist.");
             return null;
@@ -135,7 +144,8 @@ public static class HumanoidConformanceMappingCorrectionLoader
 
         try
         {
-            using var reader = File.OpenText(fullSidecarPath);
+            using Stream input = files.OpenRead(fullSidecarPath);
+            using var reader = new StreamReader(input, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             JToken token = JToken.ReadFrom(new JsonTextReader(reader), new JsonLoadSettings
             {
                 DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error,
@@ -149,12 +159,13 @@ public static class HumanoidConformanceMappingCorrectionLoader
         }
     }
 
-    private static void Validate(
+    private static string? Validate(
         HumanoidConformanceMappingCorrection correction,
         string sidecarPath,
         string sourceFbxPath,
         HumanoidComponent humanoid,
-        HumanoidConformanceMappingCorrectionResult result)
+        HumanoidConformanceMappingCorrectionResult result,
+        HumanoidConformanceFileRead files)
     {
         if (correction.SchemaVersion != HumanoidConformanceMappingCorrection.CurrentSchemaVersion)
             Add(result, "UnsupportedSchema", $"Schema version {correction.SchemaVersion} is unsupported; expected {HumanoidConformanceMappingCorrection.CurrentSchemaVersion}.");
@@ -166,20 +177,20 @@ public static class HumanoidConformanceMappingCorrectionLoader
         if (!string.Equals(correction.MappingMode, "persisted-corrections", StringComparison.Ordinal))
             Add(result, "MappingMode", "MappingMode must be 'persisted-corrections'.");
 
-        if (!File.Exists(sourceFbxPath))
+        if (!files.FileExists(sourceFbxPath))
         {
             Add(result, "SourceFbxMissing", $"Source FBX '{sourceFbxPath}' does not exist.");
-            return;
+            return null;
         }
 
-        string sourceHash = ComputeFileSha256(sourceFbxPath);
+        string sourceHash = ComputeFileSha256(sourceFbxPath, files);
         if (!string.Equals(sourceHash, NormalizeSha256(correction.SourceFbxSha256), StringComparison.OrdinalIgnoreCase))
             Add(result, "SourceFbxHashMismatch", $"Source FBX hash '{sourceHash}' does not match declared SourceFbxSha256.");
 
         if (humanoid.SceneNode is null)
         {
             Add(result, "HumanoidRootMissing", "The target HumanoidComponent has no scene-node root.");
-            return;
+            return sourceHash;
         }
         if (!string.Equals(correction.RootPath, ".", StringComparison.Ordinal))
             Add(result, "RootPath", "Schema 3 mapping corrections must declare '.' as the path-independent imported hierarchy root.");
@@ -205,6 +216,7 @@ public static class HumanoidConformanceMappingCorrectionLoader
         foreach (EHumanoidAvatarBoneRole role in RequiredRoles)
             if (!seenRoles.Contains(role))
                 Add(result, "RequiredRoleMissing", $"Required humanoid role '{role}' is not mapped exactly once.");
+        return sourceHash;
     }
 
     private static bool IsDeclaredPathContained(string rootPath, string path)
@@ -256,10 +268,12 @@ public static class HumanoidConformanceMappingCorrectionLoader
     private static string NormalizeSha256(string value)
         => value.Replace("-", string.Empty, StringComparison.Ordinal).Trim().ToUpperInvariant();
 
-    private static string ComputeFileSha256(string path)
+    private static string ComputeFileSha256(string path, HumanoidConformanceFileRead files)
     {
-        using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return Convert.ToHexString(SHA256.HashData(stream));
+        using Stream stream = files.OpenRead(path);
+        string hash = Convert.ToHexString(SHA256.HashData(stream));
+        files.EnsureCurrent();
+        return hash;
     }
 
     private static void Append(StringBuilder builder, string value)

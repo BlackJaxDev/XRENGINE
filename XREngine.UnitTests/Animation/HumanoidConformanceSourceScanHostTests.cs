@@ -50,6 +50,16 @@ public sealed class HumanoidConformanceSourceScanHostTests
         Assert.That(_files.LastStream!.Disposed, Is.True);
     }
 
+    [Test]
+    public void HostCapableSourceStillUsesCapturedDiscovery()
+    {
+        RuntimeAssetReadServices.SetSource(new ProbeSource());
+        HumanoidConformanceDependencyScanResult result = Scan();
+        Assert.That(result.Errors, Is.Empty);
+        Assert.That(result.Findings, Has.Count.EqualTo(1));
+        Assert.That(_files.Opens, Is.EqualTo(1));
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void ReplacedOwnerRejectsResultAndDisposesRead(bool replaceSource)

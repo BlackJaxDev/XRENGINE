@@ -35,11 +35,39 @@ public static class RuntimeAudioIntegrationServices
     }
 
     private static IRuntimeAudioIntegrationServices _current = new DefaultRuntimeAudioIntegrationServices();
+    private static readonly object Gate = new();
+    private static long _generation;
 
     public static IRuntimeAudioIntegrationServices Current
     {
-        get => _current;
-        set => _current = value ?? throw new ArgumentNullException(nameof(value));
+        get => Volatile.Read(ref _current);
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
+            lock (Gate)
+            {
+                Volatile.Write(ref _current, value);
+                _generation = unchecked(_generation + 1);
+            }
+        }
+    }
+
+    /// <summary>Captures the audio host installation, including a reinstall of the same instance.</summary>
+    public static IRuntimeAudioIntegrationServices Capture(out long generation)
+    {
+        lock (Gate)
+        {
+            generation = _generation;
+            return _current;
+        }
+    }
+
+    /// <summary>Checks whether the captured audio host installation is current.</summary>
+    public static bool IsCurrent(IRuntimeAudioIntegrationServices host, long generation)
+    {
+        lock (Gate)
+            return ReferenceEquals(_current, host) && _generation == generation;
     }
 
     public static long SecondsToElapsedTicks(float seconds)

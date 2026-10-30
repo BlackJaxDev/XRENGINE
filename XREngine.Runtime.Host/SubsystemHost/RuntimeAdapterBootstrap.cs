@@ -1,4 +1,5 @@
 using XREngine.Components.Animation;
+using XREngine.Data;
 using XREngine.Input;
 using XREngine.Networking;
 using XREngine.Runtime.InputIntegration;
@@ -28,6 +29,7 @@ public static class RuntimeAdapterBootstrap
             throw new InvalidOperationException("Headless world composition requires an explicit physics scene factory.");
         lock (Sync)
         {
+            using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
             IRuntimeAdapterHostLease? previous = _installedLease;
             _installedLease = null;
             previous?.DisposeWithoutLock();
@@ -47,6 +49,7 @@ public static class RuntimeAdapterBootstrap
     {
         lock (Sync)
         {
+            using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
             IRuntimeAdapterHostLease? lease = _installedLease;
             _installedLease = null;
             lease?.DisposeWithoutLock();
@@ -126,6 +129,7 @@ public static class RuntimeAdapterBootstrap
         {
             lock (Sync)
             {
+                using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
                 if (ReferenceEquals(_installedLease, this))
                     _installedLease = null;
                 DisposeWithoutLock();
@@ -242,6 +246,7 @@ public static class RuntimeAdapterBootstrap
         {
             lock (Sync)
             {
+                using IDisposable change = RuntimeSourcePublicationServices.BeginInstallationChange();
                 if (ReferenceEquals(_installedLease, this))
                     _installedLease = null;
                 DisposeWithoutLock();

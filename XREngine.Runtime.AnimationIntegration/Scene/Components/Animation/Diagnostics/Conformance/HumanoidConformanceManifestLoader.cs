@@ -14,32 +14,39 @@ public static class HumanoidConformanceManifestLoader
 
         string fullManifestPath = Path.GetFullPath(manifestPath);
         var result = new HumanoidConformanceValidationResult { ManifestPath = fullManifestPath };
-        if (!File.Exists(fullManifestPath))
+        using var files = new HumanoidConformanceFileRead("Humanoid conformance manifest read");
+        if (!files.FileExists(fullManifestPath))
         {
             Add(result, "ManifestMissing", $"Manifest '{fullManifestPath}' does not exist.");
+            using IDisposable publication = files.BeginPublication();
             return result;
         }
 
         HumanoidConformanceManifest? manifest;
         try
         {
-            string json = File.ReadAllText(fullManifestPath, Encoding.UTF8);
+            using Stream input = files.OpenRead(fullManifestPath);
+            using var reader = new StreamReader(input, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            string json = reader.ReadToEnd();
             manifest = JsonConvert.DeserializeObject<HumanoidConformanceManifest>(json);
         }
         catch (Exception ex) when (ex is IOException or JsonException)
         {
             Add(result, "ManifestUnreadable", $"Could not read manifest '{fullManifestPath}': {ex.Message}");
+            using IDisposable publication = files.BeginPublication();
             return result;
         }
 
         if (manifest is null)
         {
             Add(result, "ManifestInvalid", $"Manifest '{fullManifestPath}' did not deserialize.");
+            using IDisposable publication = files.BeginPublication();
             return result;
         }
 
         result.Manifest = manifest;
-        Validate(manifest, Path.GetDirectoryName(fullManifestPath)!, result);
+        Validate(manifest, Path.GetDirectoryName(fullManifestPath)!, result, files);
+        using IDisposable completedPublication = files.BeginPublication();
         return result;
     }
 
@@ -54,11 +61,13 @@ public static class HumanoidConformanceManifestLoader
             Manifest = manifest,
             ManifestPath = Path.GetFullPath(manifestRoot),
         };
-        Validate(manifest, Path.GetFullPath(manifestRoot), result);
+        using var files = new HumanoidConformanceFileRead("Humanoid conformance manifest validation");
+        Validate(manifest, Path.GetFullPath(manifestRoot), result, files);
+        using IDisposable publication = files.BeginPublication();
         return result;
     }
 
-    private static void Validate(HumanoidConformanceManifest manifest, string root, HumanoidConformanceValidationResult result)
+    private static void Validate(HumanoidConformanceManifest manifest, string root, HumanoidConformanceValidationResult result, HumanoidConformanceFileRead fileRead)
     {
         if (manifest.SchemaVersion != HumanoidConformanceManifest.CurrentSchemaVersion)
             Add(result, "UnsupportedSchema", $"Schema version {manifest.SchemaVersion} is unsupported; expected {HumanoidConformanceManifest.CurrentSchemaVersion}.");
@@ -96,8 +105,8 @@ public static class HumanoidConformanceManifestLoader
         var cases = Index(matrix, static x => x.Id, "MatrixCase", result);
         var captureTools = Index(captureToolList, static x => x.Id, "CaptureTool", result);
         var assetChecks = Index(assetCheckList, static x => x.Id, "AssetCheck", result);
-        ValidateFiles(files, root, result);
-        ValidateCaptureTools(captureTools, FindRepositoryRoot(root), result);
+        ValidateFiles(files, root, result, fileRead);
+        ValidateCaptureTools(captureTools, FindRepositoryRoot(root, fileRead), result, fileRead);
         ValidateAssetChecks(assetChecks, files, avatarList, clipList, result);
         ValidateAvatars(avatarList, files, result);
         ValidateClips(clipList, files, result);
@@ -124,7 +133,7 @@ public static class HumanoidConformanceManifestLoader
         return indexed;
     }
 
-    private static void ValidateFiles(Dictionary<string, HumanoidConformanceSourceFile> files, string root, HumanoidConformanceValidationResult result)
+    private static void ValidateFiles(Dictionary<string, HumanoidConformanceSourceFile> files, string root, HumanoidConformanceValidationResult result, HumanoidConformanceFileRead fileRead)
     {
         foreach ((string id, HumanoidConformanceSourceFile file) in files)
         {
@@ -146,15 +155,16 @@ public static class HumanoidConformanceManifestLoader
                 continue;
             }
 
-            if (!File.Exists(fullPath))
+            if (!fileRead.FileExists(fullPath))
             {
                 Add(result, "SourceFileMissing", $"Source file '{id}' does not exist at '{file.RelativePath}'.");
                 continue;
             }
 
             string actualHash;
-            using (var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var stream = fileRead.OpenRead(fullPath))
                 actualHash = Convert.ToHexString(SHA256.HashData(stream));
+            fileRead.EnsureCurrent();
             if (!string.Equals(actualHash, file.Sha256, StringComparison.OrdinalIgnoreCase))
                 Add(result, "SourceFileHashChanged", $"Source file '{id}' SHA-256 does not match the manifest.");
             RejectPlaceholder(file.Provenance, $"SourceFileProvenance:{id}", result);
@@ -165,7 +175,8 @@ public static class HumanoidConformanceManifestLoader
     private static void ValidateCaptureTools(
         Dictionary<string, HumanoidConformanceCaptureTool> captureTools,
         string repositoryRoot,
-        HumanoidConformanceValidationResult result)
+        HumanoidConformanceValidationResult result,
+        HumanoidConformanceFileRead fileRead)
     {
         foreach ((string id, HumanoidConformanceCaptureTool tool) in captureTools)
         {
@@ -178,15 +189,16 @@ public static class HumanoidConformanceManifestLoader
             if (!IsSha256(tool.Sha256)
                 || !TryResolveContainedPath(repositoryRoot, tool.RelativeRepositoryPath, out string sourcePath))
                 continue;
-            if (!File.Exists(sourcePath))
+            if (!fileRead.FileExists(sourcePath))
             {
                 Add(result, "CaptureToolMissing", $"Capture tool '{id}' does not exist at '{tool.RelativeRepositoryPath}'.");
                 continue;
             }
 
             string sourceHash;
-            using (var stream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var stream = fileRead.OpenRead(sourcePath))
                 sourceHash = Convert.ToHexString(SHA256.HashData(stream));
+            fileRead.EnsureCurrent();
             if (!string.Equals(sourceHash, tool.Sha256, StringComparison.OrdinalIgnoreCase))
                 Add(result, "CaptureToolHashChanged", $"Capture tool '{id}' SHA-256 does not match the manifest.");
         }
@@ -622,10 +634,10 @@ public static class HumanoidConformanceManifestLoader
             Add(result, "PlaceholderRejected", $"Required field '{field}' contains a PENDING placeholder.");
     }
 
-    private static string FindRepositoryRoot(string startingPath)
+    private static string FindRepositoryRoot(string startingPath, HumanoidConformanceFileRead files)
     {
         for (DirectoryInfo? current = new(Path.GetFullPath(startingPath)); current is not null; current = current.Parent)
-            if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+            if (files.DirectoryExists(Path.Combine(current.FullName, ".git")))
                 return current.FullName;
         throw new DirectoryNotFoundException("Could not locate repository root from humanoid conformance manifest.");
     }
