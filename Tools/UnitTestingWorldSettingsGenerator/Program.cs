@@ -703,7 +703,7 @@ static class SchemaGenerator
     private static JObject BuildUnityPackageImportExample()
     {
         JObject example = BuildStaticModelImportExample();
-        example["Path"] = "misc/Aryia_By_Mimiiu_V1.3.unitypackage";
+        example["Path"] = "misc/ExampleAvatar.unitypackage";
         example["MaterialMode"] = "Uber";
         example["ImportFlags"] = "None";
         example["AllowPartialImport"] = true;

@@ -89,7 +89,7 @@ namespace XREngine.Components.Animation
             set => SetField(ref _targetHumanoid, value);
         }
 
-        private string? _referencePath = "K:\\Unity\\Jax Main Avatars\\PoseAudit\\UnityHumanoidPose.json";
+        private string? _referencePath;
         /// <summary>
         /// Unity-exported humanoid pose audit report to visualize against the live engine pose.
         /// </summary>
