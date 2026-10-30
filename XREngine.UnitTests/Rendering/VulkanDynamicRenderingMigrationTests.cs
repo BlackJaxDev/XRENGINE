@@ -639,7 +639,8 @@ public sealed class VulkanDynamicRenderingMigrationTests
     {
         string pipelineKey = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Pipelines/VkMeshRenderer.PipelineKey.cs");
         string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
-        string prewarm = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderer.PipelinePrewarmDatabase.cs");
+        // The pipeline manager now records prewarm entries.
+        string prewarm = SourceContractWorkspace.ReadExactFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineManager.cs");
         string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/DynamicRenderingFormatSignature.cs");
 
         pipelineKey.ShouldContain("DynamicRenderingFormatSignature DynamicRenderingFormats");
@@ -649,8 +650,9 @@ public sealed class VulkanDynamicRenderingMigrationTests
         pipelineFactory.ShouldContain("request.DynamicRenderingFormats.CopyColorAttachmentFormats");
         pipelineFactory.ShouldContain("DepthAttachmentFormat = request.DynamicRenderingFormats.DepthAttachmentFormat");
         pipelineFactory.ShouldContain("StencilAttachmentFormat = request.DynamicRenderingFormats.StencilAttachmentFormat");
-        prewarm.ShouldContain("BuildDynamicRenderingSignature(dynamicRenderingFormats)");
-        prewarm.ShouldContain("dynamicRenderingFormats.DescribeColorFormats()");
+        prewarm.ShouldContain("? BuildDynamicRenderingSignature(dynamicRenderingFormats)");
+        prewarm.ShouldContain("useDynamicRendering ? dynamicRenderingFormats.DescribeColorFormats() : Format.Undefined.ToString(),");
+        prewarm.ShouldContain("VulkanPipelinePrewarmDatabase.CreateGraphicsEntry(");
         modeSource.ShouldContain("DescribeColorFormats()");
     }
 

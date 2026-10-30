@@ -393,7 +393,23 @@ namespace XREngine.Rendering.OpenGL
                         Volatile.Write(ref _contextDetachFailed, 1);
                     }
                     if (Volatile.Read(ref _disposeResourcesOnWorkerExit) != 0)
-                        ReleaseStoppedResources(window);
+                    {
+                        // After the window pump stops, the native window disposal can run inline on this worker
+                        // thread and fail its owner-thread check. An exception that leaves this dedicated thread
+                        // ends the process, so log it instead. This path runs at process exit and also on a normal
+                        // stop of the context (a stop that does not wait, or a join that times out). After a failed
+                        // release on a normal stop, the window and its context stay allocated until the process ends.
+                        try
+                        {
+                            ReleaseStoppedResources(window);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.RenderingWarning(
+                                $"[SharedContext] Worker '{_threadName}' could not release its resources when it stopped. " +
+                                $"The window and its context stay allocated until the process ends: {ex.GetType().Name}: {ex.Message}");
+                        }
+                    }
                 }
             }
 

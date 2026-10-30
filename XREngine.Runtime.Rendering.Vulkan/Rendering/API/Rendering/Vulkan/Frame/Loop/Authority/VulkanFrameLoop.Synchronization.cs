@@ -197,10 +197,20 @@ internal sealed partial class VulkanFrameLoop
             Api.CreateSemaphore(_deviceContext.Device, ref timeline, null, out sync._transferTimelineSemaphore) != Result.Success)
             throw new InvalidOperationException("Failed to create Vulkan timeline synchronization semaphores.");
 
+        // Name the synchronization objects so that validation messages and
+        // device-loss reports identify them.
+        _deviceContext.SetDebugObjectName(ObjectType.Semaphore, sync._graphicsTimelineSemaphore.Handle, "Timeline.Graphics");
+        _deviceContext.SetDebugObjectName(ObjectType.Semaphore, sync._presentTimelineSemaphore.Handle, "Timeline.Present");
+        _deviceContext.SetDebugObjectName(ObjectType.Semaphore, sync._transferTimelineSemaphore.Handle, "Timeline.Transfer");
+
         SemaphoreCreateInfo binary = new() { SType = StructureType.SemaphoreCreateInfo };
         for (int index = 0; index < FrameSlotCount; index++)
+        {
             if (Api.CreateSemaphore(_deviceContext.Device, ref binary, null, out sync.acquireBridgeSemaphores[index]) != Result.Success)
                 throw new InvalidOperationException("Failed to create Vulkan acquire bridge synchronization semaphores.");
+
+            _deviceContext.SetDebugObjectName(ObjectType.Semaphore, sync.acquireBridgeSemaphores[index].Handle, $"AcquireBridge[{index}]");
+        }
 
         if (_targetDriver.RequiresSwapchainOutput)
             CreateDesktopPresentBridgeSemaphores(_outputRuntime.Desktop.Images?.Length ?? FrameSlotCount);

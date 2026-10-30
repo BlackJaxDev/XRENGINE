@@ -29,7 +29,7 @@ internal static class BrokerMcpToolCatalog
         new McpToolSpec
         {
             Name = "start_agent_run",
-            Description = "Start a bounded exact-model OpenAI Responses or Anthropic Messages API worker, or opt into a hierarchical code swarm using GPT-6 Luna or Claude Haiku 5.5 at max effort. Swarms return parent-reviewed code changes by default; auto_apply explicitly authorizes host writes to allowed_paths. Returns a run ID immediately.",
+            Description = "Start a bounded exact-model OpenAI Responses or Anthropic Messages API worker, or opt into a code swarm using GPT-6 Luna at max or Claude Haiku 5.5 at low, medium, high, xhigh, or max. Swarms return parent-reviewed code changes by default; auto_apply authorizes host writes to allowed_paths. Returns a run ID immediately.",
             InputSchema = StartRunSchema(),
         },
         new McpToolSpec
@@ -75,7 +75,7 @@ internal static class BrokerMcpToolCatalog
             ("requested_model", new JsonObject
             {
                 ["type"] = "string",
-                ["description"] = "Prefer GPT-6 Luna, Sol, or Astra. GPT-6.1 Sol and Claude models are available for explicit runs. Swarms accept GPT-6 Luna or Claude Haiku 5.5 at max effort. Claude uses ANTHROPIC_API_KEY by default. GPT-5.6 selections are deprecated but remain explicitly callable.",
+                ["description"] = "Prefer GPT-6 Luna, Sol, or Astra. GPT-6.1 Sol and Claude models are explicit selections. Swarms accept Luna/max or Haiku at an approved effort; medium is the Haiku default. Claude uses ANTHROPIC_API_KEY. GPT-5.6 remains deprecated.",
                 ["enum"] = new JsonArray(
                     AgentModelCatalog.Luna6,
                     AgentModelCatalog.Sol6,
@@ -212,6 +212,7 @@ internal static class BrokerMcpToolCatalog
                 },
             }),
             ("swarm", SwarmSchema()),
+            ("system_instructions", StringSchema("Optional provider system instructions. The broker prepends its safety instructions.")),
             ("additional_instructions", StringSchema("Optional task-specific instructions.")));
 
     private static JsonObject SwarmSchema()

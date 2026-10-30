@@ -11,7 +11,7 @@ Bootstrap. `XREngine.Runtime.Net.Osc` owns OSC/VMC transport components. Type
 namespaces remain stable even when implementation files live in these separate
 projects. See [Runtime Project Organization](../../architecture/runtime/project-organization.md).
 
-Native runtime support includes direct client/server UDP and managed encrypted TLS ingress. Peer-to-peer networking with dynamic connection-host switching is a planned feature tracked in [Peer-To-Peer Host Switching Implementation](../../work/design/networking/peer-to-peer-host-switching.md).
+Native runtime support includes direct client/server UDP and managed encrypted TLS ingress. Peer-to-peer networking with dynamic connection-host switching is planned and not implemented.
 
 The portable [browser realtime transport](browser-realtime.md) carries the same
 managed admission and replication datagrams over WebSocket through a matching
@@ -158,9 +158,8 @@ zero-allocation result. Allocation and local two-client acceptance measurements
 remain required before claiming the performance target.
 
 Pose ownership remains in `HumanoidPoseSync` and the existing IK component.
-The span packet callback is the ownership seam for a future ECS consumer; the
-[ECS avatar design](../../work/design/runtime/generic-ecs-avatar-networking-design.md)
-remains a proposal. No second ECS pose owner is introduced here.
+The span packet callback is the ownership seam for a future ECS consumer; an
+ECS avatar design remains a proposal. No second ECS pose owner is introduced here.
 
 The [runtime measurement guide](../diagnostics/runtime-data-layout-measurements.md)
 documents the synthetic 1/8/32-avatar harness and `Tools/Measure-LocalRealtime.ps1`

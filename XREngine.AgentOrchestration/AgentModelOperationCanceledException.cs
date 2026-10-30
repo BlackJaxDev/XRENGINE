@@ -8,11 +8,15 @@ public sealed class AgentModelOperationCanceledException : OperationCanceledExce
     public AgentModelOperationCanceledException(
         AgentProviderAttemptDiagnostic providerAttempt,
         OperationCanceledException innerException,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AgentModelTurnResult? partialResult = null)
         : base("The provider model request was cancelled.", innerException, cancellationToken)
     {
         ProviderAttempt = providerAttempt;
+        PartialResult = partialResult;
     }
 
     public AgentProviderAttemptDiagnostic ProviderAttempt { get; }
+
+    public AgentModelTurnResult? PartialResult { get; }
 }

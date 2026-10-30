@@ -27,10 +27,28 @@ public sealed class AnthropicMessagesStreamParser
     public string ResponseId { get; private set; } = string.Empty;
     public string ActualModel { get; private set; } = string.Empty;
     public int ProviderEventCount { get; private set; }
+    public int MalformedEventCount { get; private set; }
     public string LastProviderEventType { get; private set; } = string.Empty;
     public bool IsCompleted { get; private set; }
     public string StopReason { get; private set; } = string.Empty;
     public string Text => _text.ToString();
+
+    /// <summary>Reported usage includes ordinary, cache-write, and cache-read input tokens.</summary>
+    public AgentTokenUsage Usage => new()
+    {
+        InputTokens = _inputTokens + _cacheCreationInputTokens + _cacheReadInputTokens,
+        OutputTokens = _outputTokens,
+        TotalTokens = _inputTokens + _cacheCreationInputTokens + _cacheReadInputTokens + _outputTokens,
+    };
+
+    /// <summary>Keeps visible evidence from a failed turn without exposing provisional tools or thinking.</summary>
+    public AgentModelTurnResult BuildPartialResult() => new()
+    {
+        ResponseId = ResponseId,
+        ActualModel = ActualModel,
+        OutputText = Text,
+        Usage = Usage,
+    };
 
     public bool ProcessData(string data, out string textDelta)
     {
@@ -42,6 +60,7 @@ public sealed class AnthropicMessagesStreamParser
         }
         catch (JsonException exception)
         {
+            MalformedEventCount++;
             throw new AgentModelException(AgentFailureCategory.ProviderError,
                 "The Anthropic stream returned invalid JSON.", diagnosticDetail: exception.Message,
                 innerException: exception);
@@ -215,6 +234,9 @@ public sealed class AnthropicMessagesStreamParser
         if (StopReason == "max_tokens")
             throw new AgentModelException(AgentFailureCategory.BudgetExceeded,
                 "The Anthropic message reached its max_tokens limit.");
+        if (StopReason == "refusal")
+            throw new AgentModelException(AgentFailureCategory.ProviderError,
+                "Anthropic refused the request; no fallback was requested.");
         if (StopReason is not ("end_turn" or "tool_use" or "stop_sequence"))
             throw InvalidEvent($"The Anthropic message stopped with '{StopReason}'.");
 
@@ -260,12 +282,7 @@ public sealed class AnthropicMessagesStreamParser
             ToolCalls = calls,
             OutputItems = outputText.Length == 0 ? [] :
                 [new AgentOutputItem { Kind = AgentOutputItemKind.Text, Text = outputText }],
-            Usage = new AgentTokenUsage
-            {
-                InputTokens = _inputTokens + _cacheCreationInputTokens + _cacheReadInputTokens,
-                OutputTokens = _outputTokens,
-                TotalTokens = _inputTokens + _cacheCreationInputTokens + _cacheReadInputTokens + _outputTokens,
-            },
+            Usage = Usage,
             ContinuationJson = continuation.ToJsonString(),
         };
     }
@@ -300,6 +317,9 @@ public sealed class AnthropicMessagesStreamParser
         => root.ValueKind == JsonValueKind.Object && root.TryGetProperty(name, out JsonElement value)
             && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private static AgentModelException InvalidEvent(string detail)
-        => new(AgentFailureCategory.ProviderError, detail);
+    private AgentModelException InvalidEvent(string detail)
+    {
+        MalformedEventCount++;
+        return new(AgentFailureCategory.ProviderError, detail);
+    }
 }

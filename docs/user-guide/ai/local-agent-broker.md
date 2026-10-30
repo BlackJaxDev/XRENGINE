@@ -88,7 +88,8 @@ reasoning; GPT-6 Luna and Sol also accept `none`. GPT-6.1 Sol rejects both
 `none` and `minimal` before a paid call. Use `requested_model: "gpt-6.1-sol"`
 and `reasoning_effort: "max"` for an explicit independent worker.
 Automatic route advice continues to choose `gpt-6-sol` for ordinary work;
-hierarchical swarms accept `gpt-6-luna` or `claude-haiku-5-5` at `max`. See the official
+hierarchical swarms accept `gpt-6-luna` at `max` or `claude-haiku-5-5` at any
+approved effort. See the official
 [GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
 and [GPT-6 model guidance](https://developers.openai.com/api/docs/guides/latest-model).
 
@@ -201,6 +202,13 @@ but not raw context-file contents. Repository tool arguments/results also remain
 excluded. The live provider still receives selected snapshot contents and tool
 results as described under [Cost, Data, And Security](#cost-data-and-security).
 
+History is a separate view of the run. If a file lock or write permission blocks
+an update, the broker logs a deferred-history diagnostic and retries while it
+is running. `get_agent_run` keeps the worker's original result; a history write
+error does not turn a completed API response into a failed worker. Persistent
+storage errors can leave the history view stale. Save the authoritative result
+before closing its broker process when history remains unavailable.
+
 ### Run Status And Progress Contract
 
 `get_agent_run` is the authoritative snapshot for one run; `list_agent_runs`
@@ -246,11 +254,15 @@ in either mode.
 
 ## Hierarchical Code Swarms
 
-Add a `swarm` object to `start_agent_run`, with `requested_model: "gpt-6-luna"`
-or `requested_model: "claude-haiku-5-5"` and `reasoning_effort: "max"`.
+Add a `swarm` object to `start_agent_run`. Select `gpt-6-luna` at `max`, or
+`claude-haiku-5-5` at `low`, `medium`, `high`, `xhigh`, or `max`.
+Haiku defaults to `medium`; the existing Luna/max request remains supported.
 Every node uses that exact model and effort for planning, proposals, and review.
 Haiku uses `ANTHROPIC_API_KEY` and, for multi-workspace keys,
 `ANTHROPIC_WORKSPACE_ID`. A swarm never mixes providers or substitutes models.
+Each phase is one provider turn with no tools or retries. Its request carries
+no `swarm` object. Parent approval still applies to every unchanged child proposal.
+See the official [Haiku effort controls](https://platform.claude.com/docs/en/build-with-claude/effort).
 The root decomposes the objective into children. A child is either an
 orchestrator that decomposes and reviews, or a leaf that returns one small
 exact text replacement. Orchestrators never write code, and leaves cannot
@@ -552,6 +564,11 @@ A caller using the MCP tools directly must provide `objective` and
 are independent optional capabilities. When the user did not pin a tier, the
 coordinator fills `requested_model` from `recommend_agent_route`. The other
 fields make the run safer and more reproducible.
+
+Use optional `system_instructions` for provider system instructions, such as an
+exact JSON output rule. The broker prepends its safety instructions. Swarm
+planning, leaf, and review requests retain these instructions and add their
+role instructions. `additional_instructions` remains a separate task field.
 
 A reasoning-only request has no repository access, editor session, or tool
 policy entries:
@@ -874,6 +891,11 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
   `use_background_mode: true`; do not silently enable it for unrelated runs.
 - **Requested and actual model differ:** treat the run as failed and report it.
   Never accept silent substitution.
+- **History write is deferred:** inspect the broker's stderr diagnostic for the
+  exact run ID, record path, exception type, and HResult. A blocking reader or
+  storage permission can prevent record replacement. The broker retries and
+  preserves the provider result; use `get_agent_run` to retrieve it. Existing
+  processes need the updated deployment before they use this behavior.
 
 ## Related Documentation
 

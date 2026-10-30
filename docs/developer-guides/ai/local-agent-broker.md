@@ -189,6 +189,21 @@ the full message history, including thinking blocks and signatures. Tool
 results use their original call IDs. Incomplete streams and invalid terminal
 states fail before the orchestrator can execute their tool calls.
 
+MCP version `0.11.2` retains native `message_stop` telemetry and stores the native
+reason separately as `provider_stop_reason`. Successful attempts use
+`outcome: "completed"` and `terminal_status: "completed"`; token exhaustion uses
+`incomplete`, and other errors use `failed`. Text-only completion uses
+`provider_stop_reason: "end_turn"`. Partial failed or cancelled turns retain only
+visible text and reported usage in the terminal result and history. Provisional
+tools and thinking remain unavailable as failed-turn outputs.
+
+Stream progress publishes the actual model at `message_start`, then bounded
+event diagnostics. Accepted stream errors and uncertain transport delivery are
+not automatically reissued. Explicit HTTP rejections can still use the configured
+retry allowance. Cancellation closes the owned stream without claiming provider
+cancellation acceptance. Usage includes ordinary plus cache-write and cache-read
+input counters, along with cumulative output tokens.
+
 The four approved Claude models accept `low`, `medium`, `high`, `xhigh`, and
 `max` effort through `output_config.effort`. They use adaptive thinking.
 `text_verbosity` becomes a prompt instruction. Claude runs reject background
@@ -281,7 +296,21 @@ They include the provider prompt, optional system instructions, incremental or
 terminal response text, concise run metadata, usage, and failures. Initial
 inline image data, raw context snapshots, repository/editor tool
 arguments/results, API keys, headers, and raw provider payloads are excluded.
-Writes are coalesced during streaming and flushed immediately at terminal state.
+Writes are coalesced during streaming and attempted immediately at terminal state.
+Existing JSON files use `File.Replace`; new records use `File.Move`. Readers
+share read, write, and delete access so refreshes can overlap atomic replacement.
+The publisher serializes snapshot capture and publication, preventing an older
+streaming snapshot from replacing a terminal snapshot.
+
+History write I/O and access errors remain separate from the authoritative
+provider result. The publisher emits one metadata-only stderr diagnostic per
+continuous failure, including the run ID, history path, exception type, and
+HResult. It retains a pending update, retries on subsequent updates plus a
+one-second fallback interval, and attempts a final flush during shutdown.
+Persistent write denial can leave history stale; `get_agent_run` still retains
+the original status, final text, usage, and provider diagnostics. A refresh may
+omit a record during replacement and retry it on the next pass.
+
 The tray's `settings.json` supports a
 nullable idle-exit duration and a nullable terminal-record retention duration;
 null means never. It also stores whether new-prompt Windows notifications are
@@ -312,7 +341,8 @@ Explicit independent `gpt-6.1-sol` runs accept `low`, `medium`, `high`,
 provider execution. See the official
 [GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
 Automatic route advice still selects `gpt-6-sol` for ordinary work, and
-hierarchical swarms accept exact `gpt-6-luna` or `claude-haiku-5-5` at `max`.
+hierarchical swarms accept exact `gpt-6-luna` at `max`, or `claude-haiku-5-5`
+at any approved effort; Haiku defaults to `medium`.
 Route advice implements the repository policy but has no launch
 side effect. Both the requested and provider-reported model must match the same
 exact ID; aliases and dated snapshot suffixes are terminal substitution failures
@@ -331,8 +361,9 @@ deprecated compatibility route). Recommendations and starts identify deprecated
 model selection. Model controls are validated
 against `AgentModelCatalog` before any paid request.
 
-`SwarmRequestValidator` enforces bounded options and exact Luna or Haiku selection
-at `max` effort. Version `0.11.1` adds Haiku swarms. `AgentModelCatalog.SupportsSwarm`
+`SwarmRequestValidator` enforces bounded options and exact Luna or Haiku selection.
+Luna requires max; Haiku accepts low, medium, high, xhigh, or max. Version `0.11.1`
+adds Haiku swarms; `0.11.2` adds its configurable effort. `AgentModelCatalog.SupportsSwarm`
 defines the two accepted IDs. Each provider request and the aggregate result use
 the root request's exact model. The public runner also rejects unsupported
 model/effort combinations before starting a provider request.
@@ -365,7 +396,7 @@ remain the exact reviewed leaf proposals; a merged whole-file replacement is
 used only during deterministic host application.
 
 Planning, coding, and review are separate single-turn executions of the shared
-orchestrator. All request the root model, `reasoning_effort: max`, and no tools,
+orchestrator. Each requests the root model and effort, with no tools,
 background mode, or retries. JSON contracts enforce roles rather than granting
 spawn or write functions to the model. No automatic repair run follows a
 rejection. Node failures and model mismatches prevent the root from approving.
@@ -536,9 +567,6 @@ workflow uses loopback and no bearer token.
 
 ## Tests And Validation
 
-The [broker validation matrix](../../work/testing/ai/local-agent-broker.md)
-records live provider and tool-continuation checks.
-
 Tests under `XREngine.UnitTests/AgentOrchestration` use scripted model clients
 and fake HTTP handlers; ordinary tests never contact a provider or a live editor.
 They cover streaming reconstruction, malformed/provider events, `store: false`
@@ -551,6 +579,11 @@ relationship. `BrokerConcurrencyTests` holds scripted HTTP responses open to
 confirm 100 independent runs enter together, the next run is rejected at full
 admission capacity, and overflow queued runs cancel without provider execution.
 No API requests or editor processes are used by those tests.
+
+`BrokerHistoryPersistenceTests` holds a history file open with restrictive
+Windows sharing to verify that a completed provider result remains intact and
+history recovers after the reader closes. It also overlaps atomic publication
+with 19 history readers. These tests use fake Responses HTTP events.
 
 The broker's non-paid protocol validation must also confirm that
 `editor_session` is optional and that `context_files`, `repository_access`, and

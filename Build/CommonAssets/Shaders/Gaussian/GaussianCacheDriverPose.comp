@@ -1,0 +1,101 @@
+#version 460
+
+// Driver pose pass of a gaussian cache. One invocation runs for each driver vertex.
+// The pass blends the two nearest decoded frames of the vertex to the current fractional frame and writes
+// the position to the pose buffer. The step between decoded frames is 8 >> (decoded temporal level) of the
+// driver level that adds the vertex: a = floor(f / step) * step, b = the next blend frame of a, and the
+// position is mix(frame a, frame b, (f - a) / step). A vertex of a driver level that is not decoded keeps
+// its old value; the cut pass does not use it.
+// GaussianCachePoseReference.PoseDrivers is the CPU mirror of this pass.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct CacheLevel
+{
+    // x: first record of the level, y: loaded node count, z: first driver index of the level,
+    // w: 1 when the level can be drawn.
+    ivec4 nodes;
+    // x: first driver vertex that the level adds, y: number of vertices that the level adds,
+    // z: frame step of the level (0 when the level is not decoded), w: not used.
+    ivec4 driver;
+};
+
+// Quantized positions, two 16-bit values in each word, indexed ((frame * DriverVertexCount) + vertex) * 3.
+layout(std430, binding = 53) readonly buffer GaussianCacheFrames
+{
+    uint framePositions[];
+};
+
+layout(std430, binding = 54) writeonly buffer GaussianCacheDriverPose
+{
+    vec4 driverPose[];
+};
+
+layout(std430, binding = 55) readonly buffer GaussianCacheLevels
+{
+    CacheLevel levels[];
+};
+
+uniform uint DriverVertexCount;
+uniform uint DriverLevelCount;
+uniform int FrameCount;
+uniform float FractionalFrame;
+// 0: loop, 1: ping-pong, 2: once.
+uniform int LoopMode;
+uniform vec3 GridOrigin;
+uniform vec3 GridStep;
+
+const int LoopModeLoop = 0;
+
+uint FrameGrid(uint index)
+{
+    uint word = framePositions[index >> 1u];
+    return (index & 1u) == 0u ? (word & 0xFFFFu) : (word >> 16u);
+}
+
+vec3 FramePosition(int frame, uint vertex)
+{
+    uint first = (uint(frame) * DriverVertexCount + vertex) * 3u;
+    return GridOrigin + vec3(float(FrameGrid(first)), float(FrameGrid(first + 1u)), float(FrameGrid(first + 2u))) * GridStep;
+}
+
+// The second frame of the blend that starts at frame i. Loop playback wraps to the start. The other modes hold
+// frame i when the later frame is after the last frame, because a blend to an earlier frame moves the pose back.
+// TemporalLevels.NextBlendFrame is the CPU mirror of this function.
+int NextBlendFrame(int i, int step)
+{
+    int b = i + step;
+    if (b < FrameCount)
+        return b;
+    return LoopMode == LoopModeLoop ? b - FrameCount : i;
+}
+
+void main()
+{
+    uint vertex = gl_GlobalInvocationID.x;
+    if (vertex >= DriverVertexCount)
+        return;
+
+    int step = 0;
+    for (uint level = 0u; level < DriverLevelCount; level++)
+    {
+        ivec4 driver = levels[level].driver;
+        if (int(vertex) >= driver.x && int(vertex) < driver.x + driver.y)
+        {
+            step = driver.z;
+            break;
+        }
+    }
+
+    if (step <= 0)
+        return;
+
+    int a = clamp(int(floor(FractionalFrame / float(step))) * step, 0, FrameCount - 1);
+    int b = NextBlendFrame(a, step);
+    if (b < 0 || b >= FrameCount)
+        b = a;
+
+    float weight = clamp((FractionalFrame - float(a)) / float(step), 0.0, 1.0);
+    vec3 position = mix(FramePosition(a, vertex), FramePosition(b, vertex), weight);
+    driverPose[vertex] = vec4(position, 1.0);
+}

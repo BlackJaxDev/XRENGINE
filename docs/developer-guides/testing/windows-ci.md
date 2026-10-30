@@ -4,6 +4,12 @@ The `Windows CI / Build and test` job builds the full solution and runs the
 unfiltered `XREngine.UnitTests` suite on a GitHub-hosted Windows runner. SDK and
 workload versions come from `global.json`.
 
+The job stages the existing pinned Streamline package with
+`Tools/Dependencies/Get-StreamlineSdk.ps1`. The script verifies the archive hash
+and includes its license files. The runtime ownership tests require these files
+in the SDK drop folder. Staging the package does not provide a GPU or qualify
+NVIDIA runtime features on the hosted runner.
+
 Shader compilation tests do not require a GPU. The Vulkan backend uses the
 checked-in Windows x64 shaderc package. See the
 [compiler rebuild instructions](../../../Build/Native/Shaderc/README.md).

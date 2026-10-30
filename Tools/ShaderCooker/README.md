@@ -65,9 +65,7 @@ compares their strict UTF-8 text with canonical LF line endings, so a Windows
 checkout retains the same pinned source identity; other source changes still
 fail. Engine schema-three manifests have a separate 1 MiB limit shared with
 the publisher. Individual recipes and descriptors retain their 64 KiB limits,
-and legacy schema-one/two manifests retain their 64 KiB limit. The
-[canonical staging investigation](../../docs/work/investigations/rendering/browser-canonical-shader-staging-2026-10-04.md)
-records the failure and validation boundaries.
+and legacy schema-one/two manifests retain their 64 KiB limit.
 
 The `AuthoredLitTexturedV1` family lowers the six exact forward normal/specular
 sources with `baseColor: "authored-textured"` and `textureFlags` equal to 1, 2, 3,
@@ -407,6 +405,4 @@ Runtime admission currently supports these raster auxiliaries for static geometr
 The native Advanced producer composes the function after canonical morph/skin,
 but the generic raster morph/skin producer has a different normal domain. That
 generic combination, including shadow casting, rejects until an equivalent
-canonical source is available. See the
-[native material contract](../../docs/work/progress/rendering/browser-native-material-vertices-2026-10-03.md)
-for accepted-frame history, conservative bounds and current acceptance limits.
+canonical source is available.

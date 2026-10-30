@@ -20,10 +20,20 @@ public sealed class RollingBallWorldAssetContractTests
         asset.ShouldContain("__type: RollingBall.RollingBallGameComponent");
         asset.ShouldContain("Name: Tilting Course");
         asset.ShouldContain("Name: Player Rig");
-        asset.ShouldContain("Name: VR Headset");
-        asset.ShouldContain("Name: Left Controller");
-        asset.ShouldContain("Name: Right Controller");
-        asset.ShouldContain("Name: VR Trackers");
+        // The authored world contains no VR nodes, so the same world works in
+        // desktop and browser builds. The optional desktop VR host adds them.
+        asset.ShouldNotContain("Name: VR Headset");
+        asset.ShouldNotContain("Name: Left Controller");
+        asset.ShouldNotContain("Name: Right Controller");
+        asset.ShouldNotContain("Name: VR Trackers");
+        string desktopVrHost = ReadRepoFile(
+            "Samples",
+            "RollingBall.DesktopVR",
+            "RollingBallDesktopVrHost.cs");
+        desktopVrHost.ShouldContain("SceneNode headset = rig.NewChild(\"VR Headset\");");
+        desktopVrHost.ShouldContain("AddControllerIfMissing(rig, \"Left Controller\", leftHand: true);");
+        desktopVrHost.ShouldContain("AddControllerIfMissing(rig, \"Right Controller\", leftHand: false);");
+        desktopVrHost.ShouldContain("_ = rig.NewChild(\"VR Trackers\").AddComponent<VRTrackerCollectionComponent>(\"Tracked Devices\");");
         asset.ShouldContain("Name: Procedural Scoreboard");
         CountOccurrences(
             asset,
@@ -87,7 +97,12 @@ public sealed class RollingBallWorldAssetContractTests
         registration.ShouldContain("PublishedCookedAssetRegistry.Register(");
         registration.ShouldContain("typeof(RollingBallWorldAsset)");
         serializer.ShouldContain("private const uint Magic = 0x4D425752;");
-        serializer.ShouldContain("private const int Version = 5;");
+        // Ordinary worlds keep the version 5 format. Only worlds that require
+        // audio use version 6.
+        serializer.ShouldContain("private const int CompatibleVersion = 5;");
+        serializer.ShouldContain("private const int RequiredAudioVersion = 6;");
+        serializer.ShouldContain("writer.Write(requiresAudio ? RequiredAudioVersion : CompatibleVersion);");
+        serializer.ShouldContain("if (version != CompatibleVersion && version != RequiredAudioVersion)");
 
         game.ShouldContain("RegisterTick(ETickGroup.PrePhysics");
         game.ShouldContain("_courseBody.KinematicTarget = target;");

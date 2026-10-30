@@ -838,7 +838,12 @@ public class GpuRenderingBacklogTests
             .Replace("\r\n", "\n");
 
         recording.ShouldContain("ImGuiOverlayAdmission.TryConsumeRenderableSnapshot(");
-        recording.ShouldContain("DesktopWsiOutput.IsInteractiveResizeInProgress,");
+        // The preflight captures the resize state once per frame attempt.
+        // The overlay admission reads that captured state.
+        recording.ShouldContain("ImGuiOverlayAdmission.TryConsumeRenderableSnapshot(\n                            attempt.InteractiveResize,\n                            out imguiOverlaySnapshot);");
+        string preflight = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Preflight.cs")
+            .Replace("\r\n", "\n");
+        preflight.ShouldContain("attempt.InteractiveResize =\n                DesktopWsiOutput.IsInteractiveResizeInProgress ||");
         recording.ShouldContain("attempt.PreserveSwapchainForImGuiOverlay =\n                hasPendingImGuiOverlay &&\n                UseDynamicRenderingRenderTargets;");
         recording.ShouldContain("RecordPreparedDesktopPrimary(\n                                ref attempt,\n                                attempt.ImageIndex,\n                                attempt.PreserveSwapchainForImGuiOverlay);");
         recording.ShouldContain("attempt.SceneCommandBuffer =\n                            recordingResult.CommandBuffer;");

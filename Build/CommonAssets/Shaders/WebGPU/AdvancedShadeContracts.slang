@@ -1,5 +1,12 @@
 // Canonical Advanced record layouts and raw scene/geometry access.
 // The source records mirror Advanced/Access and VisibilityInterface exactly.
+//
+// Boolean conditions in native shading helpers use the non-short-circuit
+// operators `&` and `|` where the right operand has no side effect. Each `&&`
+// or `||` becomes a branch in SPIR-V. After inlining, these branches inside the
+// light and sample loops make SwiftShader pipeline creation very slow. Keep
+// `&&` or `||` when the right operand writes an `out` value that later code
+// reads, or when it must not run.
 #if !defined(XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION) || XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION != 1
 #error Native shading requires the AO flag and neutral-binding semantic contract.
 #endif
@@ -490,19 +497,19 @@ uint TextureBindingCount() { uint count, stride; TextureBindings.GetDimensions(c
 uint2 LookupSegment(uint table) { return uint2(table, SceneArena[table * 8u + 4u]); }
 uint XR_ADV_ResolveHandle(XRAdvancedGpuHandle handle, uint table, uint count, uint category)
 {
-    if (handle.index == 0u || handle.generation == 0u || handle.index >= count) return XR_ADV_INVALID_DENSE_INDEX;
+    if (handle.index == 0u | handle.generation == 0u | handle.index >= count) return XR_ADV_INVALID_DENSE_INDEX;
     uint word = SceneArena[table * 8u + 3u] + handle.index * 2u;
     uint dense = SceneArena[word + 1u];
-    return SceneArena[word] == handle.generation && dense < SceneCount(table) ? dense : XR_ADV_INVALID_DENSE_INDEX;
+    return SceneArena[word] == handle.generation & dense < SceneCount(table) ? dense : XR_ADV_INVALID_DENSE_INDEX;
 }
 uint XR_ADV_ResolveVisibilityHandle(XRAdvancedGpuHandle handle, uint2 segment, uint category)
 { return XR_ADV_ResolveHandle(handle, segment.x, segment.y, category); }
 uint XR_ADV_ResolveVisibilityStableIndex(uint index, uint2 segment, uint category)
 {
-    if (index == 0u || index >= segment.y) return XR_ADV_INVALID_DENSE_INDEX;
+    if (index == 0u | index >= segment.y) return XR_ADV_INVALID_DENSE_INDEX;
     uint word = SceneArena[segment.x * 8u + 3u] + index * 2u;
     uint dense = SceneArena[word + 1u];
-    return SceneArena[word] != 0u && dense < SceneCount(segment.x) ? dense : XR_ADV_INVALID_DENSE_INDEX;
+    return SceneArena[word] != 0u & dense < SceneCount(segment.x) ? dense : XR_ADV_INVALID_DENSE_INDEX;
 }
 #define VisibilityDrawLookupSegment LookupSegment(0u)
 #define VisibilityInstanceLookupSegment LookupSegment(1u)
@@ -883,14 +890,14 @@ XRAdvancedMaterialTextureBinding XR_ADV_LoadMaterialTextureBinding(XRAdvancedMat
 float2 unpackHalf(uint value) { return float2(f16tof32(value & 65535u), f16tof32(value >> 16u)); }
 bool XR_ADV_IsValidHandle(XRAdvancedGpuHandle handle)
 {
-    return handle.index != 0u && handle.generation != 0u;
+    return handle.index != 0u & handle.generation != 0u;
 }
 bool XR_ADV_HandleMatches(
     XRAdvancedGpuHandle handle,
     uint stableId,
     uint generation)
 {
-    return handle.index == stableId && handle.generation == generation;
+    return handle.index == stableId & handle.generation == generation;
 }
 float4 XR_ADV_TransformRowVector(float4 value, float4x4 m) { return mul(value, m); }
 float3 XR_ADV_TransformPositionRowVector(float3 value, float4x4 m) { return mul(float4(value, 1.0), m).xyz; }
@@ -1009,11 +1016,11 @@ bool XR_ADV_TryLoadPreparedDrawTemporalState(
     }
 
     record = PreparedXRAdvancedPreparedDrawDeformationRecord(drawDense * 8u);
-    return XR_ADV_PreparedDeformationTemporalStatePresent(record) &&
-        record.geometry.index == draw.geometry.index &&
-        record.geometry.generation == draw.geometry.generation &&
-        record.deformation.index == draw.deformation.index &&
-        record.deformation.generation == draw.deformation.generation &&
+    return XR_ADV_PreparedDeformationTemporalStatePresent(record) &
+        record.geometry.index == draw.geometry.index &
+        record.geometry.generation == draw.geometry.generation &
+        record.deformation.index == draw.deformation.index &
+        record.deformation.generation == draw.deformation.generation &
         record.vertexCount != 0u;
 }
 bool XR_ADV_TryLoadPreparedDrawDeformation(
@@ -1024,7 +1031,7 @@ bool XR_ADV_TryLoadPreparedDrawDeformation(
     return XR_ADV_TryLoadPreparedDrawTemporalState(
             drawDense,
             draw,
-            record) &&
+            record) &
         XR_ADV_PreparedDeformationActive(record);
 }
 bool XR_ADV_TryResolvePixelMaterial(uint2 identity, uint metadata,

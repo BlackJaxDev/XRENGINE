@@ -51,7 +51,15 @@ public sealed class AdvancedPreparationIntegrationContractTests
             desktopPublication.SceneIdentity);
         eyePublication.DeformationJobCount.ShouldBe(
             desktopPublication.DeformationJobCount);
-        eyePublication.VisibilityViewCount.ShouldBe(2u);
+        // The new scene has no canonical publication, so the shared build is
+        // deferred. A later consumer of deferred work adds its consumer flags,
+        // but it must not plan views or advance visibility history.
+        desktopPublication.GpuResourcesPublished.ShouldBeFalse();
+        eyePublication.GpuResourcesPublished.ShouldBeFalse();
+        desktopPublication.VisibilityViewCount.ShouldBe(0u);
+        eyePublication.VisibilityViewCount.ShouldBe(0u);
+        eyePublication.VisibilityContentGeneration.ShouldBe(
+            desktopPublication.VisibilityContentGeneration);
         (eyePublication.Consumers &
             EAdvancedPreparationConsumer.MaterialReconstruction)
             .ShouldBe(EAdvancedPreparationConsumer.MaterialReconstruction);
@@ -153,8 +161,9 @@ public sealed class AdvancedPreparationIntegrationContractTests
         late.ShouldContain("deferredIndex >= boundedDeferredCount");
         late.ShouldContain("XR_ADV_VisibilityCounters.lateDraws");
         late.ShouldContain("XR_ADV_VisibilityLateVisibleIndices.records");
-        late.ShouldContain("view.depthParams.z != 0.0");
-        depthPyramid.ShouldContain(".depthParams.z != 0.0");
+        // The view record keeps the reversed-depth marker in depthParams.w.
+        late.ShouldContain("(view.flags & VIEW_FLAG_REVERSED_DEPTH) != 0u || view.depthParams.w != 0.0");
+        depthPyramid.ShouldContain(".depthParams.w != 0.0");
         depthPyramid.ShouldContain("XR_ADV_DEPTH_TILE_SIZE");
         indirect.ShouldContain("PRODUCER_SKINNED_MESHLET");
         indirect.ShouldContain("PRODUCER_STATIC_MESHLET");

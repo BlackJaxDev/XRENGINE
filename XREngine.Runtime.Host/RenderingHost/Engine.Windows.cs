@@ -334,7 +334,7 @@ namespace XREngine
                 Position: position,
                 Size: size,
                 VSyncEnabled: ResolveWindowVSyncEnabled(windowSettings.VSync, EffectiveSettings.VSync),
-                Visible: true,
+                Visible: windowSettings.Visible,
                 TopMost: false,
                 PreferHdrOutput: preferHdrOutput,
                 TransparentFramebuffer: windowSettings.TransparentFramebuffer,

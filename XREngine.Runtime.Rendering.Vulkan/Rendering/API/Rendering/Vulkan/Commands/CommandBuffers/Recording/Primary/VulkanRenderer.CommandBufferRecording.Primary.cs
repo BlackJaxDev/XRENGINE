@@ -50,6 +50,31 @@ namespace XREngine.Rendering.Vulkan
                     InitializeExplicitOutputColor(ref recordingState);
             }
 
+            if (!TryRecordPrimaryOperationsAndFinalize(
+                    ref recordingState,
+                    out bool noAuthoredDesktopOutput))
+            {
+                context.NoAuthoredDesktopOutput |= noAuthoredDesktopOutput;
+                return false;
+            }
+
+            PublishPrimaryCommandRecordingResults(ref recordingState);
+            return true;
+        }
+
+        /// <summary>
+        /// Records the primary operations, finalizes the recording, and ends
+        /// the command buffer. On failure, this method abandons the partial
+        /// recording and returns false. The caller publishes the results only
+        /// after this method returns true. When the frame records no authored
+        /// desktop terminal write, <paramref name="noAuthoredDesktopOutput"/>
+        /// is true.
+        /// </summary>
+        private bool TryRecordPrimaryOperationsAndFinalize(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            out bool noAuthoredDesktopOutput)
+        {
+            noAuthoredDesktopOutput = false;
             try
             {
                 bool primaryOperationsRecorded;
@@ -77,8 +102,8 @@ namespace XREngine.Rendering.Vulkan
                     !recordingState.Policy.IsExternalSwapchainTarget &&
                     recordingState.FramePlan?.RequiresFreshEmptyTerminalWrite == true)
                 {
-                    context.NoAuthoredDesktopOutput = true;
-                    context.RecordingDeferredReason =
+                    noAuthoredDesktopOutput = true;
+                    recordingState.RecordingDeferredReason =
                         "the desktop frame recorded no authored scene terminal write";
                     _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);
                     return false;
@@ -96,6 +121,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (!EndPrimaryCommandBuffer(ref recordingState))
                         return false;
+                    RecordVisibleMeshDrawCohort(in recordingState.Ops);
                     if (recordingState.AdvancedQueueOverlap is { } overlap)
                     {
                         ConsolidateAdvancedQueueOverlapSubmissionMarkers(overlap);
@@ -119,8 +145,27 @@ namespace XREngine.Rendering.Vulkan
                 CleanupPrimaryCommandRecording(ref recordingState);
             }
 
-            PublishPrimaryCommandRecordingResults(ref recordingState);
             return true;
+        }
+
+        /// <summary>
+        /// Publishes the count of visible mesh draws and unique materials for
+        /// a primary that recorded successfully. This does nothing when
+        /// rendering statistics are off.
+        /// </summary>
+        private static void RecordVisibleMeshDrawCohort(
+            in FrameOperationSequence ops)
+        {
+            if (!RuntimeEngine.Rendering.Stats.EnableTracking)
+                return;
+
+            VulkanVisibleMeshDrawCohortCounter.Count(
+                in ops,
+                out int visibleDrawCount,
+                out int uniqueMaterialCount);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanVisibleMeshDrawCohort(
+                visibleDrawCount,
+                uniqueMaterialCount);
         }
 
         internal static bool ShouldRefreshUnwrittenSwapchainForPresent(

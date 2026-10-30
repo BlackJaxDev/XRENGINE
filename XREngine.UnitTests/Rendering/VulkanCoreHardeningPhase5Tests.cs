@@ -48,16 +48,18 @@ public sealed class VulkanCoreHardeningPhase5Tests
     [Test]
     public void RecordedLayouts_AreCommandBufferLocalUntilSuccessfulSubmission()
     {
-        string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string imageLayouts = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.ImageLayouts.cs");
+        string submission = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs");
         string recording = SliceBetween(
-            synchronization,
-            "private void RecordImageAccess(",
-            "internal void ClearTrackedImageLayouts(");
+            imageLayouts,
+            "private long FlushImageAccessBatch(",
+            "private long EnterImageLayoutLockMeasured()");
         string submit = SliceBetween(
-            synchronization,
-            "private VulkanSubmissionReceipt SubmitToQueueTrackedCore(",
-            "internal Result WaitForQueueIdleTracked(");
+            submission,
+            "internal VulkanSubmissionReceipt SubmitToQueueTrackedWithDisposition(",
+            "private static string GetSealedSubmissionFallbackLogKey(");
 
         recording.ShouldContain("_recordedImageLayoutsByCommandBuffer");
         recording.ShouldContain("RecordImageAspectState(recorded");
@@ -71,34 +73,56 @@ public sealed class VulkanCoreHardeningPhase5Tests
     [Test]
     public void SubmittedAndCompletedLayouts_UseResourceLifetimeCompletionWatermarks()
     {
+        string subresourceState = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.VulkanImageSubresourceState.cs");
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandSynchronizationState.cs");
+        string submission = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs");
+        const string advance = "Synchronization.AdvanceCompletedImageLayouts(ResourceRuntime.Lifetime.Tracker);";
 
-        synchronization.ShouldContain("public VulkanImageAccessState Submitted");
-        synchronization.ShouldContain("public VulkanImageAccessState Completed");
+        subresourceState.ShouldContain("public VulkanImageAccessState Submitted");
+        subresourceState.ShouldContain("public VulkanImageAccessState Completed");
         synchronization.ShouldContain("state.Completed = state.Submitted");
         synchronization.ShouldContain("state.GraphicsSequence <= completedGraphics");
-        lifetime.ShouldContain("NotifyVulkanFenceCompleted");
-        lifetime.ShouldContain("NotifyVulkanTimelineCompleted");
-        lifetime.ShouldContain("NotifyVulkanQueueIdle");
-        lifetime.ShouldContain("NotifyVulkanDeviceIdle");
-        lifetime.ShouldContain("AdvanceCompletedImageLayouts();");
+        // Each completion source first advances the lifetime watermark and
+        // then promotes the submitted image layouts that it completed.
+        SliceBetween(submission, "internal void CompleteTrackedFence(Fence fence)", "internal void CompleteTrackedTimeline(")
+            .ShouldContain("ResourceRuntime.CompleteSynchronousFence(fence);\n        " + advance);
+        SliceBetween(submission, "internal void CompleteTrackedTimeline(Semaphore semaphore, ulong value)", "internal void CompleteTrackedQueue(")
+            .ShouldContain("ResourceRuntime.CompleteTimeline(semaphore, value);\n        " + advance);
+        SliceBetween(submission, "internal void CompleteTrackedQueue(Queue queue)", "internal void CompleteTrackedDevice(")
+            .ShouldContain("ResourceRuntime.CompleteQueue(queue);\n        " + advance);
+        SliceBetween(submission, "internal void CompleteTrackedDevice()", "internal void MarkTrackedDeviceLost(")
+            .ShouldContain("ResourceRuntime.CompleteDevice();\n        " + advance);
     }
 
     [Test]
     public void QueueOwnershipAndSecondaryRecording_ArePartOfLayoutState()
     {
-        string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string accessState = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.VulkanImageAccessState.cs");
+        string encoder = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanTrackedCommandEncoder.cs");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.NativeRecordingServices.cs");
+        string merge = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.DynamicUiOverlaySynchronization.cs");
+        string executeCommands = SliceBetween(
+            recording,
+            "internal unsafe void CmdExecuteCommandsTracked(",
+            "private unsafe void CmdBeginRenderPassTracked(");
 
-        synchronization.ShouldContain("uint QueueFamilyIndex");
-        synchronization.ShouldContain("barrier.DstQueueFamilyIndex");
-        synchronization.ShouldContain("MergeRecordedImageLayoutStates(");
-        lifetime.ShouldContain("MergeRecordedImageLayoutStates(primary, secondaries)");
+        accessState.ShouldContain("uint QueueFamilyIndex");
+        encoder.ShouldContain("QueueFamilyIndex = barrier.DstQueueFamilyIndex,");
+        recording.ShouldContain("QueueFamilyIndex = barrier.DstQueueFamilyIndex,");
+        // A secondary is never submitted, so the primary that executes it
+        // takes its final image states and queue ownership transfers.
+        executeCommands.ShouldContain("MergeSecondaryImageStatesForExecution(\n            primary,\n            secondaries,");
+        executeCommands.IndexOf("MergeSecondaryImageStatesForExecution(", StringComparison.Ordinal)
+            .ShouldBeLessThan(executeCommands.IndexOf("Api.CmdExecuteCommands(", StringComparison.Ordinal));
+        merge.ShouldContain("MergeSecondaryImageState(primaryState, secondaryState, primaryBatch);");
+        merge.ShouldContain("primaryState.QueueOwnershipTransfers.AddRange(\n            secondaryState.QueueOwnershipTransfers);");
     }
 
     [Test]
@@ -246,49 +270,74 @@ public sealed class VulkanCoreHardeningPhase5Tests
     [Test]
     public void QueueOwnershipJournal_PublishesReleasePendingUntilValidatedAcquire()
     {
-        string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string subresourceState = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.VulkanImageSubresourceState.cs");
+        string submission = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs");
         string tracking = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Tracking/VulkanRenderer.CommandBufferTrackingBatch.cs");
         string upload = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanRenderer.TextureUploadTransfer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.TextureUploadTransfer.cs");
+        string publish = SliceFrom(
+            submission,
+            "private unsafe void PublishRecordedImageLayouts(");
 
-        tracking.ShouldContain("QueueOwnershipTransfers");
-        synchronization.ShouldContain(
-            "VulkanPendingQueueOwnershipRelease?");
-        synchronization.ShouldContain(
-            "ValidateQueueOwnershipTransferRequirements(");
-        synchronization.ShouldContain(
-            "SubmissionSatisfiesQueueSemaphoreRequirement(");
-        synchronization.ShouldContain(
-            "completedGraphicsSequence");
-        synchronization.ShouldContain(
-            "state.PendingQueueOwnershipRelease = null");
-        synchronization.ShouldContain(
-            "QueueFamilyIndex =");
+        tracking.ShouldContain("batch.QueueOwnershipTransfers.Add(transfers[i]);");
+        subresourceState.ShouldContain("VulkanPendingQueueOwnershipRelease?");
+        submission.ShouldContain("bool queueOwnershipValid = ValidateQueueOwnershipTransferRequirements(");
+        submission.ShouldContain("private static unsafe bool SubmissionSatisfiesQueueSemaphoreRequirement(");
+        submission.ShouldContain("completedGraphicsSequence = ResourceRuntime.Lifetime.Tracker.CompletedGraphicsSequence;");
+        submission.ShouldContain(
+            "EVulkanLifetimeQueueDomain.Graphics => submission.QueueSequence <= completedGraphicsSequence,");
+        // A release keeps the source queue family and stays pending until a
+        // validated acquire publishes the destination family.
+        publish.ShouldContain("QueueFamilyIndex = ownershipRequirement.SourceQueueFamilyIndex,");
+        publish.ShouldContain("state.PendingQueueOwnershipRelease = new VulkanPendingQueueOwnershipRelease(");
+        publish.ShouldContain("state.PendingQueueOwnershipRelease = null;");
         upload.ShouldContain(
-            "OldLayout = ImageLayout.TransferDstOptimal");
-        upload.ShouldContain(
-            "NewLayout = ImageLayout.ShaderReadOnlyOptimal");
+            "OldLayout = ImageLayout.TransferDstOptimal,\n                NewLayout = upload.FinalLayout,");
     }
+
     [Test]
     public void ImportedTextureTransferQueue_UsesConcurrentSharingAndDescriptorLifetimePins()
     {
         string uploadImage = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.ImportedUpload.cs");
-        string uploadTransfer = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanRenderer.TextureUploadTransfer.cs");
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string uploadTransferSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.TextureUploadTransfer.cs");
+        string uploadTransfer = SliceBetween(
+            uploadTransferSource,
+            "private unsafe void RecordImportedTextureTransferUpload(",
+            "private static long CalculateUploadStagingBytes(");
+        string descriptors = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorManager.cs");
+        string removeDescriptorSet = SliceBetween(
+            descriptors,
+            "internal static void RemoveDescriptorSetLifetimeNoLock(",
+            "internal static void PublishSnapshotNoLock(");
+        string publishSnapshot = SliceBetween(
+            descriptors,
+            "internal static void PublishSnapshotNoLock(",
+            "private static void AddPinnedReferenceClosureNoLock(");
 
         uploadImage.ShouldContain("SharingMode.Concurrent");
         uploadImage.ShouldContain("QueueFamilyIndexCount = uploadQueueFamilyCount");
+        // Concurrent sharing makes a queue family ownership transfer
+        // unnecessary. The transfer queue moves the image directly from the
+        // copy layout to its final sampled layout.
         uploadTransfer.ShouldNotContain("SrcQueueFamilyIndex = transferFamily");
         uploadTransfer.ShouldNotContain("DstQueueFamilyIndex = graphicsFamily");
-        uploadTransfer.ShouldContain("OldLayout = ImageLayout.ShaderReadOnlyOptimal");
-        lifetime.ShouldContain("AddVulkanDescriptorPinnedReferenceClosure_NoLock");
-        lifetime.ShouldContain("resource.Pins.AddDescriptorReference()");
-        lifetime.ShouldContain("ReleaseVulkanDescriptorSetGenerationPins_NoLock(state)");
+        uploadTransfer.ShouldContain(
+            "OldLayout = ImageLayout.TransferDstOptimal,\n                NewLayout = upload.FinalLayout,\n                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,\n                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,");
+        // Descriptor sets pin the closure of their references (a view and its
+        // backing image) and release those pins when the set is removed.
+        descriptors.ShouldContain("private static void AddPinnedReferenceClosureNoLock(");
+        descriptors.ShouldContain("pins.Add(new VulkanResourceLifetimeKey(ObjectType.Image, image));");
+        publishSnapshot.ShouldContain("AddPinnedReferenceClosureNoLock(");
+        publishSnapshot.ShouldContain("UpdateGenerationPinsNoLock(tracker, state, pinnedReferences);");
+        descriptors.ShouldContain("resource.Pins.AddDescriptorReference();");
+        removeDescriptorSet.ShouldContain("resource.Pins.ReleaseDescriptorReference();");
+        removeDescriptorSet.ShouldContain("state.PinnedReferences.Clear();");
     }
 
     [Test]
@@ -318,12 +367,34 @@ public sealed class VulkanCoreHardeningPhase5Tests
         string programCompute = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Compute.cs");
 
-        cache.ShouldContain("private readonly Lock _pipelineCacheHostAccessLock = new();");
-        cache.ShouldContain("private readonly Lock _backgroundPipelineCacheHostAccessLock = new();");
-        cache.ShouldContain("lock (_pipelineCacheHostAccessLock)\n            lock (_backgroundPipelineCacheHostAccessLock)");
-        cache.ShouldContain("CreateGraphicsPipelinesSynchronized");
-        cache.ShouldContain("CreateComputePipelinesSynchronized");
-        cache.ShouldContain("lock (GetVulkanPipelineCacheHostAccessLock(pipelineCache))");
+        string manager = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineManager.cs");
+        string merge = SliceFrom(cache, "private Result MergeBackgroundPipelineCache()");
+        string graphicsCreate = SliceBetween(
+            cache,
+            "internal Result CreateGraphicsPipelinesSynchronized(",
+            "internal Result CreateComputePipelinesSynchronized(");
+        string computeCreate = SliceBetween(
+            cache,
+            "internal Result CreateComputePipelinesSynchronized(",
+            "private Lock GetVulkanPipelineCacheHostAccessLock(PipelineCache pipelineCache)");
+        const string perCacheLock =
+            "VulkanFrameLockScope.Enter(\n                   GetVulkanPipelineCacheHostAccessLock(pipelineCache),";
+
+        manager.ShouldContain("internal readonly Lock _pipelineCacheHostAccessLock = new();");
+        manager.ShouldContain("internal readonly Lock _backgroundPipelineCacheHostAccessLock = new();");
+        // The merge reads the background cache and writes the foreground
+        // cache, so it must hold both host access locks in a fixed order.
+        int foregroundLock = merge.IndexOf("_pipelineCacheHostAccessLock,", StringComparison.Ordinal);
+        int backgroundLock = merge.IndexOf("_backgroundPipelineCacheHostAccessLock,", StringComparison.Ordinal);
+        foregroundLock.ShouldBeGreaterThanOrEqualTo(0);
+        backgroundLock.ShouldBeGreaterThan(foregroundLock);
+        graphicsCreate.ShouldContain(perCacheLock);
+        computeCreate.ShouldContain(perCacheLock);
+        graphicsCreate.IndexOf(perCacheLock, StringComparison.Ordinal)
+            .ShouldBeLessThan(graphicsCreate.LastIndexOf("CreateGraphicsPipelines(", StringComparison.Ordinal));
+        computeCreate.IndexOf(perCacheLock, StringComparison.Ordinal)
+            .ShouldBeLessThan(computeCreate.LastIndexOf("CreateComputePipelines(", StringComparison.Ordinal));
         programGraphics.ShouldNotContain("Api!.CreateGraphicsPipelines(");
         programCompute.ShouldNotContain("Api!.CreateComputePipelines(");
     }
@@ -333,35 +404,63 @@ public sealed class VulkanCoreHardeningPhase5Tests
     public void DescriptorBinding_ValidatesExactViewRangeAgainstRecordedLayout()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
+        string barrierEmission = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Synchronization/VulkanRenderer.BarrierEmission.cs");
+        string viewTransition = SliceBetween(
+            barrierEmission,
+            "private unsafe void TransitionDescriptorImageForSampling(",
+            "private unsafe void TransitionDescriptorImageRangeForSampling(");
+        string rangeTransition = SliceBetween(
+            barrierEmission,
+            "private unsafe void TransitionDescriptorImageRangeForSampling(",
+            "private bool IsImageRangeAttachedToFrameBuffer(");
 
-        lifetime.ShouldContain("VulkanDescriptorImageReference");
-        lifetime.ShouldContain("TryGetDescriptorHeapImageViewCreateInfo(reference.View");
-        lifetime.ShouldContain("TryGetRecordedImageLayout(commandBuffer, viewInfo.Image, range");
-        lifetime.ShouldContain("Vulkan descriptor image layout mismatch at command recording");
-        lifetime.ShouldContain("ImageLayout.TransferSrcOptimal");
-        lifetime.ShouldContain("ImageLayout.TransferDstOptimal");
-        lifetime.ShouldContain("System.Diagnostics.Debug.Fail(message)");
+        // The descriptor write records the exact view and its expected layout.
+        lifetime.ShouldContain(
+            "VulkanDescriptorImageReference image = new(info.ImageView, info.ImageLayout, write.DescriptorType);");
+        // Command recording resolves the exact view subresource range and
+        // compares it with the layout that this command buffer recorded.
+        viewTransition.ShouldContain(
+            "TryGetDescriptorHeapImageViewCreateInfo(imageView, out ImageViewCreateInfo viewInfo)");
+        viewTransition.ShouldContain("ImageSubresourceRange range = viewInfo.SubresourceRange;");
+        rangeTransition.ShouldContain("TryGetRecordedImageAccessState(\n                    commandBuffer,\n                    image,\n                    range,");
+        rangeTransition.ShouldContain(
+            "throw new VulkanPlanPreconditionException(\"Descriptor sampling requires resolved image-view subresource counts.\");");
+        rangeTransition.ShouldContain("RejectPartiallyKnownDescriptorAspects(commandBuffer, image, cell);");
+        rangeTransition.ShouldContain(
+            "throw new VulkanPlanPreconditionException(\"Descriptor sampling image state belongs to a retired native generation.\");");
+        rangeTransition.ShouldContain("OldLayout = priorState.Layout,");
+        rangeTransition.ShouldContain("NewLayout = targetLayout,");
+        rangeTransition.ShouldContain("if (priorState.Layout == targetLayout)\n                return false;");
     }
 
     [Test]
     public void TransferReadbackAndMipmapGeneration_RestoreSampledLayouts()
     {
         string readbackLayouts = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Readback/VulkanRenderer.ReadbackLayouts.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Readback/VulkanReadbackLayoutPolicy.cs");
         string pixelReadback = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Readback/VulkanRenderer.PixelReadback.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Readback/VulkanCommandRuntime.PixelReadback.cs");
         string texture = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.Mipmaps.cs");
+        string resourceCommands = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanResourceCommandWrapperPort.cs");
         string mipmaps = SliceBetween(
             texture,
             "protected void GenerateMipmapsWithBlit()",
             "private ImageBlit CreateMipBlit");
+        string mipmapCommands = SliceBetween(
+            resourceCommands,
+            "internal void GenerateMipmaps(",
+            "internal bool TryDecompressBufferGDeflate(");
 
-        readbackLayouts.ShouldContain("ResolvePostTransferReadLayout");
+        readbackLayouts.ShouldContain("internal static ImageLayout ResolvePostTransfer(in BlitImageInfo info)");
+        pixelReadback.ShouldContain("ImageLayout postTransferLayout = VulkanReadbackLayoutPolicy.ResolvePostTransfer(liveSource);");
         pixelReadback.ShouldContain("ImageLayout.TransferSrcOptimal,\n                    postTransferLayout");
-        mipmaps.ShouldContain("barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal");
-        mipmaps.ShouldContain("barrier.SubresourceRange.BaseMipLevel = ResolvedMipLevels - 1");
+        mipmaps.ShouldContain("ResourceCommandPort.GenerateMipmaps(");
+        mipmapCommands.ShouldContain("barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal");
+        mipmapCommands.ShouldContain("barrier.SubresourceRange.BaseMipLevel = mipLevels - 1");
         mipmaps.ShouldContain("_currentImageLayout = ImageLayout.ShaderReadOnlyOptimal");
     }
 
@@ -370,19 +469,27 @@ public sealed class VulkanCoreHardeningPhase5Tests
     {
         string capture = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Scene/Components/Capture/SceneCaptureComponent.cs");
+        string completion = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Scene/Components/Capture/SceneCaptureComponent.Completion.cs");
         string probeIbl = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Scene/Components/Capture/LightProbeComponent.IBL.cs");
-        string finalizeCapture = capture[capture.IndexOf(
-            "public virtual void FinalizeCubemapCapture()",
-            StringComparison.Ordinal)..];
-        string finalizeProbe = probeIbl[probeIbl.IndexOf(
-            "public override void FinalizeCubemapCapture()",
-            StringComparison.Ordinal)..];
+        string finalizeCapture = SliceFrom(
+            capture,
+            "public virtual ECaptureStepResult FinalizeCubemapCapture()");
+        string finalizeProbe = SliceFrom(
+            probeIbl,
+            "public override ECaptureStepResult FinalizeCubemapCapture()");
+        string captureEncoding = SliceFrom(
+            completion,
+            "private ECaptureStepResult CompleteCaptureEncoding()");
 
+        // The octahedral encoding runs through the fenced capture encoding
+        // step after the cubemap mip chain is generated.
         int generateMips = finalizeCapture.IndexOf("GenerateMipmapsGPU()", StringComparison.Ordinal);
-        int encodeOcta = finalizeCapture.IndexOf("EncodeEnvironmentToOctahedralMap()", StringComparison.Ordinal);
+        int encodeOcta = finalizeCapture.IndexOf("CompleteCaptureEncoding()", StringComparison.Ordinal);
         generateMips.ShouldBeGreaterThanOrEqualTo(0);
         encodeOcta.ShouldBeGreaterThan(generateMips);
+        captureEncoding.ShouldContain("_captureEncodingProducer ??= EncodeEnvironmentToOctahedralMap");
 
         int baseFinalize = finalizeProbe.IndexOf("base.FinalizeCubemapCapture()", StringComparison.Ordinal);
         int synchronize = finalizeProbe.IndexOf("SynchronizeCaptureTextureWrites()", StringComparison.Ordinal);
@@ -392,6 +499,13 @@ public sealed class VulkanCoreHardeningPhase5Tests
         generateIbl.ShouldBeGreaterThan(synchronize);
     }
 
+
+    private static string SliceFrom(string source, string startToken)
+    {
+        int start = source.IndexOf(startToken, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, $"Expected start token '{startToken}'.");
+        return source[start..];
+    }
 
     private static string SliceBetween(string source, string startToken, string endToken)
     {

@@ -23,8 +23,8 @@ float4 XR_ADV_StandardVector(XRAdvancedMaterialRecord material, uint word)
 float4 XR_ADV_StandardTexture(XRAdvancedMaterialRecord material, uint slot,
     float2 uv, float2 dx, float2 dy, float4 absent)
 {
-    if (slot >= material.textureReferenceCount ||
-        material.textureReferenceOffset >= SceneCount(12u) ||
+    if (slot >= material.textureReferenceCount |
+        material.textureReferenceOffset >= SceneCount(12u) |
         slot >= SceneCount(12u) - material.textureReferenceOffset)
         return absent;
     XRAdvancedEncodedTextureReference textureReference;
@@ -413,17 +413,17 @@ float XR_ADV_CompareShadow(XRAdvancedShadowRecord record, float4 texel, float re
     }
     // Point color textures encode radial depth in increasing distance even
     // when their raster depth attachment uses a reversed projection.
-    bool reversed = record.type < 2u && (record.flags & 128u) != 0u;
+    bool reversed = record.type < 2u & (record.flags & 128u) != 0u;
     return reversed ? float(depth >= texel.r) : float(depth <= texel.r);
 }
 
 bool XR_ADV_ShadowAffectsView(XRAdvancedShadowRecord record, XRAdvancedViewRecord view, uint viewIndex)
 {
-    if (record.type == 0u && (((record.flags & 16u) != 0u) != ((view.flags & 12u) != 0u)))
+    if (record.type == 0u & (((record.flags & 16u) != 0u) != ((view.flags & 12u) != 0u)))
         return false;
     if ((record.viewMaskLo | record.viewMaskHi) == 0u) return true;
     return viewIndex < 32u ? (record.viewMaskLo & (1u << viewIndex)) != 0u :
-        viewIndex < 64u && (record.viewMaskHi & (1u << (viewIndex - 32u))) != 0u;
+        viewIndex < 64u & (record.viewMaskHi & (1u << (viewIndex - 32u))) != 0u;
 }
 
 bool XR_ADV_ProjectShadow(XRAdvancedShadowRecord record, float3 position, out float3 coordinate)
@@ -431,12 +431,12 @@ bool XR_ADV_ProjectShadow(XRAdvancedShadowRecord record, float3 position, out fl
     coordinate = float3(0.0);
     if (record.type == 3u) return record.renderedLightPositionAndFar.w > 0.0;
     float4 clip = XR_ADV_TransformRowVector(float4(position, 1.0), record.worldToShadow);
-    if (clip.w <= 0.000001 || !XR_ADV_IsFinite(clip)) return false;
+    if (clip.w <= 0.000001 | !XR_ADV_IsFinite(clip)) return false;
     float3 ndc = clip.xyz / clip.w;
     coordinate = float3(ndc.xy * 0.5 + 0.5,
         (record.flags & 32u) != 0u ? ndc.z : ndc.z * 0.5 + 0.5);
     if ((record.flags & 64u) != 0u) coordinate.y = 1.0 - coordinate.y;
-    return all(greaterThanEqual(coordinate, float3(0.0))) && all(lessThanEqual(coordinate, float3(1.0)));
+    return all(greaterThanEqual(coordinate, float3(0.0))) & all(lessThanEqual(coordinate, float3(1.0)));
 }
 
 float4 XR_ADV_FetchShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
@@ -458,13 +458,13 @@ float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, XRAdvancedSurface
     out uint reason)
 {
     reason = XR_ADV_SHADOW_OK;
-    if ((record.flags & 1u) == 0u ||
-        (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u && (record.flags & 1024u) == 0u)
+    if ((record.flags & 1u) == 0u |
+        (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u & (record.flags & 1024u) == 0u)
     {
         reason = XR_ADV_SHADOW_NOT_RESIDENT;
         return 1.0;
     }
-    if (record.encoding > 3u || record.type > 3u)
+    if (record.encoding > 3u | record.type > 3u)
     {
         reason = XR_ADV_SHADOW_UNSUPPORTED;
         return 1.0;
@@ -477,10 +477,10 @@ float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, XRAdvancedSurface
         reason = XR_ADV_SHADOW_NOT_RESIDENT;
         return 1.0;
     }
-    if ((record.type == 3u && textureRecord.dimension != 3u) ||
-        (record.type != 3u && textureRecord.dimension != 1u && textureRecord.dimension != 5u) ||
-        (textureRecord.dimension == 5u && record.textureLayer >= textureRecord.depthOrLayers) ||
-        textureRecord.width == 0u || textureRecord.height == 0u)
+    if ((record.type == 3u & textureRecord.dimension != 3u) |
+        (record.type != 3u & textureRecord.dimension != 1u & textureRecord.dimension != 5u) |
+        (textureRecord.dimension == 5u & record.textureLayer >= textureRecord.depthOrLayers) |
+        textureRecord.width == 0u | textureRecord.height == 0u)
     {
         reason = XR_ADV_SHADOW_UNSUPPORTED;
         return 1.0;
@@ -523,7 +523,7 @@ float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, XRAdvancedSurface
     }
     float bias = lerp(max(record.depthBiasAndFilter.x, 0.0), max(record.depthBiasAndFilter.y, 0.0),
         1.0 - clamp(dot(N, L), 0.0, 1.0));
-    bool reversed = record.type < 2u && record.encoding == 0u && (record.flags & 128u) != 0u;
+    bool reversed = record.type < 2u & record.encoding == 0u & (record.flags & 128u) != 0u;
     receiver += reversed ? bias : -bias;
     float2 texelSize = 1.0 / float2(textureRecord.width, textureRecord.height);
     float2 uv = coordinate.xy * record.uvScaleBias.xy + record.uvScaleBias.zw;
@@ -571,14 +571,14 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
     }
     uint rootIndex = XR_ADV_ResolveHandle(light.shadowRecord, VisibilityShadowLookupSegment.x,
         VisibilityShadowLookupSegment.y, XR_ADV_DIAGNOSTIC_SHADOW);
-    if (rootIndex == XR_ADV_INVALID_DENSE_INDEX || rootIndex >= SceneCount(6u))
+    if (rootIndex == XR_ADV_INVALID_DENSE_INDEX | rootIndex >= SceneCount(6u))
     {
         reason = XR_ADV_SHADOW_STALE_HANDLE;
         return 1.0;
     }
     XRAdvancedShadowRecord root = XR_ADV_LoadShadow(rootIndex);
-    if (!XR_ADV_HandleMatches(light.shadowRecord, root.stableShadowId, root.generation) ||
-        root.cascadeOffset >= SceneCount(6u) || root.cascadeCount == 0u ||
+    if (!XR_ADV_HandleMatches(light.shadowRecord, root.stableShadowId, root.generation) |
+        root.cascadeOffset >= SceneCount(6u) | root.cascadeCount == 0u |
         root.cascadeCount > SceneCount(6u) - root.cascadeOffset)
     {
         reason = XR_ADV_SHADOW_STALE_HANDLE;
@@ -596,17 +596,17 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
     for (uint i = 0u; i < root.cascadeCount; ++i)
     {
         XRAdvancedShadowRecord record = XR_ADV_LoadShadow(root.cascadeOffset + i);
-        if (blending && record.type != 0u) continue;
+        if (blending & record.type != 0u) continue;
         if (!XR_ADV_ShadowAffectsView(record, view, surface.viewIndex)) continue;
         if (!blending)
         {
-            if ((record.flags & 1u) == 0u ||
-                (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u && (record.flags & 1024u) == 0u)
+            if ((record.flags & 1u) == 0u |
+                (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u & (record.flags & 1024u) == 0u)
             {
                 reason = max(reason, XR_ADV_SHADOW_NOT_RESIDENT);
                 continue;
             }
-            if (record.type == 0u && (record.flags & 512u) == 0u && linearDepth > record.depthRangeAndCascade.z) continue;
+            if (record.type == 0u & (record.flags & 512u) == 0u & linearDepth > record.depthRangeAndCascade.z) continue;
         }
         float3 unusedCoordinate;
         if (!XR_ADV_ProjectShadow(record, surface.worldPosition, unusedCoordinate)) continue;
@@ -622,9 +622,9 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
             return lerp(primaryVisibility, visibility, blendWeight);
         }
         reason = sampleReason;
-        if (record.type != 0u || (record.flags & 512u) != 0u) return visibility;
+        if (record.type != 0u | (record.flags & 512u) != 0u) return visibility;
         float blendWidth = max(record.depthRangeAndCascade.w, 0.0);
-        if (blendWidth <= 0.0 || linearDepth < record.depthRangeAndCascade.z - blendWidth) return visibility;
+        if (blendWidth <= 0.0 | linearDepth < record.depthRangeAndCascade.z - blendWidth) return visibility;
         primaryVisibility = visibility;
         blendWeight = clamp((linearDepth - record.depthRangeAndCascade.z + blendWidth) / blendWidth, 0.0, 1.0);
         blending = true;
