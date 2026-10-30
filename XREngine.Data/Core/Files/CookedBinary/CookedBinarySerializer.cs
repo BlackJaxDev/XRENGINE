@@ -433,10 +433,29 @@ public static partial class CookedBinarySerializer
         return buffer;
     }
 
+    private static readonly AsyncLocal<int> DeserializationDepth = new();
+
+    /// <summary>
+    /// Gets whether a <see cref="Deserialize"/> call runs in the current execution context.
+    /// </summary>
+    /// <remarks>
+    /// The reader creates each object first and then sets its members with property notifications suppressed.
+    /// Listeners that an object attaches in its constructor thus do not get the values that the reader sets.
+    /// Render objects use this value to create their API wrappers at first use, after the read is complete.
+    /// </remarks>
+    public static bool IsDeserializing => DeserializationDepth.Value > 0;
+
+    private readonly struct DeserializationScope : IDisposable
+    {
+        public DeserializationScope() => DeserializationDepth.Value++;
+        public void Dispose() => DeserializationDepth.Value--;
+    }
+
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
     public static object? Deserialize(Type expectedType, ReadOnlySpan<byte> data, CookedBinarySerializationCallbacks? callbacks = null)
     {
+        using var deserialization = new DeserializationScope();
         unsafe
         {
             fixed (byte* ptr = data)
