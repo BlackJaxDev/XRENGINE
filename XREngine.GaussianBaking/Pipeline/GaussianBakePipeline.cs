@@ -149,10 +149,9 @@ public sealed partial class GaussianBakePipeline
     /// <param name="options">The bake options.</param>
     /// <param name="cancellationToken">Stops the bake.</param>
     /// <remarks>
-    /// This method loads the input when the caller calls it. A cooked world that loads while the engine runs does not
-    /// render in the bake world: its captures are black. A caller with a running engine thus
-    /// calls <see cref="PrepareAsync"/> before <c>Engine.Run</c>, and then
-    /// <see cref="RunAsync(GaussianBakePreparation, CancellationToken)"/>.
+    /// This method loads the input when the caller calls it. The input can load while the engine runs. A caller that
+    /// must stop on a load failure before the engine starts calls <see cref="PrepareAsync"/> before <c>Engine.Run</c>,
+    /// and then <see cref="RunAsync(GaussianBakePreparation, CancellationToken)"/>.
     /// </remarks>
     /// <returns>
     /// The report. Its status is <see cref="BakeReport.ReadyStatus"/>, or <see cref="BakeReport.FailedStatus"/> with a
@@ -179,8 +178,8 @@ public sealed partial class GaussianBakePipeline
     /// encoder check.
     /// </summary>
     /// <remarks>
-    /// Run this method before the engine starts when the input is a world: a cooked world that loads while the engine
-    /// runs does not render in the bake world.
+    /// This method does not use the renderer, so it can run before the engine starts. A failure then gives its failure
+    /// code before the engine starts.
     /// </remarks>
     /// <param name="options">The bake options.</param>
     /// <param name="meshopt">The mesh optimizer whose version the report gives.</param>
