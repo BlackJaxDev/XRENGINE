@@ -115,3 +115,32 @@ capabilities leave an existing view intact. Open and close reject overlapping
 operations. All 16 focused mapping checks pass, together with 70 related raw-read,
 YAML and save checks. This moves mapping creation and disposal into the desktop
 leaf; it does not close the remaining physical I/O inventory.
+
+The desktop window factory now supplies the native render-loop owner and the
+secondary graphics owner. Each secondary run owns its queue, worker, hidden
+window and renderer through final disposal. A bounded stop retains incomplete
+ownership. Collapsed cleanup uses the captured render queue and checks the
+native owner thread; replacement requires confirmed native backend release.
+All 20 managed owner checks pass. Native GL transfer and teardown remain later
+device checks. The repeated portable source scan reports 189 wait/result/join
+lines in 103 files, one thread constructor, and 60 task/pool lines in 29 files.
+These lexical counts do not establish complete browser reachability.
+
+The normal animation importer now uses one captured read and discovery owner
+for root and additive clips, headers and metadata. A deferred object-cache batch
+prevents failed or retired imports from becoming discoverable. All 13 focused
+owner checks pass. The separate static Unity importer still needs its generated
+context repair.
+
+The hydrated-world audio audit now checks the existing 8 MiB output budget for
+active listener-relative static attachments. It counts each source buffer,
+including repeated references to one clip, across visible scenes in that world.
+All 29 focused audio checks pass. This bounds a known static residency case;
+positional overlap, runtime changes, overlapping streamed worlds, encoded
+delivery and segmentation remain open.
+
+The compiled Editor audio audit and existing animation import and collapsed-loop
+contract checks pass (14 checks). All 24 publication gates pass with zero
+compiler warnings and errors. The separate Linux integration harness reports
+nine platform warnings from Windows-annotated Editor and Vulkan APIs; all 14
+checks execute and pass. This does not establish Windows native execution.

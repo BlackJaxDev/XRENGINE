@@ -666,6 +666,29 @@ cannot overlap or reenter. `CloseStreaming` clears ownership and disposes the
 captured lease once; replacing the backend does not retarget that cleanup.
 Callers must still close streaming explicitly and coordinate external view users.
 
+`RuntimeRenderThreadHost` resolves the optional render-loop capability on the
+installed window factory. The desktop owner holds the complete native loop,
+startup signal, foreground render thread, and join. Collapsed mode stays on the
+calling thread and pumps native events before timer rendering. Caller-thread
+hosts continue to drive frames explicitly.
+
+The same desktop factory supplies optional secondary graphics owners. Each run
+owns its queue, background worker, cancellation, hidden window, and renderer.
+Window creation and disposal run on the native window owner; graphics work and
+renderer cleanup run on the secondary context owner. A one-second stop timeout
+retains the run until its worker and native window cleanup finish. Pending work
+does not transfer to a later run. Final window disposal uses the captured window
+application service. Secondary jobs use a thread-local renderer scope and do
+not replace another thread's current renderer. Hosts without this optional
+capability keep the explicit main-renderer fallback policy.
+
+`AnimYamlImporter.Import` captures one raw-read lease and one file-discovery
+provider for root clips, additive clips, headers, and GUID metadata. It preserves
+BOM-aware parsing and hashes the exact source bytes. Final publication validates
+both owners under short host reservations. A deferred object-cache batch keeps
+failed or stale imports out of cache discovery. The static Data Unity importer
+is a separate path and does not use this contract.
+
 ## Native assets and source identity
 
 The owning module declares native build/copy/publish items. This does not require every binary's physical supply directory to match the module name: protected submodule and SDK sources, CoACD staging under Core, Steam Audio staging under Audio, and Rive staging under Rendering retain their established locations. A folder containing a native binary is not evidence that the portable project compiles or packages it. Consult the evaluated module project and [native dependency guide](../../developer-guides/runtime/native-dependencies.md) for supply and output ownership.

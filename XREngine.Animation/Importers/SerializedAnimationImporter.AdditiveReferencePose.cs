@@ -14,7 +14,8 @@ public static partial class AnimYamlImporter
         string sourcePath,
         AnimationClip clip,
         ImportedAnimationImportManifestBuilder manifest,
-        HashSet<string> activePaths)
+        HashSet<string> activePaths,
+        ImportReadOwner owner)
     {
         ImportedHumanoidClipRootMotionSettings? settings = clip.ImportedHumanoidRootMotionSettings;
         if (settings?.HasAdditiveReferencePose != true)
@@ -38,7 +39,8 @@ public static partial class AnimYamlImporter
         {
             Dictionary<string, string> paths = ResolveSourceGuidPaths(
                 sourcePath,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { reference.Guid });
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { reference.Guid },
+                owner);
             if (!paths.TryGetValue(reference.Guid, out relativePath!))
             {
                 RecordFailure(manifest, field, $"Additive reference pose GUID '{reference.Guid}' could not be resolved through a project .meta file.");
@@ -62,6 +64,7 @@ public static partial class AnimYamlImporter
         }
         if (!TryGetStandaloneAnimationClipFileId(
                 resolvedPath,
+                owner,
                 out long standaloneFileId,
                 out string headerDiagnostic)
             || standaloneFileId != reference.FileId)
@@ -94,7 +97,7 @@ public static partial class AnimYamlImporter
         }
         try
         {
-            AnimationClip imported = ImportCore(resolvedPath, activePaths);
+            AnimationClip imported = ImportCore(resolvedPath, activePaths, owner);
             if (imported.SourceImportManifest is { } childManifest
                 && childManifest.TryGetBlockingDiagnostic(
                     allowRuntimeAdapters: true,
@@ -127,6 +130,7 @@ public static partial class AnimYamlImporter
 
     private static bool TryGetStandaloneAnimationClipFileId(
         string path,
+        ImportReadOwner owner,
         out long fileId,
         out string diagnostic)
     {
@@ -135,7 +139,9 @@ public static partial class AnimYamlImporter
         Match[] animationClips;
         try
         {
-            animationClips = UnityObjectHeader.Matches(File.ReadAllText(path))
+            using var stream = new MemoryStream(owner.Read.ReadAllBytes(path), writable: false);
+            using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
+            animationClips = UnityObjectHeader.Matches(reader.ReadToEnd())
                 .Cast<Match>()
                 .Where(static match => match.Groups["class"].Value == "74")
                 .ToArray();

@@ -43,6 +43,8 @@ internal static class BrowserWorldCapabilityAudit
                 Visit(root, 0, scenePath);
             sceneIndex++;
         }
+        Collect(() => BrowserAudioCookProfile.ValidateStaticResidency(world),
+            world.Name ?? "startup-world", "audio-static-residency", pass: "audio-pcm");
         Collect(() => rendering.Complete(world.Name ?? "startup-world", report), world.Name ?? "startup-world",
             "camera-pipeline", pass: "camera-pipeline");
         rendering.InspectNativeScenes(report, cancellationToken);

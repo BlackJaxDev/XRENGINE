@@ -161,6 +161,196 @@ public sealed class BrowserAudioCookingTests
         Assert.That(transport.Bytes, Is.EqualTo(new byte[] { 0, 128, 255 }));
     }
 
+    [Test]
+    public void CookedWorldAdmitsExactStaticResidencyLimitForSharedAudio()
+    {
+        using DataSource data = new(new byte[WebAudioPcmProfile.MaximumBufferBytes / 2]);
+        AudioData audio = new() { Name = "shared", Data = data, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        XRWorld world = CookWorldWithAudio(
+            StaticNode("first", audio), StaticNode("second", audio));
+        try
+        {
+            Assert.DoesNotThrow(() => BrowserAudioCookProfile.ValidateStaticResidency(world));
+        }
+        finally
+        {
+            DisposeWorldAudio(world);
+        }
+    }
+
+    [Test]
+    public void CookedWorldRejectsCombinedStaticResidencyAboveLimit()
+    {
+        using DataSource largeData = new(new byte[WebAudioPcmProfile.MaximumBufferBytes / 2]);
+        using DataSource extraData = new(new byte[1]);
+        AudioData large = new() { Name = "large", Data = largeData, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        AudioData extra = new() { Name = "extra", Data = extraData, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        XRWorld world = CookWorldWithAudio(
+            StaticNode("first", large), StaticNode("second", large), StaticNode("extra", extra));
+        try
+        {
+            NotSupportedException? failure = Assert.Throws<NotSupportedException>(() =>
+                BrowserAudioCookProfile.ValidateStaticResidency(world));
+            Assert.That(failure!.Message, Does.StartWith("BrowserCook.AudioStaticResidencyExceeded:"));
+            Assert.That(failure.Message, Does.Contain("extra"));
+            Assert.That(failure.Message, Does.Contain((WebAudioPcmProfile.MaximumBufferBytes + 1L).ToString()));
+        }
+        finally
+        {
+            DisposeWorldAudio(world);
+        }
+    }
+
+    [Test]
+    public void DisabledComponentDoesNotCountAsStaticResident()
+    {
+        using DataSource data = new(new byte[WebAudioPcmProfile.MaximumBufferBytes / 2]);
+        using DataSource extraData = new(new byte[1]);
+        AudioData audio = new() { Data = data, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        AudioData extra = new() { Data = extraData, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        SceneNode disabled = StaticNode("disabled", audio);
+        disabled.GetComponent<AudioSourceComponent>()!.IsActive = false;
+        XRWorld world = CookWorldWithAudio(StaticNode("resident", audio), disabled, StaticNode("extra", extra));
+        try
+        {
+            Assert.That(world.Scenes[0].RootNodes[1].GetComponent<AudioSourceComponent>()!.IsActive, Is.False);
+            Assert.DoesNotThrow(() => BrowserAudioCookProfile.ValidateStaticResidency(world));
+        }
+        finally
+        {
+            DisposeWorldAudio(world);
+        }
+    }
+
+    [Test]
+    public void InactiveParentDoesNotCountItsChildAsStaticResident()
+    {
+        using DataSource data = new(new byte[WebAudioPcmProfile.MaximumBufferBytes / 2]);
+        using DataSource extraData = new(new byte[1]);
+        AudioData audio = new() { Data = data, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        AudioData extra = new() { Data = extraData, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        SceneNode parent = new("inactive-parent") { IsActiveSelf = false };
+        parent.AddChild(StaticNode("child", audio));
+        XRWorld world = CookWorldWithAudio(StaticNode("resident", audio), parent, StaticNode("extra", extra));
+        try
+        {
+            Assert.That(world.Scenes[0].RootNodes[1].IsActiveSelf, Is.False);
+            Assert.That(world.Scenes[0].RootNodes[1].Transform.Children.Count, Is.EqualTo(1));
+            Assert.DoesNotThrow(() => BrowserAudioCookProfile.ValidateStaticResidency(world));
+        }
+        finally
+        {
+            DisposeWorldAudio(world);
+        }
+    }
+
+    [Test]
+    public void PositionalSourceDoesNotCountAsGuaranteedStaticResident()
+    {
+        using DataSource data = new(new byte[WebAudioPcmProfile.MaximumBufferBytes / 2]);
+        using DataSource extraData = new(new byte[1]);
+        AudioData audio = new() { Data = data, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        AudioData extra = new() { Data = extraData, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        SceneNode positional = StaticNode("positional", audio);
+        positional.GetComponent<AudioSourceComponent>()!.RelativeToListener = false;
+        XRWorld world = CookWorldWithAudio(StaticNode("resident", audio), positional, StaticNode("extra", extra));
+        try
+        {
+            Assert.That(world.Scenes[0].RootNodes[1].GetComponent<AudioSourceComponent>()!.RelativeToListener, Is.False);
+            Assert.DoesNotThrow(() => BrowserAudioCookProfile.ValidateStaticResidency(world));
+        }
+        finally
+        {
+            DisposeWorldAudio(world);
+        }
+    }
+
+    [Test]
+    public void InvisibleSceneDoesNotCountAsStaticResident()
+    {
+        using DataSource data = new(new byte[WebAudioPcmProfile.MaximumBufferBytes / 2]);
+        using DataSource extraData = new(new byte[1]);
+        AudioData audio = new() { Data = data, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        AudioData extra = new() { Data = extraData, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        XRScene hidden = new("hidden", StaticNode("hidden-source", audio)) { IsVisible = false };
+        XRWorld world = CookWorldWithScenes(new XRScene("visible", StaticNode("resident", audio), StaticNode("extra", extra)), hidden);
+        try
+        {
+            Assert.That(world.Scenes[1].IsVisible, Is.False);
+            Assert.DoesNotThrow(() => BrowserAudioCookProfile.ValidateStaticResidency(world));
+        }
+        finally
+        {
+            DisposeWorldAudio(world);
+        }
+    }
+
+    [Test]
+    public void MultipleVisibleScenesShareTheStaticResidencyLimit()
+    {
+        using DataSource data = new(new byte[WebAudioPcmProfile.MaximumBufferBytes / 2]);
+        using DataSource extraData = new(new byte[1]);
+        AudioData audio = new() { Data = data, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        AudioData extra = new() { Data = extraData, Type = AudioData.EPCMType.Byte,
+            Frequency = 48000, ChannelCount = 1 };
+        XRWorld world = CookWorldWithScenes(
+            new XRScene("first", StaticNode("first-source", audio)),
+            new XRScene("second", StaticNode("second-source", audio), StaticNode("extra", extra)));
+        try
+        {
+            Assert.Throws<NotSupportedException>(() => BrowserAudioCookProfile.ValidateStaticResidency(world));
+        }
+        finally
+        {
+            DisposeWorldAudio(world);
+        }
+    }
+
+    private static SceneNode StaticNode(string name, AudioData audio)
+    {
+        SceneNode node = new(name);
+        AudioSourceComponent source = node.AddComponent<AudioSourceComponent>()!;
+        source.RelativeToListener = true;
+        source.StaticBuffer = audio;
+        return node;
+    }
+
+    private static XRWorld CookWorldWithAudio(params SceneNode[] nodes)
+        => CookWorldWithScenes(new XRScene("audio-scene", nodes));
+
+    private static XRWorld CookWorldWithScenes(params XRScene[] scenes)
+    {
+        XRWorld world = new("audio-world", scenes);
+        byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(world));
+        byte[] envelope = CookedAssetEnvelope.Serialize(new CookedAssetBlob(
+            CookedAssetTypeReference.Encode(typeof(XRWorld)), CookedAssetFormat.BinaryV2, payload));
+        return CookedAssetReader.LoadAsset<XRWorld>(envelope)!;
+    }
+
+    private static void DisposeWorldAudio(XRWorld world)
+    {
+        HashSet<DataSource> data = new(ReferenceEqualityComparer.Instance);
+        foreach (XRScene scene in world.Scenes)
+            foreach (SceneNode node in scene.RootNodes)
+                if (node.GetComponent<AudioSourceComponent>()?.StaticBuffer?.Data is { } source)
+                    data.Add(source);
+        foreach (DataSource source in data)
+            source.Dispose();
+        world.Destroy();
+    }
+
     private static ListenerContext CreateListener(IAudioTransport transport)
         => (ListenerContext)Activator.CreateInstance(typeof(ListenerContext), BindingFlags.Instance | BindingFlags.NonPublic,
             binder: null, args: [transport, null], culture: null)!;

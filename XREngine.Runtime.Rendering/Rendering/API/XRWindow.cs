@@ -112,6 +112,7 @@ namespace XREngine.Rendering
 
         private bool _isDisposing;
         private bool _isDisposed;
+        private bool _secondaryNativeWindowReleased;
         private bool _approvedNativeCloseInProgress;
         private int _closeRequestedOrApproved;
         private int _pendingCloseRequested;
@@ -746,6 +747,59 @@ namespace XREngine.Rendering
         #region Constructor
 
         public XRWindow(RuntimeWindowCreateOptions options)
+            : this(options, RuntimeWindowBackendRegistry.RequireFactory())
+        {
+        }
+
+        /// <summary>Creates a secondary window through its captured native factory.</summary>
+        public static XRWindow CreateSecondaryGpuContextWindow(
+            RuntimeWindowCreateOptions options, IRuntimeWindowBackendFactory factory)
+        {
+            ArgumentNullException.ThrowIfNull(factory);
+            if (options.Purpose != RuntimeWindowPurpose.SecondaryGpuContext)
+                throw new ArgumentException("A secondary graphics window requires the secondary context purpose.", nameof(options));
+            return new XRWindow(options, factory);
+        }
+
+        /// <summary>Retains secondary native resources when safe renderer teardown fails.</summary>
+        public void AbandonSecondaryContextTeardown()
+        {
+            if (!IsSecondaryGpuContext)
+                throw new InvalidOperationException("Only a secondary graphics owner can abandon this teardown.");
+            _renderer?.AbandonShutdownTeardown();
+        }
+
+        /// <summary>Disposes a secondary window and confirms that its native backend was released.</summary>
+        public bool TryDisposeSecondaryGpuContextWindow()
+        {
+            if (!IsSecondaryGpuContext)
+                throw new InvalidOperationException("Only a secondary graphics owner can request this release.");
+            if (Environment.CurrentManagedThreadId != NativeWindowThreadId)
+                throw new InvalidOperationException("Secondary GPU window disposal requires the native window owner thread.");
+            Dispose();
+            return _secondaryNativeWindowReleased;
+        }
+
+        /// <summary>Runs one secondary job with a thread-local renderer scope.</summary>
+        public void ExecuteSecondaryGpuJob(Action<AbstractRenderer> job)
+        {
+            ArgumentNullException.ThrowIfNull(job);
+            if (!IsSecondaryGpuContext)
+                throw new InvalidOperationException("Only a secondary graphics owner can execute this job.");
+            IRuntimeWindowGlContext context = DesktopGlContext
+                ?? throw new InvalidOperationException("The secondary window lost its GL context.");
+            context.AssertOwnerThread();
+            bool previousActive = _renderer.Active;
+            using var current = AbstractRenderer.EnterThreadCurrentScope(_renderer);
+            try
+            {
+                _renderer.Active = true;
+                job(_renderer);
+            }
+            finally { _renderer.Active = previousActive; }
+        }
+
+        private XRWindow(RuntimeWindowCreateOptions options, IRuntimeWindowBackendFactory factory)
         {
             IsSecondaryGpuContext = options.Purpose == RuntimeWindowPurpose.SecondaryGpuContext;
             _viewports.CollectionChanged += ViewportsChanged;
@@ -755,7 +809,7 @@ namespace XREngine.Rendering
             WindowVSyncRequested = options.Startup.VSync;
             PreferHDROutput = options.PreferHdrOutput;
 
-            _desktopBackend = RuntimeWindowBackendRegistry.RequireFactory().Create(in options);
+            _desktopBackend = factory.Create(in options);
             _nativeWindowThreadId = _desktopBackend.OwnerThreadId;
             Volatile.Write(ref _renderOwnerThreadId, _nativeWindowThreadId);
             try
@@ -3508,7 +3562,12 @@ namespace XREngine.Rendering
                 {
                     try
                     {
-                        _desktopBackend?.Dispose();
+                        if (_desktopBackend is { } backend)
+                        {
+                            backend.Dispose();
+                            if (IsSecondaryGpuContext)
+                                SetField(ref _secondaryNativeWindowReleased, true, publishNotifications: false);
+                        }
                     }
                     catch
                     {
@@ -3604,7 +3663,12 @@ namespace XREngine.Rendering
                     // Finally, release the window itself if possible.
                     try
                     {
-                        _desktopBackend?.Dispose();
+                        if (_desktopBackend is { } backend)
+                        {
+                            backend.Dispose();
+                            if (IsSecondaryGpuContext)
+                                SetField(ref _secondaryNativeWindowReleased, true, publishNotifications: false);
+                        }
                     }
                     catch
                     {

@@ -7,7 +7,8 @@ using XREngine.Rendering;
 namespace XREngine.Runtime.Platform.Desktop.Windowing;
 
 /// <summary>Maps authored desktop window policy to Silk on the native window owner.</summary>
-public sealed class DesktopSilkWindowBackendFactory : IRuntimeWindowBackendFactory
+public sealed class DesktopSilkWindowBackendFactory : IRuntimeWindowBackendFactory,
+    IRuntimeRenderThreadHostFactory, IRuntimeSecondaryGpuContextFactory
 {
     private static readonly object AuxiliaryWindowsSync = new();
     private static readonly List<DesktopSilkWindowBackend> AuxiliaryWindows = [];
@@ -35,6 +36,18 @@ public sealed class DesktopSilkWindowBackendFactory : IRuntimeWindowBackendFacto
                     window.PumpEvents();
             }
         }
+    }
+
+    public IRuntimeRenderThreadHost CreateRenderThreadHost(
+        Action<Func<bool>> blockForTimerRendering, Action waitToRender, Action stopTimer)
+        => new DesktopRenderThreadHost(blockForTimerRendering, waitToRender, stopTimer);
+
+    public IRuntimeSecondaryGpuContext CreateSecondaryGpuContext(XRWindow templateWindow, bool allowContextSharing)
+    {
+        var resources = new DesktopSecondaryGpuContextResources(this, templateWindow, allowContextSharing);
+        var owner = new DesktopSecondaryGpuContext(resources);
+        owner.Start();
+        return owner;
     }
 
     public IRuntimeWindowBackend Create(in RuntimeWindowCreateOptions request)

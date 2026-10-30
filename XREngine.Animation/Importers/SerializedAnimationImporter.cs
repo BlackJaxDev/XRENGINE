@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using SerializedAssets;
+using XREngine.Data;
+using XREngine.Data.Core;
 using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Components.Animation;
@@ -243,13 +245,27 @@ namespace XREngine.Animation.Importers
         }
 
         public static AnimationClip Import(string filePath)
-            => ImportCore(filePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        {
+            ArgumentNullException.ThrowIfNull(filePath);
+            using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+            read.EnsureHostFileAccess("Unity animation import");
+            IRuntimeFileDiscovery? discovery = RuntimeFileDiscoveryServices.Capture(out long discoveryGeneration);
+            var owner = new ImportReadOwner(read, discovery, discoveryGeneration);
+            using ObjectCachePublicationScope cachePublication = XRObjectBase.BeginDeferredObjectCachePublication();
+            AnimationClip clip = ImportCore(filePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), owner);
+            using IDisposable hostPublication = RuntimeSourcePublicationServices.BeginPublication(
+                RuntimeSourcePublicationServices.Generation);
+            using IDisposable readPublication = read.BeginPublication();
+            owner.EnsureDiscoveryCurrent();
+            cachePublication.Complete();
+            return clip;
+        }
 
-        private static AnimationClip ImportCore(string filePath, HashSet<string> activeAdditiveReferences)
+        private static AnimationClip ImportCore(string filePath, HashSet<string> activeAdditiveReferences, ImportReadOwner owner)
         {
             ArgumentNullException.ThrowIfNull(filePath);
 
-            byte[] sourceBytes = File.ReadAllBytes(filePath);
+            byte[] sourceBytes = owner.Read.ReadAllBytes(filePath);
             string sourceContentHash = Convert.ToHexString(SHA256.HashData(sourceBytes));
             using var sourceStream = new MemoryStream(sourceBytes, writable: false);
             using var reader = new StreamReader(sourceStream, detectEncodingFromByteOrderMarks: true);
@@ -346,8 +362,9 @@ namespace XREngine.Animation.Importers
                 filePath,
                 startTime,
                 stopTime,
-                manifestBuilder);
-            List<ObjectCurve> objectCurves = ReadObjectReferenceCurves(clipMap, filePath, manifestBuilder);
+                manifestBuilder,
+                owner);
+            List<ObjectCurve> objectCurves = ReadObjectReferenceCurves(clipMap, filePath, manifestBuilder, owner);
 
             // Some exporters duplicate data between m_FloatCurves and m_EditorCurves.
             // Prefer m_FloatCurves when present; fall back to m_EditorCurves.
@@ -376,7 +393,8 @@ namespace XREngine.Animation.Importers
                 hasAuthoritativeEditableObjectCurves: objectCurves.Count > 0,
                 startTime,
                 stopTime,
-                sampleRate);
+                sampleRate,
+                owner);
             NormalizeQuaternionVectorCurves(vecCurves, manifestBuilder);
             NormalizeDefaultInfinityModes(curves, vecCurves, sourceWrapMode, looped);
             ReadMaterialObjectReferenceBindings(clipMap, materialBindings, materialBindingDiagnostics);
@@ -922,7 +940,7 @@ namespace XREngine.Animation.Importers
             clip.SourceMaterialBindings = [.. materialBindings.Distinct()];
                 clip.MaterialBindingDiagnostics = [.. materialBindingDiagnostics];
             clip.ImportedGenericBindings = [.. genericBindings.Distinct()];
-            ResolveAdditiveReferencePose(filePath, clip, manifestBuilder, activeAdditiveReferences);
+            ResolveAdditiveReferencePose(filePath, clip, manifestBuilder, activeAdditiveReferences, owner);
             manifestBuilder.SourceIdentity.ImportSettingsSha256 = ComputeImportSettingsHash(
                 rootMotionSettings,
                 clip.ImportedAdditiveReferencePoseClip?.SourceImportManifest?.SourceIdentity.SourceContentSha256);
@@ -2300,7 +2318,8 @@ namespace XREngine.Animation.Importers
         private static List<ObjectCurve> ReadObjectReferenceCurves(
             YamlMappingNode clipMap,
             string clipFilePath,
-            ImportedAnimationImportManifestBuilder manifestBuilder)
+            ImportedAnimationImportManifestBuilder manifestBuilder,
+            ImportReadOwner owner)
         {
             YamlSequenceNode? sequence = GetSequenceOrNull(clipMap, "m_PPtrCurves");
             if (sequence is null || sequence.Children.Count == 0)
@@ -2360,7 +2379,7 @@ namespace XREngine.Animation.Importers
                     objectKeys));
             }
 
-            Dictionary<string, string> resolvedPaths = ResolveSourceGuidPaths(clipFilePath, referencedGuids);
+            Dictionary<string, string> resolvedPaths = ResolveSourceGuidPaths(clipFilePath, referencedGuids, owner);
             for (int curveIndex = 0; curveIndex < curves.Count; curveIndex++)
             {
                 ObjectCurve curve = curves[curveIndex];
@@ -2381,7 +2400,8 @@ namespace XREngine.Animation.Importers
 
         private static Dictionary<string, string> ResolveSourceGuidPaths(
             string clipFilePath,
-            HashSet<string> requestedGuids)
+            HashSet<string> requestedGuids,
+            ImportReadOwner owner)
         {
             Dictionary<string, string> resolved = new(StringComparer.OrdinalIgnoreCase);
             if (requestedGuids.Count == 0)
@@ -2396,10 +2416,17 @@ namespace XREngine.Animation.Importers
 
             try
             {
-                foreach (string metaPath in XREngine.Data.RuntimeFileDiscoveryServices.Required.EnumerateFiles(directory.FullName, "*.meta", SearchOption.AllDirectories))
+                owner.Read.EnsureHostFileAccess("Unity animation metadata lookup");
+                owner.EnsureDiscoveryCurrent();
+                IRuntimeFileDiscovery discovery = owner.Discovery ?? throw new NotSupportedException(
+                    "File discovery is not installed. The host must provide its storage enumeration capability.");
+                foreach (string metaPath in discovery.EnumerateFiles(directory.FullName, "*.meta", SearchOption.AllDirectories))
                 {
+                    owner.EnsureDiscoveryCurrent();
                     string? guid = null;
-                    foreach (string line in File.ReadLines(metaPath).Take(24))
+                    using var stream = new MemoryStream(owner.Read.ReadAllBytes(metaPath), writable: false);
+                    using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
+                    for (int lineIndex = 0; lineIndex < 24 && reader.ReadLine() is string line; lineIndex++)
                     {
                         ReadOnlySpan<char> trimmed = line.AsSpan().Trim();
                         if (!trimmed.StartsWith("guid:", StringComparison.OrdinalIgnoreCase))
@@ -2416,6 +2443,7 @@ namespace XREngine.Animation.Importers
                     if (resolved.Count == requestedGuids.Count)
                         break;
                 }
+                owner.EnsureDiscoveryCurrent();
             }
             catch (IOException)
             {
@@ -2425,6 +2453,8 @@ namespace XREngine.Animation.Importers
             catch (UnauthorizedAccessException)
             {
             }
+
+            owner.EnsureDiscoveryCurrent();
 
             return resolved;
         }
@@ -2804,7 +2834,8 @@ namespace XREngine.Animation.Importers
             string clipFilePath,
             float startTimeSeconds,
             float stopTimeSeconds,
-            ImportedAnimationImportManifestBuilder manifestBuilder)
+            ImportedAnimationImportManifestBuilder manifestBuilder,
+            ImportReadOwner owner)
         {
             YamlSequenceNode? sequence = GetSequenceOrNull(clipMap, "m_Events");
             if (sequence is null || sequence.Children.Count == 0)
@@ -2892,7 +2923,7 @@ namespace XREngine.Animation.Importers
                 });
             }
 
-            Dictionary<string, string> resolvedPaths = ResolveSourceGuidPaths(clipFilePath, referencedGuids);
+            Dictionary<string, string> resolvedPaths = ResolveSourceGuidPaths(clipFilePath, referencedGuids, owner);
             int unresolvedReferenceCount = 0;
             for (int i = 0; i < events.Count; i++)
             {

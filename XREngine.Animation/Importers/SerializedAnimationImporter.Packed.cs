@@ -206,7 +206,8 @@ public static partial class AnimYamlImporter
         bool hasAuthoritativeEditableObjectCurves,
         float clipStartTime,
         float clipStopTime,
-        int clipSampleRate)
+        int clipSampleRate,
+        ImportReadOwner owner)
     {
         YamlMappingNode? muscleClip = GetMappingOrNull(clipMap, "m_MuscleClip");
         YamlMappingNode? serializedClip = GetMappingOrNull(muscleClip, "m_Clip");
@@ -295,7 +296,7 @@ public static partial class AnimYamlImporter
         }
 
         NormalizePackedQuaternionCurves(decodedScalars, manifestBuilder);
-        ResolvePackedObjectReferences(clipFilePath, decodedObjects, pptrMapping);
+        ResolvePackedObjectReferences(clipFilePath, decodedObjects, pptrMapping, owner);
         if (!hasAuthoritativeEditableScalarCurves)
             scalarDestination.AddRange(decodedScalars);
         if (!hasAuthoritativeEditableObjectCurves)
@@ -1086,13 +1087,14 @@ public static partial class AnimYamlImporter
     private static void ResolvePackedObjectReferences(
         string clipFilePath,
         List<ObjectCurve> curves,
-        SourceAssetReference[] mapping)
+        SourceAssetReference[] mapping,
+        ImportReadOwner owner)
     {
         HashSet<string> requestedGuids = mapping
             .Where(static reference => !string.IsNullOrWhiteSpace(reference.Guid))
             .Select(static reference => reference.Guid)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, string> resolvedPaths = ResolveSourceGuidPaths(clipFilePath, requestedGuids);
+        Dictionary<string, string> resolvedPaths = ResolveSourceGuidPaths(clipFilePath, requestedGuids, owner);
         for (int curveIndex = 0; curveIndex < curves.Count; curveIndex++)
         {
             ObjectCurve curve = curves[curveIndex];

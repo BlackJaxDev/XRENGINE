@@ -25,6 +25,12 @@ or quantization. A clip must fit 8 MiB. The JavaScript transport separately enfo
 the 8 MiB total buffer budget per output context, so individually valid clips do
 not guarantee that all clips can be resident together. The shared audio buffer
 rejects other channel counts and updates its metadata only after successful upload.
+The browser world audit rejects active listener-relative static sources when
+their combined uploaded PCM bytes exceed one output context's 8 MiB limit. Each
+source counts its own buffer, even if it names the same `AudioData`. Inactive
+sources, positional sources, and separate streamed scenes are not treated as
+guaranteed simultaneous residents. Runtime source changes and overlapping
+streamed scenes can still exceed the context budget.
 
 This path consumes already decoded assets. It does not add compressed web audio,
 FLAC decoding, automatic segmentation, or a new file codec. WAV, MP3, and Ogg

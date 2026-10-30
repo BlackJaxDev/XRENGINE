@@ -50,7 +50,7 @@ public sealed class WindowOwnershipContractTests
     public void CollapsedWindowHost_PumpsNativeEventsBeforeEnteringRenderDispatch()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs").Replace("\r\n", "\n");
-        string host = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderThreadHost.cs").Replace("\r\n", "\n");
+        string host = ReadWorkspaceFile("XREngine.Runtime.Platform.Desktop/Windowing/DesktopRenderThreadHost.cs").Replace("\r\n", "\n");
 
         int renderStart = source.IndexOf("private void RenderFrame()", StringComparison.Ordinal);
         renderStart.ShouldBeGreaterThanOrEqualTo(0);

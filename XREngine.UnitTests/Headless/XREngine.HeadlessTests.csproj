@@ -37,11 +37,18 @@
     <EmbeddedResource Include="../Rendering/Fixtures/texture-streaming-legacy.bin" LogicalName="TextureCooking.Legacy" />
     <Compile Include="../Core/AssetDirectoryHostTests.cs" Link="Core/AssetDirectoryHostTests.cs" />
     <Compile Include="../Core/RuntimeBlockingTaskTests.cs" Link="Core/RuntimeBlockingTaskTests.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopRenderThreadHost.cs" Link="Platform/Windowing/DesktopRenderThreadHost.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopSecondaryGpuContextResources.cs" Link="Platform/Windowing/DesktopSecondaryGpuContextResources.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopSecondaryGpuContextRelease.cs" Link="Platform/Windowing/DesktopSecondaryGpuContextRelease.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopSecondaryGpuContext.cs" Link="Platform/Windowing/DesktopSecondaryGpuContext.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/IDesktopSecondaryGpuContextResources.cs" Link="Platform/Windowing/IDesktopSecondaryGpuContextResources.cs" />
+    <Compile Include="../Rendering/NativeRenderOwnerTests.cs" Link="Rendering/NativeRenderOwnerTests.cs" />
     <Compile Include="../Core/EngineLoopDomainTests.cs" Link="Core/EngineLoopDomainTests.cs" />
     <Compile Include="../Core/EngineTimerLoopDomainTests.cs" Link="Core/EngineTimerLoopDomainTests.cs" />
     <Compile Include="../Core/EngineTimerTests.cs" Link="Core/EngineTimerTests.cs" />
     <Compile Include="../Core/AssetDirectoryTestFileSystem.cs" Link="Core/AssetDirectoryTestFileSystem.cs" />
     <Compile Include="../Animation/AnimationClipReferenceHostTests.cs" Link="Animation/AnimationClipReferenceHostTests.cs" />
+    <Compile Include="../Animation/SerializedAnimationImporterHostTests.cs" Link="Animation/SerializedAnimationImporterHostTests.cs" />
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />
     <Compile Include="../VR/VrTrackerBinderTests.cs" Link="VR/VrTrackerBinderTests.cs" />
     <Compile Include="../Animation/VRIKAdditionalTargetTests.cs" Link="Animation/VRIKAdditionalTargetTests.cs" />
