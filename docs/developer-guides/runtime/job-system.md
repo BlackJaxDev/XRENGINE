@@ -16,7 +16,8 @@ thread-pool-backed worker loops.
   yielded values, and requeues when needed.
 - **Persistent domains**: `EngineGeneralWorkDomain` owns the general lanes,
   `EngineJobAuxiliaryWorkDomain` owns deferred admission and remote dispatch,
-  and `RenderWorkDomain` owns stable renderer-neutral lanes and pooled batches.
+  and the public `RenderWorkDomain` facade owns a native render owner with stable
+  renderer-neutral lanes and pooled batches.
   None relies on thread-pool growth heuristics for persistent execution.
 - **Affinities**: general jobs choose `Any` (general workers), `RenderThread`,
   `AppThread`, `CollectVisibleSwap`, or `Remote`. Foreground affinities are
@@ -96,6 +97,11 @@ process thread.
 `RenderWorkDomain` is the pooled primitive for coarse, bounded preparation
 work. It is available through `IRuntimeRenderWorkServices.RenderWork`; runtime
 modules do not construct their own pool.
+The worker backend supplies the physical lanes, bounded queues, batch pool,
+calibration, cancellation, and shutdown through the scheduler-captured factory.
+A directly constructed domain resolves the registered worker factory after
+caller-mode and argument validation. A factory without the native render
+capability fails explicitly.
 
 Nested synchronous render-batch execution is rejected from every render-work
 lane, including attempts to enter a different domain. The process architecture

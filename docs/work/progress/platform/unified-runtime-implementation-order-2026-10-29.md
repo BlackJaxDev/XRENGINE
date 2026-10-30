@@ -87,7 +87,7 @@ The native execution leaf owns the update, visibility and fixed-update thread
 handles, start order and bounded joins. The timer keeps callbacks and pacing.
 Startup failure and shutdown timeout retain incomplete ownership; stop requests
 during startup remain effective. All 27 focused timer tests pass. Physical
-pacing waits and other rendering worker domains remain in shared code.
+pacing waits remain in shared code. Later increments move the render worker domains.
 
 YAML writing now captures the serialization owner for asset references and the
 file owner for backing-text comparisons. Edited text remains inline when the
@@ -162,3 +162,18 @@ failure during blocked cleanup.
 The FXAA increment also passes all 24 publication gates with zero compiler
 warnings and errors. The Editor package contains 1,335 engine assets and 5,636
 publisher sidecar files, all verified against their recorded hashes.
+
+The native execution leaf now owns render lanes, pooled batches, bounded queues,
+calibration, cancellation and shutdown. Core retains the public facade, result
+types, backend attachments and generation-checked lease contract. The scheduler
+passes its captured factory; unsupported render capability fails explicitly.
+All 25 existing scheduler checks and two capability checks pass, including
+worker overlap, stale leases, shutdown retry and the unchanged zero-allocation
+assertion. Fourteen timer and blocking-backend checks also pass. The current
+portable scan finds 182 wait/result/join lines in 100 files, zero explicit thread
+constructors and 60 task/pool lines in 29 files. These lexical counts do not
+establish complete browser reachability.
+
+The render-worker move passes all 24 publication gates with zero compiler
+warnings and errors. The Editor package contains 1,335 engine assets and 5,633
+publisher sidecar files, with every recorded hash verified.

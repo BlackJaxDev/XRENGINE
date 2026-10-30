@@ -35,7 +35,14 @@ public sealed class EngineWorkScheduler : IDisposable
         {
             Render = new RenderWorkDomain(
                 topology.RenderWorkerThreadCount,
-                topology.RenderWorkerQos);
+                topology.RenderWorkerQos,
+                RenderWorkDomain.DefaultFrameSlotCount,
+                RenderWorkDomain.DefaultQueueCapacityPerLane,
+                RenderWorkDomain.DefaultBatchPoolCapacity,
+                RenderWorkDomain.DefaultInitialItemCapacity,
+                RenderWorkDomain.DefaultInitialDependencyCapacity,
+                RenderWorkDomain.DefaultInlineItemThreshold,
+                workerFactory);
         }
         catch (Exception startupError)
         {

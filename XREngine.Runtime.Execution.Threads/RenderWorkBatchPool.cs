@@ -13,7 +13,7 @@ internal sealed class RenderWorkBatchPool
     private int _shutdownState;
 
     internal RenderWorkBatchPool(
-        RenderWorkDomain domain,
+        ThreadedRenderWorkDomain domain,
         int batchCapacity,
         int initialItemCapacity,
         int initialDependentCapacity)

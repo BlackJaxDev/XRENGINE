@@ -6,7 +6,7 @@ namespace XREngine.Execution;
 /// <summary>
 /// Reusable control block and pooled storage for one render-work generation.
 /// </summary>
-internal sealed class RenderWorkBatch
+internal sealed class RenderWorkBatch : IRenderWorkBatchHandle
 {
     private const int StateReturning = -3;
     private const int StateRenting = -2;
@@ -19,7 +19,7 @@ internal sealed class RenderWorkBatch
     private const int StateFaulting = 5;
 
     private readonly RenderWorkBatchPool _pool;
-    private readonly RenderWorkDomain _domain;
+    private readonly ThreadedRenderWorkDomain _domain;
     private readonly object _leaseSync = new();
     private readonly ManualResetEventSlim _terminalEvent = new(initialState: true);
     private readonly ManualResetEventSlim _leaseReturnedEvent = new(initialState: true);
@@ -50,7 +50,7 @@ internal sealed class RenderWorkBatch
 
     internal RenderWorkBatch(
         RenderWorkBatchPool pool,
-        RenderWorkDomain domain,
+        ThreadedRenderWorkDomain domain,
         int initialItemCapacity,
         int initialDependentCapacity)
     {
@@ -67,7 +67,7 @@ internal sealed class RenderWorkBatch
     internal long Generation => Volatile.Read(ref _generation);
     internal int ItemCount => _itemCount;
     internal int FrameSlot => _frameSlot;
-    internal RenderWorkDomain Domain => _domain;
+    internal ThreadedRenderWorkDomain Domain => _domain;
     internal IRenderWorkExecutor Executor
         => _executor ?? throw new InvalidOperationException("The render-work batch has no sealed executor.");
     internal bool InlineOnly => _inlineOnly;
@@ -745,4 +745,32 @@ internal sealed class RenderWorkBatch
         ArrayPool<T>.Shared.Return(array, clearArray: RuntimeHelpers.IsReferenceOrContainsReferences<T>());
         array = replacement;
     }
+    int IRenderWorkBatchHandle.GetItemCount(long generation) => GetItemCount(generation);
+
+    void IRenderWorkBatchHandle.SetItem(long generation, int itemIndex, in RenderWorkItem item)
+    {
+        long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
+        SetItem(generation, itemIndex, item);
+        _domain.RecordBuildAllocation(allocationBefore);
+    }
+
+    void IRenderWorkBatchHandle.SetDependent(long generation, int dependentSlot, int dependentItemIndex)
+    {
+        long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
+        SetDependent(generation, dependentSlot, dependentItemIndex);
+        _domain.RecordBuildAllocation(allocationBefore);
+    }
+
+    RenderWorkBatchResult IRenderWorkBatchHandle.GetResult(long generation) => GetResult(generation);
+
+    void IRenderWorkBatchHandle.Cancel(long generation) => Cancel(generation);
+
+    void IRenderWorkBatchHandle.ReleaseLease(long generation)
+    {
+        long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
+        long mergeCostStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        ReleaseLease(generation);
+        _domain.RecordMergeOperation(allocationBefore, mergeCostStarted);
+    }
+
 }

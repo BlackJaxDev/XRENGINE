@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace XREngine.Execution;
 
-public sealed partial class RenderWorkDomain
+internal sealed partial class ThreadedRenderWorkDomain
 {
     private static readonly long InitialEstimatedTicksPerCostUnit =
         Math.Max(1L, Stopwatch.Frequency / 10_000L);

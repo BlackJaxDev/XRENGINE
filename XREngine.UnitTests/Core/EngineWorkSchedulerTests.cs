@@ -10,6 +10,44 @@ namespace XREngine.UnitTests.Core;
 [NonParallelizable]
 public sealed class EngineWorkSchedulerTests
 {
+    private FieldInfo[]? _providerFields;
+    private object?[]? _previousProviders;
+
+    [OneTimeSetUp]
+    public void RegisterNativeWorkers()
+    {
+        string[] providerTypes =
+        [
+            "XREngine.Execution.EngineWorkerDomainServices",
+            "XREngine.Execution.RuntimeBlockingTaskServices",
+            "XREngine.Scene.Transforms.TransformPropagationWorkerServices",
+            "XREngine.Execution.ProfilerStatsWorkerServices",
+        ];
+        string[] fieldNames = ["_factory", "_backend", "_factory", "_factory"];
+        _providerFields = new FieldInfo[providerTypes.Length];
+        _previousProviders = new object?[providerTypes.Length];
+        Assembly coreAssembly = typeof(EngineWorkerDomainServices).Assembly;
+        for (int index = 0; index < providerTypes.Length; index++)
+        {
+            Type providerType = coreAssembly.GetType(providerTypes[index], throwOnError: true)!;
+            FieldInfo field = providerType.GetField(fieldNames[index],
+                BindingFlags.Static | BindingFlags.NonPublic)!;
+            _providerFields[index] = field;
+            _previousProviders[index] = field.GetValue(null);
+        }
+
+        ThreadedWorkerBackend.EnsureRegistered();
+    }
+
+    [OneTimeTearDown]
+    public void RestoreNativeWorkers()
+    {
+        if (_providerFields is null || _previousProviders is null)
+            return;
+        for (int index = 0; index < _providerFields.Length; index++)
+            _providerFields[index].SetValue(null, _previousProviders[index]);
+    }
+
     [Test]
     public void ZeroGeneralWorkers_UsesCooperativeInlineExecutionWithoutHiddenThread()
     {
