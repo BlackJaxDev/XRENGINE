@@ -6,6 +6,14 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 
 ## Explicit Output Failure Policy
 
+The Default WebGPU FXAA route tonemaps HDR into a generation-owned, window-size
+RGBA8 texture. The texture stores the display-encoded result without an sRGB
+texture transfer. The FXAA pass reads that texture and writes to the external
+output before debug overlays and screen UI. None and four-sample MSAA still
+tonemap directly to the external output. The selected resource generation owns
+the FXAA texture, framebuffer, and quad program so resize and mode changes
+replace them together. The output requires the exact cooked `fxaa` program.
+
 `XRRenderPipelineInstance.PropagateCommandExceptions` lets an explicit frame
 producer require complete command authoring. When enabled, a command-container
 exception is retained while the authored pop/unbind sequence finishes, then

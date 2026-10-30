@@ -23,8 +23,8 @@ public partial class DefaultRenderPipeline
         if (profile.Stereo || profile.ViewCount != 1 || profile.OutputHDR ||
             profile.OutputColorFormat != EPixelInternalFormat.Rgba8)
             throw new NotSupportedException("WebGPU.DefaultPipeline.ProfileUnsupported: the forward-lit output requires mono SDR RGBA8 presentation.");
-        if (profile.AntiAliasingMode is not (EAntiAliasingMode.None or EAntiAliasingMode.Msaa))
-            throw new NotSupportedException($"WebGPU.DefaultPipeline.AntiAliasingUnsupported: '{profile.AntiAliasingMode}' has no cooked output path; None and x4 MSAA are supported.");
+        if (profile.AntiAliasingMode is not (EAntiAliasingMode.None or EAntiAliasingMode.Msaa or EAntiAliasingMode.Fxaa))
+            throw new NotSupportedException($"WebGPU.DefaultPipeline.AntiAliasingUnsupported: '{profile.AntiAliasingMode}' has no cooked output path; None, FXAA and x4 MSAA are supported.");
         if (WebMsaaEnabled(profile) && profile.MsaaSampleCount != 4)
             throw new NotSupportedException($"WebGPU.DefaultPipeline.SampleCountUnsupported: requested x{profile.MsaaSampleCount}; the exact multisample resource and resolve contract requires x4.");
     }

@@ -117,7 +117,12 @@ internal sealed class DesktopSecondaryGpuContext(IDesktopSecondaryGpuContextReso
                 resources.Execute(job);
             }
         }
-        catch (Exception error) { ReportFailure("Secondary render context terminated", error); }
+        catch (Exception error)
+        {
+            // Close admission before diagnostics or cleanup can block the failed worker.
+            lock (_gate) _stopping = true;
+            ReportFailure("Secondary render context terminated", error);
+        }
         finally
         {
             try { resources.CleanUp(); }

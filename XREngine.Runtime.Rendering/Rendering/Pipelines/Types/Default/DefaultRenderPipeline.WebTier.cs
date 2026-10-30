@@ -17,6 +17,9 @@ namespace XREngine.Rendering;
 public partial class DefaultRenderPipeline
 {
     private const string WebTonemapFBOName = "WebTonemapMaterial";
+    private const string WebFxaaSourceTextureName = "WebFxaaSourceTexture";
+    private const string WebFxaaSourceFboName = "WebFxaaSourceFBO";
+    private const string WebFxaaQuadName = "WebFxaaQuad";
     private ShaderProgramArtifact? _webTonemapArtifact;
     protected override void OnBindingWebPipelineArtifacts(WebPipelineArtifactCatalog artifacts)
     {
@@ -85,7 +88,7 @@ public partial class DefaultRenderPipeline
             throw new NotSupportedException("WebGPU.DefaultPipeline.TonemapArtifactMissing: the package must supply its exact cooked tonemap artifact.");
     }
 
-    private void DeclareWebResources(RenderPipelineResourceLayoutBuilder builder)
+    internal void DeclareWebResources(RenderPipelineResourceLayoutBuilder builder)
     {
         RenderPipelineResourceProfile profile = builder.Profile;
         ValidateWebSampleProfile(profile);
@@ -126,6 +129,8 @@ public partial class DefaultRenderPipeline
             tonemap.DependsOn(AutoExposureTextureName);
         }
         tonemap.Factory(() => CreateWebTonemapMaterial(autoExposure)).Add();
+        if (profile.AntiAliasingMode == EAntiAliasingMode.Fxaa)
+            DeclareWebFxaaResources(builder);
         builder.External("$ExternalOutput")
             .Contract(ExternalRenderResourceKind.FrameBuffer,
                 profile.ExternalTargetKind == RenderPipelineExternalTargetKind.Window
@@ -221,7 +226,7 @@ public partial class DefaultRenderPipeline
             shader.Destroy(true);
     }
 
-    private ViewportRenderCommandContainer CreateWebOutputCommands()
+    internal ViewportRenderCommandContainer CreateWebOutputCommands()
     {
         ViewportRenderCommandContainer commands = new(this);
         commands.Add<VPRC_Manual>().ManualAction = ValidateWebFrameRequirements;
@@ -312,7 +317,28 @@ public partial class DefaultRenderPipeline
                 .ConfigureRenderGraphResources(static resources => resources.SampleTexture(WebBloomCombinedTextureName));
             debugBloomChoice.TrueCommands = debugBloomCommands;
             ViewportRenderCommandContainer tonemapCommands = new(this);
-            VPRC_RenderQuadToFBO tonemap = tonemapCommands.Add<VPRC_RenderQuadToFBO>();
+            VPRC_IfElse fxaaChoice = tonemapCommands.Add<VPRC_IfElse>();
+            fxaaChoice.Label = "WebFxaa";
+            fxaaChoice.ConditionEvaluator = ShouldUseWebFxaa;
+            ViewportRenderCommandContainer fxaaCommands = new(this);
+            VPRC_RenderQuadToFBO fxaaTonemap = fxaaCommands.Add<VPRC_RenderQuadToFBO>();
+            fxaaTonemap.RequiredForOutput = true;
+            fxaaTonemap.RequiredDeclaredResourceName = WebFxaaSourceFboName;
+            fxaaTonemap.SetTargets(WebTonemapFBOName, WebFxaaSourceFboName, matchDestinationRenderArea: true)
+                .ConfigureRenderGraphResources(static resources =>
+                {
+                    resources.SampleTexture(HDRSceneTextureName);
+                    resources.SampleTextureWhenDeclared(WebBloomCombinedTextureName);
+                    resources.SampleTextureWhenDeclared(AutoExposureTextureName);
+                });
+            VPRC_RenderQuadToFBO fxaa = fxaaCommands.Add<VPRC_RenderQuadToFBO>();
+            fxaa.RequiredForOutput = true;
+            fxaa.RequiredDeclaredResourceName = WebFxaaSourceTextureName;
+            fxaa.SetTargets(WebFxaaQuadName)
+                .ConfigureRenderGraphResources(static resources => resources.SampleTexture(WebFxaaSourceTextureName));
+            fxaaChoice.TrueCommands = fxaaCommands;
+            ViewportRenderCommandContainer directTonemapCommands = new(this);
+            VPRC_RenderQuadToFBO tonemap = directTonemapCommands.Add<VPRC_RenderQuadToFBO>();
             tonemap.RequiredForOutput = true;
             tonemap.SetTargets(WebTonemapFBOName)
                 .ConfigureRenderGraphResources(static resources =>
@@ -321,6 +347,7 @@ public partial class DefaultRenderPipeline
                     resources.SampleTextureWhenDeclared(WebBloomCombinedTextureName);
                     resources.SampleTextureWhenDeclared(AutoExposureTextureName);
                 });
+            fxaaChoice.FalseCommands = directTonemapCommands;
             debugBloomChoice.FalseCommands = tonemapCommands;
             commands.Add<VPRC_Manual>().ManualAction = RenderWebDebugDrawCallbacks;
             commands.Add<VPRC_RenderDebugShapes>().DepthTested = false;
@@ -341,7 +368,7 @@ public partial class DefaultRenderPipeline
         RuntimeEngine.Rendering.State.ClearColor(color);
     }
 
-    private static void DescribeWebRenderPasses(RenderPassMetadataCollection metadata)
+    internal static void DescribeWebRenderPasses(RenderPassMetadataCollection metadata)
     {
         metadata.ForPass((int)EDefaultRenderPass.PreRender, nameof(EDefaultRenderPass.PreRender), ERenderGraphPassStage.Graphics);
         int beforeForward = (int)EDefaultRenderPass.PreRender;
@@ -372,9 +399,13 @@ public partial class DefaultRenderPipeline
         beforeOutput = LinkWebQuadPass(metadata, WebBloomCombineQuadName, WebBloomCombinedFboName, beforeOutput);
         beforeOutput = LinkWebPass(metadata, nameof(VPRC_ExposureUpdate), beforeOutput, ERenderGraphPassStage.Compute);
         int tonemap = LinkWebQuadPass(metadata, WebTonemapFBOName, RenderGraphResourceNames.OutputRenderTarget, beforeOutput);
+        int fxaaTonemap = LinkWebQuadPass(metadata, WebTonemapFBOName, WebFxaaSourceFboName, beforeOutput);
+        int fxaa = LinkWebQuadPass(metadata, WebFxaaQuadName, RenderGraphResourceNames.OutputRenderTarget, fxaaTonemap);
         int debugBloom = LinkWebQuadPass(metadata, WebBloomDebugOutputQuadName, RenderGraphResourceNames.OutputRenderTarget, beforeOutput);
         var overlay = metadata.ForPass((int)EDefaultRenderPass.OnTopForward, nameof(EDefaultRenderPass.OnTopForward), ERenderGraphPassStage.Graphics)
             .DependsOn(tonemap);
+        if (fxaa != beforeOutput)
+            overlay.DependsOn(fxaa);
         if (debugBloom != beforeOutput)
             overlay.DependsOn(debugBloom);
         int afterOverlay = LinkWebPass(metadata, nameof(VPRC_RenderScreenSpaceUI), (int)EDefaultRenderPass.OnTopForward);

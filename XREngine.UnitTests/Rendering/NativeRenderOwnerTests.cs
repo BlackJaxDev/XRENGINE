@@ -147,6 +147,50 @@ public sealed class NativeRenderOwnerTests
         Assert.That(owner.TryEnqueue(_ => { }), Is.False);
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SecondaryFailureRejectsJobsWhileCleanupRetainsResources(bool duringInitialization)
+    {
+        using var cleanupEntered = new ManualResetEventSlim();
+        using var releaseCleanup = new ManualResetEventSlim();
+        var resources = new Resources
+        {
+            FailInitialization = duringInitialization,
+            OnCleanup = () =>
+            {
+                cleanupEntered.Set();
+                releaseCleanup.Wait();
+            },
+        };
+        using var owner = new DesktopSecondaryGpuContext(resources);
+        int rejectedJobCalls = 0;
+        try
+        {
+            owner.Start();
+            if (!duringInitialization)
+                Assert.That(owner.TryEnqueue(_ => throw new IOException("job failed")), Is.True);
+            Assert.That(cleanupEntered.Wait(TimeSpan.FromSeconds(3)), Is.True);
+
+            Assert.That(owner.TryEnqueue(_ => Interlocked.Increment(ref rejectedJobCalls)), Is.False);
+            Assert.That(owner.IsRunning, Is.True);
+            Assert.That(owner.HasRenderer, Is.True);
+            Assert.That(owner.IsReleased, Is.False);
+            Assert.That(resources.Releases, Is.Zero);
+        }
+        finally
+        {
+            releaseCleanup.Set();
+            owner.Dispose();
+        }
+
+        Await(() => owner.IsReleased);
+        Assert.That(owner.IsRunning, Is.False);
+        Assert.That(owner.HasRenderer, Is.False);
+        Assert.That(resources.Cleanups, Is.EqualTo(1));
+        Assert.That(resources.Releases, Is.EqualTo(1));
+        Assert.That(rejectedJobCalls, Is.Zero);
+    }
+
     [Test]
     public void CleanupFailureStillReleasesThroughTheResourceOwner()
     {
@@ -372,6 +416,7 @@ public sealed class NativeRenderOwnerTests
     {
         public bool FailInitialization;
         public bool FailCleanup;
+        public Action? OnCleanup;
         public Action<Action<bool>>? OnRelease;
         public int InitializeThread;
         public int CleanupThread;
@@ -388,6 +433,7 @@ public sealed class NativeRenderOwnerTests
         {
             CleanupThread = Environment.CurrentManagedThreadId;
             Interlocked.Increment(ref Cleanups);
+            OnCleanup?.Invoke();
             if (FailCleanup) throw new IOException("cleanup failed");
         }
         public void Release(Action<bool> completed)

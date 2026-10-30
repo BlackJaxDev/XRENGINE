@@ -43,6 +43,8 @@
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopSecondaryGpuContext.cs" Link="Platform/Windowing/DesktopSecondaryGpuContext.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/IDesktopSecondaryGpuContextResources.cs" Link="Platform/Windowing/IDesktopSecondaryGpuContextResources.cs" />
     <Compile Include="../Rendering/NativeRenderOwnerTests.cs" Link="Rendering/NativeRenderOwnerTests.cs" />
+    <Compile Include="../Rendering/DefaultWebFxaaAdmissionTests.cs" Link="Rendering/DefaultWebFxaaAdmissionTests.cs" />
+    <Compile Include="../Rendering/PipelineTestShaderServices.cs" Link="Rendering/PipelineTestShaderServices.cs" />
     <Compile Include="../Core/EngineLoopDomainTests.cs" Link="Core/EngineLoopDomainTests.cs" />
     <Compile Include="../Core/EngineTimerLoopDomainTests.cs" Link="Core/EngineTimerLoopDomainTests.cs" />
     <Compile Include="../Core/EngineTimerTests.cs" Link="Core/EngineTimerTests.cs" />

@@ -46,6 +46,9 @@ public partial class DefaultRenderPipeline
     private static void DescribeWebEffectRequirements(RenderPipelineRequirements requirements)
     {
         requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Msaa);
+        requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Fxaa);
+        if (requirements.OutputProfile.AntiAliasingMode == EAntiAliasingMode.Fxaa)
+            requirements.RequireRasterProgram("fxaa");
         if (WebMsaaEnabled(requirements.OutputProfile))
         {
             if (requirements.OutputProfile.MsaaSampleCount != 4)

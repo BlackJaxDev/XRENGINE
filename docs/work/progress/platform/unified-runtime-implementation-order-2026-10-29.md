@@ -144,3 +144,21 @@ contract checks pass (14 checks). All 24 publication gates pass with zero
 compiler warnings and errors. The separate Linux integration harness reports
 nine platform warnings from Windows-annotated Editor and Vulkan APIs; all 14
 checks execute and pass. This does not establish Windows native execution.
+
+Default WebGPU now admits FXAA through an exact cooked raster program. The
+selected resource generation owns its display-size RGBA8 texture, framebuffer
+and quad. Tonemap writes the intermediate, FXAA writes the output, and overlays
+and UI follow. None and x4 MSAA retain their direct tonemap routes. Eight
+managed checks cover admission, inactive graph branches, pass dependencies,
+format, display sizing and resize. The complete canonical cook produces 185
+shader artifacts and 85 pipeline artifacts, including the unscoped FXAA pass.
+The Default FXAA known-value browser milestone remains open.
+
+A secondary worker now closes queue admission before failure diagnostics or
+cleanup can block. It retains its running lifetime until cleanup finishes.
+All 22 managed render-owner checks pass, including both initialization and job
+failure during blocked cleanup.
+
+The FXAA increment also passes all 24 publication gates with zero compiler
+warnings and errors. The Editor package contains 1,335 engine assets and 5,636
+publisher sidecar files, all verified against their recorded hashes.
