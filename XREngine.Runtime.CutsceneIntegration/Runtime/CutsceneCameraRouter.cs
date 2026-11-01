@@ -6,7 +6,8 @@ namespace XREngine.Cutscenes;
 /// <summary>
 /// Shows the camera that a cutscene selects on one desktop viewport.
 /// The router claims the camera of the viewport, so fallback code cannot replace it.
-/// It resets the temporal history of the viewport once for each discontinuity of the player.
+/// It resets the temporal history of the viewport once for each discontinuity of the player,
+/// and once when an attach or a detach changes the camera.
 /// The router does not touch the eye cameras of a headset.
 /// </summary>
 public sealed class CutsceneCameraRouter
@@ -15,6 +16,7 @@ public sealed class CutsceneCameraRouter
     private readonly Action<CameraComponent?> _onActiveCameraChanged;
     private readonly Action<CutsceneDiscontinuity> _onDiscontinuity;
     private XRViewport? _viewport;
+    private bool _claimed;
 
     /// <summary>Creates a router for a player.</summary>
     /// <param name="player">The player that selects the camera.</param>
@@ -45,7 +47,11 @@ public sealed class CutsceneCameraRouter
         _viewport = viewport;
         _player.ActiveCameraChanged += _onActiveCameraChanged;
         _player.Discontinuity += _onDiscontinuity;
+
+        // The player raises no discontinuity for this change, so the router resets history here.
         OnActiveCameraChanged(_player.ActiveCamera);
+        if (_claimed)
+            viewport.InvalidateTemporalHistory();
     }
 
     /// <summary>Stops the routing and gives the previous camera back to the viewport. A call on a detached router does nothing.</summary>
@@ -58,7 +64,12 @@ public sealed class CutsceneCameraRouter
         _viewport = null;
         _player.ActiveCameraChanged -= _onActiveCameraChanged;
         _player.Discontinuity -= _onDiscontinuity;
+        if (!_claimed)
+            return;
+
+        _claimed = false;
         viewport.ReleaseCameraClaim(this);
+        viewport.InvalidateTemporalHistory();
     }
 
     private void OnActiveCameraChanged(CameraComponent? camera)
@@ -68,10 +79,17 @@ public sealed class CutsceneCameraRouter
             return;
 
         // A gap between shots, or a shot without a camera, shows the previous camera.
+        // The discontinuity of the same frame resets the history of the viewport.
         if (camera is null)
+        {
+            _claimed = false;
             viewport.ReleaseCameraClaim(this);
+        }
         else
+        {
             viewport.ClaimCamera(this, camera);
+            _claimed = viewport.HasCameraClaim;
+        }
     }
 
     private void OnDiscontinuity(CutsceneDiscontinuity discontinuity)

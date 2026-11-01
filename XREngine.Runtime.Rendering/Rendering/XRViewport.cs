@@ -649,6 +649,8 @@ namespace XREngine.Rendering
         {
             ArgumentNullException.ThrowIfNull(owner);
             ArgumentNullException.ThrowIfNull(camera);
+            if (_destroyed)
+                return;
 
             if (_cameraClaims.Count == 0)
                 _unclaimedCameraComponent = _cameraComponent;
@@ -671,13 +673,23 @@ namespace XREngine.Rendering
             if (!RemoveCameraClaim(owner))
                 return;
 
-            CameraComponent? next = _cameraClaims.Count > 0
-                ? _cameraClaims[^1].Camera
-                : _unclaimedCameraComponent;
-            if (_cameraClaims.Count == 0)
+            // A camera that was destroyed during the claim cannot come back.
+            while (_cameraClaims.Count > 0 && IsCameraDestroyed(_cameraClaims[^1].Camera))
+                _cameraClaims.RemoveAt(_cameraClaims.Count - 1);
+
+            CameraComponent? next;
+            if (_cameraClaims.Count > 0)
+                next = _cameraClaims[^1].Camera;
+            else
+            {
+                next = _unclaimedCameraComponent is { } fallback && !IsCameraDestroyed(fallback) ? fallback : null;
                 _unclaimedCameraComponent = null;
+            }
             SetField(ref _cameraComponent, next, nameof(CameraComponent));
         }
+
+        private static bool IsCameraDestroyed(CameraComponent camera)
+            => camera.IsDestroyed || camera.IsDestroyQueued || camera.SceneNode is not { IsDestroyed: false, IsDestroyQueued: false };
 
         private bool RemoveCameraClaim(object owner)
         {

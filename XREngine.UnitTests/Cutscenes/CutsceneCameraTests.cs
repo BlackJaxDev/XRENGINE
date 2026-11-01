@@ -378,4 +378,106 @@ public sealed class CutsceneCameraTests
         rig.Player.Diagnostics.Count.ShouldBe(1);
         rig.Player.Diagnostics[0].Message.ShouldContain("perspective");
     }
+
+    [Test]
+    public void Attach_InvalidatesHistoryOnceWhenItClaimsACamera()
+    {
+        using Rig rig = MakeRig();
+        XRViewport viewport = CreateViewport();
+        SeekAndTick(rig.Player, 3.0);
+        ulong before = rig.Cameras[1].Camera.TemporalHistoryEpoch;
+
+        new CutsceneCameraRouter(rig.Player).Attach(viewport);
+
+        viewport.CameraComponent.ShouldBeSameAs(rig.Cameras[1]);
+        rig.Cameras[1].Camera.TemporalHistoryEpoch.ShouldBe(before + 1UL);
+    }
+
+    [Test]
+    public void Detach_InvalidatesHistoryOfThePreviousCameraOnce()
+    {
+        using Rig rig = MakeRig();
+        CameraComponent previous = CreateCamera(rig.Root, "Previous");
+        XRViewport viewport = CreateViewport(previous);
+        CutsceneCameraRouter router = new(rig.Player);
+        router.Attach(viewport);
+        SeekAndTick(rig.Player, 3.0);
+        ulong before = previous.Camera.TemporalHistoryEpoch;
+
+        router.Detach();
+        router.Detach();
+
+        previous.Camera.TemporalHistoryEpoch.ShouldBe(before + 1UL);
+    }
+
+    [Test]
+    public void Stop_InvalidatesHistoryOfThePreviousCameraOnce()
+    {
+        using Rig rig = MakeRig();
+        CameraComponent previous = CreateCamera(rig.Root, "Previous");
+        XRViewport viewport = CreateViewport(previous);
+        CutsceneCameraRouter router = new(rig.Player);
+        router.Attach(viewport);
+        SeekAndTick(rig.Player, 3.0);
+        ulong before = previous.Camera.TemporalHistoryEpoch;
+
+        rig.Player.Stop();
+        router.Detach();
+
+        previous.Camera.TemporalHistoryEpoch.ShouldBe(before + 1UL);
+    }
+
+    [Test]
+    public void ReleasingAClaim_DoesNotRestoreADestroyedPreviousCamera()
+    {
+        using Rig rig = MakeRig();
+        CameraComponent previous = CreateCamera(rig.Root, "Previous");
+        XRViewport viewport = CreateViewport(previous);
+        CutsceneCameraRouter router = new(rig.Player);
+        router.Attach(viewport);
+        SeekAndTick(rig.Player, 3.0);
+
+        previous.SceneNode!.Destroy(true);
+        router.Detach();
+
+        viewport.CameraComponent.ShouldBeNull();
+    }
+
+    [Test]
+    public void ReleasingAClaim_SkipsADestroyedEarlierClaim()
+    {
+        using Rig rig = MakeRig();
+        XRViewport viewport = CreateViewport();
+        object first = new();
+        object second = new();
+        viewport.ClaimCamera(first, rig.Cameras[0]);
+        viewport.ClaimCamera(second, rig.Cameras[1]);
+
+        rig.Cameras[0].SceneNode!.Destroy(true);
+        viewport.ReleaseCameraClaim(second);
+
+        viewport.CameraComponent.ShouldBeNull();
+        viewport.HasCameraClaim.ShouldBeFalse();
+    }
+
+    [Test]
+    public void SeekIntoAShotGapAndBackOut_ReleasesAndReclaimsTheCamera()
+    {
+        using Rig rig = MakeRig([Shot(0, 1, 0), Shot(3, 1, 1)]);
+        CameraComponent previous = CreateCamera(rig.Root, "Previous");
+        XRViewport viewport = CreateViewport(previous);
+        new CutsceneCameraRouter(rig.Player).Attach(viewport);
+        int discontinuities = 0;
+        rig.Player.Discontinuity += _ => discontinuities++;
+
+        SeekAndTick(rig.Player, 0.5);
+        viewport.CameraComponent.ShouldBeSameAs(rig.Cameras[0]);
+        SeekAndTick(rig.Player, 2.0);
+        viewport.CameraComponent.ShouldBeSameAs(previous);
+        viewport.HasCameraClaim.ShouldBeFalse();
+        SeekAndTick(rig.Player, 3.5);
+        viewport.CameraComponent.ShouldBeSameAs(rig.Cameras[1]);
+
+        discontinuities.ShouldBe(3);
+    }
 }

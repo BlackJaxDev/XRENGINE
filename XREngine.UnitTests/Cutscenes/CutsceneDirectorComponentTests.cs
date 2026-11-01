@@ -3,6 +3,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
 using XREngine.Cutscenes;
+using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -209,5 +210,46 @@ public sealed class CutsceneDirectorComponentTests
 
         rig.Director.Player.ShouldBeNull();
         rig.World.Ticks.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task TargetViewport_ReceivesTheCutsceneCameraAndGetsThePreviousOneBackOnClose()
+    {
+        SceneNode root = new("Cameras", new Transform());
+        CameraComponent shot = CreateCamera(root, "Shot");
+        CameraComponent previous = CreateCamera(root, "Previous");
+        CutsceneAsset asset = new() { Duration = T(4) };
+        asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.SceneObject, ObjectId = shot.SceneNode!.ID });
+        CameraCutTrack cut = new() { Name = "Cuts", BindingSlot = 0 };
+        cut.Clips.Add(new CameraCutClip { Start = T(0), Duration = T(4), CameraBindingSlot = 0 });
+        asset.Tracks.Add(cut);
+
+        SceneNode host = new("Director", new Transform());
+        TestWorld world = new();
+        host.SetWorldContext(world);
+        CutsceneDirectorComponent director = host.AddComponent<CutsceneDirectorComponent>()!;
+        director.Asset = asset;
+        director.BindingResolver = new FakeResolver(shot.SceneNode!);
+        XRViewport viewport = new(null) { AutomaticallyCollectVisible = false, AutomaticallySwapBuffers = false, SetRenderPipelineFromCamera = false, CameraComponent = previous };
+        director.TargetViewport = viewport;
+
+        await director.OpenAsync(CancellationToken.None);
+        director.Player!.Seek(T(1), ESeekIntent.Jump);
+        world.InvokeAll();
+        viewport.CameraComponent.ShouldBeSameAs(shot);
+
+        director.Close();
+
+        viewport.CameraComponent.ShouldBeSameAs(previous);
+        viewport.HasCameraClaim.ShouldBeFalse();
+    }
+
+    private static CameraComponent CreateCamera(SceneNode root, string name)
+    {
+        CameraComponent component = root.NewChild(name).AddComponent<CameraComponent>()!;
+        XRCamera camera = new(component.Transform, new XRPerspectiveCameraParameters(60, 1, 0.1f, 100));
+        typeof(CameraComponent).GetField("_camera", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(component, new Lazy<XRCamera>(() => camera));
+        return component;
     }
 }

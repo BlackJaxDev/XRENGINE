@@ -23,7 +23,6 @@ public sealed class CutscenePlayer
     private CutsceneTime _pendingTarget;
     private ESeekIntent _pendingIntent;
     private ECutsceneTransportState _stateBeforeScrub;
-    private int _reportedCameraSlot = -1;
     private CameraComponent? _reportedCamera;
 
     /// <summary>Creates a player.</summary>
@@ -50,7 +49,10 @@ public sealed class CutscenePlayer
         ];
     }
 
-    /// <summary>Raised once in a frame in which a seek changed the position. A seek to the same position raises nothing.</summary>
+    /// <summary>
+    /// Raised once in a frame in which the picture jumps: a seek changed the position, the selected camera changed,
+    /// or <see cref="Stop"/> moved the position or the camera. A seek to the same position with the same camera raises nothing.
+    /// </summary>
     public event Action<CutsceneDiscontinuity>? Discontinuity;
 
     /// <summary>
@@ -103,11 +105,16 @@ public sealed class CutscenePlayer
     {
         State = ECutsceneTransportState.Stopped;
         _hasPendingSeek = false;
+        CutsceneTime from = _clock.Position;
         _clock.SetPosition(CutsceneTime.Zero);
         for (int i = 0; i < _evaluators.Length; i++)
             _evaluators[i].Reset();
         _snapshot.Restore(_compiled.Asset.ForceRestoreAll, default);
-        PublishActiveCamera();
+
+        // The camera returns to the previous one and the position jumps to zero, so history must reset once.
+        bool cameraChanged = PublishActiveCamera();
+        if (cameraChanged || from != CutsceneTime.Zero)
+            Discontinuity?.Invoke(new CutsceneDiscontinuity(from, CutsceneTime.Zero, ESeekIntent.Jump));
     }
 
     /// <summary>Sets the playback rate. A negative value plays backward.</summary>
@@ -194,12 +201,10 @@ public sealed class CutscenePlayer
 
     private bool PublishActiveCamera()
     {
-        int slot = _cameraCut.ActiveSlot;
         CameraComponent? camera = _cameraCut.ActiveCamera;
-        if (slot == _reportedCameraSlot && ReferenceEquals(camera, _reportedCamera))
+        if (ReferenceEquals(camera, _reportedCamera))
             return false;
 
-        _reportedCameraSlot = slot;
         _reportedCamera = camera;
         ActiveCameraChanged?.Invoke(camera);
         return true;

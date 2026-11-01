@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using XREngine.Components;
 using XREngine.Components.Animation;
+using XREngine.Rendering;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Cutscenes;
@@ -21,6 +22,8 @@ public class CutsceneDirectorComponent : XRComponent
     private CutsceneAsset? _asset;
     private CutscenePlayer? _player;
     private CutsceneBindingTable? _bindings;
+    private CutsceneCameraRouter? _router;
+    private XRViewport? _targetViewport;
     private bool _tickRegistered;
 
     /// <summary>Creates a director component.</summary>
@@ -35,6 +38,18 @@ public class CutsceneDirectorComponent : XRComponent
     {
         get => _asset;
         set => SetField(ref _asset, value);
+    }
+
+    /// <summary>
+    /// The desktop viewport that shows the cutscene camera. A change takes effect at the next open.
+    /// If it is null, the director does not route the camera.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public XRViewport? TargetViewport
+    {
+        get => _targetViewport;
+        set => SetField(ref _targetViewport, value);
     }
 
     /// <summary>
@@ -102,6 +117,8 @@ public class CutsceneDirectorComponent : XRComponent
 
         // Stop restores the original values with the restore setting of the asset.
         player?.Stop();
+        _router?.Detach();
+        _router = null;
         bindings?.Dispose();
     }
 
@@ -150,6 +167,12 @@ public class CutsceneDirectorComponent : XRComponent
         _diagnostics.AddRange(bindings.Diagnostics);
         _bindings = bindings;
         _player = new CutscenePlayer(compiled, bindings, new CutsceneStateSnapshot(bindings));
+
+        if (_targetViewport is { } viewport)
+        {
+            _router = new CutsceneCameraRouter(_player);
+            _router.Attach(viewport);
+        }
 
         _tickRegistered = true;
         RegisterTick(ETickGroup.Normal, DirectorTickOrder, _tick);
