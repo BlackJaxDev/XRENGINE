@@ -67,6 +67,28 @@ public sealed class CutsceneStateSnapshot
         _hasActive[slot] = true;
     }
 
+    /// <summary>Reads the recorded transform of a slot.</summary>
+    /// <param name="slot">The binding slot.</param>
+    /// <param name="translation">The recorded translation.</param>
+    /// <param name="rotation">The recorded rotation.</param>
+    /// <param name="scale">The recorded scale.</param>
+    /// <returns>True if the slot has a record.</returns>
+    public bool TryGetTransform(int slot, out Vector3 translation, out Quaternion rotation, out Vector3 scale)
+    {
+        if ((uint)slot >= (uint)_hasTransform.Length || !_hasTransform[slot])
+        {
+            translation = default;
+            rotation = Quaternion.Identity;
+            scale = Vector3.One;
+            return false;
+        }
+
+        translation = _translations[slot];
+        rotation = _rotations[slot];
+        scale = _scales[slot];
+        return true;
+    }
+
     /// <summary>
     /// Writes the recorded transform of a slot to its node. The record stays, so a later call can write it again.
     /// The call does nothing if the slot has no record or no live node.

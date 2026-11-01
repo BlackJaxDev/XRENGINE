@@ -39,8 +39,8 @@ public static class CutsceneCompiler
                 long start = clip.Start.Flicks;
                 long clipEnd = start + clip.Duration.Flicks;
 
-                // A Hold or Loop clip stays active until the next clip on the track finishes its fade in.
-                // Without a next clip, it stays active until the asset end.
+                // A Hold or Loop clip stays active until the next clip on the track finishes its fade in,
+                // also when its own duration is longer. Without a next clip, it stays active until the asset end.
                 CutsceneClip? next = clip.Extrapolation == ECutsceneClipExtrapolation.None ? null : FindNextClip(trackClips, clip);
                 long crossfadeStart = long.MaxValue;
                 long crossfadeLength = 0;
@@ -53,7 +53,7 @@ public static class CutsceneCompiler
                     {
                         crossfadeStart = next.Start.Flicks;
                         crossfadeLength = Math.Max(0, next.BlendIn.Flicks);
-                        end = Math.Max(clipEnd, crossfadeStart + crossfadeLength);
+                        end = crossfadeStart + crossfadeLength;
                     }
                 }
 
@@ -72,6 +72,8 @@ public static class CutsceneCompiler
                 ends.Add(end);
             }
         }
+
+        ReportNoneOverlaps(asset, diagnostics);
 
         if (clips.Count == 0)
             return new CompiledCutscene(asset, [], [], [], [], [], 0);
@@ -110,6 +112,36 @@ public static class CutsceneCompiler
         }
 
         return new CompiledCutscene(asset, clips.ToArray(), segmentStarts, segmentOffsets, segmentCounts, clipIndices.ToArray(), maxActive);
+    }
+
+    // A clip without extrapolation does not crossfade. A later clip that starts inside it is an overlap
+    // that the author must fix. The player blends it by normalized weight.
+    private static void ReportNoneOverlaps(CutsceneAsset asset, List<CutsceneCompileDiagnostic> diagnostics)
+    {
+        for (int trackIndex = 0; trackIndex < asset.Tracks.Count; trackIndex++)
+        {
+            List<CutsceneClip> trackClips = asset.Tracks[trackIndex].Clips;
+            for (int i = 0; i < trackClips.Count; i++)
+            {
+                CutsceneClip clip = trackClips[i];
+                if (clip.Extrapolation != ECutsceneClipExtrapolation.None || clip.Duration.Flicks <= 0 || !IsValidSpeed(clip.Speed))
+                    continue;
+
+                long end = clip.Start.Flicks + clip.Duration.Flicks;
+                for (int j = 0; j < trackClips.Count; j++)
+                {
+                    CutsceneClip other = trackClips[j];
+                    if (j == i || other.Duration.Flicks <= 0 || !IsValidSpeed(other.Speed))
+                        continue;
+                    bool startsLater = other.Start.Flicks > clip.Start.Flicks || (other.Start.Flicks == clip.Start.Flicks && j > i);
+                    if (!startsLater || other.Start.Flicks >= end)
+                        continue;
+
+                    diagnostics.Add(new CutsceneCompileDiagnostic(trackIndex, i, $"The clip overlaps the clip {j} on the same track, and it has no hold or loop. The weights of the two clips are normalized."));
+                    break;
+                }
+            }
+        }
     }
 
     private static bool IsValidSpeed(double speed)

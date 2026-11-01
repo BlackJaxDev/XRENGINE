@@ -5,9 +5,10 @@ namespace XREngine.Cutscenes;
 
 /// <summary>
 /// Writes the local position, rotation, and scale of the nodes that transform tracks bind.
-/// Position and scale use the weighted sum of the active clips of a track.
-/// Rotation uses a normalized weighted sum, with a flip of each rotation into the hemisphere of the first one.
-/// A track with a total weight of zero does not write.
+/// The total weight of the active clips of a track decides the result. A total of zero leaves the original value.
+/// A total above one normalizes the weights. A total below one blends from the original value to the clip blend
+/// by the total, with lerp for position and scale and slerp for rotation.
+/// The clip blend of rotation is a normalized weighted sum, with a flip of each rotation into the hemisphere of the first one.
 /// </summary>
 public sealed class TransformTrackEvaluator : ICutsceneTrackEvaluator
 {
@@ -71,7 +72,33 @@ public sealed class TransformTrackEvaluator : ICutsceneTrackEvaluator
         if (context.Bindings.GetNode(slot)?.Transform is not Transform transform)
             return;
 
+        // Pass 1: find the total weight of the valid clips on the track.
         float totalWeight = 0f;
+        for (int i = 0; i < clips.Length; i++)
+        {
+            CutsceneActiveClip active = clips[i];
+            CutsceneClip source = track.Clips[active.ClipIndex];
+            if (source is not TransformTrackClip)
+            {
+                _reporter.Report(trackIndex, active.ClipIndex, track.Name, nameof(TransformTrackClip), source);
+                continue;
+            }
+            if (active.Weight > 0f)
+                totalWeight += active.Weight;
+        }
+
+        // A track with no weight leaves the target at its original value.
+        if (totalWeight <= 0f)
+            return;
+
+        // The original value must be recorded before the first write.
+        context.Snapshot.CaptureTransform(slot);
+        if (!context.Snapshot.TryGetTransform(slot, out Vector3 originalPosition, out Quaternion originalRotation, out Vector3 originalScale))
+            return;
+
+        // Pass 2: blend. Weights above one in total are normalized. Weights below one in total
+        // blend from the original value to the clip blend by the total weight.
+        float divisor = MathF.Max(totalWeight, 1f);
         Vector3 position = Vector3.Zero;
         Vector3 scale = Vector3.Zero;
         Quaternion rotation = default;
@@ -81,18 +108,10 @@ public sealed class TransformTrackEvaluator : ICutsceneTrackEvaluator
         for (int i = 0; i < clips.Length; i++)
         {
             CutsceneActiveClip active = clips[i];
-            CutsceneClip source = track.Clips[active.ClipIndex];
-            if (source is not TransformTrackClip clip)
-            {
-                _reporter.Report(trackIndex, active.ClipIndex, track.Name, nameof(TransformTrackClip), source);
-                continue;
-            }
-
-            float weight = active.Weight;
-            if (weight <= 0f)
+            if (track.Clips[active.ClipIndex] is not TransformTrackClip clip || active.Weight <= 0f)
                 continue;
 
-            totalWeight += weight;
+            float weight = active.Weight / divisor;
             position += clip.Position.Sample(active.LocalTime) * weight;
             scale += clip.Scale.Sample(active.LocalTime) * weight;
 
@@ -104,17 +123,21 @@ public sealed class TransformTrackEvaluator : ICutsceneTrackEvaluator
             }
             else if (Quaternion.Dot(sampled, firstRotation) < 0f)
                 sampled = Quaternion.Negate(sampled);
-            rotation += sampled * weight;
+            rotation += sampled * (active.Weight / totalWeight);
         }
 
-        if (totalWeight <= 0f)
-            return;
+        // The accumulated rotation is a convex blend of rotations in one hemisphere, so it is never near zero.
+        Quaternion blendedRotation = Quaternion.Normalize(rotation);
+        if (totalWeight < 1f)
+        {
+            position += originalPosition * (1f - totalWeight);
+            scale += originalScale * (1f - totalWeight);
+            blendedRotation = Quaternion.Slerp(originalRotation, blendedRotation, totalWeight);
+        }
 
-        context.Snapshot.CaptureTransform(slot);
         transform.Translation = position;
         transform.Scale = scale;
-        if (rotation.LengthSquared() > 1e-12f)
-            transform.Rotation = Quaternion.Normalize(rotation);
+        transform.Rotation = blendedRotation;
 
         _touched[slot] = true;
         _written[slot] = true;

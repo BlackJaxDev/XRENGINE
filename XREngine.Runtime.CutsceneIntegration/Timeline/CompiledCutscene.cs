@@ -105,7 +105,8 @@ public sealed class CompiledCutscene
             if (clip.BlendIn > 0 && elapsed < clip.BlendIn)
                 weight = (float)((double)elapsed / clip.BlendIn);
             long remaining = clip.Duration - elapsed;
-            if (clip.BlendOut > 0 && remaining < clip.BlendOut)
+            // A hold or loop clip stays at full weight after its duration, so its own fade out would snap back.
+            if (clip.BlendOut > 0 && remaining < clip.BlendOut && clip.Extrapolation == ECutsceneClipExtrapolation.None)
                 weight = Math.Min(weight, (float)((double)remaining / clip.BlendOut));
         }
         else if (clip.Extrapolation == ECutsceneClipExtrapolation.Loop)

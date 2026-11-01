@@ -164,6 +164,55 @@ public sealed class CutsceneCompilerTests
     }
 
     [Test]
+    public void Hold_EndsAtTheCrossfadeEnd_EvenWhenItsDurationIsLonger()
+    {
+        CutsceneClip next = Clip(2, 4);
+        next.BlendIn = T(1);
+        CompiledCutscene compiled = Compile(Asset(20, [Clip(0, 8, ECutsceneClipExtrapolation.Hold), next]), out _);
+        Span<CutsceneActiveClip> buffer = stackalloc CutsceneActiveClip[4];
+
+        compiled.QueryActive(T(2.5), buffer).ShouldBe(2);
+        compiled.QueryActive(T(3), buffer).ShouldBe(1);
+        buffer[0].ClipIndex.ShouldBe(1);
+        buffer[0].Weight.ShouldBe(1f);
+    }
+
+    [Test]
+    public void Hold_IgnoresItsOwnBlendOut()
+    {
+        CutsceneClip hold = Clip(0, 4, ECutsceneClipExtrapolation.Hold);
+        hold.BlendOut = T(2);
+        CompiledCutscene compiled = Compile(Asset(20, [hold]), out _);
+        Span<CutsceneActiveClip> buffer = stackalloc CutsceneActiveClip[1];
+
+        foreach (double t in new[] { 1.0, 3.0, 3.9, 4.0, 5.0 })
+        {
+            compiled.QueryActive(T(t), buffer).ShouldBe(1);
+            buffer[0].Weight.ShouldBe(1f);
+        }
+    }
+
+    [Test]
+    public void NoneClipOverlappedOnTheSameTrack_GivesADiagnostic()
+    {
+        CompiledCutscene compiled = Compile(Asset(20, [Clip(0, 4), Clip(2, 4)]), out List<CutsceneCompileDiagnostic> diagnostics);
+
+        diagnostics.Count.ShouldBe(1);
+        diagnostics[0].TrackIndex.ShouldBe(0);
+        diagnostics[0].ClipIndex.ShouldBe(0);
+        Span<CutsceneActiveClip> buffer = stackalloc CutsceneActiveClip[4];
+        compiled.QueryActive(T(3), buffer).ShouldBe(2);
+    }
+
+    [Test]
+    public void HoldCrossfadeIntoANextClip_GivesNoDiagnostic()
+    {
+        Compile(Asset(20, [Clip(0, 4, ECutsceneClipExtrapolation.Hold), Clip(2, 4)]), out List<CutsceneCompileDiagnostic> diagnostics);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
     public void TimesOutsideTheAsset_DoNotThrow()
     {
         CompiledCutscene compiled = Compile(Asset(10, [Clip(0, 2, ECutsceneClipExtrapolation.Loop)]), out _);

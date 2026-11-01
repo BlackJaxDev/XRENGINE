@@ -42,7 +42,7 @@ public sealed class CutscenePlayer
         ];
     }
 
-    /// <summary>Raised once in a frame in which a seek moved the position.</summary>
+    /// <summary>Raised once in a frame in which a seek changed the position. A seek to the same position raises nothing.</summary>
     public event Action<CutsceneDiscontinuity>? Discontinuity;
 
     /// <summary>The current position. A seek changes it at the next tick.</summary>
@@ -148,7 +148,8 @@ public sealed class CutscenePlayer
             CutsceneTime target = _pendingTarget.Clamp(CutsceneTime.Zero, duration);
             _clock.SetPosition(target);
             EvaluateAt(target, 0.0);
-            Discontinuity?.Invoke(new CutsceneDiscontinuity(from, target, _pendingIntent));
+            if (target != from)
+                Discontinuity?.Invoke(new CutsceneDiscontinuity(from, target, _pendingIntent));
             return;
         }
 
