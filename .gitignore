@@ -466,6 +466,7 @@ Build/McpRuns/
 Build/Deps/Monado/
 Build/Submodules/Build/_AgentValidation/
 Assets/
+!/XREngine.Runtime.CutsceneIntegration/Assets/
 !Samples/RollingBall/Assets/
 Samples/RollingBall/Assets/*
 !Samples/RollingBall/Assets/Shaders/
