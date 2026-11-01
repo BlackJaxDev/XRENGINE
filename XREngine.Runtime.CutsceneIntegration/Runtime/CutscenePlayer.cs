@@ -102,6 +102,16 @@ public sealed class CutscenePlayer
     /// The targets that have the keep-state setting stay as they are.
     /// </summary>
     public void Stop()
+        => StopCore(restoreEverySlot: false);
+
+    /// <summary>
+    /// Stops playback, moves the position to zero, and puts back every recorded value.
+    /// The finish behavior of the tracks has no effect, and a target of a removed track is also restored.
+    /// </summary>
+    public void StopAndRestoreAll()
+        => StopCore(restoreEverySlot: true);
+
+    private void StopCore(bool restoreEverySlot)
     {
         State = ECutsceneTransportState.Stopped;
         _hasPendingSeek = false;
@@ -109,7 +119,10 @@ public sealed class CutscenePlayer
         _clock.SetPosition(CutsceneTime.Zero);
         for (int i = 0; i < _evaluators.Length; i++)
             _evaluators[i].Reset();
-        _snapshot.Restore(_compiled.Asset.ForceRestoreAll, default);
+        if (restoreEverySlot)
+            _snapshot.RestoreAll();
+        else
+            _snapshot.Restore(_compiled.Asset.ForceRestoreAll, default);
 
         // The camera returns to the previous one and the position jumps to zero, so history must reset once.
         bool cameraChanged = PublishActiveCamera();

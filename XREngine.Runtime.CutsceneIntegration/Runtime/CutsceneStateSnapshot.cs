@@ -198,6 +198,20 @@ public sealed class CutsceneStateSnapshot
         }
     }
 
+    /// <summary>
+    /// Puts back every recorded value of every slot. This does not read the tracks of the asset,
+    /// so it also restores a target whose track was removed after the value was recorded.
+    /// </summary>
+    public void RestoreAll()
+    {
+        for (int slot = 0; slot < _hasTransform.Length; slot++)
+        {
+            RestoreTransform(slot);
+            RestoreActive(slot);
+            RestoreFieldOfView(slot);
+        }
+    }
+
     private void RestoreTransform(int slot)
     {
         if (!_hasTransform[slot])

@@ -42,6 +42,8 @@
   items:
     - name: Animation API
       href: animation/animation-api.md
+    - name: Cutscenes
+      href: animation/cutscenes.md
 
 - name: Components
   items:

@@ -369,6 +369,13 @@ public static class Undo
     }
 
     /// <summary>
+    /// Stops property change recording until the returned scope is disposed.
+    /// Use it for values that the editor writes for display only, such as a preview of a timeline.
+    /// The scope is a struct, so this call does not allocate.
+    /// </summary>
+    public static RecordingSuppressionScope SuppressRecording() => new();
+
+    /// <summary>
     /// Begins a user interaction context that enables property change recording.
     /// </summary>
     /// <returns>
@@ -1220,7 +1227,7 @@ public static class Undo
     /// RAII-style scope that suppresses property change recording while active.
     /// Used during undo/redo operations to prevent recording the restoration of values.
     /// </summary>
-    private readonly struct RecordingSuppressionScope : IDisposable
+    public readonly struct RecordingSuppressionScope : IDisposable
     {
         /// <summary>
         /// Initializes a new instance and increments the suppression counter.

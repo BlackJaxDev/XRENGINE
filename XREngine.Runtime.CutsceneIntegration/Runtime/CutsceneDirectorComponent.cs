@@ -53,8 +53,15 @@ public class CutsceneDirectorComponent : XRComponent
     }
 
     /// <summary>
+    /// Creates the binding resolver of a director that has no <see cref="BindingResolver"/>.
+    /// The application composition registers it once at startup, because this project cannot reach an asset manager.
+    /// If it is null or returns null, the open fails with a diagnostic.
+    /// </summary>
+    public static Func<CutsceneDirectorComponent, ICutsceneBindingResolver?>? DefaultBindingResolverFactory { get; set; }
+
+    /// <summary>
     /// The object that finds and creates the scene nodes that the tracks act on.
-    /// The host sets it. A cutscene cannot open without it.
+    /// If it is null, an open uses <see cref="DefaultBindingResolverFactory"/>.
     /// </summary>
     [Browsable(false)]
     [YamlIgnore]
@@ -149,10 +156,10 @@ public class CutsceneDirectorComponent : XRComponent
             return;
         }
 
-        ICutsceneBindingResolver? resolver = BindingResolver;
+        ICutsceneBindingResolver? resolver = BindingResolver ?? DefaultBindingResolverFactory?.Invoke(this);
         if (resolver is null)
         {
-            Fail("The director has no binding resolver.");
+            Fail("The director has no binding resolver, and the application registered no default binding resolver factory.");
             return;
         }
 

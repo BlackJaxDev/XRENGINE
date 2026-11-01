@@ -63,6 +63,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
+- [Cutscenes](developer-guides/animation/cutscenes.md)
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
 - [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)
 - [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)

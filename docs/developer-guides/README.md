@@ -13,6 +13,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Local Agent Broker](ai/local-agent-broker.md)
 - [Work Doc Templates](ai/work-doc-templates.md)
 - [Animation](animation/animation-api.md)
+- [Cutscenes](animation/cutscenes.md)
 - [Assets](assets/model-import.md)
 - [Audio](audio/openal-streaming-audio.md)
 - [Components](components/component-api.md)

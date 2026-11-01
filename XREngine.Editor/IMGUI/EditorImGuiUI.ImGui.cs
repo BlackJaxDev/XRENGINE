@@ -85,6 +85,7 @@ public static partial class EditorImGuiUI
         private static bool _showAssetExplorer;
         private static bool _showNetworking;
         private static bool _showAnimationClipEditor;
+        private static bool _showCutsceneSequencer;
         private static UserSettings? _editorSceneHierarchySettingsSource;
         private static string? _ownedImGuiIniFilename;
         private static bool _imguiPanelVisibilityLoaded;
@@ -764,6 +765,9 @@ public static partial class EditorImGuiUI
                 using (Engine.Profiler.Start("UI.DrawAnimationClipEditorPanel"))
                     DrawAnimationClipEditorPanel();
             }
+            // This call also runs when the panel is hidden, because it ends the preview that the panel started.
+            using (Engine.Profiler.Start("UI.DrawCutsceneSequencerPanel"))
+                DrawCutsceneSequencerPanel();
             if (_showRenderPipelineGraph)
             {
                 using (Engine.Profiler.Start("UI.DrawRenderPipelineGraphPanel"))
@@ -1475,6 +1479,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.MenuItem("Networking", null, ref _showNetworking);
                 ImGui.MenuItem("Animation Clip Editor", null, ref _showAnimationClipEditor);
+                ImGui.MenuItem("Cutscene Sequencer", null, ref _showCutsceneSequencer);
                 ImGui.MenuItem("External Texture Browser", null, ref _showExternalTextureBrowser);
                 ImGui.MenuItem("Texture Streaming", null, ref _showTextureStreaming);
                 ImGui.Separator();

@@ -172,6 +172,9 @@ internal partial class Program
         // Start undo/redo system
         Undo.Initialize();
 
+        // Give cutscene directors a default binding resolver and connect the preview to play mode changes
+        XREngine.Editor.Cutscenes.CutscenePreviewSession.Initialize();
+
         // Start file drop handler to support drag-and-drop importing of assets and scenes into the editor
         EditorFileDropHandler.Initialize();
 
