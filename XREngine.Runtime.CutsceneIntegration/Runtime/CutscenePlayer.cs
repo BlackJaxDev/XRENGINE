@@ -1,3 +1,5 @@
+using XREngine.Components;
+
 namespace XREngine.Cutscenes;
 
 /// <summary>
@@ -14,12 +16,15 @@ public sealed class CutscenePlayer
     private readonly CutsceneClock _clock = new();
     private readonly CutsceneActiveClip[] _buffer;
     private readonly ICutsceneTrackEvaluator[] _evaluators;
+    private readonly CameraCutTrackEvaluator _cameraCut;
     private readonly List<CutsceneCompileDiagnostic> _diagnostics = [];
 
     private bool _hasPendingSeek;
     private CutsceneTime _pendingTarget;
     private ESeekIntent _pendingIntent;
     private ECutsceneTransportState _stateBeforeScrub;
+    private int _reportedCameraSlot = -1;
+    private CameraComponent? _reportedCamera;
 
     /// <summary>Creates a player.</summary>
     /// <param name="compiled">The compiled cutscene.</param>
@@ -35,15 +40,27 @@ public sealed class CutscenePlayer
         _bindings = bindings;
         _snapshot = snapshot;
         _buffer = new CutsceneActiveClip[Math.Max(1, compiled.MaxActiveClips)];
+        _cameraCut = new CameraCutTrackEvaluator(_diagnostics);
         _evaluators =
         [
             new TransformTrackEvaluator(bindings.SlotCount, _diagnostics),
             new ActivationTrackEvaluator(bindings.SlotCount, _diagnostics),
+            _cameraCut,
+            new CameraPropertyTrackEvaluator(bindings.SlotCount, _diagnostics),
         ];
     }
 
     /// <summary>Raised once in a frame in which a seek changed the position. A seek to the same position raises nothing.</summary>
     public event Action<CutsceneDiscontinuity>? Discontinuity;
+
+    /// <summary>
+    /// Raised after an evaluation in which the selected camera changed, before <see cref="Discontinuity"/> of the same frame.
+    /// The argument is the new camera, or null if no camera is selected.
+    /// </summary>
+    public event Action<CameraComponent?>? ActiveCameraChanged;
+
+    /// <summary>The camera that the camera cut tracks select at the current position, or null if none is selected.</summary>
+    public CameraComponent? ActiveCamera => _cameraCut.ActiveCamera;
 
     /// <summary>The current position. A seek changes it at the next tick.</summary>
     public CutsceneTime Position => _clock.Position;
@@ -90,6 +107,7 @@ public sealed class CutscenePlayer
         for (int i = 0; i < _evaluators.Length; i++)
             _evaluators[i].Reset();
         _snapshot.Restore(_compiled.Asset.ForceRestoreAll, default);
+        PublishActiveCamera();
     }
 
     /// <summary>Sets the playback rate. A negative value plays backward.</summary>
@@ -148,7 +166,10 @@ public sealed class CutscenePlayer
             CutsceneTime target = _pendingTarget.Clamp(CutsceneTime.Zero, duration);
             _clock.SetPosition(target);
             EvaluateAt(target, 0.0);
-            if (target != from)
+
+            // A seek that changes the camera still raises only one discontinuity.
+            bool seekCameraChanged = PublishActiveCamera();
+            if (target != from || seekCameraChanged)
                 Discontinuity?.Invoke(new CutsceneDiscontinuity(from, target, _pendingIntent));
             return;
         }
@@ -156,14 +177,32 @@ public sealed class CutscenePlayer
         if (State != ECutsceneTransportState.Playing)
             return;
 
+        CutsceneTime before = _clock.Position;
         _clock.Advance(deltaSeconds);
         CutsceneTime position = _clock.Position.Clamp(CutsceneTime.Zero, duration);
         _clock.SetPosition(position);
         EvaluateAt(position, deltaSeconds);
 
+        // A cut during playback is a jump of the picture, so it raises one discontinuity.
+        if (PublishActiveCamera())
+            Discontinuity?.Invoke(new CutsceneDiscontinuity(before, position, ESeekIntent.Jump));
+
         double rate = _clock.Rate;
         if ((rate > 0.0 && position >= duration) || (rate < 0.0 && position <= CutsceneTime.Zero))
             State = ECutsceneTransportState.Paused;
+    }
+
+    private bool PublishActiveCamera()
+    {
+        int slot = _cameraCut.ActiveSlot;
+        CameraComponent? camera = _cameraCut.ActiveCamera;
+        if (slot == _reportedCameraSlot && ReferenceEquals(camera, _reportedCamera))
+            return false;
+
+        _reportedCameraSlot = slot;
+        _reportedCamera = camera;
+        ActiveCameraChanged?.Invoke(camera);
+        return true;
     }
 
     private void EvaluateAt(CutsceneTime time, double deltaSeconds)

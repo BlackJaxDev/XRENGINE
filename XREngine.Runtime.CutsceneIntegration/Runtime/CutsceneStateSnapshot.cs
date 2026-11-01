@@ -5,7 +5,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Cutscenes;
 
 /// <summary>
-/// Records the original transform and activation of the bound nodes before the cutscene writes them,
+/// Records the original transform, activation, and field of view of the bound nodes before the cutscene writes them,
 /// and puts them back when the cutscene ends. All storage is allocated when the snapshot is created.
 /// </summary>
 public sealed class CutsceneStateSnapshot
@@ -17,6 +17,8 @@ public sealed class CutsceneStateSnapshot
     private readonly bool[] _hasTransform;
     private readonly bool[] _active;
     private readonly bool[] _hasActive;
+    private readonly float[] _fieldOfView;
+    private readonly bool[] _hasFieldOfView;
 
     /// <summary>Creates a snapshot with storage for each slot of a binding table.</summary>
     /// <param name="table">The table that holds the bound nodes.</param>
@@ -31,6 +33,8 @@ public sealed class CutsceneStateSnapshot
         _hasTransform = new bool[count];
         _active = new bool[count];
         _hasActive = new bool[count];
+        _fieldOfView = new float[count];
+        _hasFieldOfView = new bool[count];
     }
 
     /// <summary>
@@ -65,6 +69,51 @@ public sealed class CutsceneStateSnapshot
 
         _active[slot] = node.IsActiveSelf;
         _hasActive[slot] = true;
+    }
+
+    /// <summary>
+    /// Records the vertical field of view of the perspective camera of a slot. If the slot is already recorded, the first value stays.
+    /// A slot without a live node, or with a node that has no perspective camera, is not recorded.
+    /// </summary>
+    /// <param name="slot">The binding slot.</param>
+    public void CaptureFieldOfView(int slot)
+    {
+        if ((uint)slot >= (uint)_hasFieldOfView.Length || _hasFieldOfView[slot])
+            return;
+        if (CutsceneCameraLookup.FindPerspective(_table.GetNode(slot)) is not { } parameters)
+            return;
+
+        _fieldOfView[slot] = parameters.VerticalFieldOfView;
+        _hasFieldOfView[slot] = true;
+    }
+
+    /// <summary>Reads the recorded field of view of a slot.</summary>
+    /// <param name="slot">The binding slot.</param>
+    /// <param name="fieldOfView">The recorded vertical field of view in degrees.</param>
+    /// <returns>True if the slot has a record.</returns>
+    public bool TryGetFieldOfView(int slot, out float fieldOfView)
+    {
+        if ((uint)slot >= (uint)_hasFieldOfView.Length || !_hasFieldOfView[slot])
+        {
+            fieldOfView = 0f;
+            return false;
+        }
+
+        fieldOfView = _fieldOfView[slot];
+        return true;
+    }
+
+    /// <summary>
+    /// Writes the recorded field of view of a slot to its camera. The record stays, so a later call can write it again.
+    /// The call does nothing if the slot has no record or no perspective camera.
+    /// </summary>
+    /// <param name="slot">The binding slot.</param>
+    public void ApplyFieldOfView(int slot)
+    {
+        if ((uint)slot >= (uint)_hasFieldOfView.Length || !_hasFieldOfView[slot])
+            return;
+        if (CutsceneCameraLookup.FindPerspective(_table.GetNode(slot)) is { } parameters)
+            parameters.VerticalFieldOfView = _fieldOfView[slot];
     }
 
     /// <summary>Reads the recorded transform of a slot.</summary>
@@ -144,6 +193,8 @@ public sealed class CutsceneStateSnapshot
                 RestoreTransform(slot);
             else if (track is ActivationTrack)
                 RestoreActive(slot);
+            else if (track is CameraPropertyTrack)
+                RestoreFieldOfView(slot);
         }
     }
 
@@ -159,6 +210,16 @@ public sealed class CutsceneStateSnapshot
         transform.Translation = _translations[slot];
         transform.Rotation = _rotations[slot];
         transform.Scale = _scales[slot];
+    }
+
+    private void RestoreFieldOfView(int slot)
+    {
+        if (!_hasFieldOfView[slot])
+            return;
+        _hasFieldOfView[slot] = false;
+
+        if (CutsceneCameraLookup.FindPerspective(_table.GetNode(slot)) is { } parameters)
+            parameters.VerticalFieldOfView = _fieldOfView[slot];
     }
 
     private void RestoreActive(int slot)

@@ -60,6 +60,19 @@ namespace XREngine.Rendering
         private CameraComponent? _cameraComponent = null;
 
         /// <summary>
+        /// The owners that claimed the camera of this viewport, in claim order. The last entry wins.
+        /// </summary>
+        private readonly List<CameraClaim> _cameraClaims = [];
+
+        /// <summary>
+        /// The camera component that the viewport uses when no claim is left.
+        /// While a claim exists, a write to <see cref="CameraComponent"/> stores its value here.
+        /// </summary>
+        private CameraComponent? _unclaimedCameraComponent;
+
+        private readonly record struct CameraClaim(object Owner, CameraComponent Camera);
+
+        /// <summary>
         /// The local player controller associated with this viewport.
         /// Used to link input handling and player-specific rendering (e.g., split-screen scenarios).
         /// </summary>
@@ -607,7 +620,75 @@ namespace XREngine.Rendering
         public CameraComponent? CameraComponent
         {
             get => _cameraComponent;
-            set => SetField(ref _cameraComponent, value);
+            set
+            {
+                // A claim keeps the viewport camera. The new value becomes the camera that returns when the last claim ends.
+                if (_cameraClaims.Count > 0)
+                {
+                    _unclaimedCameraComponent = value;
+                    return;
+                }
+
+                SetField(ref _cameraComponent, value);
+            }
+        }
+
+        /// <summary>True while at least one owner holds a claim on the camera of this viewport.</summary>
+        [YamlIgnore]
+        public bool HasCameraClaim => _cameraClaims.Count > 0;
+
+        /// <summary>
+        /// Makes a camera the camera of this viewport and keeps it there until the owner releases the claim.
+        /// The latest claim wins. A second call from the same owner replaces the camera of that owner and makes it the latest.
+        /// While a claim exists, a write to <see cref="CameraComponent"/> does not change the camera.
+        /// The write is kept and takes effect when the last claim ends.
+        /// </summary>
+        /// <param name="owner">The object that holds the claim. Use the same object to release it.</param>
+        /// <param name="camera">The camera to show.</param>
+        public void ClaimCamera(object owner, CameraComponent camera)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            ArgumentNullException.ThrowIfNull(camera);
+
+            if (_cameraClaims.Count == 0)
+                _unclaimedCameraComponent = _cameraComponent;
+            else
+                RemoveCameraClaim(owner);
+
+            _cameraClaims.Add(new CameraClaim(owner, camera));
+            SetField(ref _cameraComponent, camera, nameof(CameraComponent));
+        }
+
+        /// <summary>
+        /// Removes the claim of an owner. If another claim is left, its camera shows.
+        /// If no claim is left, the camera from before the first claim returns.
+        /// A call for an owner without a claim does nothing.
+        /// </summary>
+        /// <param name="owner">The object that holds the claim.</param>
+        public void ReleaseCameraClaim(object owner)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            if (!RemoveCameraClaim(owner))
+                return;
+
+            CameraComponent? next = _cameraClaims.Count > 0
+                ? _cameraClaims[^1].Camera
+                : _unclaimedCameraComponent;
+            if (_cameraClaims.Count == 0)
+                _unclaimedCameraComponent = null;
+            SetField(ref _cameraComponent, next, nameof(CameraComponent));
+        }
+
+        private bool RemoveCameraClaim(object owner)
+        {
+            for (int i = 0; i < _cameraClaims.Count; i++)
+            {
+                if (!ReferenceEquals(_cameraClaims[i].Owner, owner))
+                    continue;
+                _cameraClaims.RemoveAt(i);
+                return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -1117,6 +1198,8 @@ namespace XREngine.Rendering
             _renderPipeline.RequestTerminalTeardown();
             _frameViewHistoryLedger.Clear();
             AssociatedPlayer = null;
+            _cameraClaims.Clear();
+            _unclaimedCameraComponent = null;
             CameraComponent = null;
             ScreenSpaceUserInterfaceOverride = null;
             Camera = null;
