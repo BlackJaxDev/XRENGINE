@@ -73,6 +73,8 @@ A director needs a binding resolver. It uses `BindingResolver` if the property h
 
 Set `TargetViewport` to show the camera that the cut tracks select. The director claims the camera of that viewport until it closes.
 
+A claim changes only the camera that shows the scene. The screen-space UI of the viewport stays on the camera from before the claim, so the editor panels and a player HUD stay visible. A gameplay system must hide a HUD itself if a cutscene must not show it.
+
 ## MCP Tools
 
 | Tool | Arguments | Result |

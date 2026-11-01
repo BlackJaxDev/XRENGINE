@@ -688,6 +688,16 @@ namespace XREngine.Rendering
             SetField(ref _cameraComponent, next, nameof(CameraComponent));
         }
 
+        /// <summary>
+        /// The camera component that supplies the screen-space UI of this viewport.
+        /// A claim changes the camera that shows the scene. It does not change the UI,
+        /// so the editor UI and the player HUD stay on the viewport while a claim exists.
+        /// </summary>
+        private CameraComponent? UserInterfaceCameraComponent
+            => _cameraClaims.Count > 0 && _unclaimedCameraComponent is { } unclaimed && !IsCameraDestroyed(unclaimed)
+                ? unclaimed
+                : _cameraComponent;
+
         private static bool IsCameraDestroyed(CameraComponent camera)
             => camera.IsDestroyed || camera.IsDestroyQueued || camera.SceneNode is not { IsDestroyed: false, IsDestroyQueued: false };
 
@@ -3179,7 +3189,7 @@ namespace XREngine.Rendering
             if (ScreenSpaceUserInterfaceOverride is { } ownedUi)
                 return ownedUi.IsActive && ownedUi.IsScreenSpace ? ownedUi : null;
 
-            var camComp = CameraComponent;
+            var camComp = UserInterfaceCameraComponent;
             if (camComp is null)
                 return null;
 
@@ -3244,7 +3254,7 @@ namespace XREngine.Rendering
             out IRuntimeScreenSpaceUserInterface? userInterface)
         {
             userInterface = AllowUIRender
-                ? ScreenSpaceUserInterfaceOverride ?? CameraComponent?.GetUserInterfaceOverlay()
+                ? ScreenSpaceUserInterfaceOverride ?? UserInterfaceCameraComponent?.GetUserInterfaceOverlay()
                 : null;
             return userInterface is { IsActive: true, IsScreenSpace: true };
         }
@@ -3522,7 +3532,7 @@ namespace XREngine.Rendering
         /// </summary>
         private void ResizeCameraComponentUI()
         {
-            var overlay = ScreenSpaceUserInterfaceOverride ?? CameraComponent?.GetUserInterfaceOverlay();
+            var overlay = ScreenSpaceUserInterfaceOverride ?? UserInterfaceCameraComponent?.GetUserInterfaceOverlay();
             if (overlay is null)
                 return;
 
