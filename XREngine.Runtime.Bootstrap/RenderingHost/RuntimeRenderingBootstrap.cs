@@ -145,6 +145,7 @@ public static class RuntimeRenderingBootstrap
             {
                 leases.Add(RuntimeEngineStartupPolicyServices.Install(DesktopEngineStartupPolicy.Instance));
                 leases.Add(RuntimeAssetBootstrap.InstallEngineAssetServices());
+                leases.Add(XREngine.Cutscenes.CutsceneSerializationRegistration.Install());
             }
             leases.Add(renderers);
             BuiltInPhysicsBackendModules.RegisterDesktop(physics);

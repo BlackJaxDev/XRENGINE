@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
+    <XREngineRuntimeContractMode>Contracts</XREngineRuntimeContractMode>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -31,4 +32,5 @@
     <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
   </ItemGroup>
+  <Import Project="../Build/Registration/RuntimeContracts.props" />
 </Project>
