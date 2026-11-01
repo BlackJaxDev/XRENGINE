@@ -128,18 +128,46 @@ namespace XREngine
         public void SaveToImmediate(XRAsset asset, string directory)
             => RunOnJobThreadBlocking(() => { SaveToDirectoryCore(asset, directory); return true; }, JobPriority.Normal, bypassJobThread: true);
 
+        /// <summary>
+        /// Saves the dirty assets. An asset that <see cref="SaveGuard"/> refuses is not saved and stays in
+        /// <see cref="DirtyAssets"/>, and the reason goes to the log.
+        /// </summary>
         public void SaveAll()
         {
-            foreach (var kvp in DirtyAssets)
-                Save(kvp.Value);
-            DirtyAssets.Clear();
+            List<XRAsset> assets = CollectUnguardedDirtyAssets();
+            foreach (XRAsset asset in assets)
+                Save(asset);
+            RemoveFromDirtyAssets(assets);
         }
 
+        /// <summary>
+        /// Saves the dirty assets. An asset that <see cref="SaveGuard"/> refuses is not saved and stays in
+        /// <see cref="DirtyAssets"/>, and the reason goes to the log.
+        /// </summary>
         public async Task SaveAllAsync()
         {
-            var tasks = DirtyAssets.Values.Select(x => SaveAsync(x));
-            await Task.WhenAll(tasks);
-            DirtyAssets.Clear();
+            List<XRAsset> assets = CollectUnguardedDirtyAssets();
+            await Task.WhenAll(assets.Select(x => SaveAsync(x)));
+            RemoveFromDirtyAssets(assets);
+        }
+
+        private List<XRAsset> CollectUnguardedDirtyAssets()
+        {
+            List<XRAsset> assets = [];
+            foreach (var kvp in DirtyAssets)
+            {
+                if (GetSaveRejection(kvp.Value) is { } reason)
+                    Debug.LogWarning($"Save all skipped an asset: {reason}");
+                else
+                    assets.Add(kvp.Value);
+            }
+            return assets;
+        }
+
+        private void RemoveFromDirtyAssets(List<XRAsset> assets)
+        {
+            foreach (XRAsset asset in assets)
+                DirtyAssets.TryRemove(asset.ID, out _);
         }
     }
 }

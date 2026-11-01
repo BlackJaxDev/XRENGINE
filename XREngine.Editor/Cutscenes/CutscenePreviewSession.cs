@@ -279,16 +279,17 @@ public static class CutscenePreviewSession
         if (host is null)
             return;
 
-        if (!IsPreviewWorldCurrent())
-        {
-            AddSessionDiagnostic("The world changed, so the cutscene preview closed.");
-            CloseAfterFailure();
-            return;
-        }
-
         // An exception in a timer callback stops the update loop, so a failed preview closes here instead.
+        // The world check is inside, because a window can close on another thread during the check.
         try
         {
+            if (!IsPreviewWorldCurrent())
+            {
+                AddSessionDiagnostic("The world changed, so the cutscene preview closed.");
+                CloseAfterFailure();
+                return;
+            }
+
             host.Tick(deltaSeconds);
         }
         catch (Exception ex)

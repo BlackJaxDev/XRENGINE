@@ -1636,7 +1636,16 @@ public static partial class EditorUnitTests
         //Saves all modified assets in the project.
         public static async void SaveAll(UIInteractableComponent? comp)
         {
-            await Engine.Assets.SaveAllAsync();
+            // This method is async void, so an exception that leaves it would stop the process.
+            try
+            {
+                await Engine.Assets.SaveAllAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, "Save all failed.");
+            }
+
             RefreshSaveMenu();
         }
 

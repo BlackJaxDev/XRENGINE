@@ -545,6 +545,46 @@ public sealed class CutscenePreviewHostTests
         }
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SaveAll_DuringAPreview_SkipsTheScene_AndSavesTheRest(bool useAsync)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"cutscene-save-all-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        (RuntimeWorld runtime, _, _) = OpenSessionPreview();
+        try
+        {
+            AssetManager assets = new() { GameAssetsPath = directory, SaveGuard = CutscenePreviewSession.GetSaveRejection };
+            XRScene scene = new("DirtyScene") { FilePath = Path.Combine(directory, "DirtyScene.asset") };
+            CutsceneAsset other = new() { Name = "DirtyCutscene", Duration = T(1), FilePath = Path.Combine(directory, "DirtyCutscene.asset") };
+            scene.MarkDirty();
+            other.MarkDirty();
+            assets.DirtyAssets[scene.ID] = scene;
+            assets.DirtyAssets[other.ID] = other;
+
+            if (useAsync)
+                assets.SaveAllAsync().Wait(TimeSpan.FromSeconds(30)).ShouldBeTrue();
+            else
+                assets.SaveAll();
+
+            File.Exists(scene.FilePath).ShouldBeFalse();
+            File.Exists(other.FilePath).ShouldBeTrue();
+            scene.IsDirty.ShouldBeTrue();
+            other.IsDirty.ShouldBeFalse();
+            assets.DirtyAssets.ContainsKey(scene.ID).ShouldBeTrue();
+            assets.DirtyAssets.ContainsKey(other.ID).ShouldBeFalse();
+
+            // A direct save of the rejected asset still fails.
+            Should.Throw<InvalidOperationException>(() => assets.SaveImmediate(scene));
+        }
+        finally
+        {
+            CutscenePreviewSession.Close();
+            runtime.Dispose();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Test]
     public void Session_WorldChange_ClosesThePreview_AndRecordsADiagnostic()
     {
