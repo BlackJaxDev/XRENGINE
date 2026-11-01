@@ -98,6 +98,7 @@
     <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.CutsceneIntegration\XREngine.Runtime.CutsceneIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Physics.Authoring\XREngine.Runtime.Physics.Authoring.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
