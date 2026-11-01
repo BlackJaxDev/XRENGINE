@@ -25,6 +25,7 @@ public sealed class CompiledCutscene
     private readonly int[] _clipIndices;
 
     internal CompiledCutscene(
+        CutsceneAsset asset,
         ClipData[] clips,
         long[] segmentStarts,
         int[] segmentOffsets,
@@ -32,6 +33,7 @@ public sealed class CompiledCutscene
         int[] clipIndices,
         int maxActiveClips)
     {
+        Asset = asset;
         _clips = clips;
         _segmentStarts = segmentStarts;
         _segmentOffsets = segmentOffsets;
@@ -39,6 +41,9 @@ public sealed class CompiledCutscene
         _clipIndices = clipIndices;
         MaxActiveClips = maxActiveClips;
     }
+
+    /// <summary>The asset that was compiled. It is the source of the track and binding data.</summary>
+    public CutsceneAsset Asset { get; }
 
     /// <summary>The largest number of clips that are active at the same time.</summary>
     public int MaxActiveClips { get; }

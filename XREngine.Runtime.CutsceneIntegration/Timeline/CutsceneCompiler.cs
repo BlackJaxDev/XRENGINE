@@ -60,7 +60,7 @@ public static class CutsceneCompiler
         }
 
         if (clips.Count == 0)
-            return new CompiledCutscene([], [], [], [], [], 0);
+            return new CompiledCutscene(asset, [], [], [], [], [], 0);
 
         List<long> edges = new(clips.Count * 2);
         for (int i = 0; i < clips.Count; i++)
@@ -95,7 +95,7 @@ public static class CutsceneCompiler
             maxActive = Math.Max(maxActive, segmentCounts[s]);
         }
 
-        return new CompiledCutscene(clips.ToArray(), segmentStarts, segmentOffsets, segmentCounts, clipIndices.ToArray(), maxActive);
+        return new CompiledCutscene(asset, clips.ToArray(), segmentStarts, segmentOffsets, segmentCounts, clipIndices.ToArray(), maxActive);
     }
 
     private static bool IsValidSpeed(double speed)
