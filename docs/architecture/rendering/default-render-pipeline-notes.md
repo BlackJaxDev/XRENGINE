@@ -147,6 +147,21 @@ identities, and advanced visibility-family reservations live on each
 `XRRenderPipelineInstance`. This keeps one shared source asset valid across
 multiple physical outputs.
 
+Each camera with no authored source used to create its own default asset, so a
+viewport that changed between two such cameras replaced its pipeline and all of
+its resources. `XRCamera.ResolveRenderPipelineForOutput` now gives the incoming
+camera the default asset that the viewport already uses. A camera cut then keeps
+the pipeline revision and the active resource generation. These limits apply:
+
+- An authored source always wins. Two authored assets are not compared, so a cut
+  between them replaces the pipeline. Share one asset to keep the cut cheap.
+- A camera keeps its own default when another output shows that default, or when
+  its type differs from the viewport default.
+- Post-process values stay per camera, in `CameraPostProcessStateCollection`.
+  Render commands read them from the current camera on each frame.
+- Do not change the settings of a default asset through `XRCamera.RenderPipeline`
+  for one camera. Cameras can share that asset. Assign an authored source instead.
+
 The application registers the default-source policy with the central runtime
 pipeline factory. Every request carries an explicit output purpose:
 

@@ -802,7 +802,7 @@ namespace XREngine.Rendering
                 if (!SetRenderPipelineFromCamera || ActiveCamera is not { } camera)
                     return _renderPipeline.Pipeline;
 
-                RenderPipeline configuredPipeline = camera.GetOrCreateRenderPipeline();
+                RenderPipeline configuredPipeline = camera.ResolveRenderPipelineForOutput(_renderPipeline.EffectiveRequestedPipeline);
                 if (!ReferenceEquals(_renderPipeline.AssignedPipeline, configuredPipeline))
                     _renderPipeline.RequestPipelineChange(configuredPipeline, this);
                 return configuredPipeline;
@@ -899,7 +899,9 @@ namespace XREngine.Rendering
         }
 
         private void SynchronizeRenderPipelineFromActiveCamera()
-            => _renderPipeline.RequestPipelineChange(ActiveCamera?.GetOrCreateRenderPipeline(), this);
+            => _renderPipeline.RequestPipelineChange(
+                ActiveCamera?.ResolveRenderPipelineForOutput(_renderPipeline.EffectiveRequestedPipeline),
+                this);
 
         /// <summary>
         /// Completes the viewport-facing half of an applied render-thread pipeline transition.

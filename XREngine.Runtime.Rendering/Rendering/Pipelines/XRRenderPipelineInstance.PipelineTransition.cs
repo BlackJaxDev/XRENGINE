@@ -183,7 +183,7 @@ public sealed partial class XRRenderPipelineInstance
     /// Gets the newest requested pipeline: the pending request while one waits for the render
     /// thread, otherwise the applied pipeline.
     /// </summary>
-    private RenderPipeline? EffectiveRequestedPipeline
+    internal RenderPipeline? EffectiveRequestedPipeline
     {
         get
         {
