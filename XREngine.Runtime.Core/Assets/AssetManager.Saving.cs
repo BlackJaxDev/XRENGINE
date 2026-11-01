@@ -12,9 +12,28 @@ namespace XREngine
 {
     public partial class AssetManager
     {
+        /// <summary>
+        /// Lets the application refuse a save. The delegate returns the reason, or null to allow the save.
+        /// All save paths meet this check, on the thread that does the save.
+        /// </summary>
+        public Func<XRAsset, string?>? SaveGuard { get; set; }
+
+        /// <summary>Gets the reason why a save of an asset is refused now.</summary>
+        /// <param name="asset">The asset to save.</param>
+        /// <returns>The reason, or null if the save is allowed.</returns>
+        public string? GetSaveRejection(XRAsset asset)
+            => SaveGuard?.Invoke(asset);
+
+        private void RejectGuardedSave(XRAsset asset)
+        {
+            if (GetSaveRejection(asset) is { } reason)
+                throw new InvalidOperationException(reason);
+        }
+
         private void SaveExistingAssetCore(XRAsset asset)
         {
             RejectRuntimeCatalogWrite();
+            RejectGuardedSave(asset);
             if (asset.FilePath is null)
             {
                 Debug.LogWarning("Cannot save an asset without a file path.");
@@ -39,6 +58,7 @@ namespace XREngine
         private void SaveToDirectoryCore(XRAsset asset, string directory)
         {
             RejectRuntimeCatalogWrite();
+            RejectGuardedSave(asset);
 #if !DEBUG
             try
             {

@@ -393,6 +393,9 @@ namespace XREngine.Editor.Mcp
             if (assets is null)
                 return Task.FromResult(new McpToolResponse("Asset manager is unavailable.", isError: true));
 
+            if (assets.GetSaveRejection(world) is { } rejection)
+                return Task.FromResult(new McpToolResponse(rejection, isError: true));
+
             string directory = string.IsNullOrWhiteSpace(outputDir)
                 ? assets.GameAssetsPath
                 : outputDir!;

@@ -103,6 +103,9 @@ public static class Undo
     /// </summary>
     private static int _suppressRecordingCount;
 
+    /// <summary>The sequence number of the last undo action that was created.</summary>
+    private static long _lastActionSequence;
+
     /// <summary>
     /// Cached lookup for properties marked <c>[Browsable(false)]</c>.
     /// These are excluded from undo recording because they represent
@@ -373,7 +376,51 @@ public static class Undo
     /// Use it for values that the editor writes for display only, such as a preview of a timeline.
     /// The scope is a struct, so this call does not allocate.
     /// </summary>
-    public static RecordingSuppressionScope SuppressRecording() => new();
+    internal static RecordingSuppressionScope SuppressRecording() => new();
+
+    /// <summary>Gets a mark for the current end of the history. Use it with <see cref="RemovePropertyChangesSince"/>.</summary>
+    /// <returns>The mark.</returns>
+    internal static long MarkHistory()
+        => Interlocked.Read(ref _lastActionSequence);
+
+    /// <summary>
+    /// Removes the property changes of some objects from the undo and redo entries that were made after a mark.
+    /// Other changes of an entry stay. An entry with no changes left is removed. Open change scopes commit first.
+    /// </summary>
+    /// <param name="mark">The mark from <see cref="MarkHistory"/>.</param>
+    /// <param name="targets">The objects whose changes are removed. The set must compare by reference.</param>
+    internal static void RemovePropertyChangesSince(long mark, HashSet<XRBase> targets)
+    {
+        ArgumentNullException.ThrowIfNull(targets);
+        FlushPendingScopes();
+
+        bool changed;
+        lock (_sync)
+        {
+            changed = PruneHistory(_undoStack, mark, targets);
+            changed |= PruneHistory(_redoStack, mark, targets);
+        }
+
+        if (changed)
+            RaiseHistoryChanged();
+    }
+
+    private static bool PruneHistory(Stack<UndoAction> stack, long mark, HashSet<XRBase> targets)
+    {
+        UndoAction[] topFirst = stack.ToArray();
+        bool changed = false;
+        stack.Clear();
+        for (int i = topFirst.Length - 1; i >= 0; i--)
+        {
+            UndoAction action = topFirst[i];
+            if (action.Sequence > mark)
+                changed |= action.RemovePropertyChanges(targets);
+            if (!action.IsEmpty)
+                stack.Push(action);
+        }
+
+        return changed;
+    }
 
     /// <summary>
     /// Begins a user interaction context that enables property change recording.
@@ -1227,17 +1274,28 @@ public static class Undo
     /// RAII-style scope that suppresses property change recording while active.
     /// Used during undo/redo operations to prevent recording the restoration of values.
     /// </summary>
-    public readonly struct RecordingSuppressionScope : IDisposable
+    internal readonly struct RecordingSuppressionScope : IDisposable
     {
+        // A default scope never incremented the counter, so its disposal must not decrement it.
+        private readonly bool _active;
+
         /// <summary>
         /// Initializes a new instance and increments the suppression counter.
         /// </summary>
-        public RecordingSuppressionScope() => Interlocked.Increment(ref _suppressRecordingCount);
+        public RecordingSuppressionScope()
+        {
+            _active = true;
+            Interlocked.Increment(ref _suppressRecordingCount);
+        }
 
         /// <summary>
         /// Decrements the suppression counter, potentially re-enabling recording.
         /// </summary>
-        public void Dispose() => Interlocked.Decrement(ref _suppressRecordingCount);
+        public void Dispose()
+        {
+            if (_active)
+                Interlocked.Decrement(ref _suppressRecordingCount);
+        }
     }
 
     /// <summary>
@@ -2218,6 +2276,18 @@ public static class Undo
     private sealed class UndoAction(string description, List<IUndoStep> steps, DateTime timestampUtc)
     {
         private readonly List<IUndoStep> _steps = steps;
+
+        /// <summary>The creation order of this action.</summary>
+        public long Sequence { get; } = Interlocked.Increment(ref _lastActionSequence);
+
+        /// <summary>True when the action has no steps.</summary>
+        public bool IsEmpty => _steps.Count == 0;
+
+        /// <summary>Removes the property changes of some objects.</summary>
+        /// <param name="targets">The objects whose changes are removed.</param>
+        /// <returns>True if a step was removed.</returns>
+        public bool RemovePropertyChanges(HashSet<XRBase> targets)
+            => _steps.RemoveAll(step => step is PropertyChangeStep change && targets.Contains(change.Target)) > 0;
 
         /// <summary>
         /// Gets the human-readable description of this action.

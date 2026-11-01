@@ -1,5 +1,7 @@
 using XREngine.Cutscenes;
+using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Scene;
 
 namespace XREngine.Editor.Cutscenes;
 
@@ -18,6 +20,8 @@ namespace XREngine.Editor.Cutscenes;
 /// <para>
 /// The preview always restores every recorded value at <see cref="End"/>, whatever the finish behavior of a track is.
 /// The host never marks a scene as changed, and it stops the undo system from recording its writes.
+/// An author can still move a bound node with a gizmo during a preview. That undo entry holds a preview value as its
+/// previous value, so <see cref="End"/> removes the transform changes of bound nodes that were recorded since <see cref="Begin"/>.
 /// </para>
 /// </remarks>
 public sealed class CutscenePreviewHost
@@ -25,7 +29,9 @@ public sealed class CutscenePreviewHost
     private readonly ICutsceneBindingResolver _resolver;
     private readonly XRViewport? _viewport;
     private readonly List<CutsceneCompileDiagnostic> _compileDiagnostics = [];
+    private readonly HashSet<XRBase> _boundTransforms = new(ReferenceEqualityComparer.Instance);
 
+    private long _undoMark;
     private CutsceneAsset? _asset;
     private CutscenePlayer? _player;
     private CutsceneBindingTable? _bindings;
@@ -92,6 +98,8 @@ public sealed class CutscenePreviewHost
         ArgumentNullException.ThrowIfNull(asset);
         End();
 
+        using Undo.RecordingSuppressionScope suppression = Undo.SuppressRecording();
+        _undoMark = Undo.MarkHistory();
         _asset = asset;
         Open(asset);
         _player!.Pause();
@@ -198,12 +206,26 @@ public sealed class CutscenePreviewHost
             return;
 
         using Undo.RecordingSuppressionScope suppression = Undo.SuppressRecording();
-        Release();
-        _asset = null;
-        _recompileRequested = false;
-        _hasPendingSeek = false;
-        _hasLoopRange = false;
+        try
+        {
+            Release();
+        }
+        finally
+        {
+            _asset = null;
+            _recompileRequested = false;
+            _hasPendingSeek = false;
+            _hasLoopRange = false;
+            Undo.RemovePropertyChangesSince(_undoMark, _boundTransforms);
+            _boundTransforms.Clear();
+        }
     }
+
+    /// <summary>Gets the node that a binding slot holds now.</summary>
+    /// <param name="slot">The binding slot.</param>
+    /// <returns>The node, or null if the slot has no live node.</returns>
+    public SceneNode? GetBoundNode(int slot)
+        => _bindings is { } bindings && slot >= 0 && slot < bindings.SlotCount ? bindings.GetNode(slot) : null;
 
     /// <summary>Copies the current problems of the preview to a list.</summary>
     /// <param name="destination">The list that receives the problems. The method does not clear it.</param>
@@ -224,6 +246,10 @@ public sealed class CutscenePreviewHost
         CompileCount++;
 
         _bindings = CutsceneBindingTable.Resolve(compiled, _resolver);
+        for (int slot = 0; slot < _bindings.SlotCount; slot++)
+            if (_bindings.GetNode(slot)?.Transform is { } transform)
+                _boundTransforms.Add(transform);
+
         _player = new CutscenePlayer(compiled, _bindings, new CutsceneStateSnapshot(_bindings));
         if (_viewport is not null)
         {
@@ -241,9 +267,22 @@ public sealed class CutscenePreviewHost
         _bindings = null;
         _router = null;
 
-        player?.StopAndRestoreAll();
-        router?.Detach();
-        bindings?.Dispose();
+        // A restore failure must not leave the camera claim or the spawned instances behind.
+        try
+        {
+            player?.StopAndRestoreAll();
+        }
+        finally
+        {
+            try
+            {
+                router?.Detach();
+            }
+            finally
+            {
+                bindings?.Dispose();
+            }
+        }
     }
 
     /// <summary>

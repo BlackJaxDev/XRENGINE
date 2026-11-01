@@ -20,7 +20,7 @@ This guide describes the cutscene timeline: how to author a cutscene, how to pre
 3. Click **Create Cutscene Asset**. The new asset has a length of 10 seconds.
 4. Click **Start Preview**.
 5. Select the node to animate, and click **Add Transform Track**. The track has one clip that covers the whole cutscene, with one key at the current transform. The node does not move yet.
-6. Click the clip to select it. Move the playhead, move the node, and click **Add Key At Playhead**. **Remove Key At Playhead** removes a key within half a frame of the playhead.
+6. Click the clip to select it. Move the playhead, move the bound node, and click **Add Key At Playhead**. The key always uses the transform of the node that is bound to the track. **Remove Key At Playhead** removes a key within half a frame of the playhead.
 7. Select a node that has a `CameraComponent`, and click **Add Camera Track** to show that camera while the clip is active.
 8. Click **Save Asset**. A new asset goes to the `Cutscenes` folder of the game assets.
 
@@ -60,8 +60,10 @@ The preview does not mark a scene as changed, and it stops the undo system from 
 
 - Entering play mode ends the preview before the world snapshot.
 - Closing the panel ends a preview after the panel was shown.
-- A scene save during a preview writes the preview values. End the preview before you save the scene.
+- A save of a scene or a world during a preview fails with an error that tells you to end the preview. `AssetManager.SaveGuard` does this check on all save paths. A save of a cutscene asset is allowed.
 - A move of a bound node with the gizmo during a pause stays until the next evaluation. Add a key to keep it. `End` restores the original value.
+- `End` removes the transform changes of bound nodes that the undo history recorded since `Begin`, because those entries hold preview values. Other changes and key edits stay. After a preview, Ctrl+Z cannot undo a gizmo move of a bound node that you made during the preview.
+- A change of the world closes the preview and restores the values. The reason is in the diagnostics.
 
 ## Play A Cutscene
 

@@ -24,6 +24,7 @@ public static partial class EditorImGuiUI
     private static int _cutsceneFramesPerSecond = 30;
     private static float _cutscenePixelsPerSecond = 80.0f;
     private static bool _cutsceneScrubbing;
+    private static string? _cutsceneOpenMessage;
     private static bool _cutscenePanelWasShown;
     private static bool _cutsceneLoopEnabled;
     private static float _cutsceneLoopStartSeconds;
@@ -129,6 +130,12 @@ public static partial class EditorImGuiUI
         if (ImGui.Button("Save Asset"))
             SaveCutsceneAsset(asset);
 
+        if (_cutsceneOpenMessage is { } openMessage)
+        {
+            ImGui.SameLine();
+            ImGui.TextWrapped(openMessage);
+        }
+
         if (CutscenePreviewSession.Host is not null)
         {
             ImGui.SameLine();
@@ -144,7 +151,14 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        if (director.Asset is { } asset && director.World is RuntimeWorld world)
+        if (director.World is not RuntimeWorld world)
+        {
+            _cutsceneOpenMessage = "The preview cannot start: the director node is not in a runtime world.";
+            return;
+        }
+
+        _cutsceneOpenMessage = null;
+        if (director.Asset is { } asset)
             CutscenePreviewSession.OpenPreview(asset, world);
     }
 
@@ -168,11 +182,20 @@ public static partial class EditorImGuiUI
 
     private static void SaveCutsceneAsset(CutsceneAsset asset)
     {
-        if (string.IsNullOrEmpty(asset.FilePath))
-            Engine.Assets.SaveGameAssetTo(asset, "Cutscenes");
-        else
-            Engine.Assets.Save(asset);
-        asset.ClearDirty();
+        // The asset manager clears the dirty flag only after a save that succeeds.
+        try
+        {
+            if (string.IsNullOrEmpty(asset.FilePath))
+                Engine.Assets.SaveGameAssetTo(asset, "Cutscenes");
+            else
+                Engine.Assets.Save(asset);
+            _cutsceneOpenMessage = null;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, $"The cutscene asset '{asset.Name}' was not saved.");
+            _cutsceneOpenMessage = $"The asset was not saved: {ex.Message}";
+        }
     }
 
     private static void DrawCutsceneTransportBar(CutsceneAsset asset)
@@ -266,10 +289,17 @@ public static partial class EditorImGuiUI
 
         ImGui.SameLine();
         TransformTrackClip? keyClip = _cutsceneSelectedClip as TransformTrackClip;
-        ImGui.BeginDisabled(keyClip is null || selected is null || !CutscenePreviewSession.IsOpen);
-        if (ImGui.Button("Add Key At Playhead") && keyClip is not null && selected is not null)
-            AddCutsceneKey(asset, keyClip, selected);
+        int keySlot = canRemoveTrack ? asset.Tracks[_cutsceneSelectedTrack].BindingSlot : -1;
+        bool canAddKey = keyClip is not null && CutscenePreviewSession.GetBoundNode(keySlot) is not null;
+        ImGui.BeginDisabled(!canAddKey);
+        if (ImGui.Button("Add Key At Playhead") && keyClip is not null)
+            AddCutsceneKey(asset, keyClip, keySlot);
+        ImGui.EndDisabled();
+        if (!canAddKey && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Start a preview and select a transform clip whose track has a live bound node. The key uses the transform of that node.");
+
         ImGui.SameLine();
+        ImGui.BeginDisabled(keyClip is null || !CutscenePreviewSession.IsOpen);
         if (ImGui.Button("Remove Key At Playhead") && keyClip is not null)
             RemoveCutsceneKey(asset, keyClip);
         ImGui.EndDisabled();
@@ -360,12 +390,12 @@ public static partial class EditorImGuiUI
                 () => asset.Tracks.Remove(track));
         });
 
-    private static void AddCutsceneKey(CutsceneAsset asset, TransformTrackClip clip, SceneNode node)
+    private static void AddCutsceneKey(CutsceneAsset asset, TransformTrackClip clip, int bindingSlot)
         => EnqueueSceneEdit(() =>
         {
-            if (node.Transform is not Transform transform)
+            if (CutscenePreviewSession.GetBoundNode(bindingSlot)?.Transform is not Transform transform)
             {
-                Debug.LogWarning($"The node '{node.Name}' has no standard transform, so it cannot give a cutscene key.");
+                Debug.LogWarning("The bound node of the track has no standard transform, so it cannot give a cutscene key.");
                 return;
             }
 
@@ -508,6 +538,9 @@ public static partial class EditorImGuiUI
 
     private static void DrawCutsceneLane(CutsceneAsset asset, ImDrawListPtr drawList, int trackIndex, Vector2 origin, float timelineLeft)
     {
+        if (trackIndex >= asset.Tracks.Count)
+            return;
+
         CutsceneTrack track = asset.Tracks[trackIndex];
         float laneTop = origin.Y + CutsceneRulerHeight + (trackIndex * CutsceneLaneHeight);
         Vector2 headerMin = new(origin.X, laneTop);
@@ -522,6 +555,9 @@ public static partial class EditorImGuiUI
 
     private static void DrawCutsceneClip(CutsceneAsset asset, ImDrawListPtr drawList, CutsceneTrack track, int trackIndex, int clipIndex, float timelineLeft, float laneTop)
     {
+        if (clipIndex >= track.Clips.Count)
+            return;
+
         CutsceneClip clip = track.Clips[clipIndex];
         float left = timelineLeft + ((float)clip.Start.ToSeconds() * _cutscenePixelsPerSecond);
         float width = Math.Max(4.0f, (float)clip.Duration.ToSeconds() * _cutscenePixelsPerSecond);

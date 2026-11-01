@@ -234,6 +234,9 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(outputDir))
                 return Task.FromResult(new McpToolResponse("Output directory must be provided.", isError: true));
 
+            if (assets.GetSaveRejection(scene) is { } rejection)
+                return Task.FromResult(new McpToolResponse(rejection, isError: true));
+
             Directory.CreateDirectory(outputDir);
             assets.SaveTo(scene, outputDir);
             return Task.FromResult(new McpToolResponse($"Exported scene '{scene.Name ?? scene.ID.ToString()}'.", new { path = scene.FilePath }));

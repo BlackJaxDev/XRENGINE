@@ -1,4 +1,5 @@
 using XREngine.Components;
+using XREngine.Core.Files;
 using XREngine.Cutscenes;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -14,8 +15,10 @@ namespace XREngine.Editor.Cutscenes;
 public static class CutscenePreviewSession
 {
     private static readonly Action _updateFrameHandler = OnUpdateFrame;
-    private static readonly List<CutsceneCompileDiagnostic> _lastFailure = [];
+    private static readonly List<CutsceneCompileDiagnostic> _sessionDiagnostics = [];
 
+    private static RuntimeWorld? _previewWorld;
+    private static XRWorld? _previewTargetWorld;
     private static CutscenePreviewHost? _host;
     private static CutsceneDirectorComponent? _director;
     private static bool _updateHooked;
@@ -55,8 +58,23 @@ public static class CutscenePreviewSession
         _initialized = true;
 
         CutsceneDirectorComponent.DefaultBindingResolverFactory = CreateResolverForDirector;
+        Engine.Assets.SaveGuard = GetSaveRejection;
         Engine.PlayMode.PreEnterPlay += Close;
+
+        // Play can start without transitions, and that path does not raise PreEnterPlay. It does change the state.
+        Engine.PlayMode.StateChanged += OnPlayModeStateChanged;
     }
+
+    /// <summary>
+    /// Gets the reason why a save is refused. While a preview is open, the live scene holds preview values,
+    /// so a scene or a world must not be saved. A cutscene asset holds no preview values, so its save is allowed.
+    /// </summary>
+    /// <param name="asset">The asset to save.</param>
+    /// <returns>The reason, or null if the save is allowed.</returns>
+    public static string? GetSaveRejection(XRAsset asset)
+        => _host is not null && asset is XRScene or XRWorld
+            ? $"Cannot save '{asset.Name}' while a cutscene preview is open, because the scene holds preview values. End the preview, then save."
+            : null;
 
     /// <summary>Creates a binding resolver from the root nodes of a world and the asset manager of the engine.</summary>
     /// <param name="world">The world to search.</param>
@@ -85,6 +103,8 @@ public static class CutscenePreviewSession
             fallback ??= viewport;
         }
 
+        if (fallback is not null)
+            AddSessionDiagnostic("No window shows the world of the cutscene. The cutscene camera shows on the viewport of another window.");
         return fallback;
     }
 
@@ -96,10 +116,13 @@ public static class CutscenePreviewSession
         ArgumentNullException.ThrowIfNull(asset);
         ArgumentNullException.ThrowIfNull(world);
         Close();
+        _sessionDiagnostics.Clear();
 
         CutscenePreviewHost host = new(CreateResolver(world), FindSceneViewport(world));
         host.Begin(asset);
         _host = host;
+        _previewWorld = world;
+        _previewTargetWorld = world.TargetWorld;
         HookUpdate();
     }
 
@@ -112,6 +135,7 @@ public static class CutscenePreviewSession
     {
         ArgumentNullException.ThrowIfNull(director);
         Close();
+        _sessionDiagnostics.Clear();
 
         director.TargetViewport ??= FindSceneViewport(director.World as RuntimeWorld);
         director.OpenAsync().GetAwaiter().GetResult();
@@ -128,6 +152,8 @@ public static class CutscenePreviewSession
         CutsceneDirectorComponent? director = _director;
         _host = null;
         _director = null;
+        _previewWorld = null;
+        _previewTargetWorld = null;
         host?.End();
         director?.Close();
     }
@@ -203,6 +229,12 @@ public static class CutscenePreviewSession
             DirectorPlayer?.EndScrub();
     }
 
+    /// <summary>Gets the node that a binding slot of the preview holds now.</summary>
+    /// <param name="slot">The binding slot.</param>
+    /// <returns>The node, or null if no preview is open or the slot has no live node.</returns>
+    public static SceneNode? GetBoundNode(int slot)
+        => _host?.GetBoundNode(slot);
+
     /// <summary>Tells the preview that the asset changed. Any thread can call this method.</summary>
     public static void NotifyAssetEdited()
         => _host?.NotifyAssetEdited();
@@ -212,6 +244,7 @@ public static class CutscenePreviewSession
     public static void CopyDiagnostics(List<CutsceneCompileDiagnostic> destination)
     {
         ArgumentNullException.ThrowIfNull(destination);
+        destination.AddRange(_sessionDiagnostics);
         if (_host is { } host)
         {
             host.CopyDiagnostics(destination);
@@ -223,34 +256,79 @@ public static class CutscenePreviewSession
             destination.AddRange(director.Diagnostics);
             if (director.Player is { } player)
                 destination.AddRange(player.Diagnostics);
-            return;
         }
-
-        destination.AddRange(_lastFailure);
     }
 
     private static ICutsceneBindingResolver? CreateResolverForDirector(CutsceneDirectorComponent director)
         => director.World is RuntimeWorld world ? CreateResolver(world) : null;
 
     private static void OnUpdateFrame()
+        => AdvanceFrame(Engine.UndilatedDelta);
+
+    private static void OnPlayModeStateChanged(EPlayModeState state)
+    {
+        if (state is EPlayModeState.EnteringPlay or EPlayModeState.Play && _host is not null)
+            Close();
+    }
+
+    /// <summary>Runs one frame of the preview. It closes a preview whose world is gone.</summary>
+    /// <param name="deltaSeconds">The wall time since the last frame, in seconds.</param>
+    internal static void AdvanceFrame(double deltaSeconds)
     {
         CutscenePreviewHost? host = _host;
         if (host is null)
             return;
 
+        if (!IsPreviewWorldCurrent())
+        {
+            AddSessionDiagnostic("The world changed, so the cutscene preview closed.");
+            CloseAfterFailure();
+            return;
+        }
+
         // An exception in a timer callback stops the update loop, so a failed preview closes here instead.
         try
         {
-            host.Tick(Engine.UndilatedDelta);
+            host.Tick(deltaSeconds);
         }
         catch (Exception ex)
         {
             Debug.LogException(ex, "The cutscene preview failed and closed.");
-            _lastFailure.Clear();
-            _lastFailure.Add(new CutsceneCompileDiagnostic(-1, -1, $"The preview failed and closed: {ex.Message}"));
-            Close();
+            AddSessionDiagnostic($"The preview failed and closed: {ex.Message}");
+            CloseAfterFailure();
         }
     }
+
+    private static bool IsPreviewWorldCurrent()
+    {
+        RuntimeWorld? world = _previewWorld;
+        if (world is null || !ReferenceEquals(world.TargetWorld, _previewTargetWorld))
+            return false;
+
+        // The runtime world can also leave the windows. A session without windows has nothing to compare.
+        var windows = RuntimeEngine.Windows;
+        for (int i = 0; i < windows.Count; i++)
+            if (windows[i].TargetWorldInstance is IRuntimeRenderWorld renderWorld && ReferenceEquals(renderWorld.WorldContext, world))
+                return true;
+        return windows.Count == 0;
+    }
+
+    /// <summary>Closes the session from the update callback. A second failure here must not stop the update loop.</summary>
+    private static void CloseAfterFailure()
+    {
+        try
+        {
+            Close();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, "The cutscene preview did not close cleanly.");
+            AddSessionDiagnostic($"The preview did not close cleanly: {ex.Message}");
+        }
+    }
+
+    private static void AddSessionDiagnostic(string message)
+        => _sessionDiagnostics.Add(new CutsceneCompileDiagnostic(-1, -1, message));
 
     private static void HookUpdate()
     {

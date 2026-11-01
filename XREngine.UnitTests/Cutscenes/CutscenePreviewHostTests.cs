@@ -2,10 +2,14 @@ using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
+using XREngine.Core.Files;
 using XREngine.Cutscenes;
+using XREngine.Editor;
 using XREngine.Editor.Cutscenes;
+using XREngine.Editor.Mcp;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Jitter2;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Cutscenes;
@@ -466,6 +470,171 @@ public sealed class CutscenePreviewHostTests
         clip.Position.Times.ShouldBe([T(0), T(10)]);
         clip.Rotation.Times.ShouldBe([T(0)]);
         CutsceneAssetEditing.RemoveTransformKey(clip, T(5), T(0.01)).ShouldBeFalse();
+    }
+
+    [Test]
+    public void SaveGuard_RejectsAtTheSaveCore_AndAllowsOtherAssets()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"cutscene-save-guard-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            AssetManager assets = new()
+            {
+                GameAssetsPath = directory,
+                SaveGuard = asset => asset is XRScene ? "Rejected." : null,
+            };
+
+            XRScene scene = new("GuardedScene");
+            Should.Throw<InvalidOperationException>(() => assets.SaveToImmediate(scene, directory)).Message.ShouldBe("Rejected.");
+            Directory.GetFiles(directory).ShouldBeEmpty();
+
+            CutsceneAsset cutscene = new() { Name = "AllowedCutscene", Duration = T(1) };
+            cutscene.MarkDirty();
+            assets.SaveToImmediate(cutscene, directory);
+            File.Exists(cutscene.FilePath).ShouldBeTrue();
+            cutscene.IsDirty.ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static (RuntimeWorld Runtime, XRWorld Target, CutsceneAsset Asset) OpenSessionPreview()
+    {
+        XRWorld target = new("PreviewWorld", new XRScene("PreviewScene", new SceneNode("Root")));
+        RuntimeWorld runtime = new(new JitterScene(), target);
+        CutsceneAsset asset = new() { Duration = T(4) };
+        CutscenePreviewSession.OpenPreview(asset, runtime);
+        return (runtime, target, asset);
+    }
+
+    private static List<CutsceneCompileDiagnostic> SessionDiagnostics()
+    {
+        List<CutsceneCompileDiagnostic> diagnostics = [];
+        CutscenePreviewSession.CopyDiagnostics(diagnostics);
+        return diagnostics;
+    }
+
+    [Test]
+    public void Session_RefusesSceneAndWorldSaves_OnlyWhileAPreviewIsOpen()
+    {
+        (RuntimeWorld runtime, XRWorld target, CutsceneAsset asset) = OpenSessionPreview();
+        Func<XRAsset, string?>? previousGuard = Engine.Assets.SaveGuard;
+        try
+        {
+            Engine.Assets.SaveGuard = CutscenePreviewSession.GetSaveRejection;
+
+            CutscenePreviewSession.GetSaveRejection(new XRScene("S")).ShouldNotBeNull().ShouldContain("End the preview");
+            CutscenePreviewSession.GetSaveRejection(target).ShouldNotBeNull();
+            CutscenePreviewSession.GetSaveRejection(asset).ShouldBeNull();
+
+            McpToolResponse response = EditorMcpActions.SaveWorldAsync(new McpToolContext(runtime)).GetAwaiter().GetResult();
+            response.IsError.ShouldBeTrue();
+            response.Message.ShouldContain("End the preview");
+
+            CutscenePreviewSession.Close();
+            CutscenePreviewSession.GetSaveRejection(target).ShouldBeNull();
+        }
+        finally
+        {
+            Engine.Assets.SaveGuard = previousGuard;
+            CutscenePreviewSession.Close();
+            runtime.Dispose();
+        }
+    }
+
+    [Test]
+    public void Session_WorldChange_ClosesThePreview_AndRecordsADiagnostic()
+    {
+        (RuntimeWorld runtime, _, _) = OpenSessionPreview();
+        try
+        {
+            CutscenePreviewSession.AdvanceFrame(0.0);
+            CutscenePreviewSession.IsOpen.ShouldBeTrue();
+
+            runtime.RetargetWorld(new XRWorld("OtherWorld"));
+            CutscenePreviewSession.AdvanceFrame(0.0);
+
+            CutscenePreviewSession.IsOpen.ShouldBeFalse();
+            SessionDiagnostics().ShouldContain(d => d.Message.Contains("world changed"));
+
+            // A new open starts with no old failure.
+            CutscenePreviewSession.OpenPreview(new CutsceneAsset { Duration = T(1) }, runtime);
+            SessionDiagnostics().ShouldNotContain(d => d.Message.Contains("world changed"));
+        }
+        finally
+        {
+            CutscenePreviewSession.Close();
+            runtime.Dispose();
+        }
+    }
+
+    [Test]
+    public void End_RemovesGizmoMovesOfBoundNodesFromUndo_AndKeepsOtherEntries()
+    {
+        (SceneNode node, CutsceneAsset asset, CutscenePreviewHost host) = MakeRig();
+        Transform bound = (Transform)node.Transform;
+        SceneNode otherNode = new("Other", new Transform());
+        Transform other = (Transform)otherNode.Transform;
+        Undo.ClearHistory();
+        Undo.Track(bound);
+        Undo.Track(other);
+        try
+        {
+            host.Begin(asset);
+            host.Seek(T(5), ESeekIntent.Jump);
+            host.Tick(0.0);
+
+            using (Undo.BeginUserInteraction())
+            using (Undo.BeginChange("Gizmo move"))
+            {
+                bound.Translation = new Vector3(50, 0, 0);
+                other.Translation = new Vector3(60, 0, 0);
+            }
+
+            host.End();
+            Position(node).ShouldBe(OriginalPosition);
+
+            Undo.TryUndo().ShouldBeTrue();
+            Position(node).ShouldBe(OriginalPosition);
+            other.Translation.ShouldBe(Vector3.Zero);
+            Undo.CanUndo.ShouldBeFalse();
+        }
+        finally
+        {
+            Undo.Untrack(bound);
+            Undo.Untrack(other);
+            Undo.ClearHistory();
+        }
+    }
+
+    [Test]
+    public void SuppressionScope_DefaultDisposal_DoesNotChangeTheCount()
+    {
+        SceneNode node = new("Node", new Transform());
+        Transform transform = (Transform)node.Transform;
+        Undo.ClearHistory();
+        Undo.Track(transform);
+        try
+        {
+            default(Undo.RecordingSuppressionScope).Dispose();
+
+            using (Undo.SuppressRecording())
+            using (Undo.BeginUserInteraction())
+                transform.Translation = Vector3.UnitX;
+            Undo.CanUndo.ShouldBeFalse();
+
+            using (Undo.BeginUserInteraction())
+                transform.Translation = Vector3.UnitY;
+            Undo.CanUndo.ShouldBeTrue();
+        }
+        finally
+        {
+            Undo.Untrack(transform);
+            Undo.ClearHistory();
+        }
     }
 
     [Test]
