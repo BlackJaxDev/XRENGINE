@@ -16,7 +16,9 @@ public sealed class CompiledCutscene
         double Speed,
         long BlendIn,
         long BlendOut,
-        ECutsceneClipExtrapolation Extrapolation);
+        ECutsceneClipExtrapolation Extrapolation,
+        long CrossfadeStart,
+        long CrossfadeLength);
 
     private readonly ClipData[] _clips;
     private readonly long[] _segmentStarts;
@@ -110,6 +112,10 @@ public sealed class CompiledCutscene
             local = clip.ClipOffset + ScaleBySpeed(elapsed % clip.Duration, clip.Speed);
         else
             local = clip.ClipOffset + ScaleBySpeed(clip.Duration, clip.Speed);
+
+        // The next clip on the track fades in over this clip. The weights of the two clips sum to one.
+        if (clip.CrossfadeLength > 0 && t >= clip.CrossfadeStart && t - clip.CrossfadeStart < clip.CrossfadeLength)
+            weight = Math.Min(weight, 1f - (float)((double)(t - clip.CrossfadeStart) / clip.CrossfadeLength));
 
         return new CutsceneActiveClip(clip.TrackIndex, clip.ClipIndex, new CutsceneTime(local), weight);
     }

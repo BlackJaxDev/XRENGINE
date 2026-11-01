@@ -133,6 +133,37 @@ public sealed class CutsceneCompilerTests
     }
 
     [Test]
+    public void Hold_EndsWhenTheNextClipOnTheTrackFinishesItsBlendIn()
+    {
+        CutsceneClip next = Clip(6, 4);
+        next.BlendIn = T(2);
+        CompiledCutscene compiled = Compile(Asset(20, [Clip(0, 2, ECutsceneClipExtrapolation.Hold), next]), out _);
+        Span<CutsceneActiveClip> buffer = stackalloc CutsceneActiveClip[4];
+
+        compiled.QueryActive(T(5.9), buffer).ShouldBe(1);
+        compiled.QueryActive(T(7.9), buffer).ShouldBe(2);
+        compiled.QueryActive(T(8), buffer).ShouldBe(1);
+        buffer[0].ClipIndex.ShouldBe(1);
+    }
+
+    [Test]
+    public void Crossfade_OutgoingWeightIsOneMinusTheIncomingRamp()
+    {
+        CutsceneClip next = Clip(6, 4);
+        next.BlendIn = T(2);
+        CompiledCutscene compiled = Compile(Asset(20, [Clip(0, 2, ECutsceneClipExtrapolation.Loop), next]), out _);
+        Span<CutsceneActiveClip> buffer = stackalloc CutsceneActiveClip[4];
+
+        for (double t = 6.0; t < 8.0; t += 0.25)
+        {
+            compiled.QueryActive(T(t), buffer).ShouldBe(2);
+            (buffer[0].Weight + buffer[1].Weight).ShouldBe(1f, 1e-5f);
+        }
+        compiled.QueryActive(T(7), buffer);
+        buffer[0].Weight.ShouldBe(0.5f, 1e-5f);
+    }
+
+    [Test]
     public void TimesOutsideTheAsset_DoNotThrow()
     {
         CompiledCutscene compiled = Compile(Asset(10, [Clip(0, 2, ECutsceneClipExtrapolation.Loop)]), out _);

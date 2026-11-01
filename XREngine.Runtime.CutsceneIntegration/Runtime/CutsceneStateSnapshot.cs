@@ -68,6 +68,36 @@ public sealed class CutsceneStateSnapshot
     }
 
     /// <summary>
+    /// Writes the recorded transform of a slot to its node. The record stays, so a later call can write it again.
+    /// The call does nothing if the slot has no record or no live node.
+    /// </summary>
+    /// <param name="slot">The binding slot.</param>
+    public void ApplyTransform(int slot)
+    {
+        if ((uint)slot >= (uint)_hasTransform.Length || !_hasTransform[slot])
+            return;
+        if (_table.GetNode(slot)?.Transform is not Transform transform)
+            return;
+
+        transform.Translation = _translations[slot];
+        transform.Rotation = _rotations[slot];
+        transform.Scale = _scales[slot];
+    }
+
+    /// <summary>
+    /// Writes the recorded activation of a slot to its node. The record stays, so a later call can write it again.
+    /// The call does nothing if the slot has no record or no live node.
+    /// </summary>
+    /// <param name="slot">The binding slot.</param>
+    public void ApplyActive(int slot)
+    {
+        if ((uint)slot >= (uint)_hasActive.Length || !_hasActive[slot])
+            return;
+        if (_table.GetNode(slot) is SceneNode node)
+            node.IsActiveSelf = _active[slot];
+    }
+
+    /// <summary>
     /// Puts back the recorded values. A transform track restores the transform and an activation track restores the activation.
     /// A restored value is cleared, so the next capture records a new original value.
     /// </summary>

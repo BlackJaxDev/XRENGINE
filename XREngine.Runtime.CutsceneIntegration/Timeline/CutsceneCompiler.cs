@@ -38,12 +38,24 @@ public static class CutsceneCompiler
 
                 long start = clip.Start.Flicks;
                 long clipEnd = start + clip.Duration.Flicks;
-                long end = clip.Extrapolation switch
+
+                // A Hold or Loop clip stays active until the next clip on the track finishes its fade in.
+                // Without a next clip, it stays active until the asset end.
+                CutsceneClip? next = clip.Extrapolation == ECutsceneClipExtrapolation.None ? null : FindNextClip(trackClips, clip);
+                long crossfadeStart = long.MaxValue;
+                long crossfadeLength = 0;
+                long end = clipEnd;
+                if (clip.Extrapolation != ECutsceneClipExtrapolation.None)
                 {
-                    ECutsceneClipExtrapolation.Hold => Math.Max(clipEnd, assetEnd),
-                    ECutsceneClipExtrapolation.Loop => Math.Max(clipEnd, FindNextStart(trackClips, clip, assetEnd)),
-                    _ => clipEnd,
-                };
+                    if (next is null)
+                        end = Math.Max(clipEnd, assetEnd);
+                    else
+                    {
+                        crossfadeStart = next.Start.Flicks;
+                        crossfadeLength = Math.Max(0, next.BlendIn.Flicks);
+                        end = Math.Max(clipEnd, crossfadeStart + crossfadeLength);
+                    }
+                }
 
                 clips.Add(new CompiledCutscene.ClipData(
                     trackIndex,
@@ -54,7 +66,9 @@ public static class CutsceneCompiler
                     clip.Speed,
                     clip.BlendIn.Flicks,
                     clip.BlendOut.Flicks,
-                    clip.Extrapolation));
+                    clip.Extrapolation,
+                    crossfadeStart,
+                    crossfadeLength));
                 ends.Add(end);
             }
         }
@@ -101,18 +115,18 @@ public static class CutsceneCompiler
     private static bool IsValidSpeed(double speed)
         => speed > 0.0 && !double.IsInfinity(speed);
 
-    // Finds the start of the next valid clip on the track, or the asset end if there is none.
-    private static long FindNextStart(List<CutsceneClip> trackClips, CutsceneClip clip, long assetEnd)
+    // Finds the next valid clip on the track, or null if there is none.
+    private static CutsceneClip? FindNextClip(List<CutsceneClip> trackClips, CutsceneClip clip)
     {
-        long next = long.MaxValue;
+        CutsceneClip? next = null;
         for (int i = 0; i < trackClips.Count; i++)
         {
             CutsceneClip other = trackClips[i];
             if (ReferenceEquals(other, clip) || other.Duration.Flicks <= 0 || !IsValidSpeed(other.Speed))
                 continue;
-            if (other.Start.Flicks > clip.Start.Flicks && other.Start.Flicks < next)
-                next = other.Start.Flicks;
+            if (other.Start.Flicks > clip.Start.Flicks && (next is null || other.Start.Flicks < next.Start.Flicks))
+                next = other;
         }
-        return next == long.MaxValue ? assetEnd : next;
+        return next;
     }
 }
