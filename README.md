@@ -210,7 +210,7 @@ The [runtime project map](docs/architecture/runtime/project-organization.md) exp
 
 | Folder | What it is for |
 |--------|----------------|
-| `XREngine.AgentOrchestration/` | Agent context, evidence, model-provider, tool-policy, and orchestration services. |
+| [Local Agent Broker](https://github.com/BlackJaxDev/local-agent-broker) | External orchestration library and MCP broker. The editor consumes a pinned release. |
 | `XREngine.Animation/` | Animation clips, curves, key collections, compression, and VR IK data and logic. |
 | `XREngine.Audio/` | Managed audio buffers, processing, and playback/capture/effects contracts. |
 | `XREngine.Audio.*` | OpenAL, NAudio, SteamAudio, OVRLipSync, and Audio2Face implementation modules. |

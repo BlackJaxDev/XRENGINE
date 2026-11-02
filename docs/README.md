@@ -61,7 +61,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Windows CI Test Coverage](developer-guides/testing/windows-ci.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
-- [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
+- [Local Agent Broker Integration](developer-guides/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
 - [Unity Conversion](developer-guides/assets/unity-conversion-integrations.md): package startup imports, scene and prefab roots, source dependencies, and Poiyomi materials.

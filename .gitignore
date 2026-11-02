@@ -528,6 +528,7 @@ Samples/BrowserUiParity/Assets/*
 
 # Local dependency checkouts
 /Build/Dependencies/vcpkg/
+/Build/Dependencies/LocalAgentBroker/
 /Build/Submodules/Flyleaf/
 
 # Build output from the former MonkeyBallVR sample.

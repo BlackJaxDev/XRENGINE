@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <Import Project="..\Build\Shared\LocalAgentBroker.props" />
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows7.0</TargetFramework>
@@ -81,7 +83,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
     <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Audio.SteamAudio\XREngine.Audio.SteamAudio.csproj" />

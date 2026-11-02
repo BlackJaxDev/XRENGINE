@@ -14,7 +14,6 @@
     <ProjectReference Include="..\XREngine.Audio.OpenAL\XREngine.Audio.OpenAL.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.UI.Rive\XREngine.Runtime.UI.Rive.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.UI.Skia\XREngine.Runtime.UI.Skia.csproj" />
-    <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
     <PackageReference Include="Magick.NET-Q16-HDRI-x64" Version="14.16.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageReference Include="NUnit" Version="4.6.1" />
@@ -65,7 +64,6 @@
     <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj" />
     <ProjectReference Include="..\XREngine.Editor\XREngine.Editor.csproj" />
-    <ProjectReference Include="..\Tools\LocalAgentBroker\LocalAgentBroker.csproj" />
   </ItemGroup>
 
   <ItemGroup>
