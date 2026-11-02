@@ -149,41 +149,11 @@ namespace XREngine.Animation
         }
         public void RemoveLast()
         {
-            if (Last is null)
-                return;
-
-            if (First == Last)
-            {
-                First = null;
-                Last = null;
-                --Count;
-                OnChanged();
-            }
-            else
-            {
-                Keyframe temp = Last;
-                Last = Last.Prev as T;
-                temp.Remove();
-            }
+            Last?.Remove();
         }
         public void RemoveFirst()
         {
-            if (First is null)
-                return;
-
-            if (First == Last)
-            {
-                First = null;
-                Last = null;
-                --Count;
-                OnChanged();
-            }
-            else
-            {
-                Keyframe temp = First;
-                First = First.Next as T;
-                temp.Remove();
-            }
+            First?.Remove();
         }
         public T? GetKeyBefore(float second)
         {
@@ -268,6 +238,13 @@ namespace XREngine.Animation
 
         public void Clear()
         {
+            // Detach each key, so that a retained reference cannot identify this track.
+            for (Keyframe? key = First, next; key is not null; key = next)
+            {
+                next = key.Next;
+                key.Remove(notifyChange: false);
+            }
+
             _first = null;
             _last = null;
             Count = 0;

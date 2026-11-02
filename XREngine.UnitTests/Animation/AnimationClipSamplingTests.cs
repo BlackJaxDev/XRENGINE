@@ -20,7 +20,9 @@ public sealed class AnimationClipSamplingTests
     private static readonly Type[] TypedAnimations =
     [
         typeof(PropAnimFloat),
+        typeof(PropAnimVector2),
         typeof(PropAnimVector3),
+        typeof(PropAnimVector4),
         typeof(PropAnimQuaternion),
         typeof(PropAnimBool),
     ];
@@ -356,17 +358,169 @@ public sealed class AnimationClipSamplingTests
             animation.Keyframes.Add(new FloatKeyframe(i * 0.01f, i, 0.0f, EVectorInterpType.Linear));
         (AnimationClip clip, AnimationMember member, AnimationValueStore store) = CreateClip(animation);
 
-        clip.SampleToStore(50.0f, store);
-        animation.LastSampleKeySteps.ShouldBeGreaterThan(1000);
+        FloatKeyframe? key = animation.Keyframes.FindKeyBefore(50.0f, null, out int steps);
+        steps.ShouldBeGreaterThan(1000);
 
         for (int i = 1; i <= 2000; i++)
         {
             float time = 50.0f + i * 0.015f;
+            key = animation.Keyframes.FindKeyBefore(time, key, out steps);
+            steps.ShouldBeLessThanOrEqualTo(2);
+            key.ShouldBe(animation.Keyframes.GetKeyBefore(time));
+
             clip.SampleToStore(time, store);
-            animation.LastSampleKeySteps.ShouldBeLessThanOrEqualTo(2);
             // Key values equal key indices. A walk from the first key recurses too deep to compare here.
             store.GetFloat(member.Slot.TypeIndex).ShouldBe(time / 0.01f, 0.01f);
         }
+    }
+
+    [Test]
+    public void SampleToStore_ImportedClip_LeavesMethodArgumentsUnchanged()
+    {
+        AnimationClip clip = CreateImportedHumanoidClip(mirror: true, loopPose: true, cycleOffset: 0.3f, loopTime: true);
+        clip.PrepareSampling(new AnimationValueStore());
+        var store = clip.SlotLayout!.CreateStore();
+        AnimationMember member = clip.RootMember!.Children[0];
+
+        member.MethodArguments[0] = EHumanoidValue.LeftArmFrontBack;
+        clip.SampleToStore(0.5f, store);
+
+        member.MethodArguments[0].ShouldBe(EHumanoidValue.LeftArmFrontBack);
+    }
+
+    [Test]
+    public void KeyHint_AfterClear_DoesNotReachRemovedKeys()
+    {
+        var animation = (PropAnimFloat)CreateAnimation(typeof(PropAnimFloat), 0.0f);
+        (AnimationClip clip, AnimationMember member, AnimationValueStore store) = CreateClip(animation);
+        FloatKeyframe oldKey = animation.Keyframes.Last!;
+
+        animation.Keyframes.Clear();
+        oldKey.OwningTrack.ShouldBeNull();
+        oldKey.Next.ShouldBeNull();
+        oldKey.Prev.ShouldBeNull();
+        animation.Keyframes.Count.ShouldBe(0);
+        animation.Keyframes.Add(new FloatKeyframe(0.0f, 7.0f, 0.0f, EVectorInterpType.Linear));
+        animation.SetSampleKeyHint(oldKey);
+
+        clip.SampleToStore(2.5f, store);
+
+        store.GetFloat(member.Slot.TypeIndex).ShouldBe(7.0f);
+    }
+
+    [TestCase(true)]
+    [TestCase(false)]
+    public void RemoveSingleKey_DetachesKey(bool removeFirst)
+    {
+        var animation = new PropAnimFloat(Length, false, true);
+        var key = new FloatKeyframe(1.0f, 2.0f, 0.0f, EVectorInterpType.Linear);
+        animation.Keyframes.Add(key);
+
+        if (removeFirst)
+            animation.Keyframes.RemoveFirst();
+        else
+            animation.Keyframes.RemoveLast();
+
+        key.OwningTrack.ShouldBeNull();
+        animation.Keyframes.Count.ShouldBe(0);
+        animation.Keyframes.First.ShouldBeNull();
+        animation.Keyframes.Last.ShouldBeNull();
+    }
+
+    [Test]
+    public void KeyHint_AfterKeyMoveOrRemoval_MatchesFreshInstance()
+    {
+        static PropAnimFloat Create(float movedSecond, bool includeLast)
+        {
+            var animation = new PropAnimFloat(Length, false, true);
+            animation.Keyframes.Add(new FloatKeyframe(0.0f, 1.0f, 0.0f, EVectorInterpType.Linear));
+            animation.Keyframes.Add(new FloatKeyframe(movedSecond, 4.0f, 0.0f, EVectorInterpType.Linear));
+            if (includeLast)
+                animation.Keyframes.Add(new FloatKeyframe(2.0f, -2.0f, 0.0f, EVectorInterpType.Linear));
+            return animation;
+        }
+
+        PropAnimFloat animation = Create(1.0f, includeLast: true);
+        (AnimationClip clip, AnimationMember member, AnimationValueStore store) = CreateClip(animation);
+        FloatKeyframe moved = animation.Keyframes.GetKeyBefore(1.0f)!;
+        FloatKeyframe last = animation.Keyframes.Last!;
+
+        // The live hint is the moved key, because the sample before the move found it.
+        clip.SampleToStore(1.5f, store);
+        int revision = animation.Keyframes.Revision;
+        moved.Second = 2.5f;
+        animation.Keyframes.Revision.ShouldNotBe(revision);
+        foreach (float time in new[] { 1.5f, 2.25f, 2.75f })
+        {
+            clip.SampleToStore(time, store);
+            (AnimationClip fresh, AnimationMember freshMember, AnimationValueStore freshStore) = CreateClip(Create(2.5f, includeLast: true));
+            fresh.SampleToStore(time, freshStore);
+            store.GetFloat(member.Slot.TypeIndex).ShouldBe(freshStore.GetFloat(freshMember.Slot.TypeIndex), $"moved, time {time}");
+        }
+
+        // The live hint is now the key that is removed.
+        clip.SampleToStore(2.25f, store);
+        revision = animation.Keyframes.Revision;
+        last.Remove();
+        animation.Keyframes.Revision.ShouldNotBe(revision);
+        clip.SampleToStore(2.25f, store);
+        (AnimationClip afterRemoval, AnimationMember afterRemovalMember, AnimationValueStore afterRemovalStore) = CreateClip(Create(2.5f, includeLast: false));
+        afterRemoval.SampleToStore(2.25f, afterRemovalStore);
+        store.GetFloat(member.Slot.TypeIndex).ShouldBe(afterRemovalStore.GetFloat(afterRemovalMember.Slot.TypeIndex));
+    }
+
+    [Test]
+    public void PrepareSharedSampling_MirroredClipsInOneScope_MatchSoloSamples()
+    {
+        AnimationClip Create(bool mirror) => CreateImportedHumanoidClip(mirror, loopPose: false, cycleOffset: 0.0f, loopTime: true);
+
+        AnimationClip mirrored = Create(true);
+        AnimationClip plain = Create(false);
+        AnimationSlotLayout layout = AnimationClip.PrepareSharedSampling([new(mirrored), new(plain)]);
+        AnimationValueStore mirroredStore = layout.CreateStore();
+        AnimationValueStore plainStore = layout.CreateStore();
+
+        AnimationClip soloMirrored = Create(true);
+        var soloMirroredStore = new AnimationValueStore();
+        AnimationSlotLayout soloLayout = soloMirrored.PrepareSampling(soloMirroredStore);
+        AnimationClip soloPlain = Create(false);
+        var soloPlainStore = new AnimationValueStore();
+        soloPlain.PrepareSampling(soloPlainStore);
+
+        layout.FloatCount.ShouldBe(soloLayout.FloatCount);
+        layout.SamplingApplyMembers.Count.ShouldBe(soloLayout.SamplingApplyMembers.Count);
+        foreach (float time in new[] { 0.25f, 1.1f, 2.6f })
+        {
+            mirrored.SampleToStore(time, mirroredStore);
+            plain.SampleToStore(time, plainStore);
+            soloMirrored.SampleToStore(time, soloMirroredStore);
+            soloPlain.SampleToStore(time, soloPlainStore);
+
+            ShouldMatch(mirroredStore, soloMirroredStore, time);
+            ShouldMatch(plainStore, soloPlainStore, time);
+        }
+    }
+
+    [Test]
+    public void PrepareSharedSampling_RejectedCall_ChangesNothing()
+    {
+        var firstMember = new AnimationMember("Value", EAnimationMemberType.Property, CreateAnimation(typeof(PropAnimFloat), 0.0f));
+        var first = new AnimationClip(firstMember);
+        var store = new AnimationValueStore();
+        AnimationSlotLayout firstLayout = first.PrepareSampling(store);
+        AnimSlot firstSlot = firstMember.Slot;
+        var secondMember = new AnimationMember("Value", EAnimationMemberType.Property, CreateAnimation(typeof(PropAnimBool), 0.0f));
+        var second = new AnimationClip(secondMember);
+
+        Should.Throw<InvalidOperationException>(() => AnimationClip.PrepareSharedSampling([new(first), new(second)]));
+        Should.Throw<ArgumentException>(() => AnimationClip.PrepareSharedSampling([new(first), new(first)]));
+
+        firstMember.Slot.ShouldBe(firstSlot);
+        first.SlotLayout.ShouldBe(firstLayout);
+        secondMember.Slot.IsValid.ShouldBeFalse();
+        second.SlotLayout.ShouldBeNull();
+        second.AnimatedCurves.Count.ShouldBe(0);
+        first.SampleToStore(0.5f, store);
     }
 
     [Test]
@@ -522,6 +676,22 @@ public sealed class AnimationClipSamplingTests
             typed.Keyframes.Add(new FloatKeyframe(firstKeySecond, 1.0f, 0.0f, EVectorInterpType.Linear));
             typed.Keyframes.Add(new FloatKeyframe(1.0f, 4.0f, 0.0f, EVectorInterpType.Linear));
             typed.Keyframes.Add(new FloatKeyframe(2.0f, -2.0f, 0.0f, EVectorInterpType.Linear));
+            animation = typed;
+        }
+        else if (animationType == typeof(PropAnimVector2))
+        {
+            var typed = new PropAnimVector2(Length, looped, true) { DefaultValue = new Vector2(-5.0f), ConstrainKeyframedFPS = constrained, LerpConstrainedFPS = lerpConstrained };
+            typed.Keyframes.Add(new Vector2Keyframe(firstKeySecond, new Vector2(1.0f, 2.0f), Vector2.Zero, EVectorInterpType.Linear));
+            typed.Keyframes.Add(new Vector2Keyframe(1.0f, new Vector2(4.0f, 0.0f), Vector2.Zero, EVectorInterpType.Linear));
+            typed.Keyframes.Add(new Vector2Keyframe(2.0f, new Vector2(-2.0f, 6.0f), Vector2.Zero, EVectorInterpType.Linear));
+            animation = typed;
+        }
+        else if (animationType == typeof(PropAnimVector4))
+        {
+            var typed = new PropAnimVector4(Length, looped, true) { DefaultValue = new Vector4(-5.0f), ConstrainKeyframedFPS = constrained, LerpConstrainedFPS = lerpConstrained };
+            typed.Keyframes.Add(new Vector4Keyframe(firstKeySecond, new Vector4(1.0f, 2.0f, 3.0f, 4.0f), Vector4.Zero, EVectorInterpType.Linear));
+            typed.Keyframes.Add(new Vector4Keyframe(1.0f, new Vector4(4.0f, 0.0f, -1.0f, 2.0f), Vector4.Zero, EVectorInterpType.Linear));
+            typed.Keyframes.Add(new Vector4Keyframe(2.0f, new Vector4(-2.0f, 6.0f, 2.0f, -3.0f), Vector4.Zero, EVectorInterpType.Linear));
             animation = typed;
         }
         else if (animationType == typeof(PropAnimVector3))

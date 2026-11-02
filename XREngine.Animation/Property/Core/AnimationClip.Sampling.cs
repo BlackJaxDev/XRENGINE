@@ -57,32 +57,45 @@ namespace XREngine.Animation
         {
             ArgumentNullException.ThrowIfNull(bindings);
 
+            // Validate everything first. A rejected call must leave each clip and member unchanged.
             var clips = new HashSet<AnimationClip>();
+            var members = new HashSet<AnimationMember>();
+            var curvesByBinding = new Dictionary<string, AnimationMember>[bindings.Count];
             var membersByScope = new Dictionary<string, Dictionary<string, AnimationMember>>(StringComparer.Ordinal);
             for (int i = 0; i < bindings.Count; i++)
             {
                 AnimationClip clip = bindings[i].Clip;
+                ArgumentNullException.ThrowIfNull(clip);
                 if (!clips.Add(clip))
                     throw new ArgumentException($"Animation clip '{clip.Name}' occurs more than once. Use a separate instance for each binding.", nameof(bindings));
                 if (clip.SlotLayout is not null && !ReferenceEquals(clip.SlotLayout, clip._samplingLayout))
                     throw new InvalidOperationException($"Animation clip '{clip.Name}' has slots from a state machine. Sample a separate clip instance.");
 
-                if (!membersByScope.TryGetValue(bindings[i].Scope, out Dictionary<string, AnimationMember>? members))
-                    membersByScope.Add(bindings[i].Scope, members = new(StringComparer.Ordinal));
-                clip.CollectSampledMembers(members);
+                if (!membersByScope.TryGetValue(bindings[i].Scope, out Dictionary<string, AnimationMember>? scopeMembers))
+                    membersByScope.Add(bindings[i].Scope, scopeMembers = new(StringComparer.Ordinal));
+                curvesByBinding[i] = clip.CollectSampledMembers(scopeMembers, members);
             }
+
+            foreach (Dictionary<string, AnimationMember> scopeMembers in membersByScope.Values)
+                AnimStateMachine.RegisterImportedHumanoidMirroredBindings(scopeMembers);
+
+            for (int i = 0; i < bindings.Count; i++)
+                ValidateMirroredValueTypes(curvesByBinding[i], membersByScope[bindings[i].Scope]);
+
+            // Validation passed. Change the clips and members from this point.
+            for (int i = 0; i < bindings.Count; i++)
+                bindings[i].Clip.ReplaceSamplingCurves(curvesByBinding[i]);
 
             var layout = new AnimationSlotLayout();
             var slotsByScope = new Dictionary<string, Dictionary<string, AnimSlot>>(StringComparer.Ordinal);
             List<AnimationQuaternionFloatSlotGroup> quaternionGroups = [];
             List<AnimationMember> applyMembers = [];
-            foreach ((string scope, Dictionary<string, AnimationMember> members) in membersByScope)
+            foreach ((string scope, Dictionary<string, AnimationMember> scopeMembers) in membersByScope)
             {
-                AnimStateMachine.RegisterImportedHumanoidMirroredBindings(members);
-                Dictionary<string, AnimSlot> slots = AnimStateMachine.AppendSlots(layout, members);
+                Dictionary<string, AnimSlot> slots = AnimStateMachine.AppendSlots(layout, scopeMembers);
                 slotsByScope.Add(scope, slots);
-                quaternionGroups.AddRange(AnimStateMachine.BuildQuaternionFloatSlotGroups(slots, members));
-                applyMembers.AddRange(members.Values);
+                quaternionGroups.AddRange(AnimStateMachine.BuildQuaternionFloatSlotGroups(slots, scopeMembers));
+                applyMembers.AddRange(scopeMembers.Values);
             }
             layout.QuaternionFloatGroups = [.. quaternionGroups];
             layout.SamplingApplyMembers = [.. applyMembers];
@@ -117,7 +130,7 @@ namespace XREngine.Animation
             for (int i = 0; i < members.Length; i++)
             {
                 AnimationMember member = members[i];
-                if (hasPolicy && TryWriteImportedHumanoidValueToStore(store, member, policy, sampleTime, samplePhase, useSampleKeyHint: true))
+                if (hasPolicy && TryWriteImportedHumanoidValueToStore(store, member, policy, sampleTime, samplePhase, forHistoryFreeSample: true))
                     continue;
 
                 member.WriteSampleToStore(second, store);
@@ -152,18 +165,71 @@ namespace XREngine.Animation
         }
 
         /// <summary>
-        /// Registers this clip's members by logical path and adds those that have a sampled value.
-        /// In one scope, the first clip on a path owns the apply member, as in a state machine.
+        /// Gets this clip's members by logical path, adds those with a sampled value to the scope,
+        /// and checks their value types. This changes nothing on the clip or its members. In one
+        /// scope, the first clip on a path owns the apply member, as in a state machine.
         /// </summary>
-        private void CollectSampledMembers(Dictionary<string, AnimationMember> membersByPath)
+        private Dictionary<string, AnimationMember> CollectSampledMembers(
+            Dictionary<string, AnimationMember> scopeMembers,
+            HashSet<AnimationMember> members)
+        {
+            Dictionary<string, AnimationMember> curves = new(StringComparer.Ordinal);
+            if (_rootMember is not null)
+                RegisterStandaloneSamplingBindings(_rootMember, string.Empty, curves);
+
+            foreach ((string path, AnimationMember member) in curves)
+            {
+                if (!members.Add(member))
+                    throw new ArgumentException($"Animation member '{path}' in clip '{Name}' occurs in more than one binding.", "bindings");
+                if (!member.HasSampledValue)
+                    continue;
+
+                if (scopeMembers.TryGetValue(path, out AnimationMember? owner))
+                    RequireSameValueType(path, owner, member);
+                else
+                    scopeMembers.Add(path, member);
+            }
+            return curves;
+        }
+
+        private static void RequireSameValueType(string path, AnimationMember expected, AnimationMember member)
+        {
+            EAnimValueType expectedType = expected.DetermineValueType();
+            EAnimValueType valueType = member.DetermineValueType();
+            if (expectedType != valueType)
+                throw new InvalidOperationException(
+                    $"Animation binding '{path}' has value type {valueType}, but its shared slot uses {expectedType}.");
+        }
+
+        /// <summary>
+        /// Checks that each mirrored target has a slot of the same type as its source.
+        /// </summary>
+        private static void ValidateMirroredValueTypes(
+            Dictionary<string, AnimationMember> curves,
+            Dictionary<string, AnimationMember> scopeMembers)
+        {
+            foreach ((string path, AnimationMember member) in curves)
+            {
+                if (!member.HasSampledValue
+                    || !TryGetImportedHumanoidMirrorTarget(member, out object? source, out object? mirrored, out _)
+                    || Equals(source, mirrored))
+                    continue;
+
+                if (!TryReplaceFirstMethodArgument(path, member, source, mirrored, out string mirroredPath))
+                    throw new InvalidOperationException($"Could not derive the mirrored animation path for '{path}'.");
+                if (!scopeMembers.TryGetValue(mirroredPath, out AnimationMember? target))
+                    throw new InvalidOperationException($"The mirrored humanoid binding '{mirroredPath}' has no animation slot.");
+                RequireSameValueType(mirroredPath, target, member);
+            }
+        }
+
+        private void ReplaceSamplingCurves(Dictionary<string, AnimationMember> curves)
         {
             _animatedCurves.Clear();
-            EnsureStandaloneSamplingBindings();
-            foreach ((string path, AnimationMember member) in _animatedCurves)
+            foreach ((string path, AnimationMember member) in curves)
             {
                 member.Slot = AnimSlot.Invalid;
-                if (member.HasSampledValue)
-                    membersByPath.TryAdd(path, member);
+                _animatedCurves.Add(path, member);
             }
         }
 
@@ -175,13 +241,7 @@ namespace XREngine.Animation
                 if (!member.HasSampledValue)
                     continue;
 
-                AnimSlot slot = slotsByPath[path];
-                EAnimValueType valueType = member.DetermineValueType();
-                if (slot.Type != valueType)
-                    throw new InvalidOperationException(
-                        $"Animation binding '{path}' in clip '{Name}' has value type {valueType}, but its shared slot uses {slot.Type}.");
-
-                member.Slot = slot;
+                member.Slot = slotsByPath[path];
                 sampled.Add(member);
             }
 
@@ -192,11 +252,6 @@ namespace XREngine.Animation
             _samplingRootMember = _rootMember;
             PrepareImportedHumanoidMirrorSlotBindings(layout, slotsByPath);
             PrepareImportedHumanoidScalarQuaternionBindings(layout);
-
-            // The first restore of each member stores its baseline. Do it here, not in a sample.
-            if (ImportedHumanoidRootMotionSettings is not null)
-                for (int i = 0; i < sampled.Count; i++)
-                    RestoreImportedHumanoidMethodArguments(sampled[i]);
         }
 
         private static void CollectUnsupportedSamplingMembers(

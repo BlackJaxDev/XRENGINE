@@ -16,11 +16,6 @@ namespace XREngine.Animation
         private int _sampleKeyHintRevision;
 
         /// <summary>
-        /// The number of key links that the most recent sample search followed.
-        /// </summary>
-        internal int LastSampleKeySteps { get; private set; }
-
-        /// <summary>
         /// Sets the key that the next sample search starts from. The search validates this key,
         /// so any key gives the same result.
         /// </summary>
@@ -44,8 +39,7 @@ namespace XREngine.Animation
                     ? hint
                     : null;
 
-            TKeyframe? key = track.FindKeyBefore(second, start, out int steps);
-            LastSampleKeySteps = steps;
+            TKeyframe? key = track.FindKeyBefore(second, start, out _);
             _sampleKeyHint = key;
             _sampleKeyHintRevision = track.Revision;
             return key;

@@ -406,15 +406,17 @@ namespace XREngine.Animation
             ImportedHumanoidRootMotionPolicy policy,
             float sampleTime,
             float samplePhase,
-            bool useSampleKeyHint = false)
+            bool forHistoryFreeSample = false)
         {
             if (!member.Slot.IsValid || member.Animation is null)
                 return false;
 
-            RestoreImportedHumanoidMethodArguments(member);
+            // A history-free sample writes only to the store. It must not change shared method arguments.
+            if (!forHistoryFreeSample)
+                RestoreImportedHumanoidMethodArguments(member);
             switch (member.Slot.Type)
             {
-                case EAnimValueType.Float when TrySampleFloat(member.Animation, sampleTime, out float floatValue, useSampleKeyHint):
+                case EAnimValueType.Float when TrySampleFloat(member.Animation, sampleTime, out float floatValue, forHistoryFreeSample):
                     floatValue = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, floatValue);
                     AnimSlot floatSlot = ResolveImportedHumanoidMirroredFloatSlot(
                         member,
@@ -424,11 +426,11 @@ namespace XREngine.Animation
                     return true;
 
                 case EAnimValueType.Vector2 when member.Animation is PropAnimVector2 vector2Animation:
-                    store.SetVector2(member.Slot.TypeIndex, useSampleKeyHint ? vector2Animation.GetValueWithSampleKeyHint(sampleTime) : vector2Animation.GetValue(sampleTime));
+                    store.SetVector2(member.Slot.TypeIndex, forHistoryFreeSample ? vector2Animation.GetValueWithSampleKeyHint(sampleTime) : vector2Animation.GetValue(sampleTime));
                     return true;
 
                 case EAnimValueType.Vector3 when member.Animation is PropAnimVector3 vector3Animation:
-                    Vector3 vector3Value = useSampleKeyHint ? vector3Animation.GetValueWithSampleKeyHint(sampleTime) : vector3Animation.GetValue(sampleTime);
+                    Vector3 vector3Value = forHistoryFreeSample ? vector3Animation.GetValueWithSampleKeyHint(sampleTime) : vector3Animation.GetValue(sampleTime);
                     vector3Value = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, vector3Value);
                     AnimSlot vector3Slot = ResolveImportedHumanoidMirroredVector3Slot(
                         member,
@@ -438,11 +440,11 @@ namespace XREngine.Animation
                     return true;
 
                 case EAnimValueType.Vector4 when member.Animation is PropAnimVector4 vector4Animation:
-                    store.SetVector4(member.Slot.TypeIndex, useSampleKeyHint ? vector4Animation.GetValueWithSampleKeyHint(sampleTime) : vector4Animation.GetValue(sampleTime));
+                    store.SetVector4(member.Slot.TypeIndex, forHistoryFreeSample ? vector4Animation.GetValueWithSampleKeyHint(sampleTime) : vector4Animation.GetValue(sampleTime));
                     return true;
 
                 case EAnimValueType.Quaternion when member.Animation is PropAnimQuaternion quaternionAnimation:
-                    Quaternion quaternionValue = useSampleKeyHint ? quaternionAnimation.GetValueWithSampleKeyHint(sampleTime) : quaternionAnimation.GetValue(sampleTime);
+                    Quaternion quaternionValue = forHistoryFreeSample ? quaternionAnimation.GetValueWithSampleKeyHint(sampleTime) : quaternionAnimation.GetValue(sampleTime);
                     quaternionValue = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, quaternionValue);
                     AnimSlot quaternionSlot = ResolveImportedHumanoidMirroredQuaternionSlot(
                         member,
@@ -452,7 +454,7 @@ namespace XREngine.Animation
                     return true;
 
                 case EAnimValueType.Bool when member.Animation is PropAnimBool boolAnimation:
-                    store.SetBool(member.Slot.TypeIndex, useSampleKeyHint ? boolAnimation.GetValueWithSampleKeyHint(sampleTime) : boolAnimation.GetValue(sampleTime));
+                    store.SetBool(member.Slot.TypeIndex, forHistoryFreeSample ? boolAnimation.GetValueWithSampleKeyHint(sampleTime) : boolAnimation.GetValue(sampleTime));
                     return true;
 
                 default:
@@ -488,12 +490,12 @@ namespace XREngine.Animation
             }
         }
 
-        private static bool TrySampleFloat(BasePropAnim animation, float sampleTime, out float value, bool useSampleKeyHint = false)
+        private static bool TrySampleFloat(BasePropAnim animation, float sampleTime, out float value, bool forHistoryFreeSample = false)
         {
             switch (animation)
             {
                 case PropAnimFloat floatAnimation:
-                    value = useSampleKeyHint ? floatAnimation.GetValueWithSampleKeyHint(sampleTime) : floatAnimation.GetValue(sampleTime);
+                    value = forHistoryFreeSample ? floatAnimation.GetValueWithSampleKeyHint(sampleTime) : floatAnimation.GetValue(sampleTime);
                     return true;
                 case PropAnimMethod<float> methodAnimation when methodAnimation.GetValue is { } getValue:
                     value = getValue(sampleTime);

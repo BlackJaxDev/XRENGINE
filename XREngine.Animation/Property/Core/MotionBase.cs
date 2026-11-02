@@ -237,8 +237,8 @@ namespace XREngine.Animation
                         //if (member.Animation is not null)
                             path += $"<AnimatedValue>";
                         //else
-                        //    path += member.MethodArguments[i] is null
-                        //        ? "<null>"
+                        //    path += member.MethodArguments[i] is null 
+                        //        ? "<null>" 
                         //        : $"{member.MethodArguments[i]}";
                     }
                     else if (arg is null)

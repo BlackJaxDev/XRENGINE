@@ -77,10 +77,13 @@ public partial class AnimationClip
         if (AnimatedCurves.Count > 0 || RootMember is null)
             return;
 
-        RegisterStandaloneSamplingBindings(RootMember, string.Empty);
+        RegisterStandaloneSamplingBindings(RootMember, string.Empty, AnimatedCurves);
     }
 
-    private void RegisterStandaloneSamplingBindings(AnimationMember member, string path)
+    private static void RegisterStandaloneSamplingBindings(
+        AnimationMember member,
+        string path,
+        Dictionary<string, AnimationMember> destination)
     {
         if (member.MemberType != EAnimationMemberType.Group)
             path += member.MemberName;
@@ -99,7 +102,7 @@ public partial class AnimationClip
         }
 
         if (member.Animation is not null || member.MemberType == EAnimationMemberType.Method)
-            AnimatedCurves.TryAdd(path, member);
+            destination.TryAdd(path, member);
 
         if (member.Children.Count == 0)
             return;
@@ -108,7 +111,7 @@ public partial class AnimationClip
             path += "/";
 
         foreach (AnimationMember child in member.Children)
-            RegisterStandaloneSamplingBindings(child, path);
+            RegisterStandaloneSamplingBindings(child, path, destination);
     }
 
     private void PrepareAdditiveReferenceAnimationSnapshot(AnimationClip referenceClip)

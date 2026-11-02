@@ -217,6 +217,7 @@ namespace XREngine.Animation
             if (Keyframes.Count == 0)
                 return DefaultValue;
 
+            // Intended: before the first key, this value differs from GetValue and from a backward seek.
             QuaternionKeyframe? startKey = FindSampleKey(second);
             if (ConstrainKeyframedFPS)
             {
