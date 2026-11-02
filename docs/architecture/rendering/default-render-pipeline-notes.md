@@ -160,11 +160,14 @@ These rules apply:
   change a pipeline of any camera. The own asset can exist unused.
 - An authored source always wins. A cut to a camera with a different authored
   asset replaces the pipeline. Share one asset to keep the cut cheap.
-- When the last claim ends, the previous camera supplies its own pipeline. That
-  is the kept pipeline if the claim started on it, so no rebuild occurs.
-- The claimed camera reads its default post-process values against the kept
-  pipeline. The values stay per camera, and a claim adds no saved entry for the
-  kept pipeline ID.
+- When the last claim ends, the viewport synchronizes with the camera that
+  returns. If that camera owns the kept pipeline, no rebuild occurs. If not, for
+  example if a shot camera supplied an authored asset or a write during the claim
+  stored another camera, one normal pipeline transition occurs.
+- A camera with no authored source uses its default post-process values with any
+  pipeline of the same type as its own default asset. A transient pipeline ID
+  therefore never enters the saved state. A pipeline of another type keeps its
+  explicit per-pipeline state.
 - Settings on the default asset of the claimed camera do not apply during the
   claim, because that asset does not render. Use an authored source for them.
 

@@ -560,22 +560,18 @@ namespace XREngine.Rendering
             pipeline ??= _renderPipeline ?? RenderPipeline;
             if (pipeline is null)
                 return null;
-            return _renderPipeline is null && (ReferenceEquals(pipeline, _defaultRenderPipeline) || IsBorrowedThroughCameraClaim(pipeline))
+            return _renderPipeline is null && IsDefaultPipelineType(pipeline)
                 ? _postProcessStates.GetOrCreateDefaultState(pipeline)
                 : _postProcessStates.GetOrCreateState(pipeline);
         }
 
         /// <summary>
-        /// True when a viewport shows this camera through a camera claim and keeps this pipeline for it.
-        /// The camera then uses its default post-process values, so a claim adds no saved state for the kept pipeline.
+        /// True when a pipeline has the type of the default pipeline of this camera.
+        /// A viewport can render this camera with such a pipeline during a camera claim. The camera then uses
+        /// its default post-process values, so a transient pipeline ID never enters the saved state.
         /// </summary>
-        private bool IsBorrowedThroughCameraClaim(RenderPipeline pipeline)
-        {
-            for (int i = 0; i < Viewports.Count; i++)
-                if (Viewports[i].KeepsPipelineForClaimedCamera(this, pipeline))
-                    return true;
-            return false;
-        }
+        private bool IsDefaultPipelineType(RenderPipeline pipeline)
+            => _defaultRenderPipeline is { } own && own.GetType() == pipeline.GetType();
 
         /// <summary>
         /// Gets the active post-process state for the current render pipeline.

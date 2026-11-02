@@ -674,16 +674,23 @@ namespace XREngine.Rendering
         {
             ArgumentNullException.ThrowIfNull(owner);
             // The previous camera of a claim stays active until the next camera is set, and it must not request its own pipeline.
+            bool released = false;
             _releasingCameraClaim = true;
             try
             {
-                if (RemoveCameraClaim(owner))
+                released = RemoveCameraClaim(owner);
+                if (released)
                     ApplyCameraAfterClaimRelease();
             }
             finally
             {
                 _releasingCameraClaim = false;
             }
+
+            // The kept pipeline can belong to a camera of the claim. The camera that returns must use its own pipeline.
+            // If that camera owns the kept pipeline, this call does nothing.
+            if (released && _cameraClaims.Count == 0 && SetRenderPipelineFromCamera && !_destroyed)
+                SynchronizeRenderPipelineFromActiveCamera();
         }
 
         private void ApplyCameraAfterClaimRelease()
@@ -946,12 +953,6 @@ namespace XREngine.Rendering
                 ? current
                 : own;
         }
-
-        /// <summary>True when this viewport shows a camera through a claim and keeps a pipeline that the camera does not own.</summary>
-        internal bool KeepsPipelineForClaimedCamera(XRCamera camera, RenderPipeline pipeline)
-            => IsCameraClaimActive &&
-               ReferenceEquals(ActiveCamera, camera) &&
-               ReferenceEquals(_renderPipeline.EffectiveRequestedPipeline, pipeline);
 
         /// <summary>
         /// Completes the viewport-facing half of an applied render-thread pipeline transition.
