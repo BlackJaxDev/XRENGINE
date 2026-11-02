@@ -2502,7 +2502,7 @@ namespace XREngine.Components.Animation
             node.Transform.ResetPose();
         }
 
-        private void ClearRuntimeMuscleState()
+        internal void ClearRuntimeMuscleState()
         {
             lock (_muscleValuesLock)
             {

@@ -7,3 +7,5 @@
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.CameraPropertyClip), "xre.cutscene.camera-property-clip", 1)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.ActivationTrack), "xre.cutscene.activation-track", 1)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.ActivationClip), "xre.cutscene.activation-clip", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.AnimationClipTrack), "xre.cutscene.animation-clip-track", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.AnimationClipTrackClip), "xre.cutscene.animation-clip-clip", 1)]

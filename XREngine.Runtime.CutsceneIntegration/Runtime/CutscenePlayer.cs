@@ -17,6 +17,7 @@ public sealed class CutscenePlayer
     private readonly CutsceneActiveClip[] _buffer;
     private readonly ICutsceneTrackEvaluator[] _evaluators;
     private readonly CameraCutTrackEvaluator _cameraCut;
+    private readonly AnimationClipTrackEvaluator _animation;
     private readonly List<CutsceneCompileDiagnostic> _diagnostics = [];
 
     private bool _hasPendingSeek;
@@ -40,9 +41,11 @@ public sealed class CutscenePlayer
         _snapshot = snapshot;
         _buffer = new CutsceneActiveClip[Math.Max(1, compiled.MaxActiveClips)];
         _cameraCut = new CameraCutTrackEvaluator(_diagnostics);
+        _animation = new AnimationClipTrackEvaluator(compiled, bindings, _diagnostics);
         _evaluators =
         [
             new TransformTrackEvaluator(bindings.SlotCount, _diagnostics),
+            _animation,
             new ActivationTrackEvaluator(bindings.SlotCount, _diagnostics),
             _cameraCut,
             new CameraPropertyTrackEvaluator(bindings.SlotCount, _diagnostics),
@@ -117,6 +120,7 @@ public sealed class CutscenePlayer
         _hasPendingSeek = false;
         CutsceneTime from = _clock.Position;
         _clock.SetPosition(CutsceneTime.Zero);
+        _animation.RestoreForStop(restoreEverySlot || _compiled.Asset.ForceRestoreAll, _snapshot);
         for (int i = 0; i < _evaluators.Length; i++)
             _evaluators[i].Reset();
         if (restoreEverySlot)

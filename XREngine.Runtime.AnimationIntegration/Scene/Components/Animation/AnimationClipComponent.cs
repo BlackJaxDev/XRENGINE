@@ -228,6 +228,31 @@ namespace XREngine.Components.Animation
             set => SetField(ref _flipIKRotationZ, value);
         }
 
+        private bool _evaluationSuspended;
+        /// <summary>
+        /// True while another owner drives the target. This component then advances no time and writes
+        /// nothing, and its play and pause state stay as they are.
+        /// </summary>
+        public bool EvaluationSuspended
+        {
+            get => _evaluationSuspended;
+            private set => SetField(ref _evaluationSuspended, value);
+        }
+
+        /// <summary>Stops or starts the evaluation of this component for another owner of the target.</summary>
+        /// <param name="suspended">True to stop the evaluation.</param>
+        public void SetEvaluationSuspended(bool suspended)
+        {
+            if (EvaluationSuspended == suspended)
+                return;
+
+            EvaluationSuspended = suspended;
+
+            // The owner moved the pose, so the next pose starts new root history.
+            if (!suspended && _isPlaying)
+                BeginRootMotionEpoch(preserveExistingAnchor: true);
+        }
+
         private AnimStateMachineComponent? _suspendedSiblingAnimator;
         private bool _suspendedSiblingWasAlreadySuspended;
 
@@ -391,7 +416,7 @@ namespace XREngine.Components.Animation
 
         private void CompletePlaybackStartup()
         {
-            if (ApplyAnimatedValues())
+            if (!EvaluationSuspended && ApplyAnimatedValues())
                 GetSiblingHumanoid()?.ApplyCurrentMusclePose();
             DispatchInitialImportedAnimationEvents();
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
@@ -645,7 +670,7 @@ namespace XREngine.Components.Animation
 
         private void TickAnimation()
         {
-            if (Animation is null || !_initialized)
+            if (Animation is null || !_initialized || EvaluationSuspended)
                 return;
 
             using var sample = RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation");
@@ -843,7 +868,7 @@ namespace XREngine.Components.Animation
 
         private void PublishRootMotion()
         {
-            if (TransformBase.IsDiagnosticEvaluationActive || Animation?.HasRootMotion != true)
+            if (TransformBase.IsDiagnosticEvaluationActive || Animation?.HasRootMotion != true || EvaluationSuspended)
                 return;
 
             HumanoidComponent? humanoid = GetSiblingHumanoid();

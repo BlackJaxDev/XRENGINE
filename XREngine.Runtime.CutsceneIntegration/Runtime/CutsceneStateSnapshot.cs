@@ -189,7 +189,7 @@ public sealed class CutsceneStateSnapshot
             if ((uint)slot >= (uint)_hasTransform.Length)
                 continue;
 
-            if (track is TransformTrack)
+            if (track is TransformTrack or AnimationClipTrack)
                 RestoreTransform(slot);
             else if (track is ActivationTrack)
                 RestoreActive(slot);

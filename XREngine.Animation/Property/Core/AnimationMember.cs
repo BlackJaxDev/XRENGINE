@@ -500,6 +500,42 @@ namespace XREngine.Animation
         }
 
         /// <summary>
+        /// Writes the live value of the bound target to the store at this member's <see cref="Slot"/>.
+        /// A method has no value to read, so a method member writes its default argument. Reflection can
+        /// box the value, so use this method when a target is first captured and not each frame.
+        /// </summary>
+        /// <param name="store">The store that receives the value.</param>
+        /// <returns>False if the member has no slot, no bound target, or no value.</returns>
+        public bool TryWriteTargetValueToStore(AnimationValueStore store)
+        {
+            if (!Slot.IsValid || MemberNotFound || _parentObject is null)
+                return false;
+
+            object? value = MemberType switch
+            {
+                EAnimationMemberType.Property => ReadTargetProperty(),
+                EAnimationMemberType.Field => _fieldCache?.GetValue(_parentObject),
+                EAnimationMemberType.Method => DefaultValue,
+                _ => null,
+            };
+            if (value is null)
+                return false;
+
+            store.SetValue(in Slot, value);
+            return true;
+        }
+
+        private object? ReadTargetProperty()
+            => AnimationMemberBindingRegistry.TryGetGetter(_parentObject!.GetType(), _memberName, out Func<object, object?>? getter)
+                ? getter!(_parentObject)
+                : _propertyCache?.GetValue(_parentObject);
+
+        /// <summary>Checks if a store has a value for this member's <see cref="Slot"/>.</summary>
+        /// <param name="store">The store to read.</param>
+        public bool HasValueIn(AnimationValueStore store)
+            => Slot.IsValid && store.GetCoverage(in Slot) > float.Epsilon;
+
+        /// <summary>
         /// True when clip sampling cannot give a value for this member, because its track
         /// calls code at the sample time. The member type does not make a member unsupported:
         /// a method member runs its method only at apply time, not when a sample is taken.

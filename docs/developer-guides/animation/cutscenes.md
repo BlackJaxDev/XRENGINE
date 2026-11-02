@@ -13,6 +13,26 @@ This guide describes the cutscene timeline: how to author a cutscene, how to pre
 | `CutscenePreviewHost` | `XREngine.Editor` | Plays an asset in edit mode and restores the scene. |
 | `CutscenePreviewSession` | `XREngine.Editor` | Owns the one cutscene that the panel and the MCP tools control. |
 
+## Animation Clip Tracks
+
+An `AnimationClipTrack` plays `AnimationClipTrackClip` entries on its bound node. `CutsceneClipInstancer` makes one copy of each clip for each binding when the cutscene opens. The frame path makes no copies. A runtime slot must have its node before the open. If the slot has no node at the open, or gets another node later, the track writes nothing and adds a diagnostic.
+
+Each frame runs in this order: store write, humanoid solve, root placement, and one IK solve. A VRIK target keeps its own scheduled solve.
+
+- **Weights:** a total of zero leaves the original value. A total above one normalizes. A total below one blends from the original value. For a humanoid, the original value of a muscle is its default, not the pose of the bones, so a fade in starts from the neutral muscle pose.
+- **Root placement:** a humanoid root is the start transform, then `RootOffsetPosition` and `RootOffsetRotation`, then the clip motion of this frame. The result is absolute, so repeated seeks do not drift. A target without a `HumanoidComponent` has no root placement. A root offset on such a target adds a diagnostic.
+- **Lease:** while a clip has weight, the lease suspends a sibling `AnimStateMachineComponent` and `AnimationClipComponent`. The lease puts back the earlier suspension at clip exit and at stop. Playback time and the play and pause state of those components do not change.
+- **No clip:** a target that has no clip with weight returns to its original values. For a humanoid, this includes each transform under the node.
+- **Pose preview:** if `HumanoidComponent.PosePreviewMode` is not `AnimatedPose`, the preview mode owns the pose. The track writes nothing and adds one diagnostic.
+
+These features are not available from a sampled store. The open adds a diagnostic for each case:
+
+| Case | Result |
+|---|---|
+| Additive clip | Plays as an absolute pose, without its reference pose. |
+| Flip settings on a sibling `AnimationClipComponent` | The clips do not use them. |
+| A track that calls code at the sample time | The member is not sampled. |
+
 ## Author A Cutscene
 
 1. Open **Cutscene Sequencer** from the panel menu, next to **Animation Clip Editor**.
