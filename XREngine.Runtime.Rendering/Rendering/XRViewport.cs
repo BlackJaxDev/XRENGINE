@@ -664,6 +664,7 @@ namespace XREngine.Rendering
                 RemoveCameraClaim(owner);
 
             _cameraClaims.Add(new CameraClaim(owner, camera));
+            MarkClaimBorrowBeforePublish(camera);
             SetField(ref _cameraComponent, camera, nameof(CameraComponent));
         }
 
@@ -716,7 +717,10 @@ namespace XREngine.Rendering
 
             CameraComponent? next;
             if (_cameraClaims.Count > 0)
+            {
                 next = _cameraClaims[^1].Camera;
+                MarkClaimBorrowBeforePublish(next);
+            }
             else
             {
                 next = _unclaimedCameraComponent is { } fallback && !IsCameraDestroyed(fallback) ? fallback : null;
@@ -970,6 +974,16 @@ namespace XREngine.Rendering
 
             NoteClaimBorrow(camera, current);
             return current;
+        }
+
+        /// <summary>
+        /// Records the kept pipeline on a claimed camera before other threads can see that camera on this viewport.
+        /// A render read then never finds the camera without its record.
+        /// </summary>
+        private void MarkClaimBorrowBeforePublish(CameraComponent camera)
+        {
+            if (SetRenderPipelineFromCamera)
+                ResolveCameraRenderPipeline(camera.Camera);
         }
 
         private void NoteClaimBorrow(XRCamera camera, RenderPipeline pipeline)
