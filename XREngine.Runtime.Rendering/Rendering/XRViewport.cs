@@ -70,6 +70,8 @@ namespace XREngine.Rendering
         /// </summary>
         private CameraComponent? _unclaimedCameraComponent;
 
+        private volatile bool _releasingCameraClaim;
+
         private readonly record struct CameraClaim(object Owner, CameraComponent Camera);
 
         /// <summary>
@@ -626,6 +628,7 @@ namespace XREngine.Rendering
                 if (_cameraClaims.Count > 0)
                 {
                     _unclaimedCameraComponent = value;
+                    ResizeCameraComponentUI();
                     return;
                 }
 
@@ -670,9 +673,21 @@ namespace XREngine.Rendering
         public void ReleaseCameraClaim(object owner)
         {
             ArgumentNullException.ThrowIfNull(owner);
-            if (!RemoveCameraClaim(owner))
-                return;
+            // The previous camera of a claim stays active until the next camera is set, and it must not request its own pipeline.
+            _releasingCameraClaim = true;
+            try
+            {
+                if (RemoveCameraClaim(owner))
+                    ApplyCameraAfterClaimRelease();
+            }
+            finally
+            {
+                _releasingCameraClaim = false;
+            }
+        }
 
+        private void ApplyCameraAfterClaimRelease()
+        {
             // A camera that was destroyed during the claim cannot come back.
             while (_cameraClaims.Count > 0 && IsCameraDestroyed(_cameraClaims[^1].Camera))
                 _cameraClaims.RemoveAt(_cameraClaims.Count - 1);
@@ -693,10 +708,13 @@ namespace XREngine.Rendering
         /// A claim changes the camera that shows the scene. It does not change the UI,
         /// so the editor UI and the player HUD stay on the viewport while a claim exists.
         /// </summary>
-        private CameraComponent? UserInterfaceCameraComponent
+        public CameraComponent? ScreenSpaceUserInterfaceCamera
             => _cameraClaims.Count > 0 && _unclaimedCameraComponent is { } unclaimed && !IsCameraDestroyed(unclaimed)
                 ? unclaimed
                 : _cameraComponent;
+
+        private bool IsCameraClaimActive
+            => _cameraClaims.Count > 0 || _releasingCameraClaim;
 
         private static bool IsCameraDestroyed(CameraComponent camera)
             => camera.IsDestroyed || camera.IsDestroyQueued || camera.SceneNode is not { IsDestroyed: false, IsDestroyQueued: false };
@@ -812,7 +830,7 @@ namespace XREngine.Rendering
                 if (!SetRenderPipelineFromCamera || ActiveCamera is not { } camera)
                     return _renderPipeline.Pipeline;
 
-                RenderPipeline configuredPipeline = camera.ResolveRenderPipelineForOutput(_renderPipeline.EffectiveRequestedPipeline);
+                RenderPipeline configuredPipeline = ResolveCameraRenderPipeline(camera);
                 if (!ReferenceEquals(_renderPipeline.AssignedPipeline, configuredPipeline))
                     _renderPipeline.RequestPipelineChange(configuredPipeline, this);
                 return configuredPipeline;
@@ -910,8 +928,30 @@ namespace XREngine.Rendering
 
         private void SynchronizeRenderPipelineFromActiveCamera()
             => _renderPipeline.RequestPipelineChange(
-                ActiveCamera?.ResolveRenderPipelineForOutput(_renderPipeline.EffectiveRequestedPipeline),
+                ActiveCamera is { } camera ? ResolveCameraRenderPipeline(camera) : null,
                 this);
+
+        /// <summary>
+        /// Gets the pipeline that this viewport uses for a camera. A camera that a claim shows, and that has no
+        /// authored pipeline, uses the current pipeline of the viewport if the camera would use the same type.
+        /// This keeps a camera cut cheap. It changes no pipeline of any camera. Without a claim, the camera supplies the pipeline.
+        /// </summary>
+        private RenderPipeline ResolveCameraRenderPipeline(XRCamera camera)
+        {
+            RenderPipeline own = camera.GetOrCreateRenderPipeline();
+            if (!IsCameraClaimActive || camera.AssignedRenderPipeline is not null)
+                return own;
+
+            return _renderPipeline.EffectiveRequestedPipeline is { } current && current.GetType() == own.GetType()
+                ? current
+                : own;
+        }
+
+        /// <summary>True when this viewport shows a camera through a claim and keeps a pipeline that the camera does not own.</summary>
+        internal bool KeepsPipelineForClaimedCamera(XRCamera camera, RenderPipeline pipeline)
+            => IsCameraClaimActive &&
+               ReferenceEquals(ActiveCamera, camera) &&
+               ReferenceEquals(_renderPipeline.EffectiveRequestedPipeline, pipeline);
 
         /// <summary>
         /// Completes the viewport-facing half of an applied render-thread pipeline transition.
@@ -3159,7 +3199,7 @@ namespace XREngine.Rendering
             {
                 if (s_vpResolveUIDiagCount < 5)
                 {
-                    Debug.Rendering($"[VP:ResolveUI] null/inactive: CamComp={CameraComponent?.GetHashCode()} ui={ui?.GetHashCode()} active={ui?.IsActive} VP[{Index}]");
+                    Debug.Rendering($"[VP:ResolveUI] null/inactive: CamComp={ScreenSpaceUserInterfaceCamera?.GetHashCode()} ui={ui?.GetHashCode()} active={ui?.IsActive} VP[{Index}]");
                     s_vpResolveUIDiagCount++;
                 }
                 return null;
@@ -3189,7 +3229,7 @@ namespace XREngine.Rendering
             if (ScreenSpaceUserInterfaceOverride is { } ownedUi)
                 return ownedUi.IsActive && ownedUi.IsScreenSpace ? ownedUi : null;
 
-            var camComp = UserInterfaceCameraComponent;
+            var camComp = ScreenSpaceUserInterfaceCamera;
             if (camComp is null)
                 return null;
 
@@ -3254,7 +3294,7 @@ namespace XREngine.Rendering
             out IRuntimeScreenSpaceUserInterface? userInterface)
         {
             userInterface = AllowUIRender
-                ? ScreenSpaceUserInterfaceOverride ?? UserInterfaceCameraComponent?.GetUserInterfaceOverlay()
+                ? ScreenSpaceUserInterfaceOverride ?? ScreenSpaceUserInterfaceCamera?.GetUserInterfaceOverlay()
                 : null;
             return userInterface is { IsActive: true, IsScreenSpace: true };
         }
@@ -3532,7 +3572,7 @@ namespace XREngine.Rendering
         /// </summary>
         private void ResizeCameraComponentUI()
         {
-            var overlay = ScreenSpaceUserInterfaceOverride ?? UserInterfaceCameraComponent?.GetUserInterfaceOverlay();
+            var overlay = ScreenSpaceUserInterfaceOverride ?? ScreenSpaceUserInterfaceCamera?.GetUserInterfaceOverlay();
             if (overlay is null)
                 return;
 

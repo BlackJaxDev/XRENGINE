@@ -90,15 +90,6 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     /// <summary>
-    /// True when the host factory made this asset for a camera with no authored pipeline.
-    /// Cameras with no authored pipeline resolve to equivalent assets, so a viewport can keep
-    /// this asset when it changes between such cameras.
-    /// </summary>
-    [Browsable(false)]
-    [YamlIgnore]
-    internal bool IsCameraDefaultSource { get; set; }
-
-    /// <summary>
     /// Gets a stable snapshot of active render pipeline instances currently using this pipeline.
     /// Pipeline transitions publish a new snapshot atomically so settings callbacks can enumerate
     /// instances safely while the render thread changes asset ownership.

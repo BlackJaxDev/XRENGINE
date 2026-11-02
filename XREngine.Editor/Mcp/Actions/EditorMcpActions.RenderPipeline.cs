@@ -725,7 +725,7 @@ namespace XREngine.Editor.Mcp
                     AdvancedRenderPipelineOutputBinding advancedBinding =
                         viewport.RenderPipelineInstance.AdvancedOutputBinding;
                     IRuntimeScreenSpaceUserInterface? ui = viewport.ScreenSpaceUserInterfaceOverride
-                        ?? cameraComponent?.GetUserInterfaceOverlay();
+                        ?? viewport.ScreenSpaceUserInterfaceCamera?.GetUserInterfaceOverlay();
                     SceneNode? cameraNode = cameraComponent?.SceneNode;
                     activeWindowViewports.Add(new
                     {

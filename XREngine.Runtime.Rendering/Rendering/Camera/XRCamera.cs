@@ -560,9 +560,21 @@ namespace XREngine.Rendering
             pipeline ??= _renderPipeline ?? RenderPipeline;
             if (pipeline is null)
                 return null;
-            return _renderPipeline is null && ReferenceEquals(pipeline, _defaultRenderPipeline)
+            return _renderPipeline is null && (ReferenceEquals(pipeline, _defaultRenderPipeline) || IsBorrowedThroughCameraClaim(pipeline))
                 ? _postProcessStates.GetOrCreateDefaultState(pipeline)
                 : _postProcessStates.GetOrCreateState(pipeline);
+        }
+
+        /// <summary>
+        /// True when a viewport shows this camera through a camera claim and keeps this pipeline for it.
+        /// The camera then uses its default post-process values, so a claim adds no saved state for the kept pipeline.
+        /// </summary>
+        private bool IsBorrowedThroughCameraClaim(RenderPipeline pipeline)
+        {
+            for (int i = 0; i < Viewports.Count; i++)
+                if (Viewports[i].KeepsPipelineForClaimedCamera(this, pipeline))
+                    return true;
+            return false;
         }
 
         /// <summary>
@@ -1774,10 +1786,7 @@ namespace XREngine.Rendering
                 return;
 
             if (pipeline is not null && ReferenceEquals(pipeline, _defaultRenderPipeline))
-            {
                 _postProcessStates.PromoteDefaultState(pipeline);
-                pipeline.IsCameraDefaultSource = false;
-            }
             _defaultRenderPipeline = null;
             bool notificationsSuppressed = XRBase.ArePropertyNotificationsSuppressed;
             if (!SetField(ref _renderPipeline, pipeline, nameof(RenderPipeline)))
@@ -1814,40 +1823,9 @@ namespace XREngine.Rendering
             if (_defaultRenderPipeline is not null)
                 return _defaultRenderPipeline;
             RenderPipeline pipeline = CreateDefaultRenderPipeline();
-            pipeline.IsCameraDefaultSource = true;
             _defaultRenderPipeline = pipeline;
             _pipelineAssignmentRevision++;
             return pipeline;
-        }
-
-        /// <summary>
-        /// Gets the pipeline that an output must use when it shows this camera. An authored pipeline always wins.
-        /// A camera with no authored pipeline takes the default pipeline that the output already uses,
-        /// so a change between such cameras does not replace the pipeline resources of the output.
-        /// The post-process values of each camera stay separate, because they are stored per camera.
-        /// </summary>
-        /// <param name="outputPipeline">The pipeline that the output uses now or has requested.</param>
-        internal RenderPipeline ResolveRenderPipelineForOutput(RenderPipeline? outputPipeline)
-        {
-            if (_renderPipeline is { } authored)
-                return authored;
-
-            RenderPipeline? own = _defaultRenderPipeline;
-            if (outputPipeline is not { IsCameraDefaultSource: true } || ReferenceEquals(own, outputPipeline))
-                return GetOrCreateDefaultRenderPipeline();
-
-            // A default that another output shows, or a default of another type, is not interchangeable.
-            if (own is not null && (own.Instances.Count != 0 || own.GetType() != outputPipeline.GetType()))
-                return own;
-
-            if (!ReferenceEquals(System.Threading.Interlocked.CompareExchange(ref _defaultRenderPipeline, outputPipeline, own), own))
-                return GetOrCreateDefaultRenderPipeline();
-
-            _pipelineAssignmentRevision++;
-
-            // Construction subscribes the asset to runtime settings, so the unused asset must release them.
-            own?.Destroy();
-            return outputPipeline;
         }
 
         private static RenderPipeline CreateDefaultRenderPipeline()

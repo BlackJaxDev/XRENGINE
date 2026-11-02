@@ -147,20 +147,26 @@ identities, and advanced visibility-family reservations live on each
 `XRRenderPipelineInstance`. This keeps one shared source asset valid across
 multiple physical outputs.
 
-Each camera with no authored source used to create its own default asset, so a
-viewport that changed between two such cameras replaced its pipeline and all of
-its resources. `XRCamera.ResolveRenderPipelineForOutput` now gives the incoming
-camera the default asset that the viewport already uses. A camera cut then keeps
-the pipeline revision and the active resource generation. These limits apply:
+Each camera with no authored source creates its own default asset. Without a
+camera claim, a viewport that changes between two such cameras replaces its
+pipeline, its resources, and its temporal state. This is intended.
 
-- An authored source always wins. Two authored assets are not compared, so a cut
-  between them replaces the pipeline. Share one asset to keep the cut cheap.
-- A camera keeps its own default when another output shows that default, or when
-  its type differs from the viewport default.
-- Post-process values stay per camera, in `CameraPostProcessStateCollection`.
-  Render commands read them from the current camera on each frame.
-- Do not change the settings of a default asset through `XRCamera.RenderPipeline`
-  for one camera. Cameras can share that asset. Assign an authored source instead.
+While `XRViewport.ClaimCamera` holds a claim, a claimed camera with no authored
+source uses the current pipeline of the viewport if its own asset has the same
+type. A camera cut then keeps the pipeline revision and the resource generation.
+These rules apply:
+
+- The camera keeps its own default asset. A claim does not assign, destroy, or
+  change a pipeline of any camera. The own asset can exist unused.
+- An authored source always wins. A cut to a camera with a different authored
+  asset replaces the pipeline. Share one asset to keep the cut cheap.
+- When the last claim ends, the previous camera supplies its own pipeline. That
+  is the kept pipeline if the claim started on it, so no rebuild occurs.
+- The claimed camera reads its default post-process values against the kept
+  pipeline. The values stay per camera, and a claim adds no saved entry for the
+  kept pipeline ID.
+- Settings on the default asset of the claimed camera do not apply during the
+  claim, because that asset does not render. Use an authored source for them.
 
 The application registers the default-source policy with the central runtime
 pipeline factory. Every request carries an explicit output purpose:
