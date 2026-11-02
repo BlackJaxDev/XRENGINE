@@ -83,6 +83,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
                 "XREngine.Runtime.AnimationIntegration",
                 "XREngine.Runtime.AudioIntegration",
                 "XREngine.Runtime.Core",
+                "XREngine.Runtime.CutsceneIntegration",
                 "XREngine.Runtime.Host",
                 "XREngine.Runtime.Diagnostics.Desktop",
                 "XREngine.Runtime.Imaging.Magick",
