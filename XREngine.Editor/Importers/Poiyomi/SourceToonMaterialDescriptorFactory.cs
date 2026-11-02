@@ -64,6 +64,8 @@ public static class SourceToonMaterialDescriptorFactory
             }
             else if (descriptor.ImportSettings is null &&
                      resolved.AssetPath is not null &&
+                     !(binding.SemanticName == "_FlipbookTexArray" &&
+                       Path.GetExtension(resolved.AssetPath).Equals(".asset", StringComparison.OrdinalIgnoreCase)) &&
                      !IsOrdinary2DImage(resolved.AssetPath))
             {
                 diagnostics?.Add(new MaterialConversionDiagnostic(
@@ -96,6 +98,7 @@ public static class SourceToonMaterialDescriptorFactory
             IsLocked = match.IsLocked,
             SourceDocument = document,
             ShaderAsset = resolver.Resolve(document.Shader),
+            PropertyDefinitions = match.PropertyDefinitions,
             PropertyBindings = bindings,
             Textures = textures,
             Floats = floats,

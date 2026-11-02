@@ -1,6 +1,29 @@
 #ifndef XRENGINE_EXTENDED_EFFECTS_GLSL
 #define XRENGINE_EXTENDED_EFFECTS_GLSL
 
+#if defined(XRENGINE_VULKAN) && !defined(XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS)
+layout(std430, set = 0, binding = 40) readonly buffer SourceUdimTriangleCoverage
+{
+    uvec4 sourceUdimTriangleMasks[];
+};
+uniform int u_SourceUdimTriangleCount; // XRENGINE_FREQUENCY(Object)
+
+uint uberEnabledUdimTileMask()
+{
+    uint enabled = 0u;
+    vec4 rows[4] = vec4[4](
+        vec4(_UDIMDiscardRow0_0, _UDIMDiscardRow0_1, _UDIMDiscardRow0_2, _UDIMDiscardRow0_3),
+        vec4(_UDIMDiscardRow1_0, _UDIMDiscardRow1_1, _UDIMDiscardRow1_2, _UDIMDiscardRow1_3),
+        vec4(_UDIMDiscardRow2_0, _UDIMDiscardRow2_1, _UDIMDiscardRow2_2, _UDIMDiscardRow2_3),
+        vec4(_UDIMDiscardRow3_0, _UDIMDiscardRow3_1, _UDIMDiscardRow3_2, _UDIMDiscardRow3_3));
+    for (int row = 0; row < 4; row++)
+    for (int column = 0; column < 4; column++)
+        if (rows[row][column] > 0.001)
+            enabled |= 1u << uint(row * 4 + column);
+    return enabled;
+}
+#endif
+
 // Native implementations for extended material effects and runtime
 // integrations. Importers own all source-format translation.
 
@@ -23,14 +46,42 @@ bool uberApplyCoverageEffects(in ToonMesh mesh)
     if (_FaceDiscard == 2 && mesh.isFrontFace < 0.0)
         return true;
 
-    if (_UvTileDiscard > 0.5)
+    if (_UvTileDiscard > 0.5 && _UDIMDiscardMode == 0)
     {
-        vec2 grid = max(_UvTileDiscardGrid, vec2(1.0));
-        vec2 cell = floor(fract(mesh.uv[0]) * grid);
-        float tile = (cell.y * grid.x + cell.x) / max(grid.x * grid.y - 1.0, 1.0);
-        if (tile < min(_UvTileDiscardRange.x, _UvTileDiscardRange.y) ||
-            tile > max(_UvTileDiscardRange.x, _UvTileDiscardRange.y))
-            return true;
+#if defined(XRENGINE_VULKAN) && !defined(XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS)
+        uint enabled = uberEnabledUdimTileMask();
+        if (enabled != 0u)
+        {
+            if (u_SourceUdimTriangleCount <= 0 ||
+                gl_PrimitiveID < 0 || gl_PrimitiveID >= u_SourceUdimTriangleCount)
+                return true;
+            uint membership = sourceUdimTriangleMasks[gl_PrimitiveID][clamp(_UDIMDiscardUV, 0, 3)];
+            if ((membership & enabled) != 0u)
+                return true;
+        }
+#endif
+    }
+
+    if (_UvTileDiscard > 0.5 && _UDIMDiscardMode == 1)
+    {
+        vec2 tile = floor(mesh.uv[clamp(_UDIMDiscardUV, 0, 3)]);
+        if (all(greaterThanEqual(tile, vec2(0.0))) &&
+            all(lessThan(tile, vec2(4.0))))
+        {
+            vec4 row = tile.y < 1.0
+                ? vec4(_UDIMDiscardRow0_0, _UDIMDiscardRow0_1,
+                    _UDIMDiscardRow0_2, _UDIMDiscardRow0_3)
+                : tile.y < 2.0
+                    ? vec4(_UDIMDiscardRow1_0, _UDIMDiscardRow1_1,
+                        _UDIMDiscardRow1_2, _UDIMDiscardRow1_3)
+                    : tile.y < 3.0
+                        ? vec4(_UDIMDiscardRow2_0, _UDIMDiscardRow2_1,
+                            _UDIMDiscardRow2_2, _UDIMDiscardRow2_3)
+                        : vec4(_UDIMDiscardRow3_0, _UDIMDiscardRow3_1,
+                            _UDIMDiscardRow3_2, _UDIMDiscardRow3_3);
+            if (row[int(tile.x)] > 0.001)
+                return true;
+        }
     }
 #endif
     return false;

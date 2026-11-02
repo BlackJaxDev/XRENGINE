@@ -213,6 +213,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (_retiring)
                 return;
+            MarkSourceFlatCommandsDirty();
             if (UsesCommittedWorldBounds)
                 return;
 
@@ -264,6 +265,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (_retiring)
                 return;
+            MarkSourceFlatCommandsDirty();
             if (UsesCommittedWorldBounds)
                 return;
 
@@ -388,6 +390,34 @@ namespace XREngine.Components.Scene.Mesh
             }
 
             QueuePendingRenderMatrixUpdate();
+        }
+
+        private void MarkSourceFlatCommandsDirty()
+        {
+            // Component and root changes can arrive before command construction.
+            if (_rc is null)
+                return;
+
+            XRMeshRenderer? renderer = CurrentLODRenderer;
+            XRMaterial? materialOverride = _rc.MaterialOverride;
+            if (SourceMultilayerFlatDirection.IsRequired(materialOverride))
+                _rc.MarkDirty();
+            else if (materialOverride is null && renderer is not null)
+            {
+                int count = Math.Max(1, renderer.Submeshes.Count);
+                for (int index = 0; index < count; ++index)
+                {
+                    renderer.TryGetMesh(index, out _, out XRMaterial? material);
+                    if (!SourceMultilayerFlatDirection.IsRequired(material))
+                        continue;
+                    _rc.MarkDirty();
+                    break;
+                }
+            }
+
+            if (_materialOutlineCommand.Enabled &&
+                SourceMultilayerFlatDirection.IsRequired(_materialOutlineCommand.MaterialOverride))
+                _materialOutlineCommand.MarkDirty();
         }
 
         private void ApplyPendingRenderMatrixUpdates()

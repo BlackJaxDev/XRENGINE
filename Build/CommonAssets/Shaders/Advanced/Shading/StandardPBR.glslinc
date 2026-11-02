@@ -33,12 +33,30 @@ vec3 XR_ADV_FresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// Shading flag 64 selects the Jimenez multi-bounce approximation.
+vec3 XR_ADV_DiffuseOcclusion(uint flags, float ambientOcclusion, vec3 albedo)
+{
+    if ((flags & 64u) == 0u)
+        return vec3(ambientOcclusion);
+
+    vec3 a = 2.0404 * albedo - 0.3324;
+    vec3 b = -4.7951 * albedo + 0.6417;
+    vec3 c = 2.7552 * albedo + 0.6903;
+    return max(vec3(ambientOcclusion), ((a * ambientOcclusion + b) * ambientOcclusion + c) * ambientOcclusion);
+}
+
 // GTAO attenuates only the image-based specular lobe.  This approximation is
 // monotonic in AO and preserves a fully visible reflection at AO=1.
 float XR_ADV_SpecularOcclusion(float NoV, float ambientOcclusion, float roughness)
 {
     float exponent = exp2(-16.0 * roughness - 1.0);
     return clamp(pow(max(NoV + ambientOcclusion, 0.0), exponent) - 1.0 + ambientOcclusion, 0.0, 1.0);
+}
+
+// Shading flag 128 makes specular light use plain AO, as without the specular occlusion setting.
+float XR_ADV_SpecularVisibility(uint flags, float NoV, float ambientOcclusion, float roughness)
+{
+    return (flags & 128u) != 0u ? ambientOcclusion : XR_ADV_SpecularOcclusion(NoV, ambientOcclusion, roughness);
 }
 
 // Analytic split-sum approximation for a prefiltered GGX environment.

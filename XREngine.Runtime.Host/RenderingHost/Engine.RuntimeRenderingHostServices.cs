@@ -32,6 +32,8 @@ internal sealed class EngineRuntimeRenderingHostServices :
     IDisposable
 {
     private const int MaxConsecutiveVrDesktopBudgetSkips = 2;
+    private const double MinimumIndependentDesktopRateHz = 15.0;
+    private const double IndependentDesktopSlackMarginMs = 1.0;
     private const int RenderOutputCapacity = 512;
 
     private readonly IRendererBackendCatalog _rendererBackends;
@@ -48,6 +50,12 @@ internal sealed class EngineRuntimeRenderingHostServices :
     private int _vrDesktopPressureConsecutiveSkips;
     private ulong _vrDesktopPressureFrameId;
     private bool _vrDesktopPressureHoldCurrentFrame;
+    private ulong _independentDesktopAdmissionFrameId;
+    private bool _independentDesktopHoldCurrentFrame;
+    private long _independentDesktopLastAdmittedTicks;
+    private double _independentDesktopCostMs;
+    private double _independentDesktopCostSinceAdmissionMs;
+    private long _independentDesktopAdmittedXrWakeTicks;
 
     public EngineRuntimeRenderingHostServices(
         IRendererBackendCatalog rendererBackends,
@@ -1536,6 +1544,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
         ulong frameId = Engine.Time.Timer.CollectFrameId;
         float targetRateHz = GetVrOutputTargetRateHz(viewKind);
         bool autoSkipWhenOverBudget = RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget;
+        bool xrFramePriorityEnabled = autoSkipWhenOverBudget;
 
         if (!xrCritical &&
             RuntimeEngine.VRState.IsInVR &&
@@ -1566,6 +1575,18 @@ internal sealed class EngineRuntimeRenderingHostServices :
                     outputKind,
                     frameId,
                     EFrameOutputSkipReason.HeldLastImage,
+                    targetRateHz);
+            }
+
+            if (xrFramePriorityEnabled &&
+                ShouldKeepIndependentDesktopLive(mode) &&
+                ShouldHoldIndependentDesktopForXrFrame(frameId))
+            {
+                return RuntimeEngine.Rendering.Stats.FrameOutputs.RecordForcedSkip(
+                    viewKind,
+                    outputKind,
+                    frameId,
+                    EFrameOutputSkipReason.Budget,
                     targetRateHz);
             }
 
@@ -1617,6 +1638,56 @@ internal sealed class EngineRuntimeRenderingHostServices :
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Admits at most one independent desktop frame per XR frame, and only when it can finish
+    /// before the next XR frame. A minimum rate keeps the window live. A frame admitted at this
+    /// rate can delay the eyes.
+    /// </summary>
+    private bool ShouldHoldIndependentDesktopForXrFrame(ulong frameId)
+    {
+        lock (_vrDesktopPressureLock)
+        {
+            if (_independentDesktopAdmissionFrameId == frameId)
+                return _independentDesktopHoldCurrentFrame;
+
+            _independentDesktopAdmissionFrameId = frameId;
+            // The largest sample since the last admission is the admitted frame. Held frames only
+            // present, so they cost much less.
+            _independentDesktopCostSinceAdmissionMs = Math.Max(
+                _independentDesktopCostSinceAdmissionMs,
+                RuntimeEngine.Rendering.Stats.FrameOutputs.LastDesktopWorkMs);
+
+            double slackMs = RuntimeEngine.VRState.OpenXRApi?.NextFrameSlackMs ?? -1.0;
+            long xrWakeTicks = RuntimeEngine.VRState.OpenXRApi?.LastFrameWakeTicks ?? 0L;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            double elapsedMs = (now - _independentDesktopLastAdmittedTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            bool fits = slackMs < 0.0 ||
+                (xrWakeTicks != _independentDesktopAdmittedXrWakeTicks &&
+                 Math.Max(_independentDesktopCostMs, _independentDesktopCostSinceAdmissionMs) + IndependentDesktopSlackMarginMs <= slackMs);
+            bool minimumRateDue = elapsedMs >= 1000.0 / MinimumIndependentDesktopRateHz;
+            _independentDesktopHoldCurrentFrame = !fits && !minimumRateDue;
+            if (!_independentDesktopHoldCurrentFrame)
+            {
+                _independentDesktopLastAdmittedTicks = now;
+                _independentDesktopAdmittedXrWakeTicks = xrWakeTicks;
+                if (_independentDesktopCostSinceAdmissionMs > 0.0)
+                    _independentDesktopCostMs = _independentDesktopCostSinceAdmissionMs;
+                _independentDesktopCostSinceAdmissionMs = 0.0;
+            }
+            if (!fits && minimumRateDue)
+            {
+                Debug.RenderingEvery(
+                    "VR.DesktopPriority.MinimumRateAdmission",
+                    TimeSpan.FromSeconds(1),
+                    "[FrameOutput] Admitted an independent desktop frame at the minimum rate. It can delay the next XR frame. Cost={0:F1} ms, slack={1:F1} ms.",
+                    _independentDesktopCostMs,
+                    slackMs);
+            }
+
+            return _independentDesktopHoldCurrentFrame;
+        }
     }
 
     private bool ShouldHoldDesktopOutputForVrPressure(

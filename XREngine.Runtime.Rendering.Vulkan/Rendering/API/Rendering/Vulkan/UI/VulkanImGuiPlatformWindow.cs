@@ -55,7 +55,10 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 EInteractiveWindowResizeStrategy.Default, RuntimeWindowPurpose.EditorViewport,
                 position, size, false, false,
                 (viewport.Flags & ImGuiViewportFlags.TopMost) != 0,
-                false, false, 24, 24, 8, 4, 6, false, false, false);
+                false, false, 24, 24, 8, 4, 6, false, false, false)
+            {
+                EventPumpParentGeneration = outputHost.MainWindow.LifetimeGeneration,
+            };
             IRuntimeWindowBackend? created = null;
             try
             {
@@ -113,8 +116,6 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
         public void ProcessEvents(ImGuiViewportPtr viewport)
         {
             UpdateViewportFlags(viewport.Flags);
-            if (Window.IsClosing)
-                viewport.PlatformRequestClose = true;
 
             IVector2 position = Window.ClientScreenPosition;
             if (position != _lastPosition)
@@ -676,8 +677,8 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
         {
             if (_disposeStarted)
                 return;
-            WindowInputSnapshot input = Window.ConsumeUiInput(_uiEvents);
-            _owner.ReplayViewportInput(ViewportId, Window.ClientScreenPosition, input,
+            Window.ConsumeUiInput(_uiEvents);
+            _owner.ReplayViewportInput(ViewportId, Window.ClientScreenPosition,
                 CollectionsMarshal.AsSpan(_uiEvents));
         }
 

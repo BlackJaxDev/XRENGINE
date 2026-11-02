@@ -53,7 +53,7 @@ namespace XREngine.Rendering
         public override void ApplyUniforms(XRRenderProgram program)
         {
             program.Uniform("Radius", Owner.Radius);
-            program.Uniform("Power", Owner.Power);
+            program.Uniform("Bias", Owner.Bias);
         }
     }
 }

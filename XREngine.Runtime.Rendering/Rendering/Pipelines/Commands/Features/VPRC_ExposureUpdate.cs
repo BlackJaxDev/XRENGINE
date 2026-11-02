@@ -85,9 +85,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             return false;
         }
 
+        // Being in VR does not make every viewport an eye. A desktop viewport keeps its own mono exposure.
         private static bool IsVrOrStereoExposureContext()
-            => RuntimeEngine.VRState.IsInVR
-            || RuntimeEngine.Rendering.State.IsStereoPass
+            => RuntimeEngine.Rendering.State.IsStereoPass
             || AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget == true;
 
         private static void ReportVrAutoExposurePolicy(

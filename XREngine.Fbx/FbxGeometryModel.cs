@@ -39,7 +39,8 @@ public sealed record FbxMeshGeometry(
     IReadOnlyList<FbxLayerElement<Vector3>> Tangents,
     IReadOnlyList<FbxLayerElement<Vector2>> TextureCoordinates,
     IReadOnlyList<FbxLayerElement<Vector4>> Colors,
-    FbxLayerElement<int>? Materials);
+    FbxLayerElement<int>? Materials,
+    IReadOnlyList<FbxLayerElement<Vector3>>? Binormals = null);
 
 public sealed class FbxGeometryDocument
 {

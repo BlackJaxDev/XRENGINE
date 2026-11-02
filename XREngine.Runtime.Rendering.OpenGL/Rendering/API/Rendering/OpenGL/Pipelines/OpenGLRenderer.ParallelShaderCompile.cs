@@ -321,7 +321,7 @@ public partial class OpenGLRenderer
                         $"[ShaderCache] Worker '{workerLabel}' failed to enable parallel shader compile: {ex.Message}");
                 }
             });
-        }, "InitParallelShaderCompile");
+        }, "InitParallelShaderCompile", EProgramPriority.Interactive);
     }
 
     private static unsafe void InvokeGlMaxShaderCompilerThreads(nint entryPoint, uint count)

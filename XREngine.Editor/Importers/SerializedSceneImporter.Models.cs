@@ -1,3 +1,4 @@
+using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering;
@@ -29,12 +30,40 @@ internal static partial class SerializedSceneImporter
                 "Only deterministic generation 2 correspondence is supported.");
         }
 
+        bool? sourceZUp;
+        float sourceUnitToMeters;
+        try
+        {
+            sourceZUp = ValidateSourceModelCoordinates(
+                modelPath, metadata, state, out sourceUnitToMeters);
+        }
+        catch (SourceVisualImportException ex) when (state.Context.AllowPartialImport)
+        {
+            // Reject the unsupported model before a producer allocates geometry.
+            // Keep supported sibling models in an explicitly partial import.
+            state.Context.ReportPartialImport("UNITYPARTIAL0007",
+                $"Skipped model '{modelPath}' because its coordinate settings are unsupported. {ex.Message}",
+                modelPath, "m_SourcePrefab",
+                new SourceAssetIdentity
+                {
+                    AssetGuid = sourceGuid ?? string.Empty,
+                    ObjectKind = SourceAssetObjectKind.Asset,
+                });
+            state.Context.MarkOutcome(modelPath, SourceImportConversionOutcome.Failed);
+            return new ImportedHierarchy(modelPath) { SourceGuid = sourceGuid };
+        }
         Dictionary<string, XRMaterial> externalMaterials = ImportExternalMaterialRemaps(metadata, state);
+        if (string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase))
+            AddConnectedFbxMaterialRemapAliases(modelPath, externalMaterials, state);
         ModelImportOptions options = CreateSerializedModelImportOptions(metadata, externalMaterials, state.Context.FbxBackend);
 
         using var importer = new ModelAssetImporter(modelPath, onCompleted: null, materialFactory: null)
         {
             ImportOptions = options,
+            FbxSourceDocuments = state.Context.FbxSourceDocuments,
+            ResolveMissingTexturePath = string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase)
+                ? state.Context.ResolveExactModelTexture
+                : null,
         };
         Func<string, XRTexture2D> defaultTextureFactory = importer.MakeTextureAction;
         importer.MakeTextureAction = path => ResolveModelTexture(path, defaultTextureFactory, state);
@@ -79,15 +108,18 @@ internal static partial class SerializedSceneImporter
             SourceImportDiagnosticCategory.ModelIdentity,
             backendEvidence,
             modelPath);
-        if (actualBackend == ModelImportBackendIds.NativeFbx)
+        if (string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase))
+            ResolveFbxMaterialSlots(root, modelPath, state);
+        if (sourceZUp is { } zUp)
         {
-            throw new SourceVisualImportException(
-                $"Native FBX model-base normalization is not yet supported for Unity prefab composition. {backendEvidence} " +
-                "The native content basis, handedness, and mesh-local cluster binds require a shared conversion contract before publication.");
+            root = ConvertImportedModelCoordinates(
+                root, actualBackend, zUp, sourceUnitToMeters);
+            if (sourceUnitToMeters != 1.0f)
+                RestoreSourceLocalModelUnits(root, actualBackend, zUp, sourceUnitToMeters,
+                    state.Context.FbxSourceDocuments.GetSemantic(modelPath));
         }
-
         root = CollapseAssimpSyntheticRoot(root, modelPath, metadata, options, state);
-        ApplySourceImportedSkeletonBindPose(root, metadata, state);
+        AttachSourceAvatarTPose(root, metadata);
         if (metadata.SortHierarchyByName)
             SortHierarchyByName(root);
 
@@ -114,6 +146,7 @@ internal static partial class SerializedSceneImporter
             hierarchy,
             state);
         RegisterIdentityMappings(hierarchy);
+        ImportSourceModelAnimations(modelPath, metadata, root, state);
         state.Context.MarkOutcome(modelPath, SourceImportConversionOutcome.Converted);
         if (File.Exists(metaPath))
             state.Context.MarkOutcome(metaPath, SourceImportConversionOutcome.Converted);
@@ -137,17 +170,13 @@ internal static partial class SerializedSceneImporter
         {
             FbxBackend = fbxBackend,
             ScaleConversion = metadata.GlobalScale,
+            ImportBlendShapeNormals = metadata.BlendShapeNormalImportMode != 2,
             ZUp = false,
-            // Unity-authored assets face +Z while XRENGINE faces -Z. Assimp applies this
-            // reflection coherently to vertices, hierarchy transforms, and inverse bind
-            // matrices. Reverse winding in the same import step so reflected triangles
-            // remain front-facing. Unity YAML transforms are converted separately because
-            // they do not pass through the model importer.
+            // Assimp applies its Z reflection first. The Unity composition boundary
+            // then converts the complete producer chart, including geometry and binds.
             MakeLeftHanded = true,
             FlipWindingOrder = true,
-            FbxPivotPolicy = metadata.BakeAxisConversion
-                ? XREngine.Fbx.FbxPivotImportPolicy.BakeIntoLocalTransform
-                : XREngine.Fbx.FbxPivotImportPolicy.PreservePivotSemantics,
+            FbxPivotPolicy = XREngine.Fbx.FbxPivotImportPolicy.PreservePivotSemantics,
             CollapseGeneratedFbxHelperNodes = !metadata.PreserveHierarchy,
             // Assimp's graph optimizer removes empty FBX grouping nodes such as
             // "Meshes/Tops". Unity retains those nodes even when
@@ -156,6 +185,7 @@ internal static partial class SerializedSceneImporter
             OptimizeGraph = false,
             OptimizeMeshes = false,
             DeferMeshletCookingUntilPostNormalization = true,
+            PrepareGpuDeformationOnImport = false,
             ProcessMeshesAsynchronously = false,
             GenerateMeshRenderersAsync = false,
             MaterialRemap = externalMaterials.ToDictionary(
@@ -178,17 +208,20 @@ internal static partial class SerializedSceneImporter
             string? materialPath = ResolveAssetPath(state, remap.TargetMaterial.Guid);
             if (string.IsNullOrWhiteSpace(materialPath) || !File.Exists(materialPath))
             {
+                if (state.Context.AllowPartialImport)
+                {
+                    materials[remap.SourceMaterialName] = GetMissingMaterial(
+                        new SourceReference(remap.TargetMaterial.FileId, remap.TargetMaterial.Guid, remap.TargetMaterial.Type), state);
+                    continue;
+                }
                 throw new SourceVisualImportException(
                     $"Required FBX material remap '{remap.SourceMaterialName}' ({remap.TargetMaterial.Guid}) " +
                     $"from '{metadata.SourceMetaPath}' could not be resolved.");
             }
 
-            XRMaterial material = state.Context.GetOrAddCached(
-                materialPath,
-                () => SerializedMaterialImporter.ImportWithReport(materialPath, state.Context).Material
-                    ?? throw new SourceVisualImportException($"Unity material importer returned no material for '{materialPath}'."));
+            XRMaterial material = LoadSerializedMaterial(materialPath, state)
+                ?? throw new SourceVisualImportException($"Unity material importer returned no material for '{materialPath}'.");
             materials[remap.SourceMaterialName] = material;
-            state.Context.MarkOutcome(materialPath, GetMaterialOutcome(material));
         }
         state.Context.Progress?.Invoke(0.22f, "FBX external material remaps converted");
 
@@ -207,14 +240,6 @@ internal static partial class SerializedSceneImporter
             state.Context.MarkOutcome(normalized, SourceImportConversionOutcome.Converted);
             return texture;
         });
-    }
-
-    private static SourceImportConversionOutcome GetMaterialOutcome(XRMaterial material)
-    {
-        return MaterialConversionReportRegistry.Instance.TryGet(material, out MaterialConversionReport? report) &&
-               report.Outcome == EMaterialConversionOutcome.ConvertedToSourceToon
-            ? SourceImportConversionOutcome.Downgraded
-            : SourceImportConversionOutcome.Converted;
     }
 
     private static void IndexModelHierarchy(
@@ -337,6 +362,11 @@ internal static partial class SerializedSceneImporter
             return root;
         }
 
+        if (!ModelMatricesMatch(root.Transform.LocalMatrix, Matrix4x4.Identity))
+            throw new SourceVisualImportException(
+                $"Cannot remove the imported model wrapper for '{Path.GetFileName(modelPath)}': " +
+                "its local basis is not identity.");
+
         if (syntheticRoot.Transform is not Transform transform ||
             !IsIdentityTransform(transform))
         {
@@ -350,9 +380,7 @@ internal static partial class SerializedSceneImporter
                 $"SortHierarchyByName={metadata.SortHierarchyByName}; BakeAxisConversion={metadata.BakeAxisConversion}; " +
                 $"PreserveHierarchy={metadata.PreserveHierarchy}; PivotPolicy={options.FbxPivotPolicy}; " +
                 $"MakeLeftHanded={options.MakeLeftHanded}; FlipWindingOrder={options.FlipWindingOrder}.";
-            string normalizationReason = "A non-identity root with a sole authored child requires separate bounds normalization.";
-            if ((!metadata.PreserveHierarchy && syntheticRoot.Transform.Children.Count == 1) ||
-                !TryRedistributeSyntheticRootBasis(root, syntheticRoot, out normalizationReason))
+            if (!TryRedistributeSyntheticRootBasis(root, syntheticRoot, out string normalizationReason))
             {
                 throw new SourceVisualImportException(
                     $"Cannot normalize the synthetic model root for '{Path.GetFileName(modelPath)}'. {evidence} " +
@@ -380,16 +408,26 @@ internal static partial class SerializedSceneImporter
             importedRoot = singleAuthoredRoot;
         }
 
-        // ModelAssetImporter expresses imported submesh bounds relative to its outer file wrapper.
-        // That wrapper is removed here for Unity's generation-2 hierarchy, so every surviving
-        // submesh must point at the replacement root rather than a detached random transform.
-        RebindCollapsedRootTransform(importedRoot, root.Transform, importedRoot.Transform);
-        if (!ReferenceEquals(importedRoot, syntheticRoot))
-            RebindCollapsedRootTransform(importedRoot, syntheticRoot.Transform, importedRoot.Transform);
-
+        var previousState = CaptureImportedRootState(importedRoot);
         string? importedRootName = root.Name;
         importedRoot.Parent = null;
         importedRoot.Name = importedRootName;
+        importedRoot.Transform.RecalculateMatrixHierarchy(
+            forceWorldRecalc: true,
+            setRenderMatrixNow: true,
+            childRecalcType: ELoopType.Sequential).GetAwaiter().GetResult();
+        SaveImportedModelBindHierarchy(importedRoot.Transform);
+
+        // The removed transforms can still own palette slots and explicit bounds.
+        // Map their references to the surviving root and keep each old bind product.
+        RebindCollapsedRootTransform(importedRoot, root.Transform, importedRoot.Transform);
+        if (!ReferenceEquals(importedRoot, syntheticRoot))
+            RebindCollapsedRootTransform(importedRoot, syntheticRoot.Transform, importedRoot.Transform);
+        RestoreImportedRootState(
+            previousState,
+            root.Transform,
+            ReferenceEquals(importedRoot, syntheticRoot) ? null : syntheticRoot.Transform,
+            importedRoot.Transform);
         return importedRoot;
     }
 

@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param()
+param([string]$BrokerPath)
 
 $ErrorActionPreference = "Stop"
 
@@ -16,6 +16,10 @@ try {
     $startInfo.FileName = "powershell"
     $startInfo.Arguments =
         "-NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`""
+    if (-not [string]::IsNullOrWhiteSpace($BrokerPath)) {
+        $startInfo.FileName = 'dotnet'
+        $startInfo.Arguments = "`"$BrokerPath`" --repo-root `"$repoRoot`" --integration xrengine"
+    }
     $startInfo.WorkingDirectory = $repoRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
@@ -57,7 +61,7 @@ try {
 
     $initialize = $responseLines[0] | ConvertFrom-Json
     $toolList = $responseLines[1] | ConvertFrom-Json
-    if ($initialize.id -ne 1 -or $initialize.result.serverInfo.name -ne "XREngine.LocalAgentBroker") {
+    if ($initialize.id -ne 1 -or $initialize.result.serverInfo.name -notin @('LocalAgentBroker', 'XREngine.LocalAgentBroker')) {
         throw "The broker initialize response did not match the expected server identity: $($responseLines[0])"
     }
 

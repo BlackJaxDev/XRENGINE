@@ -14,7 +14,6 @@ uniform sampler2D DepthView;
 
 uniform float Radius = 2.0f;
 uniform float Bias = 0.1f;
-uniform float Power = 2.0f;
 uniform float DetailAO = 0.0f;
 uniform bool UseInputNormals = true;
 uniform float MetersToViewSpaceUnits = 1.0f;
@@ -140,5 +139,5 @@ void main()
 
     float occlusion = clamp(coarseOcclusion * 1.75f + detailOcclusion, 0.0f, 1.0f);
     float visibility = clamp(1.0f - occlusion, 0.0f, 1.0f);
-    OutIntensity = pow(visibility, max(Power, 0.001f));
+    OutIntensity = visibility;
 }

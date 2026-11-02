@@ -16,6 +16,10 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     private void AppendAdvancedLatePassCommands(ViewportRenderCommandContainer commands)
     {
+        using (commands.AddUsing<VPRC_BindFBOByName>(x =>
+            x.SetOptions(ForwardPassFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+            commands.Add<VPRC_RenderAdvancedMaterialOutline>().Stereo = Stereo;
+
         var late = commands.Add<VPRC_IfElse>();
         late.Label = "AdvancedLateTransparencyAllowed";
         late.ConditionEvaluator = HasAnyAdvancedLateConsumers;

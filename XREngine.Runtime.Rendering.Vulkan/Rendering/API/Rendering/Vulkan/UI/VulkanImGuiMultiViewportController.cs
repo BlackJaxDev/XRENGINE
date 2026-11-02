@@ -130,6 +130,23 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             Debug.Rendering("Vulkan ImGui multi-viewports enabled.");
         }
 
+        /// <summary>
+        /// Reports focus for the complete ImGui window group.
+        /// </summary>
+        public bool IsAnyWindowFocused()
+        {
+            if (_mainWindow.Events.IsFocused)
+                return true;
+            if (!_installed || _disposed)
+                return false;
+
+            foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
+                if (!window.IsDisposed && window.Focused)
+                    return true;
+
+            return false;
+        }
+
         public void PrepareForNewFrame(ImGuiIOPtr io)
         {
             if (!_installed || _disposed)
@@ -140,7 +157,16 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             EnsureMainViewportPlatformData();
 
             foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
+            {
+                if (window.IsDisposed)
+                    continue;
+
+                // ImGui clears platform requests after Platform_UpdateWindow.
+                // Send close intent before NewFrame so Begin can close the panel.
+                if (window.Window.IsClosing)
+                    RequestClose(window.ViewportId);
                 window.DrainInput();
+            }
 
             if (!_mainWindow.Events.IsFocused)
                 return;
@@ -704,7 +730,6 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         internal void ReplayViewportInput(
             uint viewportId,
             IVector2 screenOrigin,
-            WindowInputSnapshot input,
             ReadOnlySpan<WindowInputEvent> events)
         {
             MakeCurrent();
@@ -736,8 +761,6 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                         break;
                 }
             }
-            if (input.IsFocused)
-                io.AddFocusEvent(true);
         }
 
         private void ReplayModifier(ImGuiIOPtr io, EKey key, bool down)

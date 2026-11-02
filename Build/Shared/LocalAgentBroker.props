@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <LocalAgentBrokerVersion>0.1.1</LocalAgentBrokerVersion>
+    <LocalAgentBrokerRepositoryRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\'))</LocalAgentBrokerRepositoryRoot>
+    <LocalAgentBrokerLibrary>$(LocalAgentBrokerRepositoryRoot)Build\Dependencies\LocalAgentBroker\$(LocalAgentBrokerVersion)\lib\net10.0\LocalAgentBroker.Orchestration.dll</LocalAgentBrokerLibrary>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="LocalAgentBroker.Orchestration">
+      <HintPath>$(LocalAgentBrokerLibrary)</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="EnsureLocalAgentBrokerLibrary" BeforeTargets="ResolveAssemblyReferences" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(LocalAgentBrokerRepositoryRoot)Tools\Setup-LocalAgentBroker.ps1&quot; -LibraryOnly" />
+    <Error Condition="!Exists('$(LocalAgentBrokerLibrary)')" Text="The pinned orchestration package is missing. Run Tools/Setup-LocalAgentBroker.ps1 -LibraryOnly." />
+  </Target>
+</Project>

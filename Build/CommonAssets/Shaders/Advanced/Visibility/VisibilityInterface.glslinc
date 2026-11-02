@@ -23,6 +23,8 @@
 #define XR_ADV_VIS_VERSION_SHIFT 16u
 #define XR_ADV_VIS_SELECTION_VALID_SHIFT 24u
 #define XR_ADV_VERTEX_HAS_TEXCOORD1 0x00000001u
+#define XR_ADV_VERTEX_HAS_TEXCOORD2 0x00000002u
+#define XR_ADV_VERTEX_HAS_TEXCOORD3 0x00000004u
 
 bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
 {
@@ -286,8 +288,8 @@ struct XRAdvancedVisibilityPackedVertex
     uint custom0;
     uint sourceVertex;
     uint flags;
-    uint reserved0;
-    uint reserved1;
+    uint texCoord2Half;
+    uint texCoord3Half;
     uint reserved2;
     uint reserved3;
 };

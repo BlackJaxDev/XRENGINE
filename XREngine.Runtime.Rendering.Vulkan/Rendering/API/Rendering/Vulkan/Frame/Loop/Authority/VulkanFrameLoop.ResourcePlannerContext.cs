@@ -109,7 +109,7 @@ internal sealed partial class VulkanFrameLoop
             pipeline?.Resources,
             pipeline?.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata
                 ?? pipeline?.ActiveGeneration?.PassMetadata
-                ?? pipeline?.Pipeline?.PassMetadata,
+                ?? pipeline?.AssignedPipeline?.PassMetadata,
             displayWidth,
             displayHeight,
             internalWidth,
@@ -121,6 +121,7 @@ internal sealed partial class VulkanFrameLoop
         context = CompleteFrameOpContext(context with
         {
             OutputFrameBuffer = outputFrameBuffer,
+            CaptureOwnerToken = outputFrameBuffer?.CaptureOwnerToken,
             OutputSchedulingInstanceIdentity = viewport?.FrameOutputIdentity ?? 0UL,
             AdvancedVisibilityOutputIdentity = pipeline?.AdvancedOutputBinding.Request.OutputId ?? 0UL,
             OutputSchedulingRequest = viewport?.CurrentFrameOutputRequest ?? default,
@@ -499,7 +500,7 @@ internal sealed partial class VulkanFrameLoop
             ResourceGeneration = unchecked((ulong)Math.Max(pipeline.ResourceGeneration + 1, 0)),
             DescriptorGeneration = VulkanFramePlanner.ResolveFrameOpContextDescriptorGeneration(generation.Registry),
             ResourceRegistrySignatureSnapshot = VulkanFramePlanner.ComputeResourceRegistrySignature(generation.Registry),
-            ResourceRegistryInstanceRevisionSnapshot = generation.Registry?.InstanceRevision ?? 0,
+            ResourceRegistryInstanceRevisionSnapshot = generation.Registry.InstanceRevision,
         };
         context = VulkanFramePlanner.RefreshFrameOpContextRecordingFingerprint(context);
 
@@ -512,7 +513,11 @@ internal sealed partial class VulkanFrameLoop
                 pendingState = scope.CaptureCurrent(CaptureResourcePlannerRuntimeState(), ActiveFrameOpResourcePlannerSwitchingState);
                 pendingState.LastActiveFrameOpContext = context;
 
-                if (!ValidatePreparedResourceAllocator(pendingState.ResourcePlanner, pendingState.ResourceAllocator, out failureReason))
+                if (!ValidatePreparedResourceAllocator(
+                        pendingState.ResourcePlanner,
+                        pendingState.ResourceAllocator,
+                        generation.Registry,
+                        out failureReason))
                 {
                     _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(
                         BackendObjectContext,
@@ -643,6 +648,7 @@ internal sealed partial class VulkanFrameLoop
     private static bool ValidatePreparedResourceAllocator(
         VulkanResourcePlanner planner,
         VulkanResourceAllocator allocator,
+        RenderResourceRegistry resourceRegistry,
         out string? failureReason)
     {
         foreach (VulkanAllocationRequest request in planner.CurrentPlan.AllTextures())
@@ -660,7 +666,10 @@ internal sealed partial class VulkanFrameLoop
 
         foreach (VulkanBufferAllocationRequest request in planner.CurrentPlan.AllBuffers())
         {
-            if (request.Lifetime == RenderResourceLifetime.External)
+            // Registry buffers use their own wrapper and native-binding checks.
+            // Only descriptor-only buffers require planner-owned storage here.
+            if (request.Lifetime == RenderResourceLifetime.External ||
+                resourceRegistry.TryGetBuffer(request.Name, out _))
                 continue;
 
             if (!allocator.TryGetPhysicalBufferGroupForResource(request.Name, out VulkanPhysicalBufferGroup? group) ||
@@ -953,6 +962,7 @@ internal sealed partial class VulkanFrameLoop
         return ApplyInteractiveResizePlannerFreeze(CompleteFrameOpContext(context with
         {
             OutputFrameBuffer = outputFrameBuffer,
+            CaptureOwnerToken = outputFrameBuffer?.CaptureOwnerToken,
             OutputSchedulingInstanceIdentity = viewport?.FrameOutputIdentity ?? 0UL,
             AdvancedVisibilityOutputIdentity = pipeline.AdvancedOutputBinding.Request.OutputId,
             OutputSchedulingRequest = pipeline.RenderState.OutputCompletionRequest.IsDefined
@@ -1132,7 +1142,10 @@ internal sealed partial class VulkanFrameLoop
         {
             if (scope.RequiresPreparation)
             {
-                UpdateResourcePlannerFromContext(context);
+                UpdateResourcePlannerFromContext(
+                    context,
+                    deferReusedImageMetadataCommit: true,
+                    compatibleImageDonor: scope.CompatibleImageDonor);
                 scope.CompletePreparation();
             }
 
@@ -1141,7 +1154,24 @@ internal sealed partial class VulkanFrameLoop
         }
         catch
         {
-            scope.Dispose();
+            try
+            {
+                try
+                {
+                    scope.AbortPreparation(BackendObjectContext);
+                }
+                catch (Exception cleanupException)
+                {
+                    Debug.VulkanWarning(
+                        "[VulkanResourcePlanner] Unpublished image plan cleanup failed: {0}",
+                        cleanupException.Message);
+                }
+                RetireSupersededPlannerAllocators(scope.SupersededAllocators);
+            }
+            finally
+            {
+                scope.Dispose();
+            }
             throw;
         }
     }
@@ -1172,6 +1202,7 @@ internal sealed partial class VulkanFrameLoop
         HashSet<VulkanPhysicalImageGroup> keptImageGroups = [];
         foreach (VulkanPhysicalImageGroup group in currentAllocator.EnumeratePhysicalGroups())
             keptImageGroups.Add(group);
+        _resourcePlannerSessions.CollectOwnedImageGroups(keptImageGroups);
 
         for (int index = 0; index < superseded.Count; index++)
         {

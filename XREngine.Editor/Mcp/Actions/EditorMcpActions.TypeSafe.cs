@@ -4,7 +4,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using XREngine.AgentOrchestration.TypeSafe;
+using LocalAgentBroker.Orchestration.TypeSafe;
 using XREngine.Data.Core;
 using XREngine.Scene;
 

@@ -289,6 +289,14 @@ vec2 GetStencilOutlineIntensity(vec2 uv, int viewIndex)
     return vec2(hoverOutline, selectionOutline);
 }
 
+// Returns the linear change per unit of sRGB-encoded display value.
+vec3 DisplayToLinearSlope(vec3 linearColor)
+{
+    vec3 color = max(linearColor, vec3(0.0));
+    vec3 upper = 2.4 / 1.055 * pow(color, vec3(1.0 - 1.0 / 2.4));
+    return mix(vec3(1.0 / 12.92), upper, step(vec3(0.0031308), color));
+}
+
 void main()
 {
     vec2 clipXY = FragPos.xy;
@@ -409,8 +417,9 @@ void main()
     // transfer on write to sRGB-capable color attachments. Manual gamma
     // here would double-encode and wash out the image.
     //
-    // Fix subtle banding by applying fine noise in linear space.
-    ldrSceneColor += mix(-0.5 / 255.0, 0.5 / 255.0, rand(uv));
+    // Fix subtle banding with one display-code step of noise. Hardware applies the sRGB transfer
+    // after this point, so scale the noise by the local transfer slope.
+    ldrSceneColor += mix(-0.5 / 255.0, 0.5 / 255.0, rand(uv)) * DisplayToLinearSlope(ldrSceneColor);
     ldrSceneColor = SafeColor(ldrSceneColor);
 
     OutColor = vec4(ldrSceneColor, 1.0);

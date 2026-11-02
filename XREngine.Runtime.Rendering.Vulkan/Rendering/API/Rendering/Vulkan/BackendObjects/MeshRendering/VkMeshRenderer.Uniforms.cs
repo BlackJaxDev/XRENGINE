@@ -163,14 +163,17 @@ internal unsafe partial class VkMeshRenderer
 				VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
 				if (arena is null ||
 					!arena.TryGetOrReserveFrequencyAutoUniformRange(
+						this,
+						frameIndex,
+						drawUniformSlot,
 						_program,
 						block,
 						ownerIdentity,
-						out frequencyReservation) ||
+						out frequencyReservation,
+						captureOwner: draw.CaptureOwnerToken) ||
 					!arena.TryGetSlice(
 						frameIndex,
-						frequencyReservation.Offset,
-						block.Size,
+						frequencyReservation,
 						out VulkanMappedFrameSlice sharedSlice))
 				{
 					RuntimeEngine.Rendering.Stats.Vulkan
@@ -193,6 +196,7 @@ internal unsafe partial class VkMeshRenderer
 					offset: frequencyReservation.Offset,
 					ownsBuffer: false,
 					mappedSlice: sharedSlice);
+				IncludeAutoUniformBufferReplacement(name, buffers, buffers[idx]);
 			}
 			AutoUniformBuffer buffer = buffers[idx];
 			if (buffer.Buffer.Handle == 0)
@@ -252,6 +256,7 @@ internal unsafe partial class VkMeshRenderer
 			AutoUniformBlockInfo block = pair.Value;
 			if (!_autoUniformBuffers.TryGetValue(pair.Key, out AutoUniformBuffer[]? buffers) ||
 				!AutoUniformBuffersValid(
+					pair.Key,
 					buffers,
 					bufferCount,
 					Math.Max(block.Size, 1u),

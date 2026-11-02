@@ -1,6 +1,8 @@
 using System.Numerics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene.Transforms;
 
@@ -32,12 +34,6 @@ internal static partial class SerializedSceneImporter
             return false;
         }
 
-        if (HasSyntheticRootBindings(root, rootTransform))
-        {
-            reason = "A skin palette or explicit culling bound uses the synthetic root basis.";
-            return false;
-        }
-
         var childMatrices = new List<(Transform Transform, Matrix4x4 Matrix)>(rootTransform.Children.Count);
         foreach (TransformBase child in rootTransform.Children)
         {
@@ -62,8 +58,8 @@ internal static partial class SerializedSceneImporter
             childMatrices.Add((transform, target));
         }
 
-        // Validate every child before changing the hierarchy. No vertex or bind palette
-        // conversion is needed because each child's matrix product remains unchanged.
+        // Preserve palette products and authored bounds when the root is their basis.
+        var previousState = CaptureImportedRootState(root);
         foreach ((Transform child, Matrix4x4 matrix) in childMatrices)
             child.DeriveLocalMatrix(matrix);
         rootTransform.DeriveLocalMatrix(Matrix4x4.Identity);
@@ -72,6 +68,7 @@ internal static partial class SerializedSceneImporter
             setRenderMatrixNow: true,
             childRecalcType: ELoopType.Sequential).GetAwaiter().GetResult();
         SaveImportedModelBindHierarchy(rootTransform);
+        RestoreImportedRootState(previousState, null, null, rootTransform);
         reason = string.Empty;
         return true;
     }
@@ -83,7 +80,23 @@ internal static partial class SerializedSceneImporter
             SaveImportedModelBindHierarchy(child);
     }
 
-    private static bool HasSyntheticRootBindings(SceneNode node, TransformBase syntheticRoot)
+    private static (
+        List<(XRMesh Mesh, (TransformBase Bone, Matrix4x4 Product)[] Slots)> Palettes,
+        List<(SubMesh SubMesh, TransformBase Basis, Matrix4x4 World, AABB Bounds)> Bounds)
+        CaptureImportedRootState(SceneNode root)
+    {
+        var palettes = new List<(XRMesh Mesh, (TransformBase Bone, Matrix4x4 Product)[] Slots)>();
+        var bounds = new List<(SubMesh SubMesh, TransformBase Basis, Matrix4x4 World, AABB Bounds)>();
+        var seenMeshes = new HashSet<XRMesh>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        CaptureImportedRootState(root, palettes, bounds, seenMeshes);
+        return (palettes, bounds);
+    }
+
+    private static void CaptureImportedRootState(
+        SceneNode node,
+        List<(XRMesh Mesh, (TransformBase Bone, Matrix4x4 Product)[] Slots)> palettes,
+        List<(SubMesh SubMesh, TransformBase Basis, Matrix4x4 World, AABB Bounds)> bounds,
+        HashSet<XRMesh> seenMeshes)
     {
         foreach (ModelComponent component in node.Components.OfType<ModelComponent>())
         {
@@ -91,29 +104,92 @@ internal static partial class SerializedSceneImporter
                 continue;
             foreach (SubMesh subMesh in model.Meshes)
             {
-                if (subMesh.CullingBounds.HasValue &&
-                    ReferenceEquals(subMesh.RootBone ?? subMesh.RootTransform, syntheticRoot))
-                    return true;
+                if (subMesh.CullingBounds is { } explicitBounds)
+                {
+                    TransformBase basis = subMesh.RootBone ?? subMesh.RootTransform ?? node.Transform;
+                    bounds.Add((subMesh, basis, basis.WorldMatrix, explicitBounds));
+                }
                 foreach (SubMeshLOD lod in subMesh.LODs)
                 {
-                    if (lod.Mesh is not { } mesh)
+                    if (lod.Mesh is not { HasSkinning: true } mesh || !seenMeshes.Add(mesh))
                         continue;
-                    foreach (var bone in mesh.UtilizedBones)
+
+                    var slots = new (TransformBase Bone, Matrix4x4 Product)[mesh.UtilizedBones.Length];
+                    for (int slot = 0; slot < slots.Length; slot++)
                     {
-                        if (ReferenceEquals(bone.tfm, syntheticRoot))
-                            return true;
+                        (TransformBase bone, Matrix4x4 inverseBind) = mesh.UtilizedBones[slot];
+                        slots[slot] = (bone, inverseBind * bone.BindMatrix);
                     }
+                    palettes.Add((mesh, slots));
                 }
             }
         }
 
         foreach (TransformBase child in node.Transform.Children)
         {
-            if (child.SceneNode is { } childNode && HasSyntheticRootBindings(childNode, syntheticRoot))
-                return true;
+            if (child.SceneNode is { } childNode)
+                CaptureImportedRootState(childNode, palettes, bounds, seenMeshes);
         }
-        return false;
     }
+
+    private static void RestoreImportedRootState(
+        (List<(XRMesh Mesh, (TransformBase Bone, Matrix4x4 Product)[] Slots)> Palettes,
+         List<(SubMesh SubMesh, TransformBase Basis, Matrix4x4 World, AABB Bounds)> Bounds) state,
+        TransformBase? firstCollapsedRoot,
+        TransformBase? secondCollapsedRoot,
+        TransformBase importedRoot)
+    {
+        foreach ((XRMesh mesh, (TransformBase Bone, Matrix4x4 Product)[] slots) in state.Palettes)
+        {
+            var bindings = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[slots.Length];
+            bool changed = false;
+            for (int slot = 0; slot < slots.Length; slot++)
+            {
+                (TransformBase previousBone, Matrix4x4 oldProduct) = slots[slot];
+                TransformBase bone = RemapCollapsedRoot(previousBone, firstCollapsedRoot, secondCollapsedRoot, importedRoot);
+                if (!Matrix4x4.Invert(bone.BindMatrix, out Matrix4x4 inverseNewBind) ||
+                    !ModelMatricesMatch(bone.BindMatrix * inverseNewBind, Matrix4x4.Identity))
+                    throw new SourceVisualImportException(
+                        $"Imported bone '{bone.SceneNode?.Name}' has a singular or non-finite bind matrix.");
+
+                Matrix4x4 inverseBind = oldProduct * inverseNewBind;
+                if (!ModelMatricesMatch(inverseBind * bone.BindMatrix, oldProduct))
+                    throw new SourceVisualImportException(
+                        $"Imported mesh '{mesh.Name}' cannot preserve palette slot {slot} after root normalization.");
+
+                bindings[slot] = (bone, inverseBind);
+                (TransformBase oldBone, Matrix4x4 oldInverseBind) = mesh.UtilizedBones[slot];
+                changed |= !ReferenceEquals(oldBone, bone) ||
+                    !ModelMatricesMatch(oldInverseBind, inverseBind);
+            }
+
+            if (changed)
+                mesh.ReplaceSkinningBoneBindings(bindings);
+        }
+
+        foreach ((SubMesh subMesh, TransformBase oldBasis, Matrix4x4 oldWorld, AABB oldBounds) in state.Bounds)
+        {
+            TransformBase newBasis = RemapCollapsedRoot(oldBasis, firstCollapsedRoot, secondCollapsedRoot, importedRoot);
+            Matrix4x4 newWorld = newBasis.WorldMatrix;
+            if (ReferenceEquals(oldBasis, newBasis) && ModelMatricesMatch(oldWorld, newWorld))
+                continue;
+
+            if (!Matrix4x4.Invert(newWorld, out Matrix4x4 inverseNewWorld) ||
+                !ModelMatricesMatch(newWorld * inverseNewWorld, Matrix4x4.Identity))
+                throw new SourceVisualImportException(
+                    $"Imported submesh '{subMesh.Name}' has a singular or non-finite culling basis.");
+            subMesh.CullingBounds = oldBounds.Transformed(oldWorld * inverseNewWorld);
+        }
+    }
+
+    private static TransformBase RemapCollapsedRoot(
+        TransformBase transform,
+        TransformBase? firstCollapsedRoot,
+        TransformBase? secondCollapsedRoot,
+        TransformBase importedRoot)
+        => ReferenceEquals(transform, firstCollapsedRoot) || ReferenceEquals(transform, secondCollapsedRoot)
+            ? importedRoot
+            : transform;
 
     private static bool ModelMatricesMatch(Matrix4x4 left, Matrix4x4 right)
     {

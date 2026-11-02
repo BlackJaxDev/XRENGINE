@@ -283,6 +283,7 @@ internal sealed partial class VulkanFrameLoop
         ComputeDispatchSnapshot snapshot = vkProgram.CaptureComputeSnapshot();
         if (!vkProgram.ValidateComputeSnapshot(snapshot, out string? descriptorFailure))
         {
+            snapshot.ReleaseIfUnpooled();
             Debug.VulkanWarningEvery(
                 $"Vulkan.DispatchCompute.DescriptorInvalid.{RuntimeHelpers.GetHashCode(program)}",
                 TimeSpan.FromSeconds(1),
@@ -307,7 +308,18 @@ internal sealed partial class VulkanFrameLoop
                 snapshot,
                 context);
             if (authoringLease is not null)
-                operation.SealAuthoringSnapshot();
+            {
+                try
+                {
+                    operation.SealAuthoringSnapshot();
+                }
+                finally
+                {
+                    snapshot.ReleaseIfUnpooled();
+                }
+            }
+            else if (!snapshot.IsFramePoolOwned)
+                operation.OwnAuthoringSnapshot(snapshot);
             operation.AttachAuthoringResource(authoringLease);
             EnqueueFrameOp(operation);
         }

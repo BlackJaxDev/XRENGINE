@@ -307,14 +307,6 @@ namespace XREngine.Rendering.OpenGL
                 return sourceBytes;
             }
 
-            private static bool ShouldPreferSharedContextForLargeSource(ulong hash, GLProgramCompileLinkQueue.ShaderInput[]? inputs)
-                => (hash == 0 || !SharedContextLargeSourceTimeouts.ContainsKey(hash)) &&
-                   ShouldPreferSharedContextForLargeSource(inputs);
-
-            private static bool IsSharedContextAbandonedLink(string? errorLog)
-                => !string.IsNullOrWhiteSpace(errorLog) &&
-                   errorLog.Contains(SharedContextAbandonedLinkMarker, StringComparison.Ordinal);
-
             private bool IsLinkPreparationPending
                 => Volatile.Read(ref _linkPreparationPendingGeneration) == Volatile.Read(ref _linkPreparationGeneration);
 
@@ -349,14 +341,8 @@ namespace XREngine.Rendering.OpenGL
 
             //private static object HashLock = new();
             private static readonly ConcurrentDictionary<ulong, byte> Failed = new();
-            private static readonly ConcurrentDictionary<ulong, byte> SharedContextLargeSourceTimeouts = new();
             private static readonly ConcurrentDictionary<ulong, byte> SynchronousSourceRetryHashes = new();
-            private static readonly ConcurrentDictionary<ulong, byte> DriverParallelSourceTimeouts = new();
             private static readonly ConcurrentDictionary<string, byte> AsyncBinaryUploadTimeoutCacheKeys = new(StringComparer.Ordinal);
-            private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
-            private static bool AllowSynchronousSourceRetryAfterAsyncTimeout
-                => XREnvironment.IsEnabled(
-                    XREngineEnvironmentVariables.AllowSyncSourceRetryAfterAsyncTimeout);
             private static bool IsAsyncBinaryUploadTimedOutCacheKey(string? cacheKey)
                 => !string.IsNullOrWhiteSpace(cacheKey) && AsyncBinaryUploadTimeoutCacheKeys.ContainsKey(cacheKey);
 
@@ -404,12 +390,22 @@ namespace XREngine.Rendering.OpenGL
 
             private readonly record struct DeferredProgramHandleDelete(OpenGLRenderer Renderer, uint ProgramId, ulong EarliestFrameId);
 
-            private sealed class DeferredAsyncLinkCleanup(OpenGLRenderer renderer, uint programId, uint[] shaderIds)
+            private sealed class DeferredAsyncLinkCleanup(OpenGLRenderer renderer, uint programId, uint[] shaderIds, GLProgramCompileLinkQueue? sourceQueue = null)
             {
                 public bool TryProcess()
                 {
-                    if (renderer.ShouldOrphanGLHandlesForShutdown)
+                    if (renderer.ShouldOrphanGLHandlesForShutdown || GLProgramCompileLinkQueue.SourceCompilationFaulted)
                         return true;
+
+                    // A program can report completion before its worker has linked it.
+                    // The source queue owns completion of both shader and program work.
+                    if (sourceQueue is not null)
+                    {
+                        if (sourceQueue.IsNativeWorkIncomplete(programId))
+                            return true;
+                        if (sourceQueue.IsProgramInFlight(programId))
+                            return false;
+                    }
 
                     GL api = renderer.Api;
 

@@ -12,4 +12,5 @@ internal readonly record struct VulkanPreparedMeshIngressFailure(
     long PackageGeneration,
     long PackageSourceRevision,
     BackendReadyOrderedExceptionRecord PackageExceptionRecord,
-    XRRenderPipelineInstance? SelectedPipeline);
+    XRRenderPipelineInstance? SelectedPipeline,
+    string IngressEntries);

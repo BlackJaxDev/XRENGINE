@@ -20,4 +20,6 @@ public enum EAdvancedMaterialRequiredAttributeMask : uint
     DeformedPosition = 1u << 10,
     AnalyticalDerivatives = 1u << 11,
     Color1 = 1u << 12,
+    TexCoord2 = 1u << 13,
+    TexCoord3 = 1u << 14,
 }

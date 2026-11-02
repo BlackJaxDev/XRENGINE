@@ -118,9 +118,12 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         if (source.DebugDrawChains)
             GPUPhysicsChainDispatcher.Instance.RefreshDebugDrawChainsWorld(source);
         GPUPhysicsChainDispatcher.Instance.SubmitData(source, snapshot,
-            chain.UseGpuDrivenSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning &&
+            chain.UseGpuDrivenSkinning && !chain.GpuSyncToBones && RuntimeEngine.Rendering.Settings.AllowSkinning &&
                 RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader);
     }
+
+    public bool HasGpuDrivenRenderers(PhysicsChainComponent chain)
+        => _sources.TryGetValue(chain, out Source? source) && source.HasGpuDrivenRenderers;
 
     public void RenderDebug(PhysicsChainComponent chain)
         => GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug(chain.World);
@@ -153,6 +156,8 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         private readonly List<PhysicsChainGpuBone> _bones = [];
         private readonly Dictionary<Transform, int> _particleIndices = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly Dictionary<int, int> _firstChildren = [];
+        private readonly Dictionary<int, int> _childCounts = [];
+        private readonly List<int> _rootParticles = [];
         private readonly List<PaletteState> _paletteStates = [];
         private int _copiedBoneStructureSignature;
         private int _bindingGeneration;
@@ -315,7 +320,7 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
             _paletteBindingRetryPending = false;
             ReleasePaletteBindings();
             unchecked { ++_bindingGeneration; }
-            _particleIndices.Clear(); _firstChildren.Clear();
+            _particleIndices.Clear(); _firstChildren.Clear(); _childCounts.Clear(); _rootParticles.Clear();
             if (!_effectiveGpuMode || _chain.SceneNode is null)
                 return;
             for (int i = 0; i < _bones.Count; ++i)
@@ -323,8 +328,14 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
                 PhysicsChainGpuBone bone = _bones[i];
                 if (bone.Transform is not null) _particleIndices[bone.Transform] = i;
                 if (bone.ParentIndex >= 0 && !_firstChildren.ContainsKey(bone.ParentIndex)) _firstChildren[bone.ParentIndex] = i;
+                if (bone.ParentIndex >= 0) _childCounts[bone.ParentIndex] = _childCounts.GetValueOrDefault(bone.ParentIndex) + 1;
+                _rootParticles.Add(bone.ParentIndex >= 0 ? _rootParticles[bone.ParentIndex] : i);
             }
-            var root = _chain.SceneNode.Parent ?? _chain.SceneNode;
+            // A mesh can sit anywhere in the hierarchy of its skeleton, so the search starts at the top.
+            // A renderer that uses no bone of this chain receives no binding.
+            var root = _chain.SceneNode;
+            while (root.Parent is { } parent)
+                root = parent;
             root.IterateComponents<ModelComponent>(model =>
             {
                 foreach (XRMeshRenderer renderer in model.GetAllRenderersWhere(static value => value.Mesh?.HasSkinning == true))
@@ -409,7 +420,9 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
                 var (transform, _) = mesh.UtilizedBones[boneIndex];
                 if (transform is not Transform bone || !_particleIndices.TryGetValue(bone, out int particleIndex)) continue;
                 int child = _firstChildren.GetValueOrDefault(particleIndex, -1);
-                mappings.Add(new() { ParticleIndex = particleIndex, ChildParticleIndex = child, BoneMatrixIndex = boneIndex + 1, Flags = child >= 0 ? 1 : 0, RestLocalDirection = child >= 0 ? _bones[child].RestLocalDirection : Vector3.Zero });
+                // A bone with several children keeps its orientation, as on the CPU solver.
+                bool aimsAtChild = child >= 0 && _childCounts.GetValueOrDefault(particleIndex) == 1;
+                mappings.Add(new() { ParticleIndex = particleIndex, ChildParticleIndex = child, BoneMatrixIndex = boneIndex + 1, Flags = aimsAtChild ? 1 : 0, RestLocalDirection = aimsAtChild ? _bones[child].RestLocalDirection : Vector3.Zero, RootParticleIndex = _rootParticles[particleIndex] });
                 indices.Add((uint)(boneIndex + 1));
             }
             if (mappings.Count == 0) return;

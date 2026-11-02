@@ -24,6 +24,12 @@ namespace XREngine.Rendering.Vulkan
             public required DescriptorBindingInfo[] Bindings { get; init; }
 
             /// <summary>
+            /// Hash of the immutable metadata in <see cref="Bindings"/>. It lets the
+            /// per-draw resource fingerprint skip the binding names and types.
+            /// </summary>
+            public required ulong BindingStructureFingerprint { get; init; }
+
+            /// <summary>
             /// Per-frame descriptor sets. Indexed as <c>[frameIndex][setIndex]</c>.
             /// One full copy per swap-chain image avoids write-after-read hazards.
             /// </summary>

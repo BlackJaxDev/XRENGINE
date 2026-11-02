@@ -99,13 +99,14 @@ public static partial class EditorUnitTests
             : Toggles.PreviewVRStereoViews;
         bool requiresIndependentDesktopWindow = vrRenderingPrepared && (allowDesktopEditingInVr || previewVrStereoViews);
         bool usesRuntimeDesktopCamera = vrPawnRequested && !allowDesktopEditingInVr;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) ||
-            requiresIndependentDesktopWindow ||
-            usesRuntimeDesktopCamera)
-            s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;
+        // An explicit value wins unless desktop editing or stereo preview needs the window.
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)))
+            s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow;
+        else if (requiresIndependentDesktopWindow || usesRuntimeDesktopCamera)
+            s.RenderWindowsWhileInVR = true;
         s.VrMirrorComposeFromEyeTextures = false;
         if (vrRenderingPrepared && s.RenderWindowsWhileInVR)
-            s.VrMirrorMode = EVrMirrorMode.FullIndependentRender;
+            s.VrMirrorMode = XREngine.Runtime.Bootstrap.BootstrapRenderSettings.ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow);
         s.VrCopyEyePreviewTextures = previewVrStereoViews;
 
         bool groupedRenderingSpecified = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));

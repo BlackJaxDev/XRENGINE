@@ -48,6 +48,8 @@ internal readonly record struct PendingMeshDraw(
     AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
+    internal Vector4 SourceFlatDirection { get; init; }
+    internal RenderCaptureOwnerToken? CaptureOwnerToken { get; init; }
     internal EPrimitiveType IndirectTopology { get; init; } = EPrimitiveType.Triangles;
     internal IRenderResourceLeaseOwner? IndexedIndirectAuthoringLease { get; init; }
 
@@ -79,6 +81,8 @@ internal readonly record struct PendingMeshDraw(
     internal Matrix4x4 PreviousViewProjectionMatrixUnjittered
         => ViewSnapshot?.PreviousViewProjectionMatrixUnjittered ??
            Matrix4x4.Identity;
+    internal bool LeftEyeHistoryReady => ViewSnapshot?.LeftEyeHistoryReady == true;
+    internal bool RightEyeHistoryReady => ViewSnapshot?.RightEyeHistoryReady == true;
     internal Matrix4x4 RightEyeViewMatrix
         => ViewSnapshot?.RightEyeViewMatrix ?? Matrix4x4.Identity;
     internal Matrix4x4 RightEyeInverseViewMatrix

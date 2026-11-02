@@ -12,7 +12,8 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2DArray Normal;
 uniform sampler2DArray DepthView;
 
-uniform vec4 ScaleFactors;
+uniform vec4 ScaleFactors; // Fractions of Radius
+uniform float Radius = 2.2f;
 uniform float Bias = 0.05f;
 uniform float Intensity = 1.0f;
 uniform float ScreenWidth;
@@ -32,8 +33,11 @@ vec3 ViewPosFromDepth(float depth, vec2 uv, mat4 inverseProjMatrix)
     return AOViewPosFromDepth(depth, uv, inverseProjMatrix);
 }
 
-float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord, mat4 inverseProjMatrix)
+float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord, mat4 inverseProjMatrix, mat4 projMatrix)
 {
+    // Project the view-space radius, and keep at least one pixel so each scale finds a neighbor.
+    vec2 pixel = 1.0f / max(vec2(ScreenWidth, ScreenHeight), vec2(1.0f));
+    vec2 uvRadius = max(radius * 0.5f * vec2(abs(projMatrix[0][0]), abs(projMatrix[1][1])) / max(abs(pos.z), 1e-3f), pixel);
     float occlusion = 0.0f;
     int numSamples = 8;
     float stepAngle = 2.0f * PI / float(numSamples);
@@ -41,7 +45,8 @@ float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord, mat4
     for (int i = 0; i < numSamples; ++i)
     {
         float angle = stepAngle * float(i);
-        vec2 sampleOffset = vec2(cos(angle), sin(angle)) * radius / vec2(ScreenWidth, ScreenHeight);
+        // Samples spread inside the radius. A sample on the radius itself has no falloff weight.
+        vec2 sampleOffset = vec2(cos(angle), sin(angle)) * uvRadius * (float(i) + 0.5f) / float(numSamples);
 
         vec2 uv = texCoord + sampleOffset;
         float depth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
@@ -51,8 +56,10 @@ float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord, mat4
         vec3 diff = samplePos - pos;
 
         float dist = length(diff);
-        float dotProduct = max(dot(normal, normalize(diff)), 0.0f);
-        occlusion += max(radius - dist, 0.0f) * dotProduct;
+        if (dist <= 1e-5f)
+            continue;
+        float facing = max(dot(normal, diff / dist) - Bias, 0.0f);
+        occlusion += facing * clamp(1.0f - dist / radius, 0.0f, 1.0f);
     }
 
     return occlusion / float(numSamples);
@@ -67,6 +74,7 @@ void main()
     bool leftEye = gl_ViewID_OVR == 0;
     mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
     mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
+    mat4 projMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
     vec3 normal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
     vec3 viewNormal = normalize((viewMatrix * vec4(normal, 0.0f)).rgb);
@@ -79,10 +87,10 @@ void main()
     vec3 position = ViewPosFromDepth(depth, uv, inverseProjMatrix);
 
     float totalOcclusion = 0.0f;
-    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.x, uv, inverseProjMatrix);
-    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.y, uv, inverseProjMatrix);
-    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.z, uv, inverseProjMatrix);
-    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.w, uv, inverseProjMatrix);
+    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.x * Radius, uv, inverseProjMatrix, projMatrix);
+    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.y * Radius, uv, inverseProjMatrix, projMatrix);
+    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.z * Radius, uv, inverseProjMatrix, projMatrix);
+    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.w * Radius, uv, inverseProjMatrix, projMatrix);
     float obscurance = 0.25f * totalOcclusion;
-    OutIntensity = clamp(1.0f - Bias * obscurance * Intensity, 0.0f, 1.0f);
+    OutIntensity = clamp(1.0f - obscurance * Intensity, 0.0f, 1.0f);
 }

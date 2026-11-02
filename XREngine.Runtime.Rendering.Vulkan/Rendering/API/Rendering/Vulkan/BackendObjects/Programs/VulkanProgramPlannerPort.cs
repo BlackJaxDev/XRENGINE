@@ -61,7 +61,10 @@ internal sealed class VulkanProgramPlannerPort(
             passIndex = (int)EDefaultRenderPass.PreRender;
         ComputeDispatchSnapshot snapshot = program.CaptureComputeSnapshot();
         if (!program.ValidateComputeSnapshot(snapshot, out string? failure))
+        {
+            snapshot.ReleaseIfUnpooled();
             throw new InvalidOperationException($"Vulkan compute program '{program.Data.Name ?? "UnnamedProgram"}' has an invalid dispatch snapshot: {failure ?? "unknown validation failure"}");
+        }
         // Native compute pipeline readiness is resolved by the frame-plan
         // preparation authority before sealing. Do not erase this dispatch
         // while its asynchronously compiled pipeline is pending: the next
@@ -75,7 +78,17 @@ internal sealed class VulkanProgramPlannerPort(
             checked((uint)Math.Max(z, 1)),
             snapshot,
             frameContext);
-        queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(operation, passIndex));
+        if (!snapshot.IsFramePoolOwned)
+            operation.OwnAuthoringSnapshot(snapshot);
+        try
+        {
+            queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(operation, passIndex));
+        }
+        catch
+        {
+            operation.ReleaseAuthoringSnapshot();
+            throw;
+        }
     }
 
     internal void EnqueueTransformFeedback(VkTransformFeedback transformFeedback, EXRTransformFeedbackOperation operation, XRDataBuffer? counterBuffer, ulong feedbackBufferOffset, ulong? feedbackBufferSize, ulong counterBufferOffset, uint counterOffset, uint vertexStride, uint instanceCount, uint firstInstance)

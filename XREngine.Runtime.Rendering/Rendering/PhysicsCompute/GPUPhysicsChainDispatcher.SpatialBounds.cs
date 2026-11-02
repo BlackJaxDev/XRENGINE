@@ -559,7 +559,10 @@ public sealed partial class GPUPhysicsChainDispatcher
                 || prior.CpuSpatialBoundsValid != state.CpuSpatialBoundsValid
                 || prior.CpuSpatialBoundsVersion != state.CpuSpatialBoundsVersion;
             queryStateChanged |= boundsChanged || !HasSameCommittedQueryState(in prior, in state);
-            notifications.Add((renderer, boundsChanged));
+            // An unchanged bound needs no renderer notification; the commit advances the
+            // covered shadow caster output of each scene once.
+            if (boundsChanged)
+                notifications.Add((renderer, boundsChanged));
         }
         return queryStateChanged;
     }

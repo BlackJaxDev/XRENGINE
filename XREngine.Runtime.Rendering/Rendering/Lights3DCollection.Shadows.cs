@@ -1931,17 +1931,10 @@ namespace XREngine.Scene
             Add(ref hash, light.ShadowMapResolutionWidth);
             Add(ref hash, light.ShadowMapResolutionHeight);
             Add(ref hash, World.VisualScene.ShadowCasterMembershipRevision);
-            if (light is DirectionalLightComponent directionalLight)
-            {
-                Add(
-                    ref hash,
-                    directionalLight.GetShadowCasterCommandSetSignature(
-                        projectionType,
-                        source,
-                        faceOrCascadeIndex));
-            }
-            if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary &&
-                World.VisualScene.TryGetCoveredShadowCasterOutputRevision(cameraLayerMask, out ulong outputRevision))
+            Add(ref hash, light.GetShadowCasterCommandSetSignature(
+                projectionType, source, faceOrCascadeIndex));
+            if (World.VisualScene.TryGetCoveredShadowCasterOutputRevision(
+                    cameraLayerMask, out ulong outputRevision))
                 Add(ref hash, outputRevision);
             if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary)
                 AddDirectionalCascadeMatrix(ref hash, view, projection, desiredResolution);

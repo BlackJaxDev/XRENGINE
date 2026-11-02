@@ -14,6 +14,7 @@ namespace XREngine.Rendering
     {
         private bool _multiSample;
         private XRTexture2D[] _textures = [];
+        private long _layerSetRevision;
         private bool _resizable = false;
         private bool _copyGpuLayerSources;
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
@@ -61,6 +62,26 @@ namespace XREngine.Rendering
             get => _multiSample;
             set => SetField(ref _multiSample, value);
         }
+        /// <summary>
+        /// Identifies the source content of all layers. Zero means that no witness exists,
+        /// because the array is empty, multisampled, or assembled from GPU-authored layers.
+        /// </summary>
+        internal ulong CanonicalLayerContentWitness
+        {
+            get
+            {
+                XRTexture2D[] layers = _textures;
+                if (layers.Length == 0 || MultiSample || CopyGpuLayerSources)
+                    return 0UL;
+
+                const ulong prime = 1099511628211UL;
+                ulong witness = unchecked(14695981039346656037UL ^ (ulong)Volatile.Read(ref _layerSetRevision));
+                for (int index = 0; index < layers.Length; ++index)
+                    witness = unchecked((witness ^ layers[index].CanonicalSourceContentGeneration) * prime);
+                return witness == 0UL ? 1UL : witness;
+            }
+        }
+
         public XRTexture2D[] Textures
         {
             get => _textures;
@@ -252,6 +273,7 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Textures):
+                    _ = Interlocked.Increment(ref _layerSetRevision);
                     if (Textures != null)
                     {
                         foreach (XRTexture2D texture in Textures)

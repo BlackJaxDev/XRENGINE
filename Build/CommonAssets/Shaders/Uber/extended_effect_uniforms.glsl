@@ -12,6 +12,24 @@ uniform float _UvTileDiscard;
 uniform vec2 _UvTileDiscardGrid;
 //@property(name="_UvTileDiscardRange", display="Visible Tile Range", mode=animated, default="vec2(0.0, 1.0)")
 uniform vec2 _UvTileDiscardRange;
+uniform int _UDIMDiscardMode;
+uniform int _UDIMDiscardUV;
+uniform float _UDIMDiscardRow0_0;
+uniform float _UDIMDiscardRow0_1;
+uniform float _UDIMDiscardRow0_2;
+uniform float _UDIMDiscardRow0_3;
+uniform float _UDIMDiscardRow1_0;
+uniform float _UDIMDiscardRow1_1;
+uniform float _UDIMDiscardRow1_2;
+uniform float _UDIMDiscardRow1_3;
+uniform float _UDIMDiscardRow2_0;
+uniform float _UDIMDiscardRow2_1;
+uniform float _UDIMDiscardRow2_2;
+uniform float _UDIMDiscardRow2_3;
+uniform float _UDIMDiscardRow3_0;
+uniform float _UDIMDiscardRow3_1;
+uniform float _UDIMDiscardRow3_2;
+uniform float _UDIMDiscardRow3_3;
 //@property(name="_FaceDiscard", display="Face Discard", mode=animated, enum="0:None|1:Front|2:Back")
 uniform int _FaceDiscard;
 //@property(name="_PathingStrength", display="Pathing", mode=animated, range=[0,1])

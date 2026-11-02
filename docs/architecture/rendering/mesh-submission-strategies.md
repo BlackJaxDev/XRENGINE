@@ -37,14 +37,31 @@ verified vertex rank gates in the same ordered replay. Unproven raster programs,
 non-mesh commands and other unavailable selected profiles report specific
 diagnostics. Runtime acceptance of the authored meshlet lowering is pending.
 
+In the default pipeline, GPU indirect draws read the shared mesh atlas with a generated vertex shader that has no bone inputs. `VPRC_PublishDeformedMeshAtlas` runs before the mesh passes. It deforms each resident skinned or blendshape renderer in compute, and `SkinnedAtlasPublisher` writes the world-space result over the mesh's atlas range. The atlas holds one range per mesh, so renderers that share a deformed mesh also share one result. These draws have no skinned motion vectors. Interleaved meshes are not deformed on this path and log a warning.
+
 Zero-readback passes execute from configured GPU-pass topology even when CPU
 visibility collection publishes no mesh commands. The GPU scene and the pass
 culling mask own mesh membership; CPU visibility must not suppress a default,
 capture, or shadow pass before its GPU dispatch.
 
+The retained scene publication can contain ordered exceptions for commands
+outside the current view. Prepared Vulkan ingress imports an exception only
+when the exact submission row's stable command key is in the frame package's
+collected pass. It uses the command's primary draw handle and pass to find current
+ingress. If a collected exception has no matching ingress, frame preparation
+fails. Resident GPU pass membership stays independent of the CPU collection.
+Canonical CPU-owned draws remain in payload and ordered-exception tables. Vulkan
+checks their exact draw-to-geometry identity and CPU-direct producer, then omits
+them from native visibility bins. The authored pass draws them in package order.
+
 Advanced late color and participating temporal passes declare filtered
 `CpuDirect` submission independently of the opaque native GPU family. Their
 draws still execute on the GPU; the CPU filters authored late-lane eligibility.
+An enabled masked-forward material outline has a frozen supplemental command
+identity. The Advanced pipeline draws that command over native HDR and depth
+before it takes the transparent scene snapshot. It checks the owner, source
+pass, outline variant, and render options before the draw. The Vulkan outline
+vertex shader applies skinning and blendshapes before hull expansion.
 The temporal pass preserves that explicit strategy when a global opaque GPU
 override is active. Requesting GPU dispatch on a pass that requires filtered
 late participation is rejected because indirect replay cannot preserve that
@@ -62,6 +79,47 @@ instrumented strategy and must not be used as production evidence.
 The strategy also owns scene visibility acceleration. `CpuDirect` uses the CPU scene hierarchy (CPU BVH by default). Every GPU indirect and meshlet strategy requests the internal `GPUScene` command BVH. There is no independent GPU-BVH setting or Vulkan environment gate; if the BVH shader or provider buffers are not ready, the pass reports the condition and temporarily uses flat GPU frustum culling. The GPU hierarchy's bounds, revision, compact-layout, construction, traversal, and fallback contracts are documented in [GPU Scene BVH](gpu-scene-bvh.md).
 
 The CPU hierarchy's snapshot publication, mutation, traversal, and diagnostics contracts are documented in [CPU Scene BVH](cpu-scene-bvh.md).
+
+## LOD Transition Storage
+
+Collection publishes required capacity and structural reset indices with the
+scene command snapshot. It does not map the GPU-authored LOD transition buffer.
+Updating and published reset cohorts keep each command index once. Repeated
+structural edits cannot grow a pending cohort beyond command capacity when no
+LOD consumer runs. Resets published during a copy remain in the next cohort.
+The render owner prepares a zeroed candidate when capacity grows, copies the
+old rows on the GPU, and clears affected existing rows. A transfer barrier
+separates the preserve copy from overlapping resets. A final storage barrier
+precedes LOD consumers.
+
+The scene publishes the candidate only after its required producer fence proves
+completion. Copy operations retain both buffer generations until their native
+use completes. A batch discarded before native submission can retry. A partial
+submission without proven completion remains unavailable and reports a failure.
+The implementation is in `GPUScene.LodTransitionPublication.cs`.
+
+## Shared Opaque Shadow Submission
+
+Shadow submission has a separate frozen owner from main-view material
+submission. A command can use the shared opaque indirect shadow path only
+when all its geometry and materials satisfy the shared contract. Coverage,
+deformation, custom callbacks, and unsupported render state retain the authored
+shadow path. CPU replay and GPU culling use the same captured owner. A missing
+main-view canonical package does not assign a second shadow draw.
+
+The shadow GPU cull requires both the shared-opaque flag and the cast-shadow
+flag. Its compact tier ranges use the light's shadow override, depth-encoding
+fragment shader, render options, and layered uniforms. They do not use a
+surface-color material-table shader. The generated indirect vertex shader
+supplies world positions and source UV sets to supported geometry shadow
+stages. Instanced layered modes require their own vertex adapter and are
+explicitly unsupported by this shared path.
+
+Required shared shadow preparation must complete before a light can publish
+an atlas tile. Point and spot atlas writers propagate `XRViewport.TryRender`
+failure to the atlas manager. Pending programs and buffers keep the tile
+uncommitted so a later frame can retry. A scene with no shared opaque owners
+does not require an unused indirect shadow program.
 
 ## Renderer binding and scene IDs
 
@@ -150,6 +208,10 @@ Default derivation:
 `GpuIndirectZeroReadback` material scatter uses `DrawMetadata.MaterialID` as the bucket key. `StateClassID` remains the coarse pipeline-state key; it must not substitute for material identity. Material-table draw paths use the stable `DrawID` to fetch the material row and preserve per-material constants such as base color, opacity, roughness, metallic, specular, and emission.
 
 Dynamic material-table layouts for additional deferred, forward+, Uber, and annotated custom shader paths are planned.
+
+The shared material-table shader cannot express uber materials. When a scene holds any uber material, a traditional GPU indirect pass uses per-material programs instead of a requested material-table path. The atlas supplies one UV set and no vertex colors, and vertex-mode UDIM discard is not applied on this path; a material that needs that discard logs a warning.
+
+`SkinnedAtlasPublisher` writes deformed vertices over each mesh's atlas range. A recorded compute dispatch does not prove that it ran, because a backend can discard the frame that holds it. A renderer therefore dispatches each frame after a change until the viewport history ledger commits a frame at or after that change. It then reuses its output. A viewport with no history sequence does not reuse the output and dispatches each frame.
 
 ## Vulkan Command-Chain Volatility
 

@@ -384,6 +384,9 @@ namespace XREngine.Scene.Transforms
         protected override Matrix4x4 CreateWorldMatrix()
             => Matrix4x4.CreateFromQuaternion(PostRotationOffset * Rotation * PreRotationOffset) * Matrix4x4.CreateTranslation(PositionOffset + Position);
 
+        /// <summary>The world change method checks the physics reset plane.</summary>
+        protected override int OverriddenMatrixChangeNotifications => WorldMatrixNotification;
+
         protected override void OnWorldMatrixChanged(Matrix4x4 worldMatrix)
         {
             base.OnWorldMatrixChanged(worldMatrix);

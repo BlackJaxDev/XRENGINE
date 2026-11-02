@@ -31,6 +31,9 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase
         _plane = XRMath.CreatePlaneFromPointAndNormal(p, normal);
     }
 
+    protected override float ComputeClosestSegmentParameter(Vector3 start, Vector3 end)
+        => PhysicsChainColliderSnapshot.ClosestParameterToPlane(start, end, _plane.Normal, _bound == EBound.Inside);
+
     public override bool Collide(ref Vector3 particlePosition, float particleRadius)
     {
         if (!TryResolveEffectiveTransform(null, out _))

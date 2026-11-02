@@ -174,7 +174,7 @@ public partial class OpenGLRenderer
         OpenGLAdvancedSceneTableUploader sceneUploader = slot.SceneUploader ??= new(this);
         _advancedSceneUploader = sceneUploader;
         if (!sceneUploader.TryUpload(sceneDatabase, in scenePublication, out reason) ||
-            !sceneUploader.TryUploadViews(backendPackage, request.Views, out reason))
+            !sceneUploader.TryUploadViews(backendPackage, request.Views, request.RenderTimeSeconds, out reason))
             return false;
         if (!_advancedOutputRegistry.TryBindPersistentState(
                 in reservation,

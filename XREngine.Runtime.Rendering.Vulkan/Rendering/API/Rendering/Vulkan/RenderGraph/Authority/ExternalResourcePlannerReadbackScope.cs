@@ -1,3 +1,4 @@
+using System.Threading;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan.RenderGraph;
@@ -12,6 +13,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
 {
     private const int MaxFrameOpResourcePlannerSwitchingStates = 12;
+    private static long _plannerCacheMissDiagnosticCount;
     private readonly VulkanResourcePlannerSessionService _sessions;
     private readonly VulkanDeviceStateMachine _deviceState;
     private readonly Dictionary<RenderResourceRegistry, VulkanOpenXrResourceRegistryWrapperRefreshStamp> _wrapperRefreshStamps;
@@ -46,8 +48,10 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
         if (!_active)
             return;
 
+        SupersededAllocators = VulkanResourcePlannerSessionService.RemoveDestroyedOutputStates(switchingState);
+
         bool canReusePreviousState =
-            RuntimeStateMatchesKeyIgnoringRegistry(_previousState, _key) &&
+            IsPreparedStateForKey(_previousState, _key) &&
             VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
                 switchingState,
                 _key,
@@ -88,10 +92,116 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
             return;
         }
 
+        bool publishedSwitchingState = sessions.IsPublishedSwitchingState(switchingState);
+        if (publishedSwitchingState)
+            CompatibleImageDonor = FindCompatibleImageDonor(context, _key, switchingState);
+        if (VulkanBufferRetirementDiagnostics.Enabled)
+            RecordPlannerCacheMiss(switchingState, _key, context, publishedSwitchingState, CompatibleImageDonor);
         sessions.RestoreRuntimeState(ResourcePlannerRuntimeState.CreateEmpty());
     }
 
+    private static void RecordPlannerCacheMiss(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        in VulkanFrameOpPlannerStateKey requestedKey,
+        in FrameOpContext context,
+        bool publishedSwitchingState,
+        VulkanPhysicalImageReuseDonor? donor)
+    {
+        long miss = Interlocked.Increment(ref _plannerCacheMissDiagnosticCount);
+        if (miss > 12 && miss % 64 != 0)
+            return;
+
+        VulkanFrameOpPlannerStateKey? nearest = null;
+        int nearestScore = int.MinValue;
+        foreach (VulkanFrameOpPlannerStateKey candidate in switchingState.States.Keys)
+        {
+            if (candidate.PipelineIdentity != requestedKey.PipelineIdentity ||
+                candidate.ViewportIdentity != requestedKey.ViewportIdentity)
+                continue;
+
+            int score = 0;
+            if (candidate.ContextKind == requestedKey.ContextKind)
+                score++;
+            if (candidate.OutputFrameBufferIdentity == requestedKey.OutputFrameBufferIdentity)
+                score += 8;
+            if (candidate.OutputTargetIdentity == requestedKey.OutputTargetIdentity)
+                score += 8;
+            if (candidate.ResourceRegistrySignature == requestedKey.ResourceRegistrySignature)
+                score += 4;
+            if (candidate.ResourceGeneration == requestedKey.ResourceGeneration)
+                score += 2;
+            if (candidate.DescriptorGeneration == requestedKey.DescriptorGeneration)
+                score += 2;
+            if (score <= nearestScore)
+                continue;
+
+            nearest = candidate;
+            nearestScore = score;
+        }
+
+        string donorReason = !publishedSwitchingState
+            ? "ThreadLocalSwitchingState"
+            : donor is not null
+                ? "Selected"
+                : nearest is VulkanFrameOpPlannerStateKey nearestKey &&
+                  switchingState.States.TryGetValue(nearestKey, out ResourcePlannerRuntimeState nearestState)
+                    ? DescribeImageDonorRejection(context, requestedKey, nearestKey, nearestState, switchingState)
+                    : "NoSamePipelineViewportState";
+        Debug.WriteAuxiliaryLog(
+            "vulkan-physical-plan-replacements.log",
+            $"scopeMiss={miss} cachedStates={switchingState.States.Count} " +
+            $"requestedKey={requestedKey} nearestKey={nearest?.ToString() ?? "<none>"} " +
+            $"nearestScore={nearestScore} imageDonor={donor?.Key.ToString() ?? "<none>"} " +
+            $"imageDonorReason={donorReason}");
+    }
+
+    private static string DescribeImageDonorRejection(
+        in FrameOpContext context,
+        in VulkanFrameOpPlannerStateKey requestedKey,
+        in VulkanFrameOpPlannerStateKey candidateKey,
+        in ResourcePlannerRuntimeState candidateState,
+        FrameOpResourcePlannerSwitchingState switchingState)
+    {
+        if (context.ContextKind != EVulkanFrameOpContextKind.MainViewport ||
+            candidateKey.ContextKind != EVulkanFrameOpContextKind.MainViewport)
+            return "NonMainViewport";
+        if (candidateKey.OutputFrameBufferIdentity != requestedKey.OutputFrameBufferIdentity ||
+            candidateKey.OutputTargetIdentity != requestedKey.OutputTargetIdentity ||
+            candidateKey.LogicalViewId != requestedKey.LogicalViewId)
+            return "OutputIdentityMismatch";
+        if (candidateKey.DisplayWidth != requestedKey.DisplayWidth ||
+            candidateKey.DisplayHeight != requestedKey.DisplayHeight ||
+            candidateKey.InternalWidth != requestedKey.InternalWidth ||
+            candidateKey.InternalHeight != requestedKey.InternalHeight)
+            return "DimensionsMismatch";
+        if (candidateKey.PassMetadataSignature != requestedKey.PassMetadataSignature)
+            return "PassMetadataSignatureMismatch";
+        if (candidateKey.SubmissionQueueFamily != requestedKey.SubmissionQueueFamily)
+            return "SubmissionQueueMismatch";
+        if (!VulkanResourcePlannerSessionService.IsSupersededGenerationKey(candidateKey, requestedKey))
+            return "NotSuperseded";
+        if (!IsPreparedStateForKey(candidateState, candidateKey))
+            return "NotPrepared";
+        if (!VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+                switchingState, candidateKey, candidateState.ResourceAllocator))
+            return "AllocatorShared";
+        if (candidateState.LastActiveFrameOpContext is not FrameOpContext priorContext)
+            return "MissingPriorContext";
+        if (!ReferenceEquals(priorContext.PipelineInstance, context.PipelineInstance) ||
+            !ReferenceEquals(priorContext.PassMetadata, context.PassMetadata))
+            return "PipelineOrMetadataReferenceMismatch";
+        if (!string.Equals(priorContext.OutputFrameBufferName, context.OutputFrameBufferName, StringComparison.Ordinal) ||
+            !string.Equals(priorContext.OutputTargetName, context.OutputTargetName, StringComparison.Ordinal))
+            return "OutputNameMismatch";
+        if (priorContext.StereoEnabled != context.StereoEnabled ||
+            priorContext.MultiviewEnabled != context.MultiviewEnabled)
+            return "ViewModeMismatch";
+        return "NoMatchingCandidate";
+    }
+
     internal bool RequiresPreparation => _active && !_preparationCompleted;
+
+    internal VulkanPhysicalImageReuseDonor? CompatibleImageDonor { get; }
 
     /// <summary>
     /// Allocators of older resource generations that publishing this scope's
@@ -107,8 +217,36 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
 
         ResourcePlannerRuntimeState preparedState =
             _sessions.CaptureRuntimeState();
-        preparedState.LastActiveFrameOpContext = _context;
+        if (!IsPreparedStateForKey(preparedState, _key))
+        {
+            throw new RenderResourcePreparationPendingException(
+                "The requested Vulkan resource plan is not ready for publication.");
+        }
+
         PublishPreparedState(_sessions.ResolveActiveSwitchingState(), preparedState);
+        preparedState.ResourceAllocator.CommitReusedPhysicalImageMetadata();
+    }
+
+    internal void AbortPreparation(VulkanBackendObjectContext backendContext)
+    {
+        if (!_active || _preparationCompleted)
+            return;
+
+        VulkanResourceAllocator candidate = _sessions.CaptureRuntimeState().ResourceAllocator;
+        FrameOpResourcePlannerSwitchingState switchingState =
+            _sessions.ResolveActiveSwitchingState();
+        if (ReferenceEquals(candidate, _previousState.ResourceAllocator) ||
+            candidate.IsRetired ||
+            VulkanResourcePlannerSessionService.IsAllocatorOwned(switchingState, candidate) ||
+            _sessions.IsAllocatorOwnedByPublishedTable(candidate))
+        {
+            return;
+        }
+
+        _ = candidate.TryRetirePhysicalResources(
+            backendContext,
+            exceptImageGroups: candidate.CapturePendingReusedImageGroups(),
+            immediate: true);
     }
 
     private void PublishPreparedState(
@@ -121,7 +259,7 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
         // Generation commits publish into the shared table, so tables that only
         // render-time preparation fills (OpenXR eye and mirror planners) would
         // otherwise keep every earlier generation's full image set.
-        List<VulkanResourceAllocator> superseded = [];
+        List<VulkanResourceAllocator> superseded = SupersededAllocators ?? [];
         VulkanResourcePlannerSessionService.RemoveSupersededGenerationStates(
             switchingState,
             _key,
@@ -143,13 +281,13 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
         if (canPublish)
         {
             currentState = _sessions.CaptureRuntimeState();
-            currentState.LastActiveFrameOpContext = _context;
             FrameOpResourcePlannerSwitchingState switchingState =
                 _sessions.ResolveActiveSwitchingState();
-            canPublish = VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
-                switchingState,
-                _key,
-                currentState.ResourceAllocator);
+            canPublish = IsPreparedStateForKey(currentState, _key) &&
+                VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+                    switchingState,
+                    _key,
+                    currentState.ResourceAllocator);
             if (canPublish)
             {
                 switchingState.States[_key] = currentState;
@@ -193,6 +331,7 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
                     context,
                     candidateKey,
                     candidateState.LastActiveFrameOpContext?.PassMetadata) ||
+                !IsPreparedStateForKey(candidateState, candidateKey) ||
                 !VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
                     switchingState,
                     candidateKey,
@@ -214,36 +353,69 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
         return found;
     }
 
-    private static bool RuntimeStateMatchesKeyIgnoringRegistry(
-        in ResourcePlannerRuntimeState state,
-        in VulkanFrameOpPlannerStateKey key)
+    private static VulkanPhysicalImageReuseDonor? FindCompatibleImageDonor(
+        in FrameOpContext context,
+        in VulkanFrameOpPlannerStateKey requestedKey,
+        FrameOpResourcePlannerSwitchingState switchingState)
     {
-        if (state.ResourceAllocator is null || state.ResourceAllocator.IsRetired ||
-            state.LastActiveFrameOpContext is not FrameOpContext context)
+        if (context.ContextKind != EVulkanFrameOpContextKind.MainViewport)
+            return null;
+
+        VulkanPhysicalImageReuseDonor? best = null;
+        ulong bestSerial = 0UL;
+        foreach ((VulkanFrameOpPlannerStateKey key, ResourcePlannerRuntimeState state) in switchingState.States)
         {
-            return false;
+            if (key.ContextKind != EVulkanFrameOpContextKind.MainViewport ||
+                key.PipelineIdentity != requestedKey.PipelineIdentity ||
+                key.ViewportIdentity != requestedKey.ViewportIdentity ||
+                key.LogicalViewId != requestedKey.LogicalViewId ||
+                key.OutputFrameBufferIdentity != requestedKey.OutputFrameBufferIdentity ||
+                key.OutputTargetIdentity != requestedKey.OutputTargetIdentity ||
+                key.DisplayWidth != requestedKey.DisplayWidth ||
+                key.DisplayHeight != requestedKey.DisplayHeight ||
+                key.InternalWidth != requestedKey.InternalWidth ||
+                key.InternalHeight != requestedKey.InternalHeight ||
+                key.PassMetadataSignature != requestedKey.PassMetadataSignature ||
+                key.SubmissionQueueFamily != requestedKey.SubmissionQueueFamily ||
+                !VulkanResourcePlannerSessionService.IsSupersededGenerationKey(key, requestedKey) ||
+                !IsPreparedStateForKey(state, key) ||
+                !VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+                    switchingState, key, state.ResourceAllocator) ||
+                state.LastActiveFrameOpContext is not FrameOpContext donorContext ||
+                !ReferenceEquals(donorContext.PipelineInstance, context.PipelineInstance) ||
+                !ReferenceEquals(donorContext.PassMetadata, context.PassMetadata) ||
+                !string.Equals(donorContext.OutputFrameBufferName, context.OutputFrameBufferName, StringComparison.Ordinal) ||
+                !string.Equals(donorContext.OutputTargetName, context.OutputTargetName, StringComparison.Ordinal) ||
+                donorContext.StereoEnabled != context.StereoEnabled ||
+                donorContext.MultiviewEnabled != context.MultiviewEnabled)
+            {
+                continue;
+            }
+
+            ulong serial = switchingState.LastUsedSerials.TryGetValue(key, out ulong lastUsed)
+                ? lastUsed
+                : 0UL;
+            if (best is not null && serial <= bestSerial)
+                continue;
+
+            best = new VulkanPhysicalImageReuseDonor(key, state);
+            bestSerial = serial;
         }
 
-        VulkanFrameOpPlannerStateKey contextKey =
-            VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(context);
-        return contextKey.ContextKind == key.ContextKind &&
-            contextKey.PipelineIdentity == key.PipelineIdentity &&
-            contextKey.ViewportIdentity == key.ViewportIdentity &&
-            contextKey.DisplayWidth == key.DisplayWidth &&
-            contextKey.DisplayHeight == key.DisplayHeight &&
-            contextKey.InternalWidth == key.InternalWidth &&
-            contextKey.InternalHeight == key.InternalHeight &&
-            contextKey.OutputFrameBufferIdentity == key.OutputFrameBufferIdentity &&
-            contextKey.OutputTargetIdentity == key.OutputTargetIdentity &&
-            contextKey.LogicalViewId == key.LogicalViewId &&
-            contextKey.PassMetadataSignature == key.PassMetadataSignature &&
-            contextKey.ResourceGeneration == key.ResourceGeneration &&
-            contextKey.DescriptorGeneration == key.DescriptorGeneration &&
-            contextKey.SubmissionQueueFamily == key.SubmissionQueueFamily;
+        return best;
     }
 
     private static bool ContextHasPlannerResources(in FrameOpContext context)
         => context.ResourceRegistry is not null || context.PassMetadata is { Count: > 0 };
+
+    private static bool IsPreparedStateForKey(
+        in ResourcePlannerRuntimeState state,
+        in VulkanFrameOpPlannerStateKey key)
+        => state.ResourcePlannerRevision != 0 &&
+           !ReferenceEquals(state.RenderGraphPlan, VulkanRenderGraphPlan.Empty) &&
+           VulkanResourcePlannerSessionService.IsReusableState(state) &&
+           state.LastActiveFrameOpContext is FrameOpContext preparedContext &&
+           VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(preparedContext) == key;
 
     private static int Score(in ResourcePlannerRuntimeState state)
     {

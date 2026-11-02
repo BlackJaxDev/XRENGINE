@@ -11,6 +11,27 @@ public static class ForwardDepthNormalVariantFactory
     private const string ForwardLightingFunction = "XRENGINE_CalculateForwardLighting";
     private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<string, CachedFragmentVariantResult>> FragmentVariantSourceCache = new();
 
+    private const string UberDissolveGuard = "XRENGINE_UBER_DISABLE_DISSOLVE";
+
+    /// <summary>Uber features that must be compiled out for full coverage.</summary>
+    private static readonly string[] UberCoverageGuards =
+    [
+        UberDissolveGuard,
+        "XRENGINE_UBER_DISABLE_PARALLAX",
+    ];
+
+    /// <summary>Uber parameters that must be zero for full coverage.</summary>
+    private static readonly string[] UberCoverageParameters =
+    [
+        "_Mode",
+        "_ViewVisibilityMask",
+        "_FaceDiscard",
+        "_UvTileDiscard",
+    ];
+
+    private static readonly Lazy<XRShader> SharedSurfaceShader = new(
+        static () => XRShader.EngineShader(Path.Combine("Common", "DepthNormalPrePass.fs"), EShaderType.Fragment));
+
     private static readonly Regex OutputDeclarationRegex = new(
         "^\\s*layout\\s*\\(\\s*location\\s*=\\s*\\d+\\s*\\)\\s*out\\s+[^;]+;\\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline);
@@ -81,13 +102,55 @@ public static class ForwardDepthNormalVariantFactory
             return null;
 
         XRShader? explicitVariantShader = ShaderHelper.GetDepthNormalPrePassForwardVariant(fragmentShader);
-        if (explicitVariantShader is not null)
-            return CreateMaterialVariant(sourceMaterial, explicitVariantShader);
+        string variantSource = string.Empty;
+        if (explicitVariantShader is null && !TryCreateFragmentVariantSource(fragmentSource, out variantSource))
+            return null;
 
-        return TryCreateFragmentVariantSource(fragmentSource, out string variantSource)
-            ? CreateMaterialVariant(sourceMaterial, new XRShader(EShaderType.Fragment, variantSource))
-            : (XRMaterial?)null;
+        if (CanUseSharedSurfaceShader(sourceMaterial, fragmentSource))
+            return CreateSharedSurfaceVariant(sourceMaterial);
+
+        return CreateMaterialVariant(sourceMaterial, explicitVariantShader ?? new XRShader(EShaderType.Fragment, variantSource));
     }
+
+    /// <summary>
+    /// Returns true when the material's lit pass covers every rasterized fragment.
+    /// The shared shader has no discard path, so it must not write depth for a
+    /// material that can discard a fragment in its lit pass.
+    /// </summary>
+    private static bool CanUseSharedSurfaceShader(XRMaterial sourceMaterial, string fragmentSource)
+    {
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
+            sourceMaterial.RenderPass != (int)EDefaultRenderPass.OpaqueForward ||
+            sourceMaterial.VertexShaders.Count != 0 ||
+            !sourceMaterial.CanUseSharedOpaqueShadowMaterial() ||
+            fragmentSource.Contains("gl_FragDepth", StringComparison.Ordinal))
+            return false;
+
+        if (!fragmentSource.Contains(UberDissolveGuard, StringComparison.Ordinal))
+            return !fragmentSource.Contains("discard", StringComparison.Ordinal);
+
+        foreach (string guard in UberCoverageGuards)
+            if (!fragmentSource.Contains("#define " + guard, StringComparison.Ordinal))
+                return false;
+
+        // These features stay compiled in, so their saved values decide coverage.
+        // A value change invalidates this variant through the binding version.
+        ShaderVar[] parameters = sourceMaterial.Parameters ?? [];
+        foreach (ShaderVar parameter in parameters)
+            if (Array.IndexOf(UberCoverageParameters, parameter.Name) >= 0 &&
+                Convert.ToDouble(parameter.GenericValue) != 0.0)
+                return false;
+        return true;
+    }
+
+    private static XRMaterial CreateSharedSurfaceVariant(XRMaterial sourceMaterial)
+        => new(SharedSurfaceShader.Value)
+        {
+            RenderPass = sourceMaterial.RenderPass,
+            BillboardMode = sourceMaterial.BillboardMode,
+            TransparencyMode = sourceMaterial.TransparencyMode,
+            RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
+        };
 
     private static XRMaterial CreateMaterialVariant(XRMaterial sourceMaterial, XRShader fragmentVariantShader)
     {

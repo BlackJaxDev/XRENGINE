@@ -9,4 +9,5 @@ internal enum EVulkanTextureDescriptorPublicationDisposition
     Failed = 0,
     NotBound = 1,
     ExactPublished = 2,
+    StaleBeforePublication = 3,
 }

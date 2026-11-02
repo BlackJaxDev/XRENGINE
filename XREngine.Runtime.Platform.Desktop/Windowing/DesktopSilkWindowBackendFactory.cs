@@ -31,7 +31,7 @@ public sealed class DesktopSilkWindowBackendFactory : IRuntimeWindowBackendFacto
             for (int i = 0; i < AuxiliaryWindows.Count; i++)
             {
                 DesktopSilkWindowBackend window = AuxiliaryWindows[i];
-                if (window.OwnerThreadId == ownerThreadId && window.SharedParentGeneration == parentGeneration)
+                if (window.OwnerThreadId == ownerThreadId && window.EventPumpParentGeneration == parentGeneration)
                     window.PumpEvents();
             }
         }

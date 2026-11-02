@@ -17,7 +17,8 @@ public static partial class SerializedMaterialImporter
         SerializedMaterialDocument document,
         SourceAssetResolver resolver,
         ICollection<MaterialConversionDiagnostic> diagnostics,
-        List<string> warnings)
+        List<string> warnings,
+        SourceToonShaderVersion? sourceVersion)
     {
         material.SetUberFeatureEnabled("surface-extensions", true);
         material.SetUberFeatureEnabled("global-masks-themes", HasMaskOrTheme(document));
@@ -28,16 +29,28 @@ public static partial class SerializedMaterialImporter
         material.SetUberFeatureEnabled("layered-emission", HasAnyPositive(document, "_EnableEmission", "_EnableEmission1", "_EnableEmission2", "_EnableEmission3"));
         material.SetUberFeatureEnabled("texture-array-flipbook", document.TryGetPositive("_EnableFlipbook"));
         material.EnsureUberStateInitialized();
+        SetFloat(material, "_SourceLayeredEmission", 1.0f);
 
         // Poiyomi reserves _ColorMask for the render-target channel mask. It is
         // normally an integer (15), not a color-mask texture. Keep the native
         // texture extension inert unless a source shader actually authored a
         // texture with that name; otherwise its white fallback replaces albedo.
         SetFloat(material, "_ColorMaskEnabled", HasExternalTexture(document, "_ColorMask") ? 1.0f : 0.0f);
+        SetInt(material, "_SourceCubeMap", IsCubemapEnabled(document) ? 1 : 0);
 
         BindExactSurfaceParameters(material, document);
-        BindCompositeSurfaceParameters(material, document);
-        BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings);
+        BindSourceToonGlitter(material, document, sourceVersion, diagnostics);
+        BindSourceToonFlipbook(material, document);
+        BindSourceToonDissolve(material, document, diagnostics);
+        MapInt(document, material, "_RimLightColorThemeIndex", "_RimLightColorThemeIndex");
+        BindCompositeSurfaceParameters(material, document, sourceVersion);
+        BindSourceAnisotropy(material, document);
+        BindSourceRimParameters(material, document, diagnostics, warnings);
+        BindSourceLightingParameters(material, document, diagnostics, warnings);
+        BindSourceClearCoatParameters(material, document, diagnostics, warnings);
+        BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings, sourceVersion);
+        BindSourceToonNormalMetadata(material, document);
+        BindSourceMultilayerTextures(material, document, resolver, diagnostics, warnings);
         BindSurfaceCubemap(material, document, resolver, diagnostics, warnings);
         WarnForDeferredSurfaceAdapters(document, warnings);
     }
@@ -47,6 +60,7 @@ public static partial class SerializedMaterialImporter
         if (HasExternalTexture(
             document,
             "_ColorMask",
+            "_GlobalMaskTexture0",
             "_GlobalMaskTexture",
             "_GlobalMaskTexture1",
             "_GlobalMaskTexture2",
@@ -86,16 +100,57 @@ public static partial class SerializedMaterialImporter
         => HasAnyPositive(
             document,
             "_MochieBRDF",
+            "_EnableAniso",
             "_AnisotropyEnabled",
+            "_ClearCoatBRDF",
             "_ClearCoatEnabled",
             "_Specular2Enabled",
-            "_EnableRimEnviro",
+            "_EnableEnvironmentalRim",
             "_BacklightEnabled") ||
            HasExternalTexture(document, "_MochieMetallicMaps") ||
            IsCubemapEnabled(document) && HasExternalTexture(document, "_CubeMap");
 
     private static bool IsCubemapEnabled(SerializedMaterialDocument document)
         => document.TryGetPositive("_CubeMapEnabled");
+
+    private static void BindSourceAnisotropy(XRMaterial material, SerializedMaterialDocument document)
+    {
+        if (!document.TryGetPositive("_EnableAniso"))
+            return;
+
+        if (HasExternalTexture(document, "_AnisoColorMap") ||
+            GetInt(document, "_AnisoGlobalMask") != 0)
+            throw new SourceVisualImportException($"Source anisotropy maps and global masks are not supported on '{document.Name}'.");
+        if (document.TryGetPositive("_Aniso0ToonMode") ||
+            document.TryGetPositive("_Aniso1ToonMode"))
+            throw new SourceVisualImportException($"Source anisotropy toon edges are not supported on '{document.Name}'.");
+
+        SetVector4(material, "_SourceAnisoSettings", new Vector4(
+            1.0f,
+            GetFloat(document, "_AnisoAdd", 1.0f),
+            GetFloat(document, "_AnisoReplace"),
+            GetFloat(document, "_AnisoNormalBlend", 1.0f)));
+        SetVector4(material, "_SourceAnisoMix", new Vector4(
+            GetFloat(document, "_AnisoUseBaseColor"),
+            GetFloat(document, "_AnisoUseLightColor", 1.0f),
+            GetFloat(document, "_AnisoHideInShadow", 1.0f),
+            GetFloat(document, "_AnisoFadeByLightDirection")));
+
+        for (int layer = 0; layer < 2; ++layer)
+        {
+            string prefix = $"_Aniso{layer}";
+            SetVector4(material, $"_SourceAnisoLayer{layer}", new Vector4(
+                GetFloat(document, $"{prefix}Strength", 1.0f),
+                GetFloat(document, $"{prefix}Power"),
+                GetFloat(document, $"{prefix}Offset"),
+                GetFloat(document, $"{prefix}SwitchDirection")));
+            Vector4 tint = document.TryGetVector($"{prefix}Tint", out Vector4 authoredTint)
+                ? authoredTint
+                : Vector4.One;
+            SetVector4(material, $"_SourceAnisoTint{layer}", new Vector4(
+                tint.X, tint.Y, tint.Z, GetInt(document, $"{prefix}TintIndex")));
+        }
+    }
 
     private static bool HasMatcapOrRim(SerializedMaterialDocument document)
         => HasAnyPositive(
@@ -165,9 +220,22 @@ public static partial class SerializedMaterialImporter
         }
     }
 
-    private static void BindCompositeSurfaceParameters(XRMaterial material, SerializedMaterialDocument document)
+    private static void BindCompositeSurfaceParameters(
+        XRMaterial material,
+        SerializedMaterialDocument document,
+        SourceToonShaderVersion? sourceVersion)
     {
         BindGlobalThemeParameters(material, document);
+
+        // Saved values can remain after the source module is disabled.
+        SetFloat(material, "_RimEnviroIntensity", document.TryGetPositive("_EnableEnvironmentalRim")
+            ? GetFloat(document, "_RimEnviroIntensity", 1.0f) : 0.0f);
+        SetVector4(material, "_SourceEnviroRim", new Vector4(
+            document.TryGetPositive("_EnableEnvironmentalRim") ? 1.0f : 0.0f,
+            GetFloat(document, "_RimEnviroBlur", 0.7f),
+            GetFloat(document, "_RimEnviroMinBrightness"),
+            GetFloat(document, "_RimEnviroChannel")));
+        MapInt(document, material, "_RimEnviroMaskUV", "_RimEnviroMaskUV");
 
         SetFloat(material, "_DepthAlphaEnabled", document.TryGetPositive("_DepthAlphaToggle") ? 1.0f : 0.0f);
         SetVector4(
@@ -202,7 +270,9 @@ public static partial class SerializedMaterialImporter
                 $"_DecalBlendParams{slot}",
                 new Vector4(
                     GetInt(document, $"_DecalBlendType{suffix}"),
-                    GetFloat(document, $"_DecalBlendAlpha{suffix}", 1.0f),
+                    document.TryGetPositive($"_DecalEnabled{suffix}")
+                        ? GetFloat(document, $"_DecalBlendAlpha{suffix}", 1.0f)
+                        : 0.0f,
                     GetFloat(document, $"_DecalAlphaIntensity{suffix}", 1.0f),
                     GetFloat(document, $"_DecalEmissionStrength{suffix}")));
             SetInt(material, $"_DecalUvMode{slot}", GetInt(document, $"_DecalTexture{suffix}UV"));
@@ -251,7 +321,7 @@ public static partial class SerializedMaterialImporter
                     GetFloat(document, $"_EmissionBaseColorAsMap{emissionSuffix}"),
                     GetInt(document, $"_EmissionMask{emissionSuffix}Channel"),
                     GetFloat(document, $"_EmissionMaskInvert{emissionSuffix}"),
-                    0.0f));
+                    GetFloat(document, $"_EmissionFluorescence{emissionSuffix}")));
 
             string matcapPrefix = slot switch
             {
@@ -261,6 +331,56 @@ public static partial class SerializedMaterialImporter
                 _ => "_Matcap4",
             };
             bool matcapEnabled = document.TryGetPositive($"{matcapPrefix}Enable");
+            if (matcapEnabled)
+            {
+                SetFloat(material, "_SourceMatcap", 1.0f);
+                if (document.TryGetPositive($"{matcapPrefix}HueShiftEnabled") &&
+                    GetInt(document, $"{matcapPrefix}HueSelectOrShift", 1) != 1)
+                    throw new SourceVisualImportException($"Source matcap hue selection is not supported on '{document.Name}'.");
+                foreach (string unsupported in new[] { "ApplyToAlphaEnabled", "AlphaOverride", "TPSDepthEnabled" })
+                {
+                    if (document.TryGetPositive($"{matcapPrefix}{unsupported}"))
+                        throw new SourceVisualImportException($"Source matcap option '{matcapPrefix}{unsupported}' is enabled on '{document.Name}'.");
+                }
+                if (Math.Abs(GetFloat(document, $"{matcapPrefix}Rotation")) > 0.0001f ||
+                    document.TryGetPositive($"_Matcap{slot}CircleMaskEnabled") ||
+                    document.TryGetPositive($"_Matcap{slot}ALEnabled"))
+                    throw new SourceVisualImportException($"A source matcap rotation, circle mask, or AudioLink option is enabled on '{document.Name}'.");
+                bool customNormal = document.TryGetPositive($"_Matcap{slot}CustomNormal");
+                if (customNormal && (slot != 1 || !HasExternalTexture(document, "_Matcap1NormalMap") ||
+                    GetInt(document, "_Matcap1NormalMapUV") != 0 ||
+                    GetFloat(document, "_Matcap2Normal", 1.0f) != 1.0f))
+                    throw new SourceVisualImportException($"A source matcap custom normal is not supported on '{document.Name}'.");
+                int globalMask = GetInt(document, $"{matcapPrefix}MaskGlobalMask");
+                int globalBlend = GetInt(document, $"{matcapPrefix}MaskGlobalMaskBlendType", 2);
+                if (globalMask != 0 && (slot != 0 || globalMask != 1 || globalBlend != 1 ||
+                    !HasExternalTexture(document, "_GlobalMaskTexture0")))
+                    throw new SourceVisualImportException($"Source matcap global mask '{matcapPrefix}MaskGlobalMask' is not supported on '{document.Name}'.");
+                string blendProperty = slot switch
+                {
+                    0 => "_MatCapBlendUV1",
+                    1 => "_MatCap2ndBlendUV1",
+                    2 => "_MatCap3rdBlendUV1",
+                    _ => "_MatCap4thBlendUV1",
+                };
+                Vector4 blendUv = document.TryGetVector(blendProperty, out Vector4 authoredBlendUv)
+                    ? authoredBlendUv : Vector4.Zero;
+                int blendUvIndex = GetInt(document, $"{matcapPrefix}UVToBlend");
+                if ((blendUv.X != 0.0f || blendUv.Y != 0.0f) &&
+                    (slot != 3 || blendUvIndex != 1 || blendUv.Y != 0.0f ||
+                     blendUv.X < 0.0f || blendUv.X > 1.0f))
+                    throw new SourceVisualImportException($"Source matcap UV blend '{blendProperty}' is not supported on '{document.Name}'.");
+                SetVector4(material, $"_MatcapSlotUvBlend{slot}", new Vector4(
+                    blendUv.X, blendUv.Y, customNormal ? 1.0f : 0.0f,
+                    customNormal ? GetFloat(document, "_Matcap1NormalMapScale", 1.0f) : 0.0f));
+                SetVector4(material, $"_MatcapSlotUvControl{slot}", new Vector4(
+                    blendUvIndex,
+                    sourceVersion == SourceToon81Catalog.Version ? 0.0f : 1.0f,
+                    globalMask, globalBlend));
+                int projection = GetInt(document, $"{matcapPrefix}UVMode", 1);
+                if (projection < 0 || projection > 2)
+                    throw new SourceVisualImportException($"Source matcap projection '{projection}' is enabled on '{document.Name}'.");
+            }
             SetVector4(
                 material,
                 $"_MatcapSlotParams{slot}",
@@ -287,6 +407,21 @@ public static partial class SerializedMaterialImporter
                     GetFloat(document, $"{matcapPrefix}LightColorMix")));
             SetInt(material, $"_MatcapSlotTheme{slot}", GetInt(document, $"{matcapPrefix}ColorThemeIndex"));
             MapVector4(document, material, $"_MatcapSlotColor{slot}", $"{matcapPrefix}Color");
+            SetVector4(material, $"_MatcapSlotSource{slot}", new Vector4(
+                GetFloat(document, $"{matcapPrefix}Smoothness", 1.0f),
+                GetFloat(document, $"{matcapPrefix}BaseColorMix"),
+                GetFloat(document, $"{matcapPrefix}AddToLight"),
+                GetFloat(document, $"{matcapPrefix}MaskSmoothnessApply")));
+            SetVector4(material, $"_MatcapSlotHue{slot}", new Vector4(
+                matcapEnabled && document.TryGetPositive($"{matcapPrefix}HueShiftEnabled") ? 1.0f : 0.0f,
+                GetFloat(document, $"{matcapPrefix}HueShift"),
+                GetFloat(document, $"{matcapPrefix}HueShiftSpeed"),
+                GetFloat(document, $"{matcapPrefix}HueShiftColorSpace")));
+            SetVector4(material, $"_MatcapSlotMask{slot}", new Vector4(
+                GetInt(document, $"{matcapPrefix}MaskChannel"),
+                GetFloat(document, $"{matcapPrefix}MaskInvert"),
+                GetInt(document, $"{matcapPrefix}MaskSmoothnessChannel", 3),
+                GetInt(document, $"{matcapPrefix}MaskUV")));
         }
 
         MapVector4(document, material, "_Rim2Color", "_Rim2Color", "_Rim2LightColor");
@@ -298,6 +433,66 @@ public static partial class SerializedMaterialImporter
                 GetFloat(document, "_Rim2Sharpness", 1.0f),
                 GetFloat(document, "_Rim2HideInShadow"),
                 GetFloat(document, "_Rim2Intensity", 1.0f)));
+    }
+
+    private static void BindSourceRimParameters(
+        XRMaterial material,
+        SerializedMaterialDocument document,
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        List<string> warnings)
+    {
+        bool enabled = document.TryGetPositive("_EnableRimLighting");
+        string? unsupportedOption = enabled ? GetUnsupportedSourceRimOption(document) : null;
+        if (unsupportedOption is not null)
+        {
+            AddDiagnostic(diagnostics, warnings,
+                MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
+                $"Source rim option '{unsupportedOption}' on '{document.Name}' uses the approximate Uber shading path.",
+                unsupportedOption);
+        }
+        SetVector4(material, "_SourceRimSettings", new Vector4(
+            enabled && unsupportedOption is null ? 1.0f : 0.0f,
+            GetFloat(document, "_RimLightingInvert"),
+            GetFloat(document, "_RimPower", 1.0f),
+            GetFloat(document, "_Is_NormalMapToRimLight", 1.0f)));
+        float rimBlur = GetFloat(document, "_RimBlur", -1.0f);
+        SetVector4(material, "_SourceRimColorSettings", new Vector4(
+            GetFloat(document, "_RimBaseColorMix"),
+            GetFloat(document, "_RimBrightness", 1.0f),
+            GetInt(document, "_RimPoiBlendMode"),
+            // Zero selects the older sharpness edge. Other values store the source blur plus one.
+            rimBlur >= 0.0f ? rimBlur + 1.0f : 0.0f));
+    }
+
+    private static bool SupportsExactSourceRim(SerializedMaterialDocument document)
+        => document.TryGetPositive("_EnableRimLighting") &&
+           GetUnsupportedSourceRimOption(document) is null;
+
+    private static string? GetUnsupportedSourceRimOption(SerializedMaterialDocument document)
+    {
+        if (GetInt(document, "_RimStyle") != 0)
+            return "_RimStyle";
+        foreach (string property in new[]
+        {
+            "_RimShadowToggle", "_RimGlobalMask", "_RimApplyAlpha",
+            "_RimApplyGlobalMaskIndex", "_RimBiasIntensity", "_RimMaskInvert"
+        })
+        {
+            if (document.TryGetPositive(property))
+                return property;
+        }
+        if (document.TryGetPositive("_RimHueShiftEnabled") &&
+            (MathF.Abs(GetFloat(document, "_RimHueShift")) > 0.0001f ||
+             MathF.Abs(GetFloat(document, "_RimHueShiftSpeed")) > 0.0001f ||
+             GetInt(document, "_RimHueSelectOrShift", 1) != 1))
+            return "_RimHueShiftEnabled";
+        foreach (string property in new[] { "_RimMaskPan", "_RimTexPan" })
+        {
+            if (document.TryGetVector(property, out Vector4 pan) &&
+                (MathF.Abs(pan.X) > 0.0001f || MathF.Abs(pan.Y) > 0.0001f))
+                return property;
+        }
+        return null;
     }
 
     private static void BindGlobalThemeParameters(XRMaterial material, SerializedMaterialDocument document)
@@ -326,7 +521,8 @@ public static partial class SerializedMaterialImporter
         SerializedMaterialDocument document,
         SourceAssetResolver resolver,
         ICollection<MaterialConversionDiagnostic> diagnostics,
-        List<string> warnings)
+        List<string> warnings,
+        SourceToonShaderVersion? sourceVersion)
     {
         (string Destination, string[] Sources)[] bindings =
         [
@@ -334,7 +530,7 @@ public static partial class SerializedMaterialImporter
             ("_MainTexDistortionMask", ["_MainTexDistortionMask"]),
             ("_BackFaceNormalMap", ["_BackFaceNormalMap"]),
             ("_ColorMaskTexture", ["_ColorMask"]),
-            ("_GlobalMaskTexture0", ["_GlobalMaskTexture"]),
+            ("_GlobalMaskTexture0", ["_GlobalMaskTexture0", "_GlobalMaskTexture"]),
             ("_GlobalMaskTexture1", ["_GlobalMaskTexture1"]),
             ("_GlobalMaskTexture2", ["_GlobalMaskTexture2"]),
             ("_GlobalMaskTexture3", ["_GlobalMaskTexture3"]),
@@ -343,6 +539,7 @@ public static partial class SerializedMaterialImporter
             ("_Specular2Map", ["_Specular2Map"]),
             ("_BacklightMask", ["_BacklightMask"]),
             ("_CubeMapMask", ["_CubeMapMask"]),
+            ("_RimEnviroMask", ["_RimEnviroMask"]),
             ("_DecalMask", ["_DecalMask"]),
             ("_DecalTexture", ["_DecalTexture"]),
             ("_DecalTexture1", ["_DecalTexture1"]),
@@ -352,6 +549,7 @@ public static partial class SerializedMaterialImporter
             ("_Matcap0Mask", ["_MatcapMask"]),
             ("_Matcap1Tex", ["_Matcap2"]),
             ("_Matcap1Mask", ["_Matcap2Mask"]),
+            ("_Matcap1NormalMap", ["_Matcap1NormalMap"]),
             ("_Matcap2Tex", ["_Matcap3"]),
             ("_Matcap2Mask", ["_Matcap3Mask"]),
             ("_Matcap3Tex", ["_Matcap4"]),
@@ -372,7 +570,11 @@ public static partial class SerializedMaterialImporter
         {
             foreach (string source in sources)
             {
-                XRTexture2D? texture = ResolveUberTexture(document, resolver, warnings, source, destination);
+                bool sourceMatcapSampler = (destination is
+                    "_Matcap0Tex" or "_Matcap1Tex" or "_Matcap2Tex" or "_Matcap3Tex") &&
+                    sourceVersion != SourceToon81Catalog.Version;
+                XRTexture2D? texture = ResolveUberTexture(document, resolver, warnings,
+                    source, destination, sourceMatcapSampler);
                 if (texture is null)
                     continue;
 
@@ -515,15 +717,24 @@ public static partial class SerializedMaterialImporter
         string? texturePath = resolver.Resolve(property.TextureReference.Guid);
         if (string.IsNullOrWhiteSpace(texturePath) || !File.Exists(texturePath))
         {
-            warnings.Add($"Could not resolve Unity texture array '_FlipbookTexArray' ({property.TextureReference.Guid}) for material '{document.Name}'.");
+            ReportMissingTexture(
+                resolver,
+                document,
+                "_FlipbookTexArray",
+                $"Could not resolve Unity texture array '_FlipbookTexArray' ({property.TextureReference.Guid}) for material '{document.Name}'.",
+                warnings);
             return;
         }
 
-        SerializedTextureImportDocument? settings = SerializedTextureImportDocumentParser.ParseFile(texturePath);
         try
         {
+            SerializedTextureImportDocument? settings = SerializedTextureImportDocumentParser.ParseFile(texturePath);
             XRTexture2DArray texture;
-            if (Path.GetExtension(texturePath).Equals(".gif", StringComparison.OrdinalIgnoreCase))
+            if (Path.GetExtension(texturePath).Equals(".asset", StringComparison.OrdinalIgnoreCase))
+            {
+                texture = SerializedTexture2DArrayDecoder.DecodeFile(texturePath);
+            }
+            else if (Path.GetExtension(texturePath).Equals(".gif", StringComparison.OrdinalIgnoreCase))
             {
                 texture = new XRTexture2DArray();
                 texture.Load3rdParty(texturePath);
@@ -539,7 +750,7 @@ public static partial class SerializedMaterialImporter
 
             texture.Name = "_FlipbookTexArray";
             texture.SamplerName = "_FlipbookTexArray";
-            if (settings is not null)
+            if (settings is not null && !Path.GetExtension(texturePath).Equals(".asset", StringComparison.OrdinalIgnoreCase))
             {
                 foreach (XRTexture2D frame in texture.Textures)
                     ApplySerializedTextureImportSettings(frame, settings, "_FlipbookTexArray");
@@ -547,7 +758,7 @@ public static partial class SerializedMaterialImporter
             ReplaceMaterialSampler(material, "_FlipbookTexArray", texture);
             ApplyTextureTransform(material, document, "_FlipbookTexArray", "_FlipbookTexArray");
         }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException or OverflowException)
         {
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.UnsupportedTextureAsset,

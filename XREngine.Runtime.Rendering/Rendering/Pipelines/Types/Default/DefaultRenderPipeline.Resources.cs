@@ -538,7 +538,7 @@ public partial class DefaultRenderPipeline
             .Size(RenderResourceSizePolicy.Absolute(4u, 4u))
             .Usage(RenderPipelineResourceUsage.SampledTexture)
             .Format(EPixelInternalFormat.RG, EPixelFormat.Rg, EPixelType.Float)
-            .SizedFormat(ESizedInternalFormat.Rg16f)
+            .SizedFormat(ESizedInternalFormat.Rg32f)
             .Optional()
             .When(UsesAmbientOcclusionResources)
             .Add();

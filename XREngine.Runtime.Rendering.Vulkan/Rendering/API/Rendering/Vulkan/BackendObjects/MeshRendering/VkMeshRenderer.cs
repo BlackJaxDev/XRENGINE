@@ -172,7 +172,11 @@ internal unsafe partial class VkMeshRenderer(
     private readonly Dictionary<DescriptorAllocationKey, DescriptorAllocation> _descriptorAllocations = new();
     private readonly Dictionary<int, DescriptorAllocation> _descriptorAllocationsByDrawSlot = new();
     private readonly Dictionary<DescriptorOwnerLookupKey, DescriptorAllocation> _descriptorAllocationsByOwner = new();
-    private readonly Queue<(DescriptorAllocationKey Key, DescriptorAllocation Allocation)>
+    private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, ulong LinkGeneration, ulong MaterialLayoutVersion, XRRenderPipelineInstance? Pipeline), int[]>
+        _artifactFrameSourceBindingIndices = [];
+    private readonly Dictionary<(DescriptorAllocation Allocation, int Slot, ComputeDispatchSnapshot Snapshot), ulong> _frameSourceDescriptorRefreshes = new();
+    private const int MaxFrameDescriptorAllocations = 256;
+    private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, int DrawSlot, int FrameIndex), (DescriptorAllocation Allocation, ulong RenderFrameId)> _frameDescriptorAllocations = new();    private readonly Queue<(DescriptorAllocationKey Key, DescriptorAllocation Allocation)>
         _pendingSupersededDescriptorAllocationRetirements = new();
     private bool _descriptorDirty = true;
     private ulong _descriptorSchemaFingerprint;
@@ -180,10 +184,14 @@ internal unsafe partial class VkMeshRenderer(
     private string _descriptorResourceFingerprintDetails = string.Empty;
     private int _uniformDrawSlotCapacity = 1;
     private readonly HashSet<string> _descriptorWarnings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<(string? BindingName, string Reason)> _placeholderDescriptorWarnings = [];
     private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);
     private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, VulkanAutoUniformOwnerSlotTable> _autoUniformOwnerSlotTables = new(StringComparer.Ordinal);
+    /// <summary>Tables by name identity, so a reflected block does not hash its name per draw.</summary>
+    private readonly Dictionary<string, VulkanAutoUniformOwnerSlotTable> _autoUniformOwnerSlotTablesByNameIdentity =
+        new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, VulkanAutoUniformPublicationState[]> _publishedAutoUniformMaterialWritePlans = new(StringComparer.Ordinal);
     private readonly HashSet<(
         string Block,
@@ -363,7 +371,7 @@ internal unsafe partial class VkMeshRenderer(
             _pipelineDirty = true;
             _buffersDirty = true;
             _descriptorDirty = true;
-            _vertexInputStateDirty = true;
+            InvalidateVertexInputStructureNoLock();
             _lastPreparedMaterial = null;
             _triangleIndexBuffer = null;
             _lineIndexBuffer = null;
@@ -442,10 +450,10 @@ internal unsafe partial class VkMeshRenderer(
         }
     }
 
-    void IApiMeshRenderer.Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+    void IApiMeshRenderer.Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot, Vector4 sourceFlatDirection)
         => _ = EnqueueMeshRender(modelMatrix, prevModelMatrix, materialOverride,
             renderOptionsOverride, instances, billboardMode, forceNoStereo,
-            canonicalDrawIdentitySnapshot, null, out _);
+            canonicalDrawIdentitySnapshot, sourceFlatDirection, null, out _);
 
     bool IApiMeshRenderer.RenderIndexedIndirect(Matrix4x4 modelMatrix,
         Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
@@ -468,7 +476,7 @@ internal unsafe partial class VkMeshRenderer(
             return false;
         }
         return EnqueueMeshRender(modelMatrix, previousModelMatrix, materialOverride,
-            renderOptionsOverride, 1u, billboardMode, forceNoStereo, default,
+            renderOptionsOverride, 1u, billboardMode, forceNoStereo, default, default,
             new VulkanMeshIndexedIndirectPayload(arguments, byteOffset, topology,
                 authoringLease),
             out failureReason);
@@ -478,6 +486,7 @@ internal unsafe partial class VkMeshRenderer(
         XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride,
         uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo,
         in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
+        Vector4 sourceFlatDirection,
         VulkanMeshIndexedIndirectPayload? indexedIndirect, out string failureReason)
     {
         failureReason = string.Empty;
@@ -510,6 +519,9 @@ internal unsafe partial class VkMeshRenderer(
         }
         ResolvedMeshRenderMaterial resolvedMaterial =
             ResolveMaterialSelection(materialOverride, instances);
+        if (SourceMultilayerFlatDirection.IsRequired(resolvedMaterial.Material) &&
+            !SourceMultilayerFlatDirection.IsValid(sourceFlatDirection))
+            throw new InvalidOperationException("The active flat multilayer draw has no valid source direction.");
         LayeredShadowUniformState shadowUniformState =
             LayeredShadowUniformState.CaptureFromCurrentRenderingState();
         LayeredShadowCasterRelevance shadowCasterRelevance =
@@ -595,6 +607,7 @@ internal unsafe partial class VkMeshRenderer(
             residentTemplateHandle,
             windowPresentationSourceMarker)
         {
+            SourceFlatDirection = sourceFlatDirection,
             IndexedIndirect = indexedIndirect,
         };
         VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult =
@@ -740,6 +753,16 @@ internal unsafe partial class VkMeshRenderer(
         // they would be emitted with an invalid pass index and dropped at recording time.
         if (producer.Context.PipelineInstance is null)
             return false;
+        if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null ||
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId == 0)
+        {
+            _ = SetPrepareResult(
+                false,
+                "FrameBindingCaptureUnavailable",
+                "Mesh binding capture requires an active render frame and pipeline context.",
+                out _);
+            return false;
+        }
 
         int passIndex = request.PassIndex;
         XRFrameBuffer? target = producer.Target;
@@ -913,6 +936,9 @@ internal unsafe partial class VkMeshRenderer(
 
             try
             {
+                MeshRenderer.EnterResourcePublicationLease();
+                try
+                {
                 bool prepared;
                 string prepareReason;
                 using (VulkanCpuStageScope resourcePreparationStage = new(
@@ -922,7 +948,8 @@ internal unsafe partial class VkMeshRenderer(
                     prepared = TryPrepareForDrawEnqueue(
                         effectiveMaterial,
                         materializationSnapshot.RequiresSynchronousGeometryPreparation,
-                        out prepareReason);
+                        out prepareReason,
+                        request.IndexedIndirect is not null);
                 }
                 if (!prepared)
                 {
@@ -960,6 +987,7 @@ internal unsafe partial class VkMeshRenderer(
                         programBindingSnapshot,
                         out string descriptorPrewarmReason))
                 {
+                    programBindingSnapshot?.ReleaseIfUnpooled();
                     CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
                     _ = SetPrepareResult(
                         false,
@@ -976,6 +1004,11 @@ internal unsafe partial class VkMeshRenderer(
                 preparedProgramSnapshot = _program;
                 preparedProgramIdentitySnapshot = _activeProgramIdentity;
                 preparedProgramLinkGenerationSnapshot = _program?.LinkGeneration ?? 0UL;
+                }
+                finally
+                {
+                    MeshRenderer.ExitResourcePublicationLease();
+                }
             }
             finally
             {
@@ -1032,10 +1065,14 @@ internal unsafe partial class VkMeshRenderer(
             request.WindowPresentationSourceMarker);
         draw = draw with
         {
+            SourceFlatDirection = request.SourceFlatDirection,
             PreparationCompatibilitySignature =
                 request.PreparationCompatibilitySignature,
             IndirectTopology = request.IndexedIndirect?.Topology ?? EPrimitiveType.Triangles,
             IndexedIndirectAuthoringLease = request.IndexedIndirect?.AuthoringLease,
+        };
+        draw = draw with
+        {
             AutoUniformPublication =
                 VulkanAutoUniformPublicationSnapshot.Capture(
                     draw,
@@ -1450,7 +1487,9 @@ internal unsafe partial class VkMeshRenderer(
         bool shareSnapshot =
             publisherStateValid &&
             !captureUniforms &&
-            !hasMutableShadowUniformHandlers;
+            !hasMutableShadowUniformHandlers &&
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId != 0 &&
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is not null;
         MaterialBindingSnapshotCacheKey snapshotCacheKey = default;
         MaterialUniformBindingPayload? materialUniformPayload = null;
         if (shareSnapshot)
@@ -1688,6 +1727,7 @@ internal unsafe partial class VkMeshRenderer(
                          snapshot,
                          engineRequirements,
                          hasGenerationOwnedPublisherResources,
+                         engineBindingSnapshot,
                          out ComputeDispatchSnapshot persistentArtifact,
                          out EVulkanProgramBindingArtifactFallbackReason
                              contentFallbackReason,
@@ -1718,6 +1758,7 @@ internal unsafe partial class VkMeshRenderer(
                         material,
                         persistentArtifact,
                         "persistent-artifact");
+                    snapshot.ReleaseIfUnpooled();
                     return persistentArtifact;
                 }
 

@@ -1286,6 +1286,19 @@ try {
         }
     }
 
+    $brokerLockPath = Join-Path $root 'Tools\Dependencies\LocalAgentBroker.lock.json'
+    if (Test-Path -LiteralPath $brokerLockPath) {
+        $brokerLock = Get-Content -Raw -LiteralPath $brokerLockPath | ConvertFrom-Json
+        $nested.Add([pscustomobject]@{
+            Name = "LocalAgentBroker.Orchestration $($brokerLock.version)"
+            UsedBy = 'XREngine.Editor'
+            Owner = 'BlackJax LLC'
+            Url = "$($brokerLock.repository)/tree/v$($brokerLock.version)"
+            License = 'MIT'
+            LicenseSourcePath = Join-Path $root 'Tools/Dependencies/LocalAgentBroker.LICENSE.txt'
+        })
+    }
+
     $meshoptLockPath = Join-Path $root 'Tools\Dependencies\Meshoptimizer.lock.json'
     if (Test-Path -LiteralPath $meshoptLockPath) {
         $meshoptLock = Get-Content -Raw -LiteralPath $meshoptLockPath | ConvertFrom-Json

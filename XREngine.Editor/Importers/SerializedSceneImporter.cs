@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Scene.Prefabs;
@@ -25,10 +26,13 @@ internal static partial class SerializedSceneImporter
 
         string normalizedPath = Path.GetFullPath(filePath);
         var context = new SourceProjectImportContext(normalizedPath);
+        using var sourceDocuments = context.FbxSourceDocuments;
         context.DiscoverDependencies();
         var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
+        sourceDocuments.Clear();
         context.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Converted);
+        ValidateComposedModelAnimations(state);
         return [.. hierarchy.RootEntries.Select(static entry => entry.Node)];
     }
 
@@ -88,7 +92,8 @@ internal static partial class SerializedSceneImporter
         string? explicitProjectOrAssetsRoot,
         CancellationToken cancellationToken,
         Action<float, string>? progress,
-        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp,
+        bool allowPartialImport = false)
         => ImportPrefabWithManifest(
             filePath,
             outputDestination,
@@ -97,7 +102,8 @@ internal static partial class SerializedSceneImporter
             progress,
             new ModelCookSettings(),
             ModelCookOverrideSnapshot.Empty,
-            fbxBackend);
+            fbxBackend,
+            allowPartialImport);
 
     private static SerializedPrefabConversionResult ImportPrefabWithManifest(
         string filePath,
@@ -107,12 +113,16 @@ internal static partial class SerializedSceneImporter
         Action<float, string>? progress,
         ModelCookSettings cookSettings,
         ModelCookOverrideSnapshot cookOverrides,
-        FbxImportBackend fbxBackend)
+        FbxImportBackend fbxBackend,
+        bool allowPartialImport = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         ArgumentNullException.ThrowIfNull(cookSettings);
         ArgumentNullException.ThrowIfNull(cookOverrides);
 
+        // Bindings and geometry remain mutable until prefab composition finishes.
+        // World attachment builds renderers from the completed import state.
+        using IDisposable runtimeMeshScope = ModelComponent.EnterRuntimeMeshBuildSuppressionScope();
         string normalizedPath = Path.GetFullPath(filePath);
         var context = new SourceProjectImportContext(
             normalizedPath,
@@ -120,10 +130,13 @@ internal static partial class SerializedSceneImporter
             explicitProjectOrAssetsRoot,
             cancellationToken,
             progress,
-            fbxBackend);
+            fbxBackend,
+            allowPartialImport);
+        using var sourceDocuments = context.FbxSourceDocuments;
         context.DiscoverDependencies();
         var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
+        sourceDocuments.Clear();
         hierarchy.SortRoots();
 
         SceneNode rootNode;
@@ -144,6 +157,7 @@ internal static partial class SerializedSceneImporter
         }
 
         context.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Converted);
+        ValidateComposedModelAnimations(state);
         AssignFinalMeshletEntityIdentities(rootNode);
         string meshletCookIdentity = ModelCacheSourceIdentityResolver.Resolve(
             normalizedPath,
@@ -154,7 +168,9 @@ internal static partial class SerializedSceneImporter
             diagnostic.Category == SourceImportDiagnosticCategory.AvatarComponent &&
             diagnostic.Severity == SourceImportDiagnosticSeverity.Error);
         SerializedPrefabImportManifest manifest = context.CreateManifest(
-            behaviorErrors
+            context.HasPartialContent
+                ? SourceImportCompletionTier.PartialVisual
+                : behaviorErrors
                 ? SourceImportCompletionTier.VisualPrefab
                 : SourceImportCompletionTier.VisualAndAvatarBehavior);
         SerializedPrefabDependencyMonitor.Register(manifest);
@@ -340,6 +356,15 @@ internal static partial class SerializedSceneImporter
                     ? Path.GetFileNameWithoutExtension(prefabPath)
                     : $"Missing Prefab {prefabInstance.SourcePrefab.Guid ?? prefabInstance.FileId.ToString(CultureInfo.InvariantCulture)}");
 
+            if (state.Context.AllowPartialImport)
+            {
+                state.Context.ReportPartialImport("UNITYPARTIAL0001",
+                    $"Skipped missing prefab '{placeholderName}' ({prefabInstance.SourcePrefab.Guid}). Available sibling objects are retained.",
+                    ownerHierarchy.SourcePath, "m_SourcePrefab",
+                    ToIdentity(prefabInstance.SourcePrefab, SourceAssetObjectKind.Asset));
+                return new ImportedHierarchy(ownerHierarchy.SourcePath);
+            }
+
             throw new SourceVisualImportException(
                 $"Required Unity prefab source '{prefabInstance.SourcePrefab.Guid ?? "<missing-guid>"}' could not be resolved while importing '{state.EntryFilePath}' (suggested name '{placeholderName}').");
         }
@@ -426,6 +451,51 @@ internal static partial class SerializedSceneImporter
                         ReportUnresolvedProxy(proxy, state);
                     break;
             }
+        }
+
+        // A nested prefab can inherit an object without a stripped proxy record.
+        // Its local file ID still names the object in a later prefab override.
+        BindInheritedMappings(importedHierarchy.NodesByGameObjectId,
+            ownerHierarchy.NodesByGameObjectId, prefabInstance.FileId, "GameObject");
+        BindInheritedMappings(importedHierarchy.NodesByTransformId,
+            ownerHierarchy.NodesByTransformId, prefabInstance.FileId, "Transform");
+        BindInheritedMappings(importedHierarchy.ComponentsByFileId,
+            ownerHierarchy.ComponentsByFileId, prefabInstance.FileId, "Component");
+        BindInheritedMappings(importedHierarchy.SerializedAnimatorsByFileId,
+            ownerHierarchy.SerializedAnimatorsByFileId, prefabInstance.FileId, "Animator");
+        BindInheritedMappings(importedHierarchy.AvatarAnimationGraphsByFileId,
+            ownerHierarchy.AvatarAnimationGraphsByFileId, prefabInstance.FileId, "Avatar animation graph");
+        foreach (SerializedAnimatorRecord animator in importedHierarchy.SerializedAnimatorsByFileId.Values)
+            ownerHierarchy.SerializedAnimatorOwners[animator] = importedHierarchy.SerializedAnimatorOwners[animator];
+        foreach (SerializedAvatarAnimationGraphRecord graph in importedHierarchy.AvatarAnimationGraphsByFileId.Values)
+            ownerHierarchy.AvatarAnimationGraphOwners[graph] = importedHierarchy.AvatarAnimationGraphOwners[graph];
+    }
+
+    /// <summary>Registers inherited prefab objects that have no serialized stripped proxy.</summary>
+    private static void BindInheritedMappings<T>(
+        IReadOnlyDictionary<long, T> source,
+        Dictionary<long, T> destination,
+        long prefabInstanceFileId,
+        string objectKind) where T : class
+    {
+        foreach ((long sourceFileId, T value) in source)
+        {
+            if (sourceFileId == 0)
+                continue;
+
+            long localFileId = (sourceFileId ^ prefabInstanceFileId) & long.MaxValue;
+            if (localFileId == 0)
+                throw new SourceVisualImportException(
+                    $"Inherited {objectKind} fileID '{sourceFileId}' has no valid local identity.");
+            if (destination.TryGetValue(localFileId, out T? existing))
+            {
+                if (!ReferenceEquals(existing, value))
+                    throw new SourceVisualImportException(
+                        $"Inherited {objectKind} fileID '{localFileId}' resolves to multiple objects.");
+                continue;
+            }
+
+            destination.Add(localFileId, value);
         }
     }
 
@@ -1360,6 +1430,9 @@ internal static partial class SerializedSceneImporter
         public string EntryFilePath => Context.EntrySourcePath;
         public string ProjectRoot => Context.ProjectRoot;
         public HashSet<string> ActiveImports => Context.ActiveImports;
+        public Dictionary<string, XRMaterial> MissingMaterials { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<(string Path, SceneNode Owner, SceneNode Target, SceneNode? Parent)> ModelAnimationTargets { get; } = [];
+        public List<(string Path, SceneNode Owner, SceneNode Target, string Channel)> ModelAnimationMorphTargets { get; } = [];
     }
 
     private sealed class ImportedHierarchy(string sourcePath)

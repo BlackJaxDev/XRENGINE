@@ -218,6 +218,23 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
+            /// Reports focus for the complete ImGui window group.
+            /// </summary>
+            public bool IsAnyWindowFocused()
+            {
+                if (_mainWindow.Events.IsFocused)
+                    return true;
+                if (!_installed || _disposed)
+                    return false;
+
+                foreach (PlatformWindow window in _platformWindows.Values)
+                    if (!window.IsDisposed && window.Focused)
+                        return true;
+
+                return false;
+            }
+
+            /// <summary>
             /// Pushes one-time mouse state transition data for the main platform window.
             /// </summary>
             public void QueueMainViewportInput()
@@ -233,7 +250,16 @@ namespace XREngine.Rendering.OpenGL
 
                     var io = ImGui.GetIO();
                     foreach (PlatformWindow window in _platformWindows.Values)
+                    {
+                        if (window.IsDisposed)
+                            continue;
+
+                        // ImGui clears platform requests after Platform_UpdateWindow.
+                        // Send close intent before NewFrame so Begin can close the panel.
+                        if (window.Window.IsClosing)
+                            RequestClose(window.ViewportId);
                         window.DrainInput(io);
+                    }
 
                     if (!_mainWindow.Events.IsFocused)
                         return;
@@ -728,8 +754,6 @@ namespace XREngine.Rendering.OpenGL
                         return;
 
                     window.UpdateViewportFlags(viewport.Flags);
-                    if (window.Window.IsClosing)
-                        viewport.PlatformRequestClose = true;
                 }
                 catch (Exception ex)
                 {
@@ -833,7 +857,10 @@ namespace XREngine.Rendering.OpenGL
                         OpenGlDebugContext: false,
                         OpenGlForwardCompatible: false,
                         SwapAutomatically: false,
-                        SharedContext: owner._mainWindow.GlContext);
+                        SharedContext: owner._mainWindow.GlContext)
+                    {
+                        EventPumpParentGeneration = owner._mainWindow.LifetimeGeneration,
+                    };
                     IRuntimeWindowBackend? created = null;
                     try
                     {

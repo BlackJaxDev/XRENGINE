@@ -2945,6 +2945,10 @@ namespace XREngine.Components.Lights
                     EFrameBufferAttachment.DepthAttachment);
                 state.RasterDepthTexture.Name = GetCascadeShadowResourceName(source, "RasterDepthArray");
                 state.RasterDepthTexture.SamplerName = "ShadowRasterDepthArray";
+                // Raster depth is attached and sampled only at mip zero.
+                state.RasterDepthTexture.LargestMipmapLevel = 0;
+                state.RasterDepthTexture.SmallestAllowedMipmapLevel = 0;
+                state.RasterDepthTexture.AutoGenerateMipmaps = false;
             }
 
             if (recreateTexture || state.LayeredFrameBuffer is null)
@@ -3035,6 +3039,7 @@ namespace XREngine.Components.Lights
                     Camera = camera,
                 };
 
+                viewport.RenderPipelineInstance.PropagateCommandExceptions = true;
                 transforms[i] = transform;
                 cameras[i] = camera;
                 viewports[i] = viewport;
@@ -3992,7 +3997,7 @@ namespace XREngine.Components.Lights
             CollectVisibleStageTimings.EndView(previousCascadeView, cascadeViewStart);
         }
 
-        internal ulong GetShadowCasterCommandSetSignature(
+        internal override ulong GetShadowCasterCommandSetSignature(
             EShadowProjectionType projectionType,
             ShadowRequestSource source,
             int faceOrCascadeIndex)

@@ -252,11 +252,20 @@ internal sealed partial class VulkanCommandRuntime
                 programBindingSnapshot,
                 out string? bindingFailure))
         {
+            programBindingSnapshot.ReleaseIfUnpooled();
             failureReason =
                 $"Mesh-task program bindings are incomplete: {bindingFailure ?? "unknown binding failure"}.";
             return false;
         }
-        programBindingSnapshot = programBindingSnapshot.CreateSealedCopy();
+        ComputeDispatchSnapshot sourceSnapshot = programBindingSnapshot;
+        try
+        {
+            programBindingSnapshot = sourceSnapshot.CreateSealedCopy();
+        }
+        finally
+        {
+            sourceSnapshot.ReleaseIfUnpooled();
+        }
 
         MeshTaskDispatchIndirectCountOp operation =
             // Mesh-task work is recorded later, after the render pass has moved on.
@@ -314,7 +323,17 @@ internal sealed partial class VulkanCommandRuntime
             program, argumentsOwner, arguments, offset, passIndex, label, context,
             out ComputeDispatchIndirectOp? operation);
         if (operation is not null)
-            queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(operation, passIndex));
+        {
+            try
+            {
+                queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(operation, passIndex));
+            }
+            catch
+            {
+                operation.ReleaseAuthoringSnapshot();
+                throw;
+            }
+        }
         return status;
     }
 

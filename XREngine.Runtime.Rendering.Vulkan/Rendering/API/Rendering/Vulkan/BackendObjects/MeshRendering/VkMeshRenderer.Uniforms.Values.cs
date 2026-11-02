@@ -30,6 +30,13 @@ internal unsafe partial class VkMeshRenderer
 		bool wrote;
 		if (TryWriteTemporalViewProjectionUniform(data, member, draw, out wrote))
 			return wrote;
+		if (member.Name is "LeftEyeHistoryReady" or "RightEyeHistoryReady")
+		{
+			EngineUniformValue ready = member.Name == "LeftEyeHistoryReady"
+				? draw.LeftEyeHistoryReady ? 1 : 0
+				: draw.RightEyeHistoryReady ? 1 : 0;
+			return TryWriteAutoUniformValue(data, member, in ready, EShaderVarType._bool);
+		}
 
 		if (TryResolveEngineUniformValue(member.Name, draw, out EngineUniformValue engineValue, out EShaderVarType engineType))
 		{
@@ -645,6 +652,16 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	/// <summary>
+	/// Parse results by uniform name, because each block member resolves its name per draw.
+	/// Reflected names bound the size. A name that is not an engine uniform stores null.
+	/// </summary>
+	private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, EEngineUniform?> ParsedEngineUniforms =
+		new(StringComparer.Ordinal);
+
+	private static readonly Func<string, EEngineUniform?> ParseEngineUniform =
+		static name => Enum.TryParse(name, ignoreCase: false, out EEngineUniform uniform) ? uniform : null;
+
+	/// <summary>
 	/// Resolves an engine uniform value by name from the current rendering state.
 	/// Handles matrices, camera properties, screen dimensions, UI bounds, etc.
 	/// Engine-owned values come from the draw snapshot; UI bounds may still come
@@ -656,25 +673,20 @@ internal unsafe partial class VkMeshRenderer
 		out EngineUniformValue value,
 		out EShaderVarType type)
 	{
-		string normalized = NormalizeEngineUniformName(name);
-		if (TryResolveMeshStateSource(
-				normalized,
-				out EVulkanAutoUniformSpecialSource meshSource))
+		int source = EngineUniformSourcesByNameIdentity.GetOrAdd(name, ResolveEngineUniformSource);
+		if (source >= 0)
 		{
-			return TryResolveMeshStateUniformValue(
-				meshSource,
+			return TryResolveEngineUniformValue(
+				(EEngineUniform)source,
 				draw,
 				out value,
 				out type);
 		}
 
-		if (Enum.TryParse(
-				normalized,
-				ignoreCase: false,
-				out EEngineUniform uniform))
+		if (source <= MeshStateSourceBase)
 		{
-			return TryResolveEngineUniformValue(
-				uniform,
+			return TryResolveMeshStateUniformValue(
+				(EVulkanAutoUniformSpecialSource)(MeshStateSourceBase - source),
 				draw,
 				out value,
 				out type);
@@ -684,6 +696,30 @@ internal unsafe partial class VkMeshRenderer
 		type = EShaderVarType._float;
 		return false;
 	}
+
+	/// <summary>Source code for a name that is neither an engine uniform nor a mesh state value.</summary>
+	private const int NoEngineUniformSource = -1;
+
+	/// <summary>Mesh state sources are stored as this value minus the source.</summary>
+	private const int MeshStateSourceBase = -2;
+
+	/// <summary>
+	/// Source of each reflected member name, keyed by string identity. Each draw resolves every
+	/// member of its blocks, and the identity lookup avoids the suffix check, the name switch,
+	/// and the name hash. A name with the same text in another string only adds one entry.
+	/// </summary>
+	private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> EngineUniformSourcesByNameIdentity =
+		new(ReferenceEqualityComparer.Instance);
+
+	private static readonly Func<string, int> ResolveEngineUniformSource = static name =>
+	{
+		string normalized = NormalizeEngineUniformName(name);
+		if (TryResolveMeshStateSource(normalized, out EVulkanAutoUniformSpecialSource meshSource))
+			return MeshStateSourceBase - (int)meshSource;
+		return ParsedEngineUniforms.GetOrAdd(normalized, ParseEngineUniform) is { } uniform
+			? (int)uniform
+			: NoEngineUniformSource;
+	};
 
 	private static bool TryResolveMeshStateSource(
 		string name,
@@ -698,6 +734,7 @@ internal unsafe partial class VkMeshRenderer
 			BlendshapeActiveCountUniformName => EVulkanAutoUniformSpecialSource.BlendshapeActiveCount,
 			BlendshapeWeightThresholdUniformName => EVulkanAutoUniformSpecialSource.BlendshapeWeightThreshold,
 			UsePrecombinedBlendshapeDeltasUniformName => EVulkanAutoUniformSpecialSource.UsePrecombinedBlendshapeDeltas,
+			"u_SourceFlatDirection" => EVulkanAutoUniformSpecialSource.SourceFlatDirection,
 			_ => EVulkanAutoUniformSpecialSource.None,
 		};
 		return source != EVulkanAutoUniformSpecialSource.None;
@@ -716,6 +753,10 @@ internal unsafe partial class VkMeshRenderer
 			case EVulkanAutoUniformSpecialSource.TransformId:
 				value = draw.TransformId;
 				type = EShaderVarType._uint;
+				return true;
+			case EVulkanAutoUniformSpecialSource.SourceFlatDirection:
+				value = draw.SourceFlatDirection;
+				type = EShaderVarType._vec4;
 				return true;
 			case EVulkanAutoUniformSpecialSource.SkinPaletteBase:
 				value = draw.AutoUniformPublication.SkinPaletteBase;

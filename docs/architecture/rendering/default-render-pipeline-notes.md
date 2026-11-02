@@ -4,7 +4,73 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 
 ---
 
+## Point Light Publication
+
+`PointLightComponent.RegisterDynamicLight` prepares the shadow cameras and
+viewports before it adds the light to the world's dynamic light list. Scene
+collection can read the face cameras immediately after that insertion. Early
+insertion permits activation and collection to construct the same camera
+hierarchy at the same time. Keep the world-transfer guard enabled; do not hide
+this race with a retry or a weaker hierarchy check.
+
+Shadow viewport instances also enable `PropagateCommandExceptions`. A cold
+program or buffer can defer a command after the atlas tile is cleared. The
+viewport must return a failed recording result so the atlas retries the tile.
+Command-level recovery must not turn that partial pass into cached content.
+
+Point shadows use sequential face passes with `GpuIndirectZeroReadback` when
+the requested mode is `InstancedLayered`. Shared indirect vertices do not
+expand instances into cube faces. Collection, atlas grouping, and rendering
+must use the same mode decision. The reported reason is
+`SharedIndirectInstancingUnsupported`; GPU indirect submission stays enabled.
+
+Shared opaque shadow ownership accepts only `OpaqueDeferred`, `OpaqueForward`,
+and `MaskedForward`. Both live and frozen command capture check that contract.
+The GPU scene query matches the exact source pass. `PreRender = -1` is not an
+all-pass request here; treating it as one sends ordinary casters to a pass
+without a generated material layout and prevents the atlas from updating.
+
+Uber's `u_SourceUdimTriangleCount` declares `XRENGINE_FREQUENCY(Object)`.
+The count belongs to the mesh, even when several meshes share one material.
+An Object-frequency publisher alone does not change a uniform's physical
+buffer ownership. Without the shader declaration, cube and sphere draws can
+overwrite one material-owned count and discard the wrong primitives.
+
+## Directional Shadow Mip Storage
+
+Directional cascade raster depth arrays use only mip zero. Set both mip limits
+to zero when creating them. Color arrays also use one level unless moment
+encoding and moment mipmaps are both enabled. `AutoGenerateMipmaps = false`
+alone does not limit immutable texture storage: the OpenGL array allocator
+uses `SmallestMipmapLevel + 1`. A default limit of 1000 allocates a full chain,
+including levels that the shadow passes never write or sample.
+
+Shadow atlas raster depth arrays also use only mip zero. Set both mip limits
+to zero for every atlas kind. This keeps depth storage consistent with the
+atlas memory budget. Keep moment color filtering and mip policy separate.
+
 ## Explicit Output Failure Policy
+
+### Surface Texture Replacement
+
+Replacing an ordinary 2D image in `XRMaterial.SurfaceTextureBindings` preserves
+the binding layout revision when ordered metadata and runtime types match.
+Value and resource revisions still advance so descriptors refresh. Rectangle,
+multisample, and other texture replacements retain conservative invalidation.
+Binding count or metadata changes also advance the layout revision.
+
+`XRMaterialBase` keeps an ordered witness for the legacy `Textures` list.
+Replacing an image preserves layout when the slot count, effective sampler
+names, null slots, and texture targets match. Value and resource revisions
+still advance. Texture views also track their viewed resource and effective
+target. Unknown texture types use conservative layout invalidation. Repeated
+slots share one change subscription, and material destruction removes it.
+
+Static deformation uses a separate exact mesh-input generation. Material
+layout and camera changes do not discard unchanged deformation inputs. See
+[deformation source identity](advanced-render-pipeline.md#deformation-source-identity).
+
+### Frame Authoring
 
 `XRRenderPipelineInstance.PropagateCommandExceptions` lets an explicit frame
 producer require complete command authoring. When enabled, a command-container
@@ -37,7 +103,239 @@ existing owners; it does not create a backend wrapper. GPU-only bounds output
 uses `GpuProduced` storage without a CPU mirror. Do not upload a CPU image over
 the result of that compute pass.
 
+## Vulkan Shader Module Publication
+
+Shader module destruction and publication use the same pipeline dependency gate.
+Read the current native module after entering that gate. Cold publication has no
+pipeline jobs to drain. Replacement of a live module uses the scoped shader
+mutation lease. Keep reflected metadata, stage flags, native creation, stage
+entry point, compiled keys, readiness, and wrapper binding in one transaction.
+
+Asynchronous CPU compilation stays outside this gate. When its task completes,
+check task ownership and the source, configuration, clip-remap, and transform-
+feedback keys before publication. Acquire the dependency gate before the async
+compile lock. A deferred dependency replacement remains pending and keeps the
+completed task for retry. A stale result must not replace current success or
+failure state. Consume a task only after publication or a current compile failure.
+
+An interface cannot become linked with a missing native shader stage. Silently
+skipping zero stage flags can produce a linked program with an empty stage table.
+Its readiness fast path then prevents all later polls from repairing the shader.
+The link path now reports an invalid stage explicitly.
+
+## Small-Triangle Surface Reconstruction
+
+Visibility and surface reconstruction use different area checks. The screen
+barycentric denominator uses a pixel-space guard. The geometric normal must
+not use that guard as a world-space area threshold. Small visible triangles
+remain valid at any model scale.
+
+`ReconstructSurface.glslinc` transforms local edge differences, scales each
+edge by its largest absolute component, and rescales their cross product before
+normalization. It rejects zero and non-finite inputs. This preserves winding
+without subtracting large translated world positions. The CPU reference in
+`AdvancedReconstructionTangentSpace` uses the same method.
+
+## Desktop Output Admission
+
+Desktop Advanced output admission runs after the window renderer initializes.
+An existing window with an uninitialized renderer defers its binding check.
+`XRWindow.BeginTick` refreshes viewport output bindings after initialization.
+Required mode still rejects an unsupported initialized renderer.
+
 ## Resource Generation Lifecycle
+
+### Imported And Forward Buffer Ownership
+
+An importer that changes geometry after `PrepareImportedMesh` must call
+`DiscardImportedMeshPreparation` before the change. The imported deformation
+cache contains managed arrays for the old geometry. Removing that entry does
+not dispose mesh buffers or arrays already held by a pending consumer. Existing
+source witnesses reject stale pending work; a cache miss uses the normal
+budgeted renderer preparation path.
+
+Import geometry conversion reads packed blendshape entries one vertex at a
+time. A compact base-attribute snapshot preserves the original targets while
+base writes occur before the blendshape publication ticket is captured. The
+existing remap, sparse, quantized, swap, and rollback paths stay in use. Empty
+or duplicate names and duplicate active entries keep the materialized path
+to preserve its name lookup behavior.
+
+Replaceable CPU buffer owners call `XRDataBuffer.RetireBindingStorage()`.
+Retirement stops new binding admission and defers `Dispose()` until counted
+binding users release the buffer. It leaves `IsDestroyed` false while those
+users still need wrapper lookup. Direct disposal remains available to owners
+whose resource contract does not use this deferred path.
+
+Imported staging and each generation registry retain separate binding uses.
+Publish the replacement before releasing the prior use. Unbind releases staging;
+registry replacement or teardown releases the published use. Clear staged
+bindings on cache teardown even when no resource generation exists.
+
+Visibility collection reads active registry revisions without publishing staged
+imports. The command collection commits those imports at its swap handoff,
+after the previous CPU render consumer ends. It retains the exact generation
+captured during preparation and checks its pre-commit registry revisions.
+The commit returns descriptor and instance revisions under the staging lock.
+After notifications, the collection checks the same generation and receipt
+before it finalizes those two fields in the still-prepared frame package.
+Collection, command, resource-generation, pass, and viewport identities stay
+unchanged, as do package generation and canonical data. A changed generation
+still fails validation. Layoutless UI and unspecified packages cannot authorize
+an active-registry commit. Private pending generations keep their own import
+materialization path.
+
+A rejected scene frame package can still render its independently collected
+screen-space UI. The scene remains rejected and its output receipts retain the
+failure. The UI draw cannot authorize stale scene resources.
+
+Vulkan buffer snapshots retain their own uses before native handle capture.
+Sealed copies retain independently; pool reset and frame-payload cleanup release
+them. The renderer generation owns pooled capture workspaces. Shutdown drains
+them after queued work ends. Program unlink must not release snapshots that
+queued frames can still use. A copied lighting layer retains its source use,
+so an existing consumer can transfer a retiring buffer into a new snapshot.
+Mesh materialization requires an active render frame and pipeline context before
+capture. A missing context reports `FrameBindingCaptureUnavailable`. Cold compute
+captures outside that context use explicit operation ownership instead of a pool.
+Shared immutable program artifacts exclude buffer bindings. A registry
+descriptor lookup acquires a use atomically with the record read and holds it
+through descriptor publication. The final managed release starts the existing
+Vulkan native retirement path, which still waits for descriptor, command, and
+queue completion references. A fixed frame delay is not a lifetime guarantee.
+
+Forward light growth creates its replacement before retiring prior storage.
+Probe topology replacement uses the same buffer retirement contract in both
+render pipelines.
+
+Vulkan physical planning does not allocate a second buffer when the exact
+generation registry already has a concrete `XRDataBuffer` for that name.
+This includes internal buffers made by pipeline factories. The planner keeps
+their descriptors for graph dependencies and barriers. Graph publication and
+native-compute validation resolve the registry owner and its native generation.
+Only descriptor-only internal buffers need planner-owned storage. Pending
+allocator validation follows the same ownership rule. Missing registry storage
+must fail or defer through native-binding readiness; an unused physical copy
+cannot replace it.
+The physical allocation signature includes this ownership decision. Adding or
+removing a concrete owner can change storage requirements without changing the
+buffer descriptor. Replacing one concrete owner with another does not require
+duplicate planner storage; registry and native revisions govern that binding.
+
+### Desktop Internal Image Reuse
+
+A desktop WSI MainViewport plan can retain compatible internal images from a
+strictly older plan in its published switching table. The donor must have one
+allocator owner and the same output, view, dimensions, pipeline, pass metadata,
+and immutable compiled graph. Queue ownership must resolve to graphics. OpenXR,
+VR, and presentationless outputs do not use this donor path. The desktop target
+contract excludes Advanced secondary-queue execution.
+
+The replacement uses a fresh allocator and barrier plan. It resolves external
+bindings from the current registry. Borrowed image groups remain protected
+during native preparation and rollback. Successful publication commits their
+metadata; retirement of the old allocator excludes images that the published
+plans still own. A borrowed auto-exposure image keeps its existing history.
+Cached-command validation and image entry-state checks still apply. Descriptor
+compatibility alone does not authorize reuse.
+
+### Imported Probe Texture Ownership
+
+`XRTexture.RetireBindingStorage()` stops fresh binding admission and delays
+managed destruction until counted uses end. Imported staging and each registry
+record retain separate uses. Probe replacement retires the old irradiance and
+prefilter arrays after it removes their staged bindings. This contract does not
+replace the retained output-generation contract for individual probe images.
+
+Vulkan sampler and image snapshots retain array bindings through authoring.
+Array bindings cannot enter shared immutable program artifacts, which have a
+different cache lifetime. Ordinary 2D material artifacts keep their existing
+reuse path. Native image, view, descriptor, and submission ownership still
+controls GPU retirement after managed authoring ends.
+
+Planner keys include registry instance revisions. Within one resource generation,
+a complete newer revision replaces older revisions for the same logical output,
+dimensions, and pass signature. Remove those cache entries and retire their
+allocators through native completion ownership. Do not keep a full target set for
+each probe descriptor update. Descriptor signatures are hashes; they do not prove
+revision order.
+
+Realtime capture can replace its output framebuffer without changing the
+viewport generation. Planner scopes remove inactive cached states when their
+exact output framebuffer has completed destruction. This also runs on cache
+hits, so the final capture state can retire after capture stops. Shared image
+groups stay alive while any remaining active, published, or preparation state
+owns them. Convolution mip targets own their private materials and destroy them
+with their quads.
+
+Direct compute descriptor keys can include the output framebuffer identity.
+`VkRenderProgram` records that exact framebuffer for direct dispatch keys only.
+Pre-record maintenance retires a key after its owner framebuffer is destroyed.
+It removes the key's cached descriptor pools, uniform buffers, and resource
+signatures through the existing native retirement paths. Descriptor and command
+completion tickets still protect in-flight uses. A failed retirement handoff
+keeps its owner for a later attempt. Reusable refresh rejects a destroyed output
+before it can publish descriptors. Program layout teardown also retires owned
+descriptor pools before it clears the owner records. Indirect compute and mesh
+task keys do not acquire this output owner.
+
+Vulkan retirement uses a bounded emergency scan budget above its high-water
+mark. It does not divide that queue's emergency scans among inactive frame
+slots. This permits the destruction budget to recover from a capture backlog.
+Each candidate must still pass completion, dependency, and ownership checks.
+The fixed ready batch and rotating scan cursor remain in use.
+
+The shared capture viewport can retain an active Advanced bank after the last
+probe is removed. Its descriptor slots can keep old image dependencies alive.
+Fixed bank and slot capacities bound this cache. A queue-domain watermark is
+not itself proof of unfinished work. Any future idle-bank trim must stop new
+plan admission, prove that plan and recorded leases are zero and queue work is
+complete, then retire the dedicated descriptor pools and rebuild them before
+reuse. Planner inactivity alone does not authorize descriptor pin release.
+
+### Probe Diffuse Composition
+
+Probe convolution stores diffuse irradiance divided by PI. Native and forward
+shading apply albedo, Fresnel, the nonmetal fraction, and ambient occlusion once.
+Probe diffuse does not depend on the world's ambient color. Imported source
+stylized Uber shading adds this engine GI term only when authored world SH is
+disabled. Enabled SH, including zero coefficients, supplies source diffuse
+through the source lighting rules. Probe specular remains separate. Generic PBR
+retains probe diffuse. This does not project engine probe textures into Unity
+SH coefficients.
+
+The baseline diffuse suppression flag also suppresses probe diffuse. It leaves
+probe specular available. Source-mode shading must not pass already weighted
+probe diffuse back through a function that multiplies albedo again.
+
+### Recoverable Preparation
+
+The BRDF producer waits while an Advanced output reservation is stale. Visibility
+preparation refreshes that reservation. A temporarily unavailable descriptor does
+not prove that BRDF contents were replaced. Prepare its attachment and require a
+new ready descriptor epoch before invalidating completed lookup work.
+`TryPrepareFrameBufferAttachments` performs this explicit preparation. Vulkan
+refreshes the existing attachment wrappers without a synchronous upload. A
+sampling-readiness query remains read-only. Preparing the fullscreen mesh alone
+does not refresh an attachment and can leave a completed BRDF lookup unavailable
+after a probe import changes the physical resource plan.
+
+Each static deformation generation owns its mesh alias witnesses. A writable
+successor copies them with the mesh slices. A newer generation must not overwrite
+the evidence needed to reuse an older retained generation.
+
+A planner scope publishes only a complete plan for its exact requested key.
+Cache and previous-state shortcuts obey the same rule. Incomplete preparation
+must not relabel an old plan or remove the last valid cached state. Pipeline
+authoring reports the pending output precondition, and desktop command recording
+returns a frame retry. Native retirement still protects submitted uses of a
+superseded allocator.
+
+Advanced participating-transparent motion replay also requires an active velocity
+consumer. Visible transparent commands alone do not require a velocity or reactive
+mask replay. FXAA with motion blur disabled must not request temporal matrices for
+unused output. `ShouldGenerateVelocityBuffer()` preserves the motion-blur and
+temporal-upscale consumers.
 
 The deferred light-combine descriptor declares the destination color, depth,
 and stencil attachments through the same framebuffer identity. An inferred
@@ -220,7 +518,10 @@ the built-in AO setting, or the AO provider removes its native stage, full-size
 AO target, and required GTAO program. Native shading reuses the declared 1×1
 post-process neutral binding and supplies AO = 1 without fetching that texture.
 The resource-generation key and frozen native stage order preserve the selected
-AO family; desktop backends retain their existing neutral-output behavior.
+AO family. On desktop backends, the native stage writes neutral AO. The mode from
+the camera's AO schema then replaces it with the Default pipeline's AO commands
+and shaders, which read normals derived from depth. VXAO stays neutral, because
+the Default pipeline does not implement it.
 All native, surface-export, depth-comparison, and MSAA shading recipes declare
 `XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1`. Runtime validation rejects older
 recipes before binding the neutral texture, despite the unchanged 160-byte
@@ -229,11 +530,18 @@ the full-size AO fetch. This source contract still requires browser cook and
 live-output validation for the selected device.
 
 Browser native shading uses the existing `Environments` table at binding 14
-with 128-byte rows for world ambient. Bit 32 in the unchanged 160-byte native
+with 240-byte rows for world ambient and authored source SH. The seven signed
+SH vectors append to the former 128-byte prefix. Existing field offsets remain
+unchanged. Environment flag bit 0 marks a valid row; bit 1 marks enabled authored
+SH, including valid zero coefficients. The world-swap capture freezes the value,
+and the existing environment publisher owns its GPU lifetime. Browser table
+reads use the directory stride and keep the original ambient fields. Bit 32 in
+the unchanged 160-byte native
 shade parameters suppresses world ambient for the selected view. The authored
 decal flag remains bit 16. Native and surface-export mono and x4 recipes declare
 `XR_ADV_WORLD_AMBIENT_SCHEMA_VERSION=1`; reject older cooked programs and recook
-them before use. This adds no binding or table layout.
+them before use. The SH append adds no binding. Regenerate the shared record
+include when its C# record changes.
 
 The September 4–8 Advanced acceptance runs
 include bounded shaded-output, AO/IBL, temporal, post-processing, and OpenGL
@@ -765,6 +1073,8 @@ Current modes:
 
 Use deferred debug view `10` to validate the final AO sampling orientation against raw albedo or depth before changing individual AO kernels.
 
+**Rule:** AO generation shaders write linear AO. Contrast (`Power`) applies once, where AO is read, as `AmbientOcclusionPower`. Do not apply it again in a generation pass. MSVO takes its radius and `ScaleFactors` from the schema, as fractions of `Radius`.
+
 ---
 
 ## 20. Temporal AA: Static Edge Rejection and Debug Views
@@ -927,6 +1237,8 @@ The scene BVH feeding those passes uses the compact, root-down contract in
 GPU frustum culling remains the explicit small-workload and unavailable-resource
 fallback. Queue or ray-stack pressure is conservative and observable, never a
 reason to hide geometry.
+
+An opaque forward material with no discard path, no custom vertex stage, and no uniform hook uses the shared `Common/DepthNormalPrePass.fs` fragment shader with its own cull mode. This removes the per-material parameters and textures from the prepass. These materials write geometric normals, so AO and contact shadows do not see their normal maps. A material that can discard a fragment keeps its own variant, because the prepass depth must match the lit coverage. For Uber, the shared shader requires that the prepared shader disables dissolve and parallax, and that `_Mode`, `_ViewVisibilityMask`, `_FaceDiscard`, and `_UvTileDiscard` are zero.
 
 Generated vertex shaders are allowed to trim `FragTransformId` for ordinary passes, but the forward depth-normal prepass must push `RequireGeneratedVertexTransformId`. Without that render-state requirement, a generated vertex program cached for a normal forward material can be reused with a depth-normal fragment variant that consumes `FragTransformId`, causing pipeline interface mismatches.
 
@@ -1190,10 +1502,128 @@ configured clip-space policy; shaders sampling framebuffer textures must use
 `RenderClipSpacePolicy.FramebufferTextureYDirection(...)`. Screenshot/readback
 row flipping is a separate CPU export policy.
 
+The mono and stereo weighted-transparency resolve shaders use
+`XRENGINE_ClipXYToFramebufferTextureUV`, as the scene-copy shaders do. Their
+scene, accumulation, and revealage inputs share framebuffer row orientation.
+Mapping clip XY directly to 0..1 can invert the entire scene on Vulkan when
+the transparency branch becomes active.
+
 Light-probe cubemap faces use `RenderCapturePolicy.LightProbe`. Cubemap mip
 generation and cubemap-to-octahedral, irradiance, and prefilter work happen only
 after face capture through explicit `XRQuadFrameBuffer` fullscreen passes; they
 are not part of the scene-capture command chain.
+
+Vulkan capture draw families use the exact component/face `OutputId`. Physical
+framebuffer replacement does not allocate a new family. `RenderCaptureOwnerToken`
+identifies one active lifetime of the capture component. Frame contexts and mesh
+draws retain that token. Deactivation and destruction close it. Reactivation
+creates a new token. Closed owners cannot prepare or refresh new draw work.
+Prepared mesh ingress copies the same frozen token into the draw. If an owner
+closes before submission, readiness rejects the whole unsubmitted frame with
+a typed retry and settles its output receipts. It does not remove individual
+operations from a sealed stream. A completed recording can finish under its
+exact allocation readers; closing the owner does not release those readers.
+
+Mapped frame ranges carry a unique `VulkanMappedFrameAllocation` identity.
+Frequency ranges retain each contributing renderer or capture family. Removing
+one contributor does not close a shared range. Prepared data retains authoring
+readers. Native commands retain deduplicated readers until successful native
+reset or destruction. Owner retirement queues exact command invalidation; a
+cache dirty flag alone does not release its readers. Free ranges can coalesce
+only after all owners and readers release them.
+
+Capture families have separate logical-slot guards. Retired slots become free
+holes only after their prepared and native readers end. Live family bases remain
+stable. Eager engine and unknown-frequency arrays retain physical ranges until
+their renderer ends. Their capacity follows the peak slot requirement, rather
+than each capture generation. With the mapped arena disabled, dedicated-buffer
+captures retain retired logical intervals until renderer removal.
+
+IBL convolution retains compatible mip targets and private materials. Reuse
+requires the same mip count, shader objects, source texture type, and prefilter
+source dimension. Source and output bindings change only after the prior writer
+receipt settles. Incompatible targets and final teardown destroy the private
+materials with their targets.
+
+`LightProbeComponent.ReflectionFilter` selects the reflection producer. `Ggx`
+is the default. `UnityRealtime` uses the measured Unity BuiltIn 2022.3 realtime
+cube filter. It requires a power-of-two probe resolution of at least 16.
+This option affects static environments and captured probes. Diffuse irradiance
+keeps its existing convolution.
+Changing this option regenerates an assigned static environment. A captured
+probe uses the selected filter on its next capture. Retained cooked probes
+reject producer changes and keep their existing output data and convention.
+
+The compatibility producer makes an ordinary box reduction for mip 1, then
+uses a recursive 36-tap cube-face Gaussian filter. A separate raster pass
+resamples that chain into the source probe's final cube levels. The discrete
+source-LOD schedule is owned by `LightProbeComponent.RealtimeFilter.cs`.
+It is measured at resolutions 64, 128, and 256; it is not an avatar-specific
+brightness or roughness adjustment. Seven octahedral levels preserve Unity
+levels 0 through 6 directly. Their base extent is at least 512, so the last level
+retains an 8-by-8 directional footprint. Finite octahedral reconstruction remains
+an approximation.
+
+`LightProbeIblOutputGeneration.PrefilterConvention` is immutable with the image
+pair. Publication reads this value from the retained generation, never from the
+component's requested producer. `PerceptualRoughness` stores uniformly spaced
+perceptual roughness. `UnityMip` stores the seven source mip levels. Generic PBR
+maps roughness r to Unity LOD `6*r*(1.7-0.7*r)`. Source Mochie and clearcoat use
+`6*r`. Source normal blur uses `6*blur`. GGX retains its existing receiver rules.
+Each selected probe applies its own mapping before weighted composition.
+
+Advanced probe flag `UnityMipFilter` carries this convention without changing
+the record stride. Classic `ProbeParamData` is 112 bytes; its final vector is
+`PrefilterSampling` (X: convention, Y: maximum mip, Z/W: reserved). Cache equality
+and layout signatures include this vector. Shared arrays require equal physical
+extents and mip counts. Mixed conventions are valid when those layouts match;
+incompatible layouts fail admission before array allocation. Bindless probes
+retain independent image layouts. Retained profile version 1 adds an optional
+convention member. Old profiles default to `PerceptualRoughness`; Unity profiles
+must preserve all seven levels.
+
+Two private cube images alternate recursive writes. A third image holds the
+resolved cube levels. Face and mip draws have fixed materials and attachments.
+Cube writers convert the raster plane through `FramebufferTextureYDirection`
+before computing sampler-cube face directions. This keeps all recursive levels
+in the same texture-row orientation for either Vulkan viewport direction.
+The complete IBL writer fence protects intermediate reuse and destruction.
+Cold preparation visits all passes before a retry, so one unavailable shader
+cannot prevent later face passes from starting preparation. These resources
+remain private to the producer; only completed octahedral outputs are published.
+
+GGX octahedral reflection prefilters keep a final mip of at least 8 by 8 pixels.
+The base extent is at least 16 pixels so that the chain contains both roughness
+endpoints. A 256-pixel extent has six levels. Each level represents roughness
+`mip / (levelCount - 1)`. Consumers query the actual mip count and use the same
+scale. The final mip must retain direction data; a single octahedral texel
+cannot represent a rough reflection from every direction. Irradiance retains
+its separate mip policy.
+
+Equirectangular prefilter sampling derives source texel solid angle from the
+texture width, height, and sample latitude. Its pole limit uses the center of
+the first latitude row. A cubemap face-area formula does not apply to this
+source layout. Source material roughness remains unchanged by this conversion.
+
+Light-probe activation restarts the realtime timer when realtime capture is
+enabled. Deactivation cancels both capture timers and the IBL retry generation.
+Queued IBL teardown blocks new capture and convolution work until the old writer
+settles. Final teardown invalidates capture resources so that reactivation
+rebuilds the IBL targets even when the base face targets still exist.
+
+Active realtime capture retains one reusable environment cubemap and its face
+targets. The completed IBL writer releases its read claim before the next
+capture can write that set. When realtime capture stops, the optional transient
+release policy applies after pending work settles. An environment preview can
+keep the set while the component remains active. Component teardown releases
+the set after its writers settle. Output IBL generations still use separate
+textures and exact publication bindings.
+
+`LightProbeComponent.CompletedIblPublicationCount` counts valid completed IBL
+writers published during one component lifetime. It does not reset on capture
+stop or deactivation. Failed attempts and restored retained textures do not
+increase it. Use its delta for completed-update measurements. `CaptureVersion`
+identifies the published attempt generation and can skip failed attempts.
 
 ---
 
@@ -1214,6 +1644,12 @@ The default pipeline's clean-frame path follows these invariants:
   descriptor-update scratch storage are frame-bounded pools or retained
   growth-only containers. Per-frame heap allocation in collection, submission,
   recording, and present paths is a bug.
+- `VkMeshRenderer` checks a published uniform array once and records its exact
+  array identity, length, minimum element size, native-handle validity, and
+  mapped-slice validity. Reuse checks that record without scanning every draw
+  slot. A frequency-owned auto-uniform replacement updates the record
+  conservatively; array replacement and cleanup remove it. The selected slice
+  still needs its write lease and native descriptor checks.
 - The Forward+ local-light culling pass exits before resolving textures,
   buffers, or dispatch state when the scene has no point or spot lights.
 - Generated Vulkan mesh-program identity is rebuilt only when material,
@@ -1248,6 +1684,17 @@ must use the registration records under the scene lock.
 
 Desktop frame data is owned by the logical frame-in-flight slot, independently of the acquired swapchain image. Prepared primary recording inputs must explicitly carry both the frame-data slot and timing-query slot. Mapped/immutable arenas, descriptors, Advanced publications and data-dependent command reuse use the logical slot. Presentation, image artifacts and desktop timing queries retain acquired-image ownership. Reset, cancellation and accepted-submission publication must use the same slot. A rejected recording must release its unsubmitted retained publication uses.
 
+Advanced light records use the light emitter's render transform. Do not use `LightMeshMatrix` for the light origin or direction: a spot volume shifts its center by half the light distance. The volume transform is for volume geometry only. Cone attenuation and shadow projection must share the emitter origin.
+
 Retired render-resource generations require a Signaled completion fence before disposal. Missing fences remain pending; failed fences may be replaced but cannot authorize disposal. A request to wait for GPU progress is not itself a completion proof.
 
 A minimized desktop window is not a new 1x1 render profile. Suspend managed resource preparation and preserve the last complete generation until restoration; externally owned swapchain outputs remain independent.
+
+## Restored Window Extents
+
+`WindowResizeController` tracks the extent applied to viewports separately from
+the extent committed by the resource generation. A minimized resize can apply
+1 by 1 pixels while the last drawable generation stays committed. Restoring the
+same drawable size must still queue a viewport resize when the applied extent
+differs. The resource-ready commit guard remains active. A pending resize is
+cancelled when both applied and committed extents already match the native size.

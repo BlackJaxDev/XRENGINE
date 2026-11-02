@@ -37,9 +37,23 @@ internal static class NativeFbxSceneImporter
     /// </summary>
     private sealed class MeshChunkBuilder(int materialSlot, XRMeshPackedSource source, int initialIndexCapacity)
     {
+        private XRMeshPackedSource? _source = source;
         public int MaterialSlot { get; } = materialSlot;
-        public XRMeshPackedSource Source { get; } = source;
-        public List<int> Indices { get; } = new(Math.Max(6, initialIndexCapacity));
+        public XRMeshPackedSource Source => _source
+            ?? throw new InvalidOperationException("The packed mesh source was already consumed.");
+        public List<int> Indices { get; private set; } = new(Math.Max(6, initialIndexCapacity));
+
+        /// <summary>Copies the packed source into an owned mesh and releases temporary storage.</summary>
+        public XRMesh BuildMesh(string[]? blendshapeNames, bool calculateTangents)
+        {
+            Source.BlendshapeNames = blendshapeNames;
+            if (calculateTangents && !Source.HasTangents)
+                Source.GenerateTangentsFromUv0(Indices);
+            XRMesh mesh = new(Source, Indices);
+            _source = null;
+            Indices = [];
+            return mesh;
+        }
 
         public bool CanAppendPolygon(int polygonVertexCount)
             => Source.VertexCount + polygonVertexCount <= ushort.MaxValue + 1;
@@ -68,7 +82,7 @@ internal static class NativeFbxSceneImporter
         FbxIntermediateNode IntermediateNode,
         IReadOnlyList<FbxIntermediateMaterial> NodeMaterials,
         Matrix4x4 MeshWorldMatrix,
-        IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? SkinWeightsByControlPoint,
+        FbxSkinBinding? SkinBinding,
         IReadOnlyList<FbxBlendShapeChannelBinding> BlendShapeChannels);
 
     private readonly record struct MeshBuildResult(
@@ -209,8 +223,8 @@ internal static class NativeFbxSceneImporter
             () =>
             {
                 ReportProgress(onProgress, 0.02f);
-                using FbxStructuralDocument structural = FbxStructuralParser.ParseFile(sourceFilePath);
-                ReportProgress(onProgress, 0.08f);
+                using FbxSourceDocumentCache? ownedDocuments = importer.FbxSourceDocuments is null ? new() : null;
+                FbxSourceDocumentCache documents = importer.FbxSourceDocuments ?? ownedDocuments!;
                 FbxSceneSemanticsPolicy policy = new(
                     importOptions?.FbxPivotPolicy ?? FbxSceneSemanticsPolicy.Default.PivotImportPolicy,
                     FbxModelHierarchyPolicy.PreserveAuthoredNodes);
@@ -221,10 +235,8 @@ internal static class NativeFbxSceneImporter
                 FbxAnimationDocument animations;
                 using (IDisposable? parseDocumentsScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.ParseDocuments"))
                 {
-                    semantic = FbxSemanticParser.Parse(structural, policy);
-                    geometry = FbxGeometryParser.Parse(structural, semantic);
-                    deformers = FbxDeformerParser.Parse(structural, semantic);
-                    animations = FbxAnimationParser.Parse(structural, semantic, deformers);
+                    (semantic, geometry, deformers, animations) = documents.GetModelDocuments(sourceFilePath, policy);
+                    ReportProgress(onProgress, 0.08f);
                 }
                 ReportProgress(onProgress, 0.18f);
 
@@ -268,6 +280,8 @@ internal static class NativeFbxSceneImporter
                 FbxIntermediateMesh[] meshes = [.. semantic.IntermediateScene.Meshes];
                 Array.Sort(meshes, static (left, right) => left.ObjectIndex.CompareTo(right.ObjectIndex));
                 bool flipUvY = importOptions?.ImportSteps.HasFlag(ModelImportSteps.FlipUVs) ?? true;
+                bool calculateTangents = importOptions?.ImportSteps.HasFlag(ModelImportSteps.CalculateTangentSpace) ?? true;
+                bool importBlendShapeNormals = importOptions?.ImportBlendShapeNormals ?? true;
 
                 List<MeshBuildWorkItem> workItems = [];
                 using (IDisposable? buildWorkItemsScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.BuildWorkItems"))
@@ -312,16 +326,6 @@ internal static class NativeFbxSceneImporter
                                 ? resolvedNodeMaterials
                                 : [];
 
-                            IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint =
-                                hasSkinBinding
-                                    ? BuildSkinWeightsByControlPoint(
-                                        skinBinding,
-                                        sceneNode.Transform,
-                                        importWorld,
-                                        nodesByObjectId,
-                                        meshGeometry.ControlPoints.Count)
-                                    : null;
-
                             workItems.Add(new MeshBuildWorkItem(
                                 workItems.Count,
                                 modelObjectId,
@@ -331,7 +335,7 @@ internal static class NativeFbxSceneImporter
                                 intermediateNode,
                                 nodeMaterials,
                                 sceneNode.Transform.WorldMatrix,
-                                skinWeightsByControlPoint,
+                                hasSkinBinding ? skinBinding : null,
                                 blendShapeChannels));
                         }
                     }
@@ -340,6 +344,7 @@ internal static class NativeFbxSceneImporter
 
                 MeshBuildResult?[] buildResults = new MeshBuildResult?[workItems.Count];
                 bool generateMeshRenderersAsync = importOptions?.GenerateMeshRenderersAsync ?? true;
+                bool prepareGpuDeformation = importOptions?.PrepareGpuDeformationOnImport ?? true;
                 bool separateMeshIslands = importOptions?.SeparateMeshIslands ?? false;
                 int spatialPartitionMaxTriangles = importOptions?.SpatialPartitionMaxTriangles ?? 0;
 
@@ -358,6 +363,15 @@ internal static class NativeFbxSceneImporter
                     Parallel.For(0, workItems.Count, parallelOptions, workItemIndex =>
                     {
                         MeshBuildWorkItem workItem = workItems[workItemIndex];
+                        // Keep temporary weight dictionaries local to active mesh workers.
+                        var skinWeightsByControlPoint = workItem.SkinBinding is { } skinBinding
+                            ? BuildSkinWeightsByControlPoint(
+                                skinBinding,
+                                workItem.SceneNode.Transform,
+                                importWorld,
+                                nodesByObjectId,
+                                workItem.MeshGeometry.ControlPoints.Count)
+                            : null;
                         List<SubMesh> subMeshes = BuildSubMeshesForNode(
                             importer,
                             sourceFilePath,
@@ -367,7 +381,7 @@ internal static class NativeFbxSceneImporter
                             workItem.IntermediateNode,
                             workItem.NodeMaterials,
                             workItem.MeshWorldMatrix,
-                            workItem.SkinWeightsByControlPoint,
+                            skinWeightsByControlPoint,
                             workItem.BlendShapeChannels,
                             createdMaterials,
                             createdMeshes,
@@ -375,9 +389,12 @@ internal static class NativeFbxSceneImporter
                             materialCacheSync,
                             createdAssetsSync,
                             flipUvY,
+                            importBlendShapeNormals,
+                            calculateTangents,
                             cancellationToken,
                             rootNode.Transform,
                             generateMeshRenderersAsync,
+                            prepareGpuDeformation,
                             separateMeshIslands,
                             spatialPartitionMaxTriangles);
 
@@ -471,28 +488,30 @@ internal static class NativeFbxSceneImporter
     private static Dictionary<long, FbxIntermediateMaterial[]> BuildMaterialsByModelObjectId(FbxSemanticDocument semantic)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
-        Dictionary<long, List<FbxIntermediateMaterial>> materialsByModelObjectId = new();
-        IReadOnlyList<FbxIntermediateMaterial> materials = semantic.IntermediateScene.Materials;
-        for (int materialIndex = 0; materialIndex < materials.Count; materialIndex++)
-        {
-            FbxIntermediateMaterial material = materials[materialIndex];
-            for (int modelIndex = 0; modelIndex < material.ModelObjectIds.Count; modelIndex++)
-            {
-                long modelObjectId = material.ModelObjectIds[modelIndex];
-                if (!materialsByModelObjectId.TryGetValue(modelObjectId, out List<FbxIntermediateMaterial>? nodeMaterials))
-                {
-                    nodeMaterials = [];
-                    materialsByModelObjectId[modelObjectId] = nodeMaterials;
-                }
+        Dictionary<long, FbxIntermediateMaterial> materialsByObjectId = new();
+        foreach (FbxIntermediateMaterial material in semantic.IntermediateScene.Materials)
+            materialsByObjectId.Add(material.ObjectId, material);
 
-                nodeMaterials.Add(material);
-            }
+        Dictionary<long, List<FbxIntermediateMaterial>> materialsByModelObjectId = new();
+        foreach (FbxConnection connection in semantic.Connections)
+        {
+            if (connection.Kind != FbxConnectionKind.ObjectToObject ||
+                connection.Source.Id is not long materialObjectId ||
+                connection.Destination.Id is not long modelObjectId ||
+                !materialsByObjectId.TryGetValue(materialObjectId, out FbxIntermediateMaterial? material) ||
+                !semantic.TryGetObject(modelObjectId, out FbxSceneObject modelObject) ||
+                modelObject.Category != FbxObjectCategory.Model)
+                continue;
+
+            if (!materialsByModelObjectId.TryGetValue(modelObjectId, out List<FbxIntermediateMaterial>? nodeMaterials))
+                materialsByModelObjectId[modelObjectId] = nodeMaterials = [];
+            // Each connection is one material slot, even when a material fills several slots.
+            nodeMaterials.Add(material);
         }
 
         Dictionary<long, FbxIntermediateMaterial[]> results = new(materialsByModelObjectId.Count);
         foreach ((long modelObjectId, List<FbxIntermediateMaterial> nodeMaterials) in materialsByModelObjectId)
         {
-            nodeMaterials.Sort(static (left, right) => left.ObjectIndex.CompareTo(right.ObjectIndex));
             results[modelObjectId] = [.. nodeMaterials];
         }
 
@@ -605,9 +624,12 @@ internal static class NativeFbxSceneImporter
         object materialCacheSync,
         object createdAssetsSync,
         bool flipUvY,
+        bool importBlendShapeNormals,
+        bool calculateTangents,
         CancellationToken cancellationToken,
         TransformBase rootTransform,
         bool generateMeshRenderersAsync,
+        bool prepareGpuDeformation,
         bool separateMeshIslands,
         int spatialPartitionMaxTriangles)
     {
@@ -617,6 +639,7 @@ internal static class NativeFbxSceneImporter
         IReadOnlyList<int> polygonVertexIndices = meshGeometry.PolygonVertexIndices;
         FbxLayerElement<Vector3>? normalLayer = meshGeometry.Normals.Count > 0 ? meshGeometry.Normals[0] : null;
         FbxLayerElement<Vector3>? tangentLayer = meshGeometry.Tangents.Count > 0 ? meshGeometry.Tangents[0] : null;
+        FbxLayerElement<Vector3>? binormalLayer = meshGeometry.Binormals is { Count: > 0 } ? meshGeometry.Binormals[0] : null;
         string[]? blendShapeNames = blendShapeChannels.Count > 0 ? BuildBlendshapeNames(blendShapeChannels) : null;
         int[] shapeIndexByChannel = BuildShapeIndexByChannel(blendShapeChannels, blendShapeNames);
         PackedVertexScratch scratch = new(meshGeometry, blendShapeNames?.Length ?? 0);
@@ -636,6 +659,10 @@ internal static class NativeFbxSceneImporter
                     ? chunks[^1]
                     : CreateChunk(chunks, materialSlot, polygonVertexIndices.Count - polygonVertexStart, polygonVertexCount);
                 int baseVertex = chunk.Source.VertexCount;
+                Vector3 polygonBitangent = Vector3.Zero;
+                bool hasPolygonBitangent = tangentLayer is not null && binormalLayer is null && TryReconstructPolygonBitangent(
+                    meshGeometry, polygonVertexStart, polygonVertexCount, polygonIndex, intermediateNode.GeometryTransform,
+                    flipUvY, out polygonBitangent);
                 int polygonVertexIndex = polygonVertexStart;
                 int localPolygonVertexIndex = 0;
                 while (polygonVertexIndex < polygonVertexIndices.Count)
@@ -653,7 +680,11 @@ internal static class NativeFbxSceneImporter
                         polygonIndex,
                         normalLayer,
                         tangentLayer,
+                        binormalLayer,
+                        polygonBitangent,
+                        hasPolygonBitangent,
                         flipUvY,
+                        importBlendShapeNormals,
                         skinWeightsByControlPoint,
                         blendShapeChannels,
                         shapeIndexByChannel);
@@ -668,6 +699,10 @@ internal static class NativeFbxSceneImporter
                 polygonIndex++;
             }
         }
+
+        if (scratch.UnresolvedTangentFrameCount > 0)
+            XREngine.Fbx.FbxTrace.Warning("NativeImporter",
+                $"Mesh '{meshGeometry.Name}' has {scratch.UnresolvedTangentFrameCount} authored tangent corners without a valid normal, tangent, binormal, or UV-derived bitangent. Their tangent sign uses the positive default.");
 
         List<SubMesh> subMeshes = [];
         using (IDisposable? materializeSubMeshesScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "BuildSubMeshesForNode.MaterializeSubMeshes"))
@@ -694,8 +729,7 @@ internal static class NativeFbxSceneImporter
                     if (chunk.Source.VertexCount == 0 || chunk.Indices.Count == 0)
                         continue;
 
-                    chunk.Source.BlendshapeNames = blendShapeNames;
-                    XRMesh xrMesh = new(chunk.Source, chunk.Indices);
+                    XRMesh xrMesh = chunk.BuildMesh(blendShapeNames, calculateTangents);
                     SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
                     {
                         GenerateAsync = generateMeshRenderersAsync,
@@ -704,6 +738,8 @@ internal static class NativeFbxSceneImporter
                         Name = chunks.Count == 1 ? mesh.Name : $"{mesh.Name} {chunkIndex}",
                         RootTransform = rootTransform,
                         RootBone = ResolveRootBone(xrMesh),
+                        ImportedSourceMaterialSlot = materialSlot,
+                        ImportedSourceMaterialName = materialSlot < nodeMaterials.Count ? nodeMaterials[materialSlot].Name : null,
                     };
                     UpdateSkinnedSubMeshCullingBoundsForRuntimeBasis(subMesh, xrMesh, meshWorldMatrix, rootTransform);
 
@@ -724,7 +760,7 @@ internal static class NativeFbxSceneImporter
                     for (int finalIndex = 0; finalIndex < finalSubMeshes.Count; finalIndex++)
                     {
                         XRMesh? finalMesh = finalSubMeshes[finalIndex].LODs.Min?.Mesh;
-                        if (finalMesh?.HasSkinning == true)
+                        if (prepareGpuDeformation && finalMesh?.HasSkinning == true)
                             AdvancedGpuDeformationResources.PrepareImportedMesh(
                                 finalMesh, cancellationToken);
                     }
@@ -865,6 +901,87 @@ internal static class NativeFbxSceneImporter
         return polygonVertexCount;
     }
 
+    /// <summary>
+    /// Reconstructs a polygon bitangent from the first valid fan triangle and the final UV orientation.
+    /// </summary>
+    private static bool TryReconstructPolygonBitangent(
+        FbxMeshGeometry meshGeometry,
+        int polygonVertexStart,
+        int polygonVertexCount,
+        int polygonIndex,
+        Matrix4x4 geometryTransform,
+        bool flipUvY,
+        out Vector3 bitangent)
+    {
+        bitangent = Vector3.Zero;
+        if (polygonVertexCount < 3 || meshGeometry.TextureCoordinates.Count == 0)
+            return false;
+
+        if (!TryGetPolygonCorner(meshGeometry, polygonVertexStart, polygonIndex, geometryTransform, flipUvY,
+            out Vector3 position0, out Vector2 uv0))
+            return false;
+
+        for (int triangle = 1; triangle < polygonVertexCount - 1; triangle++)
+        {
+            if (!TryGetPolygonCorner(meshGeometry, polygonVertexStart + triangle, polygonIndex, geometryTransform, flipUvY,
+                out Vector3 position1, out Vector2 uv1)
+                || !TryGetPolygonCorner(meshGeometry, polygonVertexStart + triangle + 1, polygonIndex, geometryTransform, flipUvY,
+                    out Vector3 position2, out Vector2 uv2))
+                continue;
+
+            Vector2 delta1 = uv1 - uv0;
+            Vector2 delta2 = uv2 - uv0;
+            float determinant = delta1.X * delta2.Y - delta1.Y * delta2.X;
+            if (!float.IsFinite(determinant) || MathF.Abs(determinant) <= 1.0e-20f)
+                continue;
+
+            Vector3 edge1 = position1 - position0;
+            Vector3 edge2 = position2 - position0;
+            Vector3 candidate = (edge2 * delta1.X - edge1 * delta2.X) / determinant;
+            if (!IsValidDirection(candidate))
+                continue;
+
+            bitangent = Vector3.Normalize(candidate);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetPolygonCorner(
+        FbxMeshGeometry meshGeometry,
+        int polygonVertexIndex,
+        int polygonIndex,
+        Matrix4x4 geometryTransform,
+        bool flipUvY,
+        out Vector3 position,
+        out Vector2 uv)
+    {
+        int encodedControlPointIndex = meshGeometry.PolygonVertexIndices[polygonVertexIndex];
+        int controlPointIndex = encodedControlPointIndex < 0 ? ~encodedControlPointIndex : encodedControlPointIndex;
+        if ((uint)controlPointIndex >= (uint)meshGeometry.ControlPoints.Count
+            || !TryResolveLayerValue(meshGeometry.TextureCoordinates[0], controlPointIndex,
+                polygonVertexIndex, polygonIndex, out uv)
+            || !float.IsFinite(uv.X) || !float.IsFinite(uv.Y))
+        {
+            position = Vector3.Zero;
+            uv = Vector2.Zero;
+            return false;
+        }
+
+        position = Vector3.Transform(meshGeometry.ControlPoints[controlPointIndex], geometryTransform);
+        if (flipUvY)
+            uv.Y = 1.0f - uv.Y;
+        return float.IsFinite(position.X) && float.IsFinite(position.Y) && float.IsFinite(position.Z);
+    }
+
+    private static bool IsValidDirection(Vector3 value)
+    {
+        float lengthSquared = value.LengthSquared();
+        return float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z)
+            && float.IsFinite(lengthSquared) && lengthSquared > 1.0e-20f;
+    }
+
     private static string[] BuildBlendshapeNames(IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels)
     {
         HashSet<string> uniqueNames = new(StringComparer.Ordinal);
@@ -884,6 +1001,7 @@ internal static class NativeFbxSceneImporter
     {
         public Vector2[] TexCoords { get; } = new Vector2[meshGeometry.TextureCoordinates.Count];
         public Vector4[] Colors { get; } = new Vector4[meshGeometry.Colors.Count];
+        public int UnresolvedTangentFrameCount { get; set; }
         /// <summary>Shapes already added for the current vertex; the first channel of a name wins.</summary>
         public bool[] ShapeAdded { get; } = new bool[shapeCount];
     }
@@ -918,7 +1036,11 @@ internal static class NativeFbxSceneImporter
         int polygonIndex,
         FbxLayerElement<Vector3>? normalLayer,
         FbxLayerElement<Vector3>? tangentLayer,
+        FbxLayerElement<Vector3>? binormalLayer,
+        Vector3 polygonBitangent,
+        bool hasPolygonBitangent,
         bool flipUvY,
+        bool importBlendShapeNormals,
         IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint,
         IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels,
         int[] shapeIndexByChannel)
@@ -930,16 +1052,52 @@ internal static class NativeFbxSceneImporter
         Vector3 baseNormal = Vector3.Zero;
         bool hasNormal = false;
         if (TryResolveLayerValue(normalLayer, controlPointIndex, polygonVertexIndex, polygonIndex, out Vector3 normal)
-            && normal.LengthSquared() > 0.0f)
+            && IsValidDirection(normal))
         {
-            baseNormal = Vector3.Normalize(Vector3.TransformNormal(normal, geometryTransform));
-            hasNormal = true;
+            Vector3 transformedNormal = Vector3.TransformNormal(normal, geometryTransform);
+            if (IsValidDirection(transformedNormal))
+            {
+                baseNormal = Vector3.Normalize(transformedNormal);
+                hasNormal = true;
+            }
         }
 
         Vector3 baseTangent = Vector3.Zero;
         if (TryResolveLayerValue(tangentLayer, controlPointIndex, polygonVertexIndex, polygonIndex, out Vector3 tangent)
-            && tangent.LengthSquared() > 0.0f)
-            baseTangent = Vector3.Normalize(Vector3.TransformNormal(tangent, geometryTransform));
+            && IsValidDirection(tangent))
+        {
+            Vector3 transformedTangent = Vector3.TransformNormal(tangent, geometryTransform);
+            if (IsValidDirection(transformedTangent))
+                baseTangent = Vector3.Normalize(transformedTangent);
+        }
+
+        float bitangentSign = 1.0f;
+        if (tangentLayer is not null)
+        {
+            Vector3 bitangent = polygonBitangent;
+            bool hasBitangent = hasPolygonBitangent;
+            bool usesSourceBinormal = false;
+            if (TryResolveLayerValue(binormalLayer, controlPointIndex, polygonVertexIndex, polygonIndex, out Vector3 binormal)
+                && IsValidDirection(binormal))
+            {
+                Vector3 transformedBinormal = Vector3.TransformNormal(binormal, geometryTransform);
+                if (IsValidDirection(transformedBinormal))
+                {
+                    bitangent = transformedBinormal;
+                    hasBitangent = true;
+                    usesSourceBinormal = true;
+                }
+            }
+
+            Vector3 cross = Vector3.Cross(baseNormal, baseTangent);
+            float handedness = Vector3.Dot(cross, bitangent);
+            if (hasNormal && IsValidDirection(baseTangent) && hasBitangent
+                && float.IsFinite(handedness) && MathF.Abs(handedness) > 1.0e-8f)
+                bitangentSign = (handedness < 0.0f ? -1.0f : 1.0f)
+                    * (usesSourceBinormal && flipUvY ? -1.0f : 1.0f);
+            else
+                scratch.UnresolvedTangentFrameCount++;
+        }
 
         for (int set = 0; set < scratch.TexCoords.Length; set++)
         {
@@ -951,7 +1109,7 @@ internal static class NativeFbxSceneImporter
         for (int set = 0; set < scratch.Colors.Length; set++)
             scratch.Colors[set] = ResolveLayerValue(meshGeometry.Colors[set], controlPointIndex, polygonVertexIndex, polygonIndex, Vector4.One);
 
-        source.AddVertex(position, baseNormal, new Vector4(baseTangent, 1.0f), scratch.TexCoords, scratch.Colors);
+        source.AddVertex(position, baseNormal, new Vector4(baseTangent, bitangentSign), scratch.TexCoords, scratch.Colors);
 
         if (skinWeightsByControlPoint is not null
             && controlPointIndex >= 0
@@ -981,7 +1139,7 @@ internal static class NativeFbxSceneImporter
             Vector3 shapePositionDelta = hasPositionDelta ? Vector3.TransformNormal(positionDelta, geometryTransform) : Vector3.Zero;
             // A shape normal is the renormalized base normal plus its delta; the
             // stored delta is its difference to the base normal.
-            Vector3 shapeNormalDelta = hasNormal
+            Vector3 shapeNormalDelta = hasNormal && importBlendShapeNormals
                 ? Vector3.Normalize(baseNormal + (hasNormalDelta ? Vector3.TransformNormal(normalDelta, geometryTransform) : Vector3.Zero)) - baseNormal
                 : Vector3.Zero;
             source.AddBlendshapeDelta(shapeIndex, shapePositionDelta, shapeNormalDelta, Vector3.Zero);
@@ -1418,11 +1576,19 @@ internal static class NativeFbxSceneImporter
             {
                 semantic.TryGetObject(intermediateMaterial.ObjectId, out FbxSceneObject sceneMaterial);
                 string materialName = sceneMaterial?.DisplayName ?? intermediateMaterial.Name;
-                bool transparentBlendHint = ShouldUseTransparentBlend(sceneMaterial);
-
-                List<TextureSlot> textureSlots = BuildTextureSlots(semantic, intermediateMaterial.ObjectId, transparentBlendHint);
-                material = importer.MaterialFactory(sourceFilePath, materialName, textureSlots, 0, ShadingMode.Phong, []);
-                ApplyMaterialPropertyOverrides(material, sceneMaterial, textureSlots.Count == 0);
+                if (importer.ResolveMaterialRemap(materialName) is { } remapped)
+                    material = remapped;
+                else
+                {
+                    bool transparentBlendHint = ShouldUseTransparentBlend(sceneMaterial);
+                    List<TextureSlot> textureSlots = BuildTextureSlots(
+                        semantic,
+                        intermediateMaterial.ObjectId,
+                        transparentBlendHint,
+                        out bool hasTransparencyFactorMask);
+                    material = importer.MaterialFactory(sourceFilePath, materialName, textureSlots, 0, ShadingMode.Phong, []);
+                    ApplyMaterialPropertyOverrides(material, sceneMaterial, textureSlots.Count == 0, hasTransparencyFactorMask);
+                }
             }
             else
             {
@@ -1435,10 +1601,16 @@ internal static class NativeFbxSceneImporter
         }
     }
 
-    private static List<TextureSlot> BuildTextureSlots(FbxSemanticDocument semantic, long materialObjectId, bool transparentBlendHint)
+    private static List<TextureSlot> BuildTextureSlots(
+        FbxSemanticDocument semantic,
+        long materialObjectId,
+        bool transparentBlendHint,
+        out bool hasTransparencyFactorMask)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
-        List<TextureSlot> textureSlots = [];
+        List<(string FilePath, TextureType Type)> sourceSlots = [];
+        bool hasOpacityTexture = false;
+        hasTransparencyFactorMask = false;
         foreach (FbxConnection connection in semantic.Connections)
         {
             if (connection.Destination.Id != materialObjectId ||
@@ -1452,7 +1624,17 @@ internal static class NativeFbxSceneImporter
                 continue;
 
             TextureType textureType = MapTextureType(connection.PropertyName, textureObject, filePath);
-            int flags = transparentBlendHint && textureType is TextureType.Diffuse or TextureType.BaseColor ? 0x2 : 0;
+            sourceSlots.Add((filePath, textureType));
+            hasOpacityTexture |= textureType == TextureType.Opacity;
+            hasTransparencyFactorMask |= textureType == TextureType.Opacity &&
+                string.Equals(connection.PropertyName, "TransparencyFactor", StringComparison.OrdinalIgnoreCase);
+        }
+
+        List<TextureSlot> textureSlots = new(sourceSlots.Count);
+        foreach ((string filePath, TextureType textureType) in sourceSlots)
+        {
+            int flags = transparentBlendHint && !hasOpacityTexture &&
+                textureType is TextureType.Diffuse or TextureType.BaseColor ? 0x2 : 0;
             textureSlots.Add(new TextureSlot(filePath, textureType, 0, default, 0, 1.0f, default, default, default, flags));
         }
 
@@ -1501,7 +1683,7 @@ internal static class NativeFbxSceneImporter
             var text when text.Contains("normal") => TextureType.NormalCamera,
             var text when text.Contains("bump") || text.Contains("height") => TextureType.Height,
             var text when text.Contains("specular") || text.Contains("shininess") => TextureType.Specular,
-            var text when text.Contains("opacity") || text.Contains("transparent") || text.Contains("alpha") => TextureType.Opacity,
+            var text when text.Contains("opacity") || text.Contains("transparent") || text.Contains("transparency") || text.Contains("alpha") => TextureType.Opacity,
             var text when text.Contains("emiss") => TextureType.Emissive,
             var text when text.Contains("metal") => TextureType.Metalness,
             var text when text.Contains("rough") => TextureType.Roughness,
@@ -1510,7 +1692,11 @@ internal static class NativeFbxSceneImporter
         };
     }
 
-    private static void ApplyMaterialPropertyOverrides(XRMaterial material, FbxSceneObject? materialObject, bool noTextures)
+    private static void ApplyMaterialPropertyOverrides(
+        XRMaterial material,
+        FbxSceneObject? materialObject,
+        bool noTextures,
+        bool hasTransparencyFactorMask)
     {
         if (materialObject is null)
             return;
@@ -1519,18 +1705,27 @@ internal static class NativeFbxSceneImporter
             ?? GetVectorProperty(materialObject, "BaseColor")
             ?? new Vector3((float)ColorF4.Magenta.R, (float)ColorF4.Magenta.G, (float)ColorF4.Magenta.B);
         float opacity = GetFloatProperty(materialObject, "Opacity") ?? 1.0f;
-        float roughness = GetFloatProperty(materialObject, "Roughness") ?? 1.0f;
+        float? roughness = GetFloatProperty(materialObject, "Roughness");
         float metallic = GetFloatProperty(materialObject, "Metalness") ?? 0.0f;
         Vector3 emissive = GetVectorProperty(materialObject, "EmissiveColor") ?? Vector3.Zero;
+        float emissionStrength = GetFloatProperty(materialObject, "EmissiveFactor") ?? 1.0f;
 
         if (noTextures)
             material.SetVector3("BaseColor", diffuseColor);
-        material.SetFloat("Opacity", opacity);
-        material.SetFloat("Roughness", roughness);
+        // A near-zero scalar is the fallback for a connected TransparencyFactor map.
+        // Let that map control coverage. Keep other scalar opacity values.
+        material.SetFloat("Opacity", hasTransparencyFactorMask && opacity <= 0.001f ? 1.0f : opacity);
+        if (roughness.HasValue)
+            material.SetFloat("Roughness", roughness.Value);
         material.SetFloat("Metallic", metallic);
-        material.EmissiveColor = emissive;
-        material.EmissionStrength = 1.0f;
-        material.SetFloat("Emission", Math.Max(emissive.X, Math.Max(emissive.Y, emissive.Z)));
+        // Inactive emission must not add an extension to the standard surface contract.
+        bool hasEmission = emissionStrength != 0.0f && emissive != Vector3.Zero;
+        material.EmissiveColor = hasEmission ? emissive : null;
+        material.EmissionStrength = hasEmission ? emissionStrength : null;
+        material.SetFloat("Emission", Math.Max(emissive.X, Math.Max(emissive.Y, emissive.Z)) * emissionStrength);
+        if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 &&
+            !StandardLitTextureSurfaceBinding.TryRead(material, out _, out _))
+            material.EngineSemantic = EngineMaterialSemanticIdentity.None;
     }
 
     private static bool ShouldUseTransparentBlend(FbxSceneObject? materialObject)
@@ -1575,7 +1770,27 @@ internal static class NativeFbxSceneImporter
             return false;
         }
 
-        value = ResolveLayerValue(layer, controlPointIndex, polygonVertexIndex, polygonIndex, default!);
+        int lookupIndex = layer.MappingType switch
+        {
+            FbxLayerElementMappingType.ByControlPoint => controlPointIndex,
+            FbxLayerElementMappingType.ByPolygonVertex => polygonVertexIndex,
+            FbxLayerElementMappingType.ByPolygon => polygonIndex,
+            FbxLayerElementMappingType.AllSame => 0,
+            _ => -1,
+        };
+        int directIndex = layer.ReferenceType switch
+        {
+            FbxLayerElementReferenceType.Index or FbxLayerElementReferenceType.IndexToDirect
+                => (uint)lookupIndex < (uint)layer.Indices.Count ? layer.Indices[lookupIndex] : -1,
+            _ => lookupIndex,
+        };
+        if ((uint)directIndex >= (uint)layer.DirectValues.Count)
+        {
+            value = default!;
+            return false;
+        }
+
+        value = layer.DirectValues[directIndex];
         return true;
     }
 

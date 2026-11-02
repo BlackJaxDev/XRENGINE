@@ -3,12 +3,23 @@
 
 #ifndef TOON_UNIFORMS_GLSL
 #define TOON_UNIFORMS_GLSL
+uniform int _SourceBackfaceNormals;
+uniform int _FlipBackfaceNormals;
+uniform int _SourceLightMode;
+//@property(name="_WorldAmbientOcclusionStrength", display="World AO Strength", mode=static, range=[0,1])
+uniform float _WorldAmbientOcclusionStrength;
+uniform vec4 _SourceLightSettings;
+uniform vec4 _SourceAdditiveSettings;
+uniform vec4 _SourceAdditiveColor;
+uniform vec4 _SourceAdditiveGradient;
+uniform vec4 _SourceWrappedColor;
 
 // ============================================
 // Transform Matrices (Provided by engine - matches EEngineUniform names)
 // Engine sets vertex-stage camera uniforms with a "_VTX" suffix.
 // ============================================
 uniform mat4 ModelMatrix;
+uniform vec4 u_SourceFlatDirection;
 uniform mat4 ViewMatrix_VTX;
 uniform mat4 ProjMatrix_VTX;
 uniform mat4 ViewProjectionMatrix_VTX;
@@ -106,6 +117,8 @@ uniform vec2 _BumpMapPan;
 uniform int _BumpMapUV;
 //@property(name="_BumpScale", display="Normal Strength", mode=static, range=[0,2], indirect=static, semantic=normalStrength, default="1.0")
 uniform float _BumpScale;
+//@property(name="_BumpMapFlipGreen", display="Normal Green Inversion", mode=static, default="0")
+uniform int _BumpMapFlipGreen;
 uniform int NormalMapMode;
 uniform float HeightMapScale;
 #endif
@@ -215,6 +228,41 @@ uniform float _ForceFlatRampedLightmap;
 // Multilayer Math (Mode 1)
 //@property(name="_ShadowColorTex", display="Shadow Color Map", slot=texture)
 uniform sampler2D _ShadowColorTex;
+uniform vec4 _ShadowColorTex_ST;
+uniform vec2 _ShadowColorTexPan;
+uniform int _ShadowColorTexUV;
+uniform sampler2D _Shadow2ndColorTex;
+uniform vec4 _Shadow2ndColorTex_ST;
+uniform vec2 _Shadow2ndColorTexPan;
+uniform int _Shadow2ndColorTexUV;
+uniform sampler2D _Shadow3rdColorTex;
+uniform vec4 _Shadow3rdColorTex_ST;
+uniform vec2 _Shadow3rdColorTexPan;
+uniform int _Shadow3rdColorTexUV;
+uniform sampler2D _MultilayerMathBlurMap;
+uniform vec4 _MultilayerMathBlurMap_ST;
+uniform vec2 _MultilayerMathBlurMapPan;
+uniform int _MultilayerMathBlurMapUV;
+uniform sampler2D _ShadowStrengthMask;
+uniform vec4 _ShadowStrengthMask_ST;
+uniform vec2 _ShadowStrengthMaskPan;
+uniform int _ShadowStrengthMaskUV;
+uniform sampler2D _ShadowBorderMask;
+uniform sampler2D _SourceShadowBorderMaskLod;
+uniform vec4 _ShadowBorderMask_ST;
+uniform vec2 _ShadowBorderMaskPan;
+uniform int _ShadowBorderMaskUV;
+uniform vec4 _Shadow2ndColor;
+uniform vec4 _Shadow3rdColor;
+uniform vec4 _ShadowBorderColor;
+uniform vec4 _SourceMultilayerBorders;
+uniform vec4 _SourceMultilayerBlurs;
+uniform vec4 _SourceMultilayerReceive;
+uniform vec4 _SourceMultilayerMix;
+uniform vec4 _SourceMultilayerOptions;
+uniform vec4 _SourceMultilayerFlat;
+uniform vec4 _ShadowAOShift;
+uniform vec4 _ShadowAOShift2;
 //@property(name="_FirstShadeMap", display="First Shade Map", slot=texture)
 uniform sampler2D _FirstShadeMap;
 uniform vec4 _FirstShadeMap_ST;
@@ -346,6 +394,8 @@ uniform float _MatcapMaskInvert;
 #ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
 //@property(name="_RimLightColor", display="Rim Color", mode=static, default="vec4(1.0, 1.0, 1.0, 1.0)")
 uniform vec4 _RimLightColor;
+//@property(name="_RimLightColorThemeIndex", display="Rim Color Theme", mode=static, default="0")
+uniform int _RimLightColorThemeIndex;
 //@property(name="_RimWidth", display="Rim Width", mode=static, range=[0,1], default="0.5")
 uniform float _RimWidth;
 //@property(name="_RimSharpness", display="Rim Sharpness", mode=static, range=[0,16], default="1.0")
@@ -354,6 +404,8 @@ uniform float _RimSharpness;
 uniform float _RimLightColorBias;
 //@property(name="_RimEmission", display="Emission Amount", mode=static, range=[0,8], default="1.0")
 uniform float _RimEmission;
+uniform vec4 _SourceRimSettings;
+uniform vec4 _SourceRimColorSettings;
 //@property(name="_RimHideInShadow", display="Hide In Shadow", mode=static, range=[0,1], toggle=true, default="0.0")
 uniform float _RimHideInShadow;
 //@property(name="_RimStyle", display="Rim Style", mode=static, enum="0:Smooth|1:Exponential|2:Sharp", default="1")
@@ -419,6 +471,22 @@ uniform int _PBRSmoothnessMapsChannel;
 uniform float _PBRSmoothnessMapInvert;
 //@property(name="_PBRRoughnessMultiplier", display="Roughness Multiplier", mode=static, range=[0,2])
 uniform float _PBRRoughnessMultiplier;
+//@property(name="_PBRMochiePackedMasksEnabled", display="Use Packed Reflection And Specular Masks", mode=static, default="0")
+uniform int _PBRMochiePackedMasksEnabled;
+uniform vec4 _SourceMochieSettings;
+uniform vec4 _SourceMochieSecond;
+uniform vec4 _SourceMochieReflection;
+uniform vec4 _SourceMochieReflectionTint;
+//@property(name="_PBRReflectionStrength", display="Reflection Strength", mode=static, default="1.0")
+uniform float _PBRReflectionStrength;
+//@property(name="_PBRMetallicMapsReflectionMaskChannel", display="Reflection Mask Channel", mode=static, default="2")
+uniform int _PBRMetallicMapsReflectionMaskChannel;
+//@property(name="_PBRMetallicMapsSpecularMaskChannel", display="Specular Mask Channel", mode=static, default="3")
+uniform int _PBRMetallicMapsSpecularMaskChannel;
+//@property(name="_PBRReflectionMaskInvert", display="Invert Reflection Mask", mode=static, default="0")
+uniform float _PBRReflectionMaskInvert;
+//@property(name="_PBRSpecularMaskInvert", display="Invert Specular Mask", mode=static, default="0")
+uniform float _PBRSpecularMaskInvert;
 #endif
 
 
@@ -429,6 +497,16 @@ uniform float _PBRRoughnessMultiplier;
 //@subcategory("Detail")
 //@feature(id="detail-textures", name="Detail Textures", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
+//@property(name="_DetailTexUV", display="Detail UV", mode=static, default="0")
+uniform int _DetailTexUV;
+//@property(name="_DetailTexBlendMode", display="Detail Blend", mode=static, default="2")
+uniform int _DetailTexBlendMode;
+//@property(name="_DetailMaskUV", display="Detail Mask UV", mode=static, default="0")
+uniform int _DetailMaskUV;
+//@property(name="_DetailMaskPan", display="Detail Mask Pan", mode=animated, default="vec2(0.0)")
+uniform vec2 _DetailMaskPan;
+//@property(name="_DetailNormalMapUV", display="Detail Normal UV", mode=static, default="0")
+uniform int _DetailNormalMapUV;
 //@property(name="_DetailMask", display="Detail Mask", slot=texture)
 uniform sampler2D _DetailMask;
 uniform vec4 _DetailMask_ST;
@@ -449,6 +527,8 @@ uniform vec4 _DetailNormalMap_ST;
 uniform vec2 _DetailNormalMapPan;
 //@property(name="_DetailNormalMapScale", display="Detail Normal Strength", mode=static, range=[0,2])
 uniform float _DetailNormalMapScale;
+//@property(name="_DetailNormalMapFlipGreen", display="Detail Normal Green Inversion", mode=static, default="0")
+uniform int _DetailNormalMapFlipGreen;
 #endif
 
 // ============================================
@@ -476,9 +556,9 @@ uniform float _MainUseVertexColorAlpha;
 //@subcategory("Outline")
 //@feature(id="outline", name="Outline", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_OUTLINE
-//@property(name="_OutlineColor", display="Outline Color", mode=static)
+//@property(name="_OutlineColor", display="Outline Color", mode=animated)
 uniform vec4 _OutlineColor;
-//@property(name="_OutlineWidth", display="Outline Width", mode=static, range=[0,0.1])
+//@property(name="_OutlineWidth", display="Outline Width", mode=animated, range=[0,0.1])
 uniform float _OutlineWidth;
 //@property(name="_OutlineMask", display="Outline Mask", slot=texture)
 uniform sampler2D _OutlineMask;
@@ -568,6 +648,39 @@ uniform float _GlitterMaxAngle;
 uniform float _GlitterRainbow;
 //@property(name="_GlitterMask", display="Glitter Mask", slot=texture)
 uniform sampler2D _GlitterMask;
+//@property(name="_GlitterTexture", display="Glitter Shape", slot=texture)
+uniform sampler2D _GlitterTexture;
+uniform sampler2D _GlitterColorMap;
+uniform int _SourceGlitter;
+uniform int _SourceGlitterVersion;
+uniform float _GlitterFrequency;
+uniform float _GlitterDistanceLOD;
+uniform int _GlitterLayers;
+uniform int _GlitterUV;
+uniform int _GlitterMode;
+uniform int _GlitterShape;
+uniform float _GlitterAngleRange;
+uniform float _GlitterContrast;
+uniform float _GlitterBias;
+uniform float _GlitterMinBrightness;
+uniform float _GlitterCenterSize;
+uniform float _GlitterRandomLocation;
+uniform float _GlitterUseNormals;
+uniform float _GlitterUseSurfaceColor;
+uniform float _GlitterHideInShadow;
+uniform float _GlitterScaleWithLighting;
+uniform int _GlitterBlendType;
+uniform int _GlitterMaskChannel;
+uniform float _GlitterMaskInvert;
+uniform vec2 _GlitterUVPanning;
+uniform vec4 _GlitterMask_ST;
+uniform vec2 _GlitterMaskPan;
+uniform vec4 _GlitterTexture_ST;
+uniform vec2 _GlitterTexturePan;
+uniform int _GlitterMaskUV;
+uniform vec4 _GlitterColorMap_ST;
+uniform vec2 _GlitterColorMapPan;
+uniform int _GlitterColorMapUV;
 #endif
 
 // ============================================
@@ -622,8 +735,14 @@ uniform float _SSSAmbient;
 //@subcategory("Dissolve")
 //@feature(id="dissolve", name="Dissolve", default=off, cost=high)
 #ifndef XRENGINE_UBER_DISABLE_DISSOLVE
-//@property(name="_DissolveType", display="Dissolve Mode", mode=static, enum="0:Linear|1:Spherical|2:Point to Point|3:Center Out|4:UV Tile")
+//@property(name="_DissolveType", display="Dissolve Mode", mode=static, enum="0:Linear|1:Spherical|2:Point to Point|3:Center Out|4:UV Tile|5:Source Basic")
 uniform float _DissolveType;
+//@property(name="_SourceDissolveParams", display="Source Dissolve Parameters", mode=static, default="vec4(0.5, 0.0, 0.0, 0.0)")
+uniform vec4 _SourceDissolveParams;
+//@property(name="_DissolveTextureColor", display="Dissolved Color", mode=static, default="vec4(1.0)")
+uniform vec4 _DissolveTextureColor;
+//@property(name="_DissolveToEmissionStrength", display="Dissolved Emission", mode=static, default=0)
+uniform float _DissolveToEmissionStrength;
 //@property(name="_DissolveProgress", display="Progress", mode=animated, range=[0,1])
 uniform float _DissolveProgress;
 //@property(name="_DissolveEdgeColor", display="Edge Color", mode=static)

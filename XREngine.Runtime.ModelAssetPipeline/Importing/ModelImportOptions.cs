@@ -46,6 +46,13 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool DeferMeshletCookingUntilPostNormalization { get; set; }
 
     /// <summary>
+    /// Prepares optional deformation input during native model import. Disable
+    /// this when later coordinate conversion would invalidate that input.
+    /// Rendering can prepare the final mesh through its normal bounded path.
+    /// </summary>
+    public bool PrepareGpuDeformationOnImport { get; set; } = true;
+
+    /// <summary>
     /// Optional Unity project or Assets folder selected for external .prefab conversion.
     /// Model importers ignore this value.
     /// </summary>
@@ -194,6 +201,11 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     /// Uniform scale conversion applied during import.
     /// </summary>
     public float ScaleConversion { get; set; } = 1.0f;
+
+    /// <summary>
+    /// If false, blendshapes move positions only and keep the base normals and tangents.
+    /// </summary>
+    public bool ImportBlendShapeNormals { get; set; } = true;
 
     /// <summary>
     /// If true, treat the source file as Z-up (common in some DCCs).

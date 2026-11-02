@@ -2443,8 +2443,14 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             for (uint descriptorIndex = 0; descriptorIndex < write.DescriptorCount; descriptorIndex++)
             {
                 VulkanDescriptorReferencePair references = ResolveReferences(write, descriptorIndex);
-                if (!TryPrevalidateReferenceNoLock(tracker, setKey, references.First, out failureReason) ||
-                    !TryPrevalidateReferenceNoLock(tracker, setKey, references.Second, out failureReason))
+                if (!TryPrevalidateReferenceNoLock(
+                        tracker, setKey, references.First, write.DstBinding,
+                        write.DescriptorType, write.DstArrayElement + descriptorIndex,
+                        out failureReason) ||
+                    !TryPrevalidateReferenceNoLock(
+                        tracker, setKey, references.Second, write.DstBinding,
+                        write.DescriptorType, write.DstArrayElement + descriptorIndex,
+                        out failureReason))
                 {
                     return false;
                 }
@@ -2604,6 +2610,9 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
         VulkanResourceLifetimeTracker tracker,
         VulkanResourceLifetimeKey setKey,
         VulkanResourceLifetimeKey referenceKey,
+        uint binding,
+        DescriptorType descriptorType,
+        uint arrayElement,
         out string failureReason)
     {
         failureReason = string.Empty;
@@ -2620,7 +2629,9 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
         }
 
         failureReason =
-            $"Cannot update descriptor set {setKey} with retired Vulkan resource {referenceKey} generation {reference.Generation}.";
+            $"Cannot update descriptor set {setKey} binding={binding} type={descriptorType} arrayElement={arrayElement} " +
+            $"with retired Vulkan resource {referenceKey} owner='{reference.Owner}' " +
+            $"retirementOwner='{reference.RetirementOwner}' generation={reference.Generation} state={reference.State}.";
         return false;
     }
 

@@ -26,6 +26,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     bool EnableLightProbesAndIbl = false,
     bool RequiresMaterialSurfaceExports = false,
     bool SuppressBaselineDiffuse = false,
+    bool AmbientOcclusionMultiBounce = false,
+    bool AmbientOcclusionSpecularUsesVisibility = false,
     bool IsMinimalVisibilityOutput = false,
     uint NativeViewIndex = 0u,
     Commands.AdvancedSharedGpuSceneDatabase? SceneDatabase = null,
@@ -45,6 +47,9 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// </summary>
     Shadows.AdvancedDirectionalShadowLaneRequest? DirectionalShadowLane = null)
 {
+    /// <summary>Render time frozen with the authored stage family.</summary>
+    public float RenderTimeSeconds { get; init; }
+
     public bool IsValid => GetInvalidReason() is null;
 
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
@@ -53,6 +58,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// <summary>Reports the failed prerequisite without allocating on accepted frames.</summary>
     public string? GetInvalidReason()
     {
+        if (!float.IsFinite(RenderTimeSeconds))
+            return "The advanced visibility stage has no finite frozen render time.";
         if (!IsStagePhaseValid())
             return "The advanced visibility stage/phase combination is unsupported.";
         if (Publication.FrameId == 0u || Publication.PublicationGeneration == 0u)

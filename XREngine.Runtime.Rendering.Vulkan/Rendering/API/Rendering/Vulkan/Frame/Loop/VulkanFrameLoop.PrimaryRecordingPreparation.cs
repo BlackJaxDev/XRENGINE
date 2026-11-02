@@ -623,6 +623,15 @@ internal sealed partial class VulkanFrameLoop
                 ref attempt,
                 $"primary command recording exceeded the attempt limit ({recordingAttemptLimit}): {replanReason}");
         }
+        catch (RenderResourcePreparationPendingException exception)
+        {
+            return VulkanPrimaryCommandRecordingResult.Failed(
+                exception.Message,
+                attempt.ReadinessPolicy,
+                attempt.WorkClass,
+                attempt.FrameNumber,
+                EVulkanCommandRecordingFailureKind.RetryFrame);
+        }
         finally
         {
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(
@@ -689,7 +698,11 @@ internal sealed partial class VulkanFrameLoop
                 reason,
                 attempt.ReadinessPolicy,
                 attempt.WorkClass,
-                attempt.FrameNumber)
+                attempt.FrameNumber,
+                attempt.AcceptedFramePlan is { } acceptedPlan &&
+                    VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan)
+                        ? EVulkanCommandRecordingFailureKind.RetryFrame
+                        : EVulkanCommandRecordingFailureKind.None)
             : VulkanPrimaryCommandRecordingResult.Deferred(reason);
 
     private static void FailPreparedSubmissionMarkers(
@@ -968,13 +981,15 @@ internal sealed partial class VulkanFrameLoop
         long readinessDeadlineTimestamp = long.MaxValue,
         ulong sourceFrameId = 0UL,
         bool requireCompleteCohort = false,
-        bool allowFrameOwnedAuthoringOperations = false)
+        bool allowFrameOwnedAuthoringOperations = false,
+        int requiredSourceOperationCount = -1)
     {
         VulkanPresentNowReadinessWatchdog inactiveWatchdog = default;
         return MaterializeQueuedMeshRenderRequestsCore(
             requestCount,
             allowPreparedCohort,
             out deferredReason,
+            out _,
             out _,
             foregroundRequired,
             readinessDeadlineTimestamp,
@@ -983,6 +998,7 @@ internal sealed partial class VulkanFrameLoop
             trackPresentNowProgress: false,
             sliceColdPreparation: false,
             allowFrameOwnedAuthoringOperations,
+            requiredSourceOperationCount,
             ref inactiveWatchdog);
     }
 
@@ -991,6 +1007,7 @@ internal sealed partial class VulkanFrameLoop
         bool allowPreparedCohort,
         out string deferredReason,
         out bool coldSliceDeferred,
+        out bool captureOwnerClosed,
         ref VulkanPresentNowReadinessWatchdog watchdog,
         ulong sourceFrameId,
         bool sliceColdPreparation = true,
@@ -1000,6 +1017,7 @@ internal sealed partial class VulkanFrameLoop
             allowPreparedCohort,
             out deferredReason,
             out coldSliceDeferred,
+            out captureOwnerClosed,
             foregroundRequired: true,
             readinessDeadlineTimestamp: long.MaxValue,
             sourceFrameId,
@@ -1007,6 +1025,7 @@ internal sealed partial class VulkanFrameLoop
             trackPresentNowProgress: true,
             sliceColdPreparation: sliceColdPreparation,
             allowFrameOwnedAuthoringOperations,
+            requiredSourceOperationCount: -1,
             ref watchdog);
 
     private bool MaterializeQueuedMeshRenderRequestsCore(
@@ -1014,6 +1033,7 @@ internal sealed partial class VulkanFrameLoop
         bool allowPreparedCohort,
         out string deferredReason,
         out bool coldSliceDeferred,
+        out bool captureOwnerClosed,
         bool foregroundRequired,
         long readinessDeadlineTimestamp,
         ulong sourceFrameId,
@@ -1021,10 +1041,12 @@ internal sealed partial class VulkanFrameLoop
         bool trackPresentNowProgress,
         bool sliceColdPreparation,
         bool allowFrameOwnedAuthoringOperations,
+        int requiredSourceOperationCount,
         ref VulkanPresentNowReadinessWatchdog watchdog)
     {
         deferredReason = string.Empty;
         coldSliceDeferred = false;
+        captureOwnerClosed = false;
         if (requestCount == 0)
         {
             if (sliceColdPreparation)
@@ -1245,8 +1267,23 @@ internal sealed partial class VulkanFrameLoop
                 bool materialized;
                 VulkanMeshOperationRequest operationRequest;
                 string plannerGenerationDetail;
+                VulkanRequiredProducerInsertionToken sourceToken = request.RequiredProducerInsertionToken;
+                using VulkanRequiredProducerInsertionScope insertionScope =
+                    requiredSourceOperationCount >= 0
+                        ? _frameOperationQueue.BeginRequiredProducerInsertion(
+                            in sourceToken,
+                            requiredSourceOperationCount)
+                        : default;
                 do
                 {
+                    if (request.Context.CaptureOwnerToken is { IsOpen: false })
+                    {
+                        captureOwnerClosed = true;
+                        materialized = false;
+                        operationRequest = default;
+                        plannerGenerationDetail = "Capture owner closed during mesh preparation.";
+                        break;
+                    }
                     materialized = TryMaterializeQueuedMeshRenderRequest(
                         in request,
                         pipeline,
@@ -1254,6 +1291,12 @@ internal sealed partial class VulkanFrameLoop
                         prewarmDescriptorAllocation: !previouslyMaterialized,
                         out operationRequest,
                         out plannerGenerationDetail);
+                    if (request.Context.CaptureOwnerToken is { IsOpen: false })
+                    {
+                        captureOwnerClosed = true;
+                        materialized = false;
+                        break;
+                    }
                     if (materialized || !foregroundRequired)
                         break;
 
@@ -1296,8 +1339,12 @@ internal sealed partial class VulkanFrameLoop
                     cohortMaterializationComplete = false;
                     if (resumeRequestIndex < 0)
                         resumeRequestIndex = requestIndex;
-                    if (deferredReason.Length == 0 && !string.IsNullOrEmpty(plannerGenerationDetail))
-                        deferredReason = plannerGenerationDetail;
+                    if (deferredReason.Length == 0)
+                        deferredReason = $"request={requestIndex}/{requestCount} " +
+                            $"mesh='{request.Renderer.Mesh?.Name ?? "<unnamed>"}' " +
+                            $"material='{request.ResolvedMaterial.Material.Name ?? "<unnamed>"}' " +
+                            $"producerPipelinePresent={request.Producer.Context.PipelineInstance is not null} " +
+                            $"detail='{(string.IsNullOrEmpty(plannerGenerationDetail) ? request.Renderer.LastPrepareDetail : plannerGenerationDetail)}'.";
                     if (foregroundRequired &&
                         HasMeshReadinessExpired(
                             trackPresentNowProgress,
@@ -1400,7 +1447,9 @@ internal sealed partial class VulkanFrameLoop
             quarantinedRequestCount == 0 &&
             !presentNowProgressExpired;
         if (presentNowProgressExpired)
-            deferredReason = "PresentNow mesh preparation made no progress before its readiness watchdog expired.";
+            deferredReason = $"PresentNow mesh preparation made no progress before its readiness watchdog expired. " +
+                $"Requests={requestCount}, deferred={deferredRequestCount}, unavailable={unavailableRequestCount}, " +
+                $"quarantined={quarantinedRequestCount}, resume={resumeRequestIndex}. Detail: {deferredReason}";
 
         if (allowPreparedCohort &&
             cohortMaterializationComplete &&
@@ -1728,6 +1777,7 @@ internal sealed partial class VulkanFrameLoop
                     {
                         ModelMatrix = request.ModelMatrix,
                         PreviousModelMatrix = request.PreviousModelMatrix,
+                        SourceFlatDirection = request.SourceFlatDirection,
                         MaterialOverride = request.ResolvedMaterial.Material,
                         Instances = request.ExpandedInstances,
                         BillboardMode = request.BillboardMode,
@@ -1844,6 +1894,7 @@ internal sealed partial class VulkanFrameLoop
                 {
                     ModelMatrix = request.ModelMatrix,
                     PreviousModelMatrix = request.PreviousModelMatrix,
+                    SourceFlatDirection = request.SourceFlatDirection,
                     MaterialOverride = request.ResolvedMaterial.Material,
                     Instances = request.ExpandedInstances,
                     BillboardMode = request.BillboardMode,
@@ -2228,9 +2279,13 @@ internal sealed partial class VulkanFrameLoop
         }
         else
         {
+            // Required producers can read a texture written by an earlier draw.
+            // An auxiliary pipeline need not have a declared output framebuffer.
             operation = MeshDrawOp.Rent(
                 passIndex, target, request.Draw, context,
-                queueThread.RenderQueryBracketDepth > 0);
+                queueThread.RenderQueryBracketDepth > 0 ||
+                context.PreserveSubmissionOrderBlock ||
+                queueThread.OrderedComputeBatchCapture is not null);
         }
         bool accepted = _commandRuntime.TryEnqueueContentFrameOperation(
             _frameOperationQueue,

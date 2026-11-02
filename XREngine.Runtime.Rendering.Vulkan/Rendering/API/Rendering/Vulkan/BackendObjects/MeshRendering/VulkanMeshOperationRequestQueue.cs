@@ -87,15 +87,21 @@ internal sealed class VulkanMeshOperationRequestQueue
                 return EMeshRequestScheduleResult.Backpressured;
             }
 
-            VulkanMeshRenderRequest acceptedRequest = request;
+            VulkanMeshRenderRequest acceptedRequest = capture.OrderedOperations is { } operations
+                ? request with
+                {
+                    RequiredProducerInsertionToken = operations.CaptureRequiredProducerInsertionToken(),
+                }
+                : request;
             if (!capture.TryRetainPublication(
                     request.CanonicalDrawIdentitySnapshot))
             {
+                LogLostCanonicalPin(in request);
                 // The canonical bridge is optional here for the same reason it
                 // is optional on the shared queue: the immutable request can
                 // still take the legacy materialization path without losing
                 // accepted foreground content.
-                acceptedRequest = request with
+                acceptedRequest = acceptedRequest with
                 {
                     CanonicalDrawIdentitySnapshot = default,
                     ResidentTemplateHandle = default,
@@ -122,6 +128,7 @@ internal sealed class VulkanMeshOperationRequestQueue
             if (!_publishedPublicationPins.TryRetain(
                     request.CanonicalDrawIdentitySnapshot))
             {
+                LogLostCanonicalPin(in request);
                 // The canonical publication bridge is an optimization. Preserve
                 // the immutable draw through the legacy materialization path when
                 // its optional pin cannot be retained; never poison or drop it.
@@ -142,6 +149,31 @@ internal sealed class VulkanMeshOperationRequestQueue
             IncrementLaneOccupancy(lane);
             return EMeshRequestScheduleResult.Scheduled;
         }
+    }
+
+    private static void LogLostCanonicalPin(in VulkanMeshRenderRequest request)
+    {
+        AdvancedGpuSceneDrawIdentitySnapshot identity = request.CanonicalDrawIdentitySnapshot;
+        if (!identity.IsValid)
+            return;
+
+        AdvancedGpuScenePublication publication = identity.Publication.Publication;
+        Debug.VulkanWarningEvery(
+            "Vulkan.MeshRequest.CanonicalPinLost",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan.MeshRequest] Canonical publication pin failed: handle={0} pass={1} " +
+            "epoch={2} sequence={3} frameGeneration={4} sourceCount={5} " +
+            "material={6} materialId={7} mesh={8} rendererId={9}",
+            identity.Primary.Handle,
+            request.PassIndex,
+            publication.DatabaseEpoch,
+            publication.Sequence,
+            publication.FrameGeneration,
+            identity.Handles?.Count ?? 0,
+            request.ResolvedMaterial.Material.Name ?? "<null>",
+            request.ResolvedMaterial.Material.ID,
+            request.Renderer.MeshRenderer.Mesh?.Name ?? "<null>",
+            request.Renderer.MeshRenderer.ID);
     }
 
     /// <summary>
@@ -182,6 +214,7 @@ internal sealed class VulkanMeshOperationRequestQueue
     internal int CaptureTo(
         Func<bool> emitRequests,
         VulkanMeshRenderRequest[] destination,
+        VulkanFrameOperationQueue orderedOperations,
         out bool producerComplete,
         out ulong captureLeaseToken,
         out VulkanMeshRequestLaneCapacityFailure capacityFailure)
@@ -192,7 +225,7 @@ internal sealed class VulkanMeshOperationRequestQueue
         captureLeaseToken = 0UL;
         capacityFailure = default;
 
-        ThreadCaptureState capture = BeginThreadCapture(destination, out captureLeaseToken);
+        ThreadCaptureState capture = BeginThreadCapture(destination, out captureLeaseToken, orderedOperations);
         bool completed = false;
         try
         {
@@ -241,16 +274,20 @@ internal sealed class VulkanMeshOperationRequestQueue
 
     private ThreadCaptureState BeginThreadCapture(
         VulkanMeshRenderRequest[] destination,
-        out ulong captureLeaseToken)
+        out ulong captureLeaseToken,
+        VulkanFrameOperationQueue? orderedOperations = null)
     {
         ThreadCaptureState rootCapture = _threadCapture.Value
             ?? throw new InvalidOperationException(
                 "The Vulkan mesh-operation request queue capture state is unavailable.");
+        if (rootCapture.OrderedOperations is not null ||
+            rootCapture.Nested?.Destination is not null)
+            throw new InvalidOperationException("A required producer cannot use a nested mesh-request capture.");
         ThreadCaptureState capture = rootCapture.Destination is null
             ? rootCapture
             : rootCapture.Nested ?? throw new InvalidOperationException(
                 "The Vulkan nested mesh-operation request capture state is unavailable.");
-        capture.Begin(destination);
+        capture.Begin(destination, orderedOperations);
         captureLeaseToken = (capture.LeaseBatchGeneration << 1) |
             (ReferenceEquals(capture, rootCapture) ? 0UL : 1UL);
         return capture;
@@ -599,6 +636,7 @@ internal sealed class VulkanMeshOperationRequestQueue
         internal ulong LeaseBatchGeneration { get; private set; }
         private readonly object _leaseGate = new();
         internal VulkanMeshRenderRequest[]? Destination;
+        internal VulkanFrameOperationQueue? OrderedOperations;
         internal int Count;
         internal bool Failed;
         internal VulkanMeshRequestLaneCapacityFailure CapacityFailure;
@@ -630,7 +668,9 @@ internal sealed class VulkanMeshOperationRequestQueue
             Failed = true;
         }
 
-        internal void Begin(VulkanMeshRenderRequest[] destination)
+        internal void Begin(
+            VulkanMeshRenderRequest[] destination,
+            VulkanFrameOperationQueue? orderedOperations)
         {
             lock (_leaseGate)
             {
@@ -641,6 +681,7 @@ internal sealed class VulkanMeshOperationRequestQueue
                 }
 
                 Destination = destination;
+                OrderedOperations = orderedOperations;
                 Count = 0;
                 Failed = false;
                 CapacityFailure = default;
@@ -657,6 +698,7 @@ internal sealed class VulkanMeshOperationRequestQueue
                 VulkanMeshRenderRequest[]? destination = Destination;
                 int count = Count;
                 Destination = null;
+                OrderedOperations = null;
                 Count = 0;
                 Failed = false;
                 CapacityFailure = default;
@@ -677,6 +719,7 @@ internal sealed class VulkanMeshOperationRequestQueue
                     VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
                         destination.AsSpan(0, Count));
                 Destination = null;
+                OrderedOperations = null;
                 Count = 0;
                 PublicationPins.ReleaseAll();
                 PreviousPublicationPins.ReleaseAll();

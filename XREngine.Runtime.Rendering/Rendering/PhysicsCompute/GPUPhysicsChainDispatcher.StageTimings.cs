@@ -88,6 +88,8 @@ public sealed partial class GPUPhysicsChainDispatcher
             ToMs(DispatcherStage.Bounds), commit,
             ToMs(DispatcherStage.FinalizeOwnership), ToMs(DispatcherStage.PaletteSources),
             ToMs(DispatcherStage.CompleteUpdates),
+            Volatile.Read(ref _previousPaletteSingleCopyCount),
+            Volatile.Read(ref _paletteSourceRebindCount),
             new PhysicsChainDispatcherSubStageTimings(
                 ToMs(DispatcherStage.BoundsRoutes), ToMs(DispatcherStage.BoundsRows),
                 ToMs(DispatcherStage.BoundsSceneCopy), ToMs(DispatcherStage.SimTreeParams),
@@ -96,6 +98,8 @@ public sealed partial class GPUPhysicsChainDispatcher
                 commitBackendBatch, commitPageLockWait, commitFence, commitPageState,
                 commitCollectNotifications, commitNotify, commitOther,
                 Volatile.Read(ref _outputProducerEpoch),
-                Volatile.Read(ref _commitNotificationCount)));
+                Volatile.Read(ref _commitNotificationCount),
+                Volatile.Read(ref _boundsBuildReuseCount),
+                Volatile.Read(ref _boundsBuildFullCount)));
     }
 }

@@ -77,7 +77,7 @@ public partial class AdvancedRenderPipeline
                 {
                     Position = new Vector4(probe.Transform.RenderTranslation, 1.0f),
                 };
-                parameters[index] = CreateProbeParamData(probe);
+                parameters[index] = CreateProbeParamData(probe, generation);
             }
 
             ESizedInternalFormat irradianceFormat = ForwardLightProbeArrayFormat.Resolve(renderer, irradianceSources, prefilter: false);

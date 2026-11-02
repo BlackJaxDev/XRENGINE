@@ -22,6 +22,31 @@ namespace XREngine.Rendering.Models
         public string ImportedEntityIdentity { get => _importedEntityIdentity; set => SetField(ref _importedEntityIdentity, value ?? string.Empty); }
         public bool ImportedEntityIdentityIsStable { get => _importedEntityIdentityIsStable; set => SetField(ref _importedEntityIdentityIsStable, value); }
 
+        private int? _importedSourceMaterialSlot;
+        private int? _importedRendererMaterialSlot;
+        private string? _importedSourceMaterialName;
+
+        /// <summary>Raw material connection index in the source model before mesh splitting.</summary>
+        public int? ImportedSourceMaterialSlot
+        {
+            get => _importedSourceMaterialSlot;
+            set => SetField(ref _importedSourceMaterialSlot, value);
+        }
+
+        /// <summary>Compact material index in the imported renderer, ordered by first polygon use.</summary>
+        public int? ImportedRendererMaterialSlot
+        {
+            get => _importedRendererMaterialSlot;
+            set => SetField(ref _importedRendererMaterialSlot, value);
+        }
+
+        /// <summary>Source material name used to resolve an imported FBX slot.</summary>
+        public string? ImportedSourceMaterialName
+        {
+            get => _importedSourceMaterialName;
+            set => SetField(ref _importedSourceMaterialName, value);
+        }
+
         [MemoryPackIgnore]
         public SortedSet<SubMeshLOD> LODs
         {

@@ -321,6 +321,12 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     public ColorF3 GetEffectiveAmbientColor()
         => GetSettings()?.GetEffectiveAmbientColor() ?? new ColorF3(0.03f, 0.03f, 0.03f);
 
+    public bool HasAmbientSphericalHarmonics => GetSettings()?.AmbientSphericalHarmonicsEnabled == true;
+
+    public AmbientSphericalHarmonics GetEffectiveAmbientSphericalHarmonics()
+        => GetSettings()?.GetEffectiveAmbientSphericalHarmonics() ??
+            AmbientSphericalHarmonics.Constant((Vector3)GetEffectiveAmbientColor());
+
     private WorldSettings? GetSettings() => TargetWorldObject is XRWorld world ? world.Settings : null;
 
     /// <summary>Publishes pending render matrices before visibility collection.</summary>

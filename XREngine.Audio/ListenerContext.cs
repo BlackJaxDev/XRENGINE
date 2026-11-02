@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System.Numerics;
 using System.Runtime.ExceptionServices;
+using System.Threading;
 using XREngine.Core;
 using XREngine.Data.Core;
 
@@ -28,19 +29,32 @@ namespace XREngine.Audio
         /// </summary>
         public IAudioTransport? Transport { get; }
 
-        /// <summary>The device used by both listener architectures.</summary>
-        internal IAudioTransport ActiveTransport { get; }
+        // Native effects can read the published transport while they hold the OpenAL gate.
+        // Keep that read and VerifyError free of this gate to prevent a lock cycle.
+        private readonly object _initializationGate = new();
+        private IAudioTransport? _activeTransport;
+        private IAudioSourceEffects? _effects;
+
+        /// <summary>The device used by both listener architectures. Legacy listeners open it on demand.</summary>
+        internal IAudioTransport ActiveTransport
+            => Volatile.Read(ref _activeTransport) ?? InitializeLegacyTransport();
         private IAudioListenerBackend? ListenerBackend => ActiveTransport as IAudioListenerBackend;
         private IAudioSpatialTransport? SpatialTransport => ActiveTransport as IAudioSpatialTransport;
-        private IAudioListenerBackend LegacyBackend => ListenerBackend
-            ?? throw new InvalidOperationException("The listener transport does not support legacy spatial controls.");
 
         /// <summary>
         /// The audio effects processor. Non-null only in V2 mode (may still be null if passthrough).
         /// </summary>
         public IAudioEffectsProcessor? EffectsProcessor { get; }
 
-        public IAudioSourceEffects? Effects { get; }
+        public IAudioSourceEffects? Effects
+        {
+            get
+            {
+                if (!IsV2)
+                    _ = ActiveTransport;
+                return _effects;
+            }
+        }
 
         public EventDictionary<uint, AudioSource> Sources { get; } = [];
         public EventDictionary<uint, AudioBuffer> Buffers { get; } = [];
@@ -58,7 +72,7 @@ namespace XREngine.Audio
         {
             IsV2 = true;
             Transport = transport ?? throw new ArgumentNullException(nameof(transport));
-            ActiveTransport = transport;
+            _activeTransport = transport;
             EffectsProcessor = effectsProcessor;
 
             if (transport is IAudioListenerBackend backend)
@@ -71,9 +85,9 @@ namespace XREngine.Audio
             _gain = ListenerBackend?.GetListenerGain() ?? 1.0f;
 
             if (transport is IAudioSourceEffectsProvider effectsProvider)
-                Effects = effectsProvider.CreateSourceEffects(this);
+                _effects = effectsProvider.CreateSourceEffects(this);
             if (effectsProcessor is IAudioSourceEffectsConsumer effectsConsumer)
-                effectsConsumer.SetSourceEffects(Effects);
+                effectsConsumer.SetSourceEffects(_effects);
 
             SourcePool = new ResourcePool<AudioSource>(() => new AudioSource(this));
             BufferPool = new ResourcePool<AudioBuffer>(() => new AudioBuffer(this));
@@ -90,31 +104,50 @@ namespace XREngine.Audio
         internal ListenerContext()
         {
             IsV2 = false;
-            IAudioTransport transport = AudioBackendRegistry.CreateTransport(EAudioTransport.OpenAL);
-            if (transport is not IAudioListenerBackend backend)
-            {
-                transport.Dispose();
-                throw new InvalidOperationException("The registered OpenAL transport does not support legacy listener controls.");
-            }
-
-            ActiveTransport = transport;
-
-            try
-            {
-                if (transport is IAudioSourceEffectsProvider effectsProvider)
-                    Effects = effectsProvider.CreateSourceEffects(this);
-                _gain = backend.GetListenerGain();
-            }
-            catch
-            {
-                transport.Dispose();
-                throw;
-            }
-
             SourcePool = new ResourcePool<AudioSource>(() => new AudioSource(this));
             BufferPool = new ResourcePool<AudioBuffer>(() => new AudioBuffer(this));
 
             AudioDiagnostics.RecordListenerCreated(Name);
+        }
+
+        private IAudioTransport InitializeLegacyTransport()
+        {
+            lock (_initializationGate)
+            {
+                if (_activeTransport is { } existing)
+                    return existing;
+                ObjectDisposedException.ThrowIf(_disposed, this);
+
+                IAudioTransport transport = AudioBackendRegistry.CreateTransport(EAudioTransport.OpenAL);
+                IAudioSourceEffects? effects = null;
+                try
+                {
+                    if (transport is not IAudioListenerBackend backend)
+                        throw new InvalidOperationException("The registered OpenAL transport does not support legacy listener controls.");
+
+                    if (transport is IAudioSourceEffectsProvider effectsProvider)
+                        effects = effectsProvider.CreateSourceEffects(this);
+
+                    backend.SetListenerPosition(_position);
+                    backend.SetListenerVelocity(_velocity);
+                    backend.SetListenerOrientation(_forward, _up);
+                    backend.SetDopplerFactor(_dopplerFactor);
+                    backend.SetSpeedOfSound(_speedOfSound);
+                    backend.SetDistanceModel(_distanceModel);
+                    backend.SetListenerGain(_gain * _gainScale * (_enabled ? 1.0f : 0.0f));
+
+                    // Publish effects before the transport so native callers see both.
+                    _effects = effects;
+                    Volatile.Write(ref _activeTransport, transport);
+                    return transport;
+                }
+                catch
+                {
+                    try { effects?.Dispose(); }
+                    finally { transport.Dispose(); }
+                    throw;
+                }
+            }
         }
 
         public static ListenerContext? CurrentContext { get; private set; }
@@ -130,7 +163,7 @@ namespace XREngine.Audio
 
         public void VerifyError()
         {
-            if (ActiveTransport is IAudioListenerBackend backend)
+            if (Volatile.Read(ref _activeTransport) is IAudioListenerBackend backend)
                 backend.VerifyError();
         }
 
@@ -240,7 +273,8 @@ namespace XREngine.Audio
                     return _dopplerFactor = spatial.GetDopplerFactor();
                 if (IsV2)
                     return _dopplerFactor;
-                return GetDopplerFactor();
+                lock (_initializationGate)
+                    return _dopplerFactor;
             }
             set
             {
@@ -252,7 +286,15 @@ namespace XREngine.Audio
                     SetField(ref _dopplerFactor, value);
                 }
                 else
-                    SetDopplerFactor(value);
+                {
+                    lock (_initializationGate)
+                    {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
+                        if (SetField(ref _dopplerFactor, value, nameof(DopplerFactor)) &&
+                            _activeTransport is IAudioListenerBackend legacyBackend)
+                            legacyBackend.SetDopplerFactor(_dopplerFactor);
+                    }
+                }
             }
         }
         public float SpeedOfSound
@@ -265,7 +307,8 @@ namespace XREngine.Audio
                     return _speedOfSound = spatial.GetSpeedOfSound();
                 if (IsV2)
                     return _speedOfSound;
-                return GetSpeedOfSound();
+                lock (_initializationGate)
+                    return _speedOfSound;
             }
             set
             {
@@ -277,7 +320,15 @@ namespace XREngine.Audio
                     SetField(ref _speedOfSound, value);
                 }
                 else
-                    SetSpeedOfSound(value);
+                {
+                    lock (_initializationGate)
+                    {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
+                        if (SetField(ref _speedOfSound, value, nameof(SpeedOfSound)) &&
+                            _activeTransport is IAudioListenerBackend legacyBackend)
+                            legacyBackend.SetSpeedOfSound(_speedOfSound);
+                    }
+                }
             }
         }
         public EDistanceModel DistanceModel
@@ -300,15 +351,26 @@ namespace XREngine.Audio
                     return _position = backend.GetListenerPosition();
                 if (IsV2)
                     return _position;
-                return GetPosition();
+                lock (_initializationGate)
+                    return _position;
             }
             set
             {
-                _position = value;
                 if (IsV2)
+                {
+                    _position = value;
                     Transport!.SetListenerPosition(value);
+                }
                 else
-                    SetPosition(value);
+                {
+                    lock (_initializationGate)
+                    {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
+                        if (SetField(ref _position, value, publishNotifications: false, nameof(Position)) &&
+                            _activeTransport is IAudioListenerBackend legacyBackend)
+                            legacyBackend.SetListenerPosition(_position);
+                    }
+                }
             }
         }
         public Vector3 Velocity
@@ -319,15 +381,26 @@ namespace XREngine.Audio
                     return _velocity = backend.GetListenerVelocity();
                 if (IsV2)
                     return _velocity;
-                return GetVelocity();
+                lock (_initializationGate)
+                    return _velocity;
             }
             set
             {
-                _velocity = value;
                 if (IsV2)
+                {
+                    _velocity = value;
                     Transport!.SetListenerVelocity(value);
+                }
                 else
-                    SetVelocity(value);
+                {
+                    lock (_initializationGate)
+                    {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
+                        if (SetField(ref _velocity, value, publishNotifications: false, nameof(Velocity)) &&
+                            _activeTransport is IAudioListenerBackend legacyBackend)
+                            legacyBackend.SetListenerVelocity(_velocity);
+                    }
+                }
             }
         }
 
@@ -343,10 +416,19 @@ namespace XREngine.Audio
                 }
                 if (IsV2)
                     return _up;
-                GetOrientation(out _, out Vector3 upLegacy);
-                return upLegacy;
+                lock (_initializationGate)
+                    return _up;
             }
-            set => SetOrientation(Forward, value);
+            set
+            {
+                if (IsV2)
+                    SetOrientation(Forward, value);
+                else
+                {
+                    lock (_initializationGate)
+                        SetOrientation(_forward, value);
+                }
+            }
         }
 
         public Vector3 Forward
@@ -361,31 +443,76 @@ namespace XREngine.Audio
                 }
                 if (IsV2)
                     return _forward;
-                GetOrientation(out Vector3 forwardLegacy, out _);
-                return forwardLegacy;
+                lock (_initializationGate)
+                    return _forward;
             }
-            set => SetOrientation(value, Up);
+            set
+            {
+                if (IsV2)
+                    SetOrientation(value, Up);
+                else
+                {
+                    lock (_initializationGate)
+                        SetOrientation(value, _up);
+                }
+            }
         }
 
         private float _gain = 1.0f;
         public float Gain
         {
             get => _gain;
-            set => SetField(ref _gain, value);
+            set
+            {
+                if (IsV2)
+                    SetField(ref _gain, value);
+                else
+                {
+                    lock (_initializationGate)
+                    {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
+                        SetField(ref _gain, value);
+                    }
+                }
+            }
         }
 
         private bool _enabled = true;
         public bool Enabled
         {
             get => _enabled;
-            set => SetField(ref _enabled, value);
+            set
+            {
+                if (IsV2)
+                    SetField(ref _enabled, value);
+                else
+                {
+                    lock (_initializationGate)
+                    {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
+                        SetField(ref _enabled, value);
+                    }
+                }
+            }
         }
 
         private float _gainScale = 1.0f;
         public float GainScale
         {
             get => _gainScale;
-            set => SetField(ref _gainScale, value);
+            set
+            {
+                if (IsV2)
+                    SetField(ref _gainScale, value);
+                else
+                {
+                    lock (_initializationGate)
+                    {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
+                        SetField(ref _gainScale, value);
+                    }
+                }
+            }
         }
 
         private float? _fadeInSeconds = null;
@@ -395,7 +522,19 @@ namespace XREngine.Audio
         public float? FadeInSeconds
         {
             get => _fadeInSeconds;
-            set => SetField(ref _fadeInSeconds, value);
+            set
+            {
+                if (IsV2)
+                    SetField(ref _fadeInSeconds, value);
+                else
+                {
+                    lock (_initializationGate)
+                    {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
+                        SetField(ref _fadeInSeconds, value);
+                    }
+                }
+            }
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -416,19 +555,9 @@ namespace XREngine.Audio
             float effectiveGain = Gain * GainScale * (Enabled ? 1.0f : 0.0f);
             if (IsV2)
                 Transport!.SetListenerGain(effectiveGain);
-            else
-                SetGain(effectiveGain);
+            else if (Volatile.Read(ref _activeTransport) is IAudioListenerBackend backend)
+                backend.SetListenerGain(effectiveGain);
         }
-
-        private void SetPosition(Vector3 position)
-            => LegacyBackend.SetListenerPosition(position);
-        private void SetVelocity(Vector3 velocity)
-            => LegacyBackend.SetListenerVelocity(velocity);
-
-        private Vector3 GetPosition()
-            => LegacyBackend.GetListenerPosition();
-        private Vector3 GetVelocity()
-            => LegacyBackend.GetListenerVelocity();
 
         /// <summary>
         /// Gets both the forward and up vectors of the listener.
@@ -446,7 +575,14 @@ namespace XREngine.Audio
                 return;
             }
 
-            LegacyBackend.SetListenerOrientation(forward, up);
+            lock (_initializationGate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                bool forwardChanged = SetField(ref _forward, forward, publishNotifications: false, nameof(Forward));
+                bool upChanged = SetField(ref _up, up, publishNotifications: false, nameof(Up));
+                if ((forwardChanged || upChanged) && _activeTransport is IAudioListenerBackend legacyBackend)
+                    legacyBackend.SetListenerOrientation(_forward, _up);
+            }
         }
 
         /// <summary>
@@ -471,23 +607,12 @@ namespace XREngine.Audio
                 return;
             }
 
-            LegacyBackend.GetListenerOrientation(out forward, out up);
+            lock (_initializationGate)
+            {
+                forward = _forward;
+                up = _up;
+            }
         }
-
-        private void SetGain(float gain)
-            => LegacyBackend.SetListenerGain(gain);
-        private float GetGain()
-            => LegacyBackend.GetListenerGain();
-
-        private float GetDopplerFactor()
-            => LegacyBackend.GetDopplerFactor();
-        private float GetSpeedOfSound()
-            => LegacyBackend.GetSpeedOfSound();
-
-        private void SetDopplerFactor(float factor)
-            => LegacyBackend.SetDopplerFactor(factor);
-        private void SetSpeedOfSound(float speed)
-            => LegacyBackend.SetSpeedOfSound(speed);
         private void UpdateDistanceGainCalculation(EDistanceModel model)
         {
             _calcGainDistModelFunc = model switch
@@ -524,12 +649,23 @@ namespace XREngine.Audio
         }
 
         private EDistanceModel GetDistanceModelLegacy()
-            => LegacyBackend.GetDistanceModel();
+        {
+            lock (_initializationGate)
+                return _distanceModel;
+        }
 
         private void SetDistanceModelLegacy(EDistanceModel model)
         {
-            LegacyBackend.SetDistanceModel(model);
-            UpdateDistanceGainCalculation(model);
+            lock (_initializationGate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (model == _distanceModel || SetField(ref _distanceModel, model, nameof(DistanceModel)))
+                {
+                    UpdateDistanceGainCalculation(_distanceModel);
+                    if (_activeTransport is IAudioListenerBackend backend)
+                        backend.SetDistanceModel(_distanceModel);
+                }
+            }
         }
 
         public event Action<ListenerContext>? Disposed;
@@ -538,10 +674,16 @@ namespace XREngine.Audio
 
         public void Dispose()
         {
-            if (_disposed)
-                return;
-
-            _disposed = true;
+            IAudioTransport? transport;
+            IAudioSourceEffects? effects;
+            lock (_initializationGate)
+            {
+                if (_disposed)
+                    return;
+                _disposed = true;
+                transport = Volatile.Read(ref _activeTransport);
+                effects = _effects;
+            }
 
             foreach (AudioSource source in Sources.Values)
                 source.Dispose();
@@ -554,8 +696,8 @@ namespace XREngine.Audio
 
             // Dispose V2 resources
             EffectsProcessor?.Dispose();
-            Effects?.Dispose();
-            ActiveTransport.Dispose();
+            effects?.Dispose();
+            transport?.Dispose();
             if (CurrentContext == this)
                 CurrentContext = null;
 

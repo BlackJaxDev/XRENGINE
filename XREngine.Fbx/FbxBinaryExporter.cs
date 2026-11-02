@@ -258,6 +258,11 @@ public static class FbxBinaryExporter
                 objectNode.Children.Add(BuildVector3LayerNode("LayerElementTangent", index, meshGeometry.Tangents[index], "Tangents", "TangentIndex"));
                 maxLayerIndex = Math.Max(maxLayerIndex, index);
             }
+            for (int index = 0; index < (meshGeometry.Binormals?.Count ?? 0); index++)
+            {
+                objectNode.Children.Add(BuildVector3LayerNode("LayerElementBinormal", index, meshGeometry.Binormals![index], "Binormals", "BinormalIndex"));
+                maxLayerIndex = Math.Max(maxLayerIndex, index);
+            }
             for (int index = 0; index < meshGeometry.TextureCoordinates.Count; index++)
             {
                 objectNode.Children.Add(BuildVector2LayerNode("LayerElementUV", index, meshGeometry.TextureCoordinates[index], "UV", "UVIndex"));
@@ -311,6 +316,8 @@ public static class FbxBinaryExporter
             entries.Add(("LayerElementNormal", layerIndex));
         if (layerIndex < meshGeometry.Tangents.Count)
             entries.Add(("LayerElementTangent", layerIndex));
+        if (layerIndex < (meshGeometry.Binormals?.Count ?? 0))
+            entries.Add(("LayerElementBinormal", layerIndex));
         if (layerIndex < meshGeometry.TextureCoordinates.Count)
             entries.Add(("LayerElementUV", layerIndex));
         if (layerIndex < meshGeometry.Colors.Count)

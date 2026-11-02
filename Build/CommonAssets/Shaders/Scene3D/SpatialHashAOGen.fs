@@ -18,7 +18,6 @@ uniform sampler2D DepthView; //Depth
 uniform vec3 Samples[128];
 uniform int KernelSize = 96;
 uniform float Radius = 0.9f;
-uniform float Power = 1.2f;
 uniform float Bias = 0.03f;
 uniform int RayStepCount = 6;
 uniform float CellSize = 0.75f;
@@ -123,5 +122,5 @@ void main()
     }
 
     float occlusionTerm = clamp(occlusion / float(KernelSize), 0.0f, 1.0f);
-    OutIntensity = pow(1.0f - occlusionTerm, Power);
+    OutIntensity = clamp(1.0f - occlusionTerm, 0.0f, 1.0f);
 }

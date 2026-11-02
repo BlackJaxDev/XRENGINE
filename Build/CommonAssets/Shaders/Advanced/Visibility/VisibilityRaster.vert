@@ -48,6 +48,12 @@ layout(location = 7) flat out uint VisibilityPrimitiveBase;
 layout(location = 8) flat out uint VisibilityMeshletIndex;
 layout(location = 9) flat out uint VisibilityMaterialDenseIndex;
 layout(location = 10) flat out uint VisibilityEditorFlags;
+layout(location = 11) out vec2 VisibilityCoverageUv1;
+layout(location = 12) out vec4 VisibilityCoverageColor;
+layout(location = 13) out vec3 VisibilityCoverageWorldPosition;
+layout(location = 14) out vec3 VisibilityCoverageLocalPosition;
+layout(location = 15) out vec2 VisibilityCoverageUv2;
+layout(location = 16) out vec2 VisibilityCoverageUv3;
 
 uint XR_ADV_VisibilityPayloadIndex()
 {
@@ -93,6 +99,10 @@ void XR_ADV_RejectVisibilityVertex()
     VisibilityMeshletIndex = XR_ADV_VIS_INVALID;
     VisibilityMaterialDenseIndex = XR_ADV_INVALID_DENSE_INDEX;
     VisibilityEditorFlags = 0u;
+    VisibilityCoverageUv1 = vec2(0.0);
+    VisibilityCoverageColor = vec4(1.0);
+    VisibilityCoverageWorldPosition = vec3(0.0);
+    VisibilityCoverageLocalPosition = vec3(0.0);
 }
 
 void main()
@@ -204,6 +214,10 @@ void main()
 
     vec3 localPosition = Position;
     vec2 localTexCoord0 = TexCoord0;
+    vec2 localTexCoord1 = localTexCoord0;
+    vec2 localTexCoord2 = vec2(0.0);
+    vec2 localTexCoord3 = vec2(0.0);
+    vec4 localColor = vec4(1.0);
     uint selectedVertex = uint(XR_ADV_VERTEX_INDEX);
     if (producer == XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
     {
@@ -239,6 +253,16 @@ void main()
         : XR_ADV_VisibilityStaticVertices.records[selectedVertex];
     localPosition = vertex.position;
     localTexCoord0 = unpackHalf2x16(vertex.texCoord0Half);
+    localTexCoord1 = (vertex.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u
+        ? unpackHalf2x16(vertex.texCoord1Half)
+        : localTexCoord0;
+    localTexCoord2 = (vertex.flags & XR_ADV_VERTEX_HAS_TEXCOORD2) != 0u
+        ? unpackHalf2x16(vertex.texCoord2Half)
+        : vec2(0.0);
+    localTexCoord3 = (vertex.flags & XR_ADV_VERTEX_HAS_TEXCOORD3) != 0u
+        ? unpackHalf2x16(vertex.texCoord3Half)
+        : vec2(0.0);
+    localColor = unpackUnorm4x8(vertex.color0Rgba8);
     }
 #if defined(XR_ADV_VIS_VERTEX_DISPLACEMENT)
     localPosition += XR_ADV_ApplyVisibilityVertexDisplacement(
@@ -310,6 +334,12 @@ void main()
     VisibilityViewIndex = XR_ADV_RASTER_VIEW_INDEX;
     VisibilityOrigin = (XR_ADV_VisibilityRasterPush.producerAndOrigin >> XR_ADV_VIS_ORIGIN_SHIFT) & 1u;
     VisibilityCoverageUv = localTexCoord0;
+    VisibilityCoverageUv1 = localTexCoord1;
+    VisibilityCoverageUv2 = localTexCoord2;
+    VisibilityCoverageUv3 = localTexCoord3;
+    VisibilityCoverageColor = localColor;
+    VisibilityCoverageWorldPosition = worldPosition.xyz;
+    VisibilityCoverageLocalPosition = localPosition;
     VisibilityPrimitiveBase = payload.firstIndex / 3u;
     VisibilityMeshletIndex = XR_ADV_VIS_INVALID;
     VisibilityMaterialDenseIndex = materialDense;

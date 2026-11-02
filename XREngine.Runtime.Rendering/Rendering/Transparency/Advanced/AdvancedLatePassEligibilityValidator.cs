@@ -42,7 +42,8 @@ public static class AdvancedLatePassEligibilityValidator
     public static bool TryValidateLatePass(
         XRMaterial? material,
         int renderPass,
-        out string? rejectionReason)
+        out string? rejectionReason,
+        bool supportsSourceTriangleCoverage = false)
     {
         if (!TryGetExpectedKindMask(renderPass, out uint expectedKinds))
         {
@@ -53,6 +54,12 @@ public static class AdvancedLatePassEligibilityValidator
         if (material is null)
         {
             rejectionReason = "The late-pass mesh has no material.";
+            return false;
+        }
+
+        if (!supportsSourceTriangleCoverage && NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(material))
+        {
+            rejectionReason = "Vertex-mode UDIM discard requires canonical triangle coverage and is not supported in authored late passes.";
             return false;
         }
 

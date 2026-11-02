@@ -107,7 +107,14 @@ internal sealed unsafe partial class VkShader(
                 artifactIdentity = artifact.Identity;
                 rewrittenSource = artifact.RewrittenSource;
                 failureKind = EShaderCompileFailureKind.ShaderModuleCreation;
-                ApplyCompiledArtifact(artifact, sourceRevision);
+                ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(() =>
+                {
+                    lock (_asyncCompileLock)
+                    {
+                        DestroyShaderResourcesAfterPipelineCompileDrain();
+                        ApplyCompiledArtifact(artifact, sourceRevision);
+                    }
+                }, () => _shaderModule, $"shader module publication for '{SourceLabel}'");
                 RuntimeEngine.Rendering.Stats.RecordShaderVariant(
                     linked: true,
                     loadedFromDiskCache: artifact.LoadedFromDiskCache,
@@ -182,74 +189,83 @@ internal sealed unsafe partial class VkShader(
                 return false;
             }
 
-            VulkanShaderArtifact artifact;
+            return TryPublishAsyncCompile(task, shaderConfigVersion, usesVulkanClipDepthRemap,
+                sourceRevision, transformFeedbackPlanIdentity, out reason);
+        }
+
+        private bool TryPublishAsyncCompile(
+            Task<VulkanShaderArtifact> task, int shaderConfigVersion,
+            bool usesVulkanClipDepthRemap, long sourceRevision,
+            string transformFeedbackPlanIdentity, out string reason)
+        {
+            bool published = false;
+            string completionReason = "StaleShaderRevision";
+            // Publication is a cold path. The callbacks keep teardown, reflected
+            // metadata, module creation, and readiness under one dependency gate.
             try
             {
-                artifact = task.GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                SetCompileFailure(
-                    ex,
-                    EShaderCompileFailureKind.SpirvCompilation,
-                    shaderConfigVersion,
-                    usesVulkanClipDepthRemap,
-                    sourceRevision,
-                    null,
-                    _rewrittenSource);
-                reason = "ShaderCompileFailed";
-                return false;
-            }
-            finally
-            {
-                lock (_asyncCompileLock)
+                ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(() =>
                 {
-                    if (ReferenceEquals(_asyncCompileTask, task))
-                        _asyncCompileTask = null;
-                }
-            }
+                    lock (_asyncCompileLock)
+                    {
+                        if (IsRetired || !ReferenceEquals(_asyncCompileTask, task) ||
+                            _asyncCompileShaderConfigVersion != shaderConfigVersion ||
+                            _asyncCompileUsesVulkanClipDepthRemap != usesVulkanClipDepthRemap ||
+                            _asyncCompileSourceRevision != sourceRevision ||
+                            !string.Equals(_asyncCompileTransformFeedbackPlanIdentity, transformFeedbackPlanIdentity, StringComparison.Ordinal) ||
+                            Data.SourceRevision != sourceRevision ||
+                            RuntimeEngine.Rendering.Settings.ShaderConfigVersion != shaderConfigVersion ||
+                            UsesVulkanClipDepthRemap() != usesVulkanClipDepthRemap ||
+                            !string.Equals(CurrentTransformFeedbackPlanIdentity, transformFeedbackPlanIdentity, StringComparison.Ordinal))
+                            return;
 
-            if (Data.SourceRevision != sourceRevision)
+                        VulkanShaderArtifact? artifact = null;
+                        EShaderCompileFailureKind failureKind = EShaderCompileFailureKind.SpirvCompilation;
+                        try
+                        {
+                            // The caller has checked completion. Do not wait while holding the gate.
+                            artifact = task.GetAwaiter().GetResult();
+                            failureKind = EShaderCompileFailureKind.ShaderModuleCreation;
+                            bool wasActive = IsActive;
+                            if (!wasActive)
+                                PreGenerated();
+                            DestroyShaderResourcesAfterPipelineCompileDrain();
+                            ApplyCompiledArtifact(artifact, sourceRevision);
+                            if (!wasActive)
+                            {
+                                _bindingId = CacheObject(this);
+                                PostGenerated();
+                            }
+                            _asyncCompileTask = null;
+                            published = true;
+                            completionReason = "Ready";
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(
+                                linked: true,
+                                loadedFromDiskCache: artifact.LoadedFromDiskCache,
+                                generatedThisRun: !artifact.LoadedFromDiskCache);
+                        }
+                        catch (VulkanPipelineCompilationDeferredException)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            _asyncCompileTask = null;
+                            SetCompileFailure(ex, failureKind, shaderConfigVersion, usesVulkanClipDepthRemap,
+                                sourceRevision, artifact?.Identity, artifact?.RewrittenSource ?? _rewrittenSource);
+                            completionReason = failureKind == EShaderCompileFailureKind.SpirvCompilation
+                                ? "ShaderCompileFailed" : "ShaderModuleCreateFailed";
+                        }
+                    }
+                }, () => _shaderModule, $"shader module publication for '{SourceLabel}'");
+            }
+            catch (VulkanPipelineCompilationDeferredException exception)
             {
-                reason = "StaleShaderRevision";
-                RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
-                return false;
+                // A dependency replacement is pending work, not a permanent compile failure.
+                completionReason = exception.Message;
             }
-
-            try
-            {
-                bool wasActive = IsActive;
-                if (!wasActive)
-                    PreGenerated();
-
-                DestroyShaderResources();
-                ApplyCompiledArtifact(artifact, sourceRevision);
-
-                if (!wasActive)
-                {
-                    _bindingId = CacheObject(this);
-                    PostGenerated();
-                }
-
-                RuntimeEngine.Rendering.Stats.RecordShaderVariant(
-                    linked: true,
-                    loadedFromDiskCache: artifact.LoadedFromDiskCache,
-                    generatedThisRun: !artifact.LoadedFromDiskCache);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                SetCompileFailure(
-                    ex,
-                    EShaderCompileFailureKind.ShaderModuleCreation,
-                    shaderConfigVersion,
-                    usesVulkanClipDepthRemap,
-                    sourceRevision,
-                    artifact.Identity,
-                    artifact.RewrittenSource);
-                reason = "ShaderModuleCreateFailed";
-                return false;
-            }
+            reason = completionReason;
+            return published;
         }
 
         internal void WaitForPendingAsyncCompile()
@@ -662,7 +678,7 @@ internal sealed unsafe partial class VkShader(
         private void DestroyShaderResources()
             => ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 DestroyShaderResourcesAfterPipelineCompileDrain,
-                _shaderModule,
+                () => _shaderModule,
                 $"shader module mutation for '{SourceLabel}'");
 
         private void DestroyShaderResourcesAfterPipelineCompileDrain()
@@ -761,7 +777,7 @@ internal sealed unsafe partial class VkShader(
 
             ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 InvalidateAfterPipelineCompileDrain,
-                _shaderModule,
+                () => _shaderModule,
                 $"shader invalidation for '{SourceLabel}'");
         }
 

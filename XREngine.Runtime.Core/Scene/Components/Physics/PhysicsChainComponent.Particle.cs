@@ -44,6 +44,12 @@ public partial class PhysicsChainComponent
             get => _childCount;
             set => _childCount = value;
         }
+        /// <summary>The turn of the segment that ends at this particle from its rest direction, including the turn of its parents.</summary>
+        public Quaternion SegmentTurn { get; set; } = Quaternion.Identity;
+        /// <summary>The angle limit in radians. Polar limits read it as the pitch range.</summary>
+        public float MaxAngleRadians { get; set; }
+        /// <summary>The yaw range of a polar limit in radians.</summary>
+        public float MaxYawRadians { get; set; }
         public float Damping
         {
             get => _damping;

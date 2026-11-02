@@ -534,13 +534,22 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                EndActiveRenderPass(ref recordingState);
+                try
+                {
+                    EndActiveRenderPass(ref recordingState);
+                }
+                finally
+                {
+                    for (int i = 0; i < runCount; i++)
+                        if (recordingStatePrepared[i])
+                            recordingStates[i].ReleaseAuthoring();
 
-                Array.Clear(secondaryBuffers, 0, runCount);
-                Array.Clear(secondaryChains, 0, runCount);
-                Array.Clear(uniformSlots, 0, runCount);
-                Array.Clear(recordingStates, 0, runCount);
-                Array.Clear(recordingStatePrepared, 0, runCount);
+                    Array.Clear(secondaryBuffers, 0, runCount);
+                    Array.Clear(secondaryChains, 0, runCount);
+                    Array.Clear(uniformSlots, 0, runCount);
+                    Array.Clear(recordingStates, 0, runCount);
+                    Array.Clear(recordingStatePrepared, 0, runCount);
+                }
                 if (indirectLabelActive)
                     _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             }

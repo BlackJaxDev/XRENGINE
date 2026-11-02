@@ -18,7 +18,14 @@ public sealed class AdvancedGlobalResourceContractTests
         Marshal.SizeOf<AdvancedLightRecord>().ShouldBe(128);
         Marshal.SizeOf<AdvancedShadowRecord>().ShouldBe(272);
         Marshal.SizeOf<AdvancedProbeRecord>().ShouldBe(176);
-        Marshal.SizeOf<AdvancedEnvironmentRecord>().ShouldBe(128);
+        Marshal.SizeOf<AdvancedEnvironmentRecord>().ShouldBe(240);
+        Marshal.OffsetOf<AdvancedEnvironmentRecord>(nameof(AdvancedEnvironmentRecord.SourceSHAr)).ToInt32().ShouldBe(128);
+        Marshal.OffsetOf<AdvancedEnvironmentRecord>(nameof(AdvancedEnvironmentRecord.SourceSHAg)).ToInt32().ShouldBe(144);
+        Marshal.OffsetOf<AdvancedEnvironmentRecord>(nameof(AdvancedEnvironmentRecord.SourceSHAb)).ToInt32().ShouldBe(160);
+        Marshal.OffsetOf<AdvancedEnvironmentRecord>(nameof(AdvancedEnvironmentRecord.SourceSHBr)).ToInt32().ShouldBe(176);
+        Marshal.OffsetOf<AdvancedEnvironmentRecord>(nameof(AdvancedEnvironmentRecord.SourceSHBg)).ToInt32().ShouldBe(192);
+        Marshal.OffsetOf<AdvancedEnvironmentRecord>(nameof(AdvancedEnvironmentRecord.SourceSHBb)).ToInt32().ShouldBe(208);
+        Marshal.OffsetOf<AdvancedEnvironmentRecord>(nameof(AdvancedEnvironmentRecord.SourceSHC)).ToInt32().ShouldBe(224);
         Marshal.SizeOf<AdvancedDecalRecord>().ShouldBe(192);
         Marshal.SizeOf<AdvancedGiResourceRecord>().ShouldBe(208);
         Marshal.SizeOf<AdvancedTextureRecord>().ShouldBe(64);

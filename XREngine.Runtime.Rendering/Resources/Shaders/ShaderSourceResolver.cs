@@ -464,17 +464,23 @@ internal static partial class ShaderSourceResolver
         bool emitIncludeDeadCodeMarkers)
     {
         StringBuilder output = new(source.Length + 128);
-        using StringReader reader = new(source);
-
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
+        int offset = 0;
+        while (offset < source.Length)
         {
-            Match includeMatch = IncludeRegex().Match(line);
-            if (!includeMatch.Success)
+            ReadOnlySpan<char> remaining = source.AsSpan(offset);
+            int lineEnd = remaining.IndexOfAny('\r', '\n');
+            ReadOnlySpan<char> line = lineEnd < 0 ? remaining : remaining[..lineEnd];
+            offset += lineEnd < 0 ? remaining.Length : lineEnd + 1;
+            if (lineEnd >= 0 && remaining[lineEnd] == '\r' && offset < source.Length && source[offset] == '\n')
+                offset++;
+
+            if (!IncludeRegex().IsMatch(line))
             {
-                output.AppendLine(line);
+                output.Append(line).AppendLine();
                 continue;
             }
+
+            Match includeMatch = IncludeRegex().Match(line.ToString());
 
             string includePath = includeMatch.Groups["path"].Value.Trim();
             string resolvedPath = ResolveIncludePath(currentDirectory, context, includePath)

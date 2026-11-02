@@ -28,6 +28,7 @@ public static class ModelImportCanonicalSettings
         writer.WriteInt32(22, options.SpatialPartitionMaxTriangles);
         writer.WriteString(23, NormalizeResolutionPath(options.SourceProjectRootOverride, sourceFilePath));
         writer.WriteBytes(24, SerializeSearchPaths(options.TextureLoadDirSearchPaths, sourceFilePath));
+        writer.WriteBoolean(25, options.ImportBlendShapeNormals);
 
         // MultiThread, native worker count, ProcessMeshesAsynchronously,
         // GenerateMeshRenderersAsync, batch publication, and ProgressCallback affect only

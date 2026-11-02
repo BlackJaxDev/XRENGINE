@@ -19,6 +19,7 @@ public interface IRuntimePhysicsChainRenderingBridge
     void Execute(PhysicsChainComponent chain, in PhysicsChainGpuDispatchSnapshot snapshot);
     void NotifyReadbackUnavailable(PhysicsChainComponent chain, string reason);
     void InvalidateGpuDrivenRenderers(PhysicsChainComponent chain);
+    bool HasGpuDrivenRenderers(PhysicsChainComponent chain) => false;
     void RenderDebug(PhysicsChainComponent chain);
     void SetDebugDrawChains(PhysicsChainComponent chain, bool selected) { }
     void RecordHierarchyRecalculationTicks(long ticks);
@@ -69,9 +70,24 @@ public static class RuntimePhysicsChainRendering
 }
 
 public readonly record struct PhysicsChainGpuParticle(Vector3 Position, Vector3 PrevPosition, int IsColliding, Vector3 PreviousPhysicsPosition);
-public readonly record struct PhysicsChainGpuParticleStatic(Vector3 TransformLocalPosition, int ParentIndex, float Damping, float Elasticity, float Stiffness, float Inert, float Friction, float Radius, float BoneLength, int TreeIndex);
-public readonly record struct PhysicsChainGpuTree(Vector3 RestGravity, int ParticleOffset, int ParticleCount);
-public readonly record struct PhysicsChainGpuCollider(Vector4 Center, Vector4 Params, Vector4 Orientation, int Type);
+public readonly record struct PhysicsChainGpuParticleStatic(Vector3 TransformLocalPosition, int ParentIndex, float Damping, float Elasticity, float Stiffness, float Inert, float Friction, float Radius, float BoneLength, int TreeIndex, float MaxAngleRadians = 0.0f, float MaxYawRadians = 0.0f, int IsBranchChild = 0);
+public readonly record struct PhysicsChainGpuTree(Vector3 RestGravity, int ParticleOffset, int ParticleCount, Matrix4x4 RootParentMotion = default);
+public readonly record struct PhysicsChainGpuCollider(Vector4 Center, Vector4 Params, Vector4 Orientation, int Type, int ParticleContactOnly = 0, int Inside = 0, float EndRadius = 0.0f);
+
+/// <summary>Chain-wide solver settings of one GPU chain. <see cref="Flags"/> holds the <c>Flag</c> constants.</summary>
+public readonly record struct PhysicsChainGpuSolverSettings(float GravityFalloff, int Flags, int LimitType, float MaxStretch, float MaxSquish, float StretchMotion, Quaternion LimitRotation)
+{
+    public const int FlagRestFollowsParent = 1;
+    public const int FlagHoldParentOffset = 2;
+    public const int FlagSegmentGravity = 4;
+    public const int FlagPinBranchChildren = 8;
+    public const int FlagInertRootParent = 16;
+    public const int FlagSegmentCollision = 32;
+    public const int FlagHoldBetweenSteps = 64;
+
+    /// <summary>Gets the settings that keep the default solver behavior.</summary>
+    public static PhysicsChainGpuSolverSettings Default { get; } = new(1.0f, 0, 0, 0.0f, 0.0f, 0.0f, Quaternion.Identity);
+}
 public readonly record struct PhysicsChainGpuBone(Transform? Transform, int ParentIndex, Vector3 RestLocalDirection);
 
 /// <summary>Borrowed, allocation-free simulation data valid only for the bridge call.</summary>
@@ -113,6 +129,7 @@ public readonly ref struct PhysicsChainGpuDispatchSnapshot(
     public int BoneStructureSignature { get; } = boneStructureSignature;
     public PhysicsChainGpuSpatialInput SpatialInput { get; init; }
     public long ReadbackSourceGeneration { get; init; }
+    public PhysicsChainGpuSolverSettings Solver { get; init; } = PhysicsChainGpuSolverSettings.Default;
 }
 
 /// <summary>Graphics backend availability without importing rendering implementation types.</summary>

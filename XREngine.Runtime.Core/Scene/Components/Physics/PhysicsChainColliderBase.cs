@@ -9,6 +9,7 @@ public class PhysicsChainColliderBase : XRComponent
     private TransformBase? _rootTransformOverride;
     private Quaternion _localRotationOffset = Quaternion.Identity;
     private bool _debugDraw;
+    private bool _particleContactOnly;
 
     /// <summary>
     /// Shows this collider's editor visualization. Collision remains active
@@ -21,6 +22,15 @@ public class PhysicsChainColliderBase : XRComponent
     {
         get => _debugDraw;
         set => SetField(ref _debugDraw, value);
+    }
+
+    /// <summary>
+    /// Makes this collider test only the child end of each segment when the chain uses segment collision.
+    /// </summary>
+    public bool ParticleContactOnly
+    {
+        get => _particleContactOnly;
+        set => SetField(ref _particleContactOnly, value);
     }
 
     /// <summary>
@@ -76,6 +86,18 @@ public class PhysicsChainColliderBase : XRComponent
     {
         return false;
     }
+
+    /// <summary>
+    /// Gets the position along a segment, from 0 at <paramref name="start"/> to 1 at <paramref name="end"/>, that segment collision tests.
+    /// </summary>
+    public float ClosestSegmentParameter(Vector3 start, Vector3 end)
+        => ParticleContactOnly ? 1.0f : ComputeClosestSegmentParameter(start, end);
+
+    /// <summary>
+    /// Gets the position along a segment closest to this collider. The default tests the child end.
+    /// </summary>
+    protected virtual float ComputeClosestSegmentParameter(Vector3 start, Vector3 end)
+        => 1.0f;
 
     protected bool TryResolveEffectiveTransform(TransformBase? overrideTransform, out TransformBase effectiveTransform)
     {

@@ -92,6 +92,10 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestOpenXrEyeResolutionWidth = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_WIDTH";
     public const string UnitTestOpenXrEyeResolutionHeight = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_HEIGHT";
     public const string UnitTestRenderWindowsWhileInVr = "XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR";
+    public const string UnitTestVrMirrorMode = "XRE_UNIT_TEST_VR_MIRROR_MODE";
+
+    /// <summary>Set to 0 to stop collecting single-pass stereo commands for the next OpenXR frame while the current frame renders. On by default.</summary>
+    public const string OpenXrSpeculativeCollect = "XRE_OPENXR_SPECULATIVE_COLLECT";
     public const string UnitTestOpenXrRuntimeJson = "XRE_UNIT_TEST_OPENXR_RUNTIME_JSON";
     public const string UnitTestRenderApi = "XRE_UNIT_TEST_RENDER_API";
     public const string UnitTestRenderPipeline = "XRE_UNIT_TEST_RENDER_PIPELINE";
@@ -387,7 +391,6 @@ public static class XREngineEnvironmentVariables
     public const string SharedContextHazardDisableParallel = "XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL";
     public const string SharedContextDisableLinkSerialization = "XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION";
     public const string SharedContextLinkTimeoutMs = "XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS";
-    public const string AllowSyncSourceRetryAfterAsyncTimeout = "XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT";
     public const string SyncSrcHazardDisableParallel = "XRE_SYNCSRC_HAZARD_DISABLE_PARALLEL";
     public const string DumpSlowShaderSource = "XRE_DUMP_SLOW_SHADER_SOURCE";
     public const string AllowRenderThreadDriverParallelSource = "XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE";

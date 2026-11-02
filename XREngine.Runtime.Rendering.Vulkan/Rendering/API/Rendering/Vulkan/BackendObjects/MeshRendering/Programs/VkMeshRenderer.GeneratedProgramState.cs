@@ -18,6 +18,7 @@ internal unsafe partial class VkMeshRenderer
             ulong materialVariantHash,
             bool materialVariantIsEmpty,
             string? generatedVertexSource,
+            bool trustedOutlineVariant,
             string? materialName,
             string? meshName,
             string? rendererName,
@@ -42,6 +43,7 @@ internal unsafe partial class VkMeshRenderer
             MaterialVariantHash = materialVariantHash;
             MaterialVariantIsEmpty = materialVariantIsEmpty;
             GeneratedVertexSource = generatedVertexSource;
+            TrustedOutlineVariant = trustedOutlineVariant;
             MaterialName = materialName;
             MeshName = meshName;
             RendererName = rendererName;
@@ -67,6 +69,7 @@ internal unsafe partial class VkMeshRenderer
         public ulong MaterialVariantHash { get; }
         public bool MaterialVariantIsEmpty { get; }
         public string? GeneratedVertexSource { get; }
+        public bool TrustedOutlineVariant { get; }
         public string? MaterialName { get; }
         public string? MeshName { get; }
         public string? RendererName { get; }
@@ -92,6 +95,7 @@ internal unsafe partial class VkMeshRenderer
                MaterialVariantHash == other.MaterialVariantHash &&
                MaterialVariantIsEmpty == other.MaterialVariantIsEmpty &&
                ReferenceEquals(GeneratedVertexSource, other.GeneratedVertexSource) &&
+               TrustedOutlineVariant == other.TrustedOutlineVariant &&
                ReferenceEquals(MaterialName, other.MaterialName) &&
                ReferenceEquals(MeshName, other.MeshName) &&
                ReferenceEquals(RendererName, other.RendererName) &&
@@ -124,6 +128,7 @@ internal unsafe partial class VkMeshRenderer
                 Add(ref hash, MaterialVariantHash);
                 Add(ref hash, MaterialVariantIsEmpty);
                 Add(ref hash, ReferenceHash(GeneratedVertexSource));
+                Add(ref hash, TrustedOutlineVariant);
                 Add(ref hash, ReferenceHash(MaterialName));
                 Add(ref hash, ReferenceHash(MeshName));
                 Add(ref hash, ReferenceHash(RendererName));

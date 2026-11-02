@@ -47,6 +47,28 @@
             => GetValueGeneric(CurrentTime);
         public override object? GetValueGeneric(float second)
             => GetValue != null ? GetValue(second) : DefaultValue;
+
+        protected internal override BasePropAnim CreatePlaybackCopy()
+        {
+            PropAnimMethod<T> copy = new(LengthInSeconds, Looped)
+            {
+                TickMethod = TickMethod,
+                DefaultValue = DefaultValue,
+                Speed = Speed,
+            };
+            if (AuthoredFramesPerSecond > 0 && AuthoredFrameCount > 0)
+                copy.SetAuthoredCadence(new AuthoredCadence(AuthoredFrameCount, AuthoredFramesPerSecond), notifyChanged: false);
+            copy.LengthInSeconds = LengthInSeconds;
+            if (IsBaked && _baked is not null)
+                copy._baked = BakedValueStore<T?>.Encode(_baked.CaptureValues(), _baked.Algorithm);
+            copy.RestorePublishedBakedState(
+                BakedFramesPerSecond,
+                BakedFrameCount,
+                BakedValueCompressionAlgorithm,
+                EncodedBakedValueCompressionAlgorithm,
+                IsBaked);
+            return copy;
+        }
         public T? GetValueBaked(float second)
             => _baked is { Count: > 0 } ? _baked.GetValue(Math.Clamp(GetBakedFrameIndex(second), 0, _baked.Count - 1)) : DefaultValue;
         public T? GetValueBaked(int frameIndex)

@@ -10,6 +10,13 @@ public partial class XRShader : IPostCookedBinaryDeserialize
     private ShaderProgramArtifact? _cookedArtifact;
     private string? _cookedArtifactIdentity;
 
+    /// <summary>Clears derived artifacts before the caller publishes one source invalidation.</summary>
+    private void ClearCookedArtifactForSourceInvalidation()
+    {
+        SetField(ref _cookedArtifact, null, publishNotifications: false, nameof(CookedArtifact));
+        SetField(ref _cookedArtifactIdentity, null, publishNotifications: false, nameof(CookedArtifactIdentity));
+    }
+
     /// <summary>
     /// Serialized descriptor SHA-256 assigned by the target cook. The runtime
     /// content catalog supplies the exact module; source text never selects it.

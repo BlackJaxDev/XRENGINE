@@ -50,7 +50,7 @@ namespace XREngine.Components.Animation
             set => SetField(ref _outputPath, value);
         }
 
-        private string? _referencePath = "K:\\Unity\\Jax Main Avatars\\PoseAudit\\UnityHumanoidPose.json";
+        private string? _referencePath;
         /// <summary>
         /// If set, the audit report at this path will be loaded and compared against the generated report, with a summary of the comparison logged to the console.
         /// Can be relative to the current working directory or absolute.

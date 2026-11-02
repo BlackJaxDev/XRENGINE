@@ -181,6 +181,10 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    internal bool TryPrepareFrameBufferAttachments(XRFrameBuffer frameBuffer)
+        => GetOrCreateAPIRenderObject(frameBuffer) is VkFrameBuffer wrapper &&
+           wrapper.TryPrepareAttachmentBackings(allowSynchronousResourceUploads: false, out _);
+
     internal RenderTextureSamplingState GetTextureShaderSamplingState(XRTexture? texture)
     {
         if (texture is null || GetOrCreateAPIRenderObject(texture) is not IVkImageDescriptorSource source)

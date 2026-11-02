@@ -170,6 +170,9 @@ namespace XREngine.Rendering
         /// </summary>
         public AbstractRenderer Renderer => _renderer;
 
+        /// <summary>Gets whether this window's renderer completed initialization.</summary>
+        public bool IsRendererInitialized => Volatile.Read(ref _rendererInitialized);
+
         public IRuntimeRenderWorld? TargetWorldInstance
         {
             get => _targetWorldInstance;
@@ -2398,6 +2401,9 @@ namespace XREngine.Rendering
                     Viewports.Count);
 
                 Viewports.ForEach(vp => vp.SetFullInternalExtent((uint)obj.X, (uint)obj.Y));
+                WindowResizeExtents appliedExtents =
+                    _resizeController.SetAppliedFullInternalExtent(obj);
+                InteractiveResizeDiagnostics.RecordResizeExtents(appliedExtents);
 
                 _scenePanelAdapter.OnFramebufferResized(this, obj.X, obj.Y);
 
@@ -2520,6 +2526,8 @@ namespace XREngine.Rendering
 
             _renderer.Initialize();
             _rendererInitialized = true;
+            for (int index = 0; index < Viewports.Count; index++)
+                Viewports[index].RefreshRenderPipelineOutputBinding();
             RuntimeRenderingHostServices.Scheduling.SubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
 
             Debug.Rendering("[XRWindow] Tick callbacks subscribed hash={0}.", GetHashCode());
@@ -2727,6 +2735,18 @@ namespace XREngine.Rendering
                     0,
                     cpuMs,
                     0.0));
+        }
+
+        private bool IsWindowHeldForXrFramePriority()
+        {
+            if (!RuntimeRenderingHostServices.Presentation.IsInVR || Viewports.Count == 0)
+                return false;
+
+            for (int i = 0; i < Viewports.Count; i++)
+                if (!Viewports[i].IsHeldForXrFramePriority)
+                    return false;
+
+            return true;
         }
 
         private static FrameOutputPacingDecision EvaluateWindowPresentPacing(bool mirrorByComposition)
@@ -2950,6 +2970,10 @@ namespace XREngine.Rendering
                     RenderViewportsCallback?.Invoke();
                 }
                 RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.ViewportsCallback, viewportsCallbackStart);
+                long desktopWorkStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                // A held desktop keeps its last image. Recording and presenting it again would
+                // take the render-thread time that the hold gives to the next XR frame.
+                bool windowHeldForXrFrame = IsWindowHeldForXrFramePriority();
 
                 // Viewport/pipeline rendering is isolated so that exceptions during scene rendering
                 // do not prevent Vulkan's RenderFrameCallback (acquire/record/submit/present) from
@@ -2980,7 +3004,8 @@ namespace XREngine.Rendering
                             // Live resize still needs new projection and screen-space UI
                             // layout. Backend admission may defer an unready frame while
                             // the expensive internal resource generation stays frozen.
-                            RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                            if (!windowHeldForXrFrame)
+                                RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
                         }
                         RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);
                         RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.Viewports, viewportsPhaseStart);
@@ -3059,12 +3084,15 @@ namespace XREngine.Rendering
                     bool succeeded = false;
                     try
                     {
-                        frameRenderer.RenderWindow(delta);
+                        if (!windowHeldForXrFrame)
+                            frameRenderer.RenderWindow(delta);
                         succeeded = true;
                     }
                     finally
                     {
                         RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.RendererWindow, presentStart);
+                        RuntimeEngine.Rendering.Stats.FrameOutputs.RecordDesktopWork(
+                            System.Diagnostics.Stopwatch.GetTimestamp() - desktopWorkStart);
                         LastCompletedRenderWindowInterval = new XRWindowCompletedRenderInterval(
                             Interlocked.Increment(ref _completedRenderWindowIntervalSequence),
                             renderFrameId,

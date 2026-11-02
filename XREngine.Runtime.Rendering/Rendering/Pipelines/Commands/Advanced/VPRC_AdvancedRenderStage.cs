@@ -261,10 +261,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             pipeline.IsMinimalVisibilityOutput;
         IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
         bool enableBuiltInAmbientOcclusion =
+            rendererHost.BackendId == RendererBackendId.WebGPU &&
             !isMinimalVisibilityOutput &&
             !useNeutralWebAmbientOcclusion &&
             pipeline.EnableBuiltInAmbientOcclusion &&
             ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true };
+        (bool ambientOcclusionMultiBounce, bool ambientOcclusionSpecularOcclusion) =
+            pipeline.ResolveAmbientOcclusionShadingOptions(ActivePipelineInstance, null);
         if (requiresAmbientOcclusion && !isMinimalVisibilityOutput &&
             ambientOcclusionProvider is not null &&
             ambientOcclusionProvider is not AdvancedDepthGtaoProvider)
@@ -386,6 +389,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             enableLightProbesAndIbl,
             RequiresMaterialSurfaceExports: requiresMaterialSurfaceExports,
             SuppressBaselineDiffuse: suppressBaselineDiffuse,
+            AmbientOcclusionMultiBounce: ambientOcclusionMultiBounce,
+            AmbientOcclusionSpecularUsesVisibility: !isMinimalVisibilityOutput &&
+                rendererHost.BackendId != RendererBackendId.WebGPU && !ambientOcclusionSpecularOcclusion,
             IsMinimalVisibilityOutput: isMinimalVisibilityOutput,
             SceneDatabase: world.GpuScene.AdvancedSharedDatabase);
 
@@ -401,6 +407,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             SampleEncoding = sampleEncoding,
             HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
             EnableAuthoredDecals = frozenAuthoredDecals,
+            RenderTimeSeconds = state.RenderTimeSeconds,
         };
         return true;
     }
@@ -759,6 +766,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
         builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
             ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(RenderGraphResourceNames.MakeFboStencil(AdvancedVisibilityResourceNames.FrameBuffer),
+            ERenderGraphAccess.Write, ERenderPassLoadOp.Clear, ERenderPassStoreOp.Store);
     }
 
     private static void DescribeMultisampleRasterAttachments(RenderPassBuilder builder, ERenderPassLoadOp load, bool packedSamples)
@@ -767,6 +776,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             builder.UseColorAttachment(RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBufferMultisample, attachment),
                 ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
         builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBufferMultisample),
+            ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(RenderGraphResourceNames.MakeFboStencil(AdvancedVisibilityResourceNames.FrameBufferMultisample),
             ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
     }
 
@@ -993,6 +1004,11 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
         builder.UseDepthAttachment(
             RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
+            ERenderGraphAccess.ReadWrite,
+            load,
+            ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(
+            RenderGraphResourceNames.MakeFboStencil(AdvancedVisibilityResourceNames.FrameBuffer),
             ERenderGraphAccess.ReadWrite,
             load,
             ERenderPassStoreOp.Store);

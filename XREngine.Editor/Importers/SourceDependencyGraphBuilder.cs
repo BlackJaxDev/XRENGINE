@@ -39,25 +39,31 @@ public static partial class SourceDependencyGraphBuilder
 
         var graph = new SourceDependencyGraph();
         var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        Visit(context.EntrySourcePath, SourceImportDependencyKind.RequiredVisual, context, graph, active);
+        var scannedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Visit(context.EntrySourcePath, SourceImportDependencyKind.RequiredVisual, context, graph, active, scannedFiles);
+
+        SourceMaterialDependencyClassifier.ClassifyMissingTextures(context, graph);
 
         foreach (SourceDependencyEdge missing in graph.UnresolvedEdges)
         {
-            SourceImportDiagnosticSeverity severity = missing.Kind == SourceImportDependencyKind.RequiredVisual
+            SourceImportDiagnosticSeverity severity = missing.Kind == SourceImportDependencyKind.RequiredVisual && !context.AllowPartialImport
                 ? SourceImportDiagnosticSeverity.Error
                 : SourceImportDiagnosticSeverity.Warning;
             context.AddDiagnostic(
-                "UNITYDEP0001",
-                severity,
+                missing.InactiveTextureReason is null ? "UNITYDEP0001" : "UNITYDEP0004",
+                missing.InactiveTextureReason is null ? severity : SourceImportDiagnosticSeverity.Info,
                 SourceImportDiagnosticCategory.GuidResolution,
-                $"Unity GUID '{missing.TargetGuid}' referenced by '{missing.ReferringProperty}' could not be resolved.",
+                $"Unity GUID '{missing.TargetGuid}' with file ID '{missing.TargetFileId}' referenced by '{Path.GetFileName(missing.SourcePath)}' at '{missing.ReferringPropertyPath}' could not be resolved." +
+                    (missing.InactiveTextureReason is null ? string.Empty : $" {missing.InactiveTextureReason}"),
                 missing.SourcePath,
-                missing.ReferringProperty,
+                missing.ReferringPropertyPath,
                 new SourceAssetIdentity
                 {
                     AssetGuid = missing.TargetGuid,
                     LocalFileId = missing.TargetFileId,
-                    ObjectKind = InferObjectKind(missing.ReferringProperty),
+                    ObjectKind = missing.ReferringMaterialTextureSlot is null
+                        ? InferObjectKind(missing.ReferringProperty)
+                        : SourceAssetObjectKind.Texture,
                 });
         }
 
@@ -76,8 +82,10 @@ public static partial class SourceDependencyGraphBuilder
         SourceImportDependencyKind kind,
         SourceProjectImportContext context,
         SourceDependencyGraph graph,
-        HashSet<string> active)
+        HashSet<string> active,
+        HashSet<string> scannedFiles)
     {
+        context.CancellationToken.ThrowIfCancellationRequested();
         string fullPath = Path.GetFullPath(sourcePath);
         if (!File.Exists(fullPath))
             return;
@@ -103,7 +111,7 @@ public static partial class SourceDependencyGraphBuilder
         {
             string extension = GetCompleteExtension(fullPath);
             if (SerializedExtensions.Contains(extension))
-                StreamReferences(node, fullPath, context, graph, active);
+                StreamReferences(node, fullPath, context, graph, active, scannedFiles);
 
             string metaPath = fullPath.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)
                 ? fullPath
@@ -120,7 +128,7 @@ public static partial class SourceDependencyGraphBuilder
                         Kind = kind,
                     },
                     kind);
-                StreamReferences(metaNode, metaPath, context, graph, active);
+                StreamReferences(metaNode, metaPath, context, graph, active, scannedFiles);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -146,16 +154,55 @@ public static partial class SourceDependencyGraphBuilder
         string sourcePath,
         SourceProjectImportContext context,
         SourceDependencyGraph graph,
-        HashSet<string> active)
+        HashSet<string> active,
+        HashSet<string> scannedFiles)
     {
+        context.CancellationToken.ThrowIfCancellationRequested();
+        if (!scannedFiles.Add(sourcePath))
+            return;
+
         string currentProperty = string.Empty;
+        bool isMaterial = sourcePath.EndsWith(".mat", StringComparison.OrdinalIgnoreCase);
+        int texturePropertiesIndent = -1;
+        string? materialTextureSlot = null;
         long? modificationTargetFileId = null;
         string? modificationPropertyPath = null;
         foreach (string line in File.ReadLines(sourcePath))
         {
+            context.CancellationToken.ThrowIfCancellationRequested();
             string trimmed = line.Trim();
             if (trimmed.StartsWith("guid:", StringComparison.Ordinal))
                 continue;
+
+            if (isMaterial && trimmed.Length > 0)
+            {
+                int indent = line.Length - line.TrimStart().Length;
+                if (texturePropertiesIndent >= 0 && indent < texturePropertiesIndent)
+                {
+                    texturePropertiesIndent = -1;
+                    materialTextureSlot = null;
+                }
+                else if (texturePropertiesIndent >= 0 && indent == texturePropertiesIndent &&
+                    !trimmed.StartsWith("- ", StringComparison.Ordinal) &&
+                    !trimmed.StartsWith("m_TexEnvs:", StringComparison.Ordinal))
+                {
+                    texturePropertiesIndent = -1;
+                    materialTextureSlot = null;
+                }
+
+                if (trimmed.StartsWith("m_TexEnvs:", StringComparison.Ordinal))
+                {
+                    texturePropertiesIndent = indent;
+                    materialTextureSlot = null;
+                }
+                else if (texturePropertiesIndent >= 0 && indent == texturePropertiesIndent)
+                {
+                    Match textureSlotMatch = MaterialTextureSlotRegex().Match(trimmed);
+                    materialTextureSlot = textureSlotMatch.Success
+                        ? textureSlotMatch.Groups["slot"].Value
+                        : null;
+                }
+            }
 
             Match modificationTargetMatch = PrefabModificationTargetRegex().Match(line);
             if (modificationTargetMatch.Success)
@@ -188,7 +235,10 @@ public static partial class SourceDependencyGraphBuilder
                     out long localFileId);
                 string serializedProperty = propertyMatch.Success
                     ? propertyMatch.Groups["property"].Value
-                    : currentProperty;
+                    : isMaterial && materialTextureSlot is not null &&
+                        trimmed.Contains("m_Texture:", StringComparison.Ordinal)
+                        ? "m_Texture"
+                        : currentProperty;
                 if (IsPrefabCorrespondenceProperty(serializedProperty))
                     continue;
 
@@ -212,6 +262,10 @@ public static partial class SourceDependencyGraphBuilder
                         ? modificationTargetFileId
                         : null,
                     ReferringProperty = property,
+                    ReferringMaterialTextureSlot = isMaterial &&
+                        string.Equals(serializedProperty, "m_Texture", StringComparison.Ordinal)
+                        ? materialTextureSlot
+                        : null,
                     Kind = kind,
                     IsCycle = cycle,
                 };
@@ -235,7 +289,7 @@ public static partial class SourceDependencyGraphBuilder
                     continue;
                 }
 
-                Visit(targetPath, kind, context, graph, active);
+                Visit(targetPath, kind, context, graph, active, scannedFiles);
             }
         }
     }
@@ -335,4 +389,7 @@ public static partial class SourceDependencyGraphBuilder
         @"^\s*propertyPath:\s*(?<propertyPath>.*)$",
         RegexOptions.CultureInvariant)]
     private static partial Regex PrefabModificationPropertyRegex();
+
+    [GeneratedRegex(@"^-\s+(?<slot>[A-Za-z0-9_.$-]+):", RegexOptions.CultureInvariant)]
+    private static partial Regex MaterialTextureSlotRegex();
 }

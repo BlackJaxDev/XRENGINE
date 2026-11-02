@@ -97,6 +97,8 @@ public sealed partial class XRRenderPipelineInstance
         /// <summary>Pipeline and resource-generation identity paired with temporal history.</summary>
         public ulong ViewHistoryPipelineIdentity { get; private set; }
         public bool ViewHistoryAuthoring { get; private set; }
+        /// <summary>Render time frozen when this invocation begins.</summary>
+        public float RenderTimeSeconds { get; private set; }
         internal bool ViewHistoryCaptureAccepted { get; private set; } = true;
         internal RenderFrameViewHistoryCandidateToken ViewHistoryCandidate { get; private set; }
         public ulong OutputCompletionReceiptId { get; private set; }
@@ -312,6 +314,7 @@ public sealed partial class XRRenderPipelineInstance
             ViewHistoryOutputRequest = viewHistoryOutputRequest;
             ViewHistoryPipelineIdentity = viewHistoryPipelineIdentity;
             ViewHistoryAuthoring = viewHistoryAuthoring;
+            RenderTimeSeconds = RuntimeEngine.ElapsedTime;
             ViewHistoryCaptureAccepted = true;
             ViewHistoryCandidate = default;
             OutputCompletionReceiptId = 0UL;
@@ -385,6 +388,7 @@ public sealed partial class XRRenderPipelineInstance
             }
             catch
             {
+                RenderTimeSeconds = 0.0f;
                 RenderingWorld = previousRenderingWorld;
                 // Capture can mint a resolved candidate before snapshot acquisition
                 // or native viewport setup fails. It has not transferred to a
@@ -392,6 +396,7 @@ public sealed partial class XRRenderPipelineInstance
                 ViewHistoryCandidate.Discard();
                 ViewHistoryCandidate = default;
                 ViewHistoryCaptureAccepted = false;
+                RenderTimeSeconds = 0f;
                 WorldSnapshot = null;
                 FrameViewSet = null;
                 TemporalAuthoringViewSet = null;
@@ -432,12 +437,14 @@ public sealed partial class XRRenderPipelineInstance
             OutputFBO = null;
             ShadowPass = false;
             StereoPass = false;
+            RenderTimeSeconds = 0.0f;
             ViewHistorySequenceId = 0UL;
             ViewHistorySourceFrame = 0UL;
             ViewHistoryOutputRequest = default;
             ViewHistoryPipelineIdentity = 0UL;
             ViewHistoryAuthoring = false;
             ViewHistoryCaptureAccepted = true;
+            RenderTimeSeconds = 0f;
             ViewHistoryCandidate = default;
             OutputCompletionReceiptId = 0UL;
             OutputCompletionRequest = default;

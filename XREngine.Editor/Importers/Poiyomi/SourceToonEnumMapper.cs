@@ -14,7 +14,7 @@ internal static class SourceToonEnumMapper
             (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8));
 
     public static int AlphaMaskMode(SerializedMaterialDocument document, ICollection<MaterialConversionDiagnostic> diagnostics)
-        => MapInt(document, "_MainAlphaMaskMode", 0, diagnostics,
+        => MapInt(document, "_MainAlphaMaskMode", 2, diagnostics,
             (0, 0), (1, 1), (2, 2), (3, 3), (4, 4));
 
     public static int MatcapUvMode(SerializedMaterialDocument document, ICollection<MaterialConversionDiagnostic> diagnostics)
@@ -27,7 +27,7 @@ internal static class SourceToonEnumMapper
         => MapInt(document, "_RimBlendMode", 1, diagnostics, (0, 0), (1, 1), (2, 1), (3, 2));
 
     public static int DissolveMode(SerializedMaterialDocument document, ICollection<MaterialConversionDiagnostic> diagnostics)
-        => MapInt(document, "_DissolveType", 0, diagnostics, (1, 0), (2, 2), (3, 1), (4, 1));
+        => MapInt(document, "_DissolveType", 5, diagnostics, (1, 5), (2, 2), (3, 1), (4, 1));
 
     public static int SpecularType(SerializedMaterialDocument document, ICollection<MaterialConversionDiagnostic> diagnostics)
         => MapInt(document, "_Is_SpecularToHighColor", 0, diagnostics, (0, 1), (1, 0));
@@ -141,7 +141,7 @@ internal static class SourceToonEnumMapper
         diagnostics.Add(new MaterialConversionDiagnostic(
             MaterialConversionDiagnosticCodes.EnumValueOutOfRange,
             MaterialConversionDiagnosticSeverity.Warning,
-            $"Serialized enum value {sourceValue} is not supported by the pinned Poiyomi 9.3.64 mapping; using '{fallback}'.",
+            $"Serialized enum value {sourceValue} is not supported by the Poiyomi Toon mapping; using '{fallback}'.",
             sourceProperty));
         return fallback;
     }

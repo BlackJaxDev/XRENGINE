@@ -200,28 +200,39 @@ internal unsafe partial class VkMeshRenderer
                         frameSlot,
                         drawUniformSlot,
                         out expectedInfo);
-                if (!expectedSourceResolved ||
-                    !TryResolveBuffer(
-                        binding,
-                        frameSlot,
-                        drawUniformSlot,
-                        out DescriptorBufferInfo info,
-                        bindingSnapshot) ||
-                    expectedInfo.Buffer.Handle != info.Buffer.Handle ||
-                    expectedInfo.Offset != info.Offset ||
-                    expectedInfo.Range != info.Range ||
-                    info.Buffer.Handle == 0 ||
-                    info.Range == 0)
+                if (!expectedSourceResolved)
                     return false;
 
-                ulong generation = GetResourceGeneration(ObjectType.Buffer, info.Buffer.Handle);
-                if (generation == 0)
-                    return false;
-                hash.Add(true);
-                hash.Add(info.Buffer.Handle);
-                hash.Add(generation);
-                hash.Add(info.Offset);
-                hash.Add(info.Range);
+                XRDataBuffer? retainedPipelineBuffer = null;
+                try
+                {
+                    if (!TryResolveBuffer(
+                            binding,
+                            frameSlot,
+                            drawUniformSlot,
+                            out DescriptorBufferInfo info,
+                            out retainedPipelineBuffer,
+                            bindingSnapshot) ||
+                        expectedInfo.Buffer.Handle != info.Buffer.Handle ||
+                        expectedInfo.Offset != info.Offset ||
+                        expectedInfo.Range != info.Range ||
+                        info.Buffer.Handle == 0 ||
+                        info.Range == 0)
+                        return false;
+
+                    ulong generation = GetResourceGeneration(ObjectType.Buffer, info.Buffer.Handle);
+                    if (generation == 0)
+                        return false;
+                    hash.Add(true);
+                    hash.Add(info.Buffer.Handle);
+                    hash.Add(generation);
+                    hash.Add(info.Offset);
+                    hash.Add(info.Range);
+                }
+                finally
+                {
+                    retainedPipelineBuffer?.ReleaseBindingUse();
+                }
             }
         }
 
@@ -269,12 +280,11 @@ internal unsafe partial class VkMeshRenderer
 
             XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             if (pipeline is not null &&
-                (TryResolvePipelineResourceDataBuffer(pipeline, name, binding.DescriptorType, out _) ||
-                 TryResolvePipelineResourceDataBuffer(
+                (BindingResolvesPipelineResourceDataBuffer(pipeline, name, binding.DescriptorType) ||
+                 BindingResolvesPipelineResourceDataBuffer(
                      pipeline,
                      TrimDescriptorBufferSuffix(name),
-                     binding.DescriptorType,
-                     out _)))
+                     binding.DescriptorType)))
                 return false;
         }
 

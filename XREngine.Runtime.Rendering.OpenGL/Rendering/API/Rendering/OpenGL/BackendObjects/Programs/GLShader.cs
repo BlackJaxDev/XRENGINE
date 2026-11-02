@@ -111,6 +111,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (!_compilePending)
                     return true;
+                if (GLProgramCompileLinkQueue.SourceCompilationFaulted)
+                    return false;
 
                 int complete = 0;
                 MeasureRenderingShaderGlCall(
@@ -136,6 +138,7 @@ namespace XREngine.Rendering.OpenGL
                         "glGetShaderInfoLog",
                         () => Api.GetShaderInfoLog(BindingId, out info),
                         "phase=compile-final-log");
+                    StopSourceCompilationOnResourceFailure(info);
                     if (!string.IsNullOrEmpty(info))
                         Debug.OpenGLWarning(info);
                 }
@@ -152,6 +155,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (!_compilePending)
                     return true;
+                if (GLProgramCompileLinkQueue.SourceCompilationFaulted)
+                    return false;
 
                 _compilePending = false;
                 int status = 0;
@@ -168,6 +173,7 @@ namespace XREngine.Rendering.OpenGL
                         "glGetShaderInfoLog",
                         () => Api.GetShaderInfoLog(BindingId, out info),
                         "phase=compile-blocking-log");
+                    StopSourceCompilationOnResourceFailure(info);
                     if (!string.IsNullOrEmpty(info))
                         Debug.OpenGLWarning(info);
                     else
@@ -229,6 +235,9 @@ namespace XREngine.Rendering.OpenGL
 
             private void PushSource(bool compile = true)
             {
+                if (GLProgramCompileLinkQueue.SourceCompilationFaulted)
+                    return;
+
                 if (!RuntimeEngine.IsRenderThread)
                 {
                     RuntimeEngine.EnqueueMainThreadTask(() => PushSource(compile));
@@ -280,6 +289,12 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool Compile(out string? info, bool printLogInfo = true)
             {
+                if (GLProgramCompileLinkQueue.SourceCompilationFaulted)
+                {
+                    info = "Source compilation stopped after unfinished native work. Restart required.";
+                    return false;
+                }
+
                 if (RendererReloadFailureInjection.IsEnabled(
                         RendererReloadInjectedFailure.ShaderCompile))
                 {
@@ -312,6 +327,7 @@ namespace XREngine.Rendering.OpenGL
                     () => Api.GetShaderInfoLog(BindingId, out infoLog),
                     "phase=compile-sync-log");
                 info = infoLog;
+                StopSourceCompilationOnResourceFailure(infoLog);
                 IsCompiled = status != 0;
                 if (printLogInfo)
                 {
@@ -329,6 +345,9 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool Compile()
             {
+                if (GLProgramCompileLinkQueue.SourceCompilationFaulted)
+                    return false;
+
                 if (RendererReloadFailureInjection.IsEnabled(
                         RendererReloadInjectedFailure.ShaderCompile))
                 {
@@ -354,7 +373,22 @@ namespace XREngine.Rendering.OpenGL
                     () => Api.GetShader(BindingId, GLEnum.CompileStatus, out status),
                     "phase=compile-sync-status");
                 IsCompiled = status != 0;
+                if (!IsCompiled)
+                {
+                    string? info = null;
+                    MeasureRenderingShaderGlCall(
+                        "glGetShaderInfoLog",
+                        () => Api.GetShaderInfoLog(BindingId, out info),
+                        "phase=compile-sync-failure-log");
+                    StopSourceCompilationOnResourceFailure(info);
+                }
                 return IsCompiled;
+            }
+
+            private static void StopSourceCompilationOnResourceFailure(string? info)
+            {
+                if (GLProgramCompileLinkQueue.IsNativeCompilerResourceFailure(info))
+                    GLProgramCompileLinkQueue.StopSourceCompilation();
             }
 
             public string? ResolveFullSource()

@@ -41,7 +41,7 @@ public sealed class PhysicsChainStructuralCommandTests
     }
 
     [Test]
-    public void RemoveAddBeforeDrainDoesNotRecycleTheLiveSlot()
+    public void RemoveAddBeforeDrainRetiresTheOldHandle()
     {
         var world = new TestWorldContext();
         var node = new SceneNode("PhysicsChain");
@@ -49,26 +49,26 @@ public sealed class PhysicsChainStructuralCommandTests
         SetWorld(node, world);
         world.Invoke(ETickGroup.Normal);
         PhysicsChainRuntimeHandle originalHandle = component.RuntimeHandle;
+        originalHandle.IsValid.ShouldBeTrue();
 
         PhysicsChainWorld.TryGet(world, out PhysicsChainWorld? scheduler).ShouldBeTrue();
         scheduler.ShouldNotBeNull();
         scheduler!.TryResolveRuntimeHandle(originalHandle, out _).ShouldBeTrue();
 
+        // Deactivation retires the live slot. A new registration uses a new generation.
         SetWorld(node, null);
         SetWorld(node, world);
         world.Invoke(ETickGroup.Normal);
 
-        // Deactivation retires the live slot at once, before it writes rest transforms.
-        // The new registration gets a new generation, so the old handle cannot resolve
-        // to the component or to another component.
-        originalHandle.IsValid.ShouldBeTrue();
-        component.RuntimeHandle.IsValid.ShouldBeTrue();
-        component.RuntimeHandle.ShouldNotBe(originalHandle);
-        scheduler.TryResolveRuntimeHandle(originalHandle, out PhysicsChainComponent? stale).ShouldBeFalse();
-        stale.ShouldBeNull();
-        scheduler.TryResolveRuntimeHandle(component.RuntimeHandle, out PhysicsChainComponent? resolved).ShouldBeTrue();
+        scheduler!.RegisteredCount.ShouldBe(1);
+        scheduler.SlotCapacity.ShouldBe(1);
+        PhysicsChainRuntimeHandle currentHandle = component.RuntimeHandle;
+        currentHandle.IsValid.ShouldBeTrue();
+        currentHandle.Slot.ShouldBe(originalHandle.Slot);
+        currentHandle.Generation.ShouldNotBe(originalHandle.Generation);
+        scheduler.TryResolveRuntimeHandle(originalHandle, out _).ShouldBeFalse();
+        scheduler.TryResolveRuntimeHandle(currentHandle, out PhysicsChainComponent? resolved).ShouldBeTrue();
         resolved.ShouldBeSameAs(component);
-        scheduler.RegisteredCount.ShouldBe(1);
 
         SetWorld(node, null);
         world.Invoke(ETickGroup.Normal);

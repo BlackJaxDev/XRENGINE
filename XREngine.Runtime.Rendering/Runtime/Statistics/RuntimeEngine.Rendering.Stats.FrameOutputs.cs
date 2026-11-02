@@ -114,6 +114,15 @@ namespace XREngine
                     }
 
                     public static double LastWholeFrameMs => _lastManifest.WholeFrameMs;
+
+                    private static long _lastDesktopWorkTicks;
+
+                    /// <summary>Render-thread time of the last window frame, from after the XR eyes to the end of present.</summary>
+                    public static double LastDesktopWorkMs
+                        => Volatile.Read(ref _lastDesktopWorkTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
+                    internal static void RecordDesktopWork(long elapsedTicks)
+                        => Volatile.Write(ref _lastDesktopWorkTicks, elapsedTicks);
                     public static double LastFrameBudgetMs => _lastManifest.BudgetMs;
 
                     public static double GetLastOutputGpuMs(ulong outputId)

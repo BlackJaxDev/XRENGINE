@@ -3,7 +3,6 @@
   <Project Path="XREngine.ControlPlane/XREngine.ControlPlane.csproj" />
   <Project Path="XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj" />
   <Project Path="XREngine.Animation/XREngine.Animation.csproj" />
-  <Project Path="XREngine.AgentOrchestration/XREngine.AgentOrchestration.csproj" />
   <Project Path="XREngine.Audio/XREngine.Audio.csproj" />
   <Project Path="XREngine.Data/XREngine.Data.csproj" />
   <Project Path="XREngine.Editor/XREngine.Editor.csproj" />
@@ -36,14 +35,11 @@
   <Project Path="XREngine.UnitTests/Headless/XREngine.HeadlessTests.csproj" />
   <Project Path="XREngine.UnitTests/SoftwareVulkan/XREngine.SoftwareVulkanValidation.csproj" />
   <Project Path="XREngine.VRClient/XREngine.VRClient.csproj" />
-  <Project Path="Tools/LocalAgentBroker/LocalAgentBroker.csproj" />
   <Folder Name="/Build/" />
   <Folder Name="/Build/Submodules/" />
   <Folder Name="/Build/Submodules/OpenVR.NET/">
     <Project Path="Build/Submodules/OpenVR.NET/OpenVR.NET/OpenVR.NET.csproj" />
   </Folder>
-  <Project Path="Tools/LocalAgentBroker.Shared/LocalAgentBroker.Shared.csproj" />
-  <Project Path="Tools/LocalAgentBroker.Tray/LocalAgentBroker.Tray.csproj" />
   <Project Path="XREngine.Runtime.Physics.Jolt/XREngine.Runtime.Physics.Jolt.csproj" />
   <Project Path="XREngine.Runtime.Physics.PhysX/XREngine.Runtime.Physics.PhysX.csproj" />
   <Project Path="XREngine.Runtime.Physics.Jitter/XREngine.Runtime.Physics.Jitter.csproj" />

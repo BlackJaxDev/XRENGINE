@@ -19,6 +19,16 @@ The host keeps these responsibilities portable:
 
 The host does not own desktop window creation, native event pumping, OpenGL or Vulkan device ownership, VR startup, native audio devices, native physics libraries, file watching, process launch, clipboard access, or browser canvas and WebGPU objects.
 
+Detached ImGui windows set `RuntimeWindowCreateOptions.EventPumpParentGeneration`
+to the main native window's lifetime generation. The desktop event loop pumps
+auxiliary windows only when both the native owner thread and parent generation
+match. This link is independent of GL context sharing, so Vulkan windows also
+publish input snapshots. A zero value retains the shared GL context owner as the
+default parent. ImGui receives one group focus event before input replay, and
+native close requests before `NewFrame`.
+Native focus queries use current visibility because detached windows are created
+hidden and shown after their renderer is ready.
+
 ## Project Map
 
 | Project | Role |

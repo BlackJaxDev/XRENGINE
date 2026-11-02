@@ -15,7 +15,8 @@ internal static class AssimpMeshFactory
     public static XRMesh Create(
         Mesh mesh,
         IReadOnlyDictionary<string, List<SceneNode>> nodeCache,
-        Matrix4x4 dataTransform)
+        Matrix4x4 dataTransform,
+        bool importBlendShapeNormals = true)
     {
         ArgumentNullException.ThrowIfNull(mesh);
         ArgumentNullException.ThrowIfNull(nodeCache);
@@ -24,7 +25,7 @@ internal static class AssimpMeshFactory
         if (IsTriangleDominant(mesh))
         {
             using RenderObjectPublicationScope packedPublication = GenericRenderObject.BeginDeferredPublication();
-            XRMesh packed = CreateTriangleMesh(mesh, nodeCache, dataTransform);
+            XRMesh packed = CreateTriangleMesh(mesh, nodeCache, dataTransform, importBlendShapeNormals);
             packedPublication.Complete();
             return packed;
         }
@@ -91,7 +92,8 @@ internal static class AssimpMeshFactory
     private static XRMesh CreateTriangleMesh(
         Mesh mesh,
         IReadOnlyDictionary<string, List<SceneNode>> nodeCache,
-        Matrix4x4 dataTransform)
+        Matrix4x4 dataTransform,
+        bool importBlendShapeNormals)
     {
         int texCoordSets = CountLeadingChannels(mesh.TextureCoordinateChannelCount, channel => mesh.TextureCoordinateChannels[channel]?.Count ?? 0);
         int colorSets = CountLeadingChannels(mesh.VertexColorChannelCount, channel => mesh.VertexColorChannels[channel]?.Count ?? 0);
@@ -156,7 +158,7 @@ internal static class AssimpMeshFactory
                     source.AddInfluence(bone, weight);
 
             if (mesh.HasMeshAnimationAttachments)
-                AddBlendshapeDeltas(mesh, sourceIndex, position, normal, tangent, dataTransform, source);
+                AddBlendshapeDeltas(mesh, sourceIndex, position, normal, tangent, dataTransform, source, importBlendShapeNormals);
             return packed;
         }
     }
@@ -252,12 +254,19 @@ internal static class AssimpMeshFactory
         Vector3? normal,
         Vector3? tangent,
         Matrix4x4 dataTransform,
-        XRMeshPackedSource source)
+        XRMeshPackedSource source,
+        bool importBlendShapeNormals)
     {
         for (int blendshapeIndex = 0; blendshapeIndex < mesh.MeshAnimationAttachmentCount; blendshapeIndex++)
         {
             MeshAnimationAttachment blendshape = mesh.MeshAnimationAttachments[blendshapeIndex];
             Vector3 targetPosition = Vector3.Transform(blendshape.Vertices[vertexIndex], dataTransform);
+            if (!importBlendShapeNormals)
+            {
+                source.AddBlendshapeDelta(blendshapeIndex, targetPosition - position, Vector3.Zero, Vector3.Zero);
+                continue;
+            }
+
             Vector3 targetNormal = blendshape.Normals is { } normals && vertexIndex < normals.Count
                 ? Vector3.TransformNormal(normals[vertexIndex], dataTransform)
                 : Vector3.Zero;

@@ -34,6 +34,7 @@ public static class AdvancedShaderAccessLibrary
         AppendRequiredExtensions(source, backend, textureEncoding);
         AdvancedShaderRecordLayout.ValidateCpuLayouts();
         AdvancedStandardMaterialShaderContract.AppendDefines(source);
+        NativeUberMaterialSchema.AppendShaderDefines(source);
         AppendDefine(source, "XR_ADV_GLOBAL_SET", descriptorSet);
         AppendDefine(
             source,

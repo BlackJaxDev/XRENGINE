@@ -13,7 +13,21 @@ internal sealed partial class VulkanCommandRuntime
     {
         try
         {
-            VulkanPrimaryCommandRecordingResult result = RecordPrimaryCore(in input);
+            VulkanPrimaryCommandRecordingResult result =
+                VulkanCaptureOwnerReadiness.HasClosedOwner(input.FramePlan)
+                    ? VulkanPrimaryCommandRecordingResult.Failed(
+                        "A capture owner closed before command recording.",
+                        failureKind: EVulkanCommandRecordingFailureKind.RetryFrame)
+                    : RecordPrimaryCore(in input);
+            // Closing an owner can race with preparation. Reject the whole
+            // frozen transaction; its output receipts must not report success.
+            // Native allocation readers remain pinned until command reset.
+            if (!result.Succeeded && VulkanCaptureOwnerReadiness.HasClosedOwner(input.FramePlan))
+                result = result with
+                {
+                    Disposition = EVulkanPrimaryCommandRecordingDisposition.Failed,
+                    FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame,
+                };
             if (!result.Succeeded)
                 SettleFailedPrimaryRecording(in input);
             else if (result.Disposition == EVulkanPrimaryCommandRecordingDisposition.Recorded)
@@ -796,13 +810,18 @@ internal sealed partial class VulkanCommandRuntime
         if (context.NoAuthoredDesktopOutput)
             return VulkanPrimaryCommandRecordingResult.NoAuthoredOutput(reason);
 
+        // A deferral without a failure kind is transient: a pipeline is still compiling, or a
+        // renderer retired after the plan was sealed. It must not pause the renderer. The next
+        // frame builds a fresh plan, and the retry diagnostic keeps the reason visible.
         return context.Policy.IsPresentNow
             ? VulkanPrimaryCommandRecordingResult.Failed(
                 reason,
                 context.Policy.ReadinessPolicy,
                 context.Policy.WorkClass,
                 context.Policy.SourceFrameId,
-                context.FailureKind)
+                context.FailureKind == EVulkanCommandRecordingFailureKind.None
+                    ? EVulkanCommandRecordingFailureKind.RetryFrame
+                    : context.FailureKind)
             : VulkanPrimaryCommandRecordingResult.Deferred(reason);
     }
 

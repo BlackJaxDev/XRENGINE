@@ -381,6 +381,21 @@ internal sealed partial class VulkanPreparedStableBinStream
                 return false;
             }
 
+            // An explicit CPU-owned draw stays in the canonical package for
+            // ordered authored replay. It has no native visibility record.
+            if ((canonicalDraw.Flags & (uint)GPUIndirectRenderFlags.CpuFallbackOnly) != 0u)
+            {
+                EAdvancedGeometryProducer cpuProducer = producersByPayload[payloadIndex];
+                if (cpuProducer is not (EAdvancedGeometryProducer.CpuDirectStaticIndexed or
+                    EAdvancedGeometryProducer.CpuDirectPreSkinned))
+                {
+                    reason = $"canonical CPU-owned draw {payloadIndex} has GPU geometry producer {cpuProducer}";
+                    ThawForReuse();
+                    return false;
+                }
+                continue;
+            }
+
             AdvancedGeometryRecord geometry = default;
             bool geometryResolved =
                 payload.Geometry.IsValid &&

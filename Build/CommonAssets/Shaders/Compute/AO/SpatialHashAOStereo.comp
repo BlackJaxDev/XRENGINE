@@ -23,7 +23,6 @@ uniform uint MaxSamplesPerCell;
 uniform float CellSizeMin;
 uniform float Bias;
 uniform float Thickness;
-uniform float Power;
 uniform float SamplesPerPixel;
 uniform float JitterScale;
 uniform int RayStepCount;
@@ -298,7 +297,7 @@ void ProcessEye(
         occlusionRatio = float(originalOcclusion) / (float(max(originalSamples, 1u)) * float(OcclusionScale));
     }
 
-    float rawAO = pow(clamp(1.0 - occlusionRatio, 0.0, 1.0), Power);
+    float rawAO = clamp(1.0 - occlusionRatio, 0.0, 1.0);
     float ao = rawAO;
 
     if (HistoryReady)

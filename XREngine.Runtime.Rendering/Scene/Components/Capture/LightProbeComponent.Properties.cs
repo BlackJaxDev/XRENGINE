@@ -92,6 +92,23 @@ namespace XREngine.Components.Capture.Lights
 
         #region IBL Resource Properties
 
+        private ELightProbeReflectionFilter _reflectionFilter;
+
+        /// <summary>
+        /// Selects reflection filtering for new generations. Diffuse irradiance is unchanged.
+        /// </summary>
+        [DefaultValue(ELightProbeReflectionFilter.Ggx)]
+        public ELightProbeReflectionFilter ReflectionFilter
+        {
+            get => _reflectionFilter;
+            set => SetField(ref _reflectionFilter, value);
+        }
+
+        /// <summary>Gets the sampling convention of the completed published images.</summary>
+        [YamlIgnore]
+        public ELightProbePrefilterConvention PublishedPrefilterConvention
+            => _activeIblOutput?.PrefilterConvention ?? ELightProbePrefilterConvention.PerceptualRoughness;
+
         public uint IrradianceResolution
         {
             get => _irradianceResolution;
@@ -109,8 +126,8 @@ namespace XREngine.Components.Capture.Lights
         }
 
         /// <summary>
-        /// If true, releases the captured environment cubemap and any octahedral intermediate
-        /// once irradiance and prefilter outputs have been generated.
+        /// If enabled, releases captured environment textures after IBL generation when
+        /// realtime capture is stopped. Active realtime capture retains one set of face targets.
         /// </summary>
         public bool ReleaseTransientEnvironmentTexturesAfterCapture
         {
@@ -137,6 +154,7 @@ namespace XREngine.Components.Capture.Lights
         }
 
         private uint _captureVersion;
+        private ulong _completedIblPublicationCount;
         private bool _iblTexturesValid;
 
         [Browsable(false)]
@@ -145,6 +163,13 @@ namespace XREngine.Components.Capture.Lights
             get => _captureVersion;
             private set => SetField(ref _captureVersion, value);
         }
+
+        /// <summary>
+        /// Counts valid completed IBL writers published during this component's lifetime.
+        /// Failed attempts and restored retained textures do not increase this count.
+        /// </summary>
+        [Browsable(false), YamlIgnore]
+        public ulong CompletedIblPublicationCount => _completedIblPublicationCount;
 
         [Browsable(false)]
         public bool IblTexturesValid

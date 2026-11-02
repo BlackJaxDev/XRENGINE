@@ -178,6 +178,10 @@ struct BoneMappingData
     int Flags;
     vec3 RestLocalDirection;
     float _pad0;
+    int RootParticleIndex;
+    int _pad1;
+    int _pad2;
+    int _pad3;
 };
 
 struct TextureHandleEntry

@@ -16,7 +16,11 @@ public sealed partial class TransformHierarchyStore : IDisposable
     private uint[] _generations = [];
     private int[] _parent = [], _order = [], _position = [], _end = [], _first = [], _next = [], _stack = [];
     private Matrix4x4[] _local = [], _world = [], _render = [];
-    private int[] _subscribers = [], _notifications = [];
+    private int[] _notificationInterest = [], _notifications = [];
+    // One bit for each hierarchy position with a pending notification. The bits are a hint for the dispatch scan:
+    // _notifications holds the pending masks. Reorder rebuilds the bits when positions change.
+    private ulong[] _pendingNotificationPositions = [];
+    private bool _hasPendingNotificationPositions;
     private bool[] _publication = [], _worldOverride = [], _localDirty = [], _worldDirty = [];
     private ulong[] _dirty = [], _batch = [];
     private readonly Stack<int> _free = new();
@@ -107,7 +111,7 @@ public sealed partial class TransformHierarchyStore : IDisposable
                 _render[index] = render;
                 _parent[index] = -1;
                 _worldOverride[index] = owner.UsesCustomWorldMatrix;
-                _subscribers[index] = owner.MatrixSubscriberCount;
+                _notificationInterest[index] = owner.MatrixNotificationInterest;
                 _publication[index] = true;
                 _dirty[index >> 6] |= 1UL << (index & 63);
                 _count++;
@@ -375,13 +379,38 @@ public sealed partial class TransformHierarchyStore : IDisposable
             throw new InvalidOperationException("Hierarchy mutations must be deferred until matrix evaluation completes.");
     }
     internal void HierarchyChanged() { RejectHierarchyMutationDuringEvaluation(); lock (_gate) _orderDirty = true; }
-    internal void SetSubscribers(TransformHandle h, int count) { lock (_gate) _subscribers[Require(h)] = count; }
+    /// <summary>Sets the notification bits that have an effect on the owner of <paramref name="h"/>.</summary>
+    internal void SetNotificationInterest(TransformHandle h, int interest)
+    {
+        lock (_gate) _notificationInterest[Require(h)] = interest;
+    }
+
     internal void RecordEvent() => Interlocked.Increment(ref _events);
+
+    /// <summary>
+    /// Queues a notification during matrix evaluation. Bits that have no effect on the owner are dropped,
+    /// so a transform with no handlers and no overridden change method gets no dispatch.
+    /// </summary>
+    /// <returns>False when this thread does not evaluate this store, so the caller must dispatch now.</returns>
     internal bool DeferNotification(TransformHandle h, int mask)
     {
         if (_evaluating != this) return false;
-        lock (_gate) _notifications[Require(h)] |= mask;
+        lock (_gate)
+        {
+            int i = Require(h);
+            FlagNotification(i, mask & _notificationInterest[i]);
+        }
         return true;
+    }
+
+    /// <summary>Adds pending notification bits for row <paramref name="i"/>. The caller holds <see cref="_gate"/>.</summary>
+    private void FlagNotification(int i, int mask)
+    {
+        if (mask == 0) return;
+        _notifications[i] |= mask;
+        int position = _position[i];
+        _pendingNotificationPositions[position >> 6] |= 1UL << (position & 63);
+        _hasPendingNotificationPositions = true;
     }
 
     /// <summary>Rebuilds contiguous subtree ranges after a batch of hierarchy edits.</summary>
@@ -425,6 +454,18 @@ public sealed partial class TransformHierarchyStore : IDisposable
         }
         if (cursor != _count) throw new InvalidOperationException("Transform hierarchy contains a parenting cycle.");
         _orderDirty = false;
+        if (_hasPendingNotificationPositions)
+            RebuildPendingNotificationPositions();
+    }
+
+    /// <summary>Sets the pending-notification bits again from the new positions. The caller holds <see cref="_gate"/>.</summary>
+    private void RebuildPendingNotificationPositions()
+    {
+        Array.Clear(_pendingNotificationPositions);
+        _hasPendingNotificationPositions = false;
+        for (int i = 0; i < _used; i++)
+            if (_notifications[i] != 0 && _owners[i] is not null)
+                FlagNotification(i, _notifications[i]);
     }
 
     /// <summary>Propagates disjoint dirty subtree ranges, then dispatches matrix notifications.</summary>
@@ -519,16 +560,37 @@ public sealed partial class TransformHierarchyStore : IDisposable
     }
 
     /// <summary>Runs the pending matrix notifications in hierarchy order.</summary>
+    /// <remarks>The scan visits only the positions with a pending-notification bit, 64 positions for each word.</remarks>
     /// <returns>The number of transforms that got notifications.</returns>
     private int DispatchNotifications()
     {
         // Snapshot identities before callbacks, which may detach, destroy or reparent entries.
         _changed.Clear();
-        for (int p = 0; p < _count; p++)
+        lock (_gate)
         {
-            int i = _order[p];
-            int mask = Interlocked.Exchange(ref _notifications[i], 0);
-            if (mask != 0 && _owners[i] is { } owner) _changed.Add((owner, mask));
+            if (_hasPendingNotificationPositions)
+            {
+                ulong[] pending = _pendingNotificationPositions;
+                for (int word = 0; word < pending.Length; word++)
+                {
+                    ulong bits = pending[word];
+                    if (bits == 0) continue;
+                    pending[word] = 0;
+                    do
+                    {
+                        int position = (word << 6) + BitOperations.TrailingZeroCount(bits);
+                        bits &= bits - 1;
+                        if (position >= _order.Length) continue;
+                        int i = _order[position];
+                        int mask = _notifications[i];
+                        if (mask == 0) continue;
+                        _notifications[i] = 0;
+                        if (_owners[i] is { } owner) _changed.Add((owner, mask));
+                    }
+                    while (bits != 0);
+                }
+                _hasPendingNotificationPositions = false;
+            }
         }
         int notified = _changed.Count;
         for (int i = 0; i < _changed.Count; i++)
@@ -545,7 +607,7 @@ public sealed partial class TransformHierarchyStore : IDisposable
                     {
                         var retry = _changed[pending];
                         if (retry.Owner.HierarchyStore == this)
-                            _notifications[Require(retry.Owner.HierarchyHandle)] |= retry.Mask;
+                            FlagNotification(Require(retry.Owner.HierarchyHandle), retry.Mask);
                     }
                 throw;
             }
@@ -603,7 +665,8 @@ public sealed partial class TransformHierarchyStore : IDisposable
                         _publication[i] = false;
                         bool changed = !_render[i].Equals(_world[i]);
                         _render[i] = _world[i];
-                        if (changed) _notifications[i] |= 16;
+                        if (changed)
+                            FlagNotification(i, TransformBase.RenderMatrixNotification & _notificationInterest[i]);
                         _publicationSlots[published++] = i;
                     }
                 }
@@ -660,11 +723,12 @@ public sealed partial class TransformHierarchyStore : IDisposable
         Array.Resize(ref _end, capacity); Array.Resize(ref _first, capacity); Array.Resize(ref _next, capacity);
         Array.Resize(ref _stack, capacity * 2);
         Array.Resize(ref _local, capacity); Array.Resize(ref _world, capacity); Array.Resize(ref _render, capacity);
-        Array.Resize(ref _subscribers, capacity); Array.Resize(ref _notifications, capacity);
+        Array.Resize(ref _notificationInterest, capacity); Array.Resize(ref _notifications, capacity);
         Array.Resize(ref _localDirty, capacity); Array.Resize(ref _worldDirty, capacity);
         Array.Resize(ref _publicationSlots, capacity);
         Array.Resize(ref _publication, capacity); Array.Resize(ref _worldOverride, capacity);
         Array.Resize(ref _dirty, (capacity + 63) / 64); Array.Resize(ref _batch, (capacity + 63) / 64);
+        Array.Resize(ref _pendingNotificationPositions, (capacity + 63) / 64);
         _ranges.EnsureCapacity(capacity);
         _changed.EnsureCapacity(capacity);
     }

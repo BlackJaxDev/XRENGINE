@@ -31,7 +31,7 @@ using XREngine.Rendering.Info;
 
 namespace XREngine.Editor.ComponentEditors;
 
-public sealed class ModelComponentEditor : IXRComponentEditor
+public sealed partial class ModelComponentEditor : IXRComponentEditor
 {
     private static readonly Vector4 ActiveLodHighlight = new(0.20f, 0.50f, 0.90f, 0.18f);
     private static readonly string[] SubmeshInspectorTabLabels = ["Properties", "Tools"];
@@ -134,6 +134,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     {
         public string Filter = string.Empty;
         public bool HideEmptySubmeshes;
+        public bool HideBlendshapesWithoutEffect = true;
+        public readonly HashSet<string> EffectiveBlendshapeNames = new(StringComparer.InvariantCultureIgnoreCase);
         public HashSet<int> SelectedSubmeshIndices = [];
         public int RenamingIndex = -1;
         public string RenameBuffer = string.Empty;
@@ -226,12 +228,20 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (model.Meshes.Count == 0)
             return;
 
+        var panelState = s_submeshPanelStates.GetValue(modelComponent, _ => new SubmeshPanelState());
+        bool hideBlendshapesWithoutEffect = panelState.HideBlendshapesWithoutEffect;
+        if (ImGui.Checkbox("Hide Blendshapes Without Effect", ref hideBlendshapesWithoutEffect))
+            panelState.HideBlendshapesWithoutEffect = hideBlendshapesWithoutEffect;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The All LODs list keeps a name if any mesh has a delta. Each LOD shows only shapes with a delta in its mesh.");
+        if (panelState.HideBlendshapesWithoutEffect)
+            RefreshEffectiveBlendshapeNames(modelComponent, panelState.EffectiveBlendshapeNames);
+
         DrawUnifiedBlendshapeControls(modelComponent);
 
         if (!ImGui.CollapsingHeader("Submeshes"))
             return;
 
-        var panelState = s_submeshPanelStates.GetValue(modelComponent, _ => new SubmeshPanelState());
         ImGui.SetNextItemWidth(MathF.Min(360.0f, ImGui.GetContentRegionAvail().X));
         ImGui.InputTextWithHint("##SubmeshFilter", "Filter by submesh, mesh, or material...", ref panelState.Filter, 128u);
         if (!string.IsNullOrWhiteSpace(panelState.Filter))
@@ -320,6 +330,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (!ImGui.CollapsingHeader("Blendshapes (All LODs)"))
             return;
 
+        SubmeshPanelState panelState = s_submeshPanelStates.GetValue(modelComponent, _ => new SubmeshPanelState());
+        bool hideWithoutEffect = panelState.HideBlendshapesWithoutEffect;
         var blendshapeValues = new Dictionary<string, List<float>>(StringComparer.InvariantCultureIgnoreCase);
         var displayNames = new Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase);
 
@@ -338,6 +350,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 for (uint i = 0; i < blendshapeCount; i++)
                 {
                     string name = mesh.BlendshapeNames[(int)i] ?? $"Blendshape {i}";
+                    if (hideWithoutEffect && !panelState.EffectiveBlendshapeNames.Contains(name))
+                        continue;
                     if (!blendshapeValues.TryGetValue(name, out var values))
                     {
                         values = new List<float>();
@@ -352,7 +366,9 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         if (blendshapeValues.Count == 0)
         {
-            ImGui.TextDisabled("No blendshapes found across runtime meshes.");
+            ImGui.TextDisabled(hideWithoutEffect
+                ? "No blendshapes with an effect found across runtime meshes."
+                : "No blendshapes found across runtime meshes.");
             return;
         }
 
@@ -1031,6 +1047,10 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return;
         }
 
+        bool hideWithoutEffect = s_submeshPanelStates.GetValue(modelComponent, _ => new SubmeshPanelState()).HideBlendshapesWithoutEffect;
+        XRMeshBlendshapeEffectSnapshot? effects = hideWithoutEffect ? GetBlendshapeEffects(mesh) : null;
+        int visibleCount = 0;
+
         if (ImGui.BeginTable($"Blendshapes_{submeshIndex}_{lodIndex}", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
         {
             ImGui.TableSetupColumn("Blendshape", ImGuiTableColumnFlags.WidthStretch, 0.5f);
@@ -1040,6 +1060,10 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             for (uint i = 0; i < blendshapeCount; i++)
             {
                 string name = mesh.BlendshapeNames[(int)i];
+                if (hideWithoutEffect && effects is not null && !effects.HasEffect((int)i))
+                    continue;
+
+                visibleCount++;
 
                 float percent = renderer.GetBlendshapeWeight(i);
 
@@ -1062,6 +1086,9 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
             ImGui.EndTable();
         }
+
+        if (visibleCount == 0)
+            ImGui.TextDisabled("No blendshapes with an effect in this mesh.");
     }
 
     private static void PushBlendshapeWeightsToGpu(ModelComponent modelComponent, string blendshapeName, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)

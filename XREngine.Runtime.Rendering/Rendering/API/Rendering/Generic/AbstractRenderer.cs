@@ -1226,7 +1226,8 @@ namespace XREngine.Rendering
             XRDataBuffer destination,
             nint destinationOffset,
             nuint byteCount,
-            string label)
+            string label,
+            IRenderResourceLeaseOwner? authoringLease = null)
             => ERendererComputeEnqueueStatus.Unsupported;
 
         /// <summary>
@@ -1658,6 +1659,13 @@ namespace XREngine.Rendering
             MemoryBarrier(mask);
             return ERendererComputeEnqueueStatus.Enqueued;
         }
+        /// <summary>
+        /// Prepares the current attachment backing without authoring a draw or
+        /// certifying its contents. Deferred backends can return false for retry.
+        /// </summary>
+        public virtual bool TryPrepareFrameBufferAttachments(XRFrameBuffer frameBuffer)
+            => GetOrCreateAPIRenderObject(frameBuffer, generateNow: true)?.IsGenerated == true;
+
         public virtual void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer) { }
         public virtual XRGpuFence? InsertGpuFence()
             => null;

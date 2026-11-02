@@ -272,8 +272,10 @@ internal unsafe partial class VkRenderProgram
             return VulkanComputePipelineReadiness.Pending;
         }
 
-        bool foregroundRequired = VulkanProgramLinkPreparationScope.RequiresSynchronousLink(
-            BackendContext.Resources);
+        // A program without async permission has no other compile path. Without this
+        // foreground compile, it stays pending and blocks each frame that dispatches it.
+        bool foregroundRequired = !Data.AllowAsyncBackendCompile ||
+            VulkanProgramLinkPreparationScope.RequiresSynchronousLink(BackendContext.Resources);
         if (!manager.TryEnqueueComputePipelineCompile(
                 request,
                 acceptsBackendWork: BackendContext.IsDeviceOperational,
@@ -1327,7 +1329,48 @@ internal unsafe partial class VkRenderProgram
         out bool bindingSuperseded,
         out string? failureReason,
         bool excludeGlobalTextureArray = false,
-        bool allowSynchronousResourceUploads = true)
+        bool allowSynchronousResourceUploads = true,
+        XRFrameBuffer? directOutputOwner = null)
+    {
+        bindingSuperseded = false;
+        failureReason = null;
+        if (directOutputOwner is not null && reusableDescriptorBindingKey != 0 &&
+            !BackendContext.Resources.TryRegisterDirectComputeOutputOwner(
+                this, reusableDescriptorBindingKey, directOutputOwner))
+        {
+            failureReason = "The direct compute output owner is destroyed or conflicts with an existing binding key.";
+            return false;
+        }
+
+        EnterComputeDescriptorScratchTransaction();
+        try
+        {
+            if (directOutputOwner?.IsDestroyed == true)
+            {
+                failureReason = "The direct compute output owner was destroyed before descriptor preparation.";
+                return false;
+            }
+
+            return TryPrepareComputeDispatchResourcesCore(
+                planner, imageIndex, snapshot, reusableDescriptorBindingKey,
+                out bindingSuperseded, out failureReason,
+                excludeGlobalTextureArray, allowSynchronousResourceUploads);
+        }
+        finally
+        {
+            ExitComputeDescriptorScratchTransaction();
+        }
+    }
+
+    private bool TryPrepareComputeDispatchResourcesCore(
+        in VulkanProgramPlannerRequest planner,
+        uint imageIndex,
+        ComputeDispatchSnapshot snapshot,
+        ulong reusableDescriptorBindingKey,
+        out bool bindingSuperseded,
+        out string? failureReason,
+        bool excludeGlobalTextureArray,
+        bool allowSynchronousResourceUploads)
     {
         bindingSuperseded = false;
         failureReason = null;
@@ -1418,7 +1461,23 @@ internal unsafe partial class VkRenderProgram
             failureReason = "Reusable compute descriptor refresh failed.";
         return refreshed;
     }
-    internal bool TryRefreshReusableComputeDispatchFrameData(in VulkanProgramPlannerRequest planner, uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
+    internal bool TryRefreshReusableComputeDispatchFrameData(in VulkanProgramPlannerRequest planner, uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey, XRFrameBuffer? directOutputOwner)
+    {
+        EnterComputeDescriptorScratchTransaction();
+        try
+        {
+            if (directOutputOwner?.IsDestroyed == true)
+                return false;
+            return TryRefreshReusableComputeDispatchFrameDataCore(
+                planner, imageIndex, snapshot, reusableDescriptorBindingKey);
+        }
+        finally
+        {
+            ExitComputeDescriptorScratchTransaction();
+        }
+    }
+
+    private bool TryRefreshReusableComputeDispatchFrameDataCore(in VulkanProgramPlannerRequest planner, uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
     {
         if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
             return true;

@@ -22,6 +22,16 @@ internal interface IVkImageDescriptorSource
     uint DescriptorArrayLayers => 1u;
     ulong DescriptorGeneration => 0UL;
     bool IsDescriptorReady => true;
+    /// <summary>Reads the binding signature kept for one render frame and descriptor generation.</summary>
+    bool TryGetFrameBindingSignature(ulong frameId, ulong generation, out ulong signature)
+    {
+        signature = 0UL;
+        return false;
+    }
+    /// <summary>Keeps the binding signature of one render frame and descriptor generation.</summary>
+    void StoreFrameBindingSignature(ulong frameId, ulong generation, ulong signature)
+    {
+    }
     bool TryEnsureDescriptorReadyForUse(string reason) => IsDescriptorReady;
     bool TryEnsureDescriptorReadyForUse(string reason, bool allowSynchronousUpload)
         => allowSynchronousUpload ? TryEnsureDescriptorReadyForUse(reason) : IsDescriptorReady;

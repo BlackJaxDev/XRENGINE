@@ -62,8 +62,9 @@ namespace XREngine.Components.Scene.Mesh
         private void RendererCommittedOutputChanged(XRMeshRenderer renderer, uint producerEpoch, bool published,
             bool boundsChanged)
         {
-            // An unchanged committed bound keeps the CPU tree placement. Covered shadow casters
-            // still need every new output, because the GPU pose changed.
+            // A changed committed bound moves the CPU tree placement. The dispatcher also advances
+            // the scene's covered shadow caster output once for each output; this call repeats
+            // that for a withdrawn output, and the scene ignores a repeated producer epoch.
             if (boundsChanged)
                 Volatile.Write(ref _committedBoundsStateDirty, 1);
             if (ReferenceEquals(renderer, CurrentLODRenderer) &&

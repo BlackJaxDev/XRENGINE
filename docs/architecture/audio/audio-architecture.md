@@ -1,6 +1,6 @@
 # Audio Architecture
 
-> Last updated: 2026-09-29.
+> Last updated: 2026-10-16.
 
 ## Overview
 
@@ -73,6 +73,14 @@ state, playback, and buffer uploads. The OpenAL leaf owns the device/context,
 capture wrappers, EFX pools, native packages, and native license output. Native
 operations select the owning context and run under one shared OpenAL gate.
 `ListenerContext` disposes sources, buffers, and effects before the transport.
+
+A legacy listener registers with the world without opening an OpenAL device.
+It keeps pose, gain, mute, Doppler, speed, and distance state in memory. Source
+and buffer acquisition, effects access, `MakeCurrent`, capture access, and native
+metadata queries open the device on first use. The listener applies its stored
+state before it publishes the transport. Disposing a listener that never used
+native audio does not open a device. `VerifyError` checks an existing transport
+only. The V2 path still creates its transport when the listener is constructed.
 
 The optional V2 path composes an `IAudioTransport` and an
 `IAudioEffectsProcessor`. OpenAL EFX requires the OpenAL transport; requesting

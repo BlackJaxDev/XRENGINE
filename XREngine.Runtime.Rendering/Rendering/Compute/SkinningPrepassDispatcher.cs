@@ -291,11 +291,64 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
     private sealed partial class RendererResources
     {
+        /// <summary>History sequence of the frame that last dispatched changed input, or zero when it is not tracked.</summary>
+        public ulong OutputChangeSequence { get; set; }
+
         public bool HasCurrentFrameOutput(ulong frameId)
             => LastComputePrepassFrameId == frameId && _hasValidOutput;
     }
 
-    private void Run(XRMeshRenderer renderer, bool forceSkinning, bool forceBlendshapes = false)
+    /// <summary>
+    /// Runs forced deformation for the mesh atlas. It does not refit bounds or refresh the pose
+    /// from render state, so an unchanged renderer reuses a confirmed output and costs no dispatch.
+    /// </summary>
+    /// <remarks>
+    /// A recorded dispatch does not prove that it ran, because a backend can discard the frame that
+    /// holds it. Reuse without proof keeps an empty output for a skeleton that never moves. The
+    /// renderer dispatches each frame until a frame at or after its last change commits.
+    /// </remarks>
+    /// <param name="renderer">The renderer to deform.</param>
+    /// <param name="currentSequence">The current frame's history sequence, or zero when it is not tracked.</param>
+    /// <param name="committedSequence">The last committed history sequence, or zero when none exists.</param>
+    /// <param name="positions">The deformed position buffer.</param>
+    internal bool TryRunForMeshAtlas(
+        XRMeshRenderer renderer,
+        ulong currentSequence,
+        ulong committedSequence,
+        out XRDataBuffer? positions)
+    {
+        ArgumentNullException.ThrowIfNull(renderer);
+        positions = null;
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
+            return false;
+
+        Run(
+            renderer,
+            forceSkinning: true,
+            forceBlendshapes: true,
+            requireLiveBounds: false,
+            requireCommittedOutput: true,
+            currentSequence,
+            committedSequence);
+        lock (_syncRoot)
+        {
+            if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
+                !resources.HasCurrentFrameOutput(State.RenderFrameId))
+                return false;
+
+            positions = renderer.CaptureSkinnedOutputResources().Positions;
+            return positions is not null;
+        }
+    }
+
+    private void Run(
+        XRMeshRenderer renderer,
+        bool forceSkinning,
+        bool forceBlendshapes = false,
+        bool requireLiveBounds = true,
+        bool requireCommittedOutput = false,
+        ulong currentSequence = 0UL,
+        ulong committedSequence = 0UL)
     {
         if (AbstractRenderer.Current is null)
             return;
@@ -400,7 +453,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             && !renderer.HasGpuDrivenBoneSource;
         bool useSharedSkinPaletteBuffer = useExternalSkinPaletteSource || usePackedGlobalSkinPalette;
         bool useGlobalBlendWeights = false;
-        bool needsLiveSkinnedBounds = doSkinning &&
+        bool needsLiveSkinnedBounds = doSkinning && requireLiveBounds &&
             (forceSkinning || RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader);
 
         bool isInterleaved = mesh.Interleaved;
@@ -467,8 +520,17 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             if (!resources.Validate(mesh, doSkinning, doBlendshapes, isInterleaved, usePrecombinedBlendshapes))
                 return;
 
-            if (!needsLiveSkinnedBounds &&
-                resources.CanReuseOutput(doSkinning, doBlendshapes, usePrecombinedBlendshapes))
+            bool canReuseOutput = !needsLiveSkinnedBounds &&
+                resources.CanReuseOutput(doSkinning, doBlendshapes, usePrecombinedBlendshapes);
+            if (requireCommittedOutput)
+            {
+                if (!canReuseOutput)
+                    resources.OutputChangeSequence = currentSequence;
+                else if (resources.OutputChangeSequence == 0UL || committedSequence < resources.OutputChangeSequence)
+                    canReuseOutput = false;
+            }
+
+            if (canReuseOutput)
             {
                 resources.LastComputePrepassFrameId = frameId;
                 RuntimeEngine.Rendering.Stats.RecordSkinningUpload(

@@ -93,7 +93,11 @@ namespace XREngine.Rendering.Vulkan
                             recordingResult.OutputExecutionPlan;
                         attempt.HasAuthoredSwapchainWrite =
                             recordingResult.HasAuthoredSwapchainWrite;
-                        if (attempt.OutputExecutionPlan is { } sealedPlan &&
+                        // A modal resize keeps its non-blocking policy for the
+                        // whole attempt. A foreground dependency in the plan
+                        // must not turn a recording deferral into a terminal failure.
+                        if (!attempt.InteractiveResize &&
+                            attempt.OutputExecutionPlan is { } sealedPlan &&
                             sealedPlan.TryGetPresentNowContract(
                                 out RenderOutputRequest outputContract))
                         {

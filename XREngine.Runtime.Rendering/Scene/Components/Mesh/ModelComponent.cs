@@ -568,10 +568,11 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private RenderableMesh CreateRenderableMesh(SubMesh item)
-            => new(item, this, RetainRuntimeMeshRetirement)
-            {
-                //RootTransform = item.RootTransform
-            };
+        {
+            RenderableMesh mesh = new(item, this, RetainRuntimeMeshRetirement);
+            mesh.RenderBounds = RenderBounds;
+            return mesh;
+        }
 
         private void BeginModelMeshAddRange(IEnumerable<SubMesh> items)
         {

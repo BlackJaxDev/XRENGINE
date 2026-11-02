@@ -147,6 +147,8 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
         if (buffer.Handle == 0 && memory.Handle == 0)
             return;
 
+        Buffer diagnosticBuffer = buffer;
+
         VulkanLifetimeAuthority lifetime = RequireLifetime();
         VulkanRetirementTicket ticket = CaptureTicket(
             lifetime,
@@ -156,6 +158,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
             ticket = ticket.Merge(lifetime.Tracker.CaptureRetirementWatermark());
 
         int frameSlot = Volatile.Read(ref _frameSlot);
+        bool queued = false;
         lock (lifetime.Retirement.SyncRoot)
         {
             if (buffer.Handle != 0 && !lifetime.Retirement.AllBufferHandles.Add(buffer.Handle))
@@ -173,7 +176,18 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
             }
 
             if (buffer.Handle != 0 || memory.Handle != 0)
+            {
                 lifetime.Retirement.Buffers[frameSlot].Add(new RetiredBuffer(buffer, memory, ticket));
+                queued = true;
+            }
+        }
+
+        if (queued && VulkanBufferRetirementDiagnostics.Enabled)
+        {
+            ulong sizeBytes = TryGetAllocation(diagnosticBuffer, out VulkanMemoryAllocation allocation)
+                ? allocation.Size
+                : 0;
+            VulkanBufferRetirementDiagnostics.Record(owner, sizeBytes);
         }
     }
 

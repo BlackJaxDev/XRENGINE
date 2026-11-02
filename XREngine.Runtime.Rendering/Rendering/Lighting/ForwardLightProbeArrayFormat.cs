@@ -7,6 +7,7 @@ internal static class ForwardLightProbeArrayFormat
 {
     internal static ESizedInternalFormat Resolve(AbstractRenderer renderer, XRTexture2D[] sources, bool prefilter)
     {
+        ValidateLayerLayout(sources);
         if (renderer.BackendId != RendererBackendId.WebGPU) return ESizedInternalFormat.Rgb16f;
         if (sources.Length == 0) throw Invalid("the array has no retained layers");
         XRTexture2D first = sources[0];
@@ -32,6 +33,20 @@ internal static class ForwardLightProbeArrayFormat
                     throw Invalid("all retained layer mips must have identical dimensions and pixel representations");
         }
         return format;
+    }
+
+    private static void ValidateLayerLayout(XRTexture2D[] sources)
+    {
+        if (sources.Length == 0)
+            throw new NotSupportedException("ProbeArray.LayoutUnsupported: the array has no layers.");
+        XRTexture2D first = sources[0];
+        for (int index = 1; index < sources.Length; index++)
+        {
+            XRTexture2D source = sources[index];
+            if (source.Width != first.Width || source.Height != first.Height ||
+                source.SmallestMipmapLevel != first.SmallestMipmapLevel)
+                throw new NotSupportedException("ProbeArray.LayoutUnsupported: shared probe layers require equal extents and mip counts. Configure matching probe output layouts before publication.");
+        }
     }
 
     internal static XRTexture2DArray Create(AbstractRenderer renderer, XRTexture2D[] sources, bool prefilter,

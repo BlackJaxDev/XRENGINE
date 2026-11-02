@@ -582,6 +582,10 @@ namespace XREngine.Rendering
                 }
             }
 
+            bool sharedShadowPass = RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true;
+            if (sharedShadowPass && !scene.HasSharedOpaqueShadowCommand(currentRenderPass))
+                return;
+
             if ((renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback || meshletStrategy || traditionalGpuFallback) &&
                 !renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
@@ -592,11 +596,19 @@ namespace XREngine.Rendering
                     "[RenderDispatch] {0} mesh submission for pass {1} could not prepare material-tier scatter. Skipping CPU fallback.",
                     renderPasses.MeshSubmissionStrategy,
                     currentRenderPass);
+                if (sharedShadowPass)
+                    throw new RenderResourcePreparationPendingException(
+                        "The shared shadow material-tier scatter is not ready.");
                 return;
             }
 
             if (renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
+                if (sharedShadowPass)
+                {
+                    RenderZeroReadbackSharedShadowBuckets(renderPasses, camera, scene, currentRenderPass);
+                    return;
+                }
                 long allocationStart = GC.GetAllocatedBytesForCurrentThread();
                 try
                 {
@@ -662,6 +674,14 @@ namespace XREngine.Rendering
                 }
 
                 return;
+            }
+
+            if (sharedShadowPass)
+            {
+                RejectCompactMaterialTableSubmission(currentRenderPass,
+                    "Shared opaque shadow drawing requires a GPU-written compact tier range.");
+                throw new RenderResourcePreparationPendingException(
+                    "Shared opaque shadow drawing requires a GPU-written compact tier range.");
             }
 
             // Material map from scene (ID -> XRMaterial).
@@ -4110,7 +4130,7 @@ namespace XREngine.Rendering
                     sb.AppendLine("uniform mat4 PrevViewProjection;");
                 }
             }
-            sb.AppendLine("uniform int UseInstanceTransformBuffer;");
+            sb.AppendLine("uniform int UseInstanceTransformBuffer; // XRENGINE_FREQUENCY(RuntimeCallback)");
             sb.AppendLine();
 
             sb.AppendLine("uint LoadTransformId(uint drawID)");
@@ -5420,8 +5440,7 @@ namespace XREngine.Rendering
                     continue;
 
                 // Set material uniforms
-                renderer.SetMaterialUniforms(material, program);
-                renderer.ApplyRenderParameters(material.RenderOptions);
+                ApplyIndirectMaterialState(renderer, material, program);
 
                 GpuDebug("Batch draw: materialID={0} offset={1} count={2}", effectiveMaterialId, batch.Offset, effectiveCount);
 
@@ -5580,18 +5599,21 @@ namespace XREngine.Rendering
                     continue;
                 }
 
-                renderer.SetMaterialUniforms(material, program);
-                renderer.ApplyRenderParameters(material.RenderOptions);
+                ApplyIndirectMaterialState(renderer, material, program);
 
                 for (uint tier = 0; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
                 {
                     P3Diagnostics.IncTierIterated();
+                    // An empty atlas tier has no draws, and it would still publish every binding.
+                    if (scene.GetAtlasVertexCount((EAtlasTier)tier) == 0)
+                        continue;
                     XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
                     if (tierRenderer is null)
                     {
                         P3Diagnostics.IncTierSkippedConfigure();
                         continue;
                     }
+                    PublishAtlasUdimCoverage(program, material);
 
                     uint bucketIndex = ((uint)slotIndex * GPUBatchingBindings.MaterialTierCount) + tier;
                     nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
@@ -5617,7 +5639,9 @@ namespace XREngine.Rendering
                         defaultModelMatrix,
                         material: material,
                         allowMaxDrawFallback: true,
-                        emitBarrier: false);
+                        emitBarrier: false,
+                        bindForwardLighting: ((material.RenderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None) |
+                            program.GetActiveEngineUniformRequirements()).HasFlag(EUniformRequirements.Lights));
                 }
             }
 
@@ -5731,8 +5755,7 @@ namespace XREngine.Rendering
                 if (!TryUseIndirectGraphicsProgram(program, "ZeroReadbackActiveBucket"))
                     continue;
 
-                renderer.SetMaterialUniforms(material, program);
-                renderer.ApplyRenderParameters(material.RenderOptions);
+                ApplyIndirectMaterialState(renderer, material, program);
 
                 XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
                 if (tierRenderer is null)
@@ -6166,13 +6189,17 @@ namespace XREngine.Rendering
             uint indirectCommandSsboBinding = IndirectCommandSsboBinding,
             uint instanceTransformSsboBinding = InstanceTransformSsboBinding,
             bool bindForwardLighting = false,
-            int diagnosticRenderPass = int.MinValue)
+            int diagnosticRenderPass = int.MinValue,
+            bool requireSubmission = false)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchRenderIndirectCountBucket");
 
             var renderer = AbstractRenderer.Current;
             if (renderer is null || maxDrawCount == 0)
+            {
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect renderer or range is unavailable.");
                 return;
+            }
 
             // P3: with XRE_BUCKET_LOOP_DRY_RUN=1, skip the entire bucket dispatch (including the
             // upstream BindTo / SetEngineUniforms / VAO bind that would otherwise still cost CPU
@@ -6181,6 +6208,7 @@ namespace XREngine.Rendering
             if (P3Diagnostics.BucketLoopDryRun)
             {
                 P3Diagnostics.IncBucketDryRunSkipped();
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect draw is disabled by the bucket dry-run setting.");
                 return;
             }
             P3Diagnostics.IncBucketDispatched();
@@ -6193,6 +6221,7 @@ namespace XREngine.Rendering
                         diagnosticRenderPass,
                         EZeroReadbackMaterialTableDiagnosticStage.ProgramPending);
                 }
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect graphics program is not ready.");
                 return;
             }
 
@@ -6230,6 +6259,7 @@ namespace XREngine.Rendering
                 useInstanceTransformBuffer,
                 "ZeroReadbackMaterialTable"))
             {
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow scene database bindings are not ready.");
                 return;
             }
             graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
@@ -6255,6 +6285,7 @@ namespace XREngine.Rendering
             if (TrySkipTransientZeroReadbackCountPathMiss(parity, "DispatchRenderIndirectCountBucket"))
             {
                 renderer.BindVAOForRenderer(null);
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect count path is not ready.");
                 return;
             }
             AssertZeroReadbackUsesGpuCountPath(parity, "DispatchRenderIndirectCountBucket");
@@ -6347,6 +6378,7 @@ namespace XREngine.Rendering
             if (!parity.UsesCountDrawPath)
             {
                 renderer.BindVAOForRenderer(null);
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect count draw path is unavailable.");
                 return;
             }
 
@@ -6360,6 +6392,7 @@ namespace XREngine.Rendering
                 "RenderIndirectCountBucket"))
             {
                 renderer.BindVAOForRenderer(null);
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect count range is invalid.");
                 return;
             }
 
@@ -6401,7 +6434,10 @@ namespace XREngine.Rendering
                         : null;
                     bool bindlessScopeActive = false;
                     if (!TryBeginIndirectDrawState(out IndirectDrawStateCapabilityScope indirectDrawStateScope))
+                    {
+                        RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect draw state was rejected.");
                         return;
+                    }
 
                     using (indirectDrawStateScope)
                     {
@@ -6448,6 +6484,12 @@ namespace XREngine.Rendering
                 renderer.BindVAOForRenderer(null);
                 GPURenderPassCollection.Crumb("MDIC.BUCKET.UNBIND.END");
             }
+        }
+
+        private static void RejectMissingSharedShadowSubmission(bool required, string reason)
+        {
+            if (required)
+                throw new RenderResourcePreparationPendingException(reason);
         }
 
         private static void SetMotionVectorTemporalUniforms(
@@ -6574,6 +6616,55 @@ namespace XREngine.Rendering
             return true;
         }
 
+        private static XRDataBuffer? _atlasUdimCoverage;
+
+        /// <summary>
+        /// Binds the empty UDIM coverage buffer that uber fragment shaders declare. An atlas draw has
+        /// no single source mesh, so a material with vertex-mode UDIM discard is not discarded on
+        /// this path, and it logs a warning.
+        /// </summary>
+        private static void PublishAtlasUdimCoverage(XRRenderProgram program, XRMaterial material)
+        {
+            if (NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(material.ShadowBindingSourceMaterial ?? material))
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.AtlasUdim.{material.Name}",
+                    TimeSpan.FromSeconds(10),
+                    "[RenderDispatch] Material '{0}' has no vertex-mode UDIM discard on the GPU indirect atlas path.",
+                    material.Name ?? "<unnamed>");
+
+            if (_atlasUdimCoverage is null)
+            {
+                XRDataBuffer buffer = new("SourceUdimTriangleCoverage.Atlas", EBufferTarget.ShaderStorageBuffer, false)
+                {
+                    Usage = EBufferUsage.StaticDraw,
+                    Resizable = false,
+                    DisposeOnPush = false,
+                };
+                Span<Vector4> zero = stackalloc Vector4[1];
+                zero.Clear();
+                buffer.SetDataRaw<Vector4>(zero);
+                buffer.PushData();
+                _atlasUdimCoverage = buffer;
+            }
+
+            // The triangle count stays at its default of zero. A runtime write here has another
+            // frequency than the declared object block and forces a full block write per draw.
+            program.BindBuffer(_atlasUdimCoverage, XRMeshRenderer.UdimTriangleCoverageBinding);
+        }
+
+        /// <summary>
+        /// Applies material state before an indirect draw. A backend with captured indirect draw
+        /// state publishes the material when it records the draw, so it must not do so here.
+        /// </summary>
+        private static void ApplyIndirectMaterialState(AbstractRenderer renderer, XRMaterial material, XRRenderProgram program)
+        {
+            if (renderer is IIndirectDrawStateBackendCapability)
+                return;
+
+            renderer.SetMaterialUniforms(material, program);
+            renderer.ApplyRenderParameters(material.RenderOptions);
+        }
+
         private static bool TryUseIndirectGraphicsProgram(XRRenderProgram graphicsProgram, string context)
         {
             if (!graphicsProgram.IsLinked)
@@ -6621,6 +6712,14 @@ namespace XREngine.Rendering
             foreach (var cache in _materialPrograms.Values)
                 DestroyMaterialProgramCache(cache);
             _materialPrograms.Clear();
+            foreach (SharedShadowProgramSlot slot in _sharedShadowPrograms.Values)
+            {
+                if (slot.Current is { } current)
+                    DestroyMaterialProgramCache(current.Cache);
+                if (slot.Pending is { } pending)
+                    DestroyMaterialProgramCache(pending.Cache);
+            }
+            _sharedShadowPrograms.Clear();
             foreach (var cache in _pendingMaterialPrograms.Values)
                 DestroyMaterialProgramCache(cache);
             _pendingMaterialPrograms.Clear();

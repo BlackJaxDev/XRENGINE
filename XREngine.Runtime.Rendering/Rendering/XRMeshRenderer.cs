@@ -238,7 +238,7 @@ namespace XREngine.Rendering
             /// <param name="modelMatrix"></param>
             /// <param name="prevModelMatrix"></param>
             /// <param name="materialOverride"></param>
-            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot, Vector4 sourceFlatDirection = default)
             {
                 // Published mesh versions are backend-neutral until their first draw.
                 // Resolve this draw's owner explicitly so cold versions cannot silently
@@ -249,7 +249,7 @@ namespace XREngine.Rendering
                     renderOptionsOverride = (materialOverride ?? Parent?.Material)?.GetMultisampleBackgroundParameters()
                         ?? throw new InvalidOperationException("Advanced MSAA background requires an admitted material.");
                 renderer.Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride,
-                    instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot);
+                    instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot, sourceFlatDirection);
             }
 
             /// <summary>Submits one indexed draw with GPU-authored arguments.</summary>
@@ -1472,8 +1472,8 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="modelMatrix"></param>
         /// <param name="materialOverride"></param>
-        public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot = default)
-            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo, canonicalDrawIdentitySnapshot);
+        public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot = default, Vector4 sourceFlatDirection = default)
+            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo, canonicalDrawIdentitySnapshot, sourceFlatDirection);
 
         /// <summary>Submits one indexed mesh draw from a GPU-authored command.</summary>
         public bool RenderIndexedIndirect(XRDataBuffer arguments, nuint byteOffset,
@@ -1707,6 +1707,7 @@ namespace XREngine.Rendering
                 RuntimeEngine.Rendering.SettingsChanged -= RefreshGpuCoverageForSettings;
                 DetachSubmeshHandlers();
                 DestroyDeformationInputs();
+                DestroyUdimTriangleCoverage();
                 ResetDrivableBuffers();
                 IndirectDrawBuffer?.Dispose();
                 IndirectDrawBuffer = null;
@@ -2367,7 +2368,7 @@ namespace XREngine.Rendering
             int utilized = _bones?.Length ?? 0;
             bool external = RuntimeEngine.Rendering.Settings.AllowSkinning &&
                 RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-                _externalSkinPaletteBuffer is not null && _externalSkinPaletteCount >= (uint)(utilized + 1);
+                _externalSkinPaletteView?.Current is not null && _externalSkinPaletteCount >= (uint)(utilized + 1);
             BoneBufferState state = Volatile.Read(ref _boneBufferState);
             bool complete = utilized > 0 && ReferenceEquals(Mesh, state.PreparedMesh) &&
                 Mesh?.UtilizedBones?.Length == utilized &&
@@ -2393,18 +2394,6 @@ namespace XREngine.Rendering
                 throw new InvalidOperationException("Bone-buffer generation was exhausted.");
             Volatile.Write(ref _boneBufferGeneration, _boneBufferGeneration + 1);
             Interlocked.Increment(ref s_gpuDrivenBoneStateEpoch);
-        }
-
-        private void ClearExternalSkinPaletteSourceLocked()
-        {
-            _externalSkinPaletteSourceOwner = null;
-            _externalSkinPaletteBuffer = null;
-            _externalPreviousSkinPaletteBuffer = null;
-            _externalSkinPaletteBase = 0u;
-            _externalSkinPaletteCount = 0u;
-            _externalSkinPaletteComplete = false;
-            SetField(ref _externalSkinPaletteHistoryValid, false, publishNotifications: false,
-                propertyName: nameof(HasValidGpuDrivenPaletteHistory));
         }
 
         /// <summary>
@@ -2460,16 +2449,6 @@ namespace XREngine.Rendering
             Buffers = [];
             _gpuDrivenBoneCoverageChanged?.Invoke(this, coverage);
         }
-
-        [MemoryPackIgnore]
-        public XRDataBuffer? ActiveSkinPaletteBuffer => HasExternalSkinPaletteSource ? _externalSkinPaletteBuffer : SkinPaletteBuffer;
-
-        [MemoryPackIgnore]
-        public XRDataBuffer? ActivePreviousSkinPaletteBuffer => HasExternalSkinPaletteSource ? _externalPreviousSkinPaletteBuffer : PreviousSkinPaletteBuffer;
-
-        /// <summary>Reports whether the external palette keeps the prior rendered pose.</summary>
-        [MemoryPackIgnore]
-        public bool HasValidGpuDrivenPaletteHistory => Volatile.Read(ref _externalSkinPaletteHistoryValid);
 
         private SkinningLodProfile? _skinningLodProfile;
         private int _activeSkinningLodTier;
@@ -2530,19 +2509,7 @@ namespace XREngine.Rendering
                 : null;
 
         [MemoryPackIgnore]
-        public uint ActiveSkinPaletteBase => HasExternalSkinPaletteSource ? _externalSkinPaletteBase : 0u;
-
-        [MemoryPackIgnore]
-        public uint ActiveSkinPaletteCount => HasExternalSkinPaletteSource ? _externalSkinPaletteCount : (uint)(Mesh?.UtilizedBones?.Length ?? 0) + 1u;
-
-        [MemoryPackIgnore]
         public bool HasGpuDrivenBoneSource => _gpuDrivenBoneCount > 0;
-
-        [MemoryPackIgnore]
-        public bool HasExternalSkinPaletteSource
-            => RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-                && _externalSkinPaletteBuffer is not null
-                && _externalSkinPaletteCount > 0u;
 
         /// <summary>
         /// All blendshape weights for the mesh.
@@ -2918,11 +2885,12 @@ namespace XREngine.Rendering
             => Volatile.Read(ref _blendshapeBufferState).PrecombinedTangents;
 
         private readonly SkinnedOutputInvalidationState _skinnedOutputInvalidation = new();
+        // Both values include the outputs of a bound external palette view.
         [MemoryPackIgnore]
-        internal bool SkinnedOutputDirty => _skinnedOutputInvalidation.IsDirty;
+        internal bool SkinnedOutputDirty => _skinnedOutputInvalidation.IsDirtyWith(ExternalSkinPaletteOutputAdvance);
 
         [MemoryPackIgnore]
-        internal ulong SkinnedOutputVersion => _skinnedOutputInvalidation.Version;
+        internal ulong SkinnedOutputVersion => _skinnedOutputInvalidation.GetVersion(ExternalSkinPaletteOutputAdvance);
 
         [MemoryPackIgnore]
         internal bool HasValidPrecombinedBlendshapeDeltas
@@ -3577,13 +3545,6 @@ namespace XREngine.Rendering
         private float _blendshapeActiveWeightThreshold;
         private int[]? _gpuDrivenBoneRefCounts;
         private int _gpuDrivenBoneCount;
-        private object? _externalSkinPaletteSourceOwner;
-        private XRDataBuffer? _externalSkinPaletteBuffer;
-        private XRDataBuffer? _externalPreviousSkinPaletteBuffer;
-        private uint _externalSkinPaletteBase;
-        private uint _externalSkinPaletteCount;
-        private bool _externalSkinPaletteComplete;
-        private bool _externalSkinPaletteHistoryValid;
 
         private void BoneTransformRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
@@ -4141,69 +4102,6 @@ namespace XREngine.Rendering
 
             transform = bone.Transform;
             return transform is not null;
-        }
-
-        internal bool SetGpuDrivenSkinPaletteSource(
-            object owner,
-            XRDataBuffer skinPalette,
-            XRDataBuffer? previousSkinPalette,
-            uint baseElement,
-            uint elementCount,
-            long boneBufferGeneration,
-            bool drivesCompleteBonePalette,
-            bool previousPaletteValid = true)
-        {
-            GpuDrivenBoneCoverageSnapshot? change = null;
-            bool structuralChange;
-            lock (_dirtyBoneSyncRoot)
-            {
-                if (boneBufferGeneration != _boneBufferGeneration)
-                    return false;
-
-                bool oldCoverage = _hasCompleteGpuDrivenBoneCoverage;
-                bool sameOwner = ReferenceEquals(_externalSkinPaletteSourceOwner, owner);
-                bool swappedBuffers = ReferenceEquals(_externalSkinPaletteBuffer, previousSkinPalette) &&
-                    ReferenceEquals(_externalPreviousSkinPaletteBuffer, skinPalette);
-                structuralChange = !sameOwner || _externalSkinPaletteBase != baseElement ||
-                    _externalSkinPaletteCount != elementCount ||
-                    _externalSkinPaletteComplete != drivesCompleteBonePalette ||
-                    (!swappedBuffers && (!ReferenceEquals(_externalSkinPaletteBuffer, skinPalette) ||
-                        !ReferenceEquals(_externalPreviousSkinPaletteBuffer, previousSkinPalette)));
-                _externalSkinPaletteSourceOwner = owner;
-                _externalSkinPaletteBuffer = skinPalette;
-                _externalPreviousSkinPaletteBuffer = previousSkinPalette;
-                _externalSkinPaletteBase = baseElement;
-                _externalSkinPaletteCount = elementCount;
-                _externalSkinPaletteComplete = drivesCompleteBonePalette;
-                SetField(ref _externalSkinPaletteHistoryValid, previousPaletteValid, publishNotifications: false,
-                    propertyName: nameof(HasValidGpuDrivenPaletteHistory));
-                GpuDrivenBoneCoverageSnapshot snapshot = RefreshGpuDrivenBoneCoverageLocked();
-                if (snapshot.IsFullyCovered != oldCoverage)
-                    change = snapshot;
-            }
-            if (structuralChange)
-                MarkSkinnedOutputDirty();
-            if (change is { } changedSnapshot)
-                _gpuDrivenBoneCoverageChanged?.Invoke(this, changedSnapshot);
-            return true;
-        }
-
-        internal void ClearGpuDrivenSkinPaletteSource(object owner)
-        {
-            GpuDrivenBoneCoverageSnapshot? change = null;
-            lock (_dirtyBoneSyncRoot)
-            {
-                if (!ReferenceEquals(_externalSkinPaletteSourceOwner, owner))
-                    return;
-                bool oldCoverage = _hasCompleteGpuDrivenBoneCoverage;
-                ClearExternalSkinPaletteSourceLocked();
-                GpuDrivenBoneCoverageSnapshot snapshot = RefreshGpuDrivenBoneCoverageLocked();
-                if (snapshot.IsFullyCovered != oldCoverage)
-                    change = snapshot;
-            }
-            MarkSkinnedOutputDirty();
-            if (change is { } changedSnapshot)
-                _gpuDrivenBoneCoverageChanged?.Invoke(this, changedSnapshot);
         }
 
         private bool IsBoneGpuDriven(int index)

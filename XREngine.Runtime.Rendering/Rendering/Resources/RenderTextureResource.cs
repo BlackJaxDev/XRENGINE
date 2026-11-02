@@ -9,6 +9,10 @@ namespace XREngine.Rendering.Resources;
 /// </remarks>
 public sealed class RenderTextureResource
 {
+    private readonly object _bindingLock = new();
+    private XRTexture? _instance;
+    private bool _ownsInstance = true;
+
     /// <summary>
     /// Describes how the renderer should size, format, and use this texture.
     /// </summary>
@@ -17,9 +21,9 @@ public sealed class RenderTextureResource
     /// <summary>
     /// Live texture object bound to the descriptor, or <c>null</c> when only the descriptor exists.
     /// </summary>
-    public XRTexture? Instance { get; private set; }
+    public XRTexture? Instance => Volatile.Read(ref _instance);
 
-    public bool OwnsInstance { get; private set; } = true;
+    public bool OwnsInstance => Volatile.Read(ref _ownsInstance);
 
     /// <summary>
     /// Creates a texture registry record from its logical descriptor.
@@ -37,16 +41,51 @@ public sealed class RenderTextureResource
     /// Associates a live texture with this logical resource.
     /// </summary>
     public void Bind(XRTexture texture, bool ownsInstance = true)
-    {
-        if (Instance == texture && OwnsInstance == ownsInstance)
-            return;
+        => BindCore(texture, ownsInstance, transferRetiringUse: false);
 
-        // The registry is an ownership map, not a lifetime boundary. The same logical
-        // resource can be rebound between a texture and one of its views while render
-        // resources are being enriched; destroying the previous instance here invalidates
-        // live descriptors and framebuffer attachments.
-        Instance = texture;
-        OwnsInstance = ownsInstance;
+    /// <summary>Transfers an existing counted use from staged imported bindings.</summary>
+    internal void BindTransferred(XRTexture texture, bool ownsInstance)
+        => BindCore(texture, ownsInstance, transferRetiringUse: true);
+
+    private void BindCore(XRTexture texture, bool ownsInstance, bool transferRetiringUse)
+    {
+        XRTexture? previous;
+        lock (_bindingLock)
+        {
+            if (ReferenceEquals(_instance, texture) && _ownsInstance == ownsInstance)
+                return;
+
+            previous = _instance;
+            if (!ReferenceEquals(previous, texture))
+            {
+                if (transferRetiringUse)
+                    texture.RetainBindingUse();
+                else if (!texture.TryRetainActiveBindingUse())
+                    throw new ObjectDisposedException(nameof(XRTexture));
+            }
+
+            // Rebinding can switch a texture to one of its views. Its former
+            // owner decides when to retire it after dependent attachments end.
+            Volatile.Write(ref _instance, texture);
+            Volatile.Write(ref _ownsInstance, ownsInstance);
+        }
+
+        if (!ReferenceEquals(previous, texture))
+            previous?.ReleaseBindingUse();
+    }
+
+    /// <summary>Returns the current texture with one counted binding use.</summary>
+    public bool TryRetainBinding(out XRTexture? texture)
+    {
+        lock (_bindingLock)
+        {
+            texture = _instance;
+            if (texture is null)
+                return false;
+
+            texture.RetainBindingUse();
+            return true;
+        }
     }
 
     /// <summary>
@@ -54,9 +93,17 @@ public sealed class RenderTextureResource
     /// </summary>
     public void DestroyInstance()
     {
-        if (OwnsInstance)
-            Instance?.Destroy(true);
-        Instance = null;
-        OwnsInstance = true;
+        XRTexture? previous;
+        lock (_bindingLock)
+        {
+            previous = _instance;
+            bool ownedPrevious = _ownsInstance;
+            Volatile.Write(ref _instance, null);
+            Volatile.Write(ref _ownsInstance, true);
+            if (ownedPrevious)
+                previous?.RetireBindingStorage();
+        }
+
+        previous?.ReleaseBindingUse();
     }
 }

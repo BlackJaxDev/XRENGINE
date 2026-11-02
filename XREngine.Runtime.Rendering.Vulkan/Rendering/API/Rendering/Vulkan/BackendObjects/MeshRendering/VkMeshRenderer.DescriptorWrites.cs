@@ -30,22 +30,37 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		uint descriptorCount,
 		VulkanDescriptorScratchBuffer<DescriptorBufferInfo> bufferInfos,
+		VulkanDescriptorScratchBuffer<XRDataBuffer> retainedBufferBindings,
 		out int bufferStart,
 		ComputeDispatchSnapshot? bindingSnapshot = null)
 	{
 		bufferStart = bufferInfos.Count;
-		if (!TryResolveBuffer(
-			binding,
-			frameIndex,
-			drawUniformSlot,
-			out DescriptorBufferInfo bufferInfo,
-			bindingSnapshot))
-			return false;
+		XRDataBuffer? retainedPipelineBuffer = null;
+		try
+		{
+			if (!TryResolveBuffer(
+				binding,
+				frameIndex,
+				drawUniformSlot,
+				out DescriptorBufferInfo bufferInfo,
+				out retainedPipelineBuffer,
+				bindingSnapshot))
+				return false;
 
-		for (int i = 0; i < descriptorCount; i++)
-			bufferInfos.Add(bufferInfo);
+			if (retainedPipelineBuffer is not null)
+			{
+				retainedBufferBindings.Add(retainedPipelineBuffer);
+				retainedPipelineBuffer = null;
+			}
+			for (int i = 0; i < descriptorCount; i++)
+				bufferInfos.Add(bufferInfo);
 
-		return true;
+			return true;
+		}
+		finally
+		{
+			retainedPipelineBuffer?.ReleaseBindingUse();
+		}
 	}
 
 	/// <summary>Resolves one or more image descriptors for a binding from the material's textures.</summary>
@@ -54,6 +69,7 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		uint descriptorCount,
 		VulkanDescriptorScratchBuffer<DescriptorImageInfo> imageInfos,
+		VulkanDescriptorScratchBuffer<XRTexture> retainedTextures,
 		out int imageStart,
 		ComputeDispatchSnapshot? bindingSnapshot = null)
 	{
@@ -64,16 +80,29 @@ internal unsafe partial class VkMeshRenderer
 			DescriptorBindingInfo elementBinding = usesNamedArrayElements
 				? binding with { Name = ResolveDescriptorArrayElementName(binding.Name, i) }
 				: binding;
-			if (!TryResolveImage(
+			bool resolved = TryResolveImage(
 					elementBinding,
 					material,
 					elementBinding.DescriptorType,
 					out DescriptorImageInfo info,
+					out XRTexture? retainedTexture,
 					i,
-					bindingSnapshot))
-				return false;
-
-			imageInfos.Add(info);
+					bindingSnapshot);
+			try
+			{
+				if (retainedTexture is not null)
+				{
+					retainedTextures.Add(retainedTexture);
+					retainedTexture = null;
+				}
+				if (!resolved)
+					return false;
+				imageInfos.Add(info);
+			}
+			finally
+			{
+				retainedTexture?.ReleaseBindingUse();
+			}
 		}
 
 		return true;
@@ -333,6 +362,7 @@ internal unsafe partial class VkMeshRenderer
 							drawUniformSlot,
 							descriptorCount,
 							bufferInfos,
+							scratch.RetainedBufferBindings,
 							out int bufferStart,
 							bindingSnapshot))
 					{
@@ -391,6 +421,7 @@ internal unsafe partial class VkMeshRenderer
 							material,
 							descriptorCount,
 							imageInfos,
+							scratch.RetainedTextureBindings,
 							out int imageStart,
 							bindingSnapshot))
 					{

@@ -16,4 +16,5 @@ public readonly record struct AdvancedMeshRenderSnapshot(
     EAdvancedVelocityValidityReason ModelHistoryReason,
     bool ForceCpuRendering,
     XRMaterial? MaterialOverride,
-    RenderingParameters? RenderOptionsOverride);
+    RenderingParameters? RenderOptionsOverride,
+    Matrix4x4 SourceFlatBasis = default);

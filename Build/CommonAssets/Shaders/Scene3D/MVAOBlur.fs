@@ -12,6 +12,7 @@ uniform sampler2D Normal; // Normal
 
 uniform float DepthPhi = 4.0f;
 uniform float NormalPhi = 64.0f;
+uniform mat4 InverseProjMatrix;
 
 void main()
 {
@@ -29,6 +30,7 @@ void main()
         return;
     }
     vec3 centerNormal = XRENGINE_ReadNormal(Normal, uv);
+    float centerViewZ = AOViewPosFromDepth(centerDepth, uv, InverseProjMatrix).z;
 
     float weightSum = 0.0f;
     float result = 0.0f;
@@ -46,7 +48,8 @@ void main()
                 continue;
             vec3 sampleNormal = XRENGINE_ReadNormal(Normal, sampleUV);
 
-            float depthWeight = exp(-abs(sampleDepth - centerDepth) * DepthPhi);
+            float sampleViewZ = AOViewPosFromDepth(sampleDepth, sampleUV, InverseProjMatrix).z;
+            float depthWeight = exp(-abs(sampleViewZ - centerViewZ) * DepthPhi);
             float normalWeight = pow(max(dot(sampleNormal, centerNormal), 0.0f), NormalPhi);
             float spatialWeight = AOGaussianWeight(dot(pixelOffset, pixelOffset), 1.1952f);
 

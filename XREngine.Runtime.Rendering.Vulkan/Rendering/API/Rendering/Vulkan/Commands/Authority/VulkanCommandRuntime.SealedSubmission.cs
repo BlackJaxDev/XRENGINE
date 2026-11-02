@@ -6,6 +6,8 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanCommandRuntime
 {
+    /// <summary>Slots of the contract being sealed. Use only while holding the lifetime lock.</summary>
+    private readonly HashSet<VulkanResourceSlotHandle> _sealedResourceSlotScratch = [];
     private readonly SealedSubmissionContract?[] _sealedSubmissionContractScratch =
         new SealedSubmissionContract?[16];
     private readonly VulkanSealedImageExitState[] _sealedSubmissionImageOverlayScratch =
@@ -494,6 +496,11 @@ internal sealed partial class VulkanCommandRuntime
                 reusableContract?.Descriptors,
                 descriptorCount);
             int descriptorIndex = 0;
+            // Each descriptor closure checks each of its slots against all resources.
+            // A set keeps this linear, because a frame has hundreds of each.
+            _sealedResourceSlotScratch.Clear();
+            for (int index = 0; index < resources.Length; ++index)
+                _sealedResourceSlotScratch.Add(resources[index].Slot);
             for (int index = 0; index < resources.Length; ++index)
             {
                 VulkanSealedResourceDependency dependency = resources[index];
@@ -515,12 +522,8 @@ internal sealed partial class VulkanCommandRuntime
                      closureIndex < closure.Length;
                      ++closureIndex)
                 {
-                    if (ContainsSealedResourceSlot(
-                            resources,
-                            closure[closureIndex]))
-                    {
+                    if (_sealedResourceSlotScratch.Contains(closure[closureIndex]))
                         continue;
-                    }
 
                     failureReason = RuntimeEngine.Rendering.Stats.Vulkan
                         .SealedSubmissionSealFailureReason.DescriptorPublication;
@@ -684,17 +687,6 @@ internal sealed partial class VulkanCommandRuntime
         }
         failureReason = RuntimeEngine.Rendering.Stats.Vulkan
             .SealedSubmissionSealFailureReason.PublicationRace;
-        return false;
-    }
-
-    private static bool ContainsSealedResourceSlot(
-        ReadOnlySpan<VulkanSealedResourceDependency> resources,
-        VulkanResourceSlotHandle slot)
-    {
-        for (int index = 0; index < resources.Length; ++index)
-            if (resources[index].Slot == slot)
-                return true;
-
         return false;
     }
 

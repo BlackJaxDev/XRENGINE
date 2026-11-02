@@ -238,7 +238,7 @@ public sealed partial class AdvancedGpuScenePublisher
             bool observedBeforeRead = plan.Source is RenderCommandMesh3D observedCommand &&
                 observedCommand.HasCurrentRendererMutationBinding(plan.Renderer);
             int reusedStaticPlansBefore = scratch.ReusedStaticPlans;
-            if (!EvaluateUnchangedRow(scene, commandIndex, expectedFrameId, ref scratch))
+            if (!EvaluateUnchangedRow(scene, commandIndex, expectedFrameId, preparing: true, ref scratch))
                 return scratch.RowMismatch == EAdvancedPreparedGateOutcome.None
                     ? EAdvancedPreparedGateOutcome.RegistrationChanged
                     : scratch.RowMismatch;
@@ -589,7 +589,7 @@ public sealed partial class AdvancedGpuScenePublisher
             // gets the swap-time evaluation. Its result equals the result of
             // the swap-time gate for this row.
             ++reevaluatedRows;
-            if (!EvaluateUnchangedRow(scene, commandIndex, frameId, ref scratch))
+            if (!EvaluateUnchangedRow(scene, commandIndex, frameId, preparing: false, ref scratch))
                 return scratch.RowMismatch == EAdvancedPreparedGateOutcome.None
                     ? EAdvancedPreparedGateOutcome.RegistrationChanged
                     : scratch.RowMismatch;
@@ -631,7 +631,7 @@ public sealed partial class AdvancedGpuScenePublisher
 
     /// <summary>
     /// Returns true when each witnessed material still has the compared
-    /// versions, still uses no texture, and still matches its committed header.
+    /// versions and source bindings, and still matches its committed header.
     /// </summary>
     private bool AreMaterialWitnessesCurrent(int count)
     {
@@ -648,15 +648,28 @@ public sealed partial class AdvancedGpuScenePublisher
                 (material?.BindingResourceVersion ?? 0u) != witness.BindingResourceVersion ||
                 (material?.ShaderStateRevision ?? 0L) != witness.ShaderStateRevision ||
                 (material?.UberStateRevision ?? 0L) != witness.UberStateRevision ||
-                !IsUntexturedCanonicalMaterial(material) ||
+                !CanReuseMaterialSources(material) ||
                 witness.HeaderLayout is not { } layout ||
+                (NativeUberMaterialSchema.IsLayout(layout) &&
+                 !_materialPublisher.HasCurrentStrictUberValidation(witness.Handle)) ||
+                !Database.Materials.Materials.TryGet(witness.Handle,
+                    out AdvancedMaterialRecord current) ||
+                !Database.Materials.TryGetTextureBindings(current,
+                    out ReadOnlySpan<AdvancedMaterialTextureBinding> bindings) ||
+                bindings.Length != layout.Textures.Count ||
+                !Database.Materials.TryGetEngineSurface(witness.Handle,
+                    out AdvancedEngineSurfaceRecord engineSurface) ||
+                !Database.Materials.TryGetUberBaseSurface(witness.Handle,
+                    out AdvancedUberBaseSurfaceRecord uberSurface) ||
+                !CommittedMaterialBindingsMatch(material, layout, bindings,
+                    in engineSurface, in uberSurface) ||
                 !_materialPublisher.HeaderMatches(
                     witness.Handle,
                     material,
                     layout,
                     witness.HeaderCoverage,
                     witness.HeaderState,
-                    ReadOnlySpan<AdvancedMaterialTextureBinding>.Empty))
+                    bindings))
                 return false;
         }
         return true;

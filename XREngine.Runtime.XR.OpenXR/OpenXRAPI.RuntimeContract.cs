@@ -9,6 +9,10 @@ public unsafe partial class OpenXRAPI : IOpenXrRuntime
 
     double IOpenXrRuntime.CurrentRenderDeadlineMs => CurrentRenderDeadlineMs;
 
+    double IOpenXrRuntime.NextFrameSlackMs => NextFrameSlackMs;
+
+    long IOpenXrRuntime.LastFrameWakeTicks => Volatile.Read(ref _lastFrameWakeTicks);
+
     bool IOpenXrRuntime.PrepareRendererDeviceTeardown(AbstractRenderer renderer, string reason)
         => PrepareRendererDeviceTeardown(renderer, reason);
 

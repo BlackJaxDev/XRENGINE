@@ -111,6 +111,12 @@ namespace XREngine.Rendering.Commands
                 if (snapshot.Owner.ReceivesShadows)
                     flags |= GPUIndirectRenderFlags.ReceiveShadows;
             }
+            if (snapshot.SharedOpaqueShadow)
+            {
+                if (lodCount > 1u)
+                    throw new InvalidOperationException("Shared opaque shadow ownership has a multi-LOD GPU draw.");
+                flags |= GPUIndirectRenderFlags.SharedOpaqueShadow;
+            }
 
             if (mesh.HasSkinning)
                 flags |= GPUIndirectRenderFlags.Skinned;
@@ -137,6 +143,29 @@ namespace XREngine.Rendering.Commands
                 flags |= GPUIndirectRenderFlags.EditorSelected;
 
             return (uint)flags;
+        }
+
+        /// <summary>Reports whether a published draw can use the shared shadow GPU lane.</summary>
+        internal bool HasSharedOpaqueShadowCommand(int renderPass)
+        {
+            // PreRender is -1, not an all-pass query for shared shadow ownership.
+            if (!SharedOpaqueShadowEligibility.SupportsRenderPass(renderPass))
+                return false;
+
+            using (_lock.EnterScope())
+            {
+                XRDataBuffer metadataBuffer = DrawMetadataBuffer;
+                uint requiredFlags = (uint)(GPUIndirectRenderFlags.SharedOpaqueShadow | GPUIndirectRenderFlags.CastShadow);
+                for (uint index = 0; index < TotalCommandCount; ++index)
+                {
+                    DrawMetadata metadata = metadataBuffer.GetDataRawAtIndex<DrawMetadata>(index);
+                    if ((metadata.Flags & requiredFlags) == requiredFlags &&
+                        metadata.RenderPass == (uint)renderPass)
+                        return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -440,8 +469,7 @@ namespace XREngine.Rendering.Commands
                         }
                         if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
                         {
-                            LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
-                            QueueCpuLodTransitionWrite(index);
+                            QueueLodTransitionReset(index);
                         }
                         if (_useInternalBvh)
                             WriteTightCommandAabb(index, snapshot.Owner, mesh.Bounds, modelMatrix);
@@ -474,7 +502,6 @@ namespace XREngine.Rendering.Commands
                         uint byteCount = (maxIndex - minIndex + 1) * elementSize;
                         UpdatingDrawMetadataBuffer.CommitDirtyBytes(byteOffset, byteCount);
                     }
-                    FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 
                     FlushMeshDataDirtyRange();
@@ -570,7 +597,6 @@ namespace XREngine.Rendering.Commands
             UntrackRegisteredMeshCommand(meshCmd);
             VerifyUpdatingBufferSize(UpdatingCommandCount);
             FlushDrawIndexedSoARange(0u, UpdatingCommandCount);
-            FlushCpuLodTransitionWrites();
             FlushMeshDataDirtyRange();
             MarkUpdatingCommandsDirty();
             if (_gpuBvhTree is not null)

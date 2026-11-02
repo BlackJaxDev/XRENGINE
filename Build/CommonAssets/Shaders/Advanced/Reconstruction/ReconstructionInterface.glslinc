@@ -28,22 +28,7 @@
 #define XR_ADV_BINDING_RECONSTRUCTION_COUNTERS 48
 #endif
 
-#define XRAdvancedPackedVertex XRAdvancedVisibilityPackedVertex
-#define XR_ADV_StaticVertices XR_ADV_VisibilityStaticVertices
-#define XR_ADV_PreSkinnedCurrentVertices XR_ADV_VisibilityCurrentVertices
-#define XR_ADV_PreSkinnedPreviousVertices XR_ADV_VisibilityPreviousVertices
-#if !defined(XR_ADV_INDEXED_ONLY)
-#define XRAdvancedReconstructionMeshlet XRAdvancedVisibilityMeshletDescriptor
-#define XR_ADV_ReconstructionMeshlets XR_ADV_VisibilityMeshlets
-#define XR_ADV_ReconstructionMeshletVertices XR_ADV_VisibilityMeshletVertexIndices
-#define XR_ADV_ReconstructionMeshletTriangles XR_ADV_VisibilityMeshletTriangleWords
-#endif
-
-XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_RECONSTRUCTION_INDICES)
-readonly buffer XRAdvancedReconstructionIndexTable
-{
-    uint indices[];
-} XR_ADV_ReconstructionIndices;
+#include "PrimitiveAccess.glslinc"
 
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_RECONSTRUCTION_COUNTERS)
 buffer XRAdvancedReconstructionCounterTable
@@ -65,15 +50,6 @@ buffer XRAdvancedReconstructionCounterTable
     uint deformedSurfaces;
     uint reserved;
 } XR_ADV_ReconstructionCounters;
-#if !defined(XR_ADV_INDEXED_ONLY)
-uint XR_ADV_ReconstructionTriangleByte(uint byteIndex)
-{
-    uint word =
-        XR_ADV_ReconstructionMeshletTriangles.records[
-            byteIndex >> 2u];
-    return (word >> ((byteIndex & 3u) * 8u)) & 0xFFu;
-}
-#endif
 
 vec3 XR_ADV_DecodeOct(uint packedValue)
 {

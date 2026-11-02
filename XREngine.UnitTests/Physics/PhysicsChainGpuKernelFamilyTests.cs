@@ -57,17 +57,24 @@ public sealed class PhysicsChainGpuKernelFamilyTests
     public void IndirectArguments_ScaleByKernelExecutionShape()
     {
         string source = ReadShader("PhysicsChainActiveWork.comp");
+        string workgroups = ReadShader("PhysicsChainWorkgroups.glslinc");
+        string shortLinearSolver = ReadShader("PhysicsChain.comp");
 
-        string shortLinear = ReadShader("PhysicsChain.comp");
-
-        // The indirect count and the short linear solver share one group size.
+        // The short-linear solver and its GPU-authored group count share one group size.
+        workgroups.ShouldContain("#define PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE ");
         source.ShouldContain("#include \"Compute/PhysicsChain/PhysicsChainWorkgroups.glslinc\"");
-        shortLinear.ShouldContain("#include \"Compute/PhysicsChain/PhysicsChainWorkgroups.glslinc\"");
-        shortLinear.ShouldContain("layout(local_size_x = PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE");
+        shortLinearSolver.ShouldContain("#include \"Compute/PhysicsChain/PhysicsChainWorkgroups.glslinc\"");
+        shortLinearSolver.ShouldContain("layout(local_size_x = PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE,");
+
+        // Short-linear work runs one lane per tree. Branched work runs one workgroup per tree.
+        ((uint)PhysicsChainKernelBucket.ShortLinear).ShouldBe(0u);
         source.ShouldContain("IndirectArguments[argumentBase] = bucket == 0u");
         source.ShouldContain(
-            "(clampedCount + uint(PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE) - 1u) / uint(PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE)");
+            "? (clampedCount + uint(PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE) - 1u) / uint(PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE)");
         source.ShouldContain(": clampedCount;");
+
+        // The compaction group size of this shader must not scale the solver group count.
+        source.ShouldNotContain("/ gl_WorkGroupSize.x");
     }
 
     [Test]

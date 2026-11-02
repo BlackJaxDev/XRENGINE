@@ -1,0 +1,112 @@
+#ifndef XR_NATIVE_UBER_PRIMITIVE_COVERAGE_GLSLINC
+#define XR_NATIVE_UBER_PRIMITIVE_COVERAGE_GLSLINC
+
+#include "Advanced/Reconstruction/PrimitiveAccess.glslinc"
+
+bool XR_UBER_TileEnabled(uint tile)
+{
+    if (tile >= 16u)
+        return false;
+    uint column = tile & 3u;
+    uint rowIndex = tile >> 2u;
+    vec4 row = rowIndex == 0u
+        ? vec4(UBER_F(_UDIMDiscardRow0_0), UBER_F(_UDIMDiscardRow0_1),
+            UBER_F(_UDIMDiscardRow0_2), UBER_F(_UDIMDiscardRow0_3))
+        : rowIndex == 1u
+            ? vec4(UBER_F(_UDIMDiscardRow1_0), UBER_F(_UDIMDiscardRow1_1),
+                UBER_F(_UDIMDiscardRow1_2), UBER_F(_UDIMDiscardRow1_3))
+            : rowIndex == 2u
+                ? vec4(UBER_F(_UDIMDiscardRow2_0), UBER_F(_UDIMDiscardRow2_1),
+                    UBER_F(_UDIMDiscardRow2_2), UBER_F(_UDIMDiscardRow2_3))
+                : vec4(UBER_F(_UDIMDiscardRow3_0), UBER_F(_UDIMDiscardRow3_1),
+                    UBER_F(_UDIMDiscardRow3_2), UBER_F(_UDIMDiscardRow3_3));
+    return row[int(column)] > 0.001;
+}
+
+bool XR_UBER_KeepOriginalTriangle(
+    uint drawStableIndex,
+    uint producer,
+    uint encodedPrimitive)
+{
+    if (UBER_F(_UvTileDiscard) <= 0.5 || UBER_I(_UDIMDiscardMode) != 0)
+        return true;
+
+    uint drawDense = XR_ADV_ResolveVisibilityStableIndex(
+        drawStableIndex, VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    if (!XR_ADV_IsSupportedVisibilityProducer(producer) ||
+        drawDense == XR_ADV_INVALID_DENSE_INDEX ||
+        drawDense >= uint(XR_ADV_Draws.records.length()) ||
+        encodedPrimitive == XR_ADV_VIS_INVALID)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return false;
+    }
+    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+        draw.geometry, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
+    if (geometryDense == XR_ADV_INVALID_DENSE_INDEX ||
+        geometryDense >= uint(XR_ADV_Geometries.records.length()))
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return false;
+    }
+    XRAdvancedGeometryRecord geometry = XR_ADV_LoadGeometry(geometryDense);
+    uvec3 sourceVertices;
+    if (!XR_ADV_TryPrimitiveVertices(
+            geometry, producer, encodedPrimitive, sourceVertices))
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return false;
+    }
+
+    XRAdvancedPreparedDrawDeformationRecord prepared;
+    bool deformed = XR_ADV_TryLoadPreparedDrawDeformation(drawDense, draw, prepared);
+    bool needsDeformation =
+        producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET ||
+        producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED;
+    if (needsDeformation && !deformed ||
+        deformed && any(greaterThanEqual(sourceVertices, uvec3(prepared.vertexCount))) ||
+        !deformed && any(greaterThanEqual(
+            sourceVertices, uvec3(geometry.currentVertexData.elementCount))))
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return false;
+    }
+    uint baseVertex = deformed
+        ? prepared.currentVertexOffset
+        : geometry.currentVertexData.elementOffset;
+    if (any(greaterThan(sourceVertices, uvec3(0xffffffffu - baseVertex))))
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return false;
+    }
+    uvec3 indices = uvec3(baseVertex) + sourceVertices;
+    XRAdvancedPackedVertex vertex0;
+    XRAdvancedPackedVertex vertex1;
+    XRAdvancedPackedVertex vertex2;
+    if (!XR_ADV_TryLoadVertex(deformed, false, indices.x, vertex0) ||
+        !XR_ADV_TryLoadVertex(deformed, false, indices.y, vertex1) ||
+        !XR_ADV_TryLoadVertex(deformed, false, indices.z, vertex2))
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return false;
+    }
+
+    uint shift = UBER_I(_UDIMDiscardUV) == 1 ? 5u : 0u;
+    uint tile0 = (vertex0.reserved2 >> shift) & 31u;
+    uint tile1 = (vertex1.reserved2 >> shift) & 31u;
+    uint tile2 = (vertex2.reserved2 >> shift) & 31u;
+    if ((vertex0.reserved2 & 0x80000000u) == 0u ||
+        (vertex1.reserved2 & 0x80000000u) == 0u ||
+        (vertex2.reserved2 & 0x80000000u) == 0u ||
+        tile0 > 16u || tile1 > 16u || tile2 > 16u)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return false;
+    }
+    return !XR_UBER_TileEnabled(tile0) &&
+        !XR_UBER_TileEnabled(tile1) &&
+        !XR_UBER_TileEnabled(tile2);
+}
+
+#endif
