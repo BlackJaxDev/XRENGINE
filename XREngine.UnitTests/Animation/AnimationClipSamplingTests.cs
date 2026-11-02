@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Animation;
+using XREngine.Animation.IK;
+using XREngine.Animation.Importers;
+using XREngine.Components.Animation;
 
 namespace XREngine.UnitTests.Animation;
 
@@ -96,10 +100,10 @@ public sealed class AnimationClipSamplingTests
     }
 
     [Test]
-    public void GetUnsupportedSamplingMembers_ReportsAnimatedMethodMembersOnly()
+    public void GetUnsupportedSamplingMembers_ReportsOnlyTracksThatCallCode()
     {
         var supported = new AnimationMember("Supported", EAnimationMemberType.Property, CreateAnimation(typeof(PropAnimFloat), 0.0f));
-        var methodMember = new AnimationMember("SetValue", EAnimationMemberType.Method, CreateAnimation(typeof(PropAnimFloat), 0.0f));
+        var methodMember = new AnimationMember("SetKeyed", EAnimationMemberType.Method, CreateAnimation(typeof(PropAnimFloat), 0.0f));
         var delegateAnimated = new AnimationMember("Delegate", EAnimationMemberType.Property, new PropAnimMethod<float>(Length, false, second => second));
         var unanimatedMethod = new AnimationMember("SetDefault", EAnimationMemberType.Method);
         var navigation = new AnimationMember("GetComponent", EAnimationMemberType.Method);
@@ -111,7 +115,7 @@ public sealed class AnimationClipSamplingTests
         root.Children.Add(unanimatedMethod);
         var clip = new AnimationClip(root);
 
-        clip.GetUnsupportedSamplingMembers().ShouldBe([methodMember, delegateAnimated, unanimatedMethod], ignoreOrder: true);
+        clip.GetUnsupportedSamplingMembers().ShouldBe([delegateAnimated]);
 
         var store = new AnimationValueStore();
         clip.PrepareSampling(store);
@@ -119,9 +123,11 @@ public sealed class AnimationClipSamplingTests
 
         supported.Slot.IsValid.ShouldBeTrue();
         store.GetCoverage(supported.Slot).ShouldBe(1.0f);
-        methodMember.Slot.IsValid.ShouldBeFalse();
+        store.GetCoverage(methodMember.Slot).ShouldBe(1.0f);
+        store.GetFloat(methodMember.Slot.TypeIndex).ShouldBe(((PropAnimFloat)methodMember.Animation!).GetValue(0.5f));
+        unanimatedMethod.Slot.IsValid.ShouldBeTrue();
+        navigation.Slot.IsValid.ShouldBeFalse();
         delegateAnimated.Slot.IsValid.ShouldBeFalse();
-        unanimatedMethod.Slot.IsValid.ShouldBeFalse();
     }
 
     [Test]
@@ -225,6 +231,268 @@ public sealed class AnimationClipSamplingTests
         fresh.CurrentValue.ShouldBe(fresh.DefaultValue);
         jumped.CurrentValue.ShouldNotBe(fresh.CurrentValue);
         jumped.CurrentValue.ShouldBe(jumped.GetValueKeyframed(time));
+    }
+
+    [TestCase(false, false, 0.0f, true)]
+    [TestCase(true, false, 0.0f, true)]
+    [TestCase(false, true, 0.0f, true)]
+    [TestCase(false, false, 0.3f, true)]
+    [TestCase(true, true, 0.3f, true)]
+    [TestCase(true, true, 0.3f, false)]
+    public void SampleToStore_ImportedHumanoidClip_MatchesStateMachinePlayback(bool mirror, bool loopPose, float cycleOffset, bool loopTime)
+    {
+        // Times past the length cross a loop boundary, or clamp when the clip does not loop.
+        foreach (float time in new[] { 0.0f, 0.2f, 0.5f, 0.75f, 1.1f, 1.9f, 2.0f, 2.3f, 3.6f, 4.25f })
+        {
+            AnimationClip normal = CreateImportedHumanoidClip(mirror, loopPose, cycleOffset, loopTime);
+            var machine = new AnimStateMachine();
+            var layer = new AnimLayer { States = [new AnimState(normal)], InitialStateIndex = 0 };
+            machine.Layers.Add(layer);
+            machine.Initialize(null);
+            normal.EvaluateAnimationValuesAtNormalizedStateTime(new Dictionary<string, AnimVar>(), time / 2.0, additive: false);
+
+            AnimationClip sampled = CreateImportedHumanoidClip(mirror, loopPose, cycleOffset, loopTime);
+            var store = new AnimationValueStore();
+            sampled.PrepareSampling(store);
+            sampled.SampleToStore(time, store);
+
+            store.TotalSlotCount.ShouldBe(normal.ValueStore.TotalSlotCount);
+            ShouldMatch(store, normal.ValueStore, time);
+        }
+    }
+
+    [TestCase(true, false, 0.0f)]
+    [TestCase(false, true, 0.0f)]
+    [TestCase(false, false, 0.3f)]
+    public void SampleToStore_ImportedPolicy_ChangesValues(bool mirror, bool loopPose, float cycleOffset)
+    {
+        static float[] Sample(bool mirror, bool loopPose, float cycleOffset)
+        {
+            AnimationClip clip = CreateImportedHumanoidClip(mirror, loopPose, cycleOffset, loopTime: true);
+            var store = new AnimationValueStore();
+            clip.PrepareSampling(store);
+            clip.SampleToStore(0.5f, store);
+            float[] values = new float[store.FloatCount];
+            for (int i = 0; i < values.Length; i++)
+                values[i] = store.GetFloat(i);
+            return values;
+        }
+
+        Sample(mirror, loopPose, cycleOffset).ShouldNotBe(Sample(false, false, 0.0f));
+    }
+
+    [Test]
+    public void SampleToStore_ImportedHumanoidClip_AllocatesNothing()
+    {
+        AnimationClip clip = CreateImportedHumanoidClip(mirror: true, loopPose: true, cycleOffset: 0.3f, loopTime: true);
+        var store = new AnimationValueStore();
+        clip.PrepareSampling(store);
+        clip.SampleToStore(0.5f, store);
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 2000; i++)
+            clip.SampleToStore(i * 0.013f, store);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        allocated.ShouldBe(0L);
+    }
+
+    [TestCaseSource(nameof(TypedAnimations))]
+    public void SampleToStore_RandomOrder_MatchesHintFreeResults(Type animationType)
+    {
+        var random = new Random(1234);
+        foreach (bool constrained in new[] { false, true })
+        {
+            (AnimationClip hinted, AnimationMember hintedMember, AnimationValueStore hintedStore) =
+                CreateClip(CreateAnimation(animationType, 0.5f, constrained: constrained, lerpConstrained: constrained));
+            for (int i = 0; i < 300; i++)
+            {
+                float time = (float)(random.NextDouble() * (Length + 1.0));
+                hinted.SampleToStore(time, hintedStore);
+
+                (AnimationClip fresh, AnimationMember freshMember, AnimationValueStore freshStore) =
+                    CreateClip(CreateAnimation(animationType, 0.5f, constrained: constrained, lerpConstrained: constrained));
+                fresh.SampleToStore(time, freshStore);
+
+                hintedStore.GetValue(hintedMember.Slot).ShouldBe(freshStore.GetValue(freshMember.Slot), $"time {time}");
+            }
+        }
+    }
+
+    [Test]
+    public void SampleToStore_WrongKeyHint_DoesNotChangeResult()
+    {
+        var other = new PropAnimFloat(Length, false, true);
+        other.Keyframes.Add(new FloatKeyframe(0.25f, 100.0f, 0.0f, EVectorInterpType.Linear));
+
+        var animation = (PropAnimFloat)CreateAnimation(typeof(PropAnimFloat), 0.0f);
+        FloatKeyframe removed = new(2.5f, 50.0f, 0.0f, EVectorInterpType.Linear);
+        animation.Keyframes.Add(removed);
+        removed.Remove();
+        (AnimationClip clip, AnimationMember member, AnimationValueStore store) = CreateClip(animation);
+        float expected = animation.GetValue(1.5f);
+
+        foreach (FloatKeyframe? hint in new[] { animation.Keyframes.First, animation.Keyframes.Last, other.Keyframes.First, removed, null })
+        {
+            animation.SetSampleKeyHint(hint);
+            clip.SampleToStore(1.5f, store);
+            store.GetFloat(member.Slot.TypeIndex).ShouldBe(expected);
+        }
+
+        animation.SetSampleKeyHint(animation.Keyframes.Last);
+        animation.Keyframes.Clear();
+        animation.Keyframes.Add(new FloatKeyframe(0.0f, 7.0f, 0.0f, EVectorInterpType.Linear));
+        clip.SampleToStore(1.5f, store);
+        store.GetFloat(member.Slot.TypeIndex).ShouldBe(7.0f);
+    }
+
+    [Test]
+    public void SampleToStore_LargeTrackForwardStep_DoesNotWalkFromFirstKey()
+    {
+        const int keyCount = 10000;
+        var animation = new PropAnimFloat(keyCount * 0.01f, false, true);
+        // Descending insertion links each key at the front, so setup does not walk the track.
+        for (int i = keyCount - 1; i >= 0; i--)
+            animation.Keyframes.Add(new FloatKeyframe(i * 0.01f, i, 0.0f, EVectorInterpType.Linear));
+        (AnimationClip clip, AnimationMember member, AnimationValueStore store) = CreateClip(animation);
+
+        clip.SampleToStore(50.0f, store);
+        animation.LastSampleKeySteps.ShouldBeGreaterThan(1000);
+
+        for (int i = 1; i <= 2000; i++)
+        {
+            float time = 50.0f + i * 0.015f;
+            clip.SampleToStore(time, store);
+            animation.LastSampleKeySteps.ShouldBeLessThanOrEqualTo(2);
+            // Key values equal key indices. A walk from the first key recurses too deep to compare here.
+            store.GetFloat(member.Slot.TypeIndex).ShouldBe(time / 0.01f, 0.01f);
+        }
+    }
+
+    [Test]
+    public void PrepareSharedSampling_TwoClipsOnOneMember_ResolveToOneSlot()
+    {
+        var firstAnimation = new PropAnimFloat(Length, false, true);
+        firstAnimation.Keyframes.Add(new FloatKeyframe(0.0f, 2.0f, 0.0f, EVectorInterpType.Step));
+        var secondAnimation = new PropAnimFloat(Length, false, true);
+        secondAnimation.Keyframes.Add(new FloatKeyframe(0.0f, 6.0f, 0.0f, EVectorInterpType.Step));
+        var firstMember = new AnimationMember("Value", EAnimationMemberType.Property, firstAnimation);
+        var secondMember = new AnimationMember("Value", EAnimationMemberType.Property, secondAnimation);
+        var first = new AnimationClip(firstMember);
+        var second = new AnimationClip(secondMember);
+
+        AnimationSlotLayout layout = AnimationClip.PrepareSharedSampling([new(first), new(second)]);
+
+        layout.FloatCount.ShouldBe(1);
+        secondMember.Slot.ShouldBe(firstMember.Slot);
+        layout.SamplingApplyMembers.ShouldBe([firstMember]);
+
+        AnimationValueStore firstStore = layout.CreateStore();
+        AnimationValueStore secondStore = layout.CreateStore();
+        AnimationValueStore blended = layout.CreateStore();
+        first.SampleToStore(1.0f, firstStore);
+        second.SampleToStore(1.0f, secondStore);
+        AnimationValueStore.Lerp(firstStore, secondStore, 0.5f, blended);
+
+        blended.GetFloat(firstMember.Slot.TypeIndex).ShouldBe(4.0f);
+    }
+
+    [Test]
+    public void PrepareSharedSampling_SeparateScopes_KeepSeparateSlots()
+    {
+        var firstMember = new AnimationMember("Value", EAnimationMemberType.Property, CreateAnimation(typeof(PropAnimFloat), 0.0f));
+        var secondMember = new AnimationMember("Value", EAnimationMemberType.Property, CreateAnimation(typeof(PropAnimFloat), 0.0f));
+
+        AnimationSlotLayout layout = AnimationClip.PrepareSharedSampling(
+        [
+            new(new AnimationClip(firstMember), "Actor A"),
+            new(new AnimationClip(secondMember), "Actor B"),
+        ]);
+
+        layout.FloatCount.ShouldBe(2);
+        secondMember.Slot.TypeIndex.ShouldNotBe(firstMember.Slot.TypeIndex);
+        layout.SamplingApplyMembers.Count.ShouldBe(2);
+    }
+
+    [Test]
+    public void PrepareSharedSampling_DifferentValueTypesOnOnePath_Throws()
+    {
+        var first = new AnimationClip(new AnimationMember("Value", EAnimationMemberType.Property, CreateAnimation(typeof(PropAnimFloat), 0.0f)));
+        var second = new AnimationClip(new AnimationMember("Value", EAnimationMemberType.Property, CreateAnimation(typeof(PropAnimBool), 0.0f)));
+
+        Should.Throw<InvalidOperationException>(() => AnimationClip.PrepareSharedSampling([new(first), new(second)]));
+    }
+
+    private static void ShouldMatch(AnimationValueStore actual, AnimationValueStore expected, float time)
+    {
+        const float tolerance = 2e-5f;
+        actual.FloatCount.ShouldBe(expected.FloatCount);
+        actual.Vector3Count.ShouldBe(expected.Vector3Count);
+        actual.QuaternionCount.ShouldBe(expected.QuaternionCount);
+        for (int i = 0; i < expected.FloatCount; i++)
+            actual.GetFloat(i).ShouldBe(expected.GetFloat(i), tolerance, $"float {i} at time {time}");
+        for (int i = 0; i < expected.Vector3Count; i++)
+            Vector3.Distance(actual.GetVector3(i), expected.GetVector3(i)).ShouldBeLessThan(tolerance, $"vector {i} at time {time}");
+        for (int i = 0; i < expected.QuaternionCount; i++)
+        {
+            Quaternion a = actual.GetQuaternion(i);
+            Quaternion b = expected.GetQuaternion(i);
+            (new Vector4(a.X, a.Y, a.Z, a.W) - new Vector4(b.X, b.Y, b.Z, b.W)).Length().ShouldBeLessThan(tolerance, $"quaternion {i} at time {time}");
+        }
+    }
+
+    private static AnimationClip CreateImportedHumanoidClip(bool mirror, bool loopPose, float cycleOffset, bool loopTime)
+    {
+        const float clipLength = 2.0f;
+        PropAnimFloat Scalar(float start, float middle, float end)
+        {
+            var animation = new PropAnimFloat(clipLength, false, true);
+            animation.Keyframes.Add(new FloatKeyframe(0.0f, start, 0.0f, EVectorInterpType.Linear));
+            animation.Keyframes.Add(new FloatKeyframe(1.0f, middle, 0.0f, EVectorInterpType.Linear));
+            animation.Keyframes.Add(new FloatKeyframe(clipLength, end, 0.0f, EVectorInterpType.Linear));
+            return animation;
+        }
+
+        var position = new PropAnimVector3(clipLength, false, true);
+        position.Keyframes.Add(new Vector3Keyframe(0.0f, new Vector3(1.0f, 2.0f, 3.0f), Vector3.Zero, EVectorInterpType.Linear));
+        position.Keyframes.Add(new Vector3Keyframe(clipLength, new Vector3(2.0f, 1.0f, -1.0f), Vector3.Zero, EVectorInterpType.Linear));
+        var rotation = new PropAnimQuaternion(clipLength, false, true);
+        rotation.Keyframes.Add(new QuaternionKeyframe(0.0f, Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.2f), Quaternion.Identity, ERadialInterpType.Linear));
+        rotation.Keyframes.Add(new QuaternionKeyframe(clipLength, Quaternion.CreateFromAxisAngle(Vector3.UnitY, 1.2f), Quaternion.Identity, ERadialInterpType.Linear));
+
+        AnimationMember Goal(string name, ELimbEndEffector goal, object? value, BasePropAnim animation)
+            => new(name, EAnimationMemberType.Method, animation)
+            {
+                MethodArguments = [goal, value],
+                AnimatedMethodArgumentIndex = 1,
+            };
+
+        var root = new AnimationMember("Root", EAnimationMemberType.Group);
+        root.Children.Add(new AnimationMember("SetValue", EAnimationMemberType.Method, Scalar(0.1f, 0.6f, -0.4f))
+        {
+            MethodArguments = [EHumanoidValue.LeftArmDownUp, 0.0f],
+            AnimatedMethodArgumentIndex = 1,
+        });
+        root.Children.Add(Goal("SetAnimatedIKPositionX", ELimbEndEffector.LeftFoot, 0.0f, Scalar(0.5f, 1.0f, 2.0f)));
+        root.Children.Add(Goal("SetAnimatedIKPosition", ELimbEndEffector.RightHand, Vector3.Zero, position));
+        root.Children.Add(Goal("SetAnimatedIKRotation", ELimbEndEffector.RightHand, Quaternion.Identity, rotation));
+        root.Children.Add(Goal("SetAnimatedIKRotationX", ELimbEndEffector.LeftHand, 0.0f, Scalar(0.0f, 0.2f, 0.1f)));
+        root.Children.Add(Goal("SetAnimatedIKRotationY", ELimbEndEffector.LeftHand, 0.0f, Scalar(0.1f, 0.3f, 0.0f)));
+        root.Children.Add(Goal("SetAnimatedIKRotationZ", ELimbEndEffector.LeftHand, 0.0f, Scalar(0.0f, -0.1f, 0.2f)));
+        root.Children.Add(Goal("SetAnimatedIKRotationW", ELimbEndEffector.LeftHand, 1.0f, Scalar(1.0f, 0.9f, 0.95f)));
+
+        return new AnimationClip(root)
+        {
+            LengthInSeconds = clipLength,
+            ImportedHumanoidRootMotionSettings = new ImportedHumanoidClipRootMotionSettings
+            {
+                StopTime = clipLength,
+                LoopTime = loopTime,
+                LoopPose = loopPose,
+                CycleOffset = cycleOffset,
+                Mirror = mirror,
+            },
+        };
     }
 
     private static (AnimationClip Clip, AnimationMember Member, AnimationValueStore Store) CreateClip(BasePropAnim animation)

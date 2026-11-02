@@ -66,6 +66,7 @@ public partial class AnimationClip
     }
 
     private void ApplyImportedHumanoidScalarQuaternionCorrections(
+        AnimationValueStore store,
         bool hasImportedHumanoidPolicy,
         ImportedHumanoidRootMotionPolicy policy,
         float samplePhase)
@@ -75,7 +76,7 @@ public partial class AnimationClip
             AnimationQuaternionFloatSlotGroup group = hasImportedHumanoidPolicy && policy.Mirror
                 ? _importedHumanoidScalarQuaternionMirroredGroups[i]
                 : _importedHumanoidScalarQuaternionGroups[i];
-            Quaternion value = ValueStore.ReadQuaternionFloatGroup(group);
+            Quaternion value = store.ReadQuaternionFloatGroup(group);
             if (hasImportedHumanoidPolicy
                 && policy.LoopPose
                 && TrySampleScalarQuaternionEndpoints(i, out Quaternion start, out Quaternion end))
@@ -95,7 +96,7 @@ public partial class AnimationClip
                     samplePhase);
                 value = Quaternion.Normalize(value * correction);
             }
-            ValueStore.WriteQuaternionFloatGroup(group, value);
+            store.WriteQuaternionFloatGroup(group, value);
         }
     }
 

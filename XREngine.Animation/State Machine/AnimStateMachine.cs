@@ -134,7 +134,7 @@ namespace XREngine.Animation
         /// </summary>
         private void AssignSlots()
         {
-            RegisterImportedHumanoidMirroredBindings();
+            RegisterImportedHumanoidMirroredBindings(_animatedCurves);
             AnimationSlotLayout layout = BuildSlotLayout(_animatedCurves, out Dictionary<string, AnimSlot> slotsByPath);
             SlotLayout = layout;
 
@@ -177,7 +177,19 @@ namespace XREngine.Animation
             out Dictionary<string, AnimSlot> slotsByPath)
         {
             var layout = new AnimationSlotLayout();
-            slotsByPath = new Dictionary<string, AnimSlot>(StringComparer.Ordinal);
+            slotsByPath = AppendSlots(layout, membersByPath);
+            layout.QuaternionFloatGroups = BuildQuaternionFloatSlotGroups(slotsByPath, membersByPath);
+            return layout;
+        }
+
+        /// <summary>
+        /// Assigns a typed slot in the layout to each member and returns the slots by logical path.
+        /// </summary>
+        internal static Dictionary<string, AnimSlot> AppendSlots(
+            AnimationSlotLayout layout,
+            IReadOnlyDictionary<string, AnimationMember> membersByPath)
+        {
+            var slotsByPath = new Dictionary<string, AnimSlot>(StringComparer.Ordinal);
 
             // Logical paths, rather than AnimationMember object identity, define slots. Different
             // clips commonly own distinct member instances for the same target path and must write
@@ -191,8 +203,7 @@ namespace XREngine.Animation
                 slotsByPath.Add(kvp.Key, slot);
             }
 
-            layout.QuaternionFloatGroups = BuildQuaternionFloatSlotGroups(slotsByPath, membersByPath);
-            return layout;
+            return slotsByPath;
         }
 
         private static void PropagateLayoutToMotion(
@@ -241,7 +252,7 @@ namespace XREngine.Animation
             IReadOnlyDictionary<string, AnimSlot> slotsByPath)
             => BuildQuaternionFloatSlotGroups(slotsByPath, membersByPath: null);
 
-        private static AnimationQuaternionFloatSlotGroup[] BuildQuaternionFloatSlotGroups(
+        internal static AnimationQuaternionFloatSlotGroup[] BuildQuaternionFloatSlotGroups(
             IReadOnlyDictionary<string, AnimSlot> slotsByPath,
             IReadOnlyDictionary<string, AnimationMember>? membersByPath)
         {
@@ -446,9 +457,9 @@ namespace XREngine.Animation
             }
         }
 
-        private void RegisterImportedHumanoidMirroredBindings()
+        internal static void RegisterImportedHumanoidMirroredBindings(Dictionary<string, AnimationMember> membersByPath)
         {
-            KeyValuePair<string, AnimationMember>[] registered = [.. _animatedCurves];
+            KeyValuePair<string, AnimationMember>[] registered = [.. membersByPath];
             for (int i = 0; i < registered.Length; i++)
             {
                 (string sourcePath, AnimationMember sourceMember) = registered[i];
@@ -458,10 +469,10 @@ namespace XREngine.Animation
                         out string mirroredPath,
                         out AnimationMember? mirroredMember)
                     || mirroredMember is null
-                    || _animatedCurves.ContainsKey(mirroredPath))
+                    || membersByPath.ContainsKey(mirroredPath))
                     continue;
 
-                _animatedCurves.Add(mirroredPath, mirroredMember);
+                membersByPath.Add(mirroredPath, mirroredMember);
             }
         }
 

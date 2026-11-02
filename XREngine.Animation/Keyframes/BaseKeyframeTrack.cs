@@ -10,7 +10,16 @@ namespace XREngine.Animation
         public event Action<BaseKeyframeTrack>? Changed;
         public event DelLengthChange? LengthChanged;
 
-        protected internal void OnChanged() => Changed?.Invoke(this);
+        protected internal void OnChanged()
+        {
+            ++Revision;
+            Changed?.Invoke(this);
+        }
+
+        /// <summary>
+        /// Changes each time the keys change. A retained key is valid for a search only at the same revision.
+        /// </summary>
+        internal int Revision { get; private protected set; }
         protected internal void OnLengthChanged(float prevLength) => LengthChanged?.Invoke(prevLength, this);
 
         protected internal abstract Keyframe? FirstKey { get; internal set; }

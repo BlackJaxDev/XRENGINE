@@ -292,6 +292,7 @@ namespace XREngine.Animation
 
                     if (hasImportedHumanoidPolicy
                         && TryWriteImportedHumanoidValueToStore(
+                            ValueStore,
                             member,
                             sourcePolicy,
                             sourceSampleTime,
@@ -301,6 +302,7 @@ namespace XREngine.Animation
                     member.WriteCurrentValueToStore(ValueStore);
                 }
                 ApplyImportedHumanoidScalarQuaternionCorrections(
+                    ValueStore,
                     hasImportedHumanoidPolicy,
                     sourcePolicy,
                     sourceSamplePhase);
@@ -359,26 +361,37 @@ namespace XREngine.Animation
             }
 
             float playbackTime = ImportedHumanoidTicksToSeconds(_importedHumanoidStatePlaybackTicks);
+            ResolveImportedHumanoidSample(policy, playbackTime, out sampleTime, out samplePhase, out bool sourceWrapped);
+            _importedHumanoidStateSampleTime = sampleTime;
+            _importedHumanoidStateSamplePhase = samplePhase;
+            _importedHumanoidSourceWrapped = sourceWrapped;
+            return true;
+        }
 
+        /// <summary>
+        /// Converts a playback time to a source sample time and phase with the cycle offset applied.
+        /// </summary>
+        private void ResolveImportedHumanoidSample(
+            in ImportedHumanoidRootMotionPolicy policy,
+            float playbackTime,
+            out float sampleTime,
+            out float samplePhase,
+            out bool sourceWrapped)
+        {
+            sampleTime = 0.0f;
+            samplePhase = 0.0f;
+            sourceWrapped = false;
             if (!(LengthInSeconds > 0.0f) || !float.IsFinite(LengthInSeconds))
-            {
-                _importedHumanoidStateSampleTime = 0.0f;
-                _importedHumanoidStateSamplePhase = 0.0f;
-                _importedHumanoidSourceWrapped = false;
-                return true;
-            }
+                return;
 
             float shiftedTime = playbackTime + policy.NormalizedCycleOffset * LengthInSeconds;
             sampleTime = policy.LoopTime
                 ? WrapImportedHumanoidSampleTime(shiftedTime, LengthInSeconds)
                 : Math.Clamp(shiftedTime, 0.0f, LengthInSeconds);
             samplePhase = Math.Clamp(sampleTime / LengthInSeconds, 0.0f, 1.0f);
-            _importedHumanoidStateSampleTime = sampleTime;
-            _importedHumanoidStateSamplePhase = samplePhase;
-            _importedHumanoidSourceWrapped = policy.LoopTime
+            sourceWrapped = policy.LoopTime
                 && policy.NormalizedCycleOffset > 0.0f
-                && playbackTime + policy.NormalizedCycleOffset * LengthInSeconds >= LengthInSeconds;
-            return true;
+                && shiftedTime >= LengthInSeconds;
         }
 
         private static float WrapImportedHumanoidSampleTime(float time, float length)
@@ -388,10 +401,12 @@ namespace XREngine.Animation
         }
 
         private bool TryWriteImportedHumanoidValueToStore(
+            AnimationValueStore store,
             AnimationMember member,
             ImportedHumanoidRootMotionPolicy policy,
             float sampleTime,
-            float samplePhase)
+            float samplePhase,
+            bool useSampleKeyHint = false)
         {
             if (!member.Slot.IsValid || member.Animation is null)
                 return false;
@@ -399,49 +414,49 @@ namespace XREngine.Animation
             RestoreImportedHumanoidMethodArguments(member);
             switch (member.Slot.Type)
             {
-                case EAnimValueType.Float when TrySampleFloat(member.Animation, sampleTime, out float floatValue):
+                case EAnimValueType.Float when TrySampleFloat(member.Animation, sampleTime, out float floatValue, useSampleKeyHint):
                     floatValue = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, floatValue);
                     AnimSlot floatSlot = ResolveImportedHumanoidMirroredFloatSlot(
                         member,
                         policy.Mirror,
                         ref floatValue);
-                    ValueStore.SetFloat(floatSlot.TypeIndex, floatValue);
+                    store.SetFloat(floatSlot.TypeIndex, floatValue);
                     return true;
 
                 case EAnimValueType.Vector2 when member.Animation is PropAnimVector2 vector2Animation:
-                    ValueStore.SetVector2(member.Slot.TypeIndex, vector2Animation.GetValue(sampleTime));
+                    store.SetVector2(member.Slot.TypeIndex, useSampleKeyHint ? vector2Animation.GetValueWithSampleKeyHint(sampleTime) : vector2Animation.GetValue(sampleTime));
                     return true;
 
                 case EAnimValueType.Vector3 when member.Animation is PropAnimVector3 vector3Animation:
-                    Vector3 vector3Value = vector3Animation.GetValue(sampleTime);
+                    Vector3 vector3Value = useSampleKeyHint ? vector3Animation.GetValueWithSampleKeyHint(sampleTime) : vector3Animation.GetValue(sampleTime);
                     vector3Value = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, vector3Value);
                     AnimSlot vector3Slot = ResolveImportedHumanoidMirroredVector3Slot(
                         member,
                         policy.Mirror,
                         ref vector3Value);
-                    ValueStore.SetVector3(vector3Slot.TypeIndex, vector3Value);
+                    store.SetVector3(vector3Slot.TypeIndex, vector3Value);
                     return true;
 
                 case EAnimValueType.Vector4 when member.Animation is PropAnimVector4 vector4Animation:
-                    ValueStore.SetVector4(member.Slot.TypeIndex, vector4Animation.GetValue(sampleTime));
+                    store.SetVector4(member.Slot.TypeIndex, useSampleKeyHint ? vector4Animation.GetValueWithSampleKeyHint(sampleTime) : vector4Animation.GetValue(sampleTime));
                     return true;
 
                 case EAnimValueType.Quaternion when member.Animation is PropAnimQuaternion quaternionAnimation:
-                    Quaternion quaternionValue = quaternionAnimation.GetValue(sampleTime);
+                    Quaternion quaternionValue = useSampleKeyHint ? quaternionAnimation.GetValueWithSampleKeyHint(sampleTime) : quaternionAnimation.GetValue(sampleTime);
                     quaternionValue = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, quaternionValue);
                     AnimSlot quaternionSlot = ResolveImportedHumanoidMirroredQuaternionSlot(
                         member,
                         policy.Mirror,
                         ref quaternionValue);
-                    ValueStore.SetQuaternion(quaternionSlot.TypeIndex, quaternionValue);
+                    store.SetQuaternion(quaternionSlot.TypeIndex, quaternionValue);
                     return true;
 
                 case EAnimValueType.Bool when member.Animation is PropAnimBool boolAnimation:
-                    ValueStore.SetBool(member.Slot.TypeIndex, boolAnimation.GetValue(sampleTime));
+                    store.SetBool(member.Slot.TypeIndex, useSampleKeyHint ? boolAnimation.GetValueWithSampleKeyHint(sampleTime) : boolAnimation.GetValue(sampleTime));
                     return true;
 
                 default:
-                    ValueStore.SetValue(member.Slot, member.Animation.GetValueGeneric(sampleTime));
+                    store.SetValue(member.Slot, member.Animation.GetValueGeneric(sampleTime));
                     return true;
             }
         }
@@ -473,12 +488,12 @@ namespace XREngine.Animation
             }
         }
 
-        private static bool TrySampleFloat(BasePropAnim animation, float sampleTime, out float value)
+        private static bool TrySampleFloat(BasePropAnim animation, float sampleTime, out float value, bool useSampleKeyHint = false)
         {
             switch (animation)
             {
                 case PropAnimFloat floatAnimation:
-                    value = floatAnimation.GetValue(sampleTime);
+                    value = useSampleKeyHint ? floatAnimation.GetValueWithSampleKeyHint(sampleTime) : floatAnimation.GetValue(sampleTime);
                     return true;
                 case PropAnimMethod<float> methodAnimation when methodAnimation.GetValue is { } getValue:
                     value = getValue(sampleTime);

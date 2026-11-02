@@ -718,6 +718,13 @@ namespace XREngine.Animation
         public AnimationQuaternionFloatSlotGroup[] QuaternionFloatGroups { get; internal set; } = [];
 
         /// <summary>
+        /// The members that apply the values of a layout from clip sampling. There is one member for
+        /// each slot, including mirrored targets that are not in a clip member tree. This list is
+        /// empty for a state-machine layout.
+        /// </summary>
+        public IReadOnlyList<AnimationMember> SamplingApplyMembers { get; internal set; } = [];
+
+        /// <summary>
         /// Creates a new <see cref="AnimationValueStore"/> sized to this layout.
         /// </summary>
         public AnimationValueStore CreateStore()

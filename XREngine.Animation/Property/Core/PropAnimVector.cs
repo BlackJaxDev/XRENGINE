@@ -153,7 +153,15 @@ namespace XREngine.Animation
         /// Gets the value that a seek to the given second gives, and changes no playback state.
         /// </summary>
         protected TValue GetSampleValue(float second)
-            => _getValue(ResolveSampleSecond(second));
+            => GetValueWithSampleKeyHint(ResolveSampleSecond(second));
+
+        /// <summary>
+        /// Gets the same value as <see cref="GetValue"/>, and uses the key hint to start the search.
+        /// </summary>
+        internal TValue GetValueWithSampleKeyHint(float second)
+            => IsBaked
+                ? GetValueBakedBySecond(second)
+                : Interpolate(second, EVectorValueType.Position, useSampleKeyHint: true);
 
         public TValue GetValueBakedBySecond(float second)
         {
@@ -245,7 +253,7 @@ namespace XREngine.Animation
             => Interpolate(second, EVectorValueType.Velocity);
         public TValue GetAccelerationKeyframed(float second)
             => Interpolate(second, EVectorValueType.Acceleration);
-        private TValue Interpolate(float second, EVectorValueType type)
+        private TValue Interpolate(float second, EVectorValueType type, bool useSampleKeyHint = false)
         {
             if (Keyframes.Count == 0)
                 return DefaultValue;
@@ -261,7 +269,7 @@ namespace XREngine.Animation
 
                 if (LerpConstrainedFPS)
                 {
-                    TValue constrainedValue = LerpKeyedValues(floorSec, ceilSec, frameFraction, type);
+                    TValue constrainedValue = LerpKeyedValues(floorSec, ceilSec, frameFraction, type, useSampleKeyHint);
                     return type == EVectorValueType.Velocity && velocityScale < 0.0f
                         ? ScaleValue(constrainedValue, velocityScale)
                         : constrainedValue;
@@ -270,7 +278,7 @@ namespace XREngine.Animation
                 second = floorSec;
             }
 
-            TValue value = Keyframes.First?.Interpolate(second, type) ?? DefaultValue;
+            TValue value = GetInterpolationStartKey(second, useSampleKeyHint)?.Interpolate(second, type) ?? DefaultValue;
             return type == EVectorValueType.Velocity && velocityScale < 0.0f
                 ? ScaleValue(value, velocityScale)
                 : value;
@@ -372,11 +380,14 @@ namespace XREngine.Animation
             CurrentVelocity = clamped ? default : ScaleValue(vel, velocityScale);
             CurrentAcceleration = clamped ? default : acc;
         }
-        private TValue LerpKeyedValues(float floorSec, float ceilSec, float time, EVectorValueType type)
+        private TValueKey? GetInterpolationStartKey(float second, bool useSampleKeyHint)
+            => useSampleKeyHint ? GetSampleStartKey(second) : _keyframes.First;
+
+        private TValue LerpKeyedValues(float floorSec, float ceilSec, float time, EVectorValueType type, bool useSampleKeyHint)
         {
             VectorKeyframe<TValue>? prevKey = null;
 
-            TValue? floorValue = _keyframes.First?.Interpolate(
+            TValue? floorValue = GetInterpolationStartKey(floorSec, useSampleKeyHint)?.Interpolate(
                 floorSec,
                 type,
                 out prevKey,

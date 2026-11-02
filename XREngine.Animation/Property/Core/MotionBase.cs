@@ -223,7 +223,30 @@ namespace XREngine.Animation
                 LogWarningOnce($"[Animation] Animation member not found at '{brokenAt}' (segment '{member.MemberName}').");
             }
 
-            path = AppendMemberPathSegment(path, member);
+            if (member.MemberType != EAnimationMemberType.Group)
+                path += $"{member.MemberName}";
+
+            if (member.MemberType == EAnimationMemberType.Method)
+            {
+                for (int i = 0; i < member.MethodArguments.Length; i++)
+                {
+                    path += ":";
+                    object? arg = member.MethodArguments[i];
+                    if (member.AnimatedMethodArgumentIndex == i)
+                    {
+                        //if (member.Animation is not null)
+                            path += $"<AnimatedValue>";
+                        //else
+                        //    path += member.MethodArguments[i] is null
+                        //        ? "<null>"
+                        //        : $"{member.MethodArguments[i]}";
+                    }
+                    else if (arg is null)
+                        path += "<null>";
+                    else
+                        path += $"{arg}";
+                }
+            }
 
             if (member.Animation is not null || member.MemberType == EAnimationMemberType.Method)
             {
@@ -248,32 +271,6 @@ namespace XREngine.Animation
 
             foreach (AnimationMember child in member.Children)
                 InitializeMember(child, path, layer, owner, parentObject, parentMotions);
-        }
-
-        /// <summary>
-        /// Adds one member to a logical path. Logical paths identify animation store slots.
-        /// </summary>
-        internal static string AppendMemberPathSegment(string path, AnimationMember member)
-        {
-            if (member.MemberType != EAnimationMemberType.Group)
-                path += $"{member.MemberName}";
-
-            if (member.MemberType == EAnimationMemberType.Method)
-            {
-                for (int i = 0; i < member.MethodArguments.Length; i++)
-                {
-                    path += ":";
-                    object? arg = member.MethodArguments[i];
-                    if (member.AnimatedMethodArgumentIndex == i)
-                        path += "<AnimatedValue>";
-                    else if (arg is null)
-                        path += "<null>";
-                    else
-                        path += $"{arg}";
-                }
-            }
-
-            return path;
         }
 
         protected internal void SetAnimValue(string path, object? animValue)

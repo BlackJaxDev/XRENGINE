@@ -500,13 +500,21 @@ namespace XREngine.Animation
         }
 
         /// <summary>
-        /// True when clip sampling cannot give a value for this member. A method member is
-        /// unsupported when it has an animation or is a leaf. A method member that only
-        /// finds an object for its children animates nothing, so it is not unsupported.
+        /// True when clip sampling cannot give a value for this member, because its track
+        /// calls code at the sample time. The member type does not make a member unsupported:
+        /// a method member runs its method only at apply time, not when a sample is taken.
         /// </summary>
         internal bool IsUnsupportedForSampling
-            => (MemberType == EAnimationMemberType.Method && (Animation is not null || Children.Count == 0))
-            || Animation is { SupportsHistoryFreeSampling: false };
+            => Animation is { SupportsHistoryFreeSampling: false };
+
+        /// <summary>
+        /// True when clip sampling writes a value for this member. A method leaf with no
+        /// animation writes its argument, as normal playback does. A method member with
+        /// children and no animation only finds an object for its children, so it has no value.
+        /// </summary>
+        internal bool HasSampledValue
+            => !IsUnsupportedForSampling
+            && (Animation is not null || (MemberType == EAnimationMemberType.Method && Children.Count == 0));
 
         /// <summary>
         /// Writes the animation value for the given second into the store at this member's
@@ -514,8 +522,13 @@ namespace XREngine.Animation
         /// </summary>
         internal void WriteSampleToStore(float second, AnimationValueStore store)
         {
-            if (Slot.IsValid)
-                Animation?.WriteSampleToStore(second, store, in Slot);
+            if (!Slot.IsValid)
+                return;
+
+            if (Animation is null)
+                WriteCurrentValueToStore(store);
+            else
+                Animation.WriteSampleToStore(second, store, in Slot);
         }
 
         /// <summary>
@@ -607,9 +620,15 @@ namespace XREngine.Animation
                 PropAnimVector4 => EAnimValueType.Vector4,
                 PropAnimQuaternion => EAnimValueType.Quaternion,
                 PropAnimBool => EAnimValueType.Bool,
-                _ => DetermineValueTypeFromMemberInfo(),
+                _ => _bindingVariantValueType ?? DetermineValueTypeFromMemberInfo(),
             };
         }
+
+        /// <summary>
+        /// The value type of the member that a binding variant copies. A variant has no animation
+        /// and can have no target yet, but it must use a slot of the same type as its source.
+        /// </summary>
+        private EAnimValueType? _bindingVariantValueType;
 
         private EAnimValueType DetermineValueTypeFromMemberInfo()
         {
@@ -722,6 +741,7 @@ namespace XREngine.Animation
             {
                 MethodArguments = arguments,
                 AnimatedMethodArgumentIndex = AnimatedMethodArgumentIndex,
+                _bindingVariantValueType = DetermineValueType(),
             };
             variant.InitializeMethod(_parentObject);
             return variant;

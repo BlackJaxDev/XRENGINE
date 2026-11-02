@@ -138,6 +138,18 @@ namespace XREngine.Animation
             return _baked.GetValue(frame.Clamp(0, _baked.Count - 1));
         }
         public Quaternion GetValueKeyframed(float second)
+            => GetValueKeyframed(second, useSampleKeyHint: false);
+
+        /// <summary>
+        /// Gets the same value as <see cref="GetValue"/>, and uses the key hint to start the search.
+        /// </summary>
+        internal Quaternion GetValueWithSampleKeyHint(float second)
+            => IsBaked ? GetValueBakedBySecond(second) : GetValueKeyframed(second, useSampleKeyHint: true);
+
+        private QuaternionKeyframe? GetInterpolationStartKey(float second, bool useSampleKeyHint)
+            => useSampleKeyHint ? GetSampleStartKey(second) : Keyframes.First;
+
+        private Quaternion GetValueKeyframed(float second, bool useSampleKeyHint)
         {
             if (Keyframes.Count == 0)
                 return DefaultValue;
@@ -148,18 +160,18 @@ namespace XREngine.Animation
                     return DefaultValue;
 
                 if (LerpConstrainedFPS)
-                    return LerpKeyedValues(floorSec, ceilSec, frameFraction);
+                    return LerpKeyedValues(floorSec, ceilSec, frameFraction, useSampleKeyHint);
 
                 second = floorSec;
             }
 
-            return Keyframes.First?.Interpolate(second) ?? DefaultValue;
+            return GetInterpolationStartKey(second, useSampleKeyHint)?.Interpolate(second) ?? DefaultValue;
         }
-        private Quaternion LerpKeyedValues(float floorSec, float ceilSec, float time)
+        private Quaternion LerpKeyedValues(float floorSec, float ceilSec, float time, bool useSampleKeyHint)
         {
             QuaternionKeyframe? prevKey = null;
 
-            Quaternion? floorValue = _keyframes.First?.Interpolate(
+            Quaternion? floorValue = GetInterpolationStartKey(floorSec, useSampleKeyHint)?.Interpolate(
                 floorSec,
                 out prevKey,
                 out _,
@@ -205,7 +217,7 @@ namespace XREngine.Animation
             if (Keyframes.Count == 0)
                 return DefaultValue;
 
-            QuaternionKeyframe? startKey = Keyframes.GetKeyBefore(second);
+            QuaternionKeyframe? startKey = FindSampleKey(second);
             if (ConstrainKeyframedFPS)
             {
                 if (!TryGetCadenceFrameWindow(second, out _, out _, out float floorSec, out float ceilSec, out float frameFraction))
