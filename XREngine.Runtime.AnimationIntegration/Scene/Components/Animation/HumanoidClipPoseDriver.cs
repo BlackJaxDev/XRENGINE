@@ -19,6 +19,45 @@ public sealed class HumanoidClipPoseDriver
     private readonly HumanoidStateMachineRootMotionFrame _frame;
     private HumanoidIKSolverComponent? _ikSolver;
     private bool _ownsTransaction;
+    private readonly float[] _originalRaw = new float[HumanoidComponent.MuscleValueCount];
+    private readonly float[] _originalConverted = new float[HumanoidComponent.MuscleValueCount];
+    private readonly bool[] _hasOriginal = new bool[HumanoidComponent.MuscleValueCount];
+
+    /// <summary>True if the last capture found a muscle value.</summary>
+    public bool HasOriginalMuscles { get; private set; }
+
+    /// <summary>
+    /// Records the live muscle values. A frame starts from these values, so a muscle with no clip keeps its value.
+    /// </summary>
+    public void CaptureOriginalMuscles()
+    {
+        HasOriginalMuscles = false;
+        for (int i = 0; i < _hasOriginal.Length; i++)
+        {
+            EHumanoidValue value = (EHumanoidValue)i;
+            bool hasRaw = _humanoid.TryGetRawHumanoidValue(value, out _originalRaw[i]);
+            bool hasConverted = _humanoid.TryGetMuscleValue(value, out _originalConverted[i]);
+            _hasOriginal[i] = hasRaw && hasConverted;
+            HasOriginalMuscles |= _hasOriginal[i];
+        }
+    }
+
+    /// <summary>Reads a raw muscle value from the last capture.</summary>
+    /// <param name="value">The muscle.</param>
+    /// <param name="raw">The raw value.</param>
+    /// <returns>False if the capture found no value for the muscle.</returns>
+    public bool TryGetOriginalMuscle(EHumanoidValue value, out float raw)
+    {
+        int index = (int)value;
+        if ((uint)index >= (uint)_hasOriginal.Length || !_hasOriginal[index])
+        {
+            raw = 0f;
+            return false;
+        }
+
+        raw = _originalRaw[index];
+        return true;
+    }
 
     /// <summary>Creates a driver.</summary>
     /// <param name="humanoid">The humanoid to drive.</param>
@@ -69,12 +108,12 @@ public sealed class HumanoidClipPoseDriver
     }
 
     /// <summary>
-    /// Gives the added clips to the humanoid and forgets the muscle values of the last frame, so that a
-    /// value with no clip now has no effect. Write the store values after this call.
+    /// Gives the added clips to the humanoid and puts the muscles back to their captured values, so that a
+    /// muscle with no clip now keeps its original value. Write the store values after this call.
     /// </summary>
     public void StageMotion()
     {
-        _humanoid.ClearRuntimeMuscleState();
+        ResetMusclesToOriginal();
         _humanoid.StageStateMachineRootMotionFrame(this, _frame);
     }
 
@@ -112,18 +151,32 @@ public sealed class HumanoidClipPoseDriver
 
     /// <summary>Forgets the motion of the driver. The bones and the muscle values stay.</summary>
     public void ReleaseMotion()
-        => _humanoid.ClearStateMachineRootMotionFrame(this);
+    {
+        EndTransaction();
+        _humanoid.ClearStateMachineRootMotionFrame(this);
+    }
 
     /// <summary>
-    /// Forgets the motion, the muscle values, the Body sample, and the IK goals, so that a later scene tick
-    /// does not solve over the bones. The caller writes the bones.
+    /// Forgets the motion, the Body sample, and the IK goals, and puts the muscles back to their captured
+    /// values, so that a later scene tick does not solve a clip pose over the bones. The caller writes the bones.
     /// </summary>
     public void ClearPoseInputs()
     {
+        EndTransaction();
         _humanoid.ClearStateMachineRootMotionFrame(this);
         _humanoid.ResetRootMotionBaseline();
-        _humanoid.ClearRuntimeMuscleState();
+        ResetMusclesToOriginal();
         _humanoid.SceneNode.GetComponent<HumanoidIKSolverComponent>()?.ClearAnimatedIKGoals();
+    }
+
+    private void ResetMusclesToOriginal()
+    {
+        _humanoid.ClearRuntimeMuscleState();
+        for (int i = 0; i < _hasOriginal.Length; i++)
+        {
+            if (_hasOriginal[i])
+                _humanoid.RestoreRuntimeMuscleValue((EHumanoidValue)i, _originalRaw[i], _originalConverted[i]);
+        }
     }
 
     private void EndTransaction()

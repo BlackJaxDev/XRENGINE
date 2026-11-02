@@ -525,6 +525,22 @@ namespace XREngine.Animation
             return true;
         }
 
+        /// <summary>The object that this member reads and writes, after it is bound.</summary>
+        public object? BoundTarget => _parentObject;
+
+        /// <summary>Writes a value that the caller read from the target to the float slot of this member.</summary>
+        /// <param name="store">The store that receives the value.</param>
+        /// <param name="value">The value.</param>
+        /// <returns>False if this member has no float slot.</returns>
+        public bool TryWriteFloatToStore(AnimationValueStore store, float value)
+        {
+            if (!Slot.IsValid || Slot.Type != EAnimValueType.Float)
+                return false;
+
+            store.SetFloat(Slot.TypeIndex, value);
+            return true;
+        }
+
         private object? ReadTargetProperty()
             => AnimationMemberBindingRegistry.TryGetGetter(_parentObject!.GetType(), _memberName, out Func<object, object?>? getter)
                 ? getter!(_parentObject)

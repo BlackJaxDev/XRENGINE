@@ -28,7 +28,7 @@ namespace XREngine.Components.Animation
         private readonly Dictionary<EHumanoidValue, float> _muscleValues = [];
         private readonly Dictionary<EHumanoidValue, float> _rawHumanoidValues = [];
         private readonly object _muscleValuesLock = new();
-        private const int MuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
+        internal const int MuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
         private readonly float[] _muscleValueSnapshot = new float[MuscleValueCount];
         private readonly float[] _projectionMuscleValueSnapshot = new float[MuscleValueCount];
         private readonly float[] _canonicalProjectionMuscleValueSnapshot = new float[MuscleValueCount];
@@ -2500,6 +2500,16 @@ namespace XREngine.Components.Animation
             }
 
             node.Transform.ResetPose();
+        }
+
+        /// <summary>Writes a raw value and its converted value that an earlier read gave.</summary>
+        internal void RestoreRuntimeMuscleValue(EHumanoidValue value, float raw, float converted)
+        {
+            lock (_muscleValuesLock)
+            {
+                _rawHumanoidValues[value] = raw;
+                _muscleValues[value] = converted;
+            }
         }
 
         internal void ClearRuntimeMuscleState()

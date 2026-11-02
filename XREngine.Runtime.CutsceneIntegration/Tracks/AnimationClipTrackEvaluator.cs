@@ -95,7 +95,7 @@ public sealed class AnimationClipTrackEvaluator : ICutsceneTrackEvaluator
         for (int trackIndex = 0; trackIndex < tracks.Count; trackIndex++)
         {
             if (tracks[trackIndex] is AnimationClipTrack track && track.BindingSlot == slot && track.Clips.Count > 0)
-                diagnostics.Add(new CutsceneCompileDiagnostic(trackIndex, -1, $"The track '{track.Name}' has no node when the cutscene opens. Clip copies are made only at open, so its clips do not play. Fill a runtime slot before the open."));
+                diagnostics.Add(new CutsceneCompileDiagnostic(trackIndex, -1, $"The track '{track.Name}' has no node when the cutscene opens. Clip copies are made only at open, so its clips do not play. Call CutsceneDirectorComponent.SetRuntimeSlot before the open."));
         }
     }
 

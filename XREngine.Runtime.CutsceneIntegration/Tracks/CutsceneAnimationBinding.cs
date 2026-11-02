@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Animation;
+using XREngine.Animation.IK;
 using XREngine.Components.Animation;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -31,6 +32,9 @@ internal sealed class CutsceneAnimationBinding
     private readonly HumanoidComponent? _humanoid;
     private readonly HumanoidClipPoseDriver? _driver;
     private readonly bool _placesRoot;
+    private readonly bool _tracksRoot;
+    private readonly bool _hasMuscleMember;
+    private readonly bool[] _hasLiveOriginal;
 
     private readonly Transform[] _hierarchy;
     private readonly Vector3[] _hierarchyTranslations;
@@ -49,6 +53,8 @@ internal sealed class CutsceneAnimationBinding
     private bool _reportedGate;
     private bool _reportedRejection;
     private bool _reportedRebind;
+    private bool _reportedUnreadableMuscles;
+    private bool _unreadableMuscles;
 
     private CutsceneAnimationBinding(
         int slot,
@@ -78,13 +84,18 @@ internal sealed class CutsceneAnimationBinding
 
         _members = new AnimationMember[layout.SamplingApplyMembers.Count];
         _isMethod = new bool[_members.Length];
+        _hasLiveOriginal = new bool[_members.Length];
         bool hasMethodMember = false;
+        bool writesRoot = false;
         for (int i = 0; i < _members.Length; i++)
         {
             _members[i] = layout.SamplingApplyMembers[i];
             _isMethod[i] = _members[i].MemberType == EAnimationMemberType.Method;
             hasMethodMember |= _isMethod[i];
+            writesRoot |= ReferenceEquals(_members[i].BoundTarget, node.Transform);
+            _hasMuscleMember |= TryGetMuscle(_members[i], out _);
         }
+        _tracksRoot = placesRoot || writesRoot;
 
         // A method has no readable value, so the bones under the target are the original pose.
         List<Transform> hierarchy = [];
@@ -131,7 +142,7 @@ internal sealed class CutsceneAnimationBinding
             if (firstTrack is null)
                 firstTrack = track;
             else
-                Report(diagnostics, trackIndex, -1, $"The track '{track.Name}' shares a binding with the track '{firstTrack.Name}'. Their clips blend by weight, and only the root offset of '{firstTrack.Name}' applies.");
+                Report(diagnostics, trackIndex, -1, $"The track '{track.Name}' shares a binding with the track '{firstTrack.Name}'. Their clips blend by weight, and only the root offset and the finish behavior of '{firstTrack.Name}' apply.");
 
             for (int clipIndex = 0; clipIndex < track.Clips.Count; clipIndex++)
             {
@@ -225,6 +236,8 @@ internal sealed class CutsceneAnimationBinding
 
         _lease.Acquire(_node);
         CaptureOriginal(snapshot);
+        if (_unreadableMuscles && _totalWeight < 1f)
+            ReportUnreadableMusclesOnce();
 
         float divisor = _totalWeight;
         for (int i = 0; i < _activeCount; i++)
@@ -238,12 +251,20 @@ internal sealed class CutsceneAnimationBinding
         float blendToClips = MathF.Min(_totalWeight, 1f);
         _result.OverrideFrom(_blended, blendToClips);
 
-        if (_driver is null)
-            WriteResult();
-        else
-            WriteHumanoidFrame(_driver, blendToClips, snapshot);
-
+        // A failed frame can have written some members, so the exit path must restore them.
         _written = true;
+        try
+        {
+            if (_driver is null)
+                WriteResult();
+            else
+                WriteHumanoidFrame(_driver, blendToClips, snapshot);
+        }
+        catch (Exception exception)
+        {
+            _driver?.CancelFrame();
+            ReportRejectionOnce($"A member or a solver failed. {exception.GetBaseException().Message}");
+        }
     }
 
     /// <summary>Ends the use of the target for a stop.</summary>
@@ -307,9 +328,9 @@ internal sealed class CutsceneAnimationBinding
     {
         for (int i = 0; i < _members.Length; i++)
         {
-            // A method has only a default value when no clip authors it. A call with
-            // that value would set an IK goal or a muscle that no active clip asked for.
-            if (_isMethod[i] && !_members[i].HasValueIn(_blended))
+            // A method without a live original has only a default value when no clip authors
+            // it. A call with that value would set an IK goal that no active clip asked for.
+            if (_isMethod[i] && !_hasLiveOriginal[i] && !_members[i].HasValueIn(_blended))
                 continue;
 
             _members[i].ApplyFromStore(_result);
@@ -341,12 +362,17 @@ internal sealed class CutsceneAnimationBinding
             return;
         _captured = true;
 
-        if (_placesRoot)
+        if (_tracksRoot)
             snapshot.CaptureTransform(_slot);
 
+        _driver?.CaptureOriginalMuscles();
         _original.Clear();
         for (int i = 0; i < _members.Length; i++)
-            _members[i].TryWriteTargetValueToStore(_original);
+        {
+            _hasLiveOriginal[i] = TryWriteLiveMethodValue(_members[i]);
+            if (!_hasLiveOriginal[i])
+                _members[i].TryWriteTargetValueToStore(_original);
+        }
 
         for (int i = 0; i < _hierarchy.Length; i++)
         {
@@ -355,6 +381,59 @@ internal sealed class CutsceneAnimationBinding
             _hierarchyRotations[i] = transform.Rotation;
             _hierarchyScales[i] = transform.Scale;
         }
+
+        _unreadableMuscles = _hasMuscleMember && _driver is { HasOriginalMuscles: false } && IsAwayFromBindPose();
+    }
+
+    /// <summary>Reads the value of a muscle or an IK weight method from its target. A method has no getter of its own.</summary>
+    private bool TryWriteLiveMethodValue(AnimationMember member)
+    {
+        if (_driver is not null && TryGetMuscle(member, out EHumanoidValue muscle))
+            return _driver.TryGetOriginalMuscle(muscle, out float raw) && member.TryWriteFloatToStore(_original, raw);
+
+        if (member.BoundTarget is not HumanoidIKSolverComponent solver
+            || member.MethodArguments.Length == 0
+            || member.MethodArguments[0] is not ELimbEndEffector goal)
+            return false;
+
+        return member.MemberName switch
+        {
+            "SetIKPositionWeight" => member.TryWriteFloatToStore(_original, solver.GetIKPositionWeight(goal)),
+            "SetIKRotationWeight" => member.TryWriteFloatToStore(_original, solver.GetIKRotationWeight(goal)),
+            _ => false,
+        };
+    }
+
+    private static bool TryGetMuscle(AnimationMember member, out EHumanoidValue muscle)
+    {
+        muscle = default;
+        if (member.BoundTarget is not HumanoidComponent
+            || member.MemberName is not ("SetValue" or "SetImportedRawValue")
+            || member.MethodArguments.Length == 0)
+            return false;
+
+        switch (member.MethodArguments[0])
+        {
+            case EHumanoidValue value:
+                muscle = value;
+                return true;
+            case int index:
+                muscle = (EHumanoidValue)index;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private bool IsAwayFromBindPose()
+    {
+        for (int i = 0; i < _hierarchy.Length; i++)
+        {
+            Quaternion bind = _hierarchy[i].BindState.Rotation;
+            if (MathF.Abs(Quaternion.Dot(Quaternion.Normalize(_hierarchyRotations[i]), Quaternion.Normalize(bind))) < 0.9999f)
+                return true;
+        }
+        return false;
     }
 
     private void ReturnToOriginal(CutsceneStateSnapshot snapshot)
@@ -362,10 +441,21 @@ internal sealed class CutsceneAnimationBinding
         _written = false;
         _driver?.ClearPoseInputs();
 
-        if (_driver is null)
+        for (int i = 0; i < _members.Length; i++)
         {
-            for (int i = 0; i < _members.Length; i++)
+            // The driver gave the muscles back and cleared the IK goals, so a humanoid only needs its other members.
+            if (_driver is not null && _isMethod[i])
+                continue;
+
+            // One failed member must not stop the restore of the others, the lease release, or the stop.
+            try
+            {
                 _members[i].ApplyFromStore(_original);
+            }
+            catch (Exception exception)
+            {
+                ReportRejectionOnce($"A member failed in the restore. {exception.GetBaseException().Message}");
+            }
         }
 
         for (int i = 0; i < _hierarchy.Length; i++)
@@ -376,7 +466,7 @@ internal sealed class CutsceneAnimationBinding
             transform.Scale = _hierarchyScales[i];
         }
 
-        if (_placesRoot)
+        if (_tracksRoot)
             snapshot.ApplyTransform(_slot);
     }
 
@@ -386,6 +476,14 @@ internal sealed class CutsceneAnimationBinding
             return;
         _reportedGate = true;
         ReportForTrack($"The humanoid of the track '{_track.Name}' is not in the animated pose preview mode. The preview mode owns the pose, so the clips write nothing.");
+    }
+
+    private void ReportUnreadableMusclesOnce()
+    {
+        if (_reportedUnreadableMuscles)
+            return;
+        _reportedUnreadableMuscles = true;
+        ReportForTrack($"The target of the track '{_track.Name}' has bones away from the bind pose but no readable muscle values. A fade of its muscles starts from the neutral pose.");
     }
 
     private void ReportRebindOnce()

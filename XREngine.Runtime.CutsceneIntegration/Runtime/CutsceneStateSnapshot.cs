@@ -182,12 +182,16 @@ public sealed class CutsceneStateSnapshot
         {
             CutsceneTrack track = _table.GetTrack(trackIndex);
             ECutsceneFinishBehavior behavior = trackIndex < perTrack.Length ? perTrack[trackIndex] : track.WhenFinished;
-            if (!forceAll && behavior != ECutsceneFinishBehavior.RestoreState)
-                continue;
-
             int slot = track.BindingSlot;
             if ((uint)slot >= (uint)_hasTransform.Length)
                 continue;
+
+            // A kept value is the new original value of the next run.
+            if (!forceAll && behavior != ECutsceneFinishBehavior.RestoreState)
+            {
+                Forget(track, slot);
+                continue;
+            }
 
             if (track is TransformTrack or AnimationClipTrack)
                 RestoreTransform(slot);
@@ -210,6 +214,16 @@ public sealed class CutsceneStateSnapshot
             RestoreActive(slot);
             RestoreFieldOfView(slot);
         }
+    }
+
+    private void Forget(CutsceneTrack track, int slot)
+    {
+        if (track is TransformTrack or AnimationClipTrack)
+            _hasTransform[slot] = false;
+        else if (track is ActivationTrack)
+            _hasActive[slot] = false;
+        else if (track is CameraPropertyTrack)
+            _hasFieldOfView[slot] = false;
     }
 
     private void RestoreTransform(int slot)

@@ -175,6 +175,16 @@ namespace XREngine.Animation
             return Quaternion.Slerp(outInterp, inInterp, normalizedTime);
         }
 
+        /// <summary>
+        /// Corrects a key that older data stored. Older keys hold a Step in type that playback ignored,
+        /// because the constructors set only the out type. A blend with Step would jump at the middle of each span.
+        /// </summary>
+        internal void NormalizeRestoredInterpolation()
+        {
+            if (InterpolationTypeIn == ERadialInterpType.Step && InterpolationTypeOut != ERadialInterpType.Step)
+                InterpolationTypeIn = InterpolationTypeOut;
+        }
+
         /// <summary>Uses the stored type at each call, so a key gives the same result however its type was set.</summary>
         private static Quaternion Interpolate(ERadialInterpType type, QuaternionKeyframe? key1, QuaternionKeyframe? key2, float time)
             => type switch

@@ -1,6 +1,7 @@
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Cutscenes;
 using XREngine.Rendering;
@@ -88,6 +89,41 @@ public sealed class CutsceneDirectorComponentTests
             director.Asset = asset;
         director.BindingResolver = new FakeResolver(target);
         return new Rig { Target = target, Host = host, Director = director, World = world };
+    }
+
+    [Test]
+    public async Task SetRuntimeSlot_BeforeOpen_LetsAnimationTrackPlay()
+    {
+        const string SlotName = "Actor";
+        Rig rig = MakeRig();
+        SceneNode actor = new("Actor", new Transform());
+
+        PropAnimVector3 position = new(2f, false, true);
+        position.Keyframes.Add(new Vector3Keyframe(0f, Vector3.One, Vector3.Zero, EVectorInterpType.Linear));
+        AnimationMember transform = new("Transform", EAnimationMemberType.Property);
+        transform.Children.Add(new AnimationMember("Translation", EAnimationMemberType.Property, position));
+        AnimationMember sceneNode = new("SceneNode", EAnimationMemberType.Property);
+        sceneNode.Children.Add(transform);
+
+        CutsceneAsset asset = new() { Duration = T(10) };
+        asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.RuntimeSlot, SlotName = SlotName });
+        AnimationClipTrack track = new() { Name = "Anim", BindingSlot = 0 };
+        track.Clips.Add(new AnimationClipTrackClip { Start = T(0), Duration = T(2), Clip = new AnimationClip(sceneNode) { LengthInSeconds = 2f } });
+        asset.Tracks.Add(track);
+
+        // Without a node at the open, the track says which call it needs.
+        rig.Director.Asset = asset;
+        await rig.Director.OpenAsync();
+        rig.Director.Player!.Diagnostics.ShouldContain(d => d.Message.Contains(nameof(CutsceneDirectorComponent.SetRuntimeSlot), StringComparison.Ordinal));
+        rig.Director.Close();
+
+        rig.Director.SetRuntimeSlot(SlotName, actor);
+        await rig.Director.OpenAsync();
+        rig.Director.Diagnostics.ShouldNotContain(d => d.Message.Contains("is empty", StringComparison.Ordinal));
+        rig.Director.Player!.Seek(T(1), ESeekIntent.Jump);
+        rig.Director.Player.Tick(0);
+
+        Vector3.Distance(((Transform)actor.Transform).Translation, Vector3.One).ShouldBeLessThan(1e-4f);
     }
 
     [Test]

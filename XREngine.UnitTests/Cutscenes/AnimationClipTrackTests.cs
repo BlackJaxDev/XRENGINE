@@ -69,6 +69,16 @@ public sealed class AnimationClipTrackTests
         }
     }
 
+    /// <summary>A transform with a discrete property whose setter throws.</summary>
+    private sealed class ThrowingTransform : Transform
+    {
+        public string Boom
+        {
+            get => "start";
+            set => throw new InvalidOperationException("Setter failure.");
+        }
+    }
+
     private static CutsceneTime T(double seconds) => CutsceneTime.FromSeconds(seconds);
 
     // ── Clips ───────────────────────────────────────────────────────────
@@ -402,6 +412,118 @@ AnimationClip:
         rig.Player.Diagnostics.Count(d => d.Message.Contains("preview", StringComparison.OrdinalIgnoreCase)).ShouldBe(1);
     }
 
+    // ── Fade from the live pose ─────────────────────────────────────────
+
+    [Test]
+    public void Fade_OfPosedHumanoid_BlendsFromLiveMuscles()
+    {
+        (SceneNode root, HumanoidComponent humanoid) = HumanoidNode();
+        humanoid.SetValue(EHumanoidValue.LeftArmDownUp, 0.8f);
+        humanoid.SetValue(EHumanoidValue.SpineFrontBack, 0.3f);
+        humanoid.ApplyCurrentMusclePose();
+        Transform arm = Bone(root, "LeftArm");
+        Quaternion armBefore = arm.Rotation;
+
+        using Rig rig = MakeRig(root, 10, null, Entry(HumanoidClip(0.2f, 0.2f), 2, 4, blendIn: 2));
+
+        rig.SeekTo(3);
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.LeftArmDownUp, out float blended).ShouldBeTrue();
+        blended.ShouldBe(0.5f, 1e-3f);
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.SpineFrontBack, out float kept).ShouldBeTrue();
+        kept.ShouldBe(0.3f, 1e-5f);
+
+        // The first frame of the fade has almost no clip weight, so the arm must not pop to neutral.
+        rig.SeekTo(2.002);
+        ShouldBeNear(arm.Rotation, armBefore, 1e-3f);
+
+        rig.SeekTo(8);
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.LeftArmDownUp, out float restored).ShouldBeTrue();
+        restored.ShouldBe(0.8f, 1e-5f);
+        ShouldBeNear(arm.Rotation, armBefore, 1e-5f);
+    }
+
+    [Test]
+    public void Fade_OfHumanoidPosedOnlyByBones_AddsDiagnostic()
+    {
+        (SceneNode root, _) = HumanoidNode();
+        Bone(root, "LeftArm").Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 0.3f);
+        using Rig rig = MakeRig(root, 10, null, Entry(HumanoidClip(0.2f, 0.2f), 2, 4, blendIn: 2));
+
+        rig.SeekTo(3);
+        rig.SeekTo(3.5);
+
+        rig.Player.Diagnostics.Count(d => d.Message.Contains("no readable muscle", StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    // ── Exit paths ──────────────────────────────────────────────────────
+
+    [Test]
+    public void MemberOnHumanoidTarget_BackwardSeekBeforeClip_EqualsFreshEvaluation()
+    {
+        (SceneNode root, _) = HumanoidNode();
+        using Rig rig = MakeRig(root, 10, null, Entry(PositionClip(2, new Vector3(3, 3, 3), new Vector3(3, 3, 3)), 1, 2));
+        (SceneNode freshRoot, _) = HumanoidNode();
+        using Rig fresh = MakeRig(freshRoot, 10, null, Entry(PositionClip(2, new Vector3(3, 3, 3), new Vector3(3, 3, 3)), 1, 2));
+
+        rig.SeekTo(2);
+        ShouldBeNear(rig.Root.Translation, new Vector3(3, 3, 3));
+
+        rig.SeekTo(0.5);
+        fresh.SeekTo(0.5);
+        rig.Root.Translation.ShouldBe(fresh.Root.Translation);
+        rig.Root.Rotation.ShouldBe(fresh.Root.Rotation);
+
+        rig.SeekTo(2);
+        rig.Player.Stop();
+        rig.Root.Translation.ShouldBe(OriginalPosition);
+    }
+
+    [Test]
+    public void ThrowingSetter_LeavesHumanoidUsableAfterStop()
+    {
+        SceneNode root = new("Avatar", new ThrowingTransform());
+        AnimationClipComponentTests.AddPlaybackSkeleton(root);
+        HumanoidComponent humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+        humanoid.TryValidateAvatarDefinitionForPlayback(out string avatarProblem).ShouldBeTrue(avatarProblem);
+
+        PropAnimObject boom = new(2f, false, true);
+        boom.Keyframes.Add(new ObjectKeyframe { Second = 0f, Value = "next" });
+        AnimationMember transform = new("Transform", EAnimationMemberType.Property);
+        transform.Children.Add(new AnimationMember(nameof(ThrowingTransform.Boom), EAnimationMemberType.Property, boom));
+        AnimationMember sceneNode = new("SceneNode", EAnimationMemberType.Property);
+        sceneNode.Children.Add(transform);
+        AnimationClip clip = new(sceneNode) { LengthInSeconds = 2f };
+
+        using Rig rig = MakeRig(root, 10, null, Entry(clip, 0, 2));
+        rig.SeekTo(1);
+        rig.SeekTo(1.5);
+        rig.Player.Diagnostics.Count(d => d.Message.Contains("Setter failure", StringComparison.Ordinal)).ShouldBe(1);
+
+        rig.Player.Stop();
+
+        AnimationClipComponent player = root.AddComponent<AnimationClipComponent>()!;
+        player.Animation = HumanoidClip();
+        player.EvaluateAtTime(1f);
+        humanoid.WasLastNativeFrameAccepted.ShouldBeTrue();
+    }
+
+    [Test]
+    public void KeepState_NextRunStartsFromTheKeptRoot()
+    {
+        (SceneNode root, _) = HumanoidNode();
+        using Rig rig = MakeRig(root, 10, track => track.WhenFinished = ECutsceneFinishBehavior.KeepState, Entry(HumanoidClip(), 0, 2));
+
+        rig.SeekTo(1);
+        rig.Player.Stop();
+        Vector3 kept = rig.Root.Translation;
+        Vector3.Distance(kept, OriginalPosition).ShouldBeGreaterThan(0.01f);
+
+        rig.SeekTo(1);
+        rig.SeekTo(5);
+        ShouldBeNear(rig.Root.Translation, kept, 1e-5f);
+    }
+
     // ── Lease ───────────────────────────────────────────────────────────
 
     private static AnimStateMachineComponent AddStateMachine(SceneNode node, Vector3 value)
@@ -426,12 +548,12 @@ AnimationClip:
         using Rig rig = MakeRig(node, 10, null, Entry(PositionClip(2, Vector3.One, Vector3.One), 1, 2));
 
         rig.SeekTo(2);
-        machine.SuspendedByClip.ShouldBeTrue();
+        machine.EvaluationSuspended.ShouldBeTrue();
         machine.EvaluationTick();
         ShouldBeNear(rig.Root.Translation, Vector3.One);
 
         rig.SeekTo(5);
-        machine.SuspendedByClip.ShouldBeFalse();
+        machine.EvaluationSuspended.ShouldBeFalse();
         rig.Root.Translation.ShouldBe(OriginalPosition);
     }
 
@@ -443,10 +565,10 @@ AnimationClip:
         using Rig rig = MakeRig(node, 10, null, Entry(PositionClip(2, Vector3.One, Vector3.One), 1, 2));
 
         rig.SeekTo(2);
-        machine.SuspendedByClip.ShouldBeTrue();
+        machine.EvaluationSuspended.ShouldBeTrue();
 
         rig.Player.Stop();
-        machine.SuspendedByClip.ShouldBeFalse();
+        machine.EvaluationSuspended.ShouldBeFalse();
         rig.Root.Translation.ShouldBe(OriginalPosition);
     }
 
@@ -455,13 +577,36 @@ AnimationClip:
     {
         SceneNode node = PlainNode();
         AnimStateMachineComponent machine = AddStateMachine(node, Vector3.One);
-        machine.SetSuspendedByClip(true);
+        machine.SetEvaluationSuspended(true);
         using Rig rig = MakeRig(node, 10, null, Entry(PositionClip(2, Vector3.One, Vector3.One), 1, 2));
 
         rig.SeekTo(2);
         rig.SeekTo(5);
 
-        machine.SuspendedByClip.ShouldBeTrue();
+        machine.EvaluationSuspended.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Lease_KeepsMachineSuspended_WhenSiblingClipStopsDuringLease()
+    {
+        SceneNode node = PlainNode();
+        Vector3 machineValue = new(50, 50, 50);
+        AnimStateMachineComponent machine = AddStateMachine(node, machineValue);
+        machine.EvaluateAtTime(0.5f);
+        ((Transform)node.Transform).Translation = OriginalPosition;
+        machine.SetSuspendedByClip(true);
+        using Rig rig = MakeRig(node, 10, null, Entry(PositionClip(2, Vector3.One, Vector3.One), 1, 2));
+
+        rig.SeekTo(2);
+
+        // A sibling clip component gives its suspension back at its stop.
+        machine.SetSuspendedByClip(false);
+        machine.EvaluationTick();
+        ShouldBeNear(rig.Root.Translation, Vector3.One);
+
+        rig.SeekTo(5);
+        machine.EvaluationSuspended.ShouldBeFalse();
+        machine.SuspendedByClip.ShouldBeFalse();
     }
 
     [Test]
@@ -531,7 +676,7 @@ AnimationClip:
         rig.Player.Stop();
 
         ShouldBeNear(rig.Root.Translation, clipValue);
-        machine.SuspendedByClip.ShouldBeFalse();
+        machine.EvaluationSuspended.ShouldBeFalse();
     }
 
     // ── Diagnostics at open ─────────────────────────────────────────────
@@ -762,7 +907,7 @@ AnimationClip:
     }
 
     [Test]
-    public void Humanoid_ReportsAllocationPerFrame()
+    public void HumanoidCrossfade_AllocatesNothingPerFrame()
     {
         (SceneNode root, _) = HumanoidNode();
         using Rig rig = MakeRig(root, 15, null, HumanoidTimeline());
@@ -780,13 +925,25 @@ AnimationClip:
         }
         long after = GC.GetAllocatedBytesForCurrentThread();
 
-        TestContext.Out.WriteLine($"Humanoid crossfade: {(after - before) / (double)Frames:F1} bytes per frame.");
-        TestContext.Progress.WriteLine($"Humanoid crossfade: {(after - before) / (double)Frames:F1} bytes per frame.");
+        (after - before).ShouldBe(0);
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
-    public void ImportedWalk_ReportsAllocationPerFrame(bool withIK)
+    [Test]
+    public void ImportedWalkWithoutIK_AllocatesNothingPerFrame()
+    {
+        (long bytes, _) = MeasureWalk(withIK: false);
+        bytes.ShouldBe(0);
+    }
+
+    [Test]
+    [Explicit("The IK rig allocates in engine code. This test only prints the number.")]
+    public void ImportedWalkWithIK_PrintsAllocationPerFrame()
+    {
+        (long bytes, int frames) = MeasureWalk(withIK: true);
+        TestContext.Progress.WriteLine($"Imported walk with IK: {bytes / (double)frames:F1} bytes per frame.");
+    }
+
+    private static (long Bytes, int Frames) MeasureWalk(bool withIK)
     {
         (SceneNode root, _) = HumanoidNode();
         if (withIK)
@@ -804,35 +961,7 @@ AnimationClip:
             rig.Player.Seek(T(length * (i % 50) / 50.0), ESeekIntent.Scrub);
             rig.Player.Tick(0);
         }
-        long after = GC.GetAllocatedBytesForCurrentThread();
-
-        string line = $"Imported walk through the cutscene, IK {withIK}: {(after - before) / (double)Frames:F1} bytes per frame.";
-        TestContext.Out.WriteLine(line);
-        TestContext.Progress.WriteLine(line);
-    }
-
-    [TestCase(false)]
-    [TestCase(true)]
-    public void ImportedWalk_ReportsClipComponentAllocationPerFrame(bool withIK)
-    {
-        (SceneNode root, _) = HumanoidNode();
-        if (withIK)
-            root.AddComponent<HumanoidIKSolverComponent>();
-        AnimationClipComponent player = root.AddComponent<AnimationClipComponent>()!;
-        player.Animation = AnimYamlImporter.Import(Path.Combine(FindRepositoryRoot(), "Assets", "Walks", "Sexy Walk.anim"));
-        float length = player.Animation.LengthInSeconds;
-        for (int i = 0; i < 100; i++)
-            player.EvaluateAtTime(length * (i % 50) / 50f);
-
-        const int Frames = 500;
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < Frames; i++)
-            player.EvaluateAtTime(length * (i % 50) / 50f);
-        long after = GC.GetAllocatedBytesForCurrentThread();
-
-        string line = $"Imported walk through AnimationClipComponent, IK {withIK}: {(after - before) / (double)Frames:F1} bytes per frame.";
-        TestContext.Out.WriteLine(line);
-        TestContext.Progress.WriteLine(line);
+        return (GC.GetAllocatedBytesForCurrentThread() - before, Frames);
     }
 
     private static string FindRepositoryRoot()

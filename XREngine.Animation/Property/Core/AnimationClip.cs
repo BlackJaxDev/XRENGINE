@@ -1318,7 +1318,7 @@ namespace XREngine.Animation
                     data.RotationBezier!.EndControlPoint,
                     out Quaternion inRotTan,
                     out _);
-                rotAnim.Keyframes.Add(new QuaternionKeyframe((int)frame.Key, fps, data.Rotation, outRotTan, inRotTan, ERadialInterpType.Smooth));
+                rotAnim.Keyframes.Add(new QuaternionKeyframe((int)frame.Key, fps, data.Rotation, outRotTan, inRotTan, ERadialInterpType.Smooth) { InterpolationTypeIn = ERadialInterpType.Smooth });
             }
         }
     }

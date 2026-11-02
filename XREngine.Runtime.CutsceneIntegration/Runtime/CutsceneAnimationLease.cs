@@ -34,8 +34,8 @@ public sealed class CutsceneAnimationLease
 
         for (int i = 0; i < _machines.Count; i++)
         {
-            _machineWasSuspended[i] = _machines[i].SuspendedByClip;
-            _machines[i].SetSuspendedByClip(true);
+            _machineWasSuspended[i] = _machines[i].EvaluationSuspended;
+            _machines[i].SetEvaluationSuspended(true);
         }
         for (int i = 0; i < _players.Count; i++)
         {
@@ -54,7 +54,7 @@ public sealed class CutsceneAnimationLease
         for (int i = 0; i < _machines.Count; i++)
         {
             if (!_machines[i].IsDestroyed)
-                _machines[i].SetSuspendedByClip(_machineWasSuspended[i]);
+                _machines[i].SetEvaluationSuspended(_machineWasSuspended[i]);
         }
         for (int i = 0; i < _players.Count; i++)
         {

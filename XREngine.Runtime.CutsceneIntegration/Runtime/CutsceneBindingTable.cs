@@ -58,7 +58,8 @@ public sealed class CutsceneBindingTable : IDisposable
     /// <param name="compiled">The compiled cutscene.</param>
     /// <param name="resolver">The object that finds and creates the nodes.</param>
     /// <returns>A table that holds the result. The caller must dispose it when the cutscene closes.</returns>
-    public static CutsceneBindingTable Resolve(CompiledCutscene compiled, ICutsceneBindingResolver resolver)
+    /// <param name="runtimeSlots">The nodes of runtime slots by slot name. A named slot is live when the open ends.</param>
+    public static CutsceneBindingTable Resolve(CompiledCutscene compiled, ICutsceneBindingResolver resolver, IReadOnlyDictionary<string, SceneNode>? runtimeSlots = null)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(resolver);
@@ -66,7 +67,7 @@ public sealed class CutsceneBindingTable : IDisposable
         CutsceneBindingTable table = new(compiled.Asset);
         table.ReportInvalidTrackSlots();
         for (int slot = 0; slot < table._nodes.Length; slot++)
-            table.ResolveSlot(slot, resolver);
+            table.ResolveSlot(slot, resolver, runtimeSlots);
         return table;
     }
 
@@ -147,7 +148,7 @@ public sealed class CutsceneBindingTable : IDisposable
         }
     }
 
-    private void ResolveSlot(int slot, ICutsceneBindingResolver resolver)
+    private void ResolveSlot(int slot, ICutsceneBindingResolver resolver, IReadOnlyDictionary<string, SceneNode>? runtimeSlots)
     {
         CutsceneBindingReference? binding = _asset.Bindings[slot];
         if (binding is null)
@@ -189,7 +190,10 @@ public sealed class CutsceneBindingTable : IDisposable
                 break;
 
             case ECutsceneBindingKind.RuntimeSlot:
-                Report(slot, $"The runtime slot '{binding.SlotName}' is empty. {DescribeTracks(slot)} are skipped until it is filled.");
+                if (binding.SlotName is { } slotName && runtimeSlots?.TryGetValue(slotName, out SceneNode? filled) == true)
+                    node = filled;
+                else
+                    Report(slot, $"The runtime slot '{binding.SlotName}' is empty. {DescribeTracks(slot)} are skipped until it is filled.");
                 break;
         }
 

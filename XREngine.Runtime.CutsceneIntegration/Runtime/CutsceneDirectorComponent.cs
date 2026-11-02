@@ -2,6 +2,7 @@ using System.ComponentModel;
 using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Rendering;
+using XREngine.Scene;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Cutscenes;
@@ -25,6 +26,7 @@ public class CutsceneDirectorComponent : XRComponent
     private CutsceneCameraRouter? _router;
     private XRViewport? _targetViewport;
     private bool _tickRegistered;
+    private readonly Dictionary<string, SceneNode> _runtimeSlots = [];
 
     /// <summary>Creates a director component.</summary>
     public CutsceneDirectorComponent()
@@ -84,6 +86,22 @@ public class CutsceneDirectorComponent : XRComponent
     [Browsable(false)]
     [YamlIgnore]
     public IReadOnlyList<CutsceneCompileDiagnostic> Diagnostics => _diagnostics;
+
+    /// <summary>
+    /// Sets the node of a runtime slot. Call this before an open, because an animation track binds its clips
+    /// at the open. On an open cutscene, this also changes the slot for the tracks that read the slot each frame.
+    /// </summary>
+    /// <param name="slotName">The slot name.</param>
+    /// <param name="node">The node to use, or null to clear the slot.</param>
+    public void SetRuntimeSlot(string slotName, SceneNode? node)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(slotName);
+        if (node is null)
+            _runtimeSlots.Remove(slotName);
+        else
+            _runtimeSlots[slotName] = node;
+        _bindings?.SetRuntimeSlot(slotName, node);
+    }
 
     /// <summary>
     /// Compiles the asset, resolves the bindings, creates the player, and registers the tick.
@@ -164,7 +182,7 @@ public class CutsceneDirectorComponent : XRComponent
         }
 
         CompiledCutscene compiled = CutsceneCompiler.Compile(asset, _diagnostics);
-        CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, resolver);
+        CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, resolver, _runtimeSlots);
         if (cancellationToken.IsCancellationRequested)
         {
             bindings.Dispose();

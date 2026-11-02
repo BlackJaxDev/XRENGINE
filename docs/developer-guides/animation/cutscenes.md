@@ -15,14 +15,15 @@ This guide describes the cutscene timeline: how to author a cutscene, how to pre
 
 ## Animation Clip Tracks
 
-An `AnimationClipTrack` plays `AnimationClipTrackClip` entries on its bound node. `CutsceneClipInstancer` makes one copy of each clip for each binding when the cutscene opens. The frame path makes no copies. A runtime slot must have its node before the open. If the slot has no node at the open, or gets another node later, the track writes nothing and adds a diagnostic.
+An `AnimationClipTrack` plays `AnimationClipTrackClip` entries on its bound node. `CutsceneClipInstancer` makes one copy of each clip for each binding when the cutscene opens. The frame path makes no copies. A runtime slot must have its node before the open: call `CutsceneDirectorComponent.SetRuntimeSlot`. If the slot has no node at the open, or gets another node later, the track writes nothing and adds a diagnostic.
 
 Each frame runs in this order: store write, humanoid solve, root placement, and one IK solve. A VRIK target keeps its own scheduled solve.
 
-- **Weights:** a total of zero leaves the original value. A total above one normalizes. A total below one blends from the original value. For a humanoid, the original value of a muscle is its default, not the pose of the bones, so a fade in starts from the neutral muscle pose.
+- **Weights:** a total of zero leaves the original value. A total above one normalizes. A total below one blends from the original value. For a humanoid, the original value of a muscle is its live raw value at the first write, and the original value of an IK goal weight is its live weight. A target that has bones away from the bind pose and no readable muscle values fades from the neutral muscle pose, and adds a diagnostic.
 - **Root placement:** a humanoid root is the start transform, then `RootOffsetPosition` and `RootOffsetRotation`, then the clip motion of this frame. The result is absolute, so repeated seeks do not drift. A target without a `HumanoidComponent` has no root placement. A root offset on such a target adds a diagnostic.
-- **Lease:** while a clip has weight, the lease suspends a sibling `AnimStateMachineComponent` and `AnimationClipComponent`. The lease puts back the earlier suspension at clip exit and at stop. Playback time and the play and pause state of those components do not change.
-- **No clip:** a target that has no clip with weight returns to its original values. For a humanoid, this includes each transform under the node.
+- **Lease:** while a clip has weight, the lease sets `EvaluationSuspended` on a sibling `AnimStateMachineComponent` and `AnimationClipComponent`. This flag is separate from `SuspendedByClip`. The lease puts back the earlier flag at clip exit and at stop. Playback time and the play and pause state of those components do not change.
+- **No clip:** a target that has no clip with weight returns to its original values. For a humanoid, this includes each transform under the node and each member that the clips write.
+- **Finish behavior:** a `KeepState` stop keeps the pose, and the next run records it as the new original value. If two tracks share a binding, the finish behavior of the first track applies.
 - **Pose preview:** if `HumanoidComponent.PosePreviewMode` is not `AnimatedPose`, the preview mode owns the pose. The track writes nothing and adds one diagnostic.
 
 These features are not available from a sampled store. The open adds a diagnostic for each case:
