@@ -500,6 +500,25 @@ namespace XREngine.Animation
         }
 
         /// <summary>
+        /// True when clip sampling cannot give a value for this member. A method member is
+        /// unsupported when it has an animation or is a leaf. A method member that only
+        /// finds an object for its children animates nothing, so it is not unsupported.
+        /// </summary>
+        internal bool IsUnsupportedForSampling
+            => (MemberType == EAnimationMemberType.Method && (Animation is not null || Children.Count == 0))
+            || Animation is { SupportsHistoryFreeSampling: false };
+
+        /// <summary>
+        /// Writes the animation value for the given second into the store at this member's
+        /// <see cref="Slot"/>, and changes no playback state.
+        /// </summary>
+        internal void WriteSampleToStore(float second, AnimationValueStore store)
+        {
+            if (Slot.IsValid)
+                Animation?.WriteSampleToStore(second, store, in Slot);
+        }
+
+        /// <summary>
         /// Writes the default value into the given store at this member's <see cref="Slot"/>.
         /// </summary>
         public void WriteDefaultToStore(AnimationValueStore store)

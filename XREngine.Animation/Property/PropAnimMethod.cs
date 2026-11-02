@@ -20,6 +20,11 @@
             }
         }
         public DelGetValue? GetValue { get; private set; }
+
+        /// <summary>
+        /// A delegate can read any outside state, so its value is not a known function of time.
+        /// </summary>
+        internal override bool SupportsHistoryFreeSampling => false;
         
         private BakedValueStore<T?>? _baked = null;
         /// <summary>

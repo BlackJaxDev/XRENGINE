@@ -135,22 +135,7 @@ namespace XREngine.Animation
         private void AssignSlots()
         {
             RegisterImportedHumanoidMirroredBindings();
-            var layout = new AnimationSlotLayout();
-            var slotsByPath = new Dictionary<string, AnimSlot>(StringComparer.Ordinal);
-
-            // Logical paths, rather than AnimationMember object identity, define slots. Different
-            // clips commonly own distinct member instances for the same target path and must write
-            // into the same state-machine slot when they blend.
-            foreach (var kvp in _animatedCurves)
-            {
-                var member = kvp.Value;
-                var type = member.DetermineValueType();
-                AnimSlot slot = layout.AllocateSlot(type);
-                member.Slot = slot;
-                slotsByPath.Add(kvp.Key, slot);
-            }
-
-            layout.QuaternionFloatGroups = BuildQuaternionFloatSlotGroups(slotsByPath, _animatedCurves);
+            AnimationSlotLayout layout = BuildSlotLayout(_animatedCurves, out Dictionary<string, AnimSlot> slotsByPath);
             SlotLayout = layout;
 
             // Build dense member array for ApplyAnimationValues
@@ -182,6 +167,32 @@ namespace XREngine.Animation
                 stateMachineContributionCapacity += transitionContributionCapacity;
             }
             _importedHumanoidContributions.EnsureCapacity(stateMachineContributionCapacity);
+        }
+
+        /// <summary>
+        /// Assigns a typed slot to each member and returns the layout that holds those slots.
+        /// </summary>
+        internal static AnimationSlotLayout BuildSlotLayout(
+            IReadOnlyDictionary<string, AnimationMember> membersByPath,
+            out Dictionary<string, AnimSlot> slotsByPath)
+        {
+            var layout = new AnimationSlotLayout();
+            slotsByPath = new Dictionary<string, AnimSlot>(StringComparer.Ordinal);
+
+            // Logical paths, rather than AnimationMember object identity, define slots. Different
+            // clips commonly own distinct member instances for the same target path and must write
+            // into the same state-machine slot when they blend.
+            foreach (var kvp in membersByPath)
+            {
+                var member = kvp.Value;
+                var type = member.DetermineValueType();
+                AnimSlot slot = layout.AllocateSlot(type);
+                member.Slot = slot;
+                slotsByPath.Add(kvp.Key, slot);
+            }
+
+            layout.QuaternionFloatGroups = BuildQuaternionFloatSlotGroups(slotsByPath, membersByPath);
+            return layout;
         }
 
         private static void PropagateLayoutToMotion(

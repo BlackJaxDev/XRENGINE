@@ -148,6 +148,13 @@ namespace XREngine.Animation
         public override object GetValueGeneric(float second) => _getValue(second);
 
         public TValue GetValue(float second) => _getValue(second);
+
+        /// <summary>
+        /// Gets the value that a seek to the given second gives, and changes no playback state.
+        /// </summary>
+        protected TValue GetSampleValue(float second)
+            => _getValue(ResolveSampleSecond(second));
+
         public TValue GetValueBakedBySecond(float second)
         {
             if (_baked is null)

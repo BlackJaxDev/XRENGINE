@@ -297,9 +297,30 @@ namespace XREngine.Animation
         private void SetCurrentTicks(long valueTicks, long lengthTicks)
         {
             _currentTicks = Math.Max(0L, valueTicks);
-            _currentTime = lengthTicks > 0L && _currentTicks == lengthTicks
+            _currentTime = GetPlaybackSeconds(_currentTicks, lengthTicks);
+        }
+
+        private float GetPlaybackSeconds(long ticks, long lengthTicks)
+            => lengthTicks > 0L && ticks == lengthTicks
                 ? _lengthInSeconds
-                : StopwatchTicksToSeconds(_currentTicks);
+                : StopwatchTicksToSeconds(ticks);
+
+        /// <summary>
+        /// Converts a requested time to the time that a seek gives, and changes no playback state.
+        /// A looped animation wraps the time. Other animations clamp it to the length.
+        /// </summary>
+        /// <param name="timeSeconds">The requested time in seconds.</param>
+        /// <returns>The time in seconds to evaluate.</returns>
+        protected float ResolveSampleSecond(float timeSeconds)
+        {
+            long lengthTicks = GetLengthStopwatchTicks();
+            if (lengthTicks <= 0L)
+                return GetPlaybackSeconds(0L, lengthTicks);
+
+            long ticks = SecondsToStopwatchTicksSigned(timeSeconds);
+            return GetPlaybackSeconds(
+                _looped ? WrapStopwatchTicks(ticks, lengthTicks) : Math.Clamp(ticks, 0L, lengthTicks),
+                lengthTicks);
         }
 
         private static long WrapStopwatchTicks(long valueTicks, long lengthTicks)

@@ -32,6 +32,11 @@ namespace XREngine.Animation
             => _getValue?.Invoke(second) ?? false;
         public override object GetValueGeneric(float second)
             => _getValue?.Invoke(second) ?? false;
+
+        /// <inheritdoc />
+        public override void WriteSampleToStore(float second, AnimationValueStore store, in AnimSlot slot)
+            => store.SetBool(slot.TypeIndex, GetValue(ResolveSampleSecond(second)));
+
         public bool GetValueBaked(float second)
             => GetValueBaked(GetBakedFrameIndex(second));
         public bool GetValueBaked(int frameIndex)

@@ -189,6 +189,42 @@ namespace XREngine.Animation
             _baked = EncodeUnmanagedBakedValues(baked);
         }
 
+        /// <inheritdoc />
+        public override void WriteSampleToStore(float second, AnimationValueStore store, in AnimSlot slot)
+            => store.SetQuaternion(slot.TypeIndex, GetSampleValue(ResolveSampleSecond(second)));
+
+        /// <summary>
+        /// Gets the value that a seek on a new instance gives. Before the first key, a new
+        /// instance has no key to start from, so this path does not use <see cref="GetValue"/>.
+        /// </summary>
+        private Quaternion GetSampleValue(float second)
+        {
+            if (IsBaked)
+                return GetValueBakedBySecond(second);
+
+            if (Keyframes.Count == 0)
+                return DefaultValue;
+
+            QuaternionKeyframe? startKey = Keyframes.GetKeyBefore(second);
+            if (ConstrainKeyframedFPS)
+            {
+                if (!TryGetCadenceFrameWindow(second, out _, out _, out float floorSec, out float ceilSec, out float frameFraction))
+                    return DefaultValue;
+
+                if (LerpConstrainedFPS)
+                {
+                    QuaternionKeyframe? floorKey = startKey;
+                    Quaternion floorPosition = startKey?.Interpolate(floorSec, out floorKey, out _, out _) ?? Quaternion.Identity;
+                    Quaternion ceilPosition = floorKey?.Interpolate(ceilSec, out _, out _, out _) ?? Quaternion.Identity;
+                    return Quaternion.Slerp(floorPosition, ceilPosition, frameFraction);
+                }
+
+                second = floorSec;
+            }
+
+            return startKey?.Interpolate(second, out _, out _, out _) ?? DefaultValue;
+        }
+
         public event Action<PropAnimQuaternion>? CurrentValueChanged;
 
         private Quaternion _currentValue = Quaternion.Identity;

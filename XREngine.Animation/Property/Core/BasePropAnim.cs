@@ -19,5 +19,22 @@
         /// so must be overridden.
         /// </summary>
         public abstract object? GetValueGeneric(float second);
+
+        /// <summary>
+        /// True when a sample depends only on the requested time and the authored data.
+        /// </summary>
+        internal virtual bool SupportsHistoryFreeSampling => true;
+
+        /// <summary>
+        /// Writes the value for the given second to a store. This method does not change the
+        /// current time, the current value, the retained key, or the event state. A time out of
+        /// range resolves as a seek does: a looped animation wraps, and other animations clamp.
+        /// Typed overrides do not box the value.
+        /// </summary>
+        /// <param name="second">The time to sample in seconds.</param>
+        /// <param name="store">The store that receives the value.</param>
+        /// <param name="slot">The store slot. Its type must agree with the value type of this animation.</param>
+        public virtual void WriteSampleToStore(float second, AnimationValueStore store, in AnimSlot slot)
+            => store.SetValue(slot, GetValueGeneric(ResolveSampleSecond(second)));
     }
 }

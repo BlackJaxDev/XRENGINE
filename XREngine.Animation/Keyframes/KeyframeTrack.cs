@@ -187,12 +187,10 @@ namespace XREngine.Animation
         }
         public T? GetKeyBefore(float second)
         {
+            // Walk the links directly. The track enumerator allocates, and sampling calls this each frame.
             T? bestKey = null;
-            foreach (var key in this)
-                if (key.Second <= second)
-                    bestKey = key as T;
-                else
-                    break;
+            for (Keyframe? key = First; key is not null && key.Second <= second; key = key.Next)
+                bestKey = key as T;
 
             return bestKey;
         }

@@ -31,7 +31,6 @@ namespace XREngine.Animation
             => _getValue = !IsBaked ? GetValueKeyframed : GetValueBaked;
 
         private object? _currentValue = null;
-        private ObjectKeyframe? _prevKeyframe;
 
         public enum EDiscreteValueRounding
         {
@@ -91,49 +90,45 @@ namespace XREngine.Animation
             _baked = EncodeBakedValues(baked);
         }
         protected override void OnProgressed(float delta)
+            => _currentValue = GetPlaybackValue(_currentTime);
+
+        /// <inheritdoc />
+        public override void WriteSampleToStore(float second, AnimationValueStore store, in AnimSlot slot)
+            => store.SetValue(slot, GetPlaybackValue(ResolveSampleSecond(second)));
+
+        /// <summary>
+        /// Gets the playback value for a time, with the discrete value rounding applied.
+        /// </summary>
+        private object? GetPlaybackValue(float second)
         {
             if (IsBaked)
-            {
-                _currentValue = GetValueBaked(_currentTime);
-                return;
-            }
-
-            float sampleTime = Keyframes.ResolveSampleTime(_currentTime, out _, out _);
-            _prevKeyframe = Keyframes.GetKeyBefore(sampleTime);
+                return GetValueBaked(second);
 
             if (Keyframes.Count == 0)
-            {
-                _currentValue = DefaultValue;
-                return;
-            }
+                return DefaultValue;
+
+            float sampleTime = Keyframes.ResolveSampleTime(second, out _, out _);
+            ObjectKeyframe? key = Keyframes.GetKeyBefore(sampleTime);
 
             //Discrete value rounding
             switch (DiscreteValueRounding)
             {
                 default:
                 case EDiscreteValueRounding.Floor:
-                    _currentValue = _prevKeyframe?.Value;
-                    break;
+                    return key?.Value;
                 case EDiscreteValueRounding.Ceiling:
-                    _currentValue = _prevKeyframe?.Next?.Value;
-                    break;
+                    return key?.Next?.Value;
                 case EDiscreteValueRounding.Nearest:
                     {
-                        float prevSec = _prevKeyframe?.Second ?? 0.0f;
-                        float nextSec = _prevKeyframe?.Next?.Second ?? 0.0f;
+                        float prevSec = key?.Second ?? 0.0f;
+                        float nextSec = key?.Next?.Second ?? 0.0f;
                         float range = nextSec - prevSec;
                         if (range == 0.0f)
-                            _currentValue = _prevKeyframe?.Value;
-                        else
-                        {
+                            return key?.Value;
+
                         float t = (sampleTime - prevSec) / range;
-                            if (t > 0.5f)
-                                _currentValue = _prevKeyframe?.Next?.Value;
-                            else
-                                _currentValue = _prevKeyframe?.Value;
-                        }
+                        return t > 0.5f ? key?.Next?.Value : key?.Value;
                     }
-                    break;
             }
         }
     }
