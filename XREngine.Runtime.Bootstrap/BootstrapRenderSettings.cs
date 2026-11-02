@@ -13,6 +13,23 @@ public static class BootstrapRenderSettings
     private static bool _emulatedVrStereoPreviewHooked;
     private static string? _lastOpenGLShaderLinkSettingsLog;
 
+    /// <summary>
+    /// Selects the desktop view for a VR pawn that renders windows. Desktop editing and stereo
+    /// preview need the independent render. Otherwise the environment value selects the view.
+    /// </summary>
+    public static EVrMirrorMode ResolveVrWindowMirrorMode(bool requiresIndependentDesktopWindow)
+    {
+        if (requiresIndependentDesktopWindow)
+            return EVrMirrorMode.FullIndependentRender;
+
+        return Enum.TryParse(
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMirrorMode),
+            ignoreCase: true,
+            out EVrMirrorMode mode)
+            ? mode
+            : EVrMirrorMode.FullIndependentRender;
+    }
+
     private static void EnsureEmulatedVRStereoPreviewRenderingHooked()
     {
         if (_emulatedVrStereoPreviewHooked)
@@ -80,13 +97,14 @@ public static class BootstrapRenderSettings
 
         bool requiresIndependentDesktopWindow = settings.VRPawn && (settings.AllowEditingInVR || settings.PreviewVRStereoViews);
         bool usesRuntimeDesktopCamera = settings.VRPawn && !settings.AllowEditingInVR;
-        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) ||
-            requiresIndependentDesktopWindow ||
-            usesRuntimeDesktopCamera)
-            renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;
+        // An explicit value wins unless desktop editing or stereo preview needs the window.
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)))
+            renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresIndependentDesktopWindow;
+        else if (requiresIndependentDesktopWindow || usesRuntimeDesktopCamera)
+            renderSettings.RenderWindowsWhileInVR = true;
         renderSettings.VrMirrorComposeFromEyeTextures = false;
         if (settings.VRPawn && renderSettings.RenderWindowsWhileInVR)
-            renderSettings.VrMirrorMode = EVrMirrorMode.FullIndependentRender;
+            renderSettings.VrMirrorMode = ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow);
         renderSettings.VrCopyEyePreviewTextures = settings.PreviewVRStereoViews;
 
         bool groupedRenderingSpecified = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));

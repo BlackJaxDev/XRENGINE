@@ -23,7 +23,8 @@ internal static class HumanoidCanonicalSkeletonAuthoring
         HumanoidAvatarBodyAxes axes,
         SceneNode root,
         IReadOnlyDictionary<SceneNode, Matrix4x4> localBinds,
-        IReadOnlyDictionary<EHumanoidAvatarBoneRole, SceneNode> roleNodes)
+        IReadOnlyDictionary<EHumanoidAvatarBoneRole, SceneNode> roleNodes,
+        IReadOnlyList<HumanoidAuthoredTPoseBone>? authoredTPose = null)
     {
         // A failed normalisation must be indistinguishable from the native bind pose.
         foreach (HumanoidAvatarBoneBinding binding in bindings)
@@ -44,17 +45,26 @@ internal static class HumanoidCanonicalSkeletonAuthoring
             if (hierarchy.TryGetValue(node, out CanonicalNode? canonicalNode))
                 roleBones[role] = canonicalNode;
 
-        if (!TryCreateBodyFrame(roleBones, axes, out BodyFrame bodyFrame))
-            return;
-
-        foreach (EHumanoidAvatarBoneRole role in s_UnityValidationOrder)
+        if (authoredTPose is { Count: > 0 })
         {
-            if (role == EHumanoidAvatarBoneRole.Hips ||
-                !roleBones.TryGetValue(role, out CanonicalNode? bone) ||
-                !TryGetRule(role, out CanonicalisationRule rule))
-                continue;
+            // An authored T-pose replaces the estimate that the direction rules make.
+            ApplyAuthoredTPose(hierarchy, authoredTPose);
+            RecomputeWorldTransforms(hierarchyRoot);
+        }
+        else
+        {
+            if (!TryCreateBodyFrame(roleBones, axes, out BodyFrame bodyFrame))
+                return;
 
-            NormalizeBoneDirection(role, bone, roleBones, bodyFrame, rule);
+            foreach (EHumanoidAvatarBoneRole role in s_UnityValidationOrder)
+            {
+                if (role == EHumanoidAvatarBoneRole.Hips ||
+                    !roleBones.TryGetValue(role, out CanonicalNode? bone) ||
+                    !TryGetRule(role, out CanonicalisationRule rule))
+                    continue;
+
+                NormalizeBoneDirection(role, bone, roleBones, bodyFrame, rule);
+            }
         }
 
         // Unity's hips-specific orientation test depends on the full importer-side
@@ -72,6 +82,23 @@ internal static class HumanoidCanonicalSkeletonAuthoring
 
             binding.CanonicalLocalRotation = Quaternion.Normalize(node.LocalRotation);
             binding.CanonicalWorldTransform = node.WorldMatrix * rootInverse;
+        }
+    }
+
+    private static void ApplyAuthoredTPose(
+        Dictionary<SceneNode, CanonicalNode> hierarchy,
+        IReadOnlyList<HumanoidAuthoredTPoseBone> authoredTPose)
+    {
+        var rotations = new Dictionary<(string Name, string ParentName), Quaternion>(authoredTPose.Count);
+        foreach (HumanoidAuthoredTPoseBone bone in authoredTPose)
+            rotations[(bone.Name, bone.ParentName)] = bone.Rotation;
+
+        foreach ((SceneNode sceneNode, CanonicalNode node) in hierarchy)
+        {
+            // The hierarchy root has its own placement. The T-pose does not define it.
+            if (node.Parent is not null &&
+                rotations.TryGetValue((sceneNode.Name ?? string.Empty, sceneNode.Parent?.Name ?? string.Empty), out Quaternion rotation))
+                node.LocalRotation = Quaternion.Normalize(rotation);
         }
     }
 

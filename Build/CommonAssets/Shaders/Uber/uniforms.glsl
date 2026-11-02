@@ -6,6 +6,8 @@
 uniform int _SourceBackfaceNormals;
 uniform int _FlipBackfaceNormals;
 uniform int _SourceLightMode;
+//@property(name="_WorldAmbientOcclusionStrength", display="World AO Strength", mode=static, range=[0,1])
+uniform float _WorldAmbientOcclusionStrength;
 uniform vec4 _SourceLightSettings;
 uniform vec4 _SourceAdditiveSettings;
 uniform vec4 _SourceAdditiveColor;

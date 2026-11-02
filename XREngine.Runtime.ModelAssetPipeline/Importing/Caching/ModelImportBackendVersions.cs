@@ -8,5 +8,5 @@ public static class ModelImportBackendVersions
     public const uint NativeGltf = 1;
     public const uint NativeFbx = 12;
     public const uint Assimp = 4;
-    public const uint SerializedPrefab = 11;
+    public const uint SerializedPrefab = 22;
 }

@@ -61,7 +61,7 @@ internal unsafe partial class VkMeshRenderer
 				BumpPreparationCompatibilityRevision();
 				_buffersDirty = true;
 				_descriptorDirty = true;
-				_vertexInputStateDirty = true;
+				InvalidateVertexInputStructureNoLock();
 				CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
 
@@ -90,7 +90,7 @@ internal unsafe partial class VkMeshRenderer
 		PublishCachedBufferResourceFingerprint();
 		BumpPreparationCompatibilityRevision();
 		_descriptorDirty = true;
-		_vertexInputStateDirty = true;
+		InvalidateVertexInputStructureNoLock();
 		CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 	}
 
@@ -418,7 +418,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			_buffersDirty = false;
-			_vertexInputStateDirty = true;
+			InvalidateVertexInputStructureNoLock();
 			PublishBufferReadinessSnapshot();
 		}
 	}
@@ -598,7 +598,7 @@ internal unsafe partial class VkMeshRenderer
 		_buffersDirty = true;
 		_pipelineDirty = true;
 		_descriptorDirty = true;
-		_vertexInputStateDirty = true;
+		InvalidateVertexInputStructureNoLock();
 		_geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
 		CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 	}
@@ -618,7 +618,7 @@ internal unsafe partial class VkMeshRenderer
 			_triangleIndexBufferExternallyProvided = buffer is not null;
 			_indexBuffersSkippedForShaderGeneratedVertices = false;
 			if (changed)
-				_vertexInputStateDirty = true;
+				InvalidateVertexInputStructureNoLock();
 			_triangleIndexBuffer?.TryEnsureReadyForRendering(BackendContext.Resources.AllowSynchronousResourceUploads);
 			PublishBufferReadinessSnapshot();
 			return changed;

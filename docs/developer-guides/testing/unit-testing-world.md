@@ -296,6 +296,10 @@ values apply to OpenXR. The OpenVR path does not read `VR.RenderPipeline` yet.
 }
 ```
 
+An explicit `RenderWindowsWhileInVR: false` stops desktop window rendering in VR,
+unless `VR.AllowDesktopEditing` or `VR.PreviewStereoViews` needs the window. If the
+setting is absent, a VR pawn without desktop editing turns it on.
+
 When VR is active, desktop output is controlled by `Rendering.VrMirrorMode`.
 The default performance posture is a cheap mirror: `BlitSubmittedEye` keeps
 `RenderWindowsWhileInVR=true` but composes the desktop window from the submitted
@@ -343,6 +347,7 @@ For script-driven launches, these process-scoped overrides select the lane witho
 - `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1`
 - `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`
 - `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0`
+- `XRE_UNIT_TEST_VR_MIRROR_MODE=BlitSubmittedEye|CyclopeanReconstruct|LowRatePreview|FullIndependentRender` selects the desktop view for a VR pawn. Desktop editing and stereo preview still use `FullIndependentRender`.
 - `XRE_UNIT_TEST_OPENXR_RUNTIME_JSON=C:\path\to\openxr_monado.json`
 - `XRE_UNIT_TEST_VR_VIEW_RENDER_MODE=SequentialViews|SinglePassStereo|ParallelCommandBufferRecording`
 - `XRE_UNIT_TEST_VR_RENDER_PIPELINE=Default|Advanced|Rvc`

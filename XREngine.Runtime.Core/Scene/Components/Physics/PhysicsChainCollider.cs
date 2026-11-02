@@ -101,6 +101,29 @@ public class PhysicsChainCollider : PhysicsChainColliderBase
         }
     }
 
+    protected override float ComputeClosestSegmentParameter(Vector3 start, Vector3 end)
+        => _collideType switch
+        {
+            0 or 1 => PhysicsChainColliderSnapshot.ClosestParameterToPoint(start, end, _center0),
+            2 or 3 or 4 or 5 => PhysicsChainColliderSnapshot.ClosestParameterToSegment(start, end, _center0, _center1),
+            _ => 1.0f,
+        };
+
+    /// <summary>
+    /// Gets the shape from the latest <see cref="Prepare"/> in world space, for the GPU solver.
+    /// A sphere uses <paramref name="start"/> and <paramref name="radius"/>. A tapered capsule also has <paramref name="endRadius"/>.
+    /// </summary>
+    internal bool TryGetPreparedShape(out Vector3 start, out Vector3 end, out float radius, out float endRadius, out bool isCapsule, out bool inside)
+    {
+        start = _center0;
+        end = _center1;
+        radius = _scaledRadius;
+        endRadius = _collideType is 4 or 5 ? _scaledRadius2 : 0.0f;
+        isCapsule = _collideType is 2 or 3 or 4 or 5;
+        inside = _collideType is 1 or 3 or 5;
+        return _collideType >= 0;
+    }
+
     private Vector3 GetLocalAxis()
         => _direction switch
         {

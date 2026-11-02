@@ -28,7 +28,11 @@ public partial class ModelComponent
         summary.Append("component=")
             .Append(Name ?? SceneNode.Name ?? "<unnamed>")
             .Append(" renderables=")
-            .Append(renderableMeshes.Length);
+            .Append(renderableMeshes.Length)
+            // An inactive component does not draw, and its CPU palette is not refreshed.
+            // paletteMaxDiff is therefore not evidence of a defect when this value is false.
+            .Append(" activeInHierarchy=")
+            .Append(IsActiveInHierarchy);
 
         for (int renderableIndex = 0; renderableIndex < renderableMeshes.Length; ++renderableIndex)
         {

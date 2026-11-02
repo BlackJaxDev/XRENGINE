@@ -109,7 +109,7 @@ internal sealed partial class VulkanFrameLoop
             pipeline?.Resources,
             pipeline?.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata
                 ?? pipeline?.ActiveGeneration?.PassMetadata
-                ?? pipeline?.Pipeline?.PassMetadata,
+                ?? pipeline?.AssignedPipeline?.PassMetadata,
             displayWidth,
             displayHeight,
             internalWidth,

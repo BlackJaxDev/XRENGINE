@@ -262,7 +262,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 (float)width / NoiseWidth,
                 (float)height / NoiseHeight);
 
-            state.RawAoTexture = ResolveDeclaredAoTexture(instance, width, height, SSAORawTextureName, SSAOIntensityTextureName);
+            state.RawAoTexture = ResolveDeclaredAoTexture(instance, width, height, SSAORawTextureName, SSAORawTextureName);
             state.FinalAoTexture = ResolveDeclaredAoTexture(instance, width, height, SSAOIntensityTextureName, SSAOIntensityTextureName);
 
             if (!instance.TryGetFBO(SSAOFBOName, out _) || !instance.TryGetFBO(SSAOBlurFBOName, out _))
@@ -510,7 +510,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             noiseTexture.UWrap = ETexWrapMode.Repeat;
             noiseTexture.VWrap = ETexWrapMode.Repeat;
             noiseTexture.Resizable = false;
-            noiseTexture.SizedInternalFormat = ESizedInternalFormat.Rg16f;
+            noiseTexture.SizedInternalFormat = ESizedInternalFormat.Rg32f;
             noiseTexture.Mipmaps =
             [
                 new()

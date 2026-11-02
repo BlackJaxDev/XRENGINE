@@ -406,6 +406,7 @@ internal unsafe partial class VkRenderProgram
                     slot,
                     out var entry) &&
                 entry.Generation == generation &&
+                entry.Artifact is not { IsArtifactLive: false } &&
                 entry.PublisherGenerations.Matches(
                     materialPublishers,
                     meshPublishers))
@@ -433,11 +434,18 @@ internal unsafe partial class VkRenderProgram
         const int maximumPersistentArtifactSlots = 2048;
         lock (_persistentProgramBindingArtifactSync)
         {
+            ReleaseRetiredProgramBindingArtifactsNoLock();
             if (_persistentProgramBindingArtifacts.Count >=
                     maximumPersistentArtifactSlots &&
                 !_persistentProgramBindingArtifacts.ContainsKey(slot))
             {
+                foreach (var evicted in _persistentProgramBindingArtifacts.Values)
+                    RetireProgramBindingArtifactNoLock(evicted.Artifact);
                 _persistentProgramBindingArtifacts.Clear();
+            }
+            else if (_persistentProgramBindingArtifacts.TryGetValue(slot, out var replaced))
+            {
+                RetireProgramBindingArtifactNoLock(replaced.Artifact);
             }
 
             _persistentProgramBindingArtifacts[slot] =
@@ -463,7 +471,37 @@ internal unsafe partial class VkRenderProgram
             // Dictionary removal does not invalidate an active key enumeration.
             foreach (PersistentProgramBindingArtifactSlotKey slot in _persistentProgramBindingArtifacts.Keys)
                 if (slot.IsOwnedBy(meshRenderer))
+                {
+                    RetireProgramBindingArtifactNoLock(_persistentProgramBindingArtifacts[slot].Artifact);
                     _persistentProgramBindingArtifacts.Remove(slot);
+                }
+            ReleaseRetiredProgramBindingArtifactsNoLock();
+        }
+    }
+
+    /// <summary>
+    /// Keeps a replaced artifact's slot lease for a few frames. A draw captured earlier
+    /// in the frame takes its payload row lease only when its operation is sealed.
+    /// </summary>
+    private void RetireProgramBindingArtifactNoLock(ComputeDispatchSnapshot? artifact)
+    {
+        if (artifact is not null)
+            _retiredProgramBindingArtifacts.Add((
+                artifact,
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId));
+    }
+
+    private void ReleaseRetiredProgramBindingArtifactsNoLock()
+    {
+        const ulong retiredArtifactFrameCount = 4UL;
+        ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+        for (int index = _retiredProgramBindingArtifacts.Count - 1; index >= 0; index--)
+        {
+            (ComputeDispatchSnapshot artifact, ulong retiredFrameId) = _retiredProgramBindingArtifacts[index];
+            if (frameId - retiredFrameId < retiredArtifactFrameCount)
+                continue;
+            _retiredProgramBindingArtifacts.RemoveAt(index);
+            artifact.ReleaseArtifactLease();
         }
     }
 

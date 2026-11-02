@@ -705,6 +705,9 @@ public unsafe partial class OpenXRAPI
             }
         }
 
+        if (TryRunOpenXrSpeculativeCollect())
+            return;
+
         if (Volatile.Read(ref _pendingXrFrame) == 0)
             return;
 
@@ -971,12 +974,14 @@ public unsafe partial class OpenXRAPI
 
             if (useTrueSinglePassStereo)
             {
+                _openXrStereoUpdatingBufferFree = false;
                 if (!CollectOpenXrStereoVisible(
                         resolvedWorld,
                         _openXrLeftEyeCamera,
                         _openXrRightEyeCamera,
                         collectViewport,
                         leftMeshCommands,
+                        cullProjectionScale: 1.0f,
                         out int collectedAdded,
                         out long collectedBuildTicks))
                 {
@@ -1138,6 +1143,7 @@ public unsafe partial class OpenXRAPI
         XRCamera rightCamera,
         XRViewport collectViewport,
         RenderCommandCollection meshCommands,
+        float cullProjectionScale,
         out int commandsAdded,
         out long buildTicks)
     {
@@ -1181,6 +1187,8 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
+        combinedProjection.M11 *= cullProjectionScale;
+        combinedProjection.M22 *= cullProjectionScale;
         _openXrCombinedProjectionMatrix = combinedProjection;
         if (!Matrix4x4.Invert(combinedProjection, out Matrix4x4 inverseCombinedProjection))
         {
@@ -1595,6 +1603,8 @@ public unsafe partial class OpenXRAPI
             return;
         }
 
+        TryPromoteOpenXrSpeculativeCollect();
+
         // If we didn't successfully collect this frame, don't try to render stale buffers.
         if (Volatile.Read(ref _pendingXrFrameCollected) != 1)
             return;
@@ -1636,6 +1646,7 @@ public unsafe partial class OpenXRAPI
             else
             {
                 stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
+                _openXrStereoUpdatingBufferFree = true;
                 Debug.RenderingEvery(
                     $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),

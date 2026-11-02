@@ -272,8 +272,10 @@ internal unsafe partial class VkRenderProgram
             return VulkanComputePipelineReadiness.Pending;
         }
 
-        bool foregroundRequired = VulkanProgramLinkPreparationScope.RequiresSynchronousLink(
-            BackendContext.Resources);
+        // A program without async permission has no other compile path. Without this
+        // foreground compile, it stays pending and blocks each frame that dispatches it.
+        bool foregroundRequired = !Data.AllowAsyncBackendCompile ||
+            VulkanProgramLinkPreparationScope.RequiresSynchronousLink(BackendContext.Resources);
         if (!manager.TryEnqueueComputePipelineCompile(
                 request,
                 acceptsBackendWork: BackendContext.IsDeviceOperational,

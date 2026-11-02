@@ -2701,6 +2701,11 @@ namespace XREngine.Rendering
             return recorded;
         }
 
+        /// <summary>True when the XR frame priority held this viewport's scene for the current render.</summary>
+        internal bool IsHeldForXrFramePriority
+            => !_renderingFrameOutputSceneDue &&
+               _renderingFrameOutputPacing.SkipReason == EFrameOutputSkipReason.Budget;
+
         private FrameOutputPacingDecision EvaluateFrameOutputPacing(EFrameOutputKind fallbackOutputKind)
         {
             EVrOutputViewKind viewKind = ResolveOutputViewKind();
@@ -2727,7 +2732,10 @@ namespace XREngine.Rendering
                 request,
                 pacing.IsDue,
                 deferralReason);
-            if (scheduling.Execute && !pacing.IsDue)
+            // A VR budget hold has its own limit on held frames, and it admits the first frame.
+            // The admission ledger must not force a fresh render and cancel the hold.
+            bool vrBudgetHold = pacing.SkipReason == EFrameOutputSkipReason.Budget && presentation.IsInVR;
+            if (scheduling.Execute && !pacing.IsDue && !vrBudgetHold)
             {
                 pacing = pacing with
                 {

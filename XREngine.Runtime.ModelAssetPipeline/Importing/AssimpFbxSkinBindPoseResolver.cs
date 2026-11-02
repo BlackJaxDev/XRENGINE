@@ -48,16 +48,15 @@ internal sealed class AssimpFbxSkinBindPoseResolver
                     continue;
 
                 (string geometry, string owner) key = (mesh.Name, owner.Name);
-                string? ownerError = IsNear(owner.GeometryTransform, Matrix4x4.Identity)
-                    ? error
-                    : "the FBX skin uses a geometric transform that needs a separate vertex conversion";
-                Matrix4x4 importedSourceBind = sourceBind;
+                // Assimp keeps source control points, and the FBX cluster bind excludes the
+                // geometric transform, so the vertex conversion applies that transform first.
+                Matrix4x4 importedSourceBind = owner.GeometryTransform * sourceBind;
                 if (makeLeftHanded)
                 {
                     Matrix4x4 reflection = Matrix4x4.CreateScale(1.0f, 1.0f, -1.0f);
                     importedSourceBind = reflection * sourceBind * reflection;
                 }
-                Entry entry = new(importedSourceBind, ownerError);
+                Entry entry = new(importedSourceBind, error);
                 if (_entries.ContainsKey(key))
                     _entries[key] = new Entry(default, "the geometry and owner names are ambiguous");
                 else

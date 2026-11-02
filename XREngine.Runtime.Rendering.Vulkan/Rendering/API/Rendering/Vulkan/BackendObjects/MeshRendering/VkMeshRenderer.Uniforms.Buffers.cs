@@ -143,6 +143,7 @@ internal unsafe partial class VkMeshRenderer
 			_autoUniformBuffers.Remove(name);
 			_autoUniformBufferCertificates.Remove(name);
 			_autoUniformOwnerSlotTables.Remove(name);
+			_autoUniformOwnerSlotTablesByNameIdentity.Clear();
 			_publishedAutoUniformMaterialWritePlans.Remove(name);
 		}
 

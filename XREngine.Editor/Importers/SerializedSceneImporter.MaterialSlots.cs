@@ -74,7 +74,10 @@ internal static partial class SerializedSceneImporter
 
         (FbxSemanticDocument semantic, FbxGeometryDocument geometry) =
             state.Context.FbxSourceDocuments.GetGeometrySnapshot(modelPath);
-        Dictionary<string, Dictionary<string, int>> slotsByModelName = new(StringComparer.Ordinal);
+        // One material can fill several slots of a model, and each connection is its own slot.
+        Dictionary<string, Dictionary<string, List<int>>> slotsByModelName = new(StringComparer.Ordinal);
+        Dictionary<string, int> slotCountsByModelName = new(StringComparer.Ordinal);
+        Dictionary<(string Model, string Material), int> namedSlotUses = [];
         Dictionary<string, long> modelIdsByName = new(StringComparer.Ordinal);
         Dictionary<long, List<long>> geometryIdsByModelId = [];
 
@@ -104,11 +107,13 @@ internal static partial class SerializedSceneImporter
 
             if (source.Category != FbxObjectCategory.Material)
                 continue;
-            if (!slotsByModelName.TryGetValue(model.DisplayName, out Dictionary<string, int>? slots))
+            if (!slotsByModelName.TryGetValue(model.DisplayName, out Dictionary<string, List<int>>? slots))
                 slotsByModelName[model.DisplayName] = slots = new(StringComparer.Ordinal);
-            if (!slots.TryAdd(source.DisplayName, slots.Count))
-                throw new SourceVisualImportException(
-                    $"FBX model '{model.DisplayName}' connects material name '{source.DisplayName}' more than once.");
+            if (!slots.TryGetValue(source.DisplayName, out List<int>? namedSlots))
+                slots[source.DisplayName] = namedSlots = [];
+            int slotCount = slotCountsByModelName.GetValueOrDefault(model.DisplayName);
+            namedSlots.Add(slotCount);
+            slotCountsByModelName[model.DisplayName] = slotCount + 1;
         }
 
         Dictionary<long, List<int>> rendererSlotsByModelId = [];
@@ -119,15 +124,15 @@ internal static partial class SerializedSceneImporter
             if (!modelIdsByName.TryGetValue(modelName, out long modelId))
                 throw new SourceVisualImportException($"Imported renderer '{modelName}' has no unique FBX source model.");
 
-            slotsByModelName.TryGetValue(modelName, out Dictionary<string, int>? slots);
-            slots ??= new Dictionary<string, int>(StringComparer.Ordinal);
+            slotsByModelName.TryGetValue(modelName, out Dictionary<string, List<int>>? slots);
+            slots ??= new Dictionary<string, List<int>>(StringComparer.Ordinal);
 
             int sourceSlot;
             if (subMesh.ImportedSourceMaterialSlot is int assignedSlot)
             {
                 sourceSlot = assignedSlot;
                 if (slots.Count > 0 && materialName.Length > 0 &&
-                    (!slots.TryGetValue(materialName, out int namedSlot) || namedSlot != sourceSlot))
+                    (!slots.TryGetValue(materialName, out List<int>? namedSlots) || !namedSlots.Contains(sourceSlot)))
                     throw new SourceVisualImportException(
                         $"Imported material '{materialName}' on renderer '{modelName}' conflicts with FBX source slot {sourceSlot}.");
             }
@@ -135,10 +140,17 @@ internal static partial class SerializedSceneImporter
             {
                 sourceSlot = 0;
             }
-            else if (!slots.TryGetValue(materialName, out sourceSlot))
+            else if (slots.TryGetValue(materialName, out List<int>? namedSlots))
+            {
+                // Assimp gives each material connection its own mesh, in connection order.
+                int use = namedSlotUses.GetValueOrDefault((modelName, materialName));
+                namedSlotUses[(modelName, materialName)] = use + 1;
+                sourceSlot = namedSlots[Math.Min(use, namedSlots.Count - 1)];
+            }
+            else
             {
                 throw new SourceVisualImportException(
-                    $"Assimp material '{materialName}' on model '{modelName}' has no unique FBX source material slot.");
+                    $"Assimp material '{materialName}' on model '{modelName}' has no FBX source material slot.");
             }
 
             if (!rendererSlotsByModelId.TryGetValue(modelId, out List<int>? rendererSlots))
@@ -147,7 +159,7 @@ internal static partial class SerializedSceneImporter
                     !geometry.TryGetMeshGeometry(geometryIds[0], out FbxMeshGeometry mesh))
                     throw new SourceVisualImportException(
                         $"FBX renderer '{modelName}' needs one unambiguous mesh geometry for material-slot order.");
-                rendererSlots = ReadRendererMaterialOrder(mesh, Math.Max(1, slots.Count), modelName);
+                rendererSlots = ReadRendererMaterialOrder(mesh, Math.Max(1, slotCountsByModelName.GetValueOrDefault(modelName)), modelName);
                 rendererSlotsByModelId.Add(modelId, rendererSlots);
             }
 

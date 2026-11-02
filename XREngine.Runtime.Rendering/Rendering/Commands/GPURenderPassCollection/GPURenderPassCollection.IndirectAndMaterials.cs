@@ -67,6 +67,7 @@ namespace XREngine.Rendering.Commands
         {
             using var renderTiming = BeginTiming("GPURenderPassCollection.Render");
             CapturePassPolicySnapshot();
+            SelectMaterialDrawPathForScene(scene);
             GpuProgramsPendingThisFrame = false;
             _viewBatchClassificationFrameId = 0u;
             _viewBatchClassificationPublished = false;

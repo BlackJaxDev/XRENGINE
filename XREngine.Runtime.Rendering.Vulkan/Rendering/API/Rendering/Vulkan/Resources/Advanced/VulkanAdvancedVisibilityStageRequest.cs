@@ -37,6 +37,12 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// <summary>Render time frozen with this authored visibility family.</summary>
     internal float RenderTimeSeconds { get; init; }
 
+    /// <summary>Applies the multi-bounce approximation to occluded diffuse light.</summary>
+    internal bool AmbientOcclusionMultiBounce { get; init; }
+
+    /// <summary>Attenuates specular light with plain AO instead of specular occlusion.</summary>
+    internal bool AmbientOcclusionSpecularUsesVisibility { get; init; }
+
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
     internal bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
 
@@ -108,6 +114,8 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            EnableLightProbesAndIbl == other.EnableLightProbesAndIbl &&
            RequiresMaterialSurfaceExports == other.RequiresMaterialSurfaceExports &&
            SuppressBaselineDiffuse == other.SuppressBaselineDiffuse &&
+           AmbientOcclusionMultiBounce == other.AmbientOcclusionMultiBounce &&
+           AmbientOcclusionSpecularUsesVisibility == other.AmbientOcclusionSpecularUsesVisibility &&
            MsaaSampleCount == other.MsaaSampleCount &&
            HasAuthoredBackground == other.HasAuthoredBackground &&
            IsMinimalVisibilityOutput == other.IsMinimalVisibilityOutput &&

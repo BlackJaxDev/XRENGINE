@@ -66,6 +66,46 @@ internal unsafe partial class VkMeshRenderer
 		int frameIndex = 0,
 		ComputeDispatchSnapshot? bindingSnapshot = null)
 	{
+		// Prewarm, program preparation, and bind each ask for the same allocation for one draw.
+		// The first request in a render frame does the work. Later requests only activate it.
+		if (bindingSnapshot is null || _program is null)
+			return EnsureDescriptorSetsCore(material, drawUniformSlot, frameIndex, bindingSnapshot);
+
+		ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+		(ComputeDispatchSnapshot, XRMaterial, VkRenderProgram, int, int) key =
+			(bindingSnapshot, material, _program, drawUniformSlot, frameIndex);
+		if (_frameDescriptorAllocations.TryGetValue(key, out (DescriptorAllocation Allocation, ulong RenderFrameId) entry) &&
+			entry.RenderFrameId == renderFrameId &&
+			DescriptorAllocationMatchesProgram(entry.Allocation) &&
+			entry.Allocation.MaterialBindingLayoutVersion == material.BindingLayoutVersion &&
+			IsDescriptorAllocationValid(
+				entry.Allocation,
+				BackendContext.Resources.Descriptors.FrameSlotCount,
+				_program.DescriptorSetLayouts.Count))
+		{
+			ActivateDescriptorAllocation(entry.Allocation, drawUniformSlot, bindingSnapshot);
+			_descriptorDirty = false;
+			return true;
+		}
+
+		if (!EnsureDescriptorSetsCore(material, drawUniformSlot, frameIndex, bindingSnapshot))
+			return false;
+
+		if (_activeDescriptorAllocation is { } allocation)
+		{
+			if (_frameDescriptorAllocations.Count >= MaxFrameDescriptorAllocations)
+				_frameDescriptorAllocations.Clear();
+			_frameDescriptorAllocations[key] = (allocation, renderFrameId);
+		}
+		return true;
+	}
+
+	private bool EnsureDescriptorSetsCore(
+		XRMaterial material,
+		int drawUniformSlot,
+		int frameIndex,
+		ComputeDispatchSnapshot? bindingSnapshot)
+	{
 		_lastDescriptorPreparationFailure = "descriptor preparation did not report a reason";
 		if (_program is null)
 			return FailDescriptorPreparation("program unavailable");
@@ -88,28 +128,22 @@ internal unsafe partial class VkMeshRenderer
 
 		int descriptorFrameSlotCount = frameCount;
 		int setCount = layouts.Count;
-		uint activeSetMask = ComputeActiveDescriptorSetMask(
-			bindings,
-			setCount,
-			_program.ExternallyOwnedDescriptorSetMask);
+		uint activeSetMask = GetCachedActiveDescriptorSetMask(_program, bindings, setCount);
 		VkMaterial? sharedMaterial = null;
+		DescriptorSet sharedMaterialSet = default;
 		bool usesSharedMaterialTier = false;
 		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap &&
 			(activeSetMask & (1u << (int)VulkanMeshRenderingConventions.DescriptorSetMaterial)) != 0 &&
 			_program.DescriptorSetUsesUpdateAfterBind(VulkanMeshRenderingConventions.DescriptorSetMaterial) &&
 			WrapperLookup.GetOrCreate(material, generateNow: true) is VkMaterial materialObject &&
-			materialObject.TryGetMaterialDescriptorSet(_program, frameIndex, out _, out _))
+			materialObject.TryGetMaterialDescriptorSet(_program, frameIndex, out sharedMaterialSet, out _))
 		{
 			sharedMaterial = materialObject;
 			usesSharedMaterialTier = true;
 			activeSetMask &= ~(1u << (int)VulkanMeshRenderingConventions.DescriptorSetMaterial);
 		}
 		bool descriptorBindingsAreDrawSlotInvariant =
-			AreDescriptorBindingsDrawSlotInvariant(
-				bindings,
-				usesSharedMaterialTier,
-				BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
-				_program.ExternallyOwnedDescriptorSetMask);
+			GetCachedDrawSlotInvariance(_program, bindings, usesSharedMaterialTier, BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap);
 		int descriptorOwnerSlot =
 			descriptorBindingsAreDrawSlotInvariant ? 0 : drawUniformSlot;
 		int activeSetCount = System.Numerics.BitOperations.PopCount(activeSetMask);
@@ -135,6 +169,8 @@ internal unsafe partial class VkMeshRenderer
 				material,
 				frameIndex,
 				capturedResourcesValidated: true,
+				sharedMaterial,
+				sharedMaterialSet,
 				out _))
 		{
 			_descriptorDirty = false;
@@ -749,7 +785,9 @@ internal unsafe partial class VkMeshRenderer
 		bool usesSharedMaterialTier,
 		ComputeDispatchSnapshot? bindingSnapshot)
     {
-		if (bindingSnapshot?.HasReadOnlyStorageBindings == true)
+		// A frame-owned snapshot has a new publication each frame. A shared artifact keeps
+		// its publication, and the lowered slice is compared with this slot below.
+		if (bindingSnapshot is { HasReadOnlyStorageBindings: true, IsImmutableBindingArtifact: false })
 			return false;
 		if (!TryCreateDescriptorOwnerLookupKey(
 				layoutFingerprint,
@@ -808,12 +846,18 @@ internal unsafe partial class VkMeshRenderer
         }
 
 		int descriptorSlotIndex = ResolveDescriptorFrameIndex(refreshFrameIndex, allocation.Sets.Length);
-		if (bindingSnapshot?.MaterialTablePublication is not null &&
-			(bindingSnapshot.PreparedMaterialTableSignature == 0 || _program is null ||
+		// Publication identity does not prove the lowered physical buffer or offset, which
+		// the prepared storage map can change for each frame. One fingerprint covers both
+		// the material table and the storage bindings, so compute it once.
+		bool hasMaterialTablePublication = bindingSnapshot?.MaterialTablePublication is not null;
+		if (hasMaterialTablePublication && bindingSnapshot!.PreparedMaterialTableSignature == 0)
+			return false;
+		if ((hasMaterialTablePublication || bindingSnapshot is { HasReadOnlyStorageBindings: true }) &&
+			(_program is null ||
 			 !TryComputePublishedDescriptorResourceFingerprint(material, descriptorFrameSlotCount,
 				 _program.DescriptorBindings, allocation.UsesSharedMaterialTier, bindingSnapshot,
-				 includeFrameSourceDescriptors: true, out ulong materialFingerprint) ||
-			 !DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, materialFingerprint)))
+				 includeFrameSourceDescriptors: true, out ulong resourceFingerprint) ||
+			 !DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)))
 			return false;
 		if (!allocation.IsOwnerGenerationPublished(
 				descriptorSlotIndex,
@@ -881,6 +925,27 @@ internal unsafe partial class VkMeshRenderer
 		int frameIndex,
 		bool capturedResourcesValidated,
 		out string reason)
+		=> TryRefreshSharedMaterialDescriptorSetForReusableFrame(
+			material,
+			frameIndex,
+			capturedResourcesValidated,
+			knownMaterial: null,
+			knownMaterialSet: default,
+			out reason);
+
+	/// <summary>
+	/// Refreshes the shared-material slot. When <paramref name="knownMaterial"/> is the
+	/// allocation's material, <paramref name="knownMaterialSet"/> is the set that this
+	/// preparation already published for <paramref name="frameIndex"/>, so the material
+	/// resources are not hashed a second time.
+	/// </summary>
+	private bool TryRefreshSharedMaterialDescriptorSetForReusableFrame(
+		XRMaterial material,
+		int frameIndex,
+		bool capturedResourcesValidated,
+		VkMaterial? knownMaterial,
+		DescriptorSet knownMaterialSet,
+		out string reason)
 	{
 		reason = "reusable";
 		DescriptorAllocation? allocation = _activeDescriptorAllocation;
@@ -911,13 +976,20 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		DescriptorSet currentSet = default;
+		DescriptorSet currentSet = knownMaterialSet;
 		bool materialSetReady =
-			capturedResourcesValidated &&
-			allocation.SharedMaterial.TryGetValidatedReusableMaterialDescriptorSet(
-				program,
-				frameIndex,
-				out currentSet);
+			knownMaterial is not null &&
+			ReferenceEquals(knownMaterial, allocation.SharedMaterial) &&
+			knownMaterialSet.Handle != 0;
+		if (!materialSetReady)
+		{
+			materialSetReady =
+				capturedResourcesValidated &&
+				allocation.SharedMaterial.TryGetValidatedReusableMaterialDescriptorSet(
+					program,
+					frameIndex,
+					out currentSet);
+		}
 		if (!materialSetReady)
 			materialSetReady = allocation.SharedMaterial.TryGetMaterialDescriptorSet(
 				program,

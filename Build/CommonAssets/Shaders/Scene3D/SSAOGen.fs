@@ -16,7 +16,7 @@ uniform sampler2D DepthView; //Depth
 
 uniform vec3 Samples[128];
 uniform float Radius = 0.75f;
-uniform float Power = 4.0f;
+uniform float Bias = 0.025f;
 uniform vec2 NoiseScale;
 
 uniform mat4 ViewMatrix;
@@ -47,7 +47,6 @@ void main()
     mat3 TBN = mat3(viewTangent, viewBitangent, viewNormal);
 
     int kernelSize = 128;
-    float bias = 0.025f;
 
     vec3 noiseSample;
     vec4 offset;
@@ -69,8 +68,8 @@ void main()
 
         sampleDepth = AOViewPosFromDepth(rawSampleDepth, sampleUV, InverseProjMatrix).z;
 
-        occlusion += (sampleDepth >= noiseSample.z + bias ? smoothstep(0.0f, 1.0f, Radius / abs(FragPosVS.z - sampleDepth)) : 0.0f);
+        occlusion += (sampleDepth >= noiseSample.z + Bias ? smoothstep(0.0f, 1.0f, Radius / abs(FragPosVS.z - sampleDepth)) : 0.0f);
     }
 
-    OutIntensity = pow(1.0f - (occlusion / kernelSize), Power);
+    OutIntensity = clamp(1.0f - (occlusion / kernelSize), 0.0f, 1.0f);
 }

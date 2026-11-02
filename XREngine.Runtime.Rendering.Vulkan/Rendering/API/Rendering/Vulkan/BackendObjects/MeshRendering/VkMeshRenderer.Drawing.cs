@@ -2733,9 +2733,16 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		ApplyScopedProgramBindingsForPreparation(material);
+		// A captured snapshot already holds the scoped and lighting bindings of its frame.
 		if (draw.ProgramBindingSnapshot is { } programBindingSnapshot)
+		{
+			_program?.ClearBindings();
 			_program?.ApplyBindingSnapshot(programBindingSnapshot);
+		}
+		else
+		{
+			ApplyScopedProgramBindingsForPreparation(material);
+		}
 		if (_program?.Data is { } programData)
 			NotifyDrawUniforms(material, programData, draw);
 
@@ -2795,9 +2802,16 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		ApplyScopedProgramBindingsForPreparation(material);
+		// A captured snapshot already holds the scoped and lighting bindings of its frame.
 		if (draw.ProgramBindingSnapshot is { } programBindingSnapshot)
+		{
+			_program?.ClearBindings();
 			_program?.ApplyBindingSnapshot(programBindingSnapshot);
+		}
+		else
+		{
+			ApplyScopedProgramBindingsForPreparation(material);
+		}
 
 		if (!EnsureDescriptorSets(
 				material,

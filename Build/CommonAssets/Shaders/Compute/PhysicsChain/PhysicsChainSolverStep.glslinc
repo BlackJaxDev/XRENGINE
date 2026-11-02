@@ -1,0 +1,527 @@
+#ifndef PHYSICS_CHAIN_SOLVER_STEP_INCLUDED
+#define PHYSICS_CHAIN_SOLVER_STEP_INCLUDED
+
+// One simulation step of one particle. It matches the CPU solver in PhysicsChainComponent.
+// Include this file after the Particles, ParticleStatics, TransformMatrices, and Colliders buffers.
+
+#include "Compute/PhysicsChain/PhysicsChainBonePose.glslinc"
+
+const float CHAIN_MINIMUM_DIRECTION_LENGTH_SQUARED = 1e-10;
+const float CHAIN_MINIMUM_LIMIT_DIRECTION_LENGTH = 1e-6;
+const float CHAIN_MINIMUM_SEGMENT_GRAVITY = 0.0015;
+const float CHAIN_MINIMUM_COLLISION_LEVER = 0.2;
+
+vec3 rotateByQuaternion(vec4 quaternion, vec3 value)
+{
+    return value + 2.0 * cross(quaternion.xyz, cross(quaternion.xyz, value) + quaternion.w * value);
+}
+
+vec4 multiplyChainQuaternions(vec4 a, vec4 b)
+{
+    return vec4(a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz), a.w * b.w - dot(a.xyz, b.xyz));
+}
+
+vec4 readSegmentTurn(ParticleState particle)
+{
+    vec4 turn = vec4(particle.SegmentTurnX, particle.SegmentTurnY, particle.SegmentTurnZ, particle.SegmentTurnW);
+    return dot(turn, turn) > 0.5 ? turn : vec4(0.0, 0.0, 0.0, 1.0);
+}
+
+void writeSegmentTurn(inout ParticleState particle, vec4 turn)
+{
+    particle.SegmentTurnX = turn.x;
+    particle.SegmentTurnY = turn.y;
+    particle.SegmentTurnZ = turn.z;
+    particle.SegmentTurnW = turn.w;
+}
+
+// --- Colliders ---
+
+bool collideOutsideSphere(vec3 center, float radius, inout vec3 position, float particleRadius)
+{
+    vec3 delta = position - center;
+    float minimumDistance = particleRadius + radius;
+    float distanceSquared = dot(delta, delta);
+    if (distanceSquared >= minimumDistance * minimumDistance)
+        return false;
+
+    delta = distanceSquared <= 1e-8
+        ? vec3(0.0, 1.0, 0.0)
+        : delta * inversesqrt(distanceSquared);
+    position = center + delta * minimumDistance;
+    return true;
+}
+
+bool collideInsideSphere(vec3 center, float radius, inout vec3 position, float particleRadius)
+{
+    vec3 delta = position - center;
+    float maximumDistance = radius - particleRadius;
+    float distanceSquared = dot(delta, delta);
+    if (distanceSquared <= maximumDistance * maximumDistance || distanceSquared <= 1e-12)
+        return false;
+
+    position = center + delta * (maximumDistance * inversesqrt(distanceSquared));
+    return true;
+}
+
+bool collideSphereShape(ColliderData collider, vec3 center, float radius, inout vec3 position, float particleRadius)
+{
+    return collider.Inside != 0
+        ? collideInsideSphere(center, radius, position, particleRadius)
+        : collideOutsideSphere(center, radius, position, particleRadius);
+}
+
+vec3 readCapsuleDirection(ColliderData collider)
+{
+    bool hasPackedDirection = collider.Orientation.w == -65536.0 &&
+        !any(isnan(collider.Orientation.xyz)) && !any(isinf(collider.Orientation.xyz));
+    return hasPackedDirection ? collider.Orientation.xyz : collider.Params.xyz - collider.Center.xyz;
+}
+
+bool collideCapsule(ColliderData collider, inout vec3 position, float particleRadius)
+{
+    vec3 start = collider.Center.xyz;
+    vec3 direction = readCapsuleDirection(collider);
+    float inverseLengthSquared = collider.Params.w;
+    if (!(inverseLengthSquared > 0.0))
+    {
+        float lengthSquared = dot(direction, direction);
+        if (lengthSquared < 1e-8)
+            return collideSphereShape(collider, start, collider.Center.w, position, particleRadius);
+        inverseLengthSquared = 1.0 / lengthSquared;
+    }
+
+    float projection = clamp(dot(position - start, direction) * inverseLengthSquared, 0.0, 1.0);
+    float radius = collider.EndRadius > 0.0 ? mix(collider.Center.w, collider.EndRadius, projection) : collider.Center.w;
+    return collideSphereShape(collider, start + direction * projection, radius, position, particleRadius);
+}
+
+bool collideBox(vec3 center, vec3 halfExtents, vec4 orientation, inout vec3 position, float radius)
+{
+    vec4 inverseOrientation = vec4(-orientation.xyz, orientation.w);
+    vec3 local = rotateByQuaternion(inverseOrientation, position - center);
+    vec3 closest = clamp(local, -halfExtents, halfExtents);
+    vec3 delta = local - closest;
+    float distanceSquared = dot(delta, delta);
+    if (distanceSquared > radius * radius)
+        return false;
+
+    if (distanceSquared > 1e-8)
+    {
+        local = closest + delta * (radius * inversesqrt(distanceSquared));
+        position = center + rotateByQuaternion(orientation, local);
+        return true;
+    }
+
+    vec3 faceDistance = halfExtents - abs(local);
+    if (faceDistance.x <= faceDistance.y && faceDistance.x <= faceDistance.z)
+        local.x = local.x < 0.0 ? -(halfExtents.x + radius) : halfExtents.x + radius;
+    else if (faceDistance.y <= faceDistance.z)
+        local.y = local.y < 0.0 ? -(halfExtents.y + radius) : halfExtents.y + radius;
+    else
+        local.z = local.z < 0.0 ? -(halfExtents.z + radius) : halfExtents.z + radius;
+    position = center + rotateByQuaternion(orientation, local);
+    return true;
+}
+
+// Center.xyz = point on the plane, Params.xyz = plane normal, Params.w = bound (0=Outside, 1=Inside)
+bool collidePlane(vec3 point, vec3 normal, float bound, inout vec3 position, float radius)
+{
+    float distance = dot(position - point, normal);
+    if (bound < 0.5)
+    {
+        if (distance >= radius)
+            return false;
+        position += normal * (radius - distance);
+        return true;
+    }
+
+    if (distance <= -radius)
+        return false;
+    position -= normal * (distance + radius);
+    return true;
+}
+
+bool collideShape(ColliderData collider, inout vec3 position, float radius)
+{
+    if (collider.Type == 0)
+        return collideSphereShape(collider, collider.Center.xyz, collider.Center.w, position, radius);
+    if (collider.Type == 1)
+        return collideCapsule(collider, position, radius);
+    if (collider.Type == 2)
+        return collideBox(collider.Center.xyz, collider.Params.xyz, collider.Orientation, position, radius);
+    if (collider.Type == 3)
+        return collidePlane(collider.Center.xyz, collider.Params.xyz, collider.Params.w, position, radius);
+    return false;
+}
+
+float closestParameterToPoint(vec3 start, vec3 end, vec3 point)
+{
+    vec3 direction = end - start;
+    float lengthSquared = dot(direction, direction);
+    return lengthSquared > 1e-10
+        ? clamp(dot(point - start, direction) / lengthSquared, 0.0, 1.0)
+        : 1.0;
+}
+
+float closestParameterToSegment(vec3 start, vec3 end, vec3 otherStart, vec3 otherDirection)
+{
+    vec3 direction = end - start;
+    vec3 offset = start - otherStart;
+    float lengthSquared = dot(direction, direction);
+    float otherLengthSquared = dot(otherDirection, otherDirection);
+    if (lengthSquared <= 1e-10)
+        return 1.0;
+    if (otherLengthSquared <= 1e-10)
+        return closestParameterToPoint(start, end, otherStart);
+
+    float crossing = dot(direction, otherDirection);
+    float directionOffset = dot(direction, offset);
+    float otherOffset = dot(otherDirection, offset);
+    float denominator = lengthSquared * otherLengthSquared - crossing * crossing;
+    float parameter = denominator > 1e-10
+        ? clamp((crossing * otherOffset - directionOffset * otherLengthSquared) / denominator, 0.0, 1.0)
+        : 0.0;
+    float otherParameter = (crossing * parameter + otherOffset) / otherLengthSquared;
+    if (otherParameter < 0.0)
+        parameter = clamp(-directionOffset / lengthSquared, 0.0, 1.0);
+    else if (otherParameter > 1.0)
+        parameter = clamp((crossing - directionOffset) / lengthSquared, 0.0, 1.0);
+    return parameter;
+}
+
+float closestSegmentParameter(ColliderData collider, vec3 start, vec3 end)
+{
+    if (collider.ParticleContactOnly != 0)
+        return 1.0;
+    if (collider.Type == 0 || collider.Type == 2)
+        return closestParameterToPoint(start, end, collider.Center.xyz);
+    if (collider.Type == 1)
+        return closestParameterToSegment(start, end, collider.Center.xyz, readCapsuleDirection(collider));
+    if (collider.Type == 3)
+        return (collider.Params.w >= 0.5) == (dot(end - start, collider.Params.xyz) > 0.0) ? 1.0 : 0.0;
+    return 1.0;
+}
+
+bool collideChainParticle(PerTreeParams tree, vec3 parentPosition, float parentRadius, inout vec3 position, float radius)
+{
+    bool segmentCollision = (tree.SolverFlags & CHAIN_SEGMENT_COLLISION) != 0;
+    bool collided = false;
+    for (int index = 0; index < tree.ColliderCount; ++index)
+    {
+        ColliderData collider = Colliders[tree.ColliderOffset + index];
+        if (!segmentCollision)
+        {
+            collided = collideShape(collider, position, radius) || collided;
+            continue;
+        }
+
+        float parameter = closestSegmentParameter(collider, parentPosition, position);
+        vec3 contact = mix(parentPosition, position, parameter);
+        vec3 resolved = contact;
+        if (collideShape(collider, resolved, mix(parentRadius, radius, parameter)))
+        {
+            position += (resolved - contact) / max(parameter, CHAIN_MINIMUM_COLLISION_LEVER);
+            collided = true;
+        }
+    }
+    return collided;
+}
+
+// --- Freeze Axis ---
+
+void applyChainFreezeAxis(int freezeAxis, inout vec3 position, vec3 parentPosition, mat3 parentBasis)
+{
+    if (freezeAxis < 1 || freezeAxis > 3)
+        return;
+
+    vec3 normal = normalizeChainDirection(parentBasis[freezeAxis - 1]);
+    position -= normal * dot(position - parentPosition, normal);
+}
+
+// --- Angle Limits ---
+
+vec3 limitToCone(vec3 direction, vec3 axis, vec3 fallbackSide, float maximumRadians)
+{
+    float cosine = clamp(dot(direction, axis), -1.0, 1.0);
+    if (acos(cosine) <= maximumRadians)
+        return direction;
+
+    vec3 tangent = direction - axis * cosine;
+    tangent = dot(tangent, tangent) > CHAIN_MINIMUM_LIMIT_DIRECTION_LENGTH ? normalize(tangent) : fallbackSide;
+    return normalize(axis * cos(maximumRadians) + tangent * sin(maximumRadians));
+}
+
+vec3 limitToHinge(vec3 direction, vec3 axis, vec3 planeTangent, float maximumRadians)
+{
+    float angle = clamp(atan(dot(direction, planeTangent), dot(direction, axis)), -maximumRadians, maximumRadians);
+    return normalize(axis * cos(angle) + planeTangent * sin(angle));
+}
+
+vec3 limitToPolar(vec3 direction, vec3 axis, vec3 side, vec3 up, float maximumPitch, float maximumYaw)
+{
+    float forward = dot(direction, axis);
+    float pitch = atan(dot(direction, up), forward);
+    float yaw = atan(dot(direction, side), forward);
+    if (maximumPitch <= 0.0 || maximumYaw <= 0.0)
+    {
+        pitch = clamp(pitch, -maximumPitch, maximumPitch);
+        yaw = clamp(yaw, -maximumYaw, maximumYaw);
+    }
+    else
+    {
+        float pitchRatio = pitch / maximumPitch;
+        float yawRatio = yaw / maximumYaw;
+        float excess = pitchRatio * pitchRatio + yawRatio * yawRatio;
+        if (excess <= 1.0)
+            return direction;
+        float scale = inversesqrt(excess);
+        pitch *= scale;
+        yaw *= scale;
+    }
+    return normalize(axis + up * tan(pitch) + side * tan(yaw));
+}
+
+vec3 applyChainAngleLimit(
+    PerTreeParams tree,
+    ParticleStatic particleStatic,
+    int parentIndex,
+    int particleStart,
+    vec3 parentPosition,
+    vec3 position,
+    vec3 restOffset,
+    mat3 parentBasis)
+{
+    vec3 offset = position - parentPosition;
+    float restLength = length(restOffset);
+    float offsetLength = length(offset);
+    if (restLength <= CHAIN_MINIMUM_LIMIT_DIRECTION_LENGTH || offsetLength <= CHAIN_MINIMUM_LIMIT_DIRECTION_LENGTH)
+        return position;
+
+    vec3 axis = restOffset / restLength;
+    vec3 direction = offset / offsetLength;
+    vec4 parentTurn = vec4(0.0, 0.0, 0.0, 1.0);
+    int grandparentIndex = ParticleStatics[parentIndex].ParentIndex;
+    if (grandparentIndex >= particleStart && grandparentIndex < parentIndex)
+    {
+        vec3 parentRest = physicsChainAffineTranslation(TransformMatrices[parentIndex])
+            - physicsChainAffineTranslation(TransformMatrices[grandparentIndex]);
+        vec3 parentSimulated = parentPosition - Particles[grandparentIndex].Position;
+        if (dot(parentRest, parentRest) > CHAIN_MINIMUM_DIRECTION_LENGTH_SQUARED
+            && dot(parentSimulated, parentSimulated) > CHAIN_MINIMUM_DIRECTION_LENGTH_SQUARED)
+        {
+            parentTurn = chainRotationBetweenVectors(parentRest, parentSimulated);
+            axis = normalize(rotateByQuaternion(parentTurn, axis));
+        }
+    }
+
+    // The limit rotation is authored in the local space of the parent bone.
+    vec3 side = rotateByQuaternion(parentTurn, parentBasis[0]);
+    vec4 limitRotation = tree.LimitRotation;
+    if (abs(limitRotation.w) < 0.999999)
+    {
+        mat3 orthonormal = mat3(
+            normalizeChainDirection(parentBasis[0]),
+            normalizeChainDirection(parentBasis[1]),
+            normalizeChainDirection(parentBasis[2]));
+        vec3 localAxis = rotateByQuaternion(vec4(-parentTurn.xyz, parentTurn.w), axis) * orthonormal;
+        vec3 localSide = rotateByQuaternion(vec4(-parentTurn.xyz, parentTurn.w), side) * orthonormal;
+        axis = normalize(rotateByQuaternion(parentTurn, orthonormal * rotateByQuaternion(limitRotation, localAxis)));
+        side = rotateByQuaternion(parentTurn, orthonormal * rotateByQuaternion(limitRotation, localSide));
+    }
+
+    side -= axis * dot(side, axis);
+    if (dot(side, side) <= CHAIN_MINIMUM_LIMIT_DIRECTION_LENGTH)
+        side = abs(axis.y) < 0.9 ? cross(vec3(0.0, 1.0, 0.0), axis) : cross(vec3(1.0, 0.0, 0.0), axis);
+    side = normalize(side);
+    vec3 up = cross(axis, side);
+
+    vec3 limited;
+    if (tree.LimitType == CHAIN_LIMIT_HINGE)
+        limited = limitToHinge(direction, axis, up, particleStatic.MaxAngleRadians);
+    else if (tree.LimitType == CHAIN_LIMIT_POLAR)
+        limited = limitToPolar(direction, axis, side, up, particleStatic.MaxAngleRadians, particleStatic.MaxYawRadians);
+    else
+        limited = limitToCone(direction, axis, side, particleStatic.MaxAngleRadians);
+    return parentPosition + limited * offsetLength;
+}
+
+// --- Forces ---
+
+// Gets the movement per step that applies during integration, before the pull.
+vec3 computeChainIntegrationForce(PerTreeParams tree)
+{
+    vec3 force = (tree.SolverFlags & CHAIN_SEGMENT_GRAVITY) != 0 ? vec3(0.0) : tree.Gravity;
+    float gravityLengthSquared = dot(force, force);
+    if (gravityLengthSquared > 1e-8)
+    {
+        vec3 forceDirection = force * inversesqrt(gravityLengthSquared);
+        force -= forceDirection * max(dot(tree.RestGravity, forceDirection), 0.0) * tree.GravityFalloff;
+    }
+    return (force + tree.Force) * (tree.ObjectScale * tree.DeltaTime);
+}
+
+// Falloff has its full effect at rest and less effect as the segment turns away from rest.
+vec3 computeSegmentGravity(PerTreeParams tree, vec4 segmentTurn)
+{
+    float gravityLengthSquared = dot(tree.Gravity, tree.Gravity);
+    if (gravityLengthSquared <= 1e-12)
+        return vec3(0.0);
+
+    float gravityLength = sqrt(gravityLengthSquared);
+    float scale = 1.0;
+    float restLengthSquared = dot(tree.RestGravity, tree.RestGravity);
+    if (tree.GravityFalloff > 0.0 && restLengthSquared > 1e-12)
+    {
+        vec3 restDirection = rotateByQuaternion(segmentTurn, tree.RestGravity * inversesqrt(restLengthSquared));
+        scale = 1.0 - tree.GravityFalloff * max(dot(tree.Gravity / gravityLength, restDirection), 0.0);
+    }
+    return gravityLength * scale <= CHAIN_MINIMUM_SEGMENT_GRAVITY ? vec3(0.0) : tree.Gravity * scale;
+}
+
+vec3 applyRootParentMotion(PerTreeParams tree, vec3 position)
+{
+    vec4 point = vec4(position, 1.0);
+    return vec3(dot(tree.RootParentMotionX, point), dot(tree.RootParentMotionY, point), dot(tree.RootParentMotionZ, point));
+}
+
+vec3 applyChainSegmentLength(PerTreeParams tree, vec3 position, vec3 parentPosition, float restLength, bool colliding)
+{
+    float target = restLength;
+    if (tree.MaxStretch > 0.0 || tree.MaxSquish > 0.0)
+    {
+        float currentLength = length(parentPosition - position);
+        float allowed = clamp(currentLength, restLength * (1.0 - tree.MaxSquish), restLength * (1.0 + tree.MaxStretch));
+        target = colliding ? allowed : mix(restLength, allowed, tree.StretchMotion);
+    }
+    return constrainChainSegment(position, parentPosition, target);
+}
+
+// --- Particle Step ---
+
+// Runs one step of one child particle. Its parent must already have completed this step.
+void stepChainParticle(
+    inout ParticleState particle,
+    ParticleStatic particleStatic,
+    int particleStart,
+    PerTreeParams tree,
+    vec3 force,
+    vec3 objectMove,
+    bool firstIteration)
+{
+    int flags = tree.SolverFlags;
+    int parentIndex = particleStatic.ParentIndex;
+    vec3 velocity = particle.Position - particle.PrevPosition;
+    vec3 rootMove = (flags & CHAIN_INERT_ROOT_PARENT) != 0
+        ? firstIteration ? (applyRootParentMotion(tree, particle.Position) - particle.Position) * particleStatic.Inert : vec3(0.0)
+        : objectMove * particleStatic.Inert;
+    particle.PrevPosition = particle.Position + rootMove;
+
+    float damping = particleStatic.Damping;
+    if (particle.IsColliding > 0)
+    {
+        damping = min(damping + particleStatic.Friction, 1.0);
+        particle.IsColliding = 0;
+    }
+    particle.Position += velocity * (1.0 - damping) + force + rootMove;
+
+    ParticleState parent = Particles[parentIndex];
+    vec4 parentTurn = readSegmentTurn(parent);
+    bool followsParent = (flags & CHAIN_REST_FOLLOWS_PARENT) != 0;
+    bool tracksTurn = followsParent || (flags & CHAIN_SEGMENT_GRAVITY) != 0;
+    mat3 parentBasis = mat3(decodePhysicsChainAffineInput(TransformMatrices[parentIndex]));
+    vec3 unturnedRestOffset = parentBasis * particleStatic.TransformLocalPosition;
+    vec3 turnedRestOffset = rotateByQuaternion(parentTurn, unturnedRestOffset);
+    vec3 shapeRestOffset = followsParent ? turnedRestOffset : unturnedRestOffset;
+
+    // A child of a branching bone keeps its rest offset, and its own chain starts from there.
+    if ((flags & CHAIN_PIN_BRANCH_CHILDREN) != 0 && particleStatic.IsBranchChild != 0)
+    {
+        vec3 pinnedOffset = shapeRestOffset;
+        if (!followsParent)
+        {
+            int grandparentIndex = ParticleStatics[parentIndex].ParentIndex;
+            if (grandparentIndex >= particleStart && grandparentIndex < parentIndex)
+            {
+                vec3 parentRest = physicsChainAffineTranslation(TransformMatrices[parentIndex])
+                    - physicsChainAffineTranslation(TransformMatrices[grandparentIndex]);
+                vec3 parentSimulated = parent.Position - Particles[grandparentIndex].Position;
+                if (dot(parentRest, parentRest) > CHAIN_MINIMUM_DIRECTION_LENGTH_SQUARED
+                    && dot(parentSimulated, parentSimulated) > CHAIN_MINIMUM_DIRECTION_LENGTH_SQUARED)
+                    pinnedOffset = rotateByQuaternion(chainRotationBetweenVectors(parentRest, parentSimulated), pinnedOffset);
+            }
+        }
+        particle.Position = parent.Position + pinnedOffset;
+        writeSegmentTurn(particle, parentTurn);
+        return;
+    }
+
+    // Keep shape.
+    vec3 restPosition = parent.Position + shapeRestOffset;
+    particle.Position += (restPosition - particle.Position) * (particleStatic.Elasticity * tree.DeltaTime);
+    if ((flags & CHAIN_SEGMENT_GRAVITY) != 0)
+        particle.Position += computeSegmentGravity(tree, readSegmentTurn(particle)) * (particleStatic.BoneLength * tree.DeltaTime);
+
+    float stiffness = mix(1.0, particleStatic.Stiffness, tree.Weight);
+    if (stiffness > 0.0)
+    {
+        if ((flags & CHAIN_HOLD_PARENT_OFFSET) != 0)
+        {
+            vec3 heldPosition = particle.PrevPosition + (parent.Position - parent.PrevPosition);
+            particle.Position = mix(heldPosition, particle.Position, 1.0 / (1.0 + stiffness));
+        }
+        else
+        {
+            vec3 displacement = restPosition - particle.Position;
+            float displacementLength = length(displacement);
+            float maximumLength = particleStatic.BoneLength * (1.0 - stiffness) * 2.0;
+            if (displacementLength > maximumLength && displacementLength > 1e-6)
+                particle.Position += displacement * ((displacementLength - maximumLength) / displacementLength);
+        }
+    }
+
+    float radius = particleStatic.Radius * tree.ObjectScale;
+    float parentRadius = ParticleStatics[parentIndex].Radius * tree.ObjectScale;
+    bool colliding = collideChainParticle(tree, parent.Position, parentRadius, particle.Position, radius);
+    particle.IsColliding = colliding ? 1 : 0;
+    applyChainFreezeAxis(tree.FreezeAxis, particle.Position, parent.Position, parentBasis);
+
+    if (tree.LimitType != 0)
+        particle.Position = applyChainAngleLimit(tree, particleStatic, parentIndex, particleStart,
+            parent.Position, particle.Position, unturnedRestOffset, parentBasis);
+
+    particle.Position = applyChainSegmentLength(tree, particle.Position, parent.Position, particleStatic.BoneLength, colliding);
+
+    if (tracksTurn)
+    {
+        vec3 simulated = particle.Position - parent.Position;
+        vec4 turn = parentTurn;
+        if (dot(turnedRestOffset, turnedRestOffset) > CHAIN_MINIMUM_DIRECTION_LENGTH_SQUARED
+            && dot(simulated, simulated) > CHAIN_MINIMUM_DIRECTION_LENGTH_SQUARED)
+            turn = normalize(multiplyChainQuaternions(chainRotationBetweenVectors(turnedRestOffset, simulated), parentTurn));
+        writeSegmentTurn(particle, turn);
+    }
+}
+
+// Moves one child particle on a frame without a simulation step.
+void resetChainParticle(inout ParticleState particle, ParticleStatic particleStatic, PerTreeParams tree)
+{
+    particle.PrevPosition += tree.ObjectMove;
+    particle.Position += tree.ObjectMove;
+
+    ParticleState parent = Particles[particleStatic.ParentIndex];
+    float stiffness = mix(1.0, particleStatic.Stiffness, tree.Weight);
+    if (stiffness > 0.0 && (tree.SolverFlags & CHAIN_HOLD_PARENT_OFFSET) == 0)
+    {
+        vec3 restPosition = parent.Position + mat3(decodePhysicsChainAffineInput(TransformMatrices[particleStatic.ParentIndex])) * particleStatic.TransformLocalPosition;
+        vec3 displacement = restPosition - particle.Position;
+        float displacementLength = length(displacement);
+        float maximumLength = particleStatic.BoneLength * (1.0 - stiffness) * 2.0;
+        if (displacementLength > maximumLength && displacementLength > 1e-6)
+            particle.Position += displacement * ((displacementLength - maximumLength) / displacementLength);
+    }
+
+    particle.Position = constrainChainSegment(particle.Position, parent.Position, particleStatic.BoneLength);
+}
+
+#endif

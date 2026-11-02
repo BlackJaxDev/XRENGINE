@@ -753,9 +753,9 @@ public static class CommonPostProcessStages
 
         bool IsSpatialHash(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion;
 
-        bool UsesRadius(object o) => IsSSAO(o) || IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsVXAO(o) || IsMVAO(o) || IsSpatialHash(o);
-        bool UsesPower(object o) => IsSSAO(o) || IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsVXAO(o) || IsMVAO(o) || IsSpatialHash(o);
-        bool UsesBias(object o) => IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsMVAO(o) || IsPrototypeObscurance(o) || IsSpatialHash(o);
+        bool UsesRadius(object o) => IsSSAO(o) || IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsVXAO(o) || IsMVAO(o) || IsPrototypeObscurance(o) || IsSpatialHash(o);
+        bool UsesPower(object o) => IsSSAO(o) || IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsVXAO(o) || IsMVAO(o) || IsPrototypeObscurance(o) || IsSpatialHash(o);
+        bool UsesBias(object o) => IsSSAO(o) || IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsMVAO(o) || IsPrototypeObscurance(o) || IsSpatialHash(o);
 
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Radius),
@@ -794,6 +794,16 @@ public static class CommonPostProcessStages
             displayName: "Intensity",
             min: 0.0f,
             max: 4.0f,
+            step: 0.01f,
+            visibilityCondition: IsPrototypeObscurance);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.Prototype), nameof(PrototypeAmbientOcclusionSettings.ScaleFactors)),
+            PostProcessParameterKind.Vector4,
+            PrototypeAmbientOcclusionSettings.DefaultScaleFactors,
+            displayName: "Radius Scales",
+            min: 0.01f,
+            max: 1.0f,
             step: 0.01f,
             visibilityCondition: IsPrototypeObscurance);
 

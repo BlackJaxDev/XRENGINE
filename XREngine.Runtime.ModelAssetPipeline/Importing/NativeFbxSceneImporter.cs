@@ -505,8 +505,7 @@ internal static class NativeFbxSceneImporter
 
             if (!materialsByModelObjectId.TryGetValue(modelObjectId, out List<FbxIntermediateMaterial>? nodeMaterials))
                 materialsByModelObjectId[modelObjectId] = nodeMaterials = [];
-            if (nodeMaterials.Any(item => item.ObjectId == materialObjectId))
-                throw new InvalidDataException($"FBX model '{modelObject.DisplayName}' connects material '{material.Name}' more than once.");
+            // Each connection is one material slot, even when a material fills several slots.
             nodeMaterials.Add(material);
         }
 

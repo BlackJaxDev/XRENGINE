@@ -342,6 +342,51 @@ unsupported inheritance, and unmatched producer hierarchies. In particular,
 retained Assimp helper nodes can fail the source-hierarchy check when
 `preserveHierarchy` is enabled. The importer does not approximate these cases.
 
+## Rest Pose And Avatar T-Pose
+
+The importer keeps the FBX rest pose and inverse-bind matrices. It does not apply `humanDescription.skeleton` from the model `.meta` file to the hierarchy. Unity stores the avatar T-pose in that list, and the T-pose can differ from the rest pose. Applying it moves the bones away from the skin bind, and the error becomes visible only when the bones animate.
+
+The importer stores that list on `HumanoidAuthoredTPoseComponent` at the model root. `HumanoidComponent` reads it as the reference pose for imported skeletons, in place of the generated direction estimate. An empty list keeps the generated estimate. The stored pose never changes the hierarchy or the skin bind.
+
+## Humanoid Clip Facing
+
+Humanoid clip tracks use the FBX contract, which mirrors X and faces +Z. Unity prefab imports mirror Z and face -Z. `HumanoidComponent` converts the requested Body frame by the yaw between `BodyAxes.Forward` and +Z. Without this conversion, Body pitch and roll have the opposite sign on the avatar. The pose audit common space still assumes the FBX contract, so prefab avatars report a 180 degree yaw difference there. Compare their local rotations instead.
+
+## PhysBone Conversion
+
+The importer converts VRChat PhysBone components to `PhysicsChainComponent`. VRChat does not publish the solver equations. The mapping and the chain settings below come from black-box measurement of plain test chains in Unity Play mode.
+
+| Source setting | Chain setting | Notes |
+| --- | --- | --- |
+| Endpoint Position | `EndOffset`, `EndOffsetInBoneSpace` | Read in the local space of each end bone. |
+| Pull | `Elasticity` | Same value. |
+| Spring, Momentum | `Damping`, `DampingDistrib` | `1 - value`, with the curve applied to the value. Momentum uses the Spring mapping, and diagnostic `UNITYVRC0003` reports it. |
+| Stiffness | `Stiffness`, `StiffnessMode` | Advanced integration only. |
+| Gravity, Gravity Falloff | `Gravity`, `GravityFalloff`, `GravityMode` | Gravity and falloff curves are not imported. |
+| Immobile | `Inert`, `InertFollowsRootParent` | Uses the full motion of the root's parent. World type is not imported. |
+| Limit Type, Max Angle, Rotation | `LimitType`, `MaxAngle`, `MaxYaw`, `LimitRotation` | Each limit is relative to the parent segment. Rotation curves are not imported. |
+| Max Stretch, Max Squish, Stretch Motion | `MaxStretch`, `MaxSquish`, `StretchMotion` | Scalar values. Curves are not imported. |
+| Multi-Child Type | `PinBranchChildren` | Ignore pins each child of a bone with several children at its rest offset. First and Average are not imported, and diagnostic `UNITYVRC0003` reports them. |
+
+Integration Type does not select update timing. Imported chains use `EUpdateMode.Normal` and step at 60 Hz, which is the rate that matches the measurements.
+
+### Chain Solver Settings
+
+These settings are independent. Each default keeps the Dynamic Bone behavior. The importer selects the value that matches PhysBones.
+
+| Setting | Default | PhysBone value | Effect of the PhysBone value |
+| --- | --- | --- | --- |
+| `RestFollowsParent` | Off | On | The rest direction of each segment follows the simulated turn of its parent segment, so a chain curls along its length. |
+| `StiffnessMode` | `DistanceLimit` | `HoldParentOffset` | Stiffness holds the offset from the parent as it was before the step. It does not change where a segment settles under gravity. |
+| `GravityMode` | `Force` | `SegmentRatio` | Gravity scales with the segment length, so the settled angle depends on the gravity and pull ratio. Falloff weakens as a segment turns away from rest. A gravity at or below 0.0015 has no effect. |
+| `CarryParticlesBetweenSteps` | On | Off | Frames without a simulation step do not change the particles, so root motion gives the same lag at every frame rate. The chain moves rigidly with its root until the next step. |
+| `PinBranchChildren` | Off | On for Ignore | Each child of a bone with several children keeps its rest offset. |
+| `CollisionMode` | `Particle` | `Segment` | Each segment collides along its full length, and a contact turns it around the parent. A collider with Bones As Spheres imports with `ParticleContactOnly` and tests only the child end of a segment. |
+
+The GPU solver implements these settings, limits, gravity falloff, root-parent inertia, stretch, squish, and imported colliders with the same rules as the CPU solver. It has no frames between steps, because it dispatches only when a step runs, so `CarryParticlesBetweenSteps` has no effect on it. The default for `GravityFalloff` on other chains is 1, which keeps their earlier behavior.
+
+`UseGpuDrivenSkinning` writes bones to the skin palette with no readback, and it applies when `GpuSyncToBones` is off. It binds every skinned mesh in the chain's hierarchy that uses a bone of the chain, and all chains of a mesh share one palette slice. The chains refresh the palette on each frame, and particles do not change between solver steps. The CPU bones do not receive the solved pose, so a non-chain bone, attachment, or child chain under a chain bone does not follow it. Use `GpuSyncToBones` when one of these must follow the chain.
+
 ## Animation Clip Import
 
 Unity YAML `.anim` files are registered as third-party `AnimationClip` sources. The importer reads clip metadata, curve bindings, root-motion channels, humanoid muscle channels, IK goal channels, blendshape curves, and authored keyframes where those channels are present.
@@ -438,6 +483,11 @@ slot's emission by `mix(1, clamp((1 - direct) * sqrt(direct), 0, 1), strength)`.
 monochromatic, cap, multiplier, and addition controls. It does not include
 shadow visibility or ambient occlusion. Zero strength retains the previous
 emission result. This operation does not change other emission sources.
+
+The source toon converter sets `_WorldAmbientOcclusionStrength` to 0, because the
+source shaders read only their own AO maps and no screen-space AO texture. The
+uber shader mixes screen AO toward 1 by this value, in standard and source light
+modes. Set it above 0 to let world AO darken a converted material.
 
 The serialized prefab cache version invalidates output that lacks this mapping.
 

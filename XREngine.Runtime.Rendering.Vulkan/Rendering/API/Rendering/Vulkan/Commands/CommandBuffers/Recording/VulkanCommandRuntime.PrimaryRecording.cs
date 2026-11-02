@@ -810,13 +810,18 @@ internal sealed partial class VulkanCommandRuntime
         if (context.NoAuthoredDesktopOutput)
             return VulkanPrimaryCommandRecordingResult.NoAuthoredOutput(reason);
 
+        // A deferral without a failure kind is transient: a pipeline is still compiling, or a
+        // renderer retired after the plan was sealed. It must not pause the renderer. The next
+        // frame builds a fresh plan, and the retry diagnostic keeps the reason visible.
         return context.Policy.IsPresentNow
             ? VulkanPrimaryCommandRecordingResult.Failed(
                 reason,
                 context.Policy.ReadinessPolicy,
                 context.Policy.WorkClass,
                 context.Policy.SourceFrameId,
-                context.FailureKind)
+                context.FailureKind == EVulkanCommandRecordingFailureKind.None
+                    ? EVulkanCommandRecordingFailureKind.RetryFrame
+                    : context.FailureKind)
             : VulkanPrimaryCommandRecordingResult.Deferred(reason);
     }
 

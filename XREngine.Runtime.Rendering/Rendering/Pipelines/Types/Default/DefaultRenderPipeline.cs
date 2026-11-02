@@ -151,6 +151,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     protected static EMeshSubmissionStrategy MeshSubmissionStrategy
         => RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
 
+    /// <summary>True when mesh passes draw from the shared atlas, which needs deformed vertices published to it.</summary>
+    internal static bool DrawsFromMeshAtlas
+        => MeshSubmissionStrategy is EMeshSubmissionStrategy.GpuIndirectZeroReadback or
+            EMeshSubmissionStrategy.GpuIndirectInstrumented;
+
     internal static bool UseOpenXrVulkanDesktopStartupSafePath
         => UseOpenXrVulkanDesktopStartupSafePathForViewport(null);
 

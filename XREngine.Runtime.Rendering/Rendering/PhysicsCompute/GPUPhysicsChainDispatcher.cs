@@ -415,16 +415,16 @@ public sealed partial class GPUPhysicsChainDispatcher
         public Vector3 PrevPosition;
         public float _pad1;
         public int IsColliding;
-        public Vector3 _pad2;
+        public Vector3 SegmentTurnXyz;
         public Vector3 PreviousPhysicsPosition;
-        public float _pad3;
+        public float SegmentTurnW;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUParticleStaticData
     {
         public Vector3 TransformLocalPosition;
-        public float _pad0;
+        public float MaxAngleRadians;
         public int ParentIndex;
         public float Damping;
         public float Elasticity;
@@ -434,8 +434,8 @@ public sealed partial class GPUPhysicsChainDispatcher
         public float Radius;
         public float BoneLength;
         public int TreeIndex;
-        public int _pad1;
-        public int _pad2;
+        public int IsBranchChild;
+        public float MaxYawRadians;
         public int _pad3;
     }
 
@@ -462,6 +462,18 @@ public sealed partial class GPUPhysicsChainDispatcher
         public int LoopCount;
         public int DepthRangeOffset;
         public int DepthRangeCount;
+        public float GravityFalloff;
+        public int SolverFlags;
+        public int LimitType;
+        public float MaxStretch;
+        public float MaxSquish;
+        public float StretchMotion;
+        public float _pad1;
+        public float _pad2;
+        public Vector4 LimitRotation;
+        public Vector4 RootParentMotionX;
+        public Vector4 RootParentMotionY;
+        public Vector4 RootParentMotionZ;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -470,6 +482,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         public Vector3 RestGravity;
         public int ParticleOffset;
         public int ParticleCount;
+        public Matrix4x4 RootParentMotion;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -479,9 +492,9 @@ public sealed partial class GPUPhysicsChainDispatcher
         public Vector4 Params;
         public Vector4 Orientation;
         public int Type;
-        public int _pad0;
-        public int _pad1;
-        public int _pad2;
+        public int ParticleContactOnly;
+        public int Inside;
+        public float EndRadius;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -514,6 +527,10 @@ public sealed partial class GPUPhysicsChainDispatcher
         [XREngine.Rendering.Shaders.GpuPaddedVector3(nameof(_pad0))]
         public Vector3 RestLocalDirection;
         public float _pad0;
+        public int RootParticleIndex;
+        public int _pad1;
+        public int _pad2;
+        public int _pad3;
     }
 
     public readonly record struct GpuDrivenRendererPaletteBinding(
@@ -750,6 +767,9 @@ public sealed partial class GPUPhysicsChainDispatcher
                 Radius = value.Radius,
                 BoneLength = value.BoneLength,
                 TreeIndex = value.TreeIndex,
+                MaxAngleRadians = value.MaxAngleRadians,
+                MaxYawRadians = value.MaxYawRadians,
+                IsBranchChild = value.IsBranchChild,
             };
         }
     }
@@ -766,6 +786,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 RestGravity = value.RestGravity,
                 ParticleOffset = value.ParticleOffset,
                 ParticleCount = value.ParticleCount,
+                RootParentMotion = value.RootParentMotion,
             };
         }
     }
@@ -783,6 +804,9 @@ public sealed partial class GPUPhysicsChainDispatcher
                 Params = value.Params,
                 Orientation = value.Orientation,
                 Type = value.Type,
+                ParticleContactOnly = value.ParticleContactOnly,
+                Inside = value.Inside,
+                EndRadius = value.EndRadius,
             };
         }
     }
@@ -812,6 +836,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             if (input.BoneStructureSignature != snapshot.BoneStructureSignature || input.Bones.Length != snapshot.Bones.Length)
                 input.Bones = SnapshotInto(snapshot.Bones, ref input.Bones);
 
+            input.Solver = snapshot.Solver;
             CompleteSubmittedInput(component, request, input, snapshot.DeltaTime, snapshot.ObjectScale,
                 snapshot.Weight, snapshot.Force, snapshot.Gravity, snapshot.ObjectMove,
                 snapshot.FreezeAxis, snapshot.LoopCount, snapshot.TimeVar,
@@ -1486,6 +1511,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             for (int treeIndex = 0; treeIndex < trees.Length; ++treeIndex)
             {
                 ref readonly GPUParticleTreeData tree = ref trees[treeIndex];
+                ref readonly Matrix4x4 motion = ref tree.RootParentMotion;
                 _allPerTreeParams.Add(new GPUPerTreeParams
                 {
                     DeltaTime = request.TimeVar,
@@ -1501,6 +1527,16 @@ public sealed partial class GPUPhysicsChainDispatcher
                     ParticleOffset = request.ParticleOffset + tree.ParticleOffset,
                     ParticleCount = tree.ParticleCount,
                     LoopCount = request.LoopCount,
+                    GravityFalloff = request.Solver.GravityFalloff,
+                    SolverFlags = request.Solver.Flags,
+                    LimitType = request.Solver.LimitType,
+                    MaxStretch = request.Solver.MaxStretch,
+                    MaxSquish = request.Solver.MaxSquish,
+                    StretchMotion = request.Solver.StretchMotion,
+                    LimitRotation = new Vector4(request.Solver.LimitRotation.X, request.Solver.LimitRotation.Y, request.Solver.LimitRotation.Z, request.Solver.LimitRotation.W),
+                    RootParentMotionX = new Vector4(motion.M11, motion.M21, motion.M31, motion.M41),
+                    RootParentMotionY = new Vector4(motion.M12, motion.M22, motion.M32, motion.M42),
+                    RootParentMotionZ = new Vector4(motion.M13, motion.M23, motion.M33, motion.M43),
                 });
             }
         }
@@ -2236,14 +2272,17 @@ public sealed partial class GPUPhysicsChainDispatcher
             uint baseElement = _gpuDrivenPaletteSliceBases[bindingIndex];
             uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
 
-            // Compatible complete palettes share one slice and one mapping generation.
-            if (!_gpuDrivenPaletteSlicesSeeded.Add(baseElement))
+            if (_gpuDrivenPaletteSlicesSeeded.Add(baseElement))
+            {
+                XRMeshRenderer.BoneResourceSnapshot rendererResources =
+                    binding.Renderer.CaptureBoneResources();
+                CopySkinPaletteRange(rendererResources.SkinPalette, _gpuDrivenSkinPalette, baseElement, elementCount);
+                CopyMatrixRange(rendererResources.InverseBindMatrices, _gpuDrivenBoneInvBindMatrices, baseElement, elementCount);
+            }
+            // Compatible complete palettes share one mapping generation. The chains of one
+            // renderer share a slice, and each chain writes its own bones.
+            else if (SharesPaletteSliceByMesh(in binding))
                 continue;
-
-            XRMeshRenderer.BoneResourceSnapshot rendererResources =
-                binding.Renderer.CaptureBoneResources();
-            CopySkinPaletteRange(rendererResources.SkinPalette, _gpuDrivenSkinPalette, baseElement, elementCount);
-            CopyMatrixRange(rendererResources.InverseBindMatrices, _gpuDrivenBoneInvBindMatrices, baseElement, elementCount);
 
             for (int mappingIndex = 0; mappingIndex < binding.Mappings.Length; ++mappingIndex)
             {
@@ -2251,6 +2290,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 mapping.ParticleIndex += binding.ParticleBaseOffset;
                 if (mapping.ChildParticleIndex >= 0)
                     mapping.ChildParticleIndex += binding.ParticleBaseOffset;
+                mapping.RootParticleIndex += binding.ParticleBaseOffset;
                 mapping.BoneMatrixIndex += (int)baseElement;
                 _gpuDrivenBoneMappings.Add(mapping);
             }
@@ -3622,6 +3662,7 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
         ObjectMove = input.ObjectMove;
         FreezeAxis = input.FreezeAxis;
         LoopCount = input.LoopCount;
+        Solver = input.Solver;
         TimeVar = input.TimeVar;
         UpdateMode = input.UpdateMode;
         DispatchIsolationKey = input.DispatchIsolationKey;
@@ -3663,6 +3704,7 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
     public Vector3 ObjectMove;
     public int FreezeAxis;
     public int LoopCount;
+    public PhysicsChainGpuSolverSettings Solver = PhysicsChainGpuSolverSettings.Default;
     public float TimeVar;
     public int UpdateMode;
     public int DispatchIsolationKey;

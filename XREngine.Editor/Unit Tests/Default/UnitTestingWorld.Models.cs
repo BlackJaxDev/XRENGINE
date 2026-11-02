@@ -524,7 +524,7 @@ public static partial class EditorUnitTests
                                     if (model.Kind is UnitTestModelImportKind.Animated)
                                     {
                                         if (IsSerializedPrefabPath(resolvedPath))
-                                            OnFinishedImportingAvatar(importedRoot, null, result.SourceContentSha256);
+                                            OnFinishedImportingAvatar(result.AvatarRoot, null, result.SourceContentSha256);
                                         StageSerializedPrefabModelPublication(importedRoot, suspendedModels);
                                     }
 

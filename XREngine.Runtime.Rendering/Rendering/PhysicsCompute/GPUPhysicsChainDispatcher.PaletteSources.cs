@@ -91,6 +91,10 @@ public sealed partial class GPUPhysicsChainDispatcher
                 ref readonly PaletteLayoutEntry entry = ref entries[index];
                 if (!IsPaletteSourcePublishable(in entry))
                     continue;
+                // The chains of one renderer share a slice, so the first chain owns the binding.
+                // A bind for each chain would change the owner, and the epoch, at each publication.
+                if (!_paletteViewBindScratch.Add(entry.Renderer))
+                    continue;
                 bool historyValid = historyResets is null || !historyResets.Contains(entry.Renderer);
                 if (!entry.Renderer.BindGpuDrivenSkinPaletteView(entry.Component, _skinPaletteView,
                     entry.Base, entry.Count, entry.BoneGeneration, entry.DrivesCompleteBonePalette, historyValid))
@@ -101,6 +105,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 }
                 _paletteViewRenderers.Add(entry.Renderer);
             }
+            _paletteViewBindScratch.Clear();
         }
         return allBound;
     }

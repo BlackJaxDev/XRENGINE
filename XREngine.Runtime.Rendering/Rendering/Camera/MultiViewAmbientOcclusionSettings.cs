@@ -50,7 +50,6 @@ namespace XREngine.Rendering
             program.Uniform("Radius", PositiveOr(Owner.Radius, 0.9f));
             program.Uniform("SecondaryRadius", PositiveOr(SecondaryRadius, 1.6f));
             program.Uniform("Bias", PositiveOr(Owner.Bias, 0.03f));
-            program.Uniform("Power", PositiveOr(Owner.Power, 1.4f));
             program.Uniform("MultiViewBlend", Math.Clamp(Blend, 0.0f, 1.0f));
             program.Uniform("MultiViewSpread", Math.Clamp(Spread, 0.0f, 1.0f));
             program.Uniform("DepthPhi", PositiveOr(DepthPhi, 4.0f));

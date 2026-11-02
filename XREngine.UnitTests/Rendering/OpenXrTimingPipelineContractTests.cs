@@ -1679,15 +1679,16 @@ public sealed class OpenXrTimingPipelineContractTests
         editorUnitTestingPawns.ShouldContain("Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();");
         bootstrapRenderSettings.ShouldContain("renderSettings.VrCopyEyePreviewTextures = settings.PreviewVRStereoViews");
         bootstrapRenderSettings.ShouldContain("usesRuntimeDesktopCamera");
-        bootstrapRenderSettings.ShouldContain("renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;");
+        bootstrapRenderSettings.ShouldContain("renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresIndependentDesktopWindow;");
+        bootstrapRenderSettings.ShouldContain("else if (requiresIndependentDesktopWindow || usesRuntimeDesktopCamera)");
         bootstrapRenderSettings.ShouldContain("renderSettings.VrMirrorComposeFromEyeTextures = false");
-        bootstrapRenderSettings.ShouldContain("renderSettings.VrMirrorMode = EVrMirrorMode.FullIndependentRender");
+        bootstrapRenderSettings.ShouldContain("renderSettings.VrMirrorMode = ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow)");
         bootstrapRenderSettings.ShouldContain("VrMirrorMode={renderSettings.VrMirrorMode}");
         bootstrapRenderSettings.ShouldContain("VrCopyEyePreviewTextures={renderSettings.VrCopyEyePreviewTextures}");
         editorUnitTestingWorld.ShouldContain("s.VrCopyEyePreviewTextures = previewVrStereoViews");
         editorUnitTestingWorld.ShouldContain("usesRuntimeDesktopCamera");
         editorUnitTestingWorld.ShouldContain("s.VrMirrorComposeFromEyeTextures = false");
-        editorUnitTestingWorld.ShouldContain("s.VrMirrorMode = EVrMirrorMode.FullIndependentRender");
+        editorUnitTestingWorld.ShouldContain("s.VrMirrorMode = XREngine.Runtime.Bootstrap.BootstrapRenderSettings.ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow)");
         editorUnitTestingWorld.ShouldContain("VrMirrorMode={s.VrMirrorMode}");
         editorUnitTestingWorld.ShouldContain("VrCopyEyePreviewTextures={s.VrCopyEyePreviewTextures}");
         engineState.ShouldContain("XRComponent? controlledPawn = existing.ControlledPawnComponent");
@@ -1732,7 +1733,8 @@ public sealed class OpenXrTimingPipelineContractTests
         openXrFrameLifecycle.ShouldContain("_openXrRightViewport.SwapBuffers(rightCommands");
         openXrState.ShouldNotContain("HasIndependentDesktopVrView");
         string editorUnitTestingWorld = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.cs");
-        editorUnitTestingWorld.ShouldContain("s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;");
+        editorUnitTestingWorld.ShouldContain("s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow;");
+        editorUnitTestingWorld.ShouldContain("else if (requiresIndependentDesktopWindow || usesRuntimeDesktopCamera)");
         editorUnitTestingPawns.ShouldContain("firstPersonViewNode.SetTransform<Transform>();");
         editorUnitTestingPawns.ShouldNotContain("var firstPersonViewTfm = firstPersonViewNode.SetTransform<SmoothedParentConstraintTransform>();");
 

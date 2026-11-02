@@ -30,18 +30,40 @@ namespace XREngine.Rendering
                 return SetField(ref field, value, publishNotifications, propertyName);
         }
         // Cached "Texture{N}" sampler strings — avoids per-call string interpolation on hot render paths.
-        private static readonly string[] _indexedSamplerNames = CreateIndexedSamplerNames(32);
-        private static string[] CreateIndexedSamplerNames(int count)
+        // The cache grows on demand, because imported materials can have more than 32 textures.
+        private const int MaxCachedIndexedSamplerNames = 1024;
+        private static readonly Lock _indexedSamplerNamesSync = new();
+        private static string[] _indexedSamplerNames = CreateIndexedSamplerNames([], 32);
+        private static string[] CreateIndexedSamplerNames(string[] existing, int count)
         {
             var names = new string[count];
-            for (int i = 0; i < count; i++)
+            existing.CopyTo(names, 0);
+            for (int i = existing.Length; i < count; i++)
                 names[i] = $"Texture{i}";
             return names;
         }
         internal static string GetIndexedSamplerName(int textureIndex)
-            => (uint)textureIndex < (uint)_indexedSamplerNames.Length
-                ? _indexedSamplerNames[textureIndex]
-                : $"Texture{textureIndex}";
+        {
+            string[] names = Volatile.Read(ref _indexedSamplerNames);
+            if ((uint)textureIndex < (uint)names.Length)
+                return names[textureIndex];
+
+            if ((uint)textureIndex >= MaxCachedIndexedSamplerNames)
+                return $"Texture{textureIndex}";
+
+            lock (_indexedSamplerNamesSync)
+            {
+                names = _indexedSamplerNames;
+                if ((uint)textureIndex >= (uint)names.Length)
+                {
+                    int count = Math.Min(Math.Max(names.Length * 2, textureIndex + 1), MaxCachedIndexedSamplerNames);
+                    names = CreateIndexedSamplerNames(names, count);
+                    Volatile.Write(ref _indexedSamplerNames, names);
+                }
+
+                return names[textureIndex];
+            }
+        }
 
         /// <summary>Allocates an independent raw image without loading an imaging backend.</summary>
         public static RuntimeImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type)

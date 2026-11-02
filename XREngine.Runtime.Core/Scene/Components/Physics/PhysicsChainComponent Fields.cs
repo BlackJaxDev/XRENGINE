@@ -83,6 +83,24 @@ public partial class PhysicsChainComponent : XRComponent
     private float _endLength = 0.0f;
 
     private Vector3 _endOffset = Vector3.Zero;
+    private bool _endOffsetInBoneSpace;
+    private float _gravityFalloff = 1.0f;
+    private bool _inertFollowsRootParent;
+    private bool _pinBranchChildren;
+    private bool _restFollowsParent;
+    private EPhysicsChainCollisionMode _collisionMode;
+    private bool _carryParticlesBetweenSteps = true;
+    private EPhysicsChainStiffnessMode _stiffnessMode;
+    private EPhysicsChainGravityMode _gravityMode;
+    private EPhysicsChainLimitType _limitType = EPhysicsChainLimitType.None;
+    private float _maxAngle = 45.0f;
+    private PhysicsChainCoefficientCurve? _maxAngleDistrib;
+    private float _maxYaw = 45.0f;
+    private PhysicsChainCoefficientCurve? _maxYawDistrib;
+    private Quaternion _limitRotation = Quaternion.Identity;
+    private float _maxStretch;
+    private float _maxSquish;
+    private float _stretchMotion;
     private Vector3 _gravity = Vector3.Zero;
     private Vector3 _force = Vector3.Zero;
 
@@ -298,6 +316,130 @@ public partial class PhysicsChainComponent : XRComponent
     {
         get => _endOffset;
         set => SetField(ref _endOffset, value);
+    }
+    /// <summary>
+    /// Reads <see cref="EndOffset"/> in the local space of each end bone instead of the local space of this component.
+    /// </summary>
+    public bool EndOffsetInBoneSpace
+    {
+        get => _endOffsetInBoneSpace;
+        set => SetField(ref _endOffsetInBoneSpace, value);
+    }
+    /// <summary>
+    /// The part of gravity removed along the rest direction. At 1, gravity has no effect on a chain at rest.
+    /// </summary>
+    public float GravityFalloff
+    {
+        get => _gravityFalloff;
+        set => SetField(ref _gravityFalloff, Math.Clamp(value, 0.0f, 1.0f));
+    }
+    /// <summary>
+    /// Applies <see cref="Inert"/> to the full motion of the root's parent instead of the translation of this component.
+    /// </summary>
+    public bool InertFollowsRootParent
+    {
+        get => _inertFollowsRootParent;
+        set => SetField(ref _inertFollowsRootParent, value);
+    }
+    /// <summary>
+    /// Keeps each child of a bone with several children at its rest offset from that bone.
+    /// The children still rotate to follow their own chains.
+    /// </summary>
+    public bool PinBranchChildren
+    {
+        get => _pinBranchChildren;
+        set => SetField(ref _pinBranchChildren, value);
+    }
+    /// <summary>
+    /// Makes the rest direction of each segment follow the simulated turn of its parent segment, so a chain curls along its length.
+    /// When this is off, each segment aims at its rest direction from the animated pose.
+    /// </summary>
+    public bool RestFollowsParent
+    {
+        get => _restFollowsParent;
+        set => SetField(ref _restFollowsParent, value);
+    }
+    /// <summary>
+    /// Moves particles with this component on frames that have no simulation step.
+    /// When this is off, particles do not change until the next step, so root motion gives the same lag at every frame rate.
+    /// The presented chain moves rigidly with the root between steps.
+    /// </summary>
+    public bool CarryParticlesBetweenSteps
+    {
+        get => _carryParticlesBetweenSteps;
+        set => SetField(ref _carryParticlesBetweenSteps, value);
+    }
+    /// <summary>Selects if colliders test each particle or each full segment.</summary>
+    public EPhysicsChainCollisionMode CollisionMode
+    {
+        get => _collisionMode;
+        set => SetField(ref _collisionMode, value);
+    }
+    /// <summary>Selects how <see cref="Stiffness"/> acts on each segment.</summary>
+    public EPhysicsChainStiffnessMode StiffnessMode
+    {
+        get => _stiffnessMode;
+        set => SetField(ref _stiffnessMode, value);
+    }
+    /// <summary>Selects how <see cref="Gravity"/> and <see cref="GravityFalloff"/> act on the chain.</summary>
+    public EPhysicsChainGravityMode GravityMode
+    {
+        get => _gravityMode;
+        set => SetField(ref _gravityMode, value);
+    }
+    /// <summary>Selects the angle limit of each segment.</summary>
+    public EPhysicsChainLimitType LimitType
+    {
+        get => _limitType;
+        set => SetField(ref _limitType, value);
+    }
+    /// <summary>The cone or hinge angle in degrees, and the pitch range of a polar limit.</summary>
+    public float MaxAngle
+    {
+        get => _maxAngle;
+        set => SetField(ref _maxAngle, value);
+    }
+    public PhysicsChainCoefficientCurve? MaxAngleDistrib
+    {
+        get => _maxAngleDistrib;
+        set => SetField(ref _maxAngleDistrib, value);
+    }
+    /// <summary>The yaw range of a polar limit in degrees.</summary>
+    public float MaxYaw
+    {
+        get => _maxYaw;
+        set => SetField(ref _maxYaw, value);
+    }
+    public PhysicsChainCoefficientCurve? MaxYawDistrib
+    {
+        get => _maxYawDistrib;
+        set => SetField(ref _maxYawDistrib, value);
+    }
+    /// <summary>Turns the limit axis in the local space of the parent bone.</summary>
+    public Quaternion LimitRotation
+    {
+        get => _limitRotation;
+        set => SetField(ref _limitRotation, value);
+    }
+    /// <summary>The largest added segment length, as a multiple of the rest length.</summary>
+    public float MaxStretch
+    {
+        get => _maxStretch;
+        set => SetField(ref _maxStretch, MathF.Max(value, 0.0f));
+    }
+    /// <summary>The largest removed segment length, as a multiple of the rest length.</summary>
+    public float MaxSquish
+    {
+        get => _maxSquish;
+        set => SetField(ref _maxSquish, Math.Clamp(value, 0.0f, 1.0f));
+    }
+    /// <summary>
+    /// How much motion can change segment length, from 0 to 1. At 0, only collisions change it.
+    /// </summary>
+    public float StretchMotion
+    {
+        get => _stretchMotion;
+        set => SetField(ref _stretchMotion, Math.Clamp(value, 0.0f, 1.0f));
     }
     public Vector3 Gravity
     {

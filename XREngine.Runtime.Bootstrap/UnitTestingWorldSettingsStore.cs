@@ -1144,6 +1144,9 @@ public static class UnitTestingWorldSettingsStore
             ApplyMonadoSimulatedDisplayProfileEnvironment(startInfo.Environment, displayProfile);
             SetEnvironmentIfMissing(startInfo.Environment, "XRT_COMPOSITOR_LOG", "debug");
             SetEnvironmentIfMissing(startInfo.Environment, "SIMULATED_LOG", "debug");
+            // Monado's default app period holds frames over 16.7 ms at three display periods,
+            // even when two are enough. This makes the XR rate show the engine's frame time.
+            SetEnvironmentIfMissing(startInfo.Environment, "U_PACING_APP_USE_MIN_FRAME_PERIOD", "true");
 
             System.Diagnostics.Process? process = System.Diagnostics.Process.Start(startInfo);
             if (process is null)

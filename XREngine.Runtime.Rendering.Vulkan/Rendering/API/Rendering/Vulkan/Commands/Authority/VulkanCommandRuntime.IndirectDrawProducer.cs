@@ -215,6 +215,9 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         ComputeDispatchSnapshot bindings = program.CaptureComputeSnapshot();
+        // One indirect draw holds one material and one render scope. Without this flag, each
+        // draw writes every material member by name, and a large material pays for this per draw.
+        bindings.EnableMaterialBindingFastPath();
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         VulkanDescriptorResolutionDiagnostics.CaptureIndirectSnapshot(
             state.Program,

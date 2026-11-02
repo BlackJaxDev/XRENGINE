@@ -1618,6 +1618,7 @@ namespace XREngine
                 new ShaderInt(0, "_LightingColorMode"),
                 new ShaderInt(2, "_LightingMapMode"),
                 new ShaderInt(0, "_LightingDirectionMode"),
+                new ShaderFloat(1.0f, "_WorldAmbientOcclusionStrength"),
                 new ShaderFloat(0.0f, "_LightingCapEnabled"),
                 new ShaderFloat(10.0f, "_LightingCap"),
                 new ShaderFloat(0.0f, "_LightingMinLightBrightness"),

@@ -36,6 +36,7 @@ internal sealed class ComputeDispatchSnapshot
     public Dictionary<uint, VulkanComputeBufferBinding> Buffers { get; }
     public Dictionary<string, VulkanComputeBufferBinding> BuffersByName { get; }
     private bool _ownsBufferBindings;
+    private int _artifactLeaseCount;
     private readonly VulkanTextureArrayBindingUseSet _textureArrayUses = new();
     internal bool IsFramePoolOwned { get; set; }
 
@@ -67,8 +68,8 @@ internal sealed class ComputeDispatchSnapshot
     private MaterialUniformBindingPayload? _materialUniformBindings;
 
     /// <summary>
-    /// True only for a snapshot whose exact material and render scope is shared
-    /// by multiple draws in the current frame.
+    /// True only for a snapshot whose exact material and render scope is known:
+    /// one shared by multiple draws in the current frame, or one indirect draw.
     /// </summary>
     internal bool AllowsMaterialBindingFastPath { get; private set; }
 
@@ -300,6 +301,43 @@ internal sealed class ComputeDispatchSnapshot
 
     internal void ReleaseReadOnlyStorageBindings()
     {
+        // An artifact's resources belong to its leases, not to any one holder.
+        if (!IsImmutableBindingArtifact)
+            ReleaseHeldResources();
+    }
+
+    /// <summary>
+    /// True while the artifact still holds its resources. A slot may keep a reference
+    /// after the last lease ended, and that reference must not be handed out.
+    /// </summary>
+    internal bool IsArtifactLive => Volatile.Read(ref _artifactLeaseCount) > 0;
+
+    /// <summary>Adds one owner of this artifact's resources. Fails after the last lease ended.</summary>
+    internal bool TryAcquireArtifactLease()
+    {
+        int count = Volatile.Read(ref _artifactLeaseCount);
+        while (count > 0)
+        {
+            int observed = Interlocked.CompareExchange(ref _artifactLeaseCount, count + 1, count);
+            if (observed == count)
+                return true;
+            count = observed;
+        }
+        return false;
+    }
+
+    /// <summary>Ends one lease. The last lease releases every held resource.</summary>
+    internal void ReleaseArtifactLease()
+    {
+        int remaining = Interlocked.Decrement(ref _artifactLeaseCount);
+        if (remaining < 0)
+            throw new InvalidOperationException("A binding artifact lease was released twice.");
+        if (remaining == 0)
+            ReleaseHeldResources();
+    }
+
+    private void ReleaseHeldResources()
+    {
         Exception? firstFailure = null;
         try
         {
@@ -466,22 +504,9 @@ internal sealed class ComputeDispatchSnapshot
         VulkanBackendObjectContext backendContext,
         VulkanWrapperLookupPort wrapperLookup,
         XRRenderPipelineInstance? frameSourcePipeline,
-        EUniformRequirements retainedEngineRequirements)
+        EUniformRequirements retainedEngineRequirements,
+        ReadOnlyStorageBindingSet? sharedStorageBindings)
     {
-        // Shared artifacts have no buffer owner count. Keep buffer bindings in
-        // frame-owned snapshots until each artifact consumer owns a lease.
-        if (Buffers.Count != 0 || BuffersByName.Count != 0)
-            throw new InvalidOperationException("A shared binding artifact cannot own buffer bindings.");
-        foreach (XRTexture texture in Samplers.Values)
-            if (texture is XRTexture2DArray)
-                throw new InvalidOperationException("A shared binding artifact cannot own texture arrays.");
-        foreach (XRTexture texture in SamplersByName.Values)
-            if (texture is XRTexture2DArray)
-                throw new InvalidOperationException("A shared binding artifact cannot own texture arrays.");
-        foreach (ProgramImageBinding image in Images.Values)
-            if (image.Texture is XRTexture2DArray)
-                throw new InvalidOperationException("A shared binding artifact cannot own texture arrays.");
-
         Dictionary<string, ProgramUniformValue> retainedUniforms =
             new(Uniforms.Count, StringComparer.Ordinal);
         foreach ((string name, ProgramUniformValue value) in Uniforms)
@@ -519,8 +544,15 @@ internal sealed class ComputeDispatchSnapshot
 
         artifact.SetMaterialUniformBindings(MaterialUniformBindings);
         artifact.EnableMaterialBindingFastPath();
+        // The artifact holds its own uses. A slot owns the first lease, and each
+        // payload row that records the artifact holds another until the row resets.
+        artifact.RetainBufferBindings();
+        artifact._ownsBufferBindings = artifact.Buffers.Count != 0;
+        artifact.RetainTextureArrayBindings(transfer: true);
+        artifact.SetReadOnlyStorageBindings(sharedStorageBindings);
         artifact.PublishBindingLayoutSignatures(backendContext, wrapperLookup, frameSourcePipeline);
         artifact.IsImmutableBindingArtifact = true;
+        artifact._artifactLeaseCount = 1;
         return artifact;
     }
 
@@ -817,17 +849,23 @@ internal sealed class ComputeDispatchSnapshot
             DescriptorSignatures,
             includeMutableFrameSourceDescriptors: true));
         ExactSamplerResourceSignature = samplerResourceHash.ToHash();
-        FrameOpSignatureHasher stableSamplerResourceHash = new();
-        stableSamplerResourceHash.Add(VulkanFrameOpSnapshotSignatures.HashSamplerUnitBindings(
-            Samplers,
-            SamplerNamesByUnit,
-            DescriptorSignatures,
-            includeMutableFrameSourceDescriptors: false));
-        stableSamplerResourceHash.Add(VulkanFrameOpSnapshotSignatures.HashSamplerNameBindings(
-            SamplersByName,
-            DescriptorSignatures,
-            includeMutableFrameSourceDescriptors: false));
-        ulong stableSamplerResourceSignature = stableSamplerResourceHash.ToHash();
+        // The stable signature differs only for a frame-source sampler name. A snapshot without one
+        // reuses the exact value, because each texture signature reads locked descriptor state.
+        ulong stableSamplerResourceSignature = ExactSamplerResourceSignature;
+        if (HasFrameSourceSamplerName())
+        {
+            FrameOpSignatureHasher stableSamplerResourceHash = new();
+            stableSamplerResourceHash.Add(VulkanFrameOpSnapshotSignatures.HashSamplerUnitBindings(
+                Samplers,
+                SamplerNamesByUnit,
+                DescriptorSignatures,
+                includeMutableFrameSourceDescriptors: false));
+            stableSamplerResourceHash.Add(VulkanFrameOpSnapshotSignatures.HashSamplerNameBindings(
+                SamplersByName,
+                DescriptorSignatures,
+                includeMutableFrameSourceDescriptors: false));
+            stableSamplerResourceSignature = stableSamplerResourceHash.ToHash();
+        }
         RuntimeUniformNameSignature = HashUniformNames(Uniforms);
         RuntimeUniformValueSignature =
             VulkanFrameOpSnapshotSignatures.HashUniformBindings(Uniforms);
@@ -870,6 +908,19 @@ internal sealed class ComputeDispatchSnapshot
         hash.Add(RequiredSamplerPolicySignature);
         DescriptorSetLayoutSignature = hash.ToHash();
         HasPublishedBindingLayoutSignatures = true;
+    }
+
+    private bool HasFrameSourceSamplerName()
+    {
+        foreach (string name in SamplerNamesByUnit.Values)
+            if (VulkanMeshRenderingConventions.IsFrameSourceSamplerName(name))
+                return true;
+
+        foreach (string name in SamplersByName.Keys)
+            if (VulkanMeshRenderingConventions.IsFrameSourceSamplerName(name))
+                return true;
+
+        return false;
     }
 
     private bool ContainsMutableFrameSourceSamplerBindings(

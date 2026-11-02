@@ -2737,6 +2737,18 @@ namespace XREngine.Rendering
                     0.0));
         }
 
+        private bool IsWindowHeldForXrFramePriority()
+        {
+            if (!RuntimeRenderingHostServices.Presentation.IsInVR || Viewports.Count == 0)
+                return false;
+
+            for (int i = 0; i < Viewports.Count; i++)
+                if (!Viewports[i].IsHeldForXrFramePriority)
+                    return false;
+
+            return true;
+        }
+
         private static FrameOutputPacingDecision EvaluateWindowPresentPacing(bool mirrorByComposition)
         {
             IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
@@ -2958,6 +2970,10 @@ namespace XREngine.Rendering
                     RenderViewportsCallback?.Invoke();
                 }
                 RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.ViewportsCallback, viewportsCallbackStart);
+                long desktopWorkStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                // A held desktop keeps its last image. Recording and presenting it again would
+                // take the render-thread time that the hold gives to the next XR frame.
+                bool windowHeldForXrFrame = IsWindowHeldForXrFramePriority();
 
                 // Viewport/pipeline rendering is isolated so that exceptions during scene rendering
                 // do not prevent Vulkan's RenderFrameCallback (acquire/record/submit/present) from
@@ -2988,7 +3004,8 @@ namespace XREngine.Rendering
                             // Live resize still needs new projection and screen-space UI
                             // layout. Backend admission may defer an unready frame while
                             // the expensive internal resource generation stays frozen.
-                            RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                            if (!windowHeldForXrFrame)
+                                RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
                         }
                         RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);
                         RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.Viewports, viewportsPhaseStart);
@@ -3067,12 +3084,15 @@ namespace XREngine.Rendering
                     bool succeeded = false;
                     try
                     {
-                        frameRenderer.RenderWindow(delta);
+                        if (!windowHeldForXrFrame)
+                            frameRenderer.RenderWindow(delta);
                         succeeded = true;
                     }
                     finally
                     {
                         RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.RendererWindow, presentStart);
+                        RuntimeEngine.Rendering.Stats.FrameOutputs.RecordDesktopWork(
+                            System.Diagnostics.Stopwatch.GetTimestamp() - desktopWorkStart);
                         LastCompletedRenderWindowInterval = new XRWindowCompletedRenderInterval(
                             Interlocked.Increment(ref _completedRenderWindowIntervalSequence),
                             renderFrameId,

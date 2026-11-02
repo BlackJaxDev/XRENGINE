@@ -16,26 +16,6 @@ public static partial class SourceToon10Catalog
     public const string ShaderPathSegment = "/_PoiyomiShaders/Shaders/10.0/Toon/";
     public const string ShaderSha256 = "36395208f10bcb430cf0548d558f47de319b36f35e1ef8b623eef38b09ba6291";
 
-    private static readonly IReadOnlySet<string> LockedShaderHashes =
-        new HashSet<string>(StringComparer.Ordinal)
-        {
-            "4c94ba9ab54f9efb79eb230b2cadeddb4563750408b511c25126a495a6dedf20",
-            "7b2364410f93af8e23592f7311e99a23a805a05d11ddfbbd25dce0bebd7f1277",
-            "69cf7629839f82963b56b32db3f77f223515c7561d907a1bb23fa8864d13895d",
-            "fef23425a3e1916bf624c2cc11ac74345aaf799d6b15282a7bc9b5c9c6d2e297",
-            "0ea1a3c48ed561548d432a66eba0545aa85873c4964f92a8fe66fcbea09c73f4",
-            "d31d5dd0d03bfa2bf5db11cf348d13b79186d748d71dbf2569d7cc40dfbb283f",
-            "5d42aeb1a5c15467dfd23ddce7ffd85441f2f3f0758519a524295ee4a7e5a4f1",
-            "f09d10dcae522409ad1027a800edb5d8198173c01bfb804ad7922fc2fb599e1d",
-            "c2068748239d31fad44e8124429def52bb3c09d5a10e8d4e39b25c4a42a0d266",
-            "32ed0966dd5153383f222b37be7e55877ff45751966b00310be90b0f5bdd89fa",
-            "6c29ed03ec73603e66d9561c7c52303d6f51509d04a5bc3c3f7aa3e6a6b1ef8b",
-            "a808b1283f73b0ef056a56d98a31922b1b7bd3e8f91ff6c66e90be3590325234",
-            "2b390f9faeec0f1b1a527478d6ab41f5ffb8c3c5acc328415466a715a24913b0",
-            "bb38d6072fb806019294afebc0a60344d4198be0ed087ceb52d049568a8b0e88",
-            "caf1a3b892e72c3ab25cb8b1921b494d6c49603cc32f7d204a479f1bf326fade",
-        };
-
     private static readonly IReadOnlySet<string> ConversionDefaultProperties =
         new HashSet<string>(StringComparer.Ordinal)
         {
@@ -54,15 +34,16 @@ public static partial class SourceToon10Catalog
         if (version != Version || input.ShaderSource is null)
             return false;
 
+        // The optimizer writes new locked text each time it locks a material, so locked
+        // text has no stable hash. Its identity is the exact version and original shader.
+        if (isLocked)
+            return input.OverrideTags.TryGetValue("OriginalShaderGUID", out string? originalGuid) &&
+                   string.Equals(originalGuid, OriginalShaderGuid, StringComparison.OrdinalIgnoreCase);
+
         string normalizedSource = input.ShaderSource.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         string sourceHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedSource)));
-        if (!isLocked)
-            return string.Equals(input.ShaderGuid, OriginalShaderGuid, StringComparison.OrdinalIgnoreCase) &&
-                   string.Equals(sourceHash, ShaderSha256, StringComparison.Ordinal);
-
-        return input.OverrideTags.TryGetValue("OriginalShaderGUID", out string? originalGuid) &&
-               string.Equals(originalGuid, OriginalShaderGuid, StringComparison.OrdinalIgnoreCase) &&
-               LockedShaderHashes.Contains(sourceHash);
+        return string.Equals(input.ShaderGuid, OriginalShaderGuid, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(sourceHash, ShaderSha256, StringComparison.Ordinal);
     }
 
     /// <summary>

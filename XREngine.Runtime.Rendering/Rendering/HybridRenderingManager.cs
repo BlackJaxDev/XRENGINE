@@ -4130,7 +4130,7 @@ namespace XREngine.Rendering
                     sb.AppendLine("uniform mat4 PrevViewProjection;");
                 }
             }
-            sb.AppendLine("uniform int UseInstanceTransformBuffer;");
+            sb.AppendLine("uniform int UseInstanceTransformBuffer; // XRENGINE_FREQUENCY(RuntimeCallback)");
             sb.AppendLine();
 
             sb.AppendLine("uint LoadTransformId(uint drawID)");
@@ -5440,8 +5440,7 @@ namespace XREngine.Rendering
                     continue;
 
                 // Set material uniforms
-                renderer.SetMaterialUniforms(material, program);
-                renderer.ApplyRenderParameters(material.RenderOptions);
+                ApplyIndirectMaterialState(renderer, material, program);
 
                 GpuDebug("Batch draw: materialID={0} offset={1} count={2}", effectiveMaterialId, batch.Offset, effectiveCount);
 
@@ -5600,18 +5599,21 @@ namespace XREngine.Rendering
                     continue;
                 }
 
-                renderer.SetMaterialUniforms(material, program);
-                renderer.ApplyRenderParameters(material.RenderOptions);
+                ApplyIndirectMaterialState(renderer, material, program);
 
                 for (uint tier = 0; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
                 {
                     P3Diagnostics.IncTierIterated();
+                    // An empty atlas tier has no draws, and it would still publish every binding.
+                    if (scene.GetAtlasVertexCount((EAtlasTier)tier) == 0)
+                        continue;
                     XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
                     if (tierRenderer is null)
                     {
                         P3Diagnostics.IncTierSkippedConfigure();
                         continue;
                     }
+                    PublishAtlasUdimCoverage(program, material);
 
                     uint bucketIndex = ((uint)slotIndex * GPUBatchingBindings.MaterialTierCount) + tier;
                     nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
@@ -5637,7 +5639,9 @@ namespace XREngine.Rendering
                         defaultModelMatrix,
                         material: material,
                         allowMaxDrawFallback: true,
-                        emitBarrier: false);
+                        emitBarrier: false,
+                        bindForwardLighting: ((material.RenderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None) |
+                            program.GetActiveEngineUniformRequirements()).HasFlag(EUniformRequirements.Lights));
                 }
             }
 
@@ -5751,8 +5755,7 @@ namespace XREngine.Rendering
                 if (!TryUseIndirectGraphicsProgram(program, "ZeroReadbackActiveBucket"))
                     continue;
 
-                renderer.SetMaterialUniforms(material, program);
-                renderer.ApplyRenderParameters(material.RenderOptions);
+                ApplyIndirectMaterialState(renderer, material, program);
 
                 XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
                 if (tierRenderer is null)
@@ -6611,6 +6614,55 @@ namespace XREngine.Rendering
             }
 
             return true;
+        }
+
+        private static XRDataBuffer? _atlasUdimCoverage;
+
+        /// <summary>
+        /// Binds the empty UDIM coverage buffer that uber fragment shaders declare. An atlas draw has
+        /// no single source mesh, so a material with vertex-mode UDIM discard is not discarded on
+        /// this path, and it logs a warning.
+        /// </summary>
+        private static void PublishAtlasUdimCoverage(XRRenderProgram program, XRMaterial material)
+        {
+            if (NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(material.ShadowBindingSourceMaterial ?? material))
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.AtlasUdim.{material.Name}",
+                    TimeSpan.FromSeconds(10),
+                    "[RenderDispatch] Material '{0}' has no vertex-mode UDIM discard on the GPU indirect atlas path.",
+                    material.Name ?? "<unnamed>");
+
+            if (_atlasUdimCoverage is null)
+            {
+                XRDataBuffer buffer = new("SourceUdimTriangleCoverage.Atlas", EBufferTarget.ShaderStorageBuffer, false)
+                {
+                    Usage = EBufferUsage.StaticDraw,
+                    Resizable = false,
+                    DisposeOnPush = false,
+                };
+                Span<Vector4> zero = stackalloc Vector4[1];
+                zero.Clear();
+                buffer.SetDataRaw<Vector4>(zero);
+                buffer.PushData();
+                _atlasUdimCoverage = buffer;
+            }
+
+            // The triangle count stays at its default of zero. A runtime write here has another
+            // frequency than the declared object block and forces a full block write per draw.
+            program.BindBuffer(_atlasUdimCoverage, XRMeshRenderer.UdimTriangleCoverageBinding);
+        }
+
+        /// <summary>
+        /// Applies material state before an indirect draw. A backend with captured indirect draw
+        /// state publishes the material when it records the draw, so it must not do so here.
+        /// </summary>
+        private static void ApplyIndirectMaterialState(AbstractRenderer renderer, XRMaterial material, XRRenderProgram program)
+        {
+            if (renderer is IIndirectDrawStateBackendCapability)
+                return;
+
+            renderer.SetMaterialUniforms(material, program);
+            renderer.ApplyRenderParameters(material.RenderOptions);
         }
 
         private static bool TryUseIndirectGraphicsProgram(XRRenderProgram graphicsProgram, string context)

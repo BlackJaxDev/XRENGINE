@@ -280,9 +280,7 @@ internal unsafe partial class VkMeshRenderer
 		EnsureRuntimeDeformationBuffersCurrent();
 		if (CanReuseCapturedPreparedRenderState(material, preparedProgram, preparedProgramIdentity))
 		{
-			ApplyScopedProgramBindingsForPreparation(material);
-			if (programBindingSnapshot is not null)
-				_program?.ApplyBindingSnapshot(programBindingSnapshot);
+			ApplyCapturedOrScopedProgramBindings(material, programBindingSnapshot);
 
 			if (!TryEnsureDescriptorSetsForPreparation(
 					material,
@@ -301,9 +299,7 @@ internal unsafe partial class VkMeshRenderer
 		if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
 			return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
 
-		ApplyScopedProgramBindingsForPreparation(material);
-		if (programBindingSnapshot is not null)
-			_program?.ApplyBindingSnapshot(programBindingSnapshot);
+		ApplyCapturedOrScopedProgramBindings(material, programBindingSnapshot);
 		BuildVertexInputState();
 
 		if (!TryEnsureDescriptorSetsForPreparation(
@@ -495,6 +491,22 @@ internal unsafe partial class VkMeshRenderer
 			!_vertexInputStateDirty &&
 			string.Equals(_lastPrepareResult, "Ready", StringComparison.Ordinal) &&
 			AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices());
+	}
+
+	/// <summary>
+	/// Applies the bindings of one draw. A captured snapshot already holds the scoped and
+	/// lighting bindings of its frame, so the draw does not build them again.
+	/// </summary>
+	private void ApplyCapturedOrScopedProgramBindings(XRMaterial material, ComputeDispatchSnapshot? bindingSnapshot)
+	{
+		if (bindingSnapshot is null)
+		{
+			ApplyScopedProgramBindingsForPreparation(material);
+			return;
+		}
+
+		_program?.ClearBindings();
+		_program?.ApplyBindingSnapshot(bindingSnapshot);
 	}
 
 	private void ApplyScopedProgramBindingsForPreparation(XRMaterial material)

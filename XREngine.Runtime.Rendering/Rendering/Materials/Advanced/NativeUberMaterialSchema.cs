@@ -104,6 +104,7 @@ public static class NativeUberMaterialSchema
         names.Add("_SourceMultilayerFlatAxis");
         names.Add("_ShadowAOShift");
         names.Add("_ShadowAOShift2");
+        names.Add("_WorldAmbientOcclusionStrength");
         HashSet<string> seen = new(names, StringComparer.Ordinal);
         foreach (string sampler in Samplers)
         {

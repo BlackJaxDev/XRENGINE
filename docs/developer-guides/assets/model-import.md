@@ -153,6 +153,8 @@ Mesh cloning fills the bone table before assigning the cloned buffer collection.
 Serialized transform rebinding and metadata bind-pose replacement also publish
 a complete snapshot. `ModelComponent.RuntimeSkinningDiagnosticSummary` reports
 `snapshotBones` and `snapshotBindingMismatches` to detect a stale table.
+It also reports `activeInHierarchy`. An inactive component does not refresh its
+CPU palette, so `paletteMaxDiff` shows a defect only when this value is true.
 
 These operations do not repair a renderer that already cached inverse binds or
 bone-local bounds. Rebuild runtime meshes when changing an already published

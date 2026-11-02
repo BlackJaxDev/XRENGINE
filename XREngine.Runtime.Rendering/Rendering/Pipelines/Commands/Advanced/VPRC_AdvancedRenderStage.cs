@@ -261,10 +261,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             pipeline.IsMinimalVisibilityOutput;
         IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
         bool enableBuiltInAmbientOcclusion =
+            rendererHost.BackendId == RendererBackendId.WebGPU &&
             !isMinimalVisibilityOutput &&
             !useNeutralWebAmbientOcclusion &&
             pipeline.EnableBuiltInAmbientOcclusion &&
             ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true };
+        (bool ambientOcclusionMultiBounce, bool ambientOcclusionSpecularOcclusion) =
+            pipeline.ResolveAmbientOcclusionShadingOptions(ActivePipelineInstance, null);
         if (requiresAmbientOcclusion && !isMinimalVisibilityOutput &&
             ambientOcclusionProvider is not null &&
             ambientOcclusionProvider is not AdvancedDepthGtaoProvider)
@@ -386,6 +389,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             enableLightProbesAndIbl,
             RequiresMaterialSurfaceExports: requiresMaterialSurfaceExports,
             SuppressBaselineDiffuse: suppressBaselineDiffuse,
+            AmbientOcclusionMultiBounce: ambientOcclusionMultiBounce,
+            AmbientOcclusionSpecularUsesVisibility: !isMinimalVisibilityOutput &&
+                rendererHost.BackendId != RendererBackendId.WebGPU && !ambientOcclusionSpecularOcclusion,
             IsMinimalVisibilityOutput: isMinimalVisibilityOutput,
             SceneDatabase: world.GpuScene.AdvancedSharedDatabase);
 

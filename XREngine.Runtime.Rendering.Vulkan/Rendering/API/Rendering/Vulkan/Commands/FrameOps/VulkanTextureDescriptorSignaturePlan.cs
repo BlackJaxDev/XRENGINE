@@ -46,6 +46,26 @@ internal sealed class VulkanTextureDescriptorSignaturePlan
             return;
         }
 
+        // One frame hashes the same textures about 176 times per draw. The texture keeps the
+        // result for its frame and descriptor generation.
+        ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+        ulong generation = source.DescriptorGeneration;
+        if (frameId != 0UL && source.TryGetFrameBindingSignature(frameId, generation, out ulong cachedSignature))
+        {
+            hash.Add(cachedSignature);
+            return;
+        }
+
+        FrameOpSignatureHasher sourceHash = new();
+        AddSourceSignature(ref sourceHash, source);
+        ulong signature = sourceHash.ToHash();
+        if (frameId != 0UL)
+            source.StoreFrameBindingSignature(frameId, generation, signature);
+        hash.Add(signature);
+    }
+
+    private static void AddSourceSignature(ref FrameOpSignatureHasher hash, IVkImageDescriptorSource source)
+    {
         if (source.TryGetDescriptorSnapshot(null, null, "BindingSignature", false,
                 out VkImageDescriptorSnapshot snapshot))
         {

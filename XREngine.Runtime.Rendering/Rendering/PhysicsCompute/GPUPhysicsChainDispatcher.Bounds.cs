@@ -306,7 +306,8 @@ public sealed partial class GPUPhysicsChainDispatcher
                 PaletteBase = _gpuDrivenPaletteSliceBases[bindingIndex],
             };
             // Bindings come only from the output publication requests of this frame.
-            if (!IsBoundsRowBinding(in binding))
+            // A renderer has one bounds row, even when two chains each cover all of its bones.
+            if (!IsBoundsRowBinding(in binding) || _pendingBoundsSources.ContainsKey(binding.Renderer))
             {
                 _retainedBoundsBindings.Add(entry);
                 continue;

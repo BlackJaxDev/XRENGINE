@@ -1,6 +1,6 @@
 # Vulkan Primary And Secondary Command Recording
 
-Last updated: 2026-10-18
+Last updated: 2026-11-02
 
 This document explains how XRENGINE turns a frame's rendering work into Vulkan
 command buffers. It covers the desktop path, the persistent secondary-recording
@@ -22,6 +22,31 @@ This check uses the existing value-type key and does not allocate per draw.
 
 Captured draws keep their retained program identity. Their replay does not
 compare against later live material state.
+
+## Shared Generated Programs
+
+Renderers share generated programs through
+`VulkanSharedGeneratedProgramRegistry`. The key is
+`VulkanSharedGeneratedProgramKey`: the backend context and a content identity.
+The content identity holds the generation axes and the exact source text of each
+stage. Derived pass materials are separate objects with the same shader text, so
+they resolve to one program. If a stage has no inline source text, the key
+falls back to the per-material identity, and that program is not shared.
+
+- Each renderer keeps its own `GeneratedProgramCacheEntry`. The entry points to
+  the shared program, and per-renderer state stays on the renderer.
+- `TryAcquire` adds a reference to a live program. `Publish` adds a new program.
+  If another renderer published the same key first, `Publish` destroys the new
+  program and returns the existing one.
+- `Release` removes one reference. The registry destroys the program after the
+  last reference is released.
+- Program binding artifacts on a shared program use slots keyed per mesh
+  renderer, so renderers do not replace each other's artifacts.
+
+On the imported avatar test scene, sharing cuts generated programs from 121 to
+41. Steady-state descriptor binds and writes per frame do not change. The
+program build happens once at startup, so sharing mainly reduces startup work
+and memory.
 
 ## The Basic Idea
 

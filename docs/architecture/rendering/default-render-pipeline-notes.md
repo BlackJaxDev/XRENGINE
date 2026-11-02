@@ -518,7 +518,10 @@ the built-in AO setting, or the AO provider removes its native stage, full-size
 AO target, and required GTAO program. Native shading reuses the declared 1×1
 post-process neutral binding and supplies AO = 1 without fetching that texture.
 The resource-generation key and frozen native stage order preserve the selected
-AO family; desktop backends retain their existing neutral-output behavior.
+AO family. On desktop backends, the native stage writes neutral AO. The mode from
+the camera's AO schema then replaces it with the Default pipeline's AO commands
+and shaders, which read normals derived from depth. VXAO stays neutral, because
+the Default pipeline does not implement it.
 All native, surface-export, depth-comparison, and MSAA shading recipes declare
 `XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1`. Runtime validation rejects older
 recipes before binding the neutral texture, despite the unchanged 160-byte
@@ -1070,6 +1073,8 @@ Current modes:
 
 Use deferred debug view `10` to validate the final AO sampling orientation against raw albedo or depth before changing individual AO kernels.
 
+**Rule:** AO generation shaders write linear AO. Contrast (`Power`) applies once, where AO is read, as `AmbientOcclusionPower`. Do not apply it again in a generation pass. MSVO takes its radius and `ScaleFactors` from the schema, as fractions of `Radius`.
+
 ---
 
 ## 20. Temporal AA: Static Edge Rejection and Debug Views
@@ -1232,6 +1237,8 @@ The scene BVH feeding those passes uses the compact, root-down contract in
 GPU frustum culling remains the explicit small-workload and unavailable-resource
 fallback. Queue or ray-stack pressure is conservative and observable, never a
 reason to hide geometry.
+
+An opaque forward material with no discard path, no custom vertex stage, and no uniform hook uses the shared `Common/DepthNormalPrePass.fs` fragment shader with its own cull mode. This removes the per-material parameters and textures from the prepass. These materials write geometric normals, so AO and contact shadows do not see their normal maps. A material that can discard a fragment keeps its own variant, because the prepass depth must match the lit coverage. For Uber, the shared shader requires that the prepared shader disables dissolve and parallax, and that `_Mode`, `_ViewVisibilityMask`, `_FaceDiscard`, and `_UvTileDiscard` are zero.
 
 Generated vertex shaders are allowed to trim `FragTransformId` for ordinary passes, but the forward depth-normal prepass must push `RequireGeneratedVertexTransformId`. Without that render-state requirement, a generated vertex program cached for a normal forward material can be reused with a depth-normal fragment variant that consumes `FragTransformId`, causing pipeline interface mismatches.
 

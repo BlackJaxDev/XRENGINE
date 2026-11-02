@@ -106,42 +106,48 @@ internal unsafe partial class VkMeshRenderer
 		string programIdentity = BuildGeneratedProgramIdentity(programState, generatedProgramAxes, shaderStageList, generatedVertexIdentity);
 		if (!_programCache.TryGetValue(programIdentity, out GeneratedProgramCacheEntry? entry))
 		{
-			XRRenderProgramDescriptor descriptor = XRRenderProgramDescriptor.FromShaders(
-				shaders,
-				separable: false,
-				renderSettingsVersion: programState.ShaderConfigVersion,
-				generatedVertexIdentity: generatedVertexIdentity,
-				materialVariantKind: programState.MaterialVariantIsEmpty ? null : "MaterialVariant",
-				materialVariantHash: programState.MaterialVariantHash,
-				vertexLayoutIdentity: BuildCombinedProgramVertexLayoutIdentity(generatedVertexIdentity),
-				topologyKind: "VulkanCombinedMesh");
-
-			XRRenderProgram generatedProgram = new(linkNow: false, separable: false, shaders)
+			VulkanSharedGeneratedProgramKey sharedKey = new(BackendContext, BuildSharedProgramContentIdentity(shaders, generatedProgramAxes, programIdentity));
+			if (!VulkanSharedGeneratedProgramRegistry.TryAcquire(sharedKey, out VulkanSharedGeneratedProgram? sharedProgram))
 			{
-				Name = generatedProgramName,
-				UsageTag = $"VulkanCombinedMeshProgram | variant={programState.VersionKindLabel} | material={programState.MaterialName ?? "<unnamed>"} | mesh={programState.MeshName ?? "<unnamed>"} | renderer={programState.RendererName ?? "<unnamed>"} | axes={generatedProgramAxes}",
-				Priority = programState.ProgramPriority,
-				ProgramDescriptor = descriptor,
-			};
-			generatedProgram.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
-				programState.MaterialName,
-				programState.RendererName,
-				programState.VersionKindLabel,
-				"VulkanCombinedMesh",
-				programState.MeshName,
-				shaderStageList));
-			generatedProgram.AllowLink();
+				XRRenderProgramDescriptor descriptor = XRRenderProgramDescriptor.FromShaders(
+					shaders,
+					separable: false,
+					renderSettingsVersion: programState.ShaderConfigVersion,
+					generatedVertexIdentity: generatedVertexIdentity,
+					materialVariantKind: programState.MaterialVariantIsEmpty ? null : "MaterialVariant",
+					materialVariantHash: programState.MaterialVariantHash,
+					vertexLayoutIdentity: BuildCombinedProgramVertexLayoutIdentity(generatedVertexIdentity),
+					topologyKind: "VulkanCombinedMesh");
 
-            VkRenderProgram? vkProgram = ProgramCreationPort.GetOrCreateProgram(generatedProgram);
-			if (vkProgram is null)
-			{
-				generatedProgram.Destroy();
-				Debug.VulkanWarningEvery(
-					$"Vulkan.MeshRenderer.{GetHashCode()}.ProgramWrapperNull",
-					TimeSpan.FromSeconds(2),
-					"[Vulkan] MeshRenderer '{0}' cannot render: failed to create VkRenderProgram wrapper.",
-					MeshRenderer?.Name ?? "<unnamed>");
-				return false;
+				XRRenderProgram generatedProgram = new(linkNow: false, separable: false, shaders)
+				{
+					Name = generatedProgramName,
+					UsageTag = $"VulkanCombinedMeshProgram | variant={programState.VersionKindLabel} | material={programState.MaterialName ?? "<unnamed>"} | mesh={programState.MeshName ?? "<unnamed>"} | renderer={programState.RendererName ?? "<unnamed>"} | axes={generatedProgramAxes}",
+					Priority = programState.ProgramPriority,
+					ProgramDescriptor = descriptor,
+				};
+				generatedProgram.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
+					programState.MaterialName,
+					programState.RendererName,
+					programState.VersionKindLabel,
+					"VulkanCombinedMesh",
+					programState.MeshName,
+					shaderStageList));
+				generatedProgram.AllowLink();
+
+	            VkRenderProgram? vkProgram = ProgramCreationPort.GetOrCreateProgram(generatedProgram);
+				if (vkProgram is null)
+				{
+					generatedProgram.Destroy();
+					Debug.VulkanWarningEvery(
+						$"Vulkan.MeshRenderer.{GetHashCode()}.ProgramWrapperNull",
+						TimeSpan.FromSeconds(2),
+						"[Vulkan] MeshRenderer '{0}' cannot render: failed to create VkRenderProgram wrapper.",
+						MeshRenderer?.Name ?? "<unnamed>");
+					return false;
+				}
+
+				sharedProgram = VulkanSharedGeneratedProgramRegistry.Publish(sharedKey, generatedProgram, vkProgram);
 			}
 
 			entry = new GeneratedProgramCacheEntry
@@ -149,8 +155,7 @@ internal unsafe partial class VkMeshRenderer
 				Identity = programIdentity,
 				OwnerGroup = BuildGeneratedProgramOwnerGroup(programState, generatedProgramAxes, shaderStageList, generatedVertexIdentity),
 				Material = material,
-				Data = generatedProgram,
-				Program = vkProgram,
+				Shared = sharedProgram!,
 			};
 			_programCache[programIdentity] = entry;
 		}
@@ -214,6 +219,8 @@ internal unsafe partial class VkMeshRenderer
 			GeneratedProgramCacheEntry stale = superseded[index];
 			_programCache.Remove(stale.Identity);
 			_observedProgramLinkGenerations.Remove(stale.Program);
+			lock (_bufferStateSync)
+				_vertexInputStatesByProgram.Remove(stale.Program);
 
 			staleStates?.Clear();
 			foreach (KeyValuePair<GeneratedProgramState, GeneratedProgramCacheEntry> pair in _programStateCache)
@@ -243,7 +250,7 @@ internal unsafe partial class VkMeshRenderer
 					_pipelines.Remove(stalePipelineKeys[keyIndex]);
 			}
 
-			stale.Data.Destroy();
+			VulkanSharedGeneratedProgramRegistry.Release(stale.Shared);
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGeneratedProgramSuperseded();
 		}
 	}
@@ -497,6 +504,12 @@ internal unsafe partial class VkMeshRenderer
 			if (!_vertexInputStateDirty)
 				return;
 
+			if (TryRestoreVertexInputStateNoLock())
+			{
+				_vertexInputStateDirty = false;
+				return;
+			}
+
 			List<VertexInputBindingDescription> bindings = [];
 			List<VertexInputAttributeDescription> attributes = [];
 			List<KeyValuePair<string, VkDataBuffer>> vertexBuffers = [];
@@ -535,6 +548,7 @@ internal unsafe partial class VkMeshRenderer
 					ResolvePrimaryIndexSizeForLayout(out bool hasIndexBuffersNoInputs),
 					hasIndexBuffersNoInputs,
 					hasIndexBuffersNoInputs ? "IndexBuffer" : "VertexCount");
+				CacheVertexInputStateNoLock();
 				_vertexInputStateDirty = false;
 				return;
 			}
@@ -630,6 +644,7 @@ internal unsafe partial class VkMeshRenderer
 					_geometryLayoutSignature.DebugSummary);
 			}
 
+			CacheVertexInputStateNoLock();
 			_vertexInputStateDirty = false;
 		}
 	}
@@ -666,15 +681,16 @@ internal unsafe partial class VkMeshRenderer
 		return IndexSize.FourBytes;
 	}
 
+	private static readonly ConditionalWeakTable<IReadOnlyList<RenderPassMetadata>, Tuple<long, ulong>> PassMetadataListHashes = new();
+
 	private static ulong ComputePassMetadataHash(IReadOnlyCollection<RenderPassMetadata>? passMetadata, int passIndex)
 	{
-		VulkanStableHash64 hash = new(schemaVersion: 2);
+		VulkanStableHash64 hash = new(schemaVersion: 3);
 		hash.Add(passIndex);
 		hash.Add(passMetadata?.Count ?? 0);
 		if (passMetadata is IReadOnlyList<RenderPassMetadata> metadataList)
 		{
-			for (int metadataIndex = 0; metadataIndex < metadataList.Count; metadataIndex++)
-				AddMetadata(ref hash, metadataList[metadataIndex]);
+			hash.Add(ResolvePassMetadataListHash(metadataList));
 		}
 		else if (passMetadata is not null)
 		{
@@ -687,16 +703,39 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false);
 		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.PointLightLayeredShadowPass ?? false);
 		return hash.Value;
+	}
 
-		static void AddMetadata(ref VulkanStableHash64 hash, RenderPassMetadata metadata)
-		{
-			hash.Add(metadata.PassIndex);
-			hash.Add(metadata.Name);
-			hash.Add((int)metadata.Stage);
-			hash.Add(metadata.DescriptorSchemas.Count);
-			for (int schemaIndex = 0; schemaIndex < metadata.DescriptorSchemas.Count; schemaIndex++)
-				hash.Add(metadata.DescriptorSchemas[schemaIndex]);
-		}
+	/// <summary>
+	/// Returns the hash of a pass metadata list. Each draw builds a pipeline key, and
+	/// hashing the pass names and schemas per draw costs milliseconds per frame, so the
+	/// hash stays until a pass revision changes. Revisions only increase, so their sum
+	/// changes when any pass changes. The entry is immutable, so workers can share it.
+	/// </summary>
+	private static ulong ResolvePassMetadataListHash(IReadOnlyList<RenderPassMetadata> metadataList)
+	{
+		long version = metadataList.Count;
+		for (int metadataIndex = 0; metadataIndex < metadataList.Count; metadataIndex++)
+			version += metadataList[metadataIndex].Revision;
+
+		if (PassMetadataListHashes.TryGetValue(metadataList, out Tuple<long, ulong>? entry) && entry.Item1 == version)
+			return entry.Item2;
+
+		VulkanStableHash64 hash = new(schemaVersion: 1);
+		for (int metadataIndex = 0; metadataIndex < metadataList.Count; metadataIndex++)
+			AddMetadata(ref hash, metadataList[metadataIndex]);
+
+		PassMetadataListHashes.AddOrUpdate(metadataList, Tuple.Create(version, hash.Value));
+		return hash.Value;
+	}
+
+	private static void AddMetadata(ref VulkanStableHash64 hash, RenderPassMetadata metadata)
+	{
+		hash.Add(metadata.PassIndex);
+		hash.Add(metadata.Name);
+		hash.Add((int)metadata.Stage);
+		hash.Add(metadata.DescriptorSchemas.Count);
+		for (int schemaIndex = 0; schemaIndex < metadata.DescriptorSchemas.Count; schemaIndex++)
+			hash.Add(metadata.DescriptorSchemas[schemaIndex]);
 	}
 
 	private ulong ComputeFeatureProfileHash()
@@ -826,7 +865,7 @@ internal unsafe partial class VkMeshRenderer
 
 		BuildVertexInputState();
 
-		ulong programPipelineHash = _program!.ComputeGraphicsPipelineFingerprint();
+		ulong programPipelineHash = _program!.GetGraphicsPipelineFingerprint();
 		ulong vertexLayoutHash = ComputeVertexLayoutHash();
 		ulong descriptorLayoutHash = _program.DescriptorSchemaFingerprint;
 		ulong passMetadataHash = ComputePassMetadataHash(passMetadata, passIndex);
@@ -1620,11 +1659,13 @@ internal unsafe partial class VkMeshRenderer
 	private void DestroyGeneratedPrograms()
 	{
 		foreach (GeneratedProgramCacheEntry entry in _programCache.Values)
-			entry.Data.Destroy();
+			VulkanSharedGeneratedProgramRegistry.Release(entry.Shared);
 
 		_programCache.Clear();
 		_programStateCache.Clear();
 		_observedProgramLinkGenerations.Clear();
+		lock (_bufferStateSync)
+			_vertexInputStatesByProgram.Clear();
 		_program = null;
 		_generatedProgram = null;
 		_activeProgramIdentity = null;

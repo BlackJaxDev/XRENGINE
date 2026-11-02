@@ -144,7 +144,7 @@ public sealed class PhysicsChainShaderContractTests
         OffsetOf<GPUPhysicsChainDispatcher.GPUColliderData>(nameof(GPUPhysicsChainDispatcher.GPUColliderData.Orientation)).ShouldBe(32);
         OffsetOf<GPUPhysicsChainDispatcher.GPUColliderData>(nameof(GPUPhysicsChainDispatcher.GPUColliderData.Type)).ShouldBe(48);
 
-        Marshal.SizeOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>().ShouldBe(96);
+        Marshal.SizeOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>().ShouldBe(192);
         OffsetOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>(nameof(GPUPhysicsChainDispatcher.GPUPerTreeParams.Force)).ShouldBe(16);
         OffsetOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>(nameof(GPUPhysicsChainDispatcher.GPUPerTreeParams.Gravity)).ShouldBe(32);
         OffsetOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>(nameof(GPUPhysicsChainDispatcher.GPUPerTreeParams.ObjectMove)).ShouldBe(48);

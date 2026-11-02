@@ -175,6 +175,8 @@ internal sealed partial class VulkanFrameLoop
             request.HasAuthoredBackground)
         {
             RenderTimeSeconds = request.RenderTimeSeconds,
+            AmbientOcclusionMultiBounce = request.AmbientOcclusionMultiBounce,
+            AmbientOcclusionSpecularUsesVisibility = request.AmbientOcclusionSpecularUsesVisibility,
         };
         if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
         {

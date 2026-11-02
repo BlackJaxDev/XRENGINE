@@ -20,6 +20,7 @@ public static partial class EditorUnitTests
     {
         private sealed record SerializedPrefabStartupImportResult(
             SceneNode RootNode,
+            SceneNode AvatarRoot,
             int ModelCount,
             int MaterialCount,
             int SourceToonMaterialCount,
@@ -149,6 +150,7 @@ public static partial class EditorUnitTests
 
                 result = new SerializedPrefabStartupImportResult(
                     importRoot,
+                    convertedRoot,
                     modelCount,
                     materialCount,
                     sourceToonCount,

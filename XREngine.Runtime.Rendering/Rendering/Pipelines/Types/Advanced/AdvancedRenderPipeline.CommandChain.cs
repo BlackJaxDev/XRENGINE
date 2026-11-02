@@ -72,6 +72,9 @@ public partial class AdvancedRenderPipeline
         // after their corresponding marker so they share the same ordered contract.
         switch (descriptor.Stage)
         {
+            case EAdvancedRenderStage.AmbientOcclusion:
+                AppendAdvancedAmbientOcclusionCommands(commands);
+                break;
             case EAdvancedRenderStage.NativeOpaqueShading:
                 AppendAdvancedBackgroundCommands(commands);
                 AppendAdvancedGlobalIlluminationCommands(commands);

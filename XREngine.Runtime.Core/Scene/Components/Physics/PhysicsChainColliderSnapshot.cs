@@ -20,6 +20,70 @@ internal readonly struct PhysicsChainColliderSnapshot
     public float InverseLengthSquared { get; init; }
     public float PlaneDistance { get; init; }
     public bool Inside { get; init; }
+    /// <summary>Makes segment collision test only the child end of a segment.</summary>
+    public bool ParticleContactOnly { get; init; }
+
+    /// <summary>
+    /// Gets the position along a segment, from 0 at <paramref name="start"/> to 1 at <paramref name="end"/>, that is closest to this collider.
+    /// </summary>
+    public float ClosestSegmentParameter(Vector3 start, Vector3 end)
+    {
+        if (ParticleContactOnly)
+            return 1.0f;
+
+        return Kind switch
+        {
+            PhysicsChainColliderKind.Sphere or PhysicsChainColliderKind.Box => ClosestParameterToPoint(start, end, Center),
+            PhysicsChainColliderKind.Capsule => ClosestParameterToSegment(start, end, Center, End),
+            PhysicsChainColliderKind.Plane => ClosestParameterToPlane(start, end, PlaneNormal, Inside),
+            _ => 1.0f,
+        };
+    }
+
+    /// <summary>Gets the position along a segment closest to a point.</summary>
+    internal static float ClosestParameterToPoint(Vector3 start, Vector3 end, Vector3 point)
+    {
+        Vector3 direction = end - start;
+        float lengthSquared = direction.LengthSquared();
+        return lengthSquared > 1e-10f
+            ? Math.Clamp(Vector3.Dot(point - start, direction) / lengthSquared, 0.0f, 1.0f)
+            : 1.0f;
+    }
+
+    /// <summary>Gets the position along the first segment closest to the second segment.</summary>
+    internal static float ClosestParameterToSegment(Vector3 start, Vector3 end, Vector3 otherStart, Vector3 otherEnd)
+    {
+        Vector3 direction = end - start;
+        Vector3 otherDirection = otherEnd - otherStart;
+        Vector3 offset = start - otherStart;
+        float lengthSquared = direction.LengthSquared();
+        float otherLengthSquared = otherDirection.LengthSquared();
+        if (lengthSquared <= 1e-10f)
+            return 1.0f;
+        if (otherLengthSquared <= 1e-10f)
+            return ClosestParameterToPoint(start, end, otherStart);
+
+        float dot = Vector3.Dot(direction, otherDirection);
+        float directionOffset = Vector3.Dot(direction, offset);
+        float otherOffset = Vector3.Dot(otherDirection, offset);
+        float denominator = lengthSquared * otherLengthSquared - dot * dot;
+        float parameter = denominator > 1e-10f
+            ? Math.Clamp((dot * otherOffset - directionOffset * otherLengthSquared) / denominator, 0.0f, 1.0f)
+            : 0.0f;
+        float otherParameter = (dot * parameter + otherOffset) / otherLengthSquared;
+        if (otherParameter < 0.0f)
+            parameter = Math.Clamp(-directionOffset / lengthSquared, 0.0f, 1.0f);
+        else if (otherParameter > 1.0f)
+            parameter = Math.Clamp((dot - directionOffset) / lengthSquared, 0.0f, 1.0f);
+        return parameter;
+    }
+
+    /// <summary>Gets the end of a segment that is deepest behind a plane.</summary>
+    internal static float ClosestParameterToPlane(Vector3 start, Vector3 end, Vector3 normal, bool inside)
+    {
+        float slope = Vector3.Dot(end - start, normal);
+        return inside == (slope > 0.0f) ? 1.0f : 0.0f;
+    }
 
     public bool Collide(ref Vector3 position, float particleRadius)
         => Kind switch

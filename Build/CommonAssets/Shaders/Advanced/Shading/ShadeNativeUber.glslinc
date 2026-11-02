@@ -220,7 +220,11 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         UBER_V(_SourceMochieSecond).w > 0.5)
         sourceDiffuseBase *= mix(1.0, 0.96 * (1.0 - metallic),
             reflectionMask);
-    float ao = clamp(screenAo * materialAo, 0.0, 1.0);
+    float worldAo = mix(1.0, screenAo, clamp(UBER_F(_WorldAmbientOcclusionStrength), 0.0, 1.0));
+    float ao = clamp(worldAo * materialAo, 0.0, 1.0);
+    // Source lighting replaces the ambient term, so world AO applies to its indirect light here.
+    if (UBER_I(_SourceLightMode) != 0)
+        sourceIndirect *= XR_ADV_DiffuseOcclusion(u_Push.flags, worldAo, base.rgb);
     bool sourceCoat = XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_PBR) &&
         UBER_V(_SourceClearCoat).x > 0.5;
     vec4 coatMap = sourceCoat ? UBER_SAMPLE(c, _SourceClearCoatMaps, vec4(1.0)) : vec4(1.0);
@@ -233,16 +237,17 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     float probeWeights[4] = float[4](0.0, 0.0, 0.0, 0.0);
     uint probeIndices[4] = uint[4](0u, 0u, 0u, 0u);
     if ((u_Push.flags & 32u) == 0u)
-        ambient = XR_ADV_WorldAmbient(surface.viewIndex) * base.rgb * (1.0 - metallic) * ao;
+        ambient = XR_ADV_WorldAmbient(surface.viewIndex) * base.rgb * (1.0 - metallic) *
+            XR_ADV_DiffuseOcclusion(u_Push.flags, ao, base.rgb);
     if ((u_Push.flags & 8u) != 0u)
     {
         vec3 diffuseProbe;
         XR_ADV_EvaluateProbeIblWithSelection(surface.viewIndex, surface.worldPosition,
             N, V, base.rgb, roughness, metallic, diffuseProbe, probeSpecular,
             probeWeights, probeIndices);
-        if ((u_Push.flags & 32u) == 0u) probeDiffuse = diffuseProbe * ao;
+        if ((u_Push.flags & 32u) == 0u) probeDiffuse = diffuseProbe * XR_ADV_DiffuseOcclusion(u_Push.flags, ao, base.rgb);
         ambient += probeDiffuse;
-        probeSpecular *= XR_ADV_SpecularOcclusion(max(dot(N, V), 0.0), ao, roughness) * reflectionMask;
+        probeSpecular *= XR_ADV_SpecularVisibility(u_Push.flags, max(dot(N, V), 0.0), ao, roughness) * reflectionMask;
     }
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR) &&
         UBER_V(_SourceMochieSecond).w > 0.5)

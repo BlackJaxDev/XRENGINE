@@ -65,6 +65,10 @@ public sealed class CharacterMovementDebugRenderComponent : XRComponent, IRender
 
     private void RefreshCapsule()
     {
+        // This capsule has no depth test, so it must appear only when physics debug is requested.
+        // In VR it surrounds the head and would otherwise draw over each eye image.
+        _renderInfo.IsVisible = RuntimeEngine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeEnabled;
+
         CharacterMovement3DComponent? movement = Movement;
         if (movement is null)
             return;

@@ -137,7 +137,8 @@ public partial class AdvancedRenderPipeline
                 : 0UL) |
             (GlobalIlluminationPlan.RequiresNativeMaterialSurfaceExports && !UsesMinimalVisibilityOutput
                 ? MaterialSurfaceExportResourcesFeatureBit
-                : 0UL);
+                : 0UL) |
+            BuildAmbientOcclusionFeatureMask(instance, viewport);
         return (ulong)visibilityFeatures |
             (ulong)reconstructionFeatures |
             ((ulong)classificationFeatures << 32) |
@@ -187,6 +188,9 @@ public partial class AdvancedRenderPipeline
         // the complete late/post family remains per-eye rather than shared.
         if (AllowsPostProcessing)
             DeclareAdvancedPostExecutionResources(builder);
+        // The AO passes read the depth views that the post execution resources declare.
+        if (UsesAmbientOcclusionPasses)
+            DeclareAmbientOcclusionResources(builder);
 
         DeclareExternalTarget(builder);
     }
@@ -679,7 +683,10 @@ public partial class AdvancedRenderPipeline
         }
         result.Name = name;
         // The shared DoF shader also serves Default; preserve its existing sampler ABI.
-        result.SamplerName = name == DepthOfFieldTextureName ? "ColorSource" : name;
+        result.SamplerName = name == DepthOfFieldTextureName ? "ColorSource" :
+            // The shared AO blur shaders read the raw AO through this sampler.
+            name == AmbientOcclusionRawTextureName ? AmbientOcclusionIntensityTextureName :
+            name == AoNormalTextureName ? "Normal" : name;
         result.AutoGenerateMipmaps = false;
         result.RequiresStorageUsage = !Shaders.Compilation.WebPipelineRasterProgram.IsActive || name == AutoExposureTextureName;
         return result;

@@ -1012,8 +1012,8 @@ internal unsafe sealed class VulkanMappedFrameArena
 
     private static ulong ResolvePublicationLayoutSignature(VkRenderProgram program, AutoUniformBlockInfo block)
     {
-        if (program.BindingSchema?.TryGetAutoUniformBlock(block.InstanceName, out VulkanAutoUniformBindingSchema? schema) == true)
-            return schema.PublicationLayoutSignature;
+        if (program.BindingSchema?.TryGetPublicationLayoutSignature(block, out ulong signature) == true)
+            return signature;
 
         FrameOpSignatureHasher fallbackLayout = new();
         fallbackLayout.Add(program.BindingId);

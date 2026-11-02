@@ -116,7 +116,6 @@ namespace XREngine.Rendering
         public override void ApplyUniforms(XRRenderProgram program)
         {
             program.Uniform("Radius", PositiveOr(Owner.Radius, AmbientOcclusionSettings.SpatialHashDefaultRadius));
-            program.Uniform("Power", PositiveOr(Owner.Power, AmbientOcclusionSettings.SpatialHashDefaultPower));
             program.Uniform("KernelSize", PositiveOr(Samples, DefaultSamples));
             program.Uniform("RayStepCount", PositiveOr(Steps, DefaultSteps));
             program.Uniform("Bias", PositiveOr(Owner.Bias, AmbientOcclusionSettings.SpatialHashDefaultBias));

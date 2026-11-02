@@ -172,7 +172,11 @@ internal unsafe partial class VkMeshRenderer(
     private readonly Dictionary<DescriptorAllocationKey, DescriptorAllocation> _descriptorAllocations = new();
     private readonly Dictionary<int, DescriptorAllocation> _descriptorAllocationsByDrawSlot = new();
     private readonly Dictionary<DescriptorOwnerLookupKey, DescriptorAllocation> _descriptorAllocationsByOwner = new();
-    private readonly Queue<(DescriptorAllocationKey Key, DescriptorAllocation Allocation)>
+    private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, ulong LinkGeneration, ulong MaterialLayoutVersion, XRRenderPipelineInstance? Pipeline), int[]>
+        _artifactFrameSourceBindingIndices = [];
+    private readonly Dictionary<(DescriptorAllocation Allocation, int Slot, ComputeDispatchSnapshot Snapshot), ulong> _frameSourceDescriptorRefreshes = new();
+    private const int MaxFrameDescriptorAllocations = 256;
+    private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, int DrawSlot, int FrameIndex), (DescriptorAllocation Allocation, ulong RenderFrameId)> _frameDescriptorAllocations = new();    private readonly Queue<(DescriptorAllocationKey Key, DescriptorAllocation Allocation)>
         _pendingSupersededDescriptorAllocationRetirements = new();
     private bool _descriptorDirty = true;
     private ulong _descriptorSchemaFingerprint;
@@ -180,10 +184,14 @@ internal unsafe partial class VkMeshRenderer(
     private string _descriptorResourceFingerprintDetails = string.Empty;
     private int _uniformDrawSlotCapacity = 1;
     private readonly HashSet<string> _descriptorWarnings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<(string? BindingName, string Reason)> _placeholderDescriptorWarnings = [];
     private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);
     private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, VulkanAutoUniformOwnerSlotTable> _autoUniformOwnerSlotTables = new(StringComparer.Ordinal);
+    /// <summary>Tables by name identity, so a reflected block does not hash its name per draw.</summary>
+    private readonly Dictionary<string, VulkanAutoUniformOwnerSlotTable> _autoUniformOwnerSlotTablesByNameIdentity =
+        new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, VulkanAutoUniformPublicationState[]> _publishedAutoUniformMaterialWritePlans = new(StringComparer.Ordinal);
     private readonly HashSet<(
         string Block,
@@ -363,7 +371,7 @@ internal unsafe partial class VkMeshRenderer(
             _pipelineDirty = true;
             _buffersDirty = true;
             _descriptorDirty = true;
-            _vertexInputStateDirty = true;
+            InvalidateVertexInputStructureNoLock();
             _lastPreparedMaterial = null;
             _triangleIndexBuffer = null;
             _lineIndexBuffer = null;
@@ -1719,6 +1727,7 @@ internal unsafe partial class VkMeshRenderer(
                          snapshot,
                          engineRequirements,
                          hasGenerationOwnedPublisherResources,
+                         engineBindingSnapshot,
                          out ComputeDispatchSnapshot persistentArtifact,
                          out EVulkanProgramBindingArtifactFallbackReason
                              contentFallbackReason,

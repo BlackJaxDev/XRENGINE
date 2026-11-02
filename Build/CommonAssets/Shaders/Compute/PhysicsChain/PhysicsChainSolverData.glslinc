@@ -1,0 +1,95 @@
+#ifndef PHYSICS_CHAIN_SOLVER_DATA_INCLUDED
+#define PHYSICS_CHAIN_SOLVER_DATA_INCLUDED
+
+// The layouts match the C# GPU records in GPUPhysicsChainDispatcher (std430).
+
+struct ParticleState
+{
+    vec3 Position;
+    float _pad0;
+    vec3 PrevPosition;
+    float _pad1;
+    int IsColliding;
+    // The turn of the segment that ends at this particle. A zero quaternion means no turn.
+    float SegmentTurnX;
+    float SegmentTurnY;
+    float SegmentTurnZ;
+    vec3 PreviousPhysicsPosition;
+    float SegmentTurnW;
+};
+
+struct ParticleStatic
+{
+    vec3 TransformLocalPosition;
+    float MaxAngleRadians;
+    int ParentIndex;
+    float Damping;
+    float Elasticity;
+    float Stiffness;
+    float Inert;
+    float Friction;
+    float Radius;
+    float BoneLength;
+    int TreeIndex;
+    int IsBranchChild;
+    float MaxYawRadians;
+    int _pad3;
+};
+
+struct ColliderData
+{
+    vec4 Center;      // xyz = position or capsule start, w = radius
+    vec4 Params;      // type-specific
+    vec4 Orientation; // box rotation or marked capsule direction
+    int Type;         // 0=sphere, 1=capsule, 2=box, 3=plane
+    int ParticleContactOnly;
+    int Inside;
+    float EndRadius;  // A capsule end radius above zero makes a tapered capsule.
+};
+
+struct PerTreeParams
+{
+    float DeltaTime;
+    float ObjectScale;
+    float Weight;
+    int FreezeAxis;
+    vec3 Force;
+    int ColliderCount;
+    vec3 Gravity;
+    int ColliderOffset;
+    vec3 ObjectMove;
+    float _pad0;
+    vec3 RestGravity;
+    int ParticleOffset;
+    int TreeParticleCount;
+    int LoopCount;
+    int DepthRangeOffset;
+    int DepthRangeCount;
+    float GravityFalloff;
+    int SolverFlags;
+    int LimitType;
+    float MaxStretch;
+    float MaxSquish;
+    float StretchMotion;
+    float _pad1;
+    float _pad2;
+    vec4 LimitRotation;
+    // The rows of the motion of the root's parent since the previous step.
+    vec4 RootParentMotionX;
+    vec4 RootParentMotionY;
+    vec4 RootParentMotionZ;
+};
+
+const int CHAIN_REST_FOLLOWS_PARENT = 1;
+const int CHAIN_HOLD_PARENT_OFFSET = 2;
+const int CHAIN_SEGMENT_GRAVITY = 4;
+const int CHAIN_PIN_BRANCH_CHILDREN = 8;
+const int CHAIN_INERT_ROOT_PARENT = 16;
+const int CHAIN_SEGMENT_COLLISION = 32;
+const int CHAIN_HOLD_BETWEEN_STEPS = 64;
+
+const int CHAIN_LIMIT_ANGLE = 1;
+const int CHAIN_LIMIT_HINGE = 2;
+const int CHAIN_LIMIT_POLAR = 3;
+
+#endif

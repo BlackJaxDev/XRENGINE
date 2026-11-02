@@ -16,6 +16,7 @@ internal readonly record struct PersistentProgramBindingArtifactGeneration(
     ulong TypedPublisherSignature,
     ulong EngineUniformSignature,
     ulong EngineResourceSignature,
+    ulong NativeBufferBindingRevision,
     ulong PipelineUniformGeneration,
     EUniformRequirements EngineRequirements,
     bool CaptureUniformsOnRender);

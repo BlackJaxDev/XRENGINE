@@ -119,7 +119,7 @@ internal static partial class SerializedSceneImporter
                     state.Context.FbxSourceDocuments.GetSemantic(modelPath));
         }
         root = CollapseAssimpSyntheticRoot(root, modelPath, metadata, options, state);
-        ApplySourceImportedSkeletonBindPose(root, metadata, state);
+        AttachSourceAvatarTPose(root, metadata);
         if (metadata.SortHierarchyByName)
             SortHierarchyByName(root);
 

@@ -601,6 +601,8 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_LightingMapMode", SourceToonEnumMapper.Identity(document, "_LightingMapMode", 0, 0, 3, diagnostics));
         SetInt(material, "_LightingDirectionMode", SourceToonEnumMapper.Identity(document, "_LightingDirectionMode", 0, 0, 3, diagnostics));
         MapFloat(document, material, "_LightingCapEnabled", "_LightingCapEnabled");
+        // The source shaders read only their own AO maps and never a screen-space AO texture.
+        SetFloat(material, "_WorldAmbientOcclusionStrength", 0.0f);
         MapFloat(document, material, "_LightingCap", "_LightingCap");
         MapFloat(document, material, "_LightingMinLightBrightness", "_LightingMinLightBrightness");
         MapFloat(document, material, "_LightingMonochromatic", "_LightingMonochromatic");

@@ -63,6 +63,8 @@ internal unsafe partial class VkRenderProgram(
          RenderBindingPublisherGenerationSnapshot PublisherGenerations,
          ComputeDispatchSnapshot? Artifact)>
         _persistentProgramBindingArtifacts = [];
+    private readonly List<(ComputeDispatchSnapshot Artifact, ulong RetiredFrameId)>
+        _retiredProgramBindingArtifacts = [];
     private readonly Dictionary<string, Dictionary<AutoUniformMaterialWritePlanCacheKey, AutoUniformMaterialWritePlan>> _autoUniformMaterialWritePlans =
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, AutoUniformMaterialWritePlan> _frequencyOwnedAutoUniformWritePlans =

@@ -3,7 +3,7 @@ using System.Numerics;
 namespace XREngine.Scene.Importers;
 
 /// <summary>
-/// Describes one transform from Unity ModelImporter's authoritative imported skeleton pose.
+/// Describes one transform of the avatar T-pose stored in Unity's <c>humanDescription.skeleton</c>.
 /// </summary>
 public sealed class SerializedModelSkeletonTransform
 {

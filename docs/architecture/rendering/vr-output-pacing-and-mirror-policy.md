@@ -68,6 +68,20 @@ The manifest attributes each frame to a budget band:
 
 When `VrDesktopAutoSkipWhenOverBudget` is true and the previous whole-frame time exceeded the active band, a desktop-facing output skips with reason `Budget` instead of making the eyes miss their deadline. The skip is counted in the manifest.
 
+## XR frame priority
+
+The eyes render first in the render loop. With `VrDesktopAutoSkipWhenOverBudget` on, at most one independent desktop frame runs per XR frame, and only when its last measured cost fits before the next XR frame. `OpenXRAPI.NextFrameSlackMs` estimates that time from the eye work time and the runtime period. A held frame reports `EFrameOutputSkipReason.Budget`, and the window keeps its last image.
+
+The desktop keeps a minimum rate of 15 Hz, so the window cannot freeze. A frame admitted at this rate can delay the next XR frame.
+
+## Next-frame collect
+
+Only one OpenXR frame can be between `xrBeginFrame` and `xrEndFrame`. In single-pass stereo, the collect thread therefore collects the commands for the next frame while the current frame renders, after the swap publishes the current commands. When the next frame is located, the swap assigns these commands to it and publishes its located view set. Without this, each frame waits for a collect pass after `xrWaitFrame` returns, and that wait adds to the render time.
+
+These commands use the last pose, because the next pose is not known yet. The combined culling projection is scaled by 0.85, which widens the volume by about 8 degrees at each edge. Eye rendering still applies the exact late pose, so the pose only selects the collected objects. The collect does not change the eye cameras, the pipelines, or the post-process state, because the current frame reads them on the render thread. A change of view mode or a failed view-set publication drops these commands, and the frame does a full collect.
+
+Set `XRE_OPENXR_SPECULATIVE_COLLECT=0` to turn this off. Parallel command buffer recording does not use it.
+
 ## Limits
 
 - All outputs still share one render thread and fence chain. Separate pacing domains for desktop and XR depend on dedicated render-thread window ownership and are not implemented.

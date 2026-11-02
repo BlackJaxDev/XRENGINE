@@ -68,6 +68,7 @@ public partial class DefaultRenderPipeline
         c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
         c.Add<VPRC_DepthWrite>().Allow = true;
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+        c.Add<VPRC_PublishDeformedMeshAtlas>();
         RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.PreRender, branch =>
             branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false));
 
@@ -143,6 +144,7 @@ public partial class DefaultRenderPipeline
         c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
         c.Add<VPRC_DepthWrite>().Allow = true;
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+        c.Add<VPRC_PublishDeformedMeshAtlas>();
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
         var sceneWorkload = c.Add<VPRC_IfElse>();

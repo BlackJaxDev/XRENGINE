@@ -92,6 +92,10 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestOpenXrEyeResolutionWidth = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_WIDTH";
     public const string UnitTestOpenXrEyeResolutionHeight = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_HEIGHT";
     public const string UnitTestRenderWindowsWhileInVr = "XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR";
+    public const string UnitTestVrMirrorMode = "XRE_UNIT_TEST_VR_MIRROR_MODE";
+
+    /// <summary>Set to 0 to stop collecting single-pass stereo commands for the next OpenXR frame while the current frame renders. On by default.</summary>
+    public const string OpenXrSpeculativeCollect = "XRE_OPENXR_SPECULATIVE_COLLECT";
     public const string UnitTestOpenXrRuntimeJson = "XRE_UNIT_TEST_OPENXR_RUNTIME_JSON";
     public const string UnitTestRenderApi = "XRE_UNIT_TEST_RENDER_API";
     public const string UnitTestRenderPipeline = "XRE_UNIT_TEST_RENDER_PIPELINE";

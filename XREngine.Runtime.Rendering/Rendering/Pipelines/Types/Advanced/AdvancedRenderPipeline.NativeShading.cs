@@ -60,8 +60,9 @@ public partial class AdvancedRenderPipeline
     private bool _enableBuiltInAmbientOcclusion = true;
 
     /// <summary>
-    /// Enables the built-in depth-derived GTAO dispatch. Disabled browser outputs
-    /// use the shared neutral binding; desktop outputs retain their neutral target.
+    /// Enables the built-in depth-derived GTAO dispatch on browser outputs. Disabled browser
+    /// outputs use the shared neutral binding. Desktop outputs write neutral AO in this stage,
+    /// and the AO mode from the camera's schema then replaces it.
     /// </summary>
     public bool EnableBuiltInAmbientOcclusion
     {
@@ -255,6 +256,8 @@ public partial class AdvancedRenderPipeline
                 ESizedInternalFormat.R8)
             .Layers(layers)
             .StereoCompatible(layers > 1u)
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage |
+                RenderPipelineResourceUsage.ColorAttachment)
             .When(static profile => (profile.FeatureMask & WebAmbientOcclusionDisabledFeatureBit) == 0)
             .DependsOn(
                 AdvancedVisibilityResourceNames.DepthStencil)

@@ -37,6 +37,8 @@ verified vertex rank gates in the same ordered replay. Unproven raster programs,
 non-mesh commands and other unavailable selected profiles report specific
 diagnostics. Runtime acceptance of the authored meshlet lowering is pending.
 
+In the default pipeline, GPU indirect draws read the shared mesh atlas with a generated vertex shader that has no bone inputs. `VPRC_PublishDeformedMeshAtlas` runs before the mesh passes. It deforms each resident skinned or blendshape renderer in compute, and `SkinnedAtlasPublisher` writes the world-space result over the mesh's atlas range. The atlas holds one range per mesh, so renderers that share a deformed mesh also share one result. These draws have no skinned motion vectors. Interleaved meshes are not deformed on this path and log a warning.
+
 Zero-readback passes execute from configured GPU-pass topology even when CPU
 visibility collection publishes no mesh commands. The GPU scene and the pass
 culling mask own mesh membership; CPU visibility must not suppress a default,
@@ -206,6 +208,10 @@ Default derivation:
 `GpuIndirectZeroReadback` material scatter uses `DrawMetadata.MaterialID` as the bucket key. `StateClassID` remains the coarse pipeline-state key; it must not substitute for material identity. Material-table draw paths use the stable `DrawID` to fetch the material row and preserve per-material constants such as base color, opacity, roughness, metallic, specular, and emission.
 
 Dynamic material-table layouts for additional deferred, forward+, Uber, and annotated custom shader paths are planned.
+
+The shared material-table shader cannot express uber materials. When a scene holds any uber material, a traditional GPU indirect pass uses per-material programs instead of a requested material-table path. The atlas supplies one UV set and no vertex colors, and vertex-mode UDIM discard is not applied on this path; a material that needs that discard logs a warning.
+
+`SkinnedAtlasPublisher` writes deformed vertices over each mesh's atlas range. A recorded compute dispatch does not prove that it ran, because a backend can discard the frame that holds it. A renderer therefore dispatches each frame after a change until the viewport history ledger commits a frame at or after that change. It then reuses its output. A viewport with no history sequence does not reuse the output and dispatches each frame.
 
 ## Vulkan Command-Chain Volatility
 

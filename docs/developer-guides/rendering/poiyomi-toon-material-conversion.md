@@ -19,10 +19,13 @@ verified single-layer jitter and green global-mask multiplication. Unsupported
 changes to optimizer-fixed inputs remain diagnostic. The conversion report
 version is `1.3.0`.
 
-`SourceToon10Catalog` admits the verified 10.0.25 unlocked shader and a bounded
-set of verified locked shader contents. It checks the exact version, original
-shader identity, and complete source hash after line-ending normalization.
-Other locked contents and the separate Grab Pass shader remain unsupported.
+`SourceToon10Catalog` admits the verified 10.0.25 unlocked shader and shaders
+that the optimizer locked from it. For the unlocked shader, it checks the exact
+version, shader GUID, and complete source hash after line-ending normalization.
+For a locked shader, it checks the exact version and original shader GUID, and
+the matcher requires the Toon property signature. The optimizer writes new text
+each time it locks a material, so a locked shader has no stable source hash.
+The separate Grab Pass shader remains unsupported.
 The selected source supplies property types, defaults, and enum declarations.
 Duplicate declarations remain in the descriptor. The converter fills only its
 listed render, lighting, and AO defaults; conflicting duplicate defaults are

@@ -13,6 +13,10 @@ public interface IOpenXrRuntime : IOpenXrApplicationLifecycle
     bool IsRvcOpenXrVisibilityMaskExtensionEnabled { get; }
     bool CanUseTrueSinglePassStereo { get; }
     double CurrentRenderDeadlineMs { get; }
+    /// <summary>Estimated time until the next XR frame needs the render thread, or a negative value when unknown.</summary>
+    double NextFrameSlackMs { get; }
+    /// <summary>Timestamp of the last return from <c>xrWaitFrame</c>. Each XR frame has its own value.</summary>
+    long LastFrameWakeTicks { get; }
     bool PrepareRendererDeviceTeardown(AbstractRenderer renderer, string reason);
     void PrepareRendererDeviceLossAbandonment(AbstractRenderer renderer, string reason, OpenXrDeviceLossSource source);
     XRViewport? StereoViewport { get; }

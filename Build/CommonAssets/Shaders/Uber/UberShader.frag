@@ -2299,7 +2299,8 @@ void main() {
     vec3 sourceProbeDiffuse = vec3(0.0), sourceProbeSpecular = vec3(0.0);
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_AMBIENT_OCCLUSION
-    float screenAmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
+    float screenAmbientOcclusion = mix(1.0, XRENGINE_SampleAmbientOcclusion(),
+        saturate(_WorldAmbientOcclusionStrength));
 #else
     float screenAmbientOcclusion = 1.0;
 #endif
@@ -2313,6 +2314,9 @@ void main() {
         fragData.baseColor, mesh.worldNormal, surfacePbr,
         combinedAmbientOcclusion, sourceProbeDiffuse, sourceProbeSpecular);
     ToonLight light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
+    // Source lighting replaces the ambient term, so world AO applies to its indirect light here.
+    if (_SourceLightMode != 0)
+        light.indirectColor *= screenAmbientOcclusion;
 #else
     ToonLight light = createToonLight(
         mesh,

@@ -116,6 +116,9 @@ public static class NativeUberMaterialSourceEncoder
             return false;
         }
         words[NativeUberMaterialSchema.FeatureWordOffset] = features;
+        // A material without this parameter receives world AO in full.
+        words[NativeUberMaterialSchema.ParameterWordOffset(
+            NativeUberMaterialSchema.ParameterIndex("_WorldAmbientOcclusionStrength"))] = BitConverter.SingleToUInt32Bits(1.0f);
 
         foreach (ShaderVar parameter in material.Parameters)
         {

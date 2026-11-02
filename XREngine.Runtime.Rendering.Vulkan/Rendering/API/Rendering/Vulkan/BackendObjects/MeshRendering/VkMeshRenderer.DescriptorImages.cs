@@ -339,7 +339,10 @@ internal unsafe partial class VkMeshRenderer
 		if (imageInfo.ImageView.Handle == 0)
 			return false;
 
-		WarnOnce($"Texture for descriptor binding '{binding.Name}' is not ready for Vulkan descriptor use ({reason}). Using placeholder.");
+		// A texture that stays unready reaches this path on every preparation, so the
+		// warning key avoids building the message string after the first report.
+		if (_placeholderDescriptorWarnings.Add((binding.Name, reason)))
+			WarnOnce($"Texture for descriptor binding '{binding.Name}' is not ready for Vulkan descriptor use ({reason}). Using placeholder.");
 		if (VulkanMeshRenderingConventions.DescriptorTraceEnabled)
 		{
 			Debug.VulkanWarningEvery(

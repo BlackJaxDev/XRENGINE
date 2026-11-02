@@ -46,26 +46,29 @@ internal static partial class SerializedSceneImporter
         if (axes.UnitScaleFactor == 1.0d && !metadata.UseFileScale)
             throw new SourceVisualImportException(
                 $"Unity FBX model '{modelPath}' uses centimetre source units without file-scale import. This coordinate contract is not supported.");
-        // A geometric transform applies only to attached geometry and does not reach child nodes.
-        HashSet<long> meshOwnerIds = [.. source.IntermediateScene.Meshes.SelectMany(static mesh => mesh.ModelObjectIds)];
         foreach (FbxIntermediateNode node in source.IntermediateScene.Nodes)
         {
             FbxTransformSemantics transform = node.TransformSemantics;
-            bool hasPivotOffsets = transform.RotationOffset != Vector3.Zero ||
-                transform.RotationPivot != Vector3.Zero || transform.ScalingOffset != Vector3.Zero ||
-                transform.ScalingPivot != Vector3.Zero;
+            bool hasPivotOffsets = !IsPivotOffsetZero(transform.RotationOffset) ||
+                !IsPivotOffsetZero(transform.RotationPivot) || !IsPivotOffsetZero(transform.ScalingOffset) ||
+                !IsPivotOffsetZero(transform.ScalingPivot);
             if (hasPivotOffsets || transform.InheritType != 1 ||
                 transform.RotationOrder is not (FbxRotationOrder.XYZ or FbxRotationOrder.XZY or
-                    FbxRotationOrder.YZX or FbxRotationOrder.YXZ or FbxRotationOrder.ZXY or FbxRotationOrder.ZYX) ||
-                (meshOwnerIds.Contains(node.ObjectId) && !ModelMatricesMatch(node.GeometryTransform, Matrix4x4.Identity)))
+                    FbxRotationOrder.YZX or FbxRotationOrder.YXZ or FbxRotationOrder.ZXY or FbxRotationOrder.ZYX))
                 throw new SourceVisualImportException(
                     $"Unity FBX node '{node.Name}' in '{modelPath}' requires unsupported transform conversion: " +
                     $"hasPivotOffsets={hasPivotOffsets}, inheritType={transform.InheritType}, " +
-                    $"rotationOrder={transform.RotationOrder}, identityGeometry={ModelMatricesMatch(node.GeometryTransform, Matrix4x4.Identity)}.");
+                    $"rotationOrder={transform.RotationOrder}.");
         }
 
         return axes.UpAxis.AxisIndex == 2;
     }
+
+    /// <summary>
+    /// DCC exporters can write rounding noise, such as 1e-16, in place of a zero pivot offset.
+    /// </summary>
+    private static bool IsPivotOffsetZero(Vector3 offset)
+        => Vector3.Abs(offset) is { X: < 1e-6f, Y: < 1e-6f, Z: < 1e-6f };
 
     /// <summary>
     /// Converts the producer's complete coordinate chart to the Unity YAML chart.
@@ -150,5 +153,38 @@ internal static partial class SerializedSceneImporter
             generatedRoot.Parent = root;
         }
         return root;
+    }
+
+    /// <summary>
+    /// Keeps Unity's avatar T-pose as humanoid reference data. The hierarchy keeps the FBX rest pose.
+    /// </summary>
+    private static void AttachSourceAvatarTPose(SceneNode root, SerializedModelImporterDocument metadata)
+    {
+        if (metadata.SkeletonTransforms.Count == 0)
+            return;
+
+        var bones = new HumanoidAuthoredTPoseBone[metadata.SkeletonTransforms.Count];
+        for (int index = 0; index < bones.Length; index++)
+        {
+            SerializedModelSkeletonTransform entry = metadata.SkeletonTransforms[index];
+            bones[index] = new HumanoidAuthoredTPoseBone(entry.Name, entry.ParentName, ConvertRotation(entry.Rotation));
+        }
+
+        root.AddComponent<HumanoidAuthoredTPoseComponent>()!.Bones = bones;
+    }
+
+    private static IEnumerable<SceneNode> EnumerateModelHierarchy(SceneNode root)
+    {
+        var stack = new Stack<SceneNode>();
+        stack.Push(root);
+        while (stack.TryPop(out SceneNode? node))
+        {
+            yield return node;
+            for (int childIndex = node.Transform.Children.Count - 1; childIndex >= 0; childIndex--)
+            {
+                if (node.Transform.Children[childIndex].SceneNode is SceneNode child)
+                    stack.Push(child);
+            }
+        }
     }
 }

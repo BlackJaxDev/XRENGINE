@@ -444,7 +444,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             vec3 F0 = mix(vec3(0.04), base.rgb, metallic);
             vec3 F = XR_ADV_FresnelSchlick(max(dot(N, V), 0.0), F0);
             color += XR_ADV_WorldAmbient(viewIndex) * base.rgb *
-                (vec3(1.0) - F) * (1.0 - metallic) * ambientOcclusion;
+                (vec3(1.0) - F) * (1.0 - metallic) * XR_ADV_DiffuseOcclusion(u_Push.flags, ambientOcclusion, base.rgb);
         }
         uint lightCount = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
         for (uint i = 0u; i < lightCount; ++i)
@@ -488,9 +488,9 @@ void XR_ADV_EvaluateNativeOpaqueSample(
                 base.rgb, roughness, metallic, diffuseIndirect, specularIndirect);
             color += ((u_Push.flags & 32u) != 0u
                     ? vec3(0.0)
-                    : diffuseIndirect * ambientOcclusion) +
-                specularIndirect * XR_ADV_SpecularOcclusion(
-                    max(dot(N, V), 0.0), ambientOcclusion, roughness);
+                    : diffuseIndirect * XR_ADV_DiffuseOcclusion(u_Push.flags, ambientOcclusion, base.rgb)) +
+                specularIndirect * XR_ADV_SpecularVisibility(
+                    u_Push.flags, max(dot(N, V), 0.0), ambientOcclusion, roughness);
         }
     }
 

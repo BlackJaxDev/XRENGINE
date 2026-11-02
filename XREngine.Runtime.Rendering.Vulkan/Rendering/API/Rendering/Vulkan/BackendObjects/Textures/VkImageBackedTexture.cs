@@ -46,6 +46,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     private readonly List<PhysicalImageViewCacheEntry> _physicalImageViewCache = [];
 
     private readonly object _imageStateLock = new();
+    private ulong _frameBindingSignatureFrameId;
+    private ulong _frameBindingSignatureGeneration;
+    private ulong _frameBindingSignature;
 
     object IVkImageDescriptorSource.DescriptorSnapshotSyncRoot
         => _imageStateLock;
@@ -556,6 +559,26 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 RefreshPhysicalGroupImageIfStale();
                 return ResolvedArrayLayers;
             }
+        }
+    }
+
+    bool IVkImageDescriptorSource.TryGetFrameBindingSignature(ulong frameId, ulong generation, out ulong signature)
+    {
+        lock (_imageStateLock)
+        {
+            signature = _frameBindingSignature;
+            return _frameBindingSignatureFrameId == frameId &&
+                   _frameBindingSignatureGeneration == generation;
+        }
+    }
+
+    void IVkImageDescriptorSource.StoreFrameBindingSignature(ulong frameId, ulong generation, ulong signature)
+    {
+        lock (_imageStateLock)
+        {
+            _frameBindingSignatureFrameId = frameId;
+            _frameBindingSignatureGeneration = generation;
+            _frameBindingSignature = signature;
         }
     }
 

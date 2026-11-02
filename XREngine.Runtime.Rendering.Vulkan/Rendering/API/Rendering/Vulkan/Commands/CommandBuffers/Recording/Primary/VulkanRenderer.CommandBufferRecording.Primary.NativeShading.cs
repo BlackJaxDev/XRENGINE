@@ -42,6 +42,8 @@ internal sealed partial class VulkanCommandRuntime
             (payload.Request.EnableLightProbesAndIbl ? 8u : 0u) |
             (payload.Request.RequiresMaterialSurfaceExports ? 16u : 0u) |
             (payload.Request.SuppressBaselineDiffuse ? 32u : 0u) |
+            (payload.Request.AmbientOcclusionMultiBounce ? 64u : 0u) |
+            (payload.Request.AmbientOcclusionSpecularUsesVisibility ? 128u : 0u) |
             (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8) |
             ((Math.Min(closure.MsaaSampleCount, 16u) & 0xFu) << 24), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),

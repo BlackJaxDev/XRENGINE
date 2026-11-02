@@ -56,7 +56,6 @@ namespace XREngine.Rendering
         {
             program.Uniform("Radius", PositiveOr(Owner.Radius, 2.0f));
             program.Uniform("Bias", PositiveOr(Owner.Bias, 0.1f));
-            program.Uniform("Power", PositiveOr(Owner.Power, 2.0f));
             program.Uniform("DetailAO", Math.Clamp(DetailAO, 0.0f, 5.0f));
             program.Uniform("BlurEnabled", BlurEnabled);
             program.Uniform("BlurRadius", Math.Clamp(BlurRadius, 0, 16));
