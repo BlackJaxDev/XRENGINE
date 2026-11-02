@@ -292,6 +292,7 @@ namespace XREngine.Rendering
         /// </summary>
         private RenderPipeline? _renderPipeline = null;
         private RenderPipeline? _defaultRenderPipeline;
+        private volatile RenderPipeline? _claimBorrowedPipeline;
 
         // This is deliberately independent of XRBase property notifications. Render consumers use
         // it to distinguish two different asset instances even when they expose the same metadata.
@@ -560,18 +561,27 @@ namespace XREngine.Rendering
             pipeline ??= _renderPipeline ?? RenderPipeline;
             if (pipeline is null)
                 return null;
-            return _renderPipeline is null && IsDefaultPipelineType(pipeline)
+            return _renderPipeline is null && (ReferenceEquals(pipeline, _defaultRenderPipeline) || UsesDefaultStateForClaimBorrow(pipeline))
                 ? _postProcessStates.GetOrCreateDefaultState(pipeline)
                 : _postProcessStates.GetOrCreateState(pipeline);
         }
 
         /// <summary>
-        /// True when a pipeline has the type of the default pipeline of this camera.
-        /// A viewport can render this camera with such a pipeline during a camera claim. The camera then uses
-        /// its default post-process values, so a transient pipeline ID never enters the saved state.
+        /// True when a camera claim keeps this exact pipeline for this camera, and the camera has no explicit state for it.
+        /// The camera then uses its default post-process values, so the kept pipeline ID does not enter the saved state.
         /// </summary>
-        private bool IsDefaultPipelineType(RenderPipeline pipeline)
-            => _defaultRenderPipeline is { } own && own.GetType() == pipeline.GetType();
+        private bool UsesDefaultStateForClaimBorrow(RenderPipeline pipeline)
+            => ReferenceEquals(_claimBorrowedPipeline, pipeline) && !_postProcessStates.Pipelines.ContainsKey(pipeline.ID);
+
+        /// <summary>
+        /// The pipeline that a viewport last kept for this camera during a claim, or null.
+        /// The value stays after a cut, so the last frame of the outgoing camera reads the correct state.
+        /// </summary>
+        internal RenderPipeline? ClaimBorrowedPipeline => _claimBorrowedPipeline;
+
+        /// <summary>Records the pipeline that a viewport keeps for this camera during a claim. Null removes the record.</summary>
+        internal void NoteClaimBorrowedPipeline(RenderPipeline? pipeline)
+            => _claimBorrowedPipeline = pipeline;
 
         /// <summary>
         /// Gets the active post-process state for the current render pipeline.
@@ -1778,6 +1788,9 @@ namespace XREngine.Rendering
         /// <summary>Assigns an authored source, or clears it to restore the host's default-source policy.</summary>
         public void SetRenderPipelineSource(RenderPipeline? pipeline)
         {
+            if (pipeline is not null)
+                _claimBorrowedPipeline = null;
+
             if (ReferenceEquals(_renderPipeline, pipeline))
                 return;
 

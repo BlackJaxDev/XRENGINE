@@ -164,10 +164,13 @@ These rules apply:
   returns. If that camera owns the kept pipeline, no rebuild occurs. If not, for
   example if a shot camera supplied an authored asset or a write during the claim
   stored another camera, one normal pipeline transition occurs.
-- A camera with no authored source uses its default post-process values with any
-  pipeline of the same type as its own default asset. A transient pipeline ID
-  therefore never enters the saved state. A pipeline of another type keeps its
-  explicit per-pipeline state.
+- The viewport records the kept pipeline on the claimed camera. The camera uses
+  its default post-process values for that exact asset if it has no explicit
+  entry for it, so the kept pipeline ID does not enter the saved state. The record
+  stays after a cut for the last frame of the outgoing camera. The viewport clears
+  it when its last claim ends, and an authored source clears it. Without a claim,
+  the record is null and a pipeline other than the camera default uses its
+  explicit per-pipeline entry, also when it has the same type.
 - Settings on the default asset of the claimed camera do not apply during the
   claim, because that asset does not render. Use an authored source for them.
 

@@ -72,6 +72,9 @@ namespace XREngine.Rendering
 
         private volatile bool _releasingCameraClaim;
 
+        /// <summary>The cameras that hold a record of a pipeline that this viewport kept for them during a claim.</summary>
+        private readonly List<XRCamera> _claimBorrowCameras = [];
+
         private readonly record struct CameraClaim(object Owner, CameraComponent Camera);
 
         /// <summary>
@@ -689,8 +692,20 @@ namespace XREngine.Rendering
 
             // The kept pipeline can belong to a camera of the claim. The camera that returns must use its own pipeline.
             // If that camera owns the kept pipeline, this call does nothing.
-            if (released && _cameraClaims.Count == 0 && SetRenderPipelineFromCamera && !_destroyed)
+            if (!released || _cameraClaims.Count != 0)
+                return;
+
+            if (SetRenderPipelineFromCamera && !_destroyed)
                 SynchronizeRenderPipelineFromActiveCamera();
+
+            // A frame that is in progress can still render the claimed camera, so the record must stay until that frame ends.
+            if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                ClearClaimBorrowsIfUnclaimed();
+            else
+                RuntimeEngine.EnqueueRenderThreadTask(
+                    ClearClaimBorrowsIfUnclaimed,
+                    $"XRViewport.ClearClaimBorrows[{Index}]",
+                    RenderThreadJobKind.RenderPipelineResource);
         }
 
         private void ApplyCameraAfterClaimRelease()
@@ -949,9 +964,40 @@ namespace XREngine.Rendering
             if (!IsCameraClaimActive || camera.AssignedRenderPipeline is not null)
                 return own;
 
-            return _renderPipeline.EffectiveRequestedPipeline is { } current && current.GetType() == own.GetType()
-                ? current
-                : own;
+            RenderPipeline? current = _renderPipeline.EffectiveRequestedPipeline;
+            if (current is null || ReferenceEquals(current, own) || current.GetType() != own.GetType())
+                return own;
+
+            NoteClaimBorrow(camera, current);
+            return current;
+        }
+
+        private void NoteClaimBorrow(XRCamera camera, RenderPipeline pipeline)
+        {
+            if (ReferenceEquals(camera.ClaimBorrowedPipeline, pipeline))
+                return;
+
+            camera.NoteClaimBorrowedPipeline(pipeline);
+            lock (_claimBorrowCameras)
+                if (!_claimBorrowCameras.Contains(camera))
+                    _claimBorrowCameras.Add(camera);
+        }
+
+        private void ClearClaimBorrowsIfUnclaimed()
+        {
+            // A new claim can start before this queued call runs. That claim needs the records.
+            if (_cameraClaims.Count == 0)
+                ClearClaimBorrows();
+        }
+
+        private void ClearClaimBorrows()
+        {
+            lock (_claimBorrowCameras)
+            {
+                for (int i = 0; i < _claimBorrowCameras.Count; i++)
+                    _claimBorrowCameras[i].NoteClaimBorrowedPipeline(null);
+                _claimBorrowCameras.Clear();
+            }
         }
 
         /// <summary>
@@ -1265,6 +1311,7 @@ namespace XREngine.Rendering
             AssociatedPlayer = null;
             _cameraClaims.Clear();
             _unclaimedCameraComponent = null;
+            ClearClaimBorrows();
             CameraComponent = null;
             ScreenSpaceUserInterfaceOverride = null;
             Camera = null;
