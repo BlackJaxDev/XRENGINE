@@ -102,6 +102,14 @@ public static partial class EditorUnitTests
         private static readonly long FpsOverlayRefreshPeriodTicks =
             XREngine.Timers.EngineTimer.SecondsToStopwatchTicks(0.25);
         private static long _lastFpsOverlayRefreshTicks;
+        // Running totals at the previous refresh. Their differences over the refresh window are
+        // the presented desktop rate and the submitted OpenXR rate, which in VR differ from the
+        // render-loop rate: the loop ticks with every eye frame, while the desktop presents less often.
+        private static long _lastRateSampleTicks;
+        private static long _lastDesktopPresentTotal;
+        private static long _lastXrSubmittedTotal;
+        private static double _desktopPresentHz;
+        private static double _xrSubmittedHz;
 
         private readonly record struct CameraPreviewRequest(CameraComponent Camera, string Label);
 
@@ -161,7 +169,8 @@ public static partial class EditorUnitTests
             double dispatchCpuMs = _fpsWindowDispatchMs / windowFrames;
             double renderWaitForCollectMs = _fpsWindowRenderWaitMs / windowFrames;
             double collectWaitForRenderMs = _fpsWindowCollectWaitMs / windowFrames;
-            double vrHz = ResolveVrRenderHz();
+            SampleOutputRates(renderTimestampTicks);
+            double vrHz = _xrSubmittedHz > 0.0 ? _xrSubmittedHz : ResolveVrRenderHz();
             double vrPassMs = _fpsWindowVrFrames > 0 ? _fpsWindowVrPassMs / _fpsWindowVrFrames : 0.0;
             ResetFpsWindow();
             int fallbackEvents = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
@@ -200,8 +209,14 @@ public static partial class EditorUnitTests
             builder.Append(ResolveMeshSubmissionStrategyLabel());
 
             builder.Append(vrActive ? "\ndesktop:" : "\nrender: ");
-            AppendFixed(builder, averageHz, "F0", 3);
+            AppendFixed(builder, vrActive ? _desktopPresentHz : averageHz, "F0", 3);
             builder.Append("hz ");
+            if (vrActive)
+            {
+                builder.Append("presented | loop ");
+                AppendFixed(builder, averageHz, "F0", 3);
+                builder.Append("hz ");
+            }
             AppendFixed(builder, renderMs, "F1", 5);
             builder.Append("ms avg ");
             AppendFixed(builder, maxRenderMs, "F0", 3);
@@ -560,6 +575,29 @@ public static partial class EditorUnitTests
                 return "OpenVR";
 
             return "VR";
+        }
+
+        /// <summary>
+        /// Updates the presented desktop rate and the submitted OpenXR rate from their running
+        /// totals. The first call only stores the totals.
+        /// </summary>
+        private static void SampleOutputRates(long nowTicks)
+        {
+            long desktopTotal = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPresentAcceptedTotal;
+            long xrTotal = RuntimeEngine.VRState.OpenXRApi?.SmokeSubmittedFrameCount ?? 0L;
+            long elapsedTicks = nowTicks - _lastRateSampleTicks;
+            if (_lastRateSampleTicks != 0 && elapsedTicks > 0)
+            {
+                double seconds = elapsedTicks / (double)System.Diagnostics.Stopwatch.Frequency;
+                _desktopPresentHz = Math.Max(0L, desktopTotal - _lastDesktopPresentTotal) / seconds;
+                _xrSubmittedHz = xrTotal >= _lastXrSubmittedTotal
+                    ? (xrTotal - _lastXrSubmittedTotal) / seconds
+                    : 0.0;
+            }
+
+            _lastRateSampleTicks = nowTicks;
+            _lastDesktopPresentTotal = desktopTotal;
+            _lastXrSubmittedTotal = xrTotal;
         }
 
         private static double ResolveVrRenderHz()

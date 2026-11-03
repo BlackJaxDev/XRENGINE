@@ -267,6 +267,8 @@ namespace XREngine
                     private static int _vulkanQueueSubmitCount;
                     private static int _vulkanPresentAttemptCount;
                     private static int _vulkanPresentAcceptedCount;
+                    // Accepted desktop presents since startup; never reset, so readers can form a rate.
+                    private static long _vulkanPresentAcceptedTotal;
                     private static int _vulkanLastPresentResult;
                     private static int _lastFrameVulkanDeviceLocalAllocationCount;
                     private static long _lastFrameVulkanDeviceLocalAllocatedBytes;
@@ -795,6 +797,8 @@ namespace XREngine
                     public static int VulkanQueueSubmitCount => _lastFrameVulkanQueueSubmitCount;
                     public static int VulkanPresentAttemptCount => _lastFrameVulkanPresentAttemptCount;
                     public static int VulkanPresentAcceptedCount => _lastFrameVulkanPresentAcceptedCount;
+                    /// <summary>Accepted desktop presents since startup. The difference between two reads over a known time is the desktop present rate.</summary>
+                    public static long VulkanPresentAcceptedTotal => Volatile.Read(ref _vulkanPresentAcceptedTotal);
                     public static int VulkanLastPresentResult => _lastFrameVulkanLastPresentResult;
                     public static bool VulkanValidationLayersEnabled
                         => RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled;
@@ -1194,7 +1198,10 @@ namespace XREngine
 
                         Interlocked.Increment(ref _vulkanPresentAttemptCount);
                         if (accepted)
+                        {
                             Interlocked.Increment(ref _vulkanPresentAcceptedCount);
+                            Interlocked.Increment(ref _vulkanPresentAcceptedTotal);
+                        }
                         Volatile.Write(ref _vulkanLastPresentResult, result);
                     }
 
