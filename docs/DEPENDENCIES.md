@@ -5,7 +5,7 @@ Commit: 49959abd75214fcb3e6198fdd1542d6a7c2ce9f4
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
 
-Broker dependency entries updated for the standalone 0.1.1 MIT release. Unrelated license records remain from the previous inventory because the refresh could not retrieve all license files.
+Broker dependency entries updated for the standalone 0.2.0 MIT release. Unrelated license records remain from the previous inventory because the refresh could not retrieve all license files.
 
 Notes:
 - `Owner` is derived from a GitHub repository URL when available, otherwise from the NuGet nuspec `authors` field (best-effort).
@@ -33,7 +33,7 @@ Notes:
 | Jolt v5.6.0 (browser static source) | Jolt browser native archives | Jorrit Rouwe | [MIT](licenses/nested/Jolt%20v5.6.0%20%28browser%20static%20source%29-MIT.txt) | https://github.com/jrouwe/JoltPhysics/tree/e77f175595e64cb44218cc9d9d56fc365ad0e36a |
 | joltc (browser static source) | Jolt browser native archives | Amer Koleci and Contributors | [MIT](licenses/nested/joltc%20%28browser%20static%20source%29-MIT.txt) | https://github.com/amerkoleci/joltc/tree/886e088675bae3a086f8318c7803f8ee962c2f2c |
 | JoltPhysicsSharp 2.22.0 (browser source) | Jolt browser managed binding | Amer Koleci and Contributors | [MIT](licenses/nested/JoltPhysicsSharp%202.22.0%20%28browser%20source%29-MIT.txt) | https://github.com/amerkoleci/JoltPhysicsSharp/tree/77a5be2dd30d587c1981dfcaf15851f18041b39c |
-| LocalAgentBroker.Orchestration 0.1.1 | XREngine.Editor | BlackJax LLC | [MIT](licenses/nested/LocalAgentBroker.Orchestration%200.1.1-MIT.txt) | https://github.com/BlackJaxDev/local-agent-broker/tree/v0.1.1 |
+| LocalAgentBroker.Orchestration 0.2.0 | XREngine.Editor | BlackJax LLC | [MIT](licenses/nested/LocalAgentBroker.Orchestration%200.2.0-MIT.txt) | https://github.com/BlackJaxDev/local-agent-broker/tree/v0.2.0 |
 | meshoptimizer v1.3 | XREngine.Runtime.MeshProcessing.Meshoptimizer | Arseny Kapoulkine | [MIT](licenses/nested/meshoptimizer%20v1.3-MIT.md) | https://github.com/zeux/meshoptimizer/tree/v1.3 |
 | Playwright 1.63.0 (browser validation tooling) | Tools/BrowserSmoke; development and CI only | Microsoft Corporation | [Apache-2.0](licenses/Playwright-1.63.0.txt) | https://github.com/microsoft/playwright/tree/v1.63.0 |
 | Slang 2026.8 (shader compiler tooling) | Tools/ShaderCooker; cook time only | Slang project contributors | [Apache-2.0 WITH LLVM-exception](licenses/Slang-2026.8.txt) | https://github.com/shader-slang/slang/tree/v2026.8 |

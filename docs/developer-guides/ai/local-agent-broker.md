@@ -9,12 +9,20 @@ The implementation and tests live in [BlackJaxDev/local-agent-broker](https://gi
 | External `LocalAgentBroker.Orchestration` | Provider-neutral contracts, tool loop, provider transports, streaming, and HTTP MCP client. |
 | External `LocalAgentBroker` | Stdio MCP host, run registry, repository policy, swarms, and model routing. |
 | External shared and tray projects | History contracts, persistence, and Windows viewer. |
-| External `LocalAgentBroker.Integrations.XREngine` | Optional defaults for engine history and named-session paths. It has no engine runtime dependency. |
+| `Tools/Dependencies/LocalAgentBroker.config.json` | Engine history and session paths, exact session identity validation, and tray startup. |
 | `XREngine.Editor` | ImGui assistant, editor preferences, MCP tools, and scene presentation. |
 | `Build/Shared/LocalAgentBroker.props` | Pinned library reference and acquisition before assembly resolution. |
 | `Tools/Setup-LocalAgentBroker.ps1` | Verified release acquisition, versioned deployment, and pointer publication. |
 
 The editor references the DLL from the pinned orchestration nupkg. This library has only framework dependencies. The build does not use an unpinned sibling source checkout or a floating package version. The broker and tray are not engine solution projects.
+
+## Project Configuration
+
+The broker has no engine adapter or engine-specific defaults. The launcher passes the tracked JSON config and pins `--repo-root` to this checkout. Relative state and session paths resolve against that root. A custom config can be selected with `-ConfigPath` or `LOCAL_AGENT_BROKER_CONFIG`. Explicit launcher arguments take priority over environment settings; environment settings take priority over JSON.
+
+The launcher translates supported `XRE_LOCAL_AGENT_BROKER_*` settings only when the corresponding `LOCAL_AGENT_BROKER_*` setting is absent. Provider key values remain in environment variables. The config stores variable names only.
+
+`sessionIdentityPath` is `["status", "editorSession", "name"]`. The HTTP client requires this ping result to match the requested session name. The editor supplies explicit read-only and destructive tool annotations; name prefixes do not grant tool access. The default history and session paths remain unchanged.
 
 ## Release Pin
 
