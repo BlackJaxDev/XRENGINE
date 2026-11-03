@@ -3240,7 +3240,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         workers.ShouldNotContain("RendererOwnerWorkerIndices");
         workers.ShouldContain("RenderWorkDomain.FatalBatchWait");
         workers.ShouldContain("batch.ActiveWorkerMask");
-        workers.ShouldContain("domain.RentBatch(activeLaneCount);");
+        workers.ShouldContain("lease.ShrinkItemCount(activeLaneCount);");
         recording.ShouldContain("AssignCommandChainRecordingWorker(");
         recording.ShouldContain("schedulingConflictCount++");
         recording.ShouldContain("entry.WorkerIndex = recordingWorkerIndex;");
@@ -3248,7 +3248,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
             recording,
             "Invalidate the whole dirty batch before any worker is",
             "MarkCommandChainSecondaryCommandBufferInvalid(",
-            "AssignCommandChainRecordingWorker(batch, chain, workerCount)",
+            "? AssignCommandChainRecordingWorker(",
             "DispatchCommandChainRecordingWorkers(");
     }
 

@@ -1017,6 +1017,26 @@ command-buffer-local until ordered submission validation and publication.
 Successful submission merges the journals in `[left, right]` order regardless
 of worker completion order.
 
+### Captured Eye Operation Pool
+
+Desktop materialization rents mesh operations from the worker's
+`VulkanFrameOpWorkspace`, which reuses an operation in the next render frame.
+Captured OpenXR eye and mirror operations can stay referenced after their
+render frame ends, so they do not use that pool. `EnqueueQueuedMeshDraw` gives
+an eye or mirror context without a workspace the frame loop's captured-eye
+workspace instead. That workspace is created with a reuse distance of 8 render
+frames:
+
+- It keeps operations in a ring ordered by rent frame.
+- It reuses the oldest operation only when its last rent is at least 8 frames
+  old and the operation holds no authoring resource.
+- Otherwise the caller creates an operation, and the ring grows to its
+  high-water mark.
+- The distance mode takes a lock, so eye workers can share it.
+
+Without this pool, each eye draw created a new operation and resource-use list,
+about 3.4 KB per draw (about 13.6 MB per second on the imported avatar).
+
 This distinction matters when reading telemetry:
 
 - desktop parallel secondary recording distributes independent command chains;

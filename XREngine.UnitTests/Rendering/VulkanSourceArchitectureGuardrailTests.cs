@@ -402,7 +402,7 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
             preparation,
             StringComparison.Ordinal);
         int recording = scheduling.IndexOf(
-            "result = _commandRuntime.RecordPrimary(in input);",
+            "result = RecordDesktopPrimaryForExecutionMode(in input);",
             StringComparison.Ordinal);
 
         // Compute resources are prepared and checked before the primary

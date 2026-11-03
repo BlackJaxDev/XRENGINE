@@ -10,6 +10,12 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     private IRenderResourceLeaseOwner? _ownedAuthoringResource;
     internal IRenderResourceLeaseOwner? AuthoringResource => _ownedAuthoringResource;
 
+    /// <summary>
+    /// Gets whether a workspace pool may hand this operation out again. An
+    /// operation that still owns an authoring resource or lease stays in use.
+    /// </summary>
+    internal virtual bool CanReuseFromPool => _ownedAuthoringResource is null;
+
     public int PassIndex
     {
         get => _passIndex;

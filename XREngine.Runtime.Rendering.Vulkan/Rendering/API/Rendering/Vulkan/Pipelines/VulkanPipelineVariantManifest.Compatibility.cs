@@ -142,9 +142,9 @@ internal sealed partial class VulkanPipelineVariantManifest
             return hash.Value;
         }
 
-        PendingMeshDraw draw = header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
-            ? ops.GetMeshDraw(opIndex).Draw
-            : ops.GetIndirectDraw(opIndex).Draw;
+        ref readonly PendingMeshDraw draw = ref header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+            ? ref ops.GetMeshDraw(opIndex).Draw
+            : ref ops.GetIndirectDraw(opIndex).Draw;
         hash.Add(draw.PreparationCompatibilitySignature);
         hash.Add(draw.Renderer.BindingId);
         hash.Add(draw.PreparedProgramIdentity);

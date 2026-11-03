@@ -13,52 +13,18 @@ internal sealed class VulkanMeshDrawViewSnapshot
 {
     private static long s_nextPacketId;
 
+    /// <summary>
+    /// Number of recent snapshots kept per thread. One eye frame alternates
+    /// between several passes and views, so one cached entry missed for about
+    /// one draw in three and allocated a new snapshot each time.
+    /// </summary>
+    private const int CacheCapacity = 16;
     [ThreadStatic]
-    private static VulkanMeshDrawViewSnapshot? s_cachedSnapshot;
+    private static VulkanMeshDrawViewSnapshotCacheKey[]? s_cacheKeys;
     [ThreadStatic]
-    private static ulong s_cachedRenderFrameId;
+    private static VulkanMeshDrawViewSnapshot?[]? s_cacheSnapshots;
     [ThreadStatic]
-    private static ulong s_cachedRecordingFingerprint;
-    [ThreadStatic]
-    private static ulong s_cachedScopedBindingRevision;
-    [ThreadStatic]
-    private static XRRenderPipelineInstance? s_cachedPipeline;
-    [ThreadStatic]
-    private static XRCamera? s_cachedCamera;
-    [ThreadStatic]
-    private static XRCamera? s_cachedRightEyeCamera;
-    [ThreadStatic]
-    private static XRFrameBuffer? s_cachedTarget;
-    [ThreadStatic]
-    private static int s_cachedPassIndex;
-    [ThreadStatic]
-    private static int s_cachedRenderAreaWidth;
-    [ThreadStatic]
-    private static int s_cachedRenderAreaHeight;
-    [ThreadStatic]
-    private static int s_cachedDescriptorViewFamilyIdentity;
-    [ThreadStatic]
-    private static bool s_cachedIsStereoPass;
-    [ThreadStatic]
-    private static bool s_cachedUseUnjitteredProjection;
-    [ThreadStatic]
-    private static bool s_cachedIsShadowPass;
-    [ThreadStatic]
-    private static bool s_cachedDirectionalLayeredShadowPass;
-    [ThreadStatic]
-    private static bool s_cachedDirectionalInstancedLayeredShadowPass;
-    [ThreadStatic]
-    private static bool s_cachedDirectionalAtlasGroupedShadowPass;
-    [ThreadStatic]
-    private static int s_cachedDirectionalShadowLayerCount;
-    [ThreadStatic]
-    private static bool s_cachedPointLayeredShadowPass;
-    [ThreadStatic]
-    private static bool s_cachedPointInstancedLayeredShadowPass;
-    [ThreadStatic]
-    private static bool s_cachedPointAtlasGroupedShadowPass;
-    [ThreadStatic]
-    private static int s_cachedPointShadowFaceCount;
+    private static int s_cacheNext;
 
     private VulkanMeshDrawViewSnapshot(
         ulong packetId,
@@ -213,44 +179,32 @@ internal sealed class VulkanMeshDrawViewSnapshot
             renderAreaHeight = (int)producer.TargetExtent.Height;
         }
 
-        if (s_cachedSnapshot is not null &&
-            s_cachedRenderFrameId == renderFrameId &&
-            s_cachedRecordingFingerprint ==
-                producer.Context.RecordingFingerprint &&
-            s_cachedScopedBindingRevision == scopedBindingRevision &&
-            ReferenceEquals(s_cachedPipeline, pipeline) &&
-            ReferenceEquals(s_cachedCamera, camera) &&
-            ReferenceEquals(s_cachedRightEyeCamera, rightEyeCamera) &&
-            ReferenceEquals(s_cachedTarget, target) &&
-            s_cachedPassIndex == passIndex &&
-            s_cachedRenderAreaWidth == renderAreaWidth &&
-            s_cachedRenderAreaHeight == renderAreaHeight &&
-            s_cachedDescriptorViewFamilyIdentity ==
-                descriptorViewFamilyIdentity &&
-            s_cachedIsStereoPass == isStereoPass &&
-            s_cachedUseUnjitteredProjection ==
-                useUnjitteredProjection &&
-            s_cachedIsShadowPass == shadowUniformState.IsShadowPass &&
-            s_cachedDirectionalLayeredShadowPass ==
-                shadowUniformState.DirectionalCascadeLayeredShadowPass &&
-            s_cachedDirectionalInstancedLayeredShadowPass ==
-                shadowUniformState
-                    .DirectionalCascadeInstancedLayeredShadowPass &&
-            s_cachedDirectionalAtlasGroupedShadowPass ==
-                shadowUniformState
-                    .DirectionalCascadeAtlasGroupedShadowPass &&
-            s_cachedDirectionalShadowLayerCount ==
-                shadowUniformState.DirectionalCascadeShadowLayerCount &&
-            s_cachedPointLayeredShadowPass ==
-                shadowUniformState.PointLightLayeredShadowPass &&
-            s_cachedPointInstancedLayeredShadowPass ==
-                shadowUniformState.PointLightInstancedLayeredShadowPass &&
-            s_cachedPointAtlasGroupedShadowPass ==
-                shadowUniformState.PointLightAtlasGroupedShadowPass &&
-            s_cachedPointShadowFaceCount ==
-                shadowUniformState.PointLightShadowFaceCount)
+        // The snapshot reads camera, render-area and layered shadow state only.
+        // Per-draw scoped bindings change ScopedBindingRevision for almost every
+        // draw, so the key uses the layered shadow revision.
+        ulong layeredShadowRevision = RuntimeEngine.Rendering.State
+            .RenderingPipelineState?.LayeredShadowRevision ?? 0UL;
+        VulkanMeshDrawViewSnapshotCacheKey cacheKey = new(
+            renderFrameId,
+            layeredShadowRevision,
+            pipeline,
+            camera,
+            rightEyeCamera,
+            renderAreaWidth,
+            renderAreaHeight,
+            descriptorViewFamilyIdentity,
+            isStereoPass,
+            useUnjitteredProjection,
+            in shadowUniformState);
+        VulkanMeshDrawViewSnapshotCacheKey[] cacheKeys = s_cacheKeys ??= new VulkanMeshDrawViewSnapshotCacheKey[CacheCapacity];
+        VulkanMeshDrawViewSnapshot?[] cacheSnapshots = s_cacheSnapshots ??= new VulkanMeshDrawViewSnapshot?[CacheCapacity];
+        for (int index = 0; index < CacheCapacity; index++)
         {
-            return s_cachedSnapshot;
+            if (cacheSnapshots[index] is { } cachedSnapshot &&
+                cacheKeys[index].Matches(in cacheKey))
+            {
+                return cachedSnapshot;
+            }
         }
 
         Matrix4x4 viewMatrix =
@@ -421,39 +375,12 @@ internal sealed class VulkanMeshDrawViewSnapshot
             renderAreaHeight,
             descriptorViewFamilyIdentity,
             shadowUniformState);
-        s_cachedSnapshot = snapshot;
-        s_cachedRenderFrameId = renderFrameId;
-        s_cachedRecordingFingerprint =
-            producer.Context.RecordingFingerprint;
-        s_cachedScopedBindingRevision = scopedBindingRevision;
-        s_cachedPipeline = pipeline;
-        s_cachedCamera = camera;
-        s_cachedRightEyeCamera = rightEyeCamera;
-        s_cachedTarget = target;
-        s_cachedPassIndex = passIndex;
-        s_cachedRenderAreaWidth = renderAreaWidth;
-        s_cachedRenderAreaHeight = renderAreaHeight;
-        s_cachedDescriptorViewFamilyIdentity =
-            descriptorViewFamilyIdentity;
-        s_cachedIsStereoPass = isStereoPass;
-        s_cachedUseUnjitteredProjection = useUnjitteredProjection;
-        s_cachedIsShadowPass = shadowUniformState.IsShadowPass;
-        s_cachedDirectionalLayeredShadowPass = shadowUniformState
-            .DirectionalCascadeLayeredShadowPass;
-        s_cachedDirectionalInstancedLayeredShadowPass = shadowUniformState
-            .DirectionalCascadeInstancedLayeredShadowPass;
-        s_cachedDirectionalAtlasGroupedShadowPass = shadowUniformState
-            .DirectionalCascadeAtlasGroupedShadowPass;
-        s_cachedDirectionalShadowLayerCount =
-            shadowUniformState.DirectionalCascadeShadowLayerCount;
-        s_cachedPointLayeredShadowPass =
-            shadowUniformState.PointLightLayeredShadowPass;
-        s_cachedPointInstancedLayeredShadowPass =
-            shadowUniformState.PointLightInstancedLayeredShadowPass;
-        s_cachedPointAtlasGroupedShadowPass =
-            shadowUniformState.PointLightAtlasGroupedShadowPass;
-        s_cachedPointShadowFaceCount =
-            shadowUniformState.PointLightShadowFaceCount;
+        // Replace the oldest entry. Entries from earlier render frames never
+        // match, because the key holds the render-frame id.
+        int slot = s_cacheNext;
+        s_cacheNext = slot + 1 == CacheCapacity ? 0 : slot + 1;
+        cacheKeys[slot] = cacheKey;
+        cacheSnapshots[slot] = snapshot;
         return snapshot;
     }
 

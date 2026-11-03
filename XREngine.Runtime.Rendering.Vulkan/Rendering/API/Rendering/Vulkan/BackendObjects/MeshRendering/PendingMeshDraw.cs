@@ -19,8 +19,8 @@ internal readonly record struct PendingMeshDraw(
     bool DepthWriteEnabled,
     CompareOp DepthCompareOp,
     bool StencilTestEnabled,
-    StencilOpState FrontStencilState,
-    StencilOpState BackStencilState,
+    VulkanStencilFaceState FrontStencilState,
+    VulkanStencilFaceState BackStencilState,
     uint StencilWriteMask,
     ColorComponentFlags ColorWriteMask,
     CullModeFlags CullMode,
@@ -48,6 +48,9 @@ internal readonly record struct PendingMeshDraw(
     AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
+    /// <summary>An empty draw that a by-reference reader can point to when an operation has no draw.</summary>
+    internal static readonly PendingMeshDraw Empty;
+
     internal Vector4 SourceFlatDirection { get; init; }
     internal RenderCaptureOwnerToken? CaptureOwnerToken { get; init; }
     internal EPrimitiveType IndirectTopology { get; init; } = EPrimitiveType.Triangles;

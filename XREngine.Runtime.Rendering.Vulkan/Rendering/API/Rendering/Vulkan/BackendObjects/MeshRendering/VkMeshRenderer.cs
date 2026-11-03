@@ -1275,6 +1275,33 @@ internal unsafe partial class VkMeshRenderer(
         return true;
     }
 
+    private static readonly bool s_nameFallbackCallbacks =
+        XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanBindingFallbackCallbackNames);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> s_loggedFallbackCallbacks = new();
+
+    /// <summary>
+    /// Names the callbacks behind a callback fallback, when the diagnostic switch is on.
+    /// Each distinct description is also written once to
+    /// <c>binding-fallback-callbacks.log</c>, because the profiler samples keep only one frame.
+    /// </summary>
+    private string? DescribeFallbackCallbacks(
+        EVulkanProgramBindingArtifactFallbackReason reason,
+        XRMaterial material)
+    {
+        string? description = reason switch
+        {
+            EVulkanProgramBindingArtifactFallbackReason.MaterialCallback =>
+                $"material {material.GetType().Name} '{material.Name}' handlers: {material.DescribeSettingUniformsHandlers()}",
+            EVulkanProgramBindingArtifactFallbackReason.RendererCallback =>
+                $"renderer {MeshRenderer.Name}",
+            _ => null,
+        };
+        if (description is not null && s_loggedFallbackCallbacks.TryAdd(description, 0))
+            Debug.WriteAuxiliaryLog("binding-fallback-callbacks.log", $"{reason}: {description}");
+        return description;
+    }
+
     private ComputeDispatchSnapshot? CaptureProgramBindingSnapshot(
         XRMaterial material,
         in LayeredShadowUniformState shadowUniformState,
@@ -1476,7 +1503,9 @@ internal unsafe partial class VkMeshRenderer(
                     MeshRenderer.Mesh?.Name,
                     material.Name,
                     programData.Name,
-                    publisherStateFailureDetail);
+                    s_nameFallbackCallbacks
+                        ? DescribeFallbackCallbacks(artifactFallbackReason, material) ?? publisherStateFailureDetail
+                        : publisherStateFailureDetail);
         }
 
         // The frame cache key includes ScopedBindingRevision. Layered-shadow

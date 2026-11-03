@@ -403,8 +403,7 @@ internal static class VulkanFrameOperationSemantics
         switch (op)
         {
             case MeshDrawOp meshDraw:
-                PendingMeshDraw draw = meshDraw.Draw;
-                PublishMeshDrawStats(meshDraw.PassIndex, in draw);
+                PublishMeshDrawStats(meshDraw.PassIndex, in meshDraw.DrawRef);
                 break;
             case IndirectDrawOp indirectDraw:
                 PublishFrameDrawStats(new VulkanFrameDrawStats(
@@ -426,7 +425,7 @@ internal static class VulkanFrameOperationSemantics
         in PendingMeshDraw draw)
     {
         if (passIndex != int.MinValue)
-            PublishFrameDrawStats(draw.Renderer.EstimateFrameDrawStats(draw));
+            PublishFrameDrawStats(draw.Renderer.EstimateFrameDrawStats(in draw));
     }
 
     private static void PublishFrameDrawStats(VulkanFrameDrawStats stats)
