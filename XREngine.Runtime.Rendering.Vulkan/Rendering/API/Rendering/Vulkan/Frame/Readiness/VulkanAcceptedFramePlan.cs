@@ -920,15 +920,18 @@ internal sealed class VulkanAcceptedFramePlan
                 EVulkanAcceptedFrameLane.Ui,
                 _dynamicUiOperations.Length,
                 dynamicUiOperations.Length);
-        dynamicUiOperations.CopyTo(_dynamicUiOperations);
-        DynamicUiOperationCount = dynamicUiOperations.Length;
-
         if (textureUploadOperations.Length > _textureUploadOperations.Length)
             throw new VulkanAcceptedFramePlanCapacityException(
                 EVulkanAcceptedFrameLane.Upload,
                 _textureUploadOperations.Length,
                 textureUploadOperations.Length);
 
+        UnpinCapturedOperations();
+        PinOperations(staticOperations);
+        PinOperations(dynamicUiOperations);
+        PinOperations(textureUploadOperations);
+        dynamicUiOperations.CopyTo(_dynamicUiOperations);
+        DynamicUiOperationCount = dynamicUiOperations.Length;
             staticOperations.CopyTo(_staticOperations);
             StaticOperationCount = staticOperations.Length;
             TerminalOperationCount = terminalOperationCount;
@@ -1600,6 +1603,34 @@ internal sealed class VulkanAcceptedFramePlan
     }
 
     /// <summary>
+    /// Pins the visibility operations that this plan references. Lowering releases
+    /// their input leases before this plan drops them, and the plan can release them
+    /// again later. The pin keeps the workspace from giving such an operation a new
+    /// lease until then, so that late release cannot drop another frame's lease.
+    /// </summary>
+    private static void PinOperations(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations[index] is AdvancedVisibilityOp visibility)
+                visibility.PinForAcceptedPlan();
+    }
+
+    private static void UnpinOperations(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations[index] is AdvancedVisibilityOp visibility)
+                visibility.UnpinFromAcceptedPlan();
+    }
+
+    /// <summary>Ends the pins of every captured operation that the plan still references.</summary>
+    private void UnpinCapturedOperations()
+    {
+        UnpinOperations(_staticOperations.AsSpan(0, StaticOperationCount));
+        UnpinOperations(_dynamicUiOperations.AsSpan(0, DynamicUiOperationCount));
+        UnpinOperations(_textureUploadOperations.AsSpan(0, TextureUploadOperationCount));
+    }
+
+    /// <summary>
     /// Drops the references to the accepted static, dynamic-UI and texture-upload
     /// operations without releasing them. A split worker frame releases their
     /// visibility input leases itself after the worker recorded them; the workspace
@@ -1608,6 +1639,7 @@ internal sealed class VulkanAcceptedFramePlan
     /// </summary>
     internal void DetachReleasedOperations()
     {
+        UnpinCapturedOperations();
         _staticOperations.AsSpan(0, StaticOperationCount).Clear();
         _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
         _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();
@@ -1663,6 +1695,7 @@ internal sealed class VulkanAcceptedFramePlan
             _textureUploadOperations.AsSpan(
                 0,
                 TextureUploadOperationCount));
+        UnpinCapturedOperations();
         _staticOperations.AsSpan(0, StaticOperationCount).Clear();
         _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
         _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();

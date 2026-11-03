@@ -132,6 +132,59 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            string.Equals(AmbientOcclusionTargetName, other.AmbientOcclusionTargetName, StringComparison.Ordinal) &&
            string.Equals(CurrentDepthPyramidTargetName, other.CurrentDepthPyramidTargetName, StringComparison.Ordinal);
 
+    /// <summary>
+    /// Names the first family field that differs from <paramref name="other"/>,
+    /// for a rejected-family diagnostic. Returns "none" for a matching family.
+    /// </summary>
+    internal string DescribeFamilyMismatch(in VulkanAdvancedVisibilityStageRequest other)
+    {
+        if (!Reservation.Equals(other.Reservation))
+            return $"Reservation ({Reservation} vs {other.Reservation})";
+        if (RequireNativeOutput != other.RequireNativeOutput)
+            return nameof(RequireNativeOutput);
+        if (EnableBuiltInAmbientOcclusion != other.EnableBuiltInAmbientOcclusion)
+            return nameof(EnableBuiltInAmbientOcclusion);
+        if (EnableLightProbesAndIbl != other.EnableLightProbesAndIbl)
+            return nameof(EnableLightProbesAndIbl);
+        if (RequiresMaterialSurfaceExports != other.RequiresMaterialSurfaceExports)
+            return nameof(RequiresMaterialSurfaceExports);
+        if (SuppressBaselineDiffuse != other.SuppressBaselineDiffuse)
+            return nameof(SuppressBaselineDiffuse);
+        if (AmbientOcclusionMultiBounce != other.AmbientOcclusionMultiBounce)
+            return nameof(AmbientOcclusionMultiBounce);
+        if (AmbientOcclusionSpecularUsesVisibility != other.AmbientOcclusionSpecularUsesVisibility)
+            return nameof(AmbientOcclusionSpecularUsesVisibility);
+        if (MsaaSampleCount != other.MsaaSampleCount)
+            return $"{nameof(MsaaSampleCount)} ({MsaaSampleCount} vs {other.MsaaSampleCount})";
+        if (HasAuthoredBackground != other.HasAuthoredBackground)
+            return nameof(HasAuthoredBackground);
+        if (IsMinimalVisibilityOutput != other.IsMinimalVisibilityOutput)
+            return nameof(IsMinimalVisibilityOutput);
+        if (ShadingDebugView != other.ShadingDebugView)
+            return nameof(ShadingDebugView);
+        if (!BackendPackage.Equals(other.BackendPackage))
+            return nameof(BackendPackage);
+        if (!Publication.Equals(other.Publication))
+            return $"{nameof(Publication)} ({Publication} vs {other.Publication})";
+        if (VisibilityContentGeneration != other.VisibilityContentGeneration)
+            return $"{nameof(VisibilityContentGeneration)} ({VisibilityContentGeneration} vs {other.VisibilityContentGeneration})";
+        if (!ReferenceEquals(Extractor, other.Extractor))
+            return nameof(Extractor);
+        if (RenderFrameId != other.RenderFrameId)
+            return $"{nameof(RenderFrameId)} ({RenderFrameId} vs {other.RenderFrameId})";
+        if (!Views.Equals(other.Views))
+            return nameof(Views);
+        if (BitConverter.SingleToUInt32Bits(RenderTimeSeconds) != BitConverter.SingleToUInt32Bits(other.RenderTimeSeconds))
+            return $"{nameof(RenderTimeSeconds)} ({RenderTimeSeconds} vs {other.RenderTimeSeconds})";
+        if (!MatchesVisibilityTargets(in other))
+            return $"visibility targets (stage {Stage}/{Phase} vs {other.Stage}/{other.Phase})";
+        if (!string.Equals(AmbientOcclusionTargetName, other.AmbientOcclusionTargetName, StringComparison.Ordinal))
+            return nameof(AmbientOcclusionTargetName);
+        if (!string.Equals(CurrentDepthPyramidTargetName, other.CurrentDepthPyramidTargetName, StringComparison.Ordinal))
+            return nameof(CurrentDepthPyramidTargetName);
+        return "none";
+    }
+
     private bool MatchesVisibilityTargets(in VulkanAdvancedVisibilityStageRequest other)
     {
         // The directional shadow lane targets a light-owned atlas page; it shares

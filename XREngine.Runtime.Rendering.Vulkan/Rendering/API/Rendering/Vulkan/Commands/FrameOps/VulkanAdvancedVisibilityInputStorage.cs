@@ -282,7 +282,8 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         {
             _copyTelemetry?.RecordRejectedCopy();
             throw new VulkanPlanPreconditionException(
-                "The advanced visibility authoring lease does not match the frame-operation family.");
+                "The advanced visibility authoring lease does not match the frame-operation family: " +
+                authoringInput.DescribeRequestMismatch(in request) + ".");
         }
 
         ReadOnlySpan<AdvancedVisibilityPayload> payloads =
@@ -378,6 +379,27 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
            Publication.Equals(request.Publication) &&
            Publication.VisibilityContentGeneration ==
                request.VisibilityContentGeneration;
+
+    /// <summary>
+    /// Names the first reason that <see cref="MatchesRequest"/> rejects
+    /// <paramref name="request"/>, for a rejected-family diagnostic.
+    /// </summary>
+    internal string DescribeRequestMismatch(
+        in VulkanAdvancedVisibilityStageRequest request)
+    {
+        if (!_captured)
+            return "the authoring input holds no captured family";
+        if (!IsValid)
+            return $"the authoring input is not valid (publication={Publication} payloads={_payloadCount} " +
+                $"indirectPayloads={Indirect.PayloadCount} ranges={Indirect.RangeCount}/{_indirectRangeCount} " +
+                $"deformationFrame={DeformationPublication.FrameId})";
+        string familyMismatch = _familyRequest.DescribeFamilyMismatch(in request);
+        if (familyMismatch != "none")
+            return $"the family differs in {familyMismatch}";
+        if (!Publication.Equals(request.Publication))
+            return $"the retained publication {Publication} differs from the request publication {request.Publication}";
+        return $"the retained content generation {Publication.VisibilityContentGeneration} differs from the request generation {request.VisibilityContentGeneration}";
+    }
 
     internal bool MatchesPublication(
         in AdvancedPreparationPublication publication,
