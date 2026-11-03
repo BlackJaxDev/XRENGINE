@@ -37,6 +37,7 @@ namespace XREngine
         private float _fixedFramesPerSecond = 90.0f;
         private float? _targetFramesPerSecond = 90.0f;
         private float? _unfocusedTargetFramesPerSecond = null;
+        private float? _vrTargetFramesPerSecond = null;
         private bool _runVRInPlace = true;
         private bool _gpuRenderDispatch = false;
         private bool _runWithoutWindows;
@@ -333,6 +334,18 @@ namespace XREngine
         {
             get => _unfocusedTargetFramesPerSecond;
             set => SetField(ref _unfocusedTargetFramesPerSecond, value);
+        }
+
+        /// <summary>
+        /// Gets or sets the engine render limit while a VR runtime owns presentation.
+        /// Null removes the engine limit. The VR runtime still paces each frame to the headset display.
+        /// </summary>
+        [Category("Time")]
+        [Description("Target render frames per second while in VR. Null removes the engine limit; the VR runtime still paces frames to the headset refresh rate.")]
+        public float? VrTargetFramesPerSecond
+        {
+            get => _vrTargetFramesPerSecond;
+            set => SetField(ref _vrTargetFramesPerSecond, value);
         }
 
         [Category("Time")]

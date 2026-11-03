@@ -897,6 +897,7 @@ namespace XREngine.Editor.Mcp
                         collect_frustum_expansion_degrees = JsonFinite(VrStats.VrXrCollectFrustumExpansionDegrees),
                         pacing_thread_idle_ms = JsonFinite(VrStats.VrXrPacingThreadIdleTimeMs),
                         pacing_handoff_stalls = VrStats.VrXrPacingHandoffStalls,
+                        headroom = BuildVrHeadroomStats(),
                     },
                     vulkan = new
                     {

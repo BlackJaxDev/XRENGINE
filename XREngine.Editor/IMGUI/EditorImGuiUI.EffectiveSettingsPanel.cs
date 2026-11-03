@@ -269,6 +269,7 @@ public static partial class EditorImGuiUI
             nameof(Engine.EffectiveSettings.GPURenderDispatch) => Engine.PersistentGameSettings is null ? "Built-in Default" : "Game Settings",
             nameof(Engine.EffectiveSettings.TargetUpdatesPerSecond) => Engine.PersistentGameSettings is null ? "No Project Value" : "Game Settings",
             nameof(Engine.EffectiveSettings.TargetFramesPerSecond) => Engine.PersistentGameSettings is null ? "No Project Value" : "Game Settings",
+            nameof(Engine.EffectiveSettings.VrTargetFramesPerSecond) => Engine.PersistentGameSettings is null ? "No Project Value" : "Game Settings",
             nameof(Engine.EffectiveSettings.FixedFramesPerSecond) => Engine.PersistentGameSettings is null ? "Built-in Default" : "Game Settings",
             nameof(Engine.EffectiveSettings.UnfocusedTargetFramesPerSecond) => ResolveUnfocusedTargetFrameSource(),
             _ when IsUserPrimaryEffectiveSetting(settingName) && HasReadableProperty(Engine.UserSettings, settingName) => "User Settings",

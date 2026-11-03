@@ -219,6 +219,19 @@ namespace XREngine
                     _unfocusedTargetFramesPerSecondOverride.SetOverride(value.Value);
             }
         }
+        [Category("Performance")]
+        [Description("Optional target FPS while in VR. Null uses the project value; the VR runtime still paces frames to the headset refresh rate.")]
+        public float? VrTargetFramesPerSecond
+        {
+            get => _vrTargetFramesPerSecondOverride.HasOverride ? _vrTargetFramesPerSecondOverride.Value : null;
+            set
+            {
+                if (value is null)
+                    _vrTargetFramesPerSecondOverride.ClearOverride();
+                else
+                    _vrTargetFramesPerSecondOverride.SetOverride(value.Value);
+            }
+        }
         [Category("Quality")]
         [Description("Preferred global illumination mode.")]
         public EGlobalIlluminationMode GlobalIlluminationMode
@@ -278,6 +291,7 @@ namespace XREngine
         private OverrideableSetting<float> _fixedFramesPerSecondOverride = new();
         private OverrideableSetting<float> _targetFramesPerSecondOverride = new();
         private OverrideableSetting<float> _unfocusedTargetFramesPerSecondOverride = new();
+        private OverrideableSetting<float> _vrTargetFramesPerSecondOverride = new();
 
         /// <summary>
         /// User override for the number of job worker threads.
@@ -656,6 +670,19 @@ namespace XREngine
         {
             get => _unfocusedTargetFramesPerSecondOverride;
             set => SetField(ref _unfocusedTargetFramesPerSecondOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for the render limit while in VR.
+        /// Takes precedence over the project setting when HasOverride is true.
+        /// An override value below 1 removes the engine limit.
+        /// </summary>
+        [Category("Performance Overrides")]
+        [Description("User override for target FPS while in VR. A value of 0 removes the engine limit.")]
+        public OverrideableSetting<float> VrTargetFramesPerSecondOverride
+        {
+            get => _vrTargetFramesPerSecondOverride;
+            set => SetField(ref _vrTargetFramesPerSecondOverride, value ?? new());
         }
 
         #endregion

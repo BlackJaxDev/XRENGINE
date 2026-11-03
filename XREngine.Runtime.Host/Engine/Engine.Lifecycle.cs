@@ -164,6 +164,9 @@ namespace XREngine
 
                 // Start the engine timer for update/render ticks
                 Time.Initialize(GameSettings, EffectiveUserSettings);
+                // VR uses its own render limit. Re-resolve it when a VR runtime starts or stops.
+                RuntimeEngine.VRState.IsInVRChanged -= OnVrPresenceChanged;
+                RuntimeEngine.VRState.IsInVRChanged += OnVrPresenceChanged;
 
                 // Initialize networking based on configuration
                 InitializeNetworking(startupSettings);

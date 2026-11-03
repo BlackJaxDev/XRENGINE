@@ -684,10 +684,12 @@ namespace XREngine
             h[nameof(UserSettings.TargetUpdatesPerSecondOverride)] = applyTimer;
             h[nameof(UserSettings.TargetFramesPerSecondOverride)] = applyTimer;
             h[nameof(UserSettings.UnfocusedTargetFramesPerSecondOverride)] = applyTimer;
+            h[nameof(UserSettings.VrTargetFramesPerSecondOverride)] = applyTimer;
             h[nameof(UserSettings.FixedFramesPerSecondOverride)] = applyTimer;
             h[nameof(GameStartupSettings.TargetUpdatesPerSecond)] = applyTimer;
             h[nameof(GameStartupSettings.TargetFramesPerSecond)] = applyTimer;
             h[nameof(GameStartupSettings.UnfocusedTargetFramesPerSecond)] = applyTimer;
+            h[nameof(GameStartupSettings.VrTargetFramesPerSecond)] = applyTimer;
             h[nameof(GameStartupSettings.FixedFramesPerSecond)] = applyTimer;
 
             // ── Audio ──
@@ -850,6 +852,22 @@ namespace XREngine
 
             if (_settingsPropertyHandlers.TryGetValue(propertyName, out var handler))
                 handler();
+        }
+
+        /// <summary>
+        /// Switches the engine render limit between the desktop and VR settings when a VR runtime starts or stops.
+        /// This can run on any thread, so it changes only the timer render frequency and does not touch windows.
+        /// </summary>
+        private static void OnVrPresenceChanged(bool isInVR)
+        {
+            float targetRenderFrequency = Time.ResolveRenderFrequency(LastFocusState, EffectiveSettings.VSync);
+            Time.Timer.TargetRenderFrequency = targetRenderFrequency;
+            Debug.Out(
+                targetRenderFrequency > 0.0f
+                    ? $"{(isInVR ? "VR" : "Desktop")} render limit set to {targetRenderFrequency}Hz."
+                    : isInVR
+                        ? "VR render limit removed. The VR runtime paces frames to the headset display."
+                        : "Desktop render limit removed.");
         }
 
         /// <summary>

@@ -18,6 +18,38 @@ VR can run in local, client, or server-oriented modes depending on whether track
 - Add a humanoid or VR player rig only after headset/controller poses are visible.
 - Watch frame timing closely; VR work should target stable low-latency rendering.
 
+## Frame Rate Limit
+
+`VrTargetFramesPerSecond` sets the engine render limit while a VR runtime owns
+presentation. It is in the project startup settings, and `UserSettings` has an
+override. The default is null, which removes the engine limit. A value below 1
+also removes the limit. While VR is active, this setting replaces the desktop
+`TargetFramesPerSecond`, `UnfocusedTargetFramesPerSecond`, and VSync rules.
+The engine applies the change when a VR session starts or stops.
+
+The VR runtime always paces frames to the headset refresh rate through
+`xrWaitFrame` (OpenXR) or `WaitGetPoses` (OpenVR). Thus the presented VR rate
+cannot be higher than the headset refresh rate, even with no engine limit. To
+present more frames, set a higher refresh rate in the runtime. For SteamVR, open
+**Settings > Video** (or the headset-specific page) and select the refresh rate,
+for example 120 Hz or 144 Hz, then restart the VR session.
+
+To see how fast the engine could go without runtime pacing, read
+`vr.headroom` in the MCP `get_render_profiler_stats` result. It reports:
+
+- `engine_vr_limit_hz` and `active_timer_render_limit_hz`: the engine limit (0 is uncapped).
+- `runtime_display_refresh_hz`: the rate that the runtime paces to.
+- `unpaced_cpu_frame_ms`: the CPU time from the return of `xrWaitFrame` to the
+  end of `xrEndFrame`, over the last 128 frames. The runtime wait is not included.
+- `implied_unpaced_cpu_hz_median` and `implied_unpaced_cpu_hz_p95`: `1000 / unpaced_cpu_frame_ms`.
+- `cpu_headroom_ratio_median`: the implied rate divided by the display rate. A
+  value above 1 means that the CPU frame work fits in the display period.
+- `gpu`: GPU hints. Eye command buffers do not have resolved GPU timestamps yet,
+  so `eye_gpu_frame_ms` is null. A large `eye_completion_wait_ms` shows that the
+  CPU waits for eye GPU work.
+
+The implied rate does not include GPU work that finishes after `xrEndFrame`.
+
 ## Testing
 
 The Unit Testing World supports `VR.Mode = "Emulated"` for desktop stereo

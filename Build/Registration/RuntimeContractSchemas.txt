@@ -1,5 +1,5 @@
 # Stable ID | schema version | SHA-256 of generated public member shape.
-xre.settings.user|2|abf65151290c22eea63edfc6b23bef103c1e34ba8ad0ba1c96fee1bcef2c2413
+xre.settings.user|3|ea3789710ddf1aed9994597e5d7381a8a66bb7a4d684950f8ca8c76401958c5a
 xre.settings.build|1|72c0b7ff9cb73e3e8e335b183da4959914bf02eea92344f9211be4d714fc0677
 xre.animation.clip|2|c92b413957ccae9b2289a5faaceebc81212d62758fed55d2dacd759a017fa5ce
 xre.animation.blend-tree-1d|2|66a7ef3088ea6fe04c2b1a5f3190d76e97a8541555283d262809f3f23d576b0f
