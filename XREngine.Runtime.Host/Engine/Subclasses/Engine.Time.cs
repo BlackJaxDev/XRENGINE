@@ -84,8 +84,18 @@ namespace XREngine
                     EffectiveSettings.FixedFramesPerSecond,
                     EffectiveSettings.VSync);
 
+            /// <summary>
+            /// Resolves the engine render limit, in hertz. Zero removes the engine limit.
+            /// </summary>
+            /// <remarks>
+            /// While a VR runtime owns presentation, the VR limit replaces the desktop, unfocused, and VSync rules.
+            /// The VR runtime paces each frame to the headset display, so an engine limit there only adds a second cap.
+            /// </remarks>
             public static float ResolveRenderFrequency(bool focused, EVSyncMode vSync)
             {
+                if (RuntimeEngine.VRState.IsInVR)
+                    return ResolveVrRenderFrequency();
+
                 float? focusedTarget = EffectiveSettings.TargetFramesPerSecond;
                 if (!focused)
                 {
@@ -96,6 +106,14 @@ namespace XREngine
 
                 return ResolveConfiguredRenderFrequency(focusedTarget, vSync);
             }
+
+            /// <summary>
+            /// Resolves the engine render limit for VR, in hertz. Null and values below 1 remove the engine limit.
+            /// </summary>
+            public static float ResolveVrRenderFrequency()
+                => EffectiveSettings.VrTargetFramesPerSecond is float target && target >= 1.0f
+                    ? target
+                    : 0.0f;
 
             private static float ResolveConfiguredRenderFrequency(float? configuredTargetRenderFrequency, EVSyncMode vSync)
                 => vSync == EVSyncMode.Off

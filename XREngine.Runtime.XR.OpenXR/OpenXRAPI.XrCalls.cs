@@ -195,6 +195,7 @@ public unsafe partial class OpenXRAPI
 
         _frameState = frameState;
         Volatile.Write(ref _lastFramePeriodNanoseconds, frameState.PredictedDisplayPeriod);
+        RuntimeEngine.Rendering.Stats.VrHeadroom.RecordDisplayPeriod(frameState.PredictedDisplayPeriod);
         _smokePendingFrameTiming.PredictedDisplayTimeXr = frameState.PredictedDisplayTime;
         _smokePendingFrameTiming.PredictedDisplayPeriodXr = frameState.PredictedDisplayPeriod;
         _smokePendingFrameTiming.ShouldRender = frameState.ShouldRender;
@@ -382,8 +383,12 @@ public unsafe partial class OpenXRAPI
             result = (Result)binding.EndFrame(GraphicsBindingHost, frameEndInfo.LayerCount != 0);
             end = Stopwatch.GetTimestamp();
         }
-        Volatile.Write(ref _lastFrameWorkTicks, end - Volatile.Read(ref _lastFrameWakeTicks));
-        Volatile.Write(ref _frameWorkOpen, 0);
+        long frameWorkTicks = end - Volatile.Read(ref _lastFrameWakeTicks);
+        Volatile.Write(ref _lastFrameWorkTicks, frameWorkTicks);
+        // Record headroom only for a frame that a completed xrWaitFrame opened. The
+        // runtime does not pace this time, so it shows the rate the engine could reach.
+        if (Interlocked.Exchange(ref _frameWorkOpen, 0) != 0)
+            RuntimeEngine.Rendering.Stats.VrHeadroom.RecordCpuFrameWork(frameWorkTicks);
         result = CheckResult(result, "xrEndFrame");
         _smokePendingFrameTiming.EndEndQpc = end;
         _smokePendingFrameTiming.EndStartXrAvailable = TryConvertPerformanceCounterToXrTime(start, out long endStartXr);

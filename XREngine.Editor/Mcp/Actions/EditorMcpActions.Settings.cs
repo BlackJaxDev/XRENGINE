@@ -310,6 +310,7 @@ namespace XREngine.Editor.Mcp
                     fixedFramesPerSecond = Engine.GameSettings.FixedFramesPerSecond,
                     targetFramesPerSecond = Engine.GameSettings.TargetFramesPerSecond,
                     unfocusedTargetFPS = Engine.GameSettings.UnfocusedTargetFramesPerSecond,
+                    vrTargetFramesPerSecond = Engine.GameSettings.VrTargetFramesPerSecond,
                 };
             }
 
