@@ -1034,7 +1034,8 @@ internal sealed partial class VulkanFrameLoop
         ulong sourceFrameId = 0UL,
         bool requireCompleteCohort = false,
         bool allowFrameOwnedAuthoringOperations = false,
-        int requiredSourceOperationCount = -1)
+        int requiredSourceOperationCount = -1,
+        bool openXrEyeCohort = false)
     {
         VulkanPresentNowReadinessWatchdog inactiveWatchdog = default;
         return MaterializeQueuedMeshRenderRequestsCore(
@@ -1051,6 +1052,7 @@ internal sealed partial class VulkanFrameLoop
             sliceColdPreparation: false,
             allowFrameOwnedAuthoringOperations,
             requiredSourceOperationCount,
+            openXrEyeCohort,
             ref inactiveWatchdog);
     }
 
@@ -1078,6 +1080,7 @@ internal sealed partial class VulkanFrameLoop
             sliceColdPreparation: sliceColdPreparation,
             allowFrameOwnedAuthoringOperations,
             requiredSourceOperationCount: -1,
+            openXrEyeCohort: false,
             ref watchdog);
 
     private bool MaterializeQueuedMeshRenderRequestsCore(
@@ -1094,6 +1097,7 @@ internal sealed partial class VulkanFrameLoop
         bool sliceColdPreparation,
         bool allowFrameOwnedAuthoringOperations,
         int requiredSourceOperationCount,
+        bool openXrEyeCohort,
         ref VulkanPresentNowReadinessWatchdog watchdog)
     {
         deferredReason = string.Empty;
@@ -1117,11 +1121,13 @@ internal sealed partial class VulkanFrameLoop
         NormalizeQueuedMeshRenderRequests(requestCount);
         ApplyResidentTemplateProjectionDeltas(requestCount);
         InjectResidentTemplateDeviceLossIfRequested();
+        bool hasIndexedIndirect = false;
         for (int index = 0; index < requestCount; ++index)
         {
             if (_meshOperationRequestScratch[index].IndexedIndirect is not null)
             {
                 allowPreparedCohort = false;
+                hasIndexedIndirect = true;
                 break;
             }
         }
@@ -1170,6 +1176,22 @@ internal sealed partial class VulkanFrameLoop
                 out _),
             foregroundRequired,
             _telemetry);
+        VulkanPreparedMeshOperationCohort? openXrCohort =
+            openXrEyeCohort && !allowPreparedCohort && !hasIndexedIndirect
+                ? SelectOpenXrMeshOperationCohort(requestCount)
+                : null;
+        if (openXrCohort is not null &&
+            TryReuseOpenXrMeshOperationCohort(
+                openXrCohort,
+                requestCount,
+                in materializationSnapshot,
+                allowFrameOwnedAuthoringOperations))
+        {
+            VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
+            return true;
+        }
+
         bool preparedCohortMatched = false;
         bool stagedPreparedCohort = false;
         if (allowPreparedCohort)
@@ -1446,7 +1468,10 @@ internal sealed partial class VulkanFrameLoop
                 }
 
                 bool reusable = request.IndexedIndirect is null &&
-                    IsPreparedMeshOperationCohortEligible(in request, in operationRequest);
+                    IsPreparedMeshOperationCohortEligible(
+                        in request,
+                        in operationRequest,
+                        openXrEye: openXrCohort is not null);
                 if (reusable && enqueuedOperation is MeshDrawOp { PreserveSubmissionOrder: true })
                     reusable = false;
                 _meshOperationMaterializationScratch[requestIndex] =
@@ -1503,13 +1528,29 @@ internal sealed partial class VulkanFrameLoop
                 $"Requests={requestCount}, deferred={deferredRequestCount}, unavailable={unavailableRequestCount}, " +
                 $"quarantined={quarantinedRequestCount}, resume={resumeRequestIndex}. Detail: {deferredReason}";
 
-        if (allowPreparedCohort &&
+        bool cohortPublishable =
             cohortMaterializationComplete &&
             reusableCohortEntryCount > 0 &&
-            cohortResourceUseCount <= _preparedMeshIngress.ResourceUseCapacity &&
             deferredRequestCount == 0 &&
             unavailableRequestCount == 0 &&
-            quarantinedRequestCount == 0)
+            quarantinedRequestCount == 0;
+        if (openXrCohort is not null)
+        {
+            if (cohortPublishable)
+            {
+                openXrCohort.Publish(
+                    _meshOperationCohortEntryScratch.AsSpan(0, requestCount),
+                    _meshOperationMaterializationScratch.AsSpan(0, requestCount));
+                Interlocked.Increment(ref _openXrMeshCohortBuilds);
+            }
+            else
+            {
+                openXrCohort.Invalidate();
+            }
+        }
+        else if (allowPreparedCohort &&
+            cohortPublishable &&
+            cohortResourceUseCount <= _preparedMeshIngress.ResourceUseCapacity)
         {
             _preparedMeshOperationCohort.Publish(
                 _meshOperationCohortEntryScratch.AsSpan(0, requestCount),
@@ -2024,9 +2065,17 @@ internal sealed partial class VulkanFrameLoop
                 legacyHoleMaterializationCount);
     }
 
+    /// <summary>
+    /// Decides whether a materialized request may be kept as a cohort recipe.
+    /// The OpenXR eye cohort also accepts typed binding publishers and frame-source
+    /// samplers: every reuse reacquires the persistent binding artifact and requires
+    /// the same object, and that artifact is keyed by the publishers' generations,
+    /// while recording resolves frame-source descriptors live for each draw.
+    /// </summary>
     private bool IsPreparedMeshOperationCohortEligible(
         in VulkanMeshRenderRequest request,
-        in VulkanMeshOperationRequest operation)
+        in VulkanMeshOperationRequest operation,
+        bool openXrEye = false)
     {
         XRMaterial material = request.ResolvedMaterial.Material;
         VkRenderProgram? program = operation.Draw.PreparedProgram;
@@ -2034,7 +2083,7 @@ internal sealed partial class VulkanFrameLoop
             operation.Draw.ProgramBindingSnapshot;
         bool reusableBindings = bindings is null ||
             (bindings.IsImmutableBindingArtifact &&
-             !bindings.HasMutableFrameSourceSamplerBindings);
+             (openXrEye || !bindings.HasMutableFrameSourceSamplerBindings));
         return request.Pipeline is not null &&
                request.Renderer.IsActive &&
                request.Renderer.BackendContext.IsDeviceOperational &&
@@ -2054,8 +2103,9 @@ internal sealed partial class VulkanFrameLoop
                !request.Renderer.MeshRenderer.HasRenderDataPreparation &&
                !request.Renderer.MeshRenderer.HasSettingUniformsHandlers &&
                !material.HasSettingUniformsHandlers &&
-               material.BindingPublishers.Count == 0 &&
-               request.Renderer.MeshRenderer.BindingPublishers.Count == 0 &&
+               (openXrEye ||
+                (material.BindingPublishers.Count == 0 &&
+                 request.Renderer.MeshRenderer.BindingPublishers.Count == 0)) &&
                RuntimeEngine.Rendering.State.RenderingPipelineState
                    ?.HasActiveScopedBindings != true &&
                program is { IsActive: true, IsLinked: true } &&
@@ -2066,10 +2116,11 @@ internal sealed partial class VulkanFrameLoop
     private bool IsPreparedMeshOperationCohortMatch(
         in VulkanMeshRenderRequest current,
         in VulkanPreparedMeshOperationCohortEntry cached,
-        in VulkanMeshOperationRequest template)
+        in VulkanMeshOperationRequest template,
+        bool openXrEye = false)
     {
         if ((cached.IsReusable &&
-             !IsPreparedMeshOperationCohortEligible(in current, in template)) ||
+             !IsPreparedMeshOperationCohortEligible(in current, in template, openXrEye)) ||
             !ReferenceEquals(current.Renderer, cached.Renderer) ||
             current.PassIndex != cached.PassIndex ||
             !ReferenceEquals(current.Pipeline, cached.Pipeline) ||

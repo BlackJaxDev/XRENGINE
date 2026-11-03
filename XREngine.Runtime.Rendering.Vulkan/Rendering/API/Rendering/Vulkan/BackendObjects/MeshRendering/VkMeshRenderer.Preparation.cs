@@ -185,29 +185,72 @@ internal unsafe partial class VkMeshRenderer
 		return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("DeferredUntilRecording"), out reason);
 	}
 
+	/// <summary>
+	/// Reacquires the persistent binding artifact of a kept draw recipe. The renderer's
+	/// UDIM coverage publisher follows the program that was prepared last, which can be
+	/// another variant of this renderer, so the publisher is first brought to the state
+	/// that a full materialization with <paramref name="program"/> publishes.
+	/// </summary>
+	internal bool TryGetCurrentPersistentProgramBindingArtifactForReuse(
+		XRMaterial material,
+		VkRenderProgram program,
+		in LayeredShadowUniformState shadowUniformState,
+		out ComputeDispatchSnapshot? artifact)
+	{
+		artifact = null;
+		if (!_recordDrawSync.TryEnter())
+			return false;
+		try
+		{
+			XRMaterial coverageSource = material.ShadowBindingSourceMaterial ?? material;
+			bool required = NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(coverageSource);
+			bool reflected = ReflectsUdimTriangleCoverage(program);
+			if (required && !reflected)
+				return false;
+			MeshRenderer.EnterResourcePublicationLease();
+			try
+			{
+				if (!MeshRenderer.TryPrepareUdimTriangleCoverage(Mesh, material, reflected, out _))
+					return false;
+			}
+			finally
+			{
+				MeshRenderer.ExitResourcePublicationLease();
+			}
+		}
+		finally
+		{
+			_recordDrawSync.Exit();
+		}
+		return TryGetCurrentPersistentProgramBindingArtifact(material, program, in shadowUniformState, out artifact);
+	}
+
+	private static bool ReflectsUdimTriangleCoverage(VkRenderProgram? program)
+	{
+		if (program is null)
+			return false;
+		var bindings = program.DescriptorBindings;
+		for (int index = 0; index < bindings.Count; index++)
+		{
+			if (bindings[index].Set == 0u &&
+				bindings[index].Binding == XRMeshRenderer.UdimTriangleCoverageBinding &&
+				bindings[index].Name == "SourceUdimTriangleCoverage" &&
+				bindings[index].DescriptorType == Silk.NET.Vulkan.DescriptorType.StorageBuffer &&
+				bindings[index].Count == 1u &&
+				(bindings[index].StageFlags & Silk.NET.Vulkan.ShaderStageFlags.FragmentBit) != 0)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private bool TryPrepareUdimTriangleCoverageForProgram(
 		XRMaterial material,
 		bool required,
 		out string reason)
 	{
-		bool reflected = false;
-		if (_program is { } program)
-		{
-			var bindings = program.DescriptorBindings;
-			for (int index = 0; index < bindings.Count; index++)
-			{
-				if (bindings[index].Set == 0u &&
-					bindings[index].Binding == XRMeshRenderer.UdimTriangleCoverageBinding &&
-					bindings[index].Name == "SourceUdimTriangleCoverage" &&
-					bindings[index].DescriptorType == Silk.NET.Vulkan.DescriptorType.StorageBuffer &&
-					bindings[index].Count == 1u &&
-					(bindings[index].StageFlags & Silk.NET.Vulkan.ShaderStageFlags.FragmentBit) != 0)
-				{
-					reflected = true;
-					break;
-				}
-			}
-		}
+		bool reflected = ReflectsUdimTriangleCoverage(_program);
 		if (required && !reflected)
 			return SetPrepareResult(false, "UnsupportedVertexUdimProgram", "The active program has no source triangle UDIM coverage binding.", out reason);
 		bool prepared;
