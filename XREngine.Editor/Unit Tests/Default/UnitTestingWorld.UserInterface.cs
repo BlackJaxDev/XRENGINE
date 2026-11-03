@@ -578,6 +578,19 @@ public static partial class EditorUnitTests
         }
 
         /// <summary>
+        /// Returns the running totals behind the overlay output rates, for a timed external probe
+        /// such as MCP <c>invoke_method</c>. Two reads give the presented desktop rate and the
+        /// submitted OpenXR rate over the time between them.
+        /// </summary>
+        public static object CaptureOutputRateTotals()
+            => new
+            {
+                timestampSeconds = System.Diagnostics.Stopwatch.GetTimestamp() / (double)System.Diagnostics.Stopwatch.Frequency,
+                desktopPresentedTotal = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPresentAcceptedTotal,
+                xrSubmittedTotal = RuntimeEngine.VRState.OpenXRApi?.SmokeSubmittedFrameCount ?? 0L,
+            };
+
+        /// <summary>
         /// Updates the presented desktop rate and the submitted OpenXR rate from their running
         /// totals. The first call only stores the totals.
         /// </summary>
