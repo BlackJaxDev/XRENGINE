@@ -269,7 +269,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 new XElement("SelfContained", executable && selfContained ? "true" : "false"),
                 executable ? new XElement("RuntimeIdentifier", "win-x64") : null,
                 new XElement("BaseOutputPath", "Build"),
-                new XElement("ServerGarbageCollection", "false"),
+                new XElement("ServerGarbageCollection", "true"),
                 new XElement("ConcurrentGarbageCollection", "true"),
                 new XElement("GarbageCollectionAdaptationMode", "1"),
                 rendererBackendSelection is null ? null : new XElement("XREngineRendererBackends", rendererBackendSelection)
@@ -996,7 +996,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     new XElement("AssemblyName", assemblyName),
                     new XElement("RootNamespace", assemblyName.Replace('.', '_')),
                     new XElement("BaseOutputPath", "Build"),
-                    new XElement("ServerGarbageCollection", "false"),
+                    new XElement("ServerGarbageCollection", "true"),
                     new XElement("ConcurrentGarbageCollection", "true"),
                     new XElement("GarbageCollectionAdaptationMode", "1")
                 ),

@@ -108,6 +108,13 @@ public static partial class EditorUnitTests
         if (vrRenderingPrepared && s.RenderWindowsWhileInVR)
             s.VrMirrorMode = XREngine.Runtime.Bootstrap.BootstrapRenderSettings.ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow);
         s.VrCopyEyePreviewTextures = previewVrStereoViews;
+        if (Enum.TryParse(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
+                ignoreCase: true,
+                out EVrDesktopFrameExecutionMode desktopExecutionMode))
+        {
+            s.VrDesktopFrameExecutionMode = desktopExecutionMode;
+        }
 
         bool groupedRenderingSpecified = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
         if (groupedRenderingSpecified)

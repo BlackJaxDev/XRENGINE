@@ -348,6 +348,7 @@ For script-driven launches, these process-scoped overrides select the lane witho
 - `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`
 - `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0`
 - `XRE_UNIT_TEST_VR_MIRROR_MODE=BlitSubmittedEye|CyclopeanReconstruct|LowRatePreview|FullIndependentRender` selects the desktop view for a VR pawn. Desktop editing and stereo preview still use `FullIndependentRender`.
+- `XRE_UNIT_TEST_VR_DESKTOP_FRAME_EXECUTION_MODE=Inline|WorkerRecord|SeparateDomain` sets `VrDesktopFrameExecutionMode` for a recording desktop view. `WorkerRecord` needs at least two background render workers (`XRE_RENDER_WORKER_THREADS=2` or more; the default is 0) and otherwise fails every desktop frame with a logged reason; `SeparateDomain` holds the window until it is implemented.
 - `XRE_UNIT_TEST_OPENXR_RUNTIME_JSON=C:\path\to\openxr_monado.json`
 - `XRE_UNIT_TEST_VR_VIEW_RENDER_MODE=SequentialViews|SinglePassStereo|ParallelCommandBufferRecording`
 - `XRE_UNIT_TEST_VR_RENDER_PIPELINE=Default|Advanced|Rvc`

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine;
+using XREngine.Animation;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -425,8 +426,6 @@ public partial class PhysicsChainComponent : XRComponent
     {
         bool observeGpuPrepare = UseGPU && RuntimeWorldTickTelemetry.Enabled;
         long restPoseTicks = 0L;
-        long hierarchyTicks = 0L;
-        long particleReadTicks = 0L;
         _deltaTime = RuntimeTimingServices.Current.UpdateDeltaSeconds;
         switch (UpdateMode)
         {
@@ -493,50 +492,20 @@ public partial class PhysicsChainComponent : XRComponent
                 continue;
             }
 
-            // Restore rest-pose rotations before reading matrices. ApplyParticlesToTransforms()
-            // writes simulation rotation deltas back to the hierarchy each frame; without this
-            // reset the matrices we read below would include the previous frame's deformation,
-            // causing the rest reference to drift.
+            // The rest pose is composed from the initial local poses and is never written to the
+            // live bones. The collect thread publishes render matrices while this thread
+            // prepares and solves, so a rest pose in the live bones can render for one frame.
             long restPoseStart = observeGpuPrepare ? Stopwatch.GetTimestamp() : 0L;
-            InitTransforms(pt);
+            ReadRestPose(pt);
             if (observeGpuPrepare)
                 restPoseTicks += Stopwatch.GetTimestamp() - restPoseStart;
 
-            // Ensure we sample the current (post-InitTransforms / post-animation) pose.
-            // Without this, we can end up using stale world matrices from the prior frame,
-            // effectively allowing the simulated pose to slowly become the new "rest".
-            long hierarchyStart = RuntimeWorldTickTelemetry.Enabled
-                ? Stopwatch.GetTimestamp()
-                : 0L;
-            RefreshPreparedParticleTree(pt);
-            if (RuntimeWorldTickTelemetry.Enabled)
-            {
-                long hierarchyElapsed = Stopwatch.GetTimestamp() - hierarchyStart;
-                RuntimePhysicsChainRendering.Current.RecordHierarchyRecalculationTicks(hierarchyElapsed);
-                if (observeGpuPrepare)
-                    hierarchyTicks += hierarchyElapsed;
-            }
-
-            pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
             UpdateRootParentMotion(pt);
-
-            long particleReadStart = observeGpuPrepare ? Stopwatch.GetTimestamp() : 0L;
-            for (int j = 0; j < pt.Particles.Count; ++j)
-            {
-                Particle p = pt.Particles[j];
-                if (p.Transform is not null)
-                {
-                    p.TransformPosition = p.Transform.WorldTranslation;
-                    p.TransformLocalPosition = p.ParentIndex < 0 ? p.Transform.LocalTranslation : p.InitLocalPosition;
-                    p.TransformLocalToWorldMatrix = p.Transform.WorldMatrix;
-                }
-            }
-            if (observeGpuPrepare)
-                particleReadTicks += Stopwatch.GetTimestamp() - particleReadStart;
         }
 
+        // The rest-pose read composes matrices and reads no hierarchy, so it owns all of the time.
         if (observeGpuPrepare)
-            PhysicsChainWorld.RecordGpuPrepareDetails(restPoseTicks, hierarchyTicks, particleReadTicks);
+            PhysicsChainWorld.RecordGpuPrepareDetails(restPoseTicks, 0L, 0L);
 
         _effectiveColliders?.Clear();
 
@@ -1120,7 +1089,11 @@ public partial class PhysicsChainComponent : XRComponent
         }
     }
 
-    private static void RefreshPreparedParticleTree(ParticleTree pt)
+    /// <summary>
+    /// Reads the rest pose of each particle from its initial local pose and the current parent
+    /// world matrix. The root keeps its current local translation. No transform changes.
+    /// </summary>
+    private static void ReadRestPose(ParticleTree pt)
     {
         List<Particle> particles = pt.Particles;
         int particleCount = particles.Count;
@@ -1129,17 +1102,23 @@ public partial class PhysicsChainComponent : XRComponent
             Particle particle = particles[i];
             Transform? transform = particle.Transform;
             if (transform is null)
-            {
-                particle.PreparedWorldChanged = particle.ParentIndex >= 0
-                    && particle.ParentIndex < particleCount
-                    && particles[particle.ParentIndex].PreparedWorldChanged;
                 continue;
-            }
 
-            bool forceWorldRecalc = particle.ParentIndex >= 0
-                && particle.ParentIndex < particleCount
-                && particles[particle.ParentIndex].PreparedWorldChanged;
-            particle.PreparedWorldChanged = transform.RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow: false);
+            bool isRoot = particle.ParentIndex < 0 || particle.ParentIndex >= particleCount;
+            TransformState state = transform.FrameState;
+            Vector3 localTranslation = isRoot ? state.Translation : particle.InitLocalPosition;
+            // Particles are in parent-first order, so the parent rest matrix is ready.
+            Matrix4x4 parentWorld = !isRoot && particles[particle.ParentIndex].Transform is not null
+                ? particles[particle.ParentIndex].TransformLocalToWorldMatrix
+                : transform.Parent?.WorldMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 world = PhysicsChainRestTransformMatrix.Compose(
+                localTranslation, particle.InitLocalRotation, state.Scale, state.Order).ToMatrix4x4() * parentWorld;
+
+            particle.TransformPosition = world.Translation;
+            particle.TransformLocalPosition = localTranslation;
+            particle.TransformLocalToWorldMatrix = world;
+            if (i == 0)
+                pt.RestGravity = Vector3.TransformNormal(pt.LocalGravity, world);
         }
     }
 
@@ -1949,9 +1928,17 @@ public partial class PhysicsChainComponent : XRComponent
             return;
         }
 
+        // Each bone receives only its final local value, computed from its rest pose. A
+        // render-matrix publish on the collect thread can run at any time during this loop,
+        // so the loop never writes the rest pose itself to a bone.
         var particles = pt.Particles;
         using TransformHierarchyMutationBatch hierarchyBatch = pt.Root.BeginHierarchyMutationBatch();
         int particleCount = particles.Count;
+        // The loop below does not aim a bone without children, so it keeps its rest rotation.
+        for (int i = 0; i < particleCount; ++i)
+            if (particles[i] is { ChildCount: 0, Transform: { } leafTfm } leaf)
+                hierarchyBatch.SetLocalRotation(leafTfm, leaf.InitLocalRotation);
+
         for (int i = 1; i < particleCount; ++i)
         {
             Particle child = particles[i];
@@ -1969,40 +1956,56 @@ public partial class PhysicsChainComponent : XRComponent
             Vector3 parentPosition = ResolveFixedUpdateRenderPosition(parent.PreviousPhysicsPosition, parent.Position, mode, alpha) + pt.PresentationOffset;
             Vector3 childPosition = ResolveFixedUpdateRenderPosition(child.PreviousPhysicsPosition, child.Position, mode, alpha) + pt.PresentationOffset;
 
-            // The parent's own parent can have rotated earlier in this loop. The parent's world
-            // matrix must include that rotation before it defines the segment direction below
-            // and the child's world translation. A stale matrix bends the bones away from their
-            // particles and moves each child off its rest offset.
             if (pTfm is not null)
-                hierarchyBatch.RecalculateMatrices(pTfm, forceWorldRecalc: true);
-
-            if (parent.ChildCount <= 1 && pTfm is not null) // do not modify bone orientation if has more then one child
             {
-                Vector3 localPos = cTfm is not null
-                    ? child.InitLocalPosition
-                    : child.EndOffset;
+                // A bone with more than one child keeps its rest rotation.
+                Quaternion localRotation = parent.ChildCount <= 1
+                    ? AimRestRotation(pTfm, parent.InitLocalRotation,
+                        cTfm is not null ? child.InitLocalPosition : child.EndOffset,
+                        childPosition - parentPosition)
+                    : parent.InitLocalRotation;
+                hierarchyBatch.SetLocalRotation(pTfm, localRotation);
 
-                Vector3 v0 = pTfm.TransformDirection(localPos);
-                Vector3 v1 = childPosition - parentPosition;
-
-                // A zero-length segment has no direction, so it cannot define a parent rotation.
-                if (v0.LengthSquared() > MinimumSegmentDirectionLengthSquared &&
-                    v1.LengthSquared() > MinimumSegmentDirectionLengthSquared)
-                {
-                    Quaternion rot = Quaternion.Normalize(XRMath.RotationBetweenVectors(v0, v1));
-
-                    hierarchyBatch.AddWorldRotationDelta(pTfm, rot);
-                }
-
-                // Refresh the parent's world + inverse-world matrices so that the
-                // child's SetWorldTranslation (which uses ParentInverseWorldMatrix)
-                // computes the correct local translation.
-                hierarchyBatch.RecalculateMatrices(pTfm, forceWorldRecalc: false);
+                // The parent's own parent can have rotated earlier in this loop. The parent's
+                // world and inverse-world matrices must include that rotation and this one
+                // before the child's SetWorldTranslation, which uses ParentInverseWorldMatrix.
+                hierarchyBatch.RecalculateMatrices(pTfm, forceWorldRecalc: true);
             }
 
-            if (cTfm is not null && !(pinBranchChildren && parent.ChildCount > 1))
+            if (cTfm is null)
+                continue;
+            if (pinBranchChildren && parent.ChildCount > 1)
+                hierarchyBatch.SetLocalTranslation(cTfm, child.InitLocalPosition);
+            else
                 hierarchyBatch.SetWorldTranslation(cTfm, childPosition);
         }
+    }
+
+    /// <summary>
+    /// Returns the local rotation that turns a bone from its rest rotation so that its rest
+    /// segment direction points along <paramref name="segment"/>. The parent world matrix of
+    /// <paramref name="bone"/> must be current, and the local translation of the bone must be final.
+    /// </summary>
+    private static Quaternion AimRestRotation(Transform bone, Quaternion restLocalRotation,
+        Vector3 restSegmentLocal, Vector3 segment)
+    {
+        TransformState state = bone.FrameState;
+        Matrix4x4 restWorld = PhysicsChainRestTransformMatrix.Compose(
+            state.Translation, restLocalRotation, state.Scale, state.Order).ToMatrix4x4()
+            * (bone.Parent?.WorldMatrix ?? Matrix4x4.Identity);
+        Vector3 restSegment = Vector3.TransformNormal(restSegmentLocal, restWorld);
+
+        // A zero-length segment has no direction, so it cannot define a rotation.
+        if (restSegment.LengthSquared() <= MinimumSegmentDirectionLengthSquared ||
+            segment.LengthSquared() <= MinimumSegmentDirectionLengthSquared)
+            return restLocalRotation;
+
+        // The same world-to-local conversion as Transform.AddWorldRotationDelta, applied to the rest rotation.
+        Quaternion worldDelta = Quaternion.Normalize(XRMath.RotationBetweenVectors(restSegment, segment));
+        Quaternion parentWorldRotation = bone.ParentWorldRotation;
+        Quaternion localDelta = Quaternion.Normalize(
+            Quaternion.Inverse(parentWorldRotation) * worldDelta * parentWorldRotation);
+        return Quaternion.Normalize(localDelta * restLocalRotation);
     }
 
 }

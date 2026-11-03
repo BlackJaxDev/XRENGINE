@@ -373,6 +373,19 @@ namespace XREngine.Components.Scene.Mesh
                 return [.. LODs];
         }
 
+        /// <summary>
+        /// Appends the renderer of every LOD to <paramref name="destination"/>.
+        /// Per-frame callers reuse one list instead of a new LOD array.
+        /// </summary>
+        internal void AppendLodRenderers(List<XRMeshRenderer> destination)
+        {
+            lock (_lodsLock)
+            {
+                for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null; node = node.Next)
+                    destination.Add(node.Value.Renderer);
+            }
+        }
+
         internal XRMeshRenderer? GetCurrentOrFirstLodRenderer()
         {
             lock (_lodsLock)
