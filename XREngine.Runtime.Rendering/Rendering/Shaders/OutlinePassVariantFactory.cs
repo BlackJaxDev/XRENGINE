@@ -71,7 +71,7 @@ public static partial class OutlinePassVariantFactory
         // pass-specific generated fragment instead of restoring the base source.
         variant.Shaders = [monoVertex, ovrVertex, nvVertex, fragment];
 
-        variant.SettingUniforms += (_, program) => sourceMaterial.OnSettingUniforms(program);
+        sourceMaterial.ShareUniformSourcesWith(variant);
         return variant;
     }
 

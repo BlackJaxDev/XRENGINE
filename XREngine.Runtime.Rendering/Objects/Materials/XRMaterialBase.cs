@@ -30,9 +30,55 @@ namespace XREngine.Rendering
             set => SetField(ref _renderPass, value);
         }
 
-        public event Action<XRMaterialBase, XRRenderProgram>? SettingUniforms;
+        private Action<XRMaterialBase, XRRenderProgram>? _settingUniforms;
+
+        public event Action<XRMaterialBase, XRRenderProgram>? SettingUniforms
+        {
+            add
+            {
+                _settingUniforms += value;
+                OnSettingUniformsHandlersChanged();
+            }
+            remove
+            {
+                _settingUniforms -= value;
+                OnSettingUniformsHandlersChanged();
+            }
+        }
+
+        /// <summary>
+        /// Runs after a handler is added to or removed from <see cref="SettingUniforms"/>.
+        /// Derived materials use it to rebuild variants that copied the handler set.
+        /// </summary>
+        protected virtual void OnSettingUniformsHandlersChanged()
+        {
+        }
+
+        /// <summary>
+        /// Runs after a publisher is added to or removed from <see cref="BindingPublishers"/>.
+        /// Derived materials use it to rebuild variants that copied the publisher set.
+        /// </summary>
+        protected virtual void OnBindingPublishersChanged()
+        {
+        }
+
+        /// <summary>
+        /// Names the methods attached to <see cref="SettingUniforms"/>, for diagnostics
+        /// only. It allocates, so call it only when a diagnostic switch is on.
+        /// </summary>
+        internal string DescribeSettingUniformsHandlers()
+        {
+            if (_settingUniforms is null)
+                return "<none>";
+
+            Delegate[] handlers = _settingUniforms.GetInvocationList();
+            string[] names = new string[handlers.Length];
+            for (int i = 0; i < handlers.Length; i++)
+                names[i] = $"{handlers[i].Method.DeclaringType?.FullName}.{handlers[i].Method.Name}";
+            return string.Join(", ", names);
+        }
         public virtual void OnSettingUniforms(XRRenderProgram program)
-            => SettingUniforms?.Invoke(this, program);
+            => _settingUniforms?.Invoke(this, program);
 
         /// <summary>
         /// Uploads material-owned deformation inputs to the active vertex
@@ -44,19 +90,19 @@ namespace XREngine.Rendering
             => SettingVertexUniforms?.Invoke(program);
         public bool HasSettingVertexUniformHandlers => SettingVertexUniforms is not null;
         public bool HasSettingUniformsHandlers
-            => SettingUniforms is not null;
+            => _settingUniforms is not null;
 
         /// <summary>Checks one engine-owned publisher without allocating a delegate invocation list.</summary>
         protected bool HasOnlySettingUniformsHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
-            => SettingUniforms == handler;
+            => _settingUniforms == handler;
 
         /// <summary>Checks a cold cook's explicitly recognized publishers without admitting arbitrary callbacks.</summary>
         protected bool HasOnlySettingUniformsHandlers(IReadOnlySet<Action<XRMaterialBase, XRRenderProgram>> handlers,
             Action<XRMaterialBase, XRRenderProgram>? additionalHandler = null)
         {
-            if (SettingUniforms is null)
+            if (_settingUniforms is null)
                 return true;
-            foreach (Delegate handler in SettingUniforms.GetInvocationList())
+            foreach (Delegate handler in _settingUniforms.GetInvocationList())
                 if (handler is not Action<XRMaterialBase, XRRenderProgram> typed ||
                     typed != additionalHandler && !handlers.Contains(typed))
                     return false;
@@ -107,6 +153,7 @@ namespace XREngine.Rendering
 
         public XRMaterialBase()
         {
+            BindingPublishers.Changed += OnBindingPublishersChanged;
             _ownedRenderOptions = _renderOptions;
             _ownedInitialTextures = _textures;
             AttachTextureListHandlers(_textures);
@@ -498,8 +545,28 @@ namespace XREngine.Rendering
             return _legacyIndexedSamplerNames[index] ??= XRTexture.GetIndexedSamplerName(index);
         }
 
+        private long _textureSourceVersion = 1L;
+
+        /// <summary>
+        /// Gets a version that advances when a bound texture reports an advanced
+        /// GPU source change (<see cref="XRTexture.AdvancedSourceVersion"/>). Texture
+        /// list changes advance <see cref="BindingResourceVersion"/> instead. The
+        /// advanced scene publisher compares both before it trusts a committed row.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        internal ulong TextureSourceVersion
+            => unchecked((ulong)Volatile.Read(ref _textureSourceVersion));
+
+        private void BoundTextureAdvancedSourceChanged(XRTexture texture)
+        {
+            if (Interlocked.Increment(ref _textureSourceVersion) == 0L)
+                Interlocked.Increment(ref _textureSourceVersion);
+        }
+
         private void AttachLegacyTextureHandlers(XRTexture texture)
         {
+            texture.AdvancedSourceChanged += BoundTextureAdvancedSourceChanged;
             texture.PropertyChanged += LegacyTexturePropertyChanged;
             if (texture is XRTextureViewBase view)
                 view.ViewedTextureChanged += LegacyViewedTextureChanged;
@@ -507,6 +574,7 @@ namespace XREngine.Rendering
 
         private void DetachLegacyTextureHandlers(XRTexture texture)
         {
+            texture.AdvancedSourceChanged -= BoundTextureAdvancedSourceChanged;
             texture.PropertyChanged -= LegacyTexturePropertyChanged;
             if (texture is XRTextureViewBase view)
                 view.ViewedTextureChanged -= LegacyViewedTextureChanged;

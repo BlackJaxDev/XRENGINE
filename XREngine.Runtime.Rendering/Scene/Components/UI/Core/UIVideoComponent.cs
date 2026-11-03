@@ -548,6 +548,9 @@ namespace XREngine.Rendering.UI
             StopStreamingPipeline();
         }
 
+        /// <summary>The video drains its frames from the material's uniform callback.</summary>
+        protected override bool UsesMaterialSettingUniformsCallback => true;
+
         /// <summary>
         /// Hooked into the material's uniform-setting phase. Runs on the
         /// render thread, which is the only safe place to do GPU texture uploads.

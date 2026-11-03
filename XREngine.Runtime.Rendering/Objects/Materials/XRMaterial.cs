@@ -814,6 +814,41 @@ namespace XREngine.Rendering
 
         public void InvalidateDepthNormalPrePassVariant() => InvalidateDepthNormalPrePassVariant(now: false);
 
+        /// <summary>
+        /// Gives a pass variant this material's uniform sources. The variant forwards the
+        /// uniform callbacks only when this material has some, because any callback makes
+        /// the backend capture a new binding snapshot for every draw, and it shares this
+        /// material's typed publishers. Both sets are copied when the variant is created,
+        /// so a later change to them rebuilds the variants.
+        /// </summary>
+        internal void ShareUniformSourcesWith(XRMaterial variant)
+        {
+            if (HasSettingUniformsHandlers)
+                variant.SettingUniforms += (_, program) => OnSettingUniforms(program);
+            foreach (IRenderBindingPublisher publisher in BindingPublishers)
+                variant.BindingPublishers.Add(publisher);
+        }
+
+        protected override void OnSettingUniformsHandlersChanged()
+        {
+            base.OnSettingUniformsHandlersChanged();
+            InvalidateUniformSourceVariants();
+        }
+
+        protected override void OnBindingPublishersChanged()
+        {
+            base.OnBindingPublishersChanged();
+            InvalidateUniformSourceVariants();
+        }
+
+        private void InvalidateUniformSourceVariants()
+        {
+            if (_depthNormalPrePassVariantResolved)
+                InvalidateDepthNormalPrePassVariant(now: false);
+            if (_outlinePassVariant is not null)
+                InvalidateOutlinePassVariant(now: false);
+        }
+
         private void InvalidateDepthNormalPrePassVariant(bool now)
         {
             DestroyNativeVertexPassMaterials(now);

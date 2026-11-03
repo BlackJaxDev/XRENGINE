@@ -173,7 +173,7 @@ public static class ForwardDepthNormalVariantFactory
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
         };
 
-        variant.SettingUniforms += (_, program) => sourceMaterial.OnSettingUniforms(program);
+        sourceMaterial.ShareUniformSourcesWith(variant);
         return variant;
     }
 

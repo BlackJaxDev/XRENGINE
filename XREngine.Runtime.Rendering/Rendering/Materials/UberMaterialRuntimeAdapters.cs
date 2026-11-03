@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Materials;
@@ -55,10 +56,7 @@ public static class UberMaterialRuntimeAdapters
             BindStableTexture(material, AudioLink.DataTexture, "_AudioLinkTexture");
 
         if (useAudioLink || useEnvironment || useViewContext)
-        {
-            UberMaterialAdapterBinding binding = new(useAudioLink, useEnvironment, useViewContext);
-            material.SettingUniforms += binding.Apply;
-        }
+            material.BindingPublishers.Add(new UberMaterialAdapterBinding(useAudioLink, useEnvironment, useViewContext));
 
         return audioAvailable && environmentAvailable;
     }
@@ -77,12 +75,48 @@ public static class UberMaterialRuntimeAdapters
         material.Textures = [.. textures];
     }
 
+    /// <summary>
+    /// Publishes the adapter values through a typed publisher. A uniform callback
+    /// would make the backend capture a new binding snapshot for every draw of the
+    /// material. The generation advances only when a published value changes, so a
+    /// material without AudioLink keeps its snapshot while the view context and the
+    /// environment stay the same.
+    /// </summary>
     private sealed class UberMaterialAdapterBinding(
         bool useAudioLink,
         bool useEnvironment,
-        bool useViewContext)
+        bool useViewContext) : IRenderBindingPublisher
     {
-        public void Apply(XRMaterialBase _, XRRenderProgram program)
+        private readonly RenderBindingGenerationTracker<AdapterBindingKey> _generation = new();
+
+        public ERenderBindingFrequency Frequency => ERenderBindingFrequency.View;
+
+        public ulong Generation
+        {
+            get
+            {
+                bool hasAudio = false;
+                AudioLinkFrame audioFrame = default;
+                if (useAudioLink)
+                    hasAudio = AudioLink?.TryGetFrame(out audioFrame) == true;
+                bool hasEnvironment = false;
+                MaterialEnvironmentFrame environmentFrame = default;
+                if (useEnvironment)
+                    hasEnvironment = Environment?.TryGetFrame(out environmentFrame) == true;
+                return _generation.Advance(new AdapterBindingKey(
+                    hasAudio,
+                    audioFrame,
+                    hasEnvironment,
+                    environmentFrame,
+                    useViewContext ? _viewFlags : default,
+                    useViewContext ? _viewTint : default));
+            }
+        }
+
+        public void PublishUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+            => Apply(materialProgram);
+
+        private void Apply(XRRenderProgram program)
         {
             if (useAudioLink &&
                 AudioLink?.TryGetFrame(out AudioLinkFrame audioFrame) == true)
@@ -108,4 +142,12 @@ public static class UberMaterialRuntimeAdapters
             program.Uniform("_ViewTint", _viewTint);
         }
     }
+
+    private readonly record struct AdapterBindingKey(
+        bool HasAudio,
+        AudioLinkFrame Audio,
+        bool HasEnvironment,
+        MaterialEnvironmentFrame Environment,
+        MaterialViewFlags ViewFlags,
+        Vector4 ViewTint);
 }

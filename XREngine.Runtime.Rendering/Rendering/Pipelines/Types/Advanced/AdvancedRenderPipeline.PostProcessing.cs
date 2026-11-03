@@ -169,6 +169,17 @@ public partial class AdvancedRenderPipeline
     }
 
     private static void ApplyLensDistortionUniforms(PipelinePostProcessState? state, XRRenderProgram program, bool enabled)
+        => ApplyLensDistortionUniforms(ResolveLensDistortionInputs(state), program, enabled);
+
+    /// <summary>Every input that changes the published lens distortion values.</summary>
+    private readonly record struct LensDistortionInputs(
+        LensDistortionSettings? Lens,
+        ulong LensGeneration,
+        float? CameraFov,
+        float AspectRatio,
+        Vector2 DistortionCenterUv);
+
+    private static LensDistortionInputs ResolveLensDistortionInputs(PipelinePostProcessState? state)
     {
         var lens = GetSettings<LensDistortionSettings>(state);
         float widthPx = Math.Max(1, InternalWidth);
@@ -198,14 +209,23 @@ public partial class AdvancedRenderPipeline
                 break;
         }
 
+        return new LensDistortionInputs(lens, lens?.BindingGeneration ?? 0UL, cameraFov, aspectRatio, distortionCenterUv);
+    }
+
+    private static void ApplyLensDistortionUniforms(in LensDistortionInputs inputs, XRRenderProgram program, bool enabled)
+    {
         if (enabled)
         {
-            (lens ?? new LensDistortionSettings()).SetUniforms(program, cameraFov, aspectRatio, distortionCenterUv);
+            (inputs.Lens ?? new LensDistortionSettings()).SetUniforms(
+                program,
+                inputs.CameraFov,
+                inputs.AspectRatio,
+                inputs.DistortionCenterUv);
             return;
         }
 
         program.Uniform("LensDistortionMode", (int)ELensDistortionMode.None);
-        program.Uniform("LensDistortionCenter", distortionCenterUv);
+        program.Uniform("LensDistortionCenter", inputs.DistortionCenterUv);
         program.Uniform("LensDistortionIntensity", 0.0f);
         program.Uniform("PaniniDistance", 0.0f);
         program.Uniform("PaniniCrop", 1.0f);
@@ -218,6 +238,12 @@ public partial class AdvancedRenderPipeline
         RenderFrameViewSelection? frozenView = null)
     {
         BindCurrentPostProcessTextures(material, materialProgram);
+        ApplyPostProcessUniformValues(materialProgram, frozenView);
+    }
+
+    /// <summary>Publishes the post-process numeric values. The sampler slots are bound separately.</summary>
+    private void ApplyPostProcessUniformValues(XRRenderProgram materialProgram, RenderFrameViewSelection? frozenView)
+    {
         materialProgram.Uniform("OutputHDR", ResolveOutputHDR());
 
         var prefs = RuntimeEngine.EditorPreferences;
@@ -295,6 +321,50 @@ public partial class AdvancedRenderPipeline
             material.Textures[slot] = texture;
         materialProgram.Sampler(samplerName ?? resourceName, texture, slot);
     }
+
+    /// <summary>
+    /// Publishes the final post-process source and lens distortion through typed
+    /// publishers, so the backend keeps the captured binding snapshot while the
+    /// source texture and lens inputs stay the same.
+    /// </summary>
+    private sealed class FinalPostProcessBindingPublisher(AdvancedRenderPipeline owner) : IRenderResourceBindingPublisher
+    {
+        private readonly RenderBindingGenerationTracker<FinalPostProcessBindingKey> _generation = new();
+
+        public ERenderBindingFrequency Frequency => ERenderBindingFrequency.Pass;
+
+        public ulong Generation
+        {
+            get
+            {
+                XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                return _generation.Advance(new FinalPostProcessBindingKey(
+                    GetTexture<XRTexture>(PostProcessOutputTextureName),
+                    instance?.ResourceGeneration ?? 0,
+                    ResolveLensDistortionInputs(ResolveCurrentSettingsCamera()?.GetActivePostProcessState())));
+            }
+        }
+
+        public ulong ResourceGeneration => Generation;
+
+        public void PublishUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+            => ApplyLensDistortionUniforms(
+                ResolveCurrentSettingsCamera()?.GetActivePostProcessState(),
+                materialProgram,
+                enabled: true);
+
+        public void PublishResources(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+        {
+            XRTexture? source = GetTexture<XRTexture>(PostProcessOutputTextureName);
+            if (source is not null)
+                materialProgram.Sampler(PostProcessOutputTextureName, source, 0);
+        }
+    }
+
+    private readonly record struct FinalPostProcessBindingKey(
+        XRTexture? Source,
+        int PipelineResourceGeneration,
+        LensDistortionInputs Lens);
 
     private void ApplyFinalPostProcessProgramBindings(XRRenderProgram materialProgram)
     {

@@ -523,9 +523,69 @@ public partial class AdvancedRenderPipeline
             RenderOptions = CreateAoQuadRenderParameters()
         };
         XRQuadFrameBuffer quad = new(material, true, false, Stereo) { Name = AoFinalizeQuadFBOName };
-        quad.SettingUniforms += SetAoFinalizeUniforms;
+        if (UseTypedPostProcessPublishers)
+            quad.FullScreenMesh.BindingPublishers.Add(new AoFinalizeBindingPublisher(this));
+        else
+            quad.SettingUniforms += SetAoFinalizeUniforms;
         return quad;
     }
+
+    /// <summary>
+    /// Publishes the AO finalize values through a typed publisher, so the backend
+    /// keeps the captured binding snapshot while the render region, AO power and AO
+    /// input texture stay the same. A uniform callback forces a new snapshot every
+    /// frame. The shader samples <c>AmbientOcclusionTexture</c>, an engine AO name, so
+    /// the publisher owns the AO requirement and binds the intensity texture itself.
+    /// </summary>
+    private sealed class AoFinalizeBindingPublisher(AdvancedRenderPipeline owner) :
+        IRenderResourceBindingPublisher,
+        IPersistentProgramBindingRequirementOwner
+    {
+        private readonly RenderBindingGenerationTracker<AoFinalizeBindingKey> _generation = new();
+
+        public ERenderBindingFrequency Frequency => ERenderBindingFrequency.Pass;
+
+        public ulong Generation
+        {
+            get
+            {
+                XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                var region = instance?.RenderState.CurrentRenderRegion ?? default;
+                return _generation.Advance(new AoFinalizeBindingKey(
+                    instance is not null,
+                    region.Width,
+                    region.Height,
+                    owner.ResolveAmbientOcclusionSettings()?.Power ?? 1.0f,
+                    GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName),
+                    instance?.ResourceGeneration ?? 0));
+            }
+        }
+
+        public ulong ResourceGeneration => Generation;
+
+        public EUniformRequirements OwnedPersistentArtifactRequirement => EUniformRequirements.AmbientOcclusion;
+
+        public void PublishUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+            => owner.SetAoFinalizeUniforms(materialProgram);
+
+        public void PublishResources(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+        {
+            if (GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName) is { } intensity)
+                materialProgram.Sampler(EngineShaderBindingNames.Samplers.AmbientOcclusionTexture, intensity, 0);
+        }
+    }
+
+    /// <summary>False when the A/B switch selects the uniform callbacks for these passes.</summary>
+    private static readonly bool UseTypedPostProcessPublishers =
+        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AdvancedTypedPostProcessPublishers)?.Trim() != "0";
+
+    private readonly record struct AoFinalizeBindingKey(
+        bool HasInstance,
+        int Width,
+        int Height,
+        float Power,
+        XRTexture? Intensity,
+        int PipelineResourceGeneration);
 
     private void SetAoFinalizeUniforms(XRRenderProgram program)
     {

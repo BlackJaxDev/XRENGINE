@@ -576,6 +576,7 @@ public sealed partial class XRRenderPipelineInstance
             // per-frame binding snapshot can be reused inside this exact
             // shadow scope, but never across a different cascade publication.
             IncrementScopedBindingRevision();
+            IncrementLayeredShadowRevision();
             return StateObject.New(PopDirectionalCascadeLayeredShadowPassAction, this);
         }
 
@@ -611,6 +612,7 @@ public sealed partial class XRRenderPipelineInstance
                 _pointLightShadowFaceIndices[i] = i < faceIndices.Length ? faceIndices[i] : i;
             }
             IncrementScopedBindingRevision();
+            IncrementLayeredShadowRevision();
             return StateObject.New(PopPointLightLayeredShadowPassAction, this);
         }
 
@@ -676,6 +678,7 @@ public sealed partial class XRRenderPipelineInstance
 
             RestoreLayeredShadowScope(snapshot);
             IncrementScopedBindingRevision();
+            IncrementLayeredShadowRevision();
         }
 
         private void RestoreLayeredShadowScope(
@@ -983,6 +986,26 @@ public sealed partial class XRRenderPipelineInstance
                 _bufferBindings.Count != 0 ||
                 _shaderGlobals.Count != 0 ||
                 _programBindings.Count != 0;
+
+        /// <summary>
+        /// Gets a revision that changes only when a layered shadow scope is pushed
+        /// or popped. View-level snapshots depend on the layered shadow matrices,
+        /// but not on per-draw texture, buffer, or program bindings, so they key
+        /// on this revision instead of <see cref="ScopedBindingRevision"/>.
+        /// </summary>
+        public ulong LayeredShadowRevision
+            => _layeredShadowRevision;
+
+        private ulong _layeredShadowRevision;
+
+        private void IncrementLayeredShadowRevision()
+        {
+            unchecked
+            {
+                ulong next = _layeredShadowRevision + 1;
+                _layeredShadowRevision = next == 0 ? 1 : next;
+            }
+        }
 
         private void IncrementScopedBindingRevision()
         {
