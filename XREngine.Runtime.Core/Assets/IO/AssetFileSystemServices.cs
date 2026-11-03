@@ -1,20 +1,23 @@
 namespace XREngine.Core.Files;
 
 /// <summary>Stores the host's explicitly installed asset file-discovery capability.</summary>
+/// <remarks>
+/// The file system and its generation are published together as one immutable
+/// box, so captures and currency checks read them without a lock.
+/// </remarks>
 public static class AssetFileSystemServices
 {
     private static readonly object Gate = new();
-    private static IAssetFileSystem? _current;
-    private static long _generation;
+    private static System.Runtime.CompilerServices.StrongBox<(IAssetFileSystem? FileSystem, long Generation)> _installation = new((null, 0));
     public static IAssetFileSystem? Current
     {
-        get => Volatile.Read(ref _current);
+        get => Volatile.Read(ref _installation).Value.FileSystem;
         set
         {
             lock (Gate)
             {
-                Volatile.Write(ref _current, value);
-                _generation = unchecked(_generation + 1);
+                long generation = unchecked(_installation.Value.Generation + 1);
+                Volatile.Write(ref _installation, new((value, generation)));
                 XREngine.Data.RuntimeFileDiscoveryServices.Current = value;
             }
         }
@@ -37,18 +40,14 @@ public static class AssetFileSystemServices
     /// <summary>Captures one asset discovery installation.</summary>
     public static bool TryCapture(out IAssetFileSystem? fileSystem, out long generation)
     {
-        lock (Gate)
-        {
-            fileSystem = _current;
-            generation = _generation;
-            return fileSystem is not null;
-        }
+        (fileSystem, generation) = Volatile.Read(ref _installation).Value;
+        return fileSystem is not null;
     }
 
     /// <summary>Checks if the captured asset discovery installation is current.</summary>
     public static bool IsCurrent(IAssetFileSystem? fileSystem, long generation)
     {
-        lock (Gate)
-            return ReferenceEquals(_current, fileSystem) && _generation == generation;
+        (IAssetFileSystem? current, long currentGeneration) = Volatile.Read(ref _installation).Value;
+        return ReferenceEquals(current, fileSystem) && currentGeneration == generation;
     }
 }

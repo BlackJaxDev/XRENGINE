@@ -164,12 +164,14 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // publication stops before that point, or when the world swap section
         // is not open on this thread.
         long stageMark = 0L;
+        ulong previousWitnessEpoch = AdvancedSourceWitnessEpoch.Begin();
         try
         {
             PublishCore(scene, frameId, in globalResources, ref stageMark);
         }
         finally
         {
+            AdvancedSourceWitnessEpoch.End(previousWitnessEpoch);
             try
             {
                 ReleasePlannedMirrorSnapshots();

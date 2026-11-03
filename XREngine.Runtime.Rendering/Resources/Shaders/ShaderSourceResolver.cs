@@ -47,6 +47,8 @@ internal static partial class ShaderSourceResolver
     private static readonly object CacheOwnerGate = new();
     private static ShaderSourceProviderOwner _cacheOwner;
     private static bool _hasCacheOwner;
+    // Lock-free copy of the cache owner for the common unchanged case.
+    private static System.Runtime.CompilerServices.StrongBox<ShaderSourceProviderOwner>? _publishedCacheOwner;
 
     private static long _registeredSnippetVersion;
 
@@ -70,6 +72,11 @@ internal static partial class ShaderSourceResolver
         AssetFileSystemServices.TryCapture(out IAssetFileSystem? fileSystem, out long fileSystemGeneration);
         ShaderSourceProviderOwner owner = new(backend, backendGeneration, fileSystem, fileSystemGeneration,
             admitted && backend is not null && fileSystem is not null);
+        // Scene publication calls this for every row on every frame. When the
+        // owner is unchanged, the caches stay valid and no lock is needed.
+        if (Volatile.Read(ref _publishedCacheOwner) is { } published && published.Value.Equals(owner))
+            return owner;
+
         lock (CacheOwnerGate)
         {
             if ((!_hasCacheOwner || !_cacheOwner.Equals(owner)) && IsOwnerInstallationCurrent(owner))
@@ -77,6 +84,7 @@ internal static partial class ShaderSourceResolver
                 ClearCaches();
                 _cacheOwner = owner;
                 _hasCacheOwner = true;
+                Volatile.Write(ref _publishedCacheOwner, new(owner));
             }
         }
         return owner;

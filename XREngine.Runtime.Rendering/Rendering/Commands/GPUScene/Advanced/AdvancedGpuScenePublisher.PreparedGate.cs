@@ -92,7 +92,16 @@ public sealed partial class AdvancedGpuScenePublisher
     internal void PrepareUnchangedRowGate(GPUScene scene)
     {
         DiscardPreparedUnchangedRowGate();
-        EAdvancedPreparedGateOutcome outcome = TryPrepareUnchangedRowGate(scene);
+        EAdvancedPreparedGateOutcome outcome;
+        ulong previousWitnessEpoch = AdvancedSourceWitnessEpoch.Begin();
+        try
+        {
+            outcome = TryPrepareUnchangedRowGate(scene);
+        }
+        finally
+        {
+            AdvancedSourceWitnessEpoch.End(previousWitnessEpoch);
+        }
         if (outcome == EAdvancedPreparedGateOutcome.Prepared)
         {
             AdvancedPreparedGateTelemetry.RecordPrepared();
@@ -661,7 +670,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     out AdvancedEngineSurfaceRecord engineSurface) ||
                 !Database.Materials.TryGetUberBaseSurface(witness.Handle,
                     out AdvancedUberBaseSurfaceRecord uberSurface) ||
-                !CommittedMaterialBindingsMatch(material, layout, bindings,
+                !WitnessedCommittedMaterialBindingsMatch(witness.Handle, material, layout, bindings,
                     in engineSurface, in uberSurface) ||
                 !_materialPublisher.HeaderMatches(
                     witness.Handle,

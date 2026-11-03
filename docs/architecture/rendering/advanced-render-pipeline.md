@@ -144,6 +144,47 @@ allocate. Storage images, framebuffer attachments, and cubes without complete
 CPU face data cannot use this reuse path. This witness does not replace native
 texture preparation or descriptor lifetime checks.
 
+The cube face check runs once per publication pass. `AdvancedSourceWitnessEpoch`
+marks a pass on its thread, and the cube keeps a memo for the rest of the pass.
+A reader checks an unchanged cube without the cube lock: a sequence counter is
+odd while the lock holder changes the observed faces, and the reader accepts its
+reads only when the counter is even and the same before and after them.
+
+#### Material source witness
+
+The texture-source encode of the committed-binding check is skipped while a
+material witness is unchanged. `WitnessedCommittedMaterialBindingsMatch` is used
+by the gate row check, by the prepared-verdict revalidation
+(`AreMaterialWitnessesCurrent`), and by the material transition reuse check. The
+witness (`AdvancedMaterialSourceWitness`) holds:
+
+- the material and layout objects and the five material revisions;
+- `XRMaterialBase.TextureSourceVersion`, which advances when a bound texture
+  raises `XRTexture.AdvancedSourceChanged`;
+- a hash of each bound texture's own counters: for a 2D texture, the source
+  content generation, the imported metadata epoch, the mip array identity and
+  length, and the base mip identity, content epoch, size, and format; for an
+  array, the layer content witness; for a CPU-backed cube, the cube source
+  generation;
+- the resource publisher `CommitGeneration`, which advances on each texture or
+  sampler record write or release;
+- the material database generations;
+- a hash of the committed bindings and surface records that the check compared.
+
+`XRTexture.AdvancedSourceVersion` advances on every texture property change, on
+sampler and format metadata writes that publish no notification, and on a change
+of the progressive-upload state. A material with a texture that has no witness
+contract (a texture view, a GPU-authored cube or array, or an unknown type)
+always takes the full check.
+
+Each writer advances its counter after the data write. Thus a texture write on
+another thread that races the witness read leaves a different witness for the
+next pass, which then takes the full check. A change can be one pass late, but
+it is not lost. Set `XRE_ADVANCED_PUBLISHER_WITNESS_VALIDATE=1` to run the full
+check also when the witness is unchanged. A mismatch logs a warning and returns
+the full-check result. A hit that a concurrent texture write changed during the
+check is counted separately and is not a failure.
+
 When the gate passes and no global resource changed, the publisher reuses the
 current publication and delivers the identities again, as the full reuse path
 does. The reuse applies the same lease rule as the full reuse path, so the

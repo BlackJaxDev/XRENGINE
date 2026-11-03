@@ -1223,7 +1223,7 @@ public sealed partial class AdvancedGpuScenePublisher
 
         int companionBindingCount = engineSurface.SchemaVersion == 0 ? 0 : AdvancedEngineSurfaceRecord.RoleCount;
         int uberBindingCount = uberSurface.SchemaVersion == 0 ? 0 : AdvancedUberBaseSurfaceRecord.RoleCount;
-        if (!CommittedMaterialBindingsMatch(material, layout, bindings,
+        if (!WitnessedCommittedMaterialBindingsMatch(registration.Material, material, layout, bindings,
                 in engineSurface, in uberSurface))
         {
             reuseFailure = "MaterialBindingsChanged";

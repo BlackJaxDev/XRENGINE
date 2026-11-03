@@ -152,32 +152,58 @@ public static class NativeUberMaterialSourceEncoder
             reason = "The native Uber texture destination does not match its fixed schema.";
             return false;
         }
+        // Map each material texture to its role in one pass. The scene publisher
+        // runs this check for every Uber material on every frame, and a scan of
+        // every texture for every role cost one name comparison per pair.
+        XRTexture?[] roleTextures = t_roleTextures ??= new XRTexture?[NativeUberMaterialSchema.TextureRoleCount];
+        bool[] duplicateRoles = t_duplicateRoles ??= new bool[NativeUberMaterialSchema.TextureRoleCount];
+        Array.Clear(roleTextures);
+        Array.Clear(duplicateRoles);
+        int textureCount = material.Textures.Count;
+        for (int slot = 0; slot < textureCount; ++slot)
+        {
+            XRTexture? candidate = material.Textures[slot];
+            if (candidate is null)
+                continue;
+            int roleIndex = NativeUberMaterialSchema.TextureIndex(candidate.ResolveSamplerName(slot));
+            if (roleIndex < 0)
+                continue;
+            if (roleTextures[roleIndex] is not null)
+                duplicateRoles[roleIndex] = true;
+            else
+                roleTextures[roleIndex] = candidate;
+        }
+
         for (int role = 0; role < resources.Length; ++role)
         {
             string name = NativeUberMaterialSchema.TextureRoles[role];
-            XRTexture? texture = null;
-            for (int slot = 0; slot < material.Textures.Count; ++slot)
+            if (duplicateRoles[role])
             {
-                XRTexture? candidate = material.Textures[slot];
-                if (candidate is null || candidate.ResolveSamplerName(slot) != name) continue;
-                if (texture is not null)
-                {
-                    compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
-                    reason = $"Native Uber sampler '{name}' has duplicate source bindings.";
-                    return false;
-                }
-                texture = candidate;
+                compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
+                reason = $"Native Uber sampler '{name}' has duplicate source bindings.";
+                Array.Clear(roleTextures);
+                return false;
             }
+            XRTexture? texture = roleTextures[role];
+            roleTextures[role] = null;
             EAdvancedResourceFallback fallback = name == "_BumpMap"
                 ? EAdvancedResourceFallback.FlatNormal
                 : name.Contains("Emission", StringComparison.Ordinal) ? EAdvancedResourceFallback.Black
                 : EAdvancedResourceFallback.White;
             if (!AdvancedGpuResourceSourceEncoder.TryEncode(texture, fallback,
                     out resources[role], out compatibilityReason, out reason))
+            {
+                Array.Clear(roleTextures);
                 return false;
+            }
         }
         return true;
     }
+
+    [ThreadStatic]
+    private static XRTexture?[]? t_roleTextures;
+    [ThreadStatic]
+    private static bool[]? t_duplicateRoles;
 
     private static bool TryWriteParameter(ShaderVar parameter, Span<uint> words)
     {

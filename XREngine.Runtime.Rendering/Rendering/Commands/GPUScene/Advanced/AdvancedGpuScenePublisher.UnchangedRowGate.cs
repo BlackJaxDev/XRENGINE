@@ -555,8 +555,8 @@ public sealed partial class AdvancedGpuScenePublisher
                     out AdvancedEngineSurfaceRecord engineSurface) ||
                 !Database.Materials.TryGetUberBaseSurface(registration.Material,
                     out AdvancedUberBaseSurfaceRecord uberSurface) ||
-                !CommittedMaterialBindingsMatch(material, layout, bindings,
-                    in engineSurface, in uberSurface) ||
+                !PreparedCommittedMaterialBindingsMatch(registration.Material, material, layout, bindings,
+                    in engineSurface, in uberSurface, preparing) ||
                 !_materialPublisher.HeaderMatches(
                     registration.Material,
                     material,
@@ -575,6 +575,43 @@ public sealed partial class AdvancedGpuScenePublisher
             cache.GpuOwnedBounds &&
             cache.IdentityWorld)
             ++scratch.ReusedStaticPlans;
+        return true;
+    }
+
+    // Materials whose committed bindings matched in the current prepared-gate pass.
+    private readonly Dictionary<AdvancedGpuHandle, (XRMaterial? Material, MaterialBindingLayout Layout, ulong Epoch)> _preparedMaterialBindingMatches = [];
+
+    /// <summary>
+    /// Runs <see cref="CommittedMaterialBindingsMatch"/> once per material for one
+    /// prepared-gate pass. The prepared gate only reads the committed database,
+    /// so a match stays valid for the rest of the pass even when rows that share
+    /// the material are not adjacent. A publication pass can commit materials,
+    /// so it always runs the full check.
+    /// </summary>
+    private bool PreparedCommittedMaterialBindingsMatch(
+        AdvancedGpuHandle handle,
+        XRMaterial? material,
+        MaterialBindingLayout layout,
+        ReadOnlySpan<AdvancedMaterialTextureBinding> bindings,
+        in AdvancedEngineSurfaceRecord engineSurface,
+        in AdvancedUberBaseSurfaceRecord uberSurface,
+        bool preparing)
+    {
+        ulong epoch = AdvancedSourceWitnessEpoch.Current;
+        if (preparing && epoch != 0UL &&
+            _preparedMaterialBindingMatches.TryGetValue(handle, out var cached) &&
+            cached.Epoch == epoch &&
+            ReferenceEquals(cached.Material, material) &&
+            ReferenceEquals(cached.Layout, layout))
+        {
+            return true;
+        }
+
+        if (!WitnessedCommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface))
+            return false;
+
+        if (preparing && epoch != 0UL)
+            _preparedMaterialBindingMatches[handle] = (material, layout, epoch);
         return true;
     }
 
