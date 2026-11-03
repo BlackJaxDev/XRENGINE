@@ -410,6 +410,8 @@ namespace XREngine.Editor.Mcp
             EngineWorkSchedulerMetrics schedulerMetrics =
                 workScheduler?.Metrics ?? default;
             RenderWorkDomainMetrics renderWork = schedulerMetrics.Render;
+            RenderWorkAsynchronousMetrics asyncWork =
+                workScheduler?.Render.AsynchronousMetrics ?? default;
             RenderForegroundWorkSnapshot foregroundWork =
                 RenderForegroundWorkCoordinator.CaptureSnapshot();
             VulkanFrameHotPathSnapshot hotPath =
@@ -523,6 +525,34 @@ namespace XREngine.Editor.Mcp
                                 1000.0 / Stopwatch.Frequency,
                             queue_lock_waits_over_0_1_ms =
                                 renderWork.QueueLockWaitOverThresholdCount,
+                            asynchronous = new
+                            {
+                                rental_limit = asyncWork.AsynchronousRentalLimit,
+                                outstanding_batches = asyncWork.OutstandingBatchCount,
+                                peak_outstanding_batches = asyncWork.PeakOutstandingBatchCount,
+                                oldest_unjoined_age_ms =
+                                    asyncWork.OldestUnjoinedAgeTicks * 1000.0 / Stopwatch.Frequency,
+                                rentals = asyncWork.RentalCount,
+                                submits = asyncWork.SubmitCount,
+                                joins = asyncWork.JoinCount,
+                                waiting_joins = asyncWork.WaitingJoinCount,
+                                join_wait_ms = asyncWork.JoinWaitTicks * 1000.0 / Stopwatch.Frequency,
+                                join_wait_peak_ms = asyncWork.PeakJoinWaitTicks * 1000.0 / Stopwatch.Frequency,
+                                submit_to_quiescence_ms =
+                                    asyncWork.SubmitToQuiescenceTicks * 1000.0 / Stopwatch.Frequency,
+                                deadline_violations = asyncWork.DeadlineViolationCount,
+                                completed = asyncWork.CompletedCount,
+                                canceled = asyncWork.CanceledCount,
+                                faulted = asyncWork.FaultedCount,
+                                rejected_capacity_disabled = asyncWork.RejectedCapacityDisabledCount,
+                                rejected_capacity_exhausted = asyncWork.RejectedCapacityExhaustedCount,
+                                rejected_executor_busy = asyncWork.RejectedExecutorBusyCount,
+                                rejected_last_free_batch = asyncWork.RejectedLastFreeBatchCount,
+                                rejected_domain_unavailable = asyncWork.RejectedDomainUnavailableCount,
+                                rejected_lane_reserved = asyncWork.RejectedLaneReservedCount,
+                                lane_reservations = asyncWork.LaneReservationCount,
+                                affine_collisions = asyncWork.AffineCollisionCount,
+                            },
                         },
                     },
                     frame_lifecycle = new
@@ -1275,6 +1305,16 @@ namespace XREngine.Editor.Mcp
                             program_binding_artifact_builds = VulkanStats.VulkanProgramBindingArtifactBuilds,
                             program_binding_artifact_reuses = VulkanStats.VulkanProgramBindingArtifactReuses,
                             program_binding_artifact_fallbacks = VulkanStats.VulkanProgramBindingArtifactFallbacks,
+                            program_binding_artifact_totals = new
+                            {
+                                builds = VulkanStats.VulkanProgramBindingArtifactBuildsTotal,
+                                reuses = VulkanStats.VulkanProgramBindingArtifactReusesTotal,
+                                fallbacks = VulkanStats.VulkanProgramBindingArtifactFallbacksTotal,
+                                renderer_callback = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonTotal(EVulkanProgramBindingArtifactFallbackReason.RendererCallback),
+                                material_callback = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonTotal(EVulkanProgramBindingArtifactFallbackReason.MaterialCallback),
+                                shadow_pass = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonTotal(EVulkanProgramBindingArtifactFallbackReason.ShadowPass),
+                                active_scoped_bindings = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonTotal(EVulkanProgramBindingArtifactFallbackReason.ActiveScopedBindings),
+                            },
                             program_binding_allocation_breakdown_bytes = new
                             {
                                 setup = VulkanStats.GetVulkanProgramBindingAllocationBytes(EVulkanProgramBindingAllocationSegment.Setup),

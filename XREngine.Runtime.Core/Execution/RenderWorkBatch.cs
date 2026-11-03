@@ -6,7 +6,7 @@ namespace XREngine.Execution;
 /// <summary>
 /// Reusable control block and pooled storage for one render-work generation.
 /// </summary>
-internal sealed class RenderWorkBatch
+internal sealed partial class RenderWorkBatch
 {
     private const int StateReturning = -3;
     private const int StateRenting = -2;
@@ -62,6 +62,11 @@ internal sealed class RenderWorkBatch
         _validationPrerequisites = ArrayPool<int>.Shared.Rent(Math.Max(1, initialItemCapacity));
         _validationQueue = ArrayPool<int>.Shared.Rent(Math.Max(1, initialItemCapacity));
         _dependents = ArrayPool<int>.Shared.Rent(Math.Max(1, initialDependentCapacity));
+        // A slim event allocates its lock object on the first wait that blocks. Make
+        // that wait here, so the first join that waits for this block does not allocate.
+        _terminalEvent.Reset();
+        _ = _terminalEvent.Wait(TimeSpan.FromMilliseconds(1));
+        _terminalEvent.Set();
     }
 
     internal long Generation => Volatile.Read(ref _generation);
@@ -72,6 +77,7 @@ internal sealed class RenderWorkBatch
         => _executor ?? throw new InvalidOperationException("The render-work batch has no sealed executor.");
     internal bool InlineOnly => _inlineOnly;
     internal bool IsQuiesced => _terminalEvent.IsSet;
+    internal bool IsIdle => Volatile.Read(ref _state) == StateIdle;
     internal bool HasUnquiescedGeneration
     {
         get
@@ -114,6 +120,7 @@ internal sealed class RenderWorkBatch
                 Volatile.Write(ref _quarantineFinalized, 0);
                 _faultingItemIndex = -1;
                 _faultingLaneId = -1;
+                ResetAsynchronousState();
                 _terminalEvent.Reset();
                 _leaseReturnedEvent.Reset();
 
@@ -171,6 +178,24 @@ internal sealed class RenderWorkBatch
             _items[itemIndex] = item;
             _remainingPrerequisites[itemIndex] = item.PrerequisiteCount;
             Interlocked.Increment(ref _configuredItemCount);
+        }
+    }
+
+    internal void ShrinkItemCount(long generation, int itemCount)
+    {
+        lock (_leaseSync)
+        {
+            ValidateBuildingLease(generation);
+            if ((uint)itemCount > (uint)_itemCount)
+                throw new ArgumentOutOfRangeException(nameof(itemCount), "A batch can only shrink its rented item count.");
+
+            for (int itemIndex = itemCount; itemIndex < _itemCount; itemIndex++)
+            {
+                if (Volatile.Read(ref _itemStates[itemIndex]) != -1)
+                    throw new InvalidOperationException($"Render-work item {itemIndex} is configured beyond the new item count {itemCount}.");
+            }
+
+            _itemCount = itemCount;
         }
     }
 
@@ -332,6 +357,9 @@ internal sealed class RenderWorkBatch
                 return;
             if (!_domain.IsLaneZeroOwnerThread)
                 return;
+            // Only the designated join finalizes a submitted asynchronous generation.
+            if (IsAsynchronousQuarantineDeferredUnderLock())
+                return;
             if (Volatile.Read(ref _quarantineFinalized) == 2)
             {
                 TryReturnReleasedLeaseUnderLock();
@@ -409,6 +437,7 @@ internal sealed class RenderWorkBatch
             if (generation != Generation || Volatile.Read(ref _leaseReleased) != 0)
                 return;
 
+            ThrowIfAsynchronousReleaseRejectedUnderLock();
             int state = Volatile.Read(ref _state);
             if (state is StateBuilding or StateRunning)
                 CancelUnderLock();
@@ -634,6 +663,8 @@ internal sealed class RenderWorkBatch
         if (Volatile.Read(ref _queuedReferences) != 0)
             return;
 
+        // Record first so an owner that observes quiescence also observes its time.
+        RecordAsynchronousQuiescence();
         _terminalEvent.Set();
         TryReturnReleasedLease();
     }
@@ -684,6 +715,8 @@ internal sealed class RenderWorkBatch
 
         _executor = null;
         _fault = null;
+        ReleaseAsynchronousChargeUnderLock();
+        ReleaseSynchronousClaimUnderLock();
         _pool.Return(this);
         _leaseReturnedEvent.Set();
         Volatile.Write(ref _state, StateIdle);

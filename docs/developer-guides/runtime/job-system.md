@@ -144,6 +144,57 @@ signals until work or shutdown arrives; they do not wake on a polling timer.
   once, and faulted pooled storage is quarantined until lane 0 finalizes it. A
   quarantine exception poisons the domain and retains the batch; it is never
   counted as successful quarantine or returned to the pool.
+- Asynchronous batches let the lane 0 owner continue while background lanes
+  run a batch. `TryRentAsynchronousBatch` binds an executor to a building lease
+  and returns a `RenderWorkAdmissionResult` reason instead of throwing for
+  capacity. The limit is `min(2, max(0, poolCapacity - 1))` rentals, one per
+  executor, and a rental never takes the last free pooled batch.
+  `TryReserveAsynchronousLanes` reserves background lanes before backend
+  preparation; overlapping reservations are rejected. `SubmitAsynchronous`
+  accepts only items affine to reserved background lanes and starts an absolute
+  CPU deadline of `FatalBatchWait`. `IsAsynchronousComplete` polls without
+  waiting; `JoinAsynchronous` waits within the remaining deadline, finalizes a
+  fault quarantine once, releases the lane reservation, and returns the same
+  result on a repeated call. A submitted lease cannot be released before its
+  join. The pool-wide quarantine sweep skips unjoined asynchronous generations.
+  A reserved lane does not take migratable work, and a synchronous item that
+  names a reserved lane fails with a collision. A synchronous planner calls
+  `TryClaimSynchronousLanes` on its building lease before it assigns items or
+  touches lane-local backend storage; the claim blocks asynchronous reservation
+  of those lanes until the batch returns to the pool. The paired OpenXR eye
+  recorder claims its two eye lanes before it freezes worker inputs. Vulkan
+  command-chain recording hashes each chain into the eligible physical lanes
+  (lanes that asynchronous work does not reserve) and stores the physical lane
+  id; with no reservation the mapping is unchanged. It rents its batch and
+  claims those lanes before the first lane-arena allocation, keeps the lease
+  through dispatch, and lowers the item count with `ShrinkItemCount` when the
+  active lane count is known.
+- `RuntimeAsynchronousRenderWorkService` services asynchronous work on the
+  render owner thread. `RuntimeRenderThreadHost` installs it and binds the owner
+  thread; it holds two consumer slots (`IRuntimeAsynchronousRenderWorkConsumer`).
+  `EngineTimer.WaitToRender` and `WaitUntilNextRenderDispatch` call `Service`
+  and, only while work is unresolved, wait in 1 ms slices that keep the original
+  wait limits. A drain request from another thread closes admission and returns
+  a generation; the owner acknowledges that generation at its next service pass,
+  so an older acknowledgement never satisfies a newer request. The render loop
+  drains in a `finally` block on exit, and window renderer teardown and
+  `Engine.Cleanup` require a successful acknowledgement before they destroy
+  backend state. Each consumer names its `AbstractRenderer`. Window renderer
+  teardown drains only the consumers of that renderer and closes admission only
+  for that renderer, so other windows keep their asynchronous work. The final
+  window also closes global admission. Two pending drains for different
+  renderers merge into one drain of every consumer. Backends wrap owner-thread
+  preparation and recording in `EnterOwnerOperation`; consumer callbacks run
+  inside one too. A drain that the owner requests inside an operation runs when
+  the outermost operation ends, and a wait for it inside the operation returns
+  false at once, so the caller defers destruction. All entry points run on the
+  lane 0 owner thread, and lane 0 ownership does not move while an asynchronous
+  rental exists. `AsynchronousMetrics` reports rentals, joins, waits,
+  rejections, reservations and collisions. The MCP tool
+  `get_render_profiler_stats` shows these values under
+  `work_scheduler.render.asynchronous`. Each pooled batch makes one blocking
+  wait at construction so that the first blocking join does not allocate the
+  event lock.
 - Scheduler-controlled waits use a default two-second lifecycle bound. The
   scheduler cannot preempt arbitrary synchronous code executing on lane 0, so
   `IRenderWorkExecutor.Execute` and `QuarantineFaultedBatch` must be nonblocking,

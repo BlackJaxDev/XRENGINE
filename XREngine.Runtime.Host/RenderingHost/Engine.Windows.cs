@@ -269,6 +269,18 @@ namespace XREngine
         {
             bool isFinalWindow = RuntimeEngine.Windows.Count == 1 && ReferenceEquals(RuntimeEngine.Windows[0], window);
             bool cleanupSuppressed = Volatile.Read(ref _suppressedCleanupRequests) > 0;
+            // Every renderer teardown settles the asynchronous render work of its own
+            // renderer first and closes admission for that renderer. Work of other
+            // renderers keeps running. The final window also closes global admission.
+            if (!DrainAsynchronousRenderWork(window.Renderer) ||
+                (isFinalWindow && !cleanupSuppressed && !DrainAsynchronousRenderWork(closeAdmission: true)))
+            {
+                Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
+                Debug.RenderingWarning(
+                    "[Shutdown] Asynchronous render work did not drain. Renderer teardown is abandoned so that live resources are not destroyed.");
+                return false;
+            }
+
             if (!isFinalWindow || cleanupSuppressed)
                 return true;
 
@@ -281,6 +293,46 @@ namespace XREngine
                 "[Shutdown] Core engine loops did not quiesce within 2 seconds. " +
                 "Renderer and process-exit resource teardown will be abandoned to avoid destroying live resources.");
             return false;
+        }
+
+        /// <summary>
+        /// Requests a drain of asynchronous render work from the render owner and waits
+        /// for its acknowledgement within a bounded budget. Returns true when no work was
+        /// unresolved or the owner drained it.
+        /// </summary>
+        internal static bool DrainAsynchronousRenderWork(AbstractRenderer renderer)
+        {
+            RuntimeAsynchronousRenderWorkService? service = RuntimeAsynchronousRenderWorkService.Installed;
+            if (service is null)
+                return true;
+            if (!service.HasUnresolvedWorkFor(renderer))
+            {
+                service.CloseAdmission(renderer);
+                return true;
+            }
+
+            long generation = service.RequestDrain(renderer);
+            return service.WaitForDrainAcknowledgement(generation, TimeSpan.FromSeconds(2));
+        }
+
+        /// <summary>
+        /// Requests a drain of every consumer of asynchronous render work and waits for
+        /// the owner's acknowledgement within a bounded budget.
+        /// </summary>
+        internal static bool DrainAsynchronousRenderWork(bool closeAdmission)
+        {
+            RuntimeAsynchronousRenderWorkService? service = RuntimeAsynchronousRenderWorkService.Installed;
+            if (service is null)
+                return true;
+            if (!service.HasUnresolvedWork)
+            {
+                if (closeAdmission)
+                    service.CloseAdmission();
+                return true;
+            }
+
+            long generation = service.RequestDrain(closeAdmission);
+            return service.WaitForDrainAcknowledgement(generation, TimeSpan.FromSeconds(2));
         }
 
         /// <summary>
