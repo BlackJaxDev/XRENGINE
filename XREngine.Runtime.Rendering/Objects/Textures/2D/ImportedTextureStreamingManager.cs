@@ -1571,7 +1571,7 @@ internal sealed partial class ImportedTextureStreamingManager
             Math.Max(oldestTextureQueueWaitMilliseconds, TextureRuntimeDiagnostics.MaxQueueWaitMilliseconds));
         RenderWorkBudgetCoordinator.RecordUrgentTextureRepairQueue(urgentTextureRepairDepth);
 
-        if (frameId % TextureSummaryIntervalFrames == 0)
+        if (frameId % TextureSummaryIntervalFrames == 0 && TextureRuntimeDiagnostics.IsSummaryLogEnabled)
             TextureRuntimeDiagnostics.LogSummary(frameId, GetTelemetry(), GetTrackedTextureTelemetry());
 
         // Periodic legacy streaming diagnostics (kept in general log for early startup correlation).

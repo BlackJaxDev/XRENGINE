@@ -164,7 +164,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             _allocatedVRAMBytes = 0;
         }
 
-        _view = default;
+        SetCurrentView(default);
         _attachmentViews.Clear();
         _image = default;
         _memory = default;
@@ -273,7 +273,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 // don't use a destroyed VkImage.
                 if (switchedPhysicalGroup)
                 {
-                    _view = default;
+                    SetCurrentView(default);
                     _attachmentViews.Clear();
                     _image = default;
                     _memory = default;
@@ -302,7 +302,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>");
             if (switchedPhysicalGroup)
             {
-                _view = default;
+                SetCurrentView(default);
                 _attachmentViews.Clear();
             }
             else
@@ -350,7 +350,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
             if (!TryRestorePhysicalImageViewCache(_physicalGroup, current))
             {
-                _view = default;
+                SetCurrentView(default);
                 _attachmentViews.Clear();
                 CreateImageView(default);
             }

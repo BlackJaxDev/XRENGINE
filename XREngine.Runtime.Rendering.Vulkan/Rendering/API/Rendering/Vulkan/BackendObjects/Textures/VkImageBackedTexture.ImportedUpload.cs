@@ -958,7 +958,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         _image = pendingUpload.Image;
         _memory = pendingUpload.Memory;
-        _view = new VulkanOwnedImageView(pendingUpload.ImageView, pendingUpload.ImageViewGeneration);
+        SetCurrentViewForUploadPublication(new VulkanOwnedImageView(pendingUpload.ImageView, pendingUpload.ImageViewGeneration));
         _sampler = pendingUpload.Sampler;
         _ownsImageMemory = true;
         _physicalGroup = null;

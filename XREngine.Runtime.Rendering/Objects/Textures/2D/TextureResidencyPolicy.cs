@@ -370,17 +370,28 @@ internal static class TextureResidencyPolicy
         if (string.IsNullOrWhiteSpace(samplerName))
             return 1.0f;
 
-        string normalized = samplerName.Trim().ToLowerInvariant();
-        if (normalized.Contains("normal") || normalized.Contains("bump") || normalized.Contains("height") || normalized.Contains("parallax"))
+        // Span comparisons avoid a lowered copy of the name. This runs for every
+        // streamed texture on every residency pass.
+        ReadOnlySpan<char> name = samplerName.AsSpan().Trim();
+        if (ContainsAny(name, "normal", "bump", "height", "parallax"))
             return 0.85f;
 
-        if (normalized.Contains("rough") || normalized.Contains("metal") || normalized.Contains("occlusion") || normalized.Contains("ao") || normalized.Contains("orm") || normalized.Contains("specular"))
+        if (ContainsAny(name, "rough", "metal", "occlusion", "ao", "orm", "specular"))
             return 0.65f;
 
-        if (normalized.Contains("alpha") || normalized.Contains("mask") || normalized.Contains("opacity") || normalized.Contains("emissive"))
+        if (ContainsAny(name, "alpha", "mask", "opacity", "emissive"))
             return 0.95f;
 
         return 1.0f;
+    }
+
+    private static bool ContainsAny(ReadOnlySpan<char> name, params ReadOnlySpan<string> keywords)
+    {
+        foreach (string keyword in keywords)
+            if (name.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+        return false;
     }
 
     private static uint QuantizeResidentSize(uint sourceMaxDimension, uint minimumResidentSize, float targetPixelSpan)

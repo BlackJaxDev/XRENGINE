@@ -23,21 +23,56 @@ internal abstract class VkTexture<T>(
     /// <summary>
     /// Tracks CPU-side data invalidation separately from Vulkan handle generation.
     /// </summary>
-    public bool IsInvalidated { get; protected set; } = true;
+    public bool IsInvalidated
+    {
+        get => _isInvalidated;
+        protected set => SetReadinessFlag(ref _isInvalidated, value);
+    }
+    private bool _isInvalidated = true;
 
     /// <summary>
     /// True after this wrapper has completed an upload or otherwise marked its backing
     /// resource as ready for descriptor use. This is intentionally separate from
     /// <see cref="IsGenerated"/>, which only answers whether backend handles exist.
     /// </summary>
-    public bool HasUploadedData { get; protected set; }
+    public bool HasUploadedData
+    {
+        get => _hasUploadedData;
+        protected set => SetReadinessFlag(ref _hasUploadedData, value);
+    }
+    private bool _hasUploadedData;
 
     /// <summary>
     /// Set when sampler/view-affecting state changes and descriptor users should
     /// refresh their cached image or texel-buffer info.
     /// </summary>
-    public bool IsDescriptorDirty { get; protected set; } = true;
+    public bool IsDescriptorDirty
+    {
+        get => _isDescriptorDirty;
+        protected set => SetReadinessFlag(ref _isDescriptorDirty, value);
+    }
+    private bool _isDescriptorDirty = true;
     private long _descriptorGeneration;
+    private long _readinessEpoch;
+
+    /// <summary>
+    /// Advances whenever <see cref="IsInvalidated"/>, <see cref="HasUploadedData"/>
+    /// or <see cref="IsDescriptorDirty"/> changes. Together with
+    /// <see cref="DescriptorGeneration"/> it identifies the descriptor readiness
+    /// state, so a binding signature can be kept across frames while both stay
+    /// the same.
+    /// </summary>
+    public ulong ReadinessEpoch
+        => unchecked((ulong)Volatile.Read(ref _readinessEpoch));
+
+    private void SetReadinessFlag(ref bool field, bool value)
+    {
+        if (field == value)
+            return;
+
+        field = value;
+        Interlocked.Increment(ref _readinessEpoch);
+    }
 
     public ulong DescriptorGeneration
         => unchecked((ulong)Volatile.Read(ref _descriptorGeneration));
@@ -171,6 +206,22 @@ internal abstract class VkTexture<T>(
 
     private void IncrementDescriptorGeneration()
         => Interlocked.Increment(ref _descriptorGeneration);
+
+    /// <summary>
+    /// Advances the descriptor generation and the readiness epoch after the view that
+    /// descriptors bind was replaced or retired. Unlike
+    /// <see cref="PublishDescriptorResourceReplacement"/>, it does not mark the
+    /// descriptor clean.
+    /// </summary>
+    protected void AdvanceDescriptorGenerationForViewChange()
+    {
+        IncrementDescriptorGeneration();
+        Interlocked.Increment(ref _readinessEpoch);
+    }
+
+    /// <summary>Advances only the readiness epoch.</summary>
+    protected void AdvanceReadinessEpoch()
+        => Interlocked.Increment(ref _readinessEpoch);
 
     protected virtual void OnPrePushData(out bool shouldPush, out bool allowPostPushCallback)
     {

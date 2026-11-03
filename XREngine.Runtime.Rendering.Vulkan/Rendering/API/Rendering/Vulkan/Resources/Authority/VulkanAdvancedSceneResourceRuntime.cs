@@ -1040,6 +1040,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
 
         DescriptorSet globalDescriptorSet =
             slot.GlobalDescriptorSets[slot.EntryCount];
+        bool textureViewRetired = false;
         if (!TryUpdateGlobalTableDescriptors(
                  globalDescriptorSet,
                  fallbackTableSlice,
@@ -1075,7 +1076,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 (uint)textureHighWater,
                 samplerBase,
                 (uint)samplerHighWater,
-                out reason))
+                out reason,
+                out textureViewRetired))
         {
             if (!TryRollbackStorageTransaction(
                     slot, storageArena, frameSlot, rollbackCursor, out string rollbackReason))
@@ -1084,8 +1086,11 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 reason = rollbackReason;
                 return false;
             }
-            failure =
-                EVulkanAdvancedSceneResourceFailure.DescriptorUpdateFailed;
+            // A texture view that retired after its row was prepared wrote nothing.
+            // The next frame prepares the row again from the current view.
+            failure = textureViewRetired
+                ? EVulkanAdvancedSceneResourceFailure.TextureDescriptorNotReady
+                : EVulkanAdvancedSceneResourceFailure.DescriptorUpdateFailed;
             reason += $" Scene slot={frameSlot} slotGeneration={slot.FrameGeneration} requestedGeneration={frameGeneration} entries={slot.EntryCount} activeUses={slot.ActiveUseCount} globalSet=0x{globalDescriptorSet.Handle:X} resourceSet=0x{slot.ResourceDescriptorSet.Handle:X}.";
             return false;
         }
@@ -2634,7 +2639,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     DescriptorCapacity,
                     0u,
                     DescriptorCapacity,
-                    out reason))
+                    out reason,
+                    out _))
             {
                 return false;
             }
@@ -2756,8 +2762,10 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         uint textureCount,
         uint samplerBase,
         uint samplerCount,
-        out string reason)
+        out string reason,
+        out bool referenceRetired)
     {
+        referenceRetired = false;
         WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[4];
         uint writeCount = 0u;
         fixed (DescriptorImageInfo* imagePointer = _imageDescriptorScratch)
@@ -2803,7 +2811,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 !_resources.DescriptorLifetime.TryUpdateDescriptorSets(
                     writeCount,
                     writes,
-                    out reason))
+                    out reason,
+                    out referenceRetired))
             {
                 return false;
             }

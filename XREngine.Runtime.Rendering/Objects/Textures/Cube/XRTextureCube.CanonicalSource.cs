@@ -10,6 +10,15 @@ public partial class XRTextureCube
     private CubeMipmap[]? _canonicalObservedMipmaps;
     private CubeFaceWitness[] _canonicalObservedFaces = [];
     private ulong _canonicalSourceGeneration;
+    // Odd while the lock holder changes the observed chain, faces, or generation.
+    // A reader without the lock accepts its reads only when the value is even and
+    // the same before and after them.
+    private long _canonicalObservedSequence;
+    // Pass memo: the face check passed in pass _memoEpoch for _memoMipmaps. The
+    // writer clears the epoch first and writes it last.
+    private ulong _memoEpoch;
+    private CubeMipmap[]? _memoMipmaps;
+    private ulong _memoGeneration;
 
     /// <summary>
     /// Gets a revision for a CPU-backed cube. A caller must invalidate a side
@@ -22,49 +31,124 @@ public partial class XRTextureCube
         {
             lock (_canonicalSourceSync)
             {
+                BeginObservedWrite();
                 _canonicalObservedMipmaps = null;
                 _canonicalObservedFaces = [];
+                EndObservedWrite();
+                PublishWitnessPass(0UL, null, 0UL);
             }
             return false;
         }
 
+        ulong witnessEpoch = XREngine.Rendering.Commands.AdvancedSourceWitnessEpoch.Current;
+        CubeMipmap[] mipmaps = Mipmaps;
+        // One scene publication checks the same cube for every material that
+        // binds it. The face check walks every face of every mip, so it runs
+        // once per publication pass while the mip chain is the same object.
+        // Pass epochs are unique to one thread, so only this thread writes a memo
+        // with this epoch.
+        if (witnessEpoch != 0UL && Volatile.Read(ref _memoEpoch) == witnessEpoch)
+        {
+            CubeMipmap[]? memoMipmaps = Volatile.Read(ref _memoMipmaps);
+            ulong memoGeneration = Volatile.Read(ref _memoGeneration);
+            if (Volatile.Read(ref _memoEpoch) == witnessEpoch &&
+                ReferenceEquals(memoMipmaps, mipmaps))
+            {
+                generation = memoGeneration;
+                return true;
+            }
+        }
+
+        // An unchanged cube needs no lock: the face check only reads the
+        // observed state. Another thread that checks the same cube every frame
+        // then does not block this one.
+        long sequence = Volatile.Read(ref _canonicalObservedSequence);
+        if ((sequence & 1L) == 0L)
+        {
+            CubeMipmap[]? observed = Volatile.Read(ref _canonicalObservedMipmaps);
+            CubeFaceWitness[] observedFaces = Volatile.Read(ref _canonicalObservedFaces);
+            ulong observedGeneration = Volatile.Read(ref _canonicalSourceGeneration);
+            if (ReferenceEquals(observed, mipmaps) &&
+                MatchesCanonicalFaces(mipmaps, observed, observedFaces) &&
+                Volatile.Read(ref _canonicalObservedSequence) == sequence)
+            {
+                if (witnessEpoch != 0UL)
+                    PublishWitnessPass(witnessEpoch, mipmaps, observedGeneration);
+                generation = observedGeneration;
+                return true;
+            }
+        }
+
         lock (_canonicalSourceSync)
         {
-            CubeMipmap[] mipmaps = Mipmaps;
-            if (MatchesCanonicalFaces(mipmaps))
+            mipmaps = Mipmaps;
+            if (MatchesCanonicalFaces(mipmaps, _canonicalObservedMipmaps, _canonicalObservedFaces))
             {
+                if (witnessEpoch != 0UL)
+                    PublishWitnessPass(witnessEpoch, mipmaps, _canonicalSourceGeneration);
                 generation = _canonicalSourceGeneration;
                 return true;
             }
 
+            PublishWitnessPass(0UL, null, 0UL);
+
             // A changed mip chain owns new face references. Keep no old data
             // source alive after the chain is replaced.
-            _canonicalObservedMipmaps = null;
-            _canonicalObservedFaces = [];
-            if (!TryCaptureCanonicalFaces(mipmaps, out CubeFaceWitness[] faces))
-                return false;
-
-            _canonicalObservedMipmaps = mipmaps;
-            _canonicalObservedFaces = faces;
-            if (!MatchesCanonicalFaces(mipmaps))
+            BeginObservedWrite();
+            try
             {
                 _canonicalObservedMipmaps = null;
                 _canonicalObservedFaces = [];
-                return false;
+                if (!TryCaptureCanonicalFaces(mipmaps, out CubeFaceWitness[] faces))
+                    return false;
+
+                if (!MatchesCanonicalFaces(mipmaps, mipmaps, faces))
+                    return false;
+
+                _canonicalObservedMipmaps = mipmaps;
+                _canonicalObservedFaces = faces;
+                unchecked { ++_canonicalSourceGeneration; }
+                if (_canonicalSourceGeneration == 0UL)
+                    _canonicalSourceGeneration = 1UL;
+            }
+            finally
+            {
+                EndObservedWrite();
             }
 
-            unchecked { ++_canonicalSourceGeneration; }
-            if (_canonicalSourceGeneration == 0UL)
-                _canonicalSourceGeneration = 1UL;
+            if (witnessEpoch != 0UL)
+                PublishWitnessPass(witnessEpoch, mipmaps, _canonicalSourceGeneration);
             generation = _canonicalSourceGeneration;
             return true;
         }
     }
 
-    private bool MatchesCanonicalFaces(CubeMipmap[] mipmaps)
+    private void BeginObservedWrite()
+        => Interlocked.Increment(ref _canonicalObservedSequence);
+
+    private void EndObservedWrite()
+        => Interlocked.Increment(ref _canonicalObservedSequence);
+
+    /// <summary>
+    /// Records that the face check passed in a pass. An epoch of 0 clears the
+    /// memo. A memo is valid only for the rest of its pass, so a change inside
+    /// the pass is seen by the next pass.
+    /// </summary>
+    private void PublishWitnessPass(ulong witnessEpoch, CubeMipmap[]? mipmaps, ulong generation)
     {
-        if (!ReferenceEquals(_canonicalObservedMipmaps, mipmaps) ||
-            mipmaps.Length == 0 || _canonicalObservedFaces.Length != mipmaps.Length * 6)
+        Volatile.Write(ref _memoEpoch, 0UL);
+        Volatile.Write(ref _memoMipmaps, mipmaps);
+        Volatile.Write(ref _memoGeneration, generation);
+        Volatile.Write(ref _memoEpoch, witnessEpoch);
+    }
+
+    private static bool MatchesCanonicalFaces(
+        CubeMipmap[] mipmaps,
+        CubeMipmap[]? observedMipmaps,
+        CubeFaceWitness[] observedFaces)
+    {
+        if (!ReferenceEquals(observedMipmaps, mipmaps) ||
+            mipmaps.Length == 0 || observedFaces.Length != mipmaps.Length * 6)
             return false;
 
         for (int mipIndex = 0; mipIndex < mipmaps.Length; ++mipIndex)
@@ -75,7 +159,7 @@ public partial class XRTextureCube
             for (int faceIndex = 0; faceIndex < 6; ++faceIndex)
             {
                 Mipmap2D? side = sides[faceIndex];
-                if (side is null || !_canonicalObservedFaces[mipIndex * 6 + faceIndex]
+                if (side is null || !observedFaces[mipIndex * 6 + faceIndex]
                         .Matches(mip, sides, side))
                     return false;
             }

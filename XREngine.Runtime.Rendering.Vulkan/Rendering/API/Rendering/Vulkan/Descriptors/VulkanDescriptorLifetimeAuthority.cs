@@ -217,13 +217,56 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             out failureReason);
     }
 
+    /// <summary>
+    /// Updates descriptor sets after prevalidation. <paramref name="referenceRetired"/> is true
+    /// when the update was rejected only because a referenced resource is retiring. Nothing was
+    /// written then, so the caller can retry with the current resource.
+    /// </summary>
+    internal bool TryUpdateDescriptorSets(
+        uint descriptorWriteCount,
+        WriteDescriptorSet* descriptorWrites,
+        out string failureReason,
+        out bool referenceRetired)
+    {
+        referenceRetired = false;
+        if (_deviceContext is not { IsOperational: true } device)
+        {
+            failureReason = $"Cannot update Vulkan descriptors while device state is {_deviceContext?.State}.";
+            return false;
+        }
+
+        return ApplyDescriptorWrites(
+            device,
+            descriptorWriteCount,
+            descriptorWrites,
+            prevalidate: true,
+            out failureReason,
+            out referenceRetired);
+    }
+
     private bool ApplyDescriptorWrites(
         VulkanDeviceContext device,
         uint descriptorWriteCount,
         WriteDescriptorSet* descriptorWrites,
         bool prevalidate,
         out string failureReason)
+        => ApplyDescriptorWrites(
+            device,
+            descriptorWriteCount,
+            descriptorWrites,
+            prevalidate,
+            out failureReason,
+            out _);
+
+    private bool ApplyDescriptorWrites(
+        VulkanDeviceContext device,
+        uint descriptorWriteCount,
+        WriteDescriptorSet* descriptorWrites,
+        bool prevalidate,
+        out string failureReason,
+        out bool referenceRetired)
     {
+        referenceRetired = false;
         ulong[]? dependentCommandBuffers;
         int dependentCommandBufferCount;
         bool invalidatesRecordedCommandBuffers;
@@ -240,7 +283,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
                 if (!TryPrevalidateWritesNoLock(
                         descriptorWriteCount,
                         descriptorWrites,
-                        out failureReason))
+                        out failureReason,
+                        out referenceRetired))
                 {
                     if (prevalidate)
                         return false;
@@ -413,6 +457,7 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
                             if (!TryPrevalidateWritesNoLock(
                                     unchecked((uint)writes.Length),
                                     writePointer,
+                                    out _,
                                     out _))
                             {
                                 return false;
@@ -2388,9 +2433,11 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
     private bool TryPrevalidateWritesNoLock(
         uint writeCount,
         WriteDescriptorSet* writes,
-        out string failureReason)
+        out string failureReason,
+        out bool referenceRetired)
     {
         failureReason = string.Empty;
+        referenceRetired = false;
         if (writeCount == 0 || writes is null)
             return true;
 
@@ -2452,6 +2499,7 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
                         write.DescriptorType, write.DstArrayElement + descriptorIndex,
                         out failureReason))
                 {
+                    referenceRetired = true;
                     return false;
                 }
             }

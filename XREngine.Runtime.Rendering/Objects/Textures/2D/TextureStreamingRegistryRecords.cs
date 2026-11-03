@@ -29,6 +29,14 @@ internal sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
 
     public readonly WeakReference<XRTexture2D> Texture = new(texture);
     public string? FilePath = texture.FilePath;
+
+    /// <summary>
+    /// Fairness group key cached for <see cref="FairnessGroupKeySourcePath"/>.
+    /// The key comes from the file path, which rarely changes, and building it
+    /// allocates a string. Read and write it under <see cref="Sync"/>.
+    /// </summary>
+    public string FairnessGroupKey = string.Empty;
+    public string? FairnessGroupKeySourcePath;
     public ITextureStreamingSource? Source;
     public ITextureResidencyBackend? Backend;
     public ESizedInternalFormat Format = texture.SizedInternalFormat;

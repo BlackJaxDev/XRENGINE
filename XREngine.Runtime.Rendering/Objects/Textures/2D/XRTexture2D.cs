@@ -1899,7 +1899,13 @@ namespace XREngine.Rendering
         public bool RuntimeManagedProgressiveUploadActive
         {
             get => _runtimeManagedProgressiveUploadActive;
-            set => _runtimeManagedProgressiveUploadActive = value;
+            set
+            {
+                if (_runtimeManagedProgressiveUploadActive == value)
+                    return;
+                _runtimeManagedProgressiveUploadActive = value;
+                AdvanceAdvancedSourceVersion();
+            }
         }
 
         /// <summary>

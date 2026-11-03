@@ -23,7 +23,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     {
         if (_image.Handle == 0)
         {
-            DestroyView(ref _view);
+            DestroyCurrentView();
             Debug.VulkanWarningEvery(
                 $"Vulkan.Texture.ViewWithoutImage.{Data.GetHashCode()}",
                 TimeSpan.FromSeconds(2),
@@ -44,8 +44,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (replacement == _view)
             return;
 
-        DestroyView(ref _view);
-        _view = replacement;
+        DestroyCurrentView();
+        SetCurrentView(replacement);
     }
 
     /// <summary>
@@ -222,7 +222,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 "VkImageBackedTexture.DestroyCurrentViews");
         }
 
-        _view = default;
+        SetCurrentView(default);
         _attachmentViews.Clear();
 
         if (removeActiveCacheEntry && _image.Handle != 0)
@@ -231,7 +231,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     private void ForgetCurrentViews(bool removeActiveCacheEntry)
     {
-        _view = default;
+        SetCurrentView(default);
         _attachmentViews.Clear();
 
         if (removeActiveCacheEntry && _image.Handle != 0)
@@ -753,7 +753,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (!IsCachedImageViewBackedByImage(entry.PrimaryView, image))
             return false;
 
-        _view = entry.PrimaryView;
+        SetCurrentView(entry.PrimaryView);
         _attachmentViews.Clear();
         foreach (KeyValuePair<AttachmentViewKey, VulkanOwnedImageView> pair in entry.AttachmentViews)
         {

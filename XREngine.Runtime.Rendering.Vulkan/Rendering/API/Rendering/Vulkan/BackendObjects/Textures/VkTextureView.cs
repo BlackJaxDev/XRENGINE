@@ -9,6 +9,21 @@ namespace XREngine.Rendering.Vulkan
     {
         private Image _image;
         private ImageView _view;
+
+        /// <summary>
+        /// Replaces the view that descriptors bind. A change advances the descriptor
+        /// generation and the readiness epoch, so no cache keyed by them can return a
+        /// view that was replaced or released.
+        /// </summary>
+        private void SetCurrentView(ImageView view)
+        {
+            if (_view.Handle == view.Handle)
+                return;
+
+            _view = view;
+            AdvanceDescriptorGenerationForViewChange();
+            Data.NotifyBackendDescriptorSourceChanged();
+        }
         private ImageView _depthOnlyView;
         private ImageView _stencilOnlyView;
         private VulkanInternedImageViewReference _viewReference;
@@ -829,7 +844,7 @@ namespace XREngine.Rendering.Vulkan
                     throw new InvalidOperationException($"Texture view target '{Data.TextureTarget}' is incompatible with buffer texture '{viewedTexture.GetType().Name}'.");
 
                 _image = default;
-                _view = default;
+                SetCurrentView(default);
                 _viewReference = default;
                 _sampler = default;
                 _format = texelSource.DescriptorBufferFormat;
@@ -884,7 +899,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in viewInfo, "VkTextureView.View", out _viewReference))
                 throw new InvalidOperationException("Failed to create Vulkan texture view.");
-            _view = _viewReference.View;
+            SetCurrentView(_viewReference.View);
 
             try
             {
@@ -990,9 +1005,9 @@ namespace XREngine.Rendering.Vulkan
                 };
 
                 if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in viewInfo, "VkTextureView.RefreshedView", out _viewReference))
-                    _view = default;
+                    SetCurrentView(default);
                 else
-                    _view = _viewReference.View;
+                    SetCurrentView(_viewReference.View);
 
                 bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
                 if (_view.Handle != 0 && hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
@@ -1109,7 +1124,7 @@ namespace XREngine.Rendering.Vulkan
             BackendContext.Resources.Images.ReleaseInternedView(_depthOnlyViewReference);
             BackendContext.Resources.Images.ReleaseInternedView(_stencilOnlyViewReference);
 
-            _view = default;
+            SetCurrentView(default);
             _depthOnlyView = default;
             _stencilOnlyView = default;
             _viewReference = default;
