@@ -83,6 +83,28 @@ namespace XREngine
                     }
 
                     /// <summary>
+                    /// True when the last frame snapshot holds an active desktop output of
+                    /// <paramref name="viewKind"/> that rendered its scene or mirror. Unlike
+                    /// <see cref="LastManifest"/>, this check does not copy the outputs.
+                    /// </summary>
+                    public static bool HasRecentRenderedDesktopOutput(EVrOutputViewKind viewKind)
+                    {
+                        lock (Sync)
+                        {
+                            for (int i = 0; i < _lastOutputCount; i++)
+                            {
+                                ref readonly FrameOutputEntrySnapshot output = ref _lastOutputs[i];
+                                if (output.ViewKind != viewKind || !output.Active)
+                                    continue;
+                                if ((output.OutputKind == EFrameOutputKind.DesktopScene && output.RenderPhaseSceneRendered) ||
+                                    (output.OutputKind == EFrameOutputKind.DesktopMirror && output.Rendered))
+                                    return true;
+                            }
+                            return false;
+                        }
+                    }
+
+                    /// <summary>
                     /// Copies the output telemetry accumulated since the last frame snapshot without
                     /// consuming it. The return value is the total number of current outputs, which can
                     /// exceed <paramref name="destination"/> when the caller's bounded scratch buffer is

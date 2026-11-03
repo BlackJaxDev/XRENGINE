@@ -225,6 +225,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private readonly object _renderGraphValidationLock = new();
     private readonly HashSet<int> _executedRenderGraphPassIndices = [];
     private readonly HashSet<int> _executedBranchRenderGraphPassIndices = [];
+    // Pass indices of the metadata that the last render-graph validation used.
+    private readonly HashSet<int> _validationPassMetadataIndices = [];
+    private IReadOnlyCollection<RenderPassMetadata>? _validationPassMetadataSource;
+    private int _validationPassMetadataCount = -1;
     private static readonly Action<object?> PopRenderGraphBranchScopeAction =
         static state => ((XRRenderPipelineInstance)state!).PopRenderGraphBranchScope();
     private int _activeRenderGraphBranchDepth;
@@ -3803,47 +3807,74 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (pipeline is null)
             return;
 
-        HashSet<int> executedPasses;
-        HashSet<int> branchExecutedPasses;
+        IReadOnlyCollection<RenderPassMetadata> passMetadata =
+            ActiveGeneration?.PassMetadata ?? pipeline.PassMetadata;
+        int[]? missingExecuted = null;
+        int[]? missingBranchExecuted = null;
         lock (_renderGraphValidationLock)
         {
             if (_executedRenderGraphPassIndices.Count == 0 && _executedBranchRenderGraphPassIndices.Count == 0)
                 return;
 
-            executedPasses = [.. _executedRenderGraphPassIndices];
-            branchExecutedPasses = [.. _executedBranchRenderGraphPassIndices];
+            HashSet<int> metadataPassIndices = GetMetadataPassIndices(passMetadata);
+            // The check runs every frame; it allocates only to report a missing pass.
+            missingExecuted = CollectMissingPassMetadata(_executedRenderGraphPassIndices, metadataPassIndices);
+            missingBranchExecuted = CollectMissingPassMetadata(_executedBranchRenderGraphPassIndices, metadataPassIndices);
         }
 
-        IReadOnlyCollection<RenderPassMetadata> passMetadata =
-            ActiveGeneration?.PassMetadata ?? pipeline.PassMetadata;
-        HashSet<int> metadataPassIndices = passMetadata
-            .Select(m => m.PassIndex)
-            .ToHashSet();
-
         WarnMissingPassMetadata(
-            executedPasses,
-            metadataPassIndices,
+            missingExecuted,
             "executed",
             "[RenderDiag] Pipeline '{0}' executed render-graph passes without metadata: {1}.");
 
         WarnMissingPassMetadata(
-            branchExecutedPasses,
-            metadataPassIndices,
+            missingBranchExecuted,
             "branch-executed",
             "[RenderDiag] Pipeline '{0}' executed branch-selected passes without metadata: {1}.");
     }
 
+    /// <summary>
+    /// Returns the pass indices of <paramref name="passMetadata"/>. The set is rebuilt only
+    /// when the metadata collection changes. The caller holds <see cref="_renderGraphValidationLock"/>.
+    /// </summary>
+    private HashSet<int> GetMetadataPassIndices(IReadOnlyCollection<RenderPassMetadata> passMetadata)
+    {
+        if (!ReferenceEquals(_validationPassMetadataSource, passMetadata) ||
+            _validationPassMetadataCount != passMetadata.Count)
+        {
+            _validationPassMetadataIndices.Clear();
+            foreach (RenderPassMetadata metadata in passMetadata)
+                _validationPassMetadataIndices.Add(metadata.PassIndex);
+            _validationPassMetadataSource = passMetadata;
+            _validationPassMetadataCount = passMetadata.Count;
+        }
+        return _validationPassMetadataIndices;
+    }
+
+    private static int[]? CollectMissingPassMetadata(HashSet<int> executedPasses, HashSet<int> metadataPassIndices)
+    {
+        int missingCount = 0;
+        foreach (int passIndex in executedPasses)
+            if (!metadataPassIndices.Contains(passIndex))
+                missingCount++;
+        if (missingCount == 0)
+            return null;
+
+        int[] missing = new int[missingCount];
+        int index = 0;
+        foreach (int passIndex in executedPasses)
+            if (!metadataPassIndices.Contains(passIndex))
+                missing[index++] = passIndex;
+        Array.Sort(missing);
+        return missing;
+    }
+
     private void WarnMissingPassMetadata(
-        HashSet<int> executedPasses,
-        HashSet<int> metadataPassIndices,
+        int[]? missing,
         string scopeLabel,
         string messageTemplate)
     {
-        if (executedPasses.Count == 0)
-            return;
-
-        int[] missing = [.. executedPasses.Where(passIndex => !metadataPassIndices.Contains(passIndex)).OrderBy(passIndex => passIndex)];
-        if (missing.Length == 0)
+        if (missing is null)
             return;
 
         string missingList = string.Join(", ", missing);

@@ -1563,12 +1563,12 @@ internal sealed class EngineRuntimeRenderingHostServices :
             RuntimeEngine.VRState.IsInVR &&
             viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop)
         {
-            RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot manifest = RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest;
             EVrMirrorMode mode = RuntimeEngine.Rendering.Settings.VrMirrorMode;
             if (ShouldKeepIndependentDesktopLive(mode))
                 autoSkipWhenOverBudget = false;
 
-            if (autoSkipWhenOverBudget && !HasRecentRenderedDesktopOutput(manifest, viewKind))
+            if (autoSkipWhenOverBudget &&
+                !RuntimeEngine.Rendering.Stats.FrameOutputs.HasRecentRenderedDesktopOutput(viewKind))
                 autoSkipWhenOverBudget = false;
 
             if (mode == EVrMirrorMode.Off)
@@ -1603,7 +1603,8 @@ internal sealed class EngineRuntimeRenderingHostServices :
                     targetRateHz);
             }
 
-            if (autoSkipWhenOverBudget && ShouldHoldDesktopOutputForVrPressure(frameId, manifest))
+            if (autoSkipWhenOverBudget &&
+                ShouldHoldDesktopOutputForVrPressure(frameId, RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest))
             {
                 return RuntimeEngine.Rendering.Stats.FrameOutputs.RecordForcedSkip(
                     viewKind,
@@ -1631,27 +1632,6 @@ internal sealed class EngineRuntimeRenderingHostServices :
     private bool ShouldKeepIndependentDesktopLive(EVrMirrorMode mode)
         => mode == EVrMirrorMode.FullIndependentRender &&
            RuntimeEngine.Rendering.Settings.RenderWindowsWhileInVR;
-
-    private static bool HasRecentRenderedDesktopOutput(
-        RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot manifest,
-        EVrOutputViewKind viewKind)
-    {
-        RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = manifest.Outputs;
-        for (int i = 0; i < outputs.Length; i++)
-        {
-            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
-            if (output.ViewKind != viewKind || !output.Active)
-                continue;
-
-            if ((output.OutputKind == EFrameOutputKind.DesktopScene && output.RenderPhaseSceneRendered) ||
-                (output.OutputKind == EFrameOutputKind.DesktopMirror && output.Rendered))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     /// <summary>
     /// Admits at most one independent desktop frame per XR frame, and only when it can finish
