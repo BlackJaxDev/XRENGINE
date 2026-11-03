@@ -92,6 +92,9 @@ domain and retains the batch instead of silently recycling partial output.
   or `1..32`).
 - `XRE_ALLOW_CPU_OVERSUBSCRIPTION`: diagnostic opt-in (`true`, `false`, `1`, or
   `0`).
+- `XRE_PREFER_LARGEST_CACHE_CORES`: `0` keeps the full process affinity on a CPU
+  whose L3 caches have different sizes. Overrides the `PreferLargestCacheCores`
+  engine setting (on by default).
 - `XRE_RENDER_WORKER_QOS`: render-domain background-lane policy (`OsDefault`
   or diagnostic `High`).
 - `XR_JOB_QUEUE_LIMIT`: bounded queue capacity.

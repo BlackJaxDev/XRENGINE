@@ -49,6 +49,25 @@ not exceed `Environment.ProcessorCount` unless
 an invalid/oversubscribed topology fail startup before native windows are
 created and include the requested and effective counts in the diagnostic.
 
+Before the topology resolves, startup applies the cache-core affinity policy
+(`Engine.ApplyProcessorCacheAffinityPolicy`). When the CPU's L3 caches have
+different sizes, for example a core complex with a stacked cache, the process is
+restricted to the logical processors that share the largest L3, and the topology
+then sizes automatic worker counts from only those processors. The startup
+oversubscription check still uses the machine's processor count
+(`SystemProcessorCount`), because the fixed dedicated loops and explicit worker
+counts fit the machine and only share the narrowed cores. The rule reads the cache topology from the
+OS (`GetLogicalProcessorInformationEx` on Windows, in
+`WindowsProcessorCacheAffinity`), so it needs no CPU vendor or model list. It
+does nothing when all L3 caches have the same size, when the largest caches span
+more than one processor group, or when the launcher already narrowed the process
+affinity. Hybrid CPUs that differ only in core efficiency class are logged but
+not restricted, because the OS thread director already places foreground threads
+on performance cores. The decision is written to `cpu-affinity.log`. Disable the
+policy with the `PreferLargestCacheCores` execution setting or
+`XRE_PREFER_LARGEST_CACHE_CORES=0`. On a 7950X3D, the eye record ran about 30%
+faster on the large-cache cores than on the other core complex.
+
 `EngineWorkScheduler` applies the snapshot once during startup:
 
 - The general count creates the persistent `XRE-General-*` lanes. `G == 0`
@@ -339,6 +358,8 @@ var response = await Engine.Jobs.ScheduleRemote(new RemoteJobRequest
   `1..32`).
 - `XRE_ALLOW_CPU_OVERSUBSCRIPTION`: Diagnostic oversubscription opt-in (`true`,
   `false`, `1`, or `0`; default false).
+- `XRE_PREFER_LARGEST_CACHE_CORES`: Cache-core affinity policy (`true`, `false`,
+  `1`, or `0`; default true). Overrides `PreferLargestCacheCores`.
 - `XRE_RENDER_WORKER_QOS`: Renderer-neutral render-worker QoS (`OsDefault` or
   diagnostic `High`).
 - `XR_JOB_QUEUE_LIMIT`: Max enqueued jobs when bounded (default 8192; 0 disables bounding).

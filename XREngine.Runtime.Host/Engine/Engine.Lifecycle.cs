@@ -135,6 +135,7 @@ namespace XREngine
                 EnsureMemoryPolicyConfigured(startupSettings);
                 if (allowsWindows)
                     ValidateGpuRenderingStartupConfiguration();
+                ApplyProcessorCacheAffinityPolicy();
                 ResolveExecutionTopology();
                 ConfigureJobManager(GameSettings);
                 if (allowsWindows)

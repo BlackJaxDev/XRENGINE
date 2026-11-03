@@ -112,7 +112,13 @@ namespace XREngine
 
             var request = new EngineExecutionTopologyRequest
             {
-                EffectiveProcessorCount = Environment.ProcessorCount,
+                EffectiveProcessorCount = _cacheAffinityProcessorCount > 0
+                    ? _cacheAffinityProcessorCount
+                    : Environment.ProcessorCount,
+                SystemProcessorCount = _cacheAffinityProcessorCount > 0 &&
+                    _cacheAffinityProcessorCount < Environment.ProcessorCount
+                        ? Environment.ProcessorCount
+                        : 0,
                 GeneralWorkerThreadCount = generalWorkers,
                 GeneralWorkerThreadCap = generalWorkerCap,
                 RenderWorkerThreadCount = renderWorkers,
@@ -214,6 +220,30 @@ namespace XREngine
 
             source = EEngineExecutionSettingSource.Environment;
             return value;
+        }
+
+        // Logical processors left after the cache-core affinity policy; 0 before it runs.
+        private static int _cacheAffinityProcessorCount;
+
+        /// <summary>
+        /// Restricts the process to the cores of the largest L3 cache when the CPU's L3 caches
+        /// have different sizes. Runs once at startup, before the execution topology sizes its
+        /// worker domains, so the topology counts only the cores that the process may use.
+        /// </summary>
+        internal static void ApplyProcessorCacheAffinityPolicy()
+        {
+            bool enabled = ReadExecutionBooleanOverride(
+                XREngineEnvironmentVariables.PreferLargestCacheCores,
+                RuntimeEngine.Rendering.Settings.PreferLargestCacheCores,
+                EEngineExecutionSettingSource.EngineDefault,
+                out _);
+            _cacheAffinityProcessorCount = ProcessorCacheAffinity.ApplyToCurrentProcess(
+                enabled,
+                static message =>
+                {
+                    Debug.Out(message);
+                    Debug.WriteAuxiliaryLog("cpu-affinity.log", message);
+                });
         }
 
         private static bool ReadExecutionBooleanOverride(

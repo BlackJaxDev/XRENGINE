@@ -453,6 +453,17 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Restricts the process to the cores of the largest L3 cache on CPUs with unequal L3 caches.
+                /// </summary>
+                [Category("Execution")]
+                [Description("Restricts the process to the cores that share the largest L3 cache when the CPU's L3 caches have different sizes. Enabled by default and requires restart.")]
+                public bool PreferLargestCacheCores
+                {
+                    get => Execution.PreferLargestCacheCores;
+                    set => Execution.PreferLargestCacheCores = value;
+                }
+
+                /// <summary>
                 /// Scheduling policy requested for renderer-neutral render-domain workers.
                 /// </summary>
                 [Category("Execution")]

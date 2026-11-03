@@ -68,6 +68,23 @@ public sealed class EngineExecutionTopologyTests
     }
 
     [Test]
+    public void Resolve_NarrowedAffinity_ChecksExplicitCountsAgainstTheMachineBudget()
+    {
+        EngineExecutionTopology topology = EngineExecutionTopology.Resolve(
+            CreateRequest() with
+            {
+                EffectiveProcessorCount = 16,
+                SystemProcessorCount = 32,
+                RenderWorkerThreadCount = 2,
+                DedicatedBackgroundThreadCount = 12,
+            });
+
+        topology.EffectiveProcessorCount.ShouldBe(16);
+        topology.ExceedsProcessorBudget.ShouldBeFalse();
+        topology.IsOversubscribed.ShouldBeTrue();
+    }
+
+    [Test]
     public void Resolve_ExplicitOversubscriptionOptIn_IsRetainedAsDiagnosticState()
     {
         EngineExecutionTopology topology = EngineExecutionTopology.Resolve(

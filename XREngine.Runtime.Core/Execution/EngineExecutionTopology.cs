@@ -46,6 +46,13 @@ public sealed class EngineExecutionTopology
     public bool AllowCpuOversubscription { get; }
     public ERenderWorkerQos RenderWorkerQos { get; }
     public bool IsOversubscribed => TotalReservedThreadCount > EffectiveProcessorCount;
+
+    /// <summary>
+    /// True when the reserved threads exceed the machine budget: the larger of
+    /// <see cref="EffectiveProcessorCount"/> and <see cref="EngineExecutionTopologyRequest.SystemProcessorCount"/>.
+    /// </summary>
+    public bool ExceedsProcessorBudget
+        => TotalReservedThreadCount > Math.Max(EffectiveProcessorCount, Request.SystemProcessorCount);
     public bool GeneralWorkerCountIsAutomatic => Request.GeneralWorkerThreadCount == AutomaticWorkerCount;
     public bool RenderWorkerCountIsAutomatic => Request.RenderWorkerThreadCount == AutomaticWorkerCount;
     public bool ForegroundReservationIsAutomatic => Request.ReservedForegroundThreadCount == AutomaticWorkerCount;
@@ -104,7 +111,7 @@ public sealed class EngineExecutionTopology
             request.GeneralWorkerThreadCount != AutomaticWorkerCount ||
             request.RenderWorkerThreadCount != AutomaticWorkerCount ||
             request.ReservedForegroundThreadCount != AutomaticWorkerCount;
-        if (topology.IsOversubscribed &&
+        if (topology.ExceedsProcessorBudget &&
             !topology.AllowCpuOversubscription &&
             hasExplicitReservation)
         {
@@ -130,6 +137,8 @@ public sealed class EngineExecutionTopology
         var builder = new StringBuilder(384);
         builder.Append("[ExecutionTopology] processors=")
             .Append(EffectiveProcessorCount)
+            .Append(" systemProcessors=")
+            .Append(Request.SystemProcessorCount)
             .Append(" foreground=")
             .Append(ReservedForegroundThreadCount)
             .Append(" general=")

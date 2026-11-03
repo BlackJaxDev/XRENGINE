@@ -433,6 +433,8 @@ public static class XREngineEnvironmentVariables
     public const string RenderWorkerThreadCap = "XRE_RENDER_WORKER_THREAD_CAP";
     public const string ReservedForegroundThreads = "XRE_RESERVED_FOREGROUND_THREADS";
     public const string AllowCpuOversubscription = "XRE_ALLOW_CPU_OVERSUBSCRIPTION";
+    /// <summary>Set to 0 to keep the full process affinity on CPUs whose L3 caches have different sizes; overrides <c>PreferLargestCacheCores</c>.</summary>
+    public const string PreferLargestCacheCores = "XRE_PREFER_LARGEST_CACHE_CORES";
     public const string RenderWorkerQos = "XRE_RENDER_WORKER_QOS";
     public const string JobWorkers = "XR_JOB_WORKERS";
     public const string JobWorkerCap = "XR_JOB_WORKER_CAP";
