@@ -73,7 +73,7 @@ Explicit positive token and elapsed-time limits remain hard caps. Raise any
 other individual limit only when the objective
 requires it and the expected validation benefit justifies the additional cost.
 Global broker concurrency remains bounded by
-`XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
+`LOCAL_AGENT_BROKER_MAX_CONCURRENCY` (the engine launcher also accepts its legacy `XRE_` prefix).
 
 ### Opt-In Hierarchical Code Swarms
 

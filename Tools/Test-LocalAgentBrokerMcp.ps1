@@ -3,6 +3,16 @@ param([string]$BrokerPath)
 
 $ErrorActionPreference = "Stop"
 
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    $arguments = @('-NoProfile', '-File', $PSCommandPath)
+    if (-not [string]::IsNullOrWhiteSpace($BrokerPath)) {
+        $arguments += @('-BrokerPath', $BrokerPath)
+    }
+    & pwsh @arguments
+    if ($LASTEXITCODE -ne 0) { throw 'The broker smoke check failed under PowerShell 7.' }
+    return
+}
+
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $launcherPath = Join-Path $PSScriptRoot "Invoke-LocalAgentBroker.ps1"
 
@@ -13,12 +23,13 @@ try {
     )
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = "powershell"
-    $startInfo.Arguments =
-        "-NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`""
+    $startInfo.FileName = "pwsh"
+    $startInfo.ArgumentList.Add('-NoProfile')
+    $startInfo.ArgumentList.Add('-File')
+    $startInfo.ArgumentList.Add($launcherPath)
     if (-not [string]::IsNullOrWhiteSpace($BrokerPath)) {
-        $startInfo.FileName = 'dotnet'
-        $startInfo.Arguments = "`"$BrokerPath`" --repo-root `"$repoRoot`" --integration xrengine"
+        $startInfo.ArgumentList.Add('-BrokerPath')
+        $startInfo.ArgumentList.Add($BrokerPath)
     }
     $startInfo.WorkingDirectory = $repoRoot
     $startInfo.UseShellExecute = $false

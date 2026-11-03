@@ -7,6 +7,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    $arguments = @('-NoProfile', '-File', $PSCommandPath)
+    if ($LibraryOnly) { $arguments += '-LibraryOnly' }
+    if ($SkipSmokeTest) { $arguments += '-SkipSmokeTest' }
+    if ($PackagePath) { $arguments += @('-PackagePath', $PackagePath) }
+    if ($ArchivePath) { $arguments += @('-ArchivePath', $ArchivePath) }
+    & pwsh @arguments
+    if ($LASTEXITCODE -ne 0) { throw 'Broker setup failed under PowerShell 7.' }
+    return
+}
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $pin = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Dependencies/LocalAgentBroker.lock.json') -Raw | ConvertFrom-Json
 if ($pin.version -notmatch '^\d+\.\d+\.\d+$' -or

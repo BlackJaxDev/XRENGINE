@@ -1,0 +1,7 @@
+{
+  "repositoryRoot": "../..",
+  "stateRoot": "Build/_AgentValidation/00000000-000000-shared/local-agent-broker-ui",
+  "sessionsRoot": "Build/_AgentValidation/00000000-000000-shared/mcp-sessions",
+  "sessionIdentityPath": ["status", "editorSession", "name"],
+  "launchTray": true
+}

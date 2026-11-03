@@ -23,9 +23,9 @@ Setup needs network access for uncached assets. For offline setup, pass `-Packag
 
 Set `OPENAI_API_KEY` for OpenAI runs or `ANTHROPIC_API_KEY` for Claude runs. Set `ANTHROPIC_WORKSPACE_ID` only when required by that key. On Windows, the broker can read the configured user environment. Do not put key values in source, MCP arguments, or logs.
 
-The existing MCP configuration continues to call `Tools/Invoke-LocalAgentBroker.ps1`. The launcher selects `--integration xrengine`, which preserves the checkout's history and named editor-session locations. Existing `XRE_LOCAL_AGENT_BROKER_*` variables remain accepted; the standalone server also supports `LOCAL_AGENT_BROKER_*` names.
+The existing MCP configuration continues to call `Tools/Invoke-LocalAgentBroker.ps1`. The launcher selects `Tools/Dependencies/LocalAgentBroker.config.json` and the current checkout root. The JSON config preserves history and named editor-session locations. Existing `XRE_LOCAL_AGENT_BROKER_*` settings remain accepted at this launcher; `LOCAL_AGENT_BROKER_*` settings take priority. The standalone server uses only the generic names.
 
-The launcher can still open a legacy deployment while a host is being updated. New deployments use `LocalAgentBroker.dll` and namespace `LocalAgentBroker.*`.
+The launcher requires version 0.2.0 or newer and reports a setup command for an older deployment. Run setup before restarting the MCP host. Deployments use `LocalAgentBroker.dll` and namespace `LocalAgentBroker.*`.
 
 ## Tools And Permissions
 
@@ -37,8 +37,16 @@ Repository access is opt-in and requires allowed roots. Editor access uses one e
 
 ## History And Editor Sessions
 
-The XRENGINE adapter preserves history under `Build/_AgentValidation/00000000-000000-shared/local-agent-broker-ui/` and reads manifests under the shared `mcp-sessions/` directory. Opt-in metadata traces now use the history root's `traces/` directory.
+The engine config preserves history under `Build/_AgentValidation/00000000-000000-shared/local-agent-broker-ui/` and reads manifests under the shared `mcp-sessions/` directory. Opt-in metadata traces now use the history root's `traces/` directory.
 
 Start and stop editor sessions through `Tools/Manage-McpEditorSession.ps1`. The broker only resolves a named manifest and contacts its loopback endpoint; it does not manage editor processes.
 
 In generic workspaces, the standalone broker defaults to `.local-agent-broker/` state and disables editor sessions unless a manifest root is explicitly configured. An `AGENTS.md` file is not required by generic mode.
+
+## Configuration Overrides
+
+Use `-ConfigPath <file.json>` to select another explicit config, or set `LOCAL_AGENT_BROKER_CONFIG`. The launcher always selects this engine checkout as the workspace. Relative state and session paths resolve against that checkout. `-StateRoot`, `-SessionsRoot`, and provider-key variable-name arguments override config and environment settings.
+
+Set `LOCAL_AGENT_BROKER_LAUNCH_TRAY=false` to disable tray startup. Set `LOCAL_AGENT_BROKER_MAX_CONCURRENCY` to change concurrent runs; the default retained-run capacity grows with that limit. A fixed `maximumRetainedRuns` in a custom config must be at least the concurrency limit.
+
+Keep `sessionIdentityPath` set to `["status", "editorSession", "name"]` for engine sessions. It preserves the exact named-session check before tools are exposed. The generic broker also supports added text extensions, exact text file names, and excluded paths through `repositoryAccess` settings. These settings do not override secret-file, traversal, state-storage, or session-storage protections. See the standalone [configuration guide](https://github.com/BlackJaxDev/local-agent-broker/blob/main/docs/configuration.md).
