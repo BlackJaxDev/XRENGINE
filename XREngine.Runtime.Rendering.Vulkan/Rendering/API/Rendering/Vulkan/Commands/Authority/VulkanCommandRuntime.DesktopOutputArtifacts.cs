@@ -60,6 +60,7 @@ internal sealed partial class VulkanCommandRuntime
         RetireArtifacts(CommandBuffers.DynamicUiSecondaries, "Swapchain.DynamicUiSecondary");
         RetireArtifacts(CommandBuffers.DynamicUiOverlays, "Swapchain.DynamicUiOverlay");
         RetireArtifacts(imguiOverlayCommandBuffers, "Swapchain.ImGuiOverlay");
+        RetireArtifacts(CommandBuffers.DesktopOffscreenCopies, "Swapchain.OffscreenCopy");
 
         CommandBuffers.Buffers = null;
         CommandBuffers.ActiveBuffers = null;
@@ -67,6 +68,7 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffers.PrimaryOwners = null;
         CommandBuffers.DynamicUiSecondaries = null;
         CommandBuffers.DynamicUiOverlays = null;
+        CommandBuffers.DesktopOffscreenCopies = null;
         CommandBuffers.DynamicUiOpCounts = null;
         CommandBuffers.DynamicUiSignatures = null;
         CommandBuffers.DirtyFlags = null;
@@ -119,6 +121,7 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffer[] dynamicUiSecondary = Allocate(CommandBufferLevel.Secondary, "Swapchain.DynamicUiSecondary");
         CommandBuffer[] dynamicUiOverlay = Allocate(CommandBufferLevel.Primary, "Swapchain.DynamicUiOverlay");
         CommandBuffer[] imguiOverlay = Allocate(CommandBufferLevel.Primary, "Swapchain.ImGuiOverlay");
+        CommandBuffer[] offscreenCopy = Allocate(CommandBufferLevel.Primary, "Swapchain.OffscreenCopy");
         VulkanNativeDependencyGraph dependencies = resources.NativeDependencies;
         VulkanNativeDependencyHandle output = dependencies.Register(
             EVulkanNativeDependencyOwner.Output,
@@ -130,6 +133,7 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffers.ActiveBuffers = (CommandBuffer[])primary.Clone();
         CommandBuffers.DynamicUiSecondaries = dynamicUiSecondary;
         CommandBuffers.DynamicUiOverlays = dynamicUiOverlay;
+        CommandBuffers.DesktopOffscreenCopies = offscreenCopy;
         CommandBuffers.DynamicUiOpCounts = Enumerable.Repeat(-1, imageCount).ToArray();
         CommandBuffers.DynamicUiSignatures = Enumerable.Repeat(ulong.MaxValue, imageCount).ToArray();
         CommandBuffers.DirtyFlags = Enumerable.Repeat(true, imageCount).ToArray();
@@ -145,14 +149,17 @@ internal sealed partial class VulkanCommandRuntime
             CommandBuffers.RegisterImageIndex(dynamicUiSecondary[index], imageIndex);
             CommandBuffers.RegisterImageIndex(dynamicUiOverlay[index], imageIndex);
             CommandBuffers.RegisterImageIndex(imguiOverlay[index], imageIndex);
+            CommandBuffers.RegisterImageIndex(offscreenCopy[index], imageIndex);
             RegisterCommandBufferImageIndex(primary[index], imageIndex);
             RegisterCommandBufferImageIndex(dynamicUiSecondary[index], imageIndex);
             RegisterCommandBufferImageIndex(dynamicUiOverlay[index], imageIndex);
             RegisterCommandBufferImageIndex(imguiOverlay[index], imageIndex);
+            RegisterCommandBufferImageIndex(offscreenCopy[index], imageIndex);
             RegisterOutputArtifact(primary[index], "primary");
             RegisterOutputArtifact(dynamicUiSecondary[index], "dynamic-ui-secondary");
             RegisterOutputArtifact(dynamicUiOverlay[index], "dynamic-ui-overlay");
             RegisterOutputArtifact(imguiOverlay[index], "imgui-overlay");
+            RegisterOutputArtifact(offscreenCopy[index], "offscreen-copy");
             CommandBuffers.PrimaryPlans[index] = new VulkanPrimaryCommandPlan();
             CommandBuffers.PrimaryOwners[index] = new PrimaryCommandArtifactOwner(
                 primary[index],

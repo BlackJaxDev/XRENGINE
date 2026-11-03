@@ -80,6 +80,7 @@ internal sealed partial class VulkanFrameLoop
                 RejectPresentNowFrame(ref attempt, in retry);
                 return EDesktopFrameFlow.Stop;
             }
+            FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyAccepted);
             watchdog.RecordProgress();
 
             ClassifyIncompleteResizeReleaseSuccessorBeforeAcquire(ref attempt);
@@ -184,7 +185,9 @@ internal sealed partial class VulkanFrameLoop
             }
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyShadow);
         CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyOpsCaptured);
 
         _preparedMeshIngress.Clear();
         int requestCount;
@@ -257,6 +260,7 @@ internal sealed partial class VulkanFrameLoop
                 acceptedPlan.ResetAuthoredOperations();
                 return false;
             }
+            FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyTextures);
 
             if (!MaterializeQueuedMeshRenderRequests(
                     requestCount,
@@ -302,6 +306,7 @@ internal sealed partial class VulkanFrameLoop
                 _meshOperationRequestScratch.AsSpan(0, requestCount));
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyMeshes);
         CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
         if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan.AuthoredOperations) ||
             VulkanCaptureOwnerReadiness.HasClosedOwner(_preparedMeshIngress))
@@ -390,6 +395,7 @@ internal sealed partial class VulkanFrameLoop
         }
         if (_preparedMeshIngress.IsCohortHit)
             PublishPreparedMeshIngressCohortHit();
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyStableBins);
 
         SplitPreparedDynamicUiOperations(
             acceptedPlan.AuthoredOperations,
@@ -433,6 +439,7 @@ internal sealed partial class VulkanFrameLoop
                 disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyCompute);
         if (planningSnapshot.RenderGraphPlan.Revision !=
             plannerState.ResourcePlannerRevision)
         {
@@ -512,6 +519,7 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyTargets);
         acceptedPlan.TransferAuthoredOperations(
             staticOperations,
             dynamicUiOperations);
@@ -573,6 +581,7 @@ internal sealed partial class VulkanFrameLoop
                 exception.Message);
             return false;
         }
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyPlanSealed);
         logicalPlan.PrepareRecordingPlannerGenerations(in plannerState);
         if (!logicalPlan.HasAnyExecutableOutput)
         {
@@ -646,6 +655,7 @@ internal sealed partial class VulkanFrameLoop
         {
             return false;
         }
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyPlanTextures);
         if (!TryPrepareReadOnlyStorage(
                 logicalPlan, attempt.FrameSlot,
                 out VulkanReadOnlyStoragePreparedAuthority? storageAuthority,
@@ -675,6 +685,7 @@ internal sealed partial class VulkanFrameLoop
         }
         using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
             ResourceRuntime.EnterReadOnlyStorageRecordingScope(storageAuthority);
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyStorage);
         watchdog.RecordProgress();
         if (!_commandRuntime.TryPreparePresentNowPipelinesForSealedFramePlan(
                 logicalPlan,
@@ -715,6 +726,7 @@ internal sealed partial class VulkanFrameLoop
 
         // Readiness prepares the same sealed slot that completion maintenance
         // reopened. An acquired swapchain image never owns frame-data storage.
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyPipelines);
         uint frameDataSlotIndex = checked((uint)logicalPlan.FrameSlot);
         computePreparation =
             _commandRuntime.PrepareComputeFramePlanForRecording(
@@ -747,6 +759,7 @@ internal sealed partial class VulkanFrameLoop
                 disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyComputeRecording);
         acceptedPlan.DeclareDependencies(logicalPlan);
         acceptedPlan.MarkNonTextureDependenciesReady();
         _ = acceptedPlan.SynchronizeTextureDependencies();

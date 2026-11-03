@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Resources;
 
@@ -5,6 +6,14 @@ namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 internal sealed partial class VulkanFramePlanner
 {
+    /// <summary>
+    /// Maps a source publication to the publication refrozen from it. Planner
+    /// states are value copies, so a refreeze written into one keyed state does
+    /// not reach the other copies of the same generation. Those copies still
+    /// hold the source publication and would refreeze it again on each frame.
+    /// </summary>
+    private readonly ConditionalWeakTable<VulkanRenderGraphPlan, VulkanRenderGraphPlan> _refrozenRenderGraphPlans = new();
+
     /// <summary>
     /// Captures one immutable graph/barrier publication from the exact planner
     /// state that owns its physical resources. This runs only when a planner
@@ -40,6 +49,17 @@ internal sealed partial class VulkanFramePlanner
             currentPlan.Barriers.HasCompleteNativeBindings &&
             currentPlan.Barriers.NativeBufferBindingRevision == nativeBufferBindingRevision)
         {
+            reason = string.Empty;
+            return true;
+        }
+
+        if (_refrozenRenderGraphPlans.TryGetValue(currentPlan, out VulkanRenderGraphPlan? refrozenPlan) &&
+            refrozenPlan.Revision == state.ResourcePlannerRevision &&
+            ReferenceEquals(refrozenPlan.CompiledGraph, state.CompiledRenderGraph) &&
+            refrozenPlan.Barriers.HasCompleteNativeBindings &&
+            refrozenPlan.Barriers.NativeBufferBindingRevision == nativeBufferBindingRevision)
+        {
+            state.RenderGraphPlan = refrozenPlan;
             reason = string.Empty;
             return true;
         }
@@ -154,6 +174,8 @@ internal sealed partial class VulkanFramePlanner
             state.ResourcePlannerRevision,
             state.CompiledRenderGraph,
             frozenBarriers);
+        if (!ReferenceEquals(currentPlan, VulkanRenderGraphPlan.Empty))
+            _refrozenRenderGraphPlans.AddOrUpdate(currentPlan, state.RenderGraphPlan);
         reason = string.Empty;
         return true;
     }

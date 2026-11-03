@@ -280,6 +280,10 @@ namespace XREngine
             if (!coreLoopsStopped)
                 Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
 
+            // Timer quiescence alone does not prove that asynchronous render work settled.
+            if (!DrainAsynchronousRenderWork(closeAdmission: true))
+                Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
+
             if (Volatile.Read(ref _abandonProcessExitCleanup) != 0)
             {
                 Debug.RenderingWarning(

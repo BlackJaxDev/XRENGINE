@@ -44,6 +44,24 @@ internal sealed class VulkanRecordedImageLayoutState
     public bool UseExecutionPredecessorEntryState;
 
     /// <summary>
+    /// Clears every field for reuse by another command buffer. The collections
+    /// keep their capacity, so a recycled journal does not grow again.
+    /// </summary>
+    public void ResetForReuse()
+    {
+        EntrySubresources.Clear();
+        SecondaryDescriptorRequirements.Clear();
+        SecondaryDescriptorImagePayloadGenerations.Clear();
+        Subresources.Clear();
+        TouchedSubresources.Clear();
+        QueueOwnershipTransfers.Clear();
+        EntryStateIncomplete = false;
+        EntryStateFailure = default;
+        RecordingGeneration = 0;
+        UseExecutionPredecessorEntryState = false;
+    }
+
+    /// <summary>
     /// Rebuilds the compact touched-subresource list from the current overlay
     /// so submission publication avoids re-discovering dictionary entries.
     /// </summary>

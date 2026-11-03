@@ -33,6 +33,8 @@ internal sealed class VulkanCommandBufferState
     internal Dictionary<ulong, PrimaryCommandArtifactOwner> OpenXrPrimaryOwners { get; } = [];
     internal CommandBuffer[]? DynamicUiSecondaries;
     internal CommandBuffer[]? DynamicUiOverlays;
+    // Copy passes from the desktop offscreen color target into the acquired image.
+    internal CommandBuffer[]? DesktopOffscreenCopies;
     internal int[]? DynamicUiOpCounts;
     internal ulong[]? DynamicUiSignatures;
     internal ulong[]? FrameOpSignatures;

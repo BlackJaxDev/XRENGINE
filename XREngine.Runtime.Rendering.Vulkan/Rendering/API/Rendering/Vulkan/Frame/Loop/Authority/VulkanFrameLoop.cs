@@ -38,6 +38,13 @@ internal sealed partial class VulkanFrameLoop
     private readonly VulkanPreparedMeshOperationCohortEntry[] _meshOperationCohortEntryScratch =
         new VulkanPreparedMeshOperationCohortEntry[VulkanMeshOperationRequestQueue.Capacity];
     private readonly VulkanPreparedMeshOperationCohort _preparedMeshOperationCohort = new();
+    /// <summary>
+    /// Render frames that must pass before a captured OpenXR eye operation is
+    /// reused. The value covers the frames in flight with a margin.
+    /// </summary>
+    private const int OpenXrCapturedOperationReuseFrames = 8;
+    private readonly VulkanFrameOpWorkspace _openXrCapturedOperationWorkspace =
+        new(OpenXrCapturedOperationReuseFrames);
     private readonly VulkanResidentDrawTemplate?[] _residentTemplateHitScratch =
         new VulkanResidentDrawTemplate[VulkanMeshOperationRequestQueue.Capacity];
     private readonly VulkanResidentDrawTemplateHandle[] _residentTemplateHandleScratch =
@@ -728,6 +735,8 @@ internal sealed partial class VulkanFrameLoop
             return;
         }
 
+        _desktopWorkerSecondHalfPresented = false;
+        _desktopWorkerSecondHalfRan = false;
         try
         {
             ExecuteDesktopFrameTransaction(in desktopFrameIdentity);
@@ -736,11 +745,54 @@ internal sealed partial class VulkanFrameLoop
         {
             Exit(in desktopFrameIdentity);
         }
+
+        // A split worker frame that just presented its second half starts the next
+        // first half in the same callback, so the worker records it while the render
+        // thread runs the next eye frame. A second half that did not present leaves
+        // this callback's desktop operations unconsumed; drop them, because the next
+        // callback queues its own and one plan cannot hold two visibility families.
+        if (!_desktopWorkerSecondHalfPresented)
+        {
+            if (_desktopWorkerSecondHalfRan)
+            {
+                _desktopWorkerSecondHalfRan = false;
+                DrainSkippedResizeFrameOps(
+                    "a split desktop second half did not present",
+                    preserveTextureUploads: true);
+            }
+            return;
+        }
+
+        _desktopWorkerSecondHalfPresented = false;
+        // A first half that cannot finish before the next XR frame waits for the next
+        // desktop opportunity. That opportunity then runs only the first half.
+        if (!CanRunFollowOnDesktopFirstHalf())
+        {
+            DrainSkippedResizeFrameOps(
+                "the XR slack is too short for the next split desktop first half",
+                preserveTextureUploads: true);
+            return;
+        }
+
+        if (!TryEnter(out DesktopFrameIdentity nextFrameIdentity))
+            return;
+
+        long firstHalfStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            ExecuteDesktopFrameTransaction(in nextFrameIdentity);
+        }
+        finally
+        {
+            Exit(in nextFrameIdentity);
+            RecordFollowOnDesktopFirstHalfCost(firstHalfStartTicks);
+        }
     }
 
     private void ExecuteDesktopFrameTransaction(in DesktopFrameIdentity identity)
     {
         VulkanFrameAttempt attempt = new(in identity);
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopTransactionStart);
         try
         {
             attempt.Timing = _telemetry.BeginFrame(identity);
@@ -749,11 +801,13 @@ internal sealed partial class VulkanFrameLoop
         catch (Exception primaryFailure)
         {
             attempt.PrimaryFailure = primaryFailure;
+            ReportDesktopSplitException(primaryFailure, in attempt);
             throw;
         }
         finally
         {
             SettleAndPublishDesktopFrame(ref attempt);
+            FramePacingTimeline.Mark(EFramePacingMark.DesktopTransactionEnd);
         }
     }
 
@@ -794,14 +848,50 @@ internal sealed partial class VulkanFrameLoop
                 RenderForegroundWorkCoordinator.EnterHighRefreshFrame(
                     attempt.Timing.PresentationProfile.TargetRefreshHz);
 
+        // A split worker frame ends its first half without advancing the frame
+        // slot. The second half runs on that same slot, so a pending recording that
+        // does not match this attempt's slot or mode cannot be presented.
+        bool splitWorkerFrame = ShouldSplitDesktopWorkerFrame(in attempt);
+        if (_desktopWorkerCarry.IsActive &&
+            (!splitWorkerFrame ||
+             _desktopWorkerCarry.FrameSlot != attempt.FrameSlot ||
+             !IsDesktopWorkerCarryTargetCurrent()))
+        {
+            DiscardDesktopWorkerCarry(!splitWorkerFrame
+                ? "the desktop frame no longer splits"
+                : _desktopWorkerCarry.FrameSlot != attempt.FrameSlot
+                    ? $"frame slot {attempt.FrameSlot} is not the recorded slot {_desktopWorkerCarry.FrameSlot}"
+                    : "the offscreen target changed");
+        }
+        bool workerSecondHalf = splitWorkerFrame && _desktopWorkerCarry.IsActive;
+        if (workerSecondHalf)
+            _desktopWorkerSecondHalfRan = true;
+
         phaseStarted = BeginDesktopFramePhase(
             EVulkanFrameStage.CompletionMaintenance);
-        if (!CompleteDesktopFramePhase(
+        if (workerSecondHalf)
+        {
+            // The first half prepared this slot, and the worker's commands use its
+            // frame data, so the slot must not be reset again.
+            attempt.AdvanceTo(EDesktopFramePhase.SlotReady);
+            _ = CompleteDesktopFramePhase(
                 ref attempt,
                 EVulkanFrameStage.CompletionMaintenance,
-                PrepareDesktopFrameSlot(ref attempt),
+                EDesktopFrameFlow.Continue,
+                phaseStarted);
+        }
+        else if (!CompleteDesktopFramePhase(
+                ref attempt,
+                EVulkanFrameStage.CompletionMaintenance,
+                PrepareDesktopFrameSlotForSplit(ref attempt, splitWorkerFrame),
                 phaseStarted).ShouldContinue)
+        {
+            if (splitWorkerFrame)
+                ReportDesktopSplitOutcome("frame slot preparation stopped", in attempt, string.Empty);
             return;
+        }
+        if (splitWorkerFrame && !workerSecondHalf)
+            FramePacingTimeline.Mark(EFramePacingMark.DesktopSplitSlotReady);
 
         if (attempt.InteractiveResize)
         {
@@ -819,14 +909,82 @@ internal sealed partial class VulkanFrameLoop
         }
 
         phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.ResourcePrepare);
-        if (!CompleteDesktopFramePhase(
+        if (workerSecondHalf)
+        {
+            _desktopWorkerCarry.RestoreReadiness(ref attempt);
+            CompleteDesktopFramePhaseTiming(
+                ref attempt,
+                EVulkanFrameStage.ResourcePrepare,
+                phaseStarted);
+        }
+        else if (!CompleteDesktopFramePhase(
                 ref attempt,
                 EVulkanFrameStage.ResourcePrepare,
                 DriveDesktopPresentNowReadiness(ref attempt),
                 phaseStarted).ShouldContinue)
+        {
+            if (splitWorkerFrame)
+            {
+                ReportDesktopSplitOutcome("readiness stopped", in attempt, string.Empty);
+                RequestDesktopSplitReadinessRecovery(in attempt);
+            }
+            return;
+        }
+
+        if (splitWorkerFrame && !workerSecondHalf)
+        {
+            FramePacingTimeline.Mark(EFramePacingMark.DesktopSplitReadinessDone);
+            phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.CommandRecord);
+            _ = RunDesktopWorkerFirstHalf(ref attempt);
+            // The plan holds what the worker reads, so the scene producer may continue.
+            ReleaseCollectForDesktopFrame(ref attempt);
+            CompleteDesktopFramePhaseTiming(
+                ref attempt,
+                EVulkanFrameStage.CommandRecord,
+                phaseStarted);
+            return;
+        }
+
+        try
+        {
+            RunDesktopFrameOutputPhases(ref attempt);
+        }
+        finally
+        {
+            if (workerSecondHalf)
+                SettleDesktopWorkerSecondHalf(in attempt);
+        }
+    }
+
+    /// <summary>
+    /// Ends the carry of a second half. A carry that the frame joined ends here,
+    /// as accepted when the queue took the scene. A carry that the frame never
+    /// joined (for example after a failed acquire) stays for the next opportunity.
+    /// </summary>
+    private void SettleDesktopWorkerSecondHalf(in VulkanFrameAttempt attempt)
+    {
+        if (!_desktopWorkerCarry.IsActive)
             return;
 
-        phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.OutputAcquire);
+        if (_desktopWorkerCarry.Record.Phase == EVulkanPendingDesktopRecordPhase.Recorded)
+        {
+            if (!attempt.Submitted && _reportedSecondHalfFailureCount < 20)
+            {
+                _reportedSecondHalfFailureCount++;
+                Debug.WriteAuxiliaryLog(
+                    "desktop-execution-mode.log",
+                    $"Split desktop frame: second half did not submit; frame={attempt.FrameNumber} slot={attempt.FrameSlot} " +
+                    $"reason={attempt.Reason} flow={attempt.Flow} rejected={attempt.RejectedFailure?.Message ?? "<none>"} " +
+                    $"deferred={attempt.DeferredFailure?.Message ?? "<none>"} primary={attempt.PrimaryFailure?.Message ?? "<none>"}");
+            }
+            _desktopWorkerSecondHalfPresented = attempt.Submitted;
+            CompleteDesktopWorkerCarry(attempt.Submitted);
+        }
+    }
+
+    private void RunDesktopFrameOutputPhases(ref VulkanFrameAttempt attempt)
+    {
+        long phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.OutputAcquire);
         EDesktopFrameFlow acquireFlow = AcquireDesktopSwapchainImageCore(
             ref attempt);
         if (acquireFlow != EDesktopFrameFlow.Continue)

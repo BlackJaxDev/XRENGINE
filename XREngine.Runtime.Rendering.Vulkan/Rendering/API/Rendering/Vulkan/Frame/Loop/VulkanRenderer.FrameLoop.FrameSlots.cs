@@ -25,7 +25,10 @@ namespace XREngine.Rendering.Vulkan
                     HasTimelineValueCompleted(
                         _commandRuntime.Synchronization._graphicsTimelineSemaphore,
                         slotWaitValue);
+                // The first half of a split worker frame acquires no swapchain image,
+                // so only its frame slot must be free.
                 bool imageSlotsReady = !xrOwnsFrameDeadline ||
+                    _desktopWorkerPreparingFirstHalf ||
                     AreDesktopImageTimelinesCompleted();
                 if (deadlineBoundDesktop && (!frameSlotReady || !imageSlotsReady))
                 {
@@ -249,6 +252,16 @@ namespace XREngine.Rendering.Vulkan
                 Stage: EVulkanFrameStage.QueueSubmit));
         }
 
+        /// <summary>
+        /// Returns the timing-query index that this desktop frame's scene writes. A scene
+        /// recorded offscreen on the worker lane uses the frame slot; a scene recorded into
+        /// the acquired image uses the image index. Submission and sampling must agree.
+        /// </summary>
+        private static int ResolveDesktopTimingQueryIndex(in VulkanFrameAttempt attempt)
+            => attempt.UsesDesktopOffscreenTarget
+                ? attempt.FrameSlot
+                : unchecked((int)Math.Min(attempt.ImageIndex, int.MaxValue));
+
         private bool AreDesktopImageTimelinesCompleted()
         {
             ulong[]? imageTimelineValues = OutputRuntime.Desktop.ImageTimelineValues;
@@ -315,7 +328,7 @@ namespace XREngine.Rendering.Vulkan
                     _frameTelemetry.SampleFrameTimingQueries(
                     Api,
                     _deviceContext.Device,
-                    unchecked((int)Math.Min(attempt.ImageIndex, int.MaxValue)));
+                    ResolveDesktopTimingQueryIndex(in attempt));
                 ResourceRuntime.NotifyTimingQueryPoolsCompleted(completedQueries);
             }
 

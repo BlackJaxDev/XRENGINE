@@ -40,6 +40,8 @@ internal sealed class VulkanDesktopOutputState
     internal Extent2D Extent;
     internal ulong Generation;
     internal VulkanSwapchainDepthResources? DepthResources;
+    // Created on first use by desktop worker recording; guarded by DepthMutationGate.
+    internal VulkanDesktopOffscreenColorResources? OffscreenColorResources;
     internal object DepthMutationGate { get; } = new();
     internal int RecreateInProgress;
     internal bool Maintenance1Enabled;

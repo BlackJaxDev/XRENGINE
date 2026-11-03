@@ -106,6 +106,13 @@ public static class BootstrapRenderSettings
         if (settings.VRPawn && renderSettings.RenderWindowsWhileInVR)
             renderSettings.VrMirrorMode = ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow);
         renderSettings.VrCopyEyePreviewTextures = settings.PreviewVRStereoViews;
+        if (Enum.TryParse(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
+                ignoreCase: true,
+                out EVrDesktopFrameExecutionMode desktopExecutionMode))
+        {
+            renderSettings.VrDesktopFrameExecutionMode = desktopExecutionMode;
+        }
 
         bool groupedRenderingSpecified = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
         if (groupedRenderingSpecified)

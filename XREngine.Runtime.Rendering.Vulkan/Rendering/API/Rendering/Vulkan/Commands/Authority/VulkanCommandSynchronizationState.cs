@@ -39,6 +39,8 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     private uint _freeStableImageSubresourceSlotHead;
     internal readonly Dictionary<ulong, (ulong ResourceGeneration, EVulkanExternalImageOwnership Ownership)> _externalImageOwnershipByHandle = new();
     internal readonly Dictionary<ulong, VulkanRecordedImageLayoutState> _recordedImageLayoutsByCommandBuffer = new();
+    private const int MaxRecycledRecordedImageLayouts = 64;
+    private readonly Stack<VulkanRecordedImageLayoutState> _recycledRecordedImageLayouts = new();
     internal readonly VulkanQueueOperationRecord[] _vulkanQueueOperationHistory =
         new VulkanQueueOperationRecord[QueueOperationHistoryCapacity];
     internal long _vulkanQueueOperationSerial;
@@ -421,8 +423,30 @@ internal sealed unsafe class VulkanCommandSynchronizationState
             return;
 
         lock (_vulkanImageLayoutLock)
-            _recordedImageLayoutsByCommandBuffer.Remove(
-                unchecked((ulong)commandBuffer.Handle));
+        {
+            if (_recordedImageLayoutsByCommandBuffer.Remove(
+                    unchecked((ulong)commandBuffer.Handle),
+                    out VulkanRecordedImageLayoutState? removed) &&
+                _recycledRecordedImageLayouts.Count < MaxRecycledRecordedImageLayouts)
+            {
+                removed.ResetForReuse();
+                _recycledRecordedImageLayouts.Push(removed);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns a cleared journal for a new command buffer. Transient command
+    /// buffers are created and destroyed every frame, and a new journal grew its
+    /// dictionaries from empty each time. The caller holds the image-layout lock.
+    /// </summary>
+    internal VulkanRecordedImageLayoutState RentRecordedImageLayoutState(ulong recordingGeneration)
+    {
+        VulkanRecordedImageLayoutState state = _recycledRecordedImageLayouts.Count > 0
+            ? _recycledRecordedImageLayouts.Pop()
+            : new VulkanRecordedImageLayoutState();
+        state.RecordingGeneration = recordingGeneration;
+        return state;
     }
 
     /// <summary>
@@ -616,10 +640,12 @@ internal sealed unsafe class VulkanCommandSynchronizationState
         waitInfo.PSemaphores = semaphorePtr;
         waitInfo.PValues = valuePtr;
 
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.TimelineWaitStart);
         Result result = api.WaitSemaphores(
             deviceContext.Device,
             &waitInfo,
             timeoutNanoseconds);
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.TimelineWaitEnd);
         deviceContext.ObserveNativeResult("vkWaitSemaphores", result);
         if (result == Result.Success)
             CompleteTimelineSubmissions(lifetimeTracker, semaphore, value);

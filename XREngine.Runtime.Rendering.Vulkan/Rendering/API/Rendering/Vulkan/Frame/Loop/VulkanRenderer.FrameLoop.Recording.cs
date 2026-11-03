@@ -224,6 +224,8 @@ namespace XREngine.Rendering.Vulkan
 
                 attempt.ScenePrimaryRecordedThisFrame =
                     _lastEnsureCommandBufferRecordedPrimary;
+                if (attempt.UsesDesktopOffscreenTarget)
+                    RecordDesktopOffscreenCopy(ref attempt);
                 int presentationDescriptorSlot = attempt.FrameSlot;
                 VulkanPresentationSourceTuple presentationSource =
                     _windowPresentSource.CaptureForDescriptorSlot(
@@ -568,7 +570,7 @@ namespace XREngine.Rendering.Vulkan
                             attempt.ImageIndex,
                             snapshot,
                             attempt.SwapchainLayoutAfterScene,
-                            attempt.SceneCommandBuffer,
+                            ResolveDesktopSwapchainPredecessor(in attempt),
                             clearSwapchain: false,
                             out attempt.ImGuiOverlayCommandBuffer);
                     if (attempt.PreserveSwapchainForImGuiOverlay &&
@@ -630,7 +632,7 @@ namespace XREngine.Rendering.Vulkan
                                 : attempt.SwapchainLayoutAfterScene,
                             attempt.HasImGuiOverlayCommandBuffer
                                 ? attempt.ImGuiOverlayCommandBuffer
-                                : attempt.SceneCommandBuffer,
+                                : ResolveDesktopSwapchainPredecessor(in attempt),
                             out attempt.DynamicTextOverlayCommandBuffer);
                 }
             }

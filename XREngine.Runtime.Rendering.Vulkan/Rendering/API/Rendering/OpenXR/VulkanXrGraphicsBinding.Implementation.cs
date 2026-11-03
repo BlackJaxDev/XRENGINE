@@ -1246,6 +1246,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
     private bool TryRenderVulkanEyesBatch(out bool handled)
     {
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.EyeBatchStart);
         bool strictSinglePassStereoRequested =
             RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
         handled = strictSinglePassStereoRequested;

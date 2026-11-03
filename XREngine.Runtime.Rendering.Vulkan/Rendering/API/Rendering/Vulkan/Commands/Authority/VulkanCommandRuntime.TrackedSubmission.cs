@@ -354,7 +354,9 @@ internal sealed partial class VulkanCommandRuntime
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
                         RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.NativeQueueAdmission,
                         Stopwatch.GetTimestamp() - queueAdmissionStarted);
+                    global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.QueueSubmitStart);
                     result = SubmitNative(queue, ref submitInfo, fence);
+                    global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.QueueSubmitEnd);
                     // vkQueueSubmit success is the irrevocable ownership boundary. Set this
                     // before any sink or telemetry publication so later faults cannot cancel
                     // command or resource pins that the driver now owns.

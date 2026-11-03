@@ -19,6 +19,9 @@ internal sealed partial class VulkanFrameLoop
         _targetDriver.Quiesce();
         VulkanTextureStreamingBackendProvider.Instance.UnbindScheduler(this);
         QuiesceFrameAdmissionAndWait();
+        // A split desktop frame can still hold a worker recording; join and drop it
+        // before the recording workers and the GPU are quiesced.
+        DiscardDesktopWorkerCarry("the renderer is retiring");
         _commandRuntime.QuiesceCommandChainRecordingWorkersForRetirement();
         _resourceRuntime.Uploads.QuiescePreparationForRetirement(
             "Vulkan renderer retirement before GPU idle",

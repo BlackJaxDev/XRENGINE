@@ -1599,6 +1599,23 @@ internal sealed class VulkanAcceptedFramePlan
         return false;
     }
 
+    /// <summary>
+    /// Drops the references to the accepted static, dynamic-UI and texture-upload
+    /// operations without releasing them. A split worker frame releases their
+    /// visibility input leases itself after the worker recorded them; the workspace
+    /// can then reuse those operations, so a later <see cref="Reset"/> must not
+    /// release them again for their new owner.
+    /// </summary>
+    internal void DetachReleasedOperations()
+    {
+        _staticOperations.AsSpan(0, StaticOperationCount).Clear();
+        _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
+        _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();
+        StaticOperationCount = 0;
+        DynamicUiOperationCount = 0;
+        TextureUploadOperationCount = 0;
+    }
+
     internal void Reset()
     {
         _recordedAdvancedPickingPipelines.AsSpan(

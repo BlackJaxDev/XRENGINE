@@ -145,6 +145,7 @@ public unsafe partial class OpenXRAPI
         _smokePendingFrameTiming.BeginStartQpc = beginStart;
         Result nativeResult = (Result)binding.BeginFrame(GraphicsBindingHost);
         _smokePendingFrameTiming.BeginEndQpc = Stopwatch.GetTimestamp();
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrBeginFrameEnd);
         Result result = CheckResult(nativeResult, "xrBeginFrame");
         if (result != Result.Success)
         {
@@ -174,8 +175,10 @@ public unsafe partial class OpenXRAPI
         frameState = new FrameState { Type = StructureType.FrameState };
         long waitStart = Stopwatch.GetTimestamp();
         _smokePendingFrameTiming.WaitStartQpc = waitStart;
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrWaitFrameStart);
         Result nativeResult = Api.WaitFrame(_session, in frameWaitInfo, ref frameState);
         long waitEnd = Stopwatch.GetTimestamp();
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrWaitFrameEnd);
         _smokePendingFrameTiming.WaitEndQpc = waitEnd;
         Volatile.Write(ref _lastFrameWakeTicks, waitEnd);
         Volatile.Write(ref _frameWorkOpen, 1);
@@ -379,8 +382,10 @@ public unsafe partial class OpenXRAPI
             endFrameAttempted = true;
             start = Stopwatch.GetTimestamp();
             _smokePendingFrameTiming.EndStartQpc = start;
+            global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrEndFrameStart);
             result = (Result)binding.EndFrame(GraphicsBindingHost, frameEndInfo.LayerCount != 0);
             end = Stopwatch.GetTimestamp();
+            global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrEndFrameEnd);
         }
         Volatile.Write(ref _lastFrameWorkTicks, end - Volatile.Read(ref _lastFrameWakeTicks));
         Volatile.Write(ref _frameWorkOpen, 0);

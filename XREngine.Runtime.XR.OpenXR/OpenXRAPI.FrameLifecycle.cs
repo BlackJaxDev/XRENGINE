@@ -39,6 +39,7 @@ public unsafe partial class OpenXRAPI
     {
         AssertOpenXrRenderThread(nameof(RenderFrame));
         long submitStart = Stopwatch.GetTimestamp();
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrRenderStart);
         // Render thread: only submit if the CollectVisible thread prepared a frame.
         if (!_sessionBegun)
             return;

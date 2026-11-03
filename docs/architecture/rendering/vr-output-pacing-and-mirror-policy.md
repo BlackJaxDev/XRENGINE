@@ -14,6 +14,10 @@ While VR is active, the desktop window, editor panels, mirror composition, and X
 | `LowRatePreview` | Render a low-rate desktop preview. |
 | `FullIndependentRender` | Render the desktop scene independently. This mode is expensive. Use it for editor diagnostics. Visibility uses `EVrVisibilityPolicy.IndependentDesktopAndVrEyes`. |
 
+With `Off`, `XRWindow` does not record or present the window on most frames. It presents at a keep-alive rate of 2 Hz, so window and desktop-frame maintenance still run. Before this hold, each VR frame acquired a swapchain image, deferred an empty recording, and presented a rejected image, which delayed the next XR frame.
+
+`Engine.Rendering.Settings.VrDesktopFrameExecutionMode` (`EVrDesktopFrameExecutionMode`) selects how a recording desktop view (`FullIndependentRender`) executes while VR is active. `Inline` (the default) records, submits and presents the desktop frame on the render thread after the eyes. `WorkerRecord` records the desktop primary on reserved background render lane 2 into an engine-owned offscreen color image for the frame slot (created on first use with the swapchain format and extent, retired with the desktop WSI generation). After the scene, the render thread records a short copy from that image into the acquired swapchain image, and the ImGui and dynamic text overlays follow it. The render thread still joins the worker before it submits; a later change moves the join to the next desktop opportunity so that the desktop presents one XR frame later. `WorkerRecord` needs dynamic rendering and no Streamline frame generation, and fails loudly without them. `SeparateDomain` is reserved for a separate desktop render domain; selecting it holds the desktop window at its last image with a warning. No mode records inline instead.
+
 All modes except `FullIndependentRender` use `EVrVisibilityPolicy.CombinedRuntimeLeftRightCyclopean`. The legacy flags `RenderWindowsWhileInVR` and `VrMirrorComposeFromEyeTextures` are compatibility views of `VrMirrorMode`: setting `RenderWindowsWhileInVR=false` selects `Off`, and setting `VrMirrorComposeFromEyeTextures=true` selects the submitted-eye mirror path. The Unit Testing World bootstrap selects `FullIndependentRender` when a VR pawn renders desktop windows. A mirror mode change never changes XR eye submission.
 
 ## Cyclopean reconstruction contract
@@ -72,7 +76,7 @@ When `VrDesktopAutoSkipWhenOverBudget` is true and the previous whole-frame time
 
 The eyes render first in the render loop. With `VrDesktopAutoSkipWhenOverBudget` on, at most one independent desktop frame runs per XR frame, and only when its last measured cost fits before the next XR frame. `OpenXRAPI.NextFrameSlackMs` estimates that time from the eye work time and the runtime period. A held frame reports `EFrameOutputSkipReason.Budget`, and the window keeps its last image.
 
-The desktop keeps a minimum rate of 15 Hz, so the window cannot freeze. A frame admitted at this rate can delay the next XR frame.
+The desktop keeps a minimum rate of 15 Hz, so the window cannot freeze. A frame that is due at this rate waits for the start of the next slack window (just after `xrEndFrame`). It runs only when its measured cost goes past the next XR wake by at most 1.5 ms. When the cost does not fit, a 4 Hz fallback frame runs early in a slack window, with at least 1.5 ms of slack left. Below 1 Hz, a frame runs at any time. A frame that starts just before an XR wake delays the eye frame by most of its cost and makes the eye frame miss its display slot; on the imported avatar at 90 Hz, this change reduced missed slots from 42 to 13 of about 450 frames.
 
 ## Next-frame collect
 

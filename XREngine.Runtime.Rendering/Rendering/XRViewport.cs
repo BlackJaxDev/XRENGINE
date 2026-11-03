@@ -1749,7 +1749,10 @@ namespace XREngine.Rendering
             if (!pacing.IsDue)
             {
                 long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                CollectVisible_ScreenSpaceUI();
+                // With the VR mirror off the window does not show this viewport, so its
+                // screen-space UI has no consumer. The canvas lookup searches the scene.
+                if (pacing.SkipReason != EFrameOutputSkipReason.MirrorOff)
+                    CollectVisible_ScreenSpaceUI();
                 PrepareBackendReadyFramePackage(_renderPipeline.MeshRenderCommands);
                 RecordFrameOutput(
                     EFrameOutputPhase.Collect,
@@ -2732,10 +2735,16 @@ namespace XREngine.Rendering
                 request,
                 pacing.IsDue,
                 deferralReason);
-            // A VR budget hold has its own limit on held frames, and it admits the first frame.
-            // The admission ledger must not force a fresh render and cancel the hold.
-            bool vrBudgetHold = pacing.SkipReason == EFrameOutputSkipReason.Budget && presentation.IsInVR;
-            if (scheduling.Execute && !pacing.IsDue && !vrBudgetHold)
+            // The admission ledger must not force a fresh render over a VR policy skip. A
+            // budget hold has its own limit on held frames, and it admits the first frame.
+            // With the mirror off, or with the window composed from the eye images, no
+            // consumer reads this viewport's scene, so a forced render only adds collect
+            // and record work to the XR frame.
+            bool vrPolicyHold = presentation.IsInVR &&
+                pacing.SkipReason is EFrameOutputSkipReason.Budget
+                    or EFrameOutputSkipReason.MirrorOff
+                    or EFrameOutputSkipReason.HeldLastImage;
+            if (scheduling.Execute && !pacing.IsDue && !vrPolicyHold)
             {
                 pacing = pacing with
                 {

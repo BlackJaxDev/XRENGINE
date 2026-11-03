@@ -181,6 +181,17 @@ internal sealed partial class VulkanCommandRuntime
         for (int laneId = 0; laneId < attachments.GetLength(0); laneId++)
         {
             VulkanRenderLaneFrameAttachment attachment = attachments[laneId, frameSlot];
+            // A lane held by pending asynchronous work keeps its arenas. The frame
+            // cannot use that lane: the scheduler reservation excludes it from both
+            // synchronous affine dispatch and command-chain lane selection.
+            if (HasPendingLaneUse(attachment))
+            {
+                // Counted, not logged: this repeats every frame while desktop
+                // recording overlaps the XR frame.
+                Interlocked.Increment(ref _pendingLaneResetSkipCount);
+                continue;
+            }
+
             for (int familyIndex = 0; familyIndex < attachment.QueueFamilyCount; familyIndex++)
             {
                 attachment.GetFamilyAt(familyIndex).PrepareTransientPool(
@@ -189,6 +200,22 @@ internal sealed partial class VulkanCommandRuntime
                     priorUseCompletionProven);
             }
         }
+    }
+
+    private long _pendingLaneResetSkipCount;
+
+    /// <summary>Lane transient-pool resets skipped because asynchronous work held the lane.</summary>
+    internal long PendingLaneResetSkipCount => Interlocked.Read(ref _pendingLaneResetSkipCount);
+
+    private static bool HasPendingLaneUse(VulkanRenderLaneFrameAttachment attachment)
+    {
+        for (int familyIndex = 0; familyIndex < attachment.QueueFamilyCount; familyIndex++)
+        {
+            if (attachment.GetFamilyAt(familyIndex).HasPendingUse)
+                return true;
+        }
+
+        return false;
     }
 
     internal void DestroyRenderLaneCommandAttachments()

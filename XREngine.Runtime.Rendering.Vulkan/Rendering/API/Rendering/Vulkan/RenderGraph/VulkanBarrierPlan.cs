@@ -151,9 +151,27 @@ internal sealed class VulkanBarrierPlan
         IReadOnlyList<VulkanBarrierPlanner.PlannedSwapchainBarrier> plannerSwapchains,
         VulkanRenderGraphResourceIds resourceIds)
     {
-        VulkanFrozenImageBarrier[] images = plannerImages.Select(barrier => new VulkanFrozenImageBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.Range, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex, barrier.NativeImage, barrier.NativeFormat, barrier.NativeGeneration, IsBloomName(barrier.ResourceName))).ToArray();
-        VulkanFrozenBufferBarrier[] buffers = plannerBuffers.Select(barrier => new VulkanFrozenBufferBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.ResourceName, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex, barrier.NativeBuffer, barrier.NativeOffset, barrier.NativeSize, barrier.NativeGeneration)).ToArray();
-        VulkanFrozenSwapchainBarrier[] swapchains = plannerSwapchains.Select(barrier => new VulkanFrozenSwapchainBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.ResourceType, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex)).ToArray();
+        VulkanFrozenImageBarrier[] images = new VulkanFrozenImageBarrier[plannerImages.Count];
+        for (int index = 0; index < images.Length; index++)
+        {
+            VulkanBarrierPlanner.PlannedImageBarrier barrier = plannerImages[index];
+            images[index] = new VulkanFrozenImageBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.Range, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex, barrier.NativeImage, barrier.NativeFormat, barrier.NativeGeneration, IsBloomName(barrier.ResourceName));
+        }
+
+        VulkanFrozenBufferBarrier[] buffers = new VulkanFrozenBufferBarrier[plannerBuffers.Count];
+        for (int index = 0; index < buffers.Length; index++)
+        {
+            VulkanBarrierPlanner.PlannedBufferBarrier barrier = plannerBuffers[index];
+            buffers[index] = new VulkanFrozenBufferBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.ResourceName, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex, barrier.NativeBuffer, barrier.NativeOffset, barrier.NativeSize, barrier.NativeGeneration);
+        }
+
+        VulkanFrozenSwapchainBarrier[] swapchains = new VulkanFrozenSwapchainBarrier[plannerSwapchains.Count];
+        for (int index = 0; index < swapchains.Length; index++)
+        {
+            VulkanBarrierPlanner.PlannedSwapchainBarrier barrier = plannerSwapchains[index];
+            swapchains[index] = new VulkanFrozenSwapchainBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.ResourceType, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex);
+        }
+
         return new VulkanBarrierPlan(generation, nativeBufferBindingRevision, images, buffers, swapchains);
     }
 
@@ -277,7 +295,8 @@ internal sealed class VulkanBarrierPlan
         compare = left.DstQueueFamilyIndex.CompareTo(right.DstQueueFamilyIndex);
         if (compare != 0)
             return compare;
-        compare = left.NativeFormat.CompareTo(right.NativeFormat);
+        // Enum.CompareTo takes object and boxes; compare the underlying values.
+        compare = ((ulong)left.NativeFormat).CompareTo((ulong)right.NativeFormat);
         if (compare != 0)
             return compare;
         compare = left.IsBloomDiagnostic.CompareTo(right.IsBloomDiagnostic);
@@ -322,16 +341,17 @@ internal sealed class VulkanBarrierPlan
         in VulkanBarrierPlanner.PlannedImageState left,
         in VulkanBarrierPlanner.PlannedImageState right)
     {
-        int compare = left.Layout.CompareTo(right.Layout);
+        // Enum.CompareTo takes object and boxes; compare the underlying values.
+        int compare = ((ulong)left.Layout).CompareTo((ulong)right.Layout);
         if (compare != 0)
             return compare;
-        compare = left.StageMask.CompareTo(right.StageMask);
+        compare = ((ulong)left.StageMask).CompareTo((ulong)right.StageMask);
         if (compare != 0)
             return compare;
-        compare = left.AccessMask.CompareTo(right.AccessMask);
+        compare = ((ulong)left.AccessMask).CompareTo((ulong)right.AccessMask);
         return compare != 0
             ? compare
-            : left.AspectMask.CompareTo(right.AspectMask);
+            : ((ulong)left.AspectMask).CompareTo((ulong)right.AspectMask);
     }
 
     private static bool HasCompleteBindings(

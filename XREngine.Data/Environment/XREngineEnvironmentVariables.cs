@@ -93,6 +93,8 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestOpenXrEyeResolutionHeight = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_HEIGHT";
     public const string UnitTestRenderWindowsWhileInVr = "XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR";
     public const string UnitTestVrMirrorMode = "XRE_UNIT_TEST_VR_MIRROR_MODE";
+    /// <summary>Selects the VR desktop frame execution mode for the unit-testing world (Inline, WorkerRecord or SeparateDomain).</summary>
+    public const string UnitTestVrDesktopFrameExecutionMode = "XRE_UNIT_TEST_VR_DESKTOP_FRAME_EXECUTION_MODE";
 
     /// <summary>Set to 0 to stop collecting single-pass stereo commands for the next OpenXR frame while the current frame renders. On by default.</summary>
     public const string OpenXrSpeculativeCollect = "XRE_OPENXR_SPECULATIVE_COLLECT";
@@ -189,6 +191,27 @@ public static class XREngineEnvironmentVariables
     public const string AdvancedRenderPipelineMode = "XRE_ADVANCED_RENDER_PIPELINE_MODE";
     /// <summary>Set to 1 to time the parts of Advanced preparation extraction for each row.</summary>
     public const string AdvancedExtractionSubStageTimers = "XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS";
+    /// <summary>Set to 1 to run the full committed-binding check also when the material source witness is unchanged, and to log each mismatch.</summary>
+    public const string AdvancedPublisherWitnessValidate = "XRE_ADVANCED_PUBLISHER_WITNESS_VALIDATE";
+    /// <summary>Set to 1 to record frame pacing marks for <c>FramePacingTimeline.Dump</c>.</summary>
+    public const string FramePacingTimeline = "XRE_FRAME_PACING_TIMELINE";
+    /// <summary>
+    /// Vulkan texture binding signatures across frames. <c>0</c> (default) keeps a signature for
+    /// one render frame only. <c>1</c> keeps it while the descriptor generation and the
+    /// readiness epoch stay the same. <c>witness</c> keeps it across frames, also computes each
+    /// signature again, uses the new value, and logs each mismatch to <c>descriptor-signature-witness.log</c>.
+    /// </summary>
+    public const string VulkanDescriptorSignatureEpoch = "XRE_VK_DESCRIPTOR_SIGNATURE_EPOCH";
+    /// <summary>
+    /// Set to 0 to publish the Advanced pipeline's AO finalize, post-process and final post-process values
+    /// with uniform callbacks instead of typed binding publishers. Used for A/B checks.
+    /// </summary>
+    public const string AdvancedTypedPostProcessPublishers = "XRE_ADVANCED_TYPED_POSTPROCESS_PUBLISHERS";
+    /// <summary>
+    /// Set to 1 to name the material and renderer uniform callbacks in Vulkan binding-artifact
+    /// fallback samples. The names allocate, so use it for diagnosis only.
+    /// </summary>
+    public const string VulkanBindingFallbackCallbackNames = "XRE_VK_BINDING_FALLBACK_CALLBACK_NAMES";
     public const string HizCullTrace = "XRE_HIZ_CULL_TRACE";
     public const string DiagVendorUpscale = "XRE_DIAG_VENDOR_UPSCALE";
     public const string DiagQuadBlit = "XRE_DIAG_QUAD_BLIT";

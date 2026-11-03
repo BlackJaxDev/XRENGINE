@@ -34,6 +34,17 @@ internal sealed class EngineRuntimeRenderingHostServices :
     private const int MaxConsecutiveVrDesktopBudgetSkips = 2;
     private const double MinimumIndependentDesktopRateHz = 15.0;
     private const double IndependentDesktopSlackMarginMs = 1.0;
+    // A minimum-rate desktop frame may run past the next XR wake by at most this much.
+    // A frame admitted later in the slack would delay the next eye frame by most of
+    // its cost and make it miss its display slot.
+    private const double MinimumRateDesktopOverlapMs = 1.5;
+    // The window gets a frame at this rate also when the estimated cost does not fit
+    // a slack window, so a stale cost estimate cannot freeze it. Such a frame still
+    // starts early in a slack window, with at least this much slack left.
+    private const double FallbackIndependentDesktopRateHz = 4.0;
+    private const double FallbackDesktopMinimumSlackMs = 1.5;
+    // Below this rate the window gets a frame at any time.
+    private const double FloorIndependentDesktopRateHz = 1.0;
     private const int RenderOutputCapacity = 512;
 
     private readonly IRendererBackendCatalog _rendererBackends;
@@ -1536,6 +1547,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
             _ => 0.0f,
         };
     public bool VrDesktopAutoSkipWhenOverBudget => RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget;
+    public EVrDesktopFrameExecutionMode VrDesktopFrameExecutionMode => RuntimeEngine.Rendering.Settings.VrDesktopFrameExecutionMode;
     public FrameOutputPacingDecision EvaluateFrameOutputPacing(
         EVrOutputViewKind viewKind,
         EFrameOutputKind outputKind,
@@ -1643,7 +1655,8 @@ internal sealed class EngineRuntimeRenderingHostServices :
     /// <summary>
     /// Admits at most one independent desktop frame per XR frame, and only when it can finish
     /// before the next XR frame. A minimum rate keeps the window live. A frame admitted at this
-    /// rate can delay the eyes.
+    /// rate starts at the beginning of an XR slack window, so it delays the next eye frame by at
+    /// most <see cref="MinimumRateDesktopOverlapMs"/>.
     /// </summary>
     private bool ShouldHoldIndependentDesktopForXrFrame(ulong frameId)
     {
@@ -1666,7 +1679,23 @@ internal sealed class EngineRuntimeRenderingHostServices :
             bool fits = slackMs < 0.0 ||
                 (xrWakeTicks != _independentDesktopAdmittedXrWakeTicks &&
                  Math.Max(_independentDesktopCostMs, _independentDesktopCostSinceAdmissionMs) + IndependentDesktopSlackMarginMs <= slackMs);
-            bool minimumRateDue = elapsedMs >= 1000.0 / MinimumIndependentDesktopRateHz;
+            // A due minimum-rate frame waits for the start of an XR slack window (just
+            // after xrEndFrame), where it overlaps the next eye frame least.
+            bool newSlackWindow = slackMs < 0.0 || xrWakeTicks != _independentDesktopAdmittedXrWakeTicks;
+            bool floorDue = elapsedMs >= 1000.0 / FloorIndependentDesktopRateHz;
+            bool fallbackDue = newSlackWindow &&
+                elapsedMs >= 1000.0 / FallbackIndependentDesktopRateHz &&
+                (slackMs < 0.0 || slackMs >= FallbackDesktopMinimumSlackMs);
+            bool minimumDue = newSlackWindow &&
+                elapsedMs >= 1000.0 / MinimumIndependentDesktopRateHz &&
+                (slackMs < 0.0 || slackMs + MinimumRateDesktopOverlapMs >= _independentDesktopCostMs);
+            bool minimumRateDue = floorDue || fallbackDue || minimumDue;
+            if (fits || minimumRateDue)
+                FramePacingTimeline.Mark(
+                    fits ? EFramePacingMark.DesktopAdmitFits :
+                    minimumDue ? EFramePacingMark.DesktopAdmitMinimumRate :
+                    fallbackDue ? EFramePacingMark.DesktopAdmitFallback :
+                    EFramePacingMark.DesktopAdmitFloor);
             _independentDesktopHoldCurrentFrame = !fits && !minimumRateDue;
             if (!_independentDesktopHoldCurrentFrame)
             {

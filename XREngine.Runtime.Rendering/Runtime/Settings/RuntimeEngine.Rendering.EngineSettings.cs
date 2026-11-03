@@ -635,6 +635,7 @@ public static partial class RuntimeEngine
                 private float _vrDesktopEditorTargetRateHz = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrOutputTargetRateHz;
                 private float _vrCyclopeanDesktopTargetRateHz = 60.0f;
                 private bool _vrDesktopAutoSkipWhenOverBudget = true;
+                private EVrDesktopFrameExecutionMode _vrDesktopFrameExecutionMode = EVrDesktopFrameExecutionMode.Inline;
                 private bool _enableVrFoveatedViewSet = false;
                 private EVrFoveationMode _vrFoveationMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationMode;
                 private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
@@ -2298,6 +2299,18 @@ public static partial class RuntimeEngine
                 {
                     get => _vrDesktopAutoSkipWhenOverBudget;
                     set => SetField(ref _vrDesktopAutoSkipWhenOverBudget, value);
+                }
+
+                /// <summary>
+                /// Selects how a recording desktop view executes while VR is active. The
+                /// desktop frame reads it once per attempt.
+                /// </summary>
+                [Category("VR")]
+                [Description("How a recording desktop view executes while VR is active. Inline records on the render thread after the eyes. WorkerRecord records on a background lane and presents one XR frame later. SeparateDomain is reserved.")]
+                public EVrDesktopFrameExecutionMode VrDesktopFrameExecutionMode
+                {
+                    get => _vrDesktopFrameExecutionMode;
+                    set => SetField(ref _vrDesktopFrameExecutionMode, value);
                 }
 
                 /// <summary>

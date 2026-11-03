@@ -24,6 +24,8 @@ namespace XREngine.Rendering
     public sealed class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
     {
         private long _completedRenderWindowIntervalSequence;
+        private const long VrMirrorOffKeepAlivePresentRateHz = 2;
+        private long _vrMirrorOffLastPresentTicks;
         public XRWindowCompletedRenderInterval LastCompletedRenderWindowInterval { get; private set; }
         private static readonly TimeSpan RendererShutdownGpuWaitTimeout = TimeSpan.FromSeconds(5);
 
@@ -2749,6 +2751,56 @@ namespace XREngine.Rendering
             return true;
         }
 
+        /// <summary>
+        /// True when VR is active with the desktop mirror off and the keep-alive present
+        /// is not due. The window then has no output to show. Without this hold, each
+        /// frame acquires a swapchain image, defers an empty recording, and presents a
+        /// rejected image before the next XR frame. The keep-alive present still runs the
+        /// window and desktop-frame maintenance at a low rate.
+        /// </summary>
+        private bool IsWindowHeldForVrMirrorOff()
+        {
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            if (!presentation.IsInVR ||
+                (presentation.VrMirrorMode != EVrMirrorMode.Off && presentation.RenderWindowsWhileInVR))
+            {
+                return false;
+            }
+
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (now - _vrMirrorOffLastPresentTicks >=
+                System.Diagnostics.Stopwatch.Frequency / VrMirrorOffKeepAlivePresentRateHz)
+            {
+                _vrMirrorOffLastPresentTicks = now;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// True when VR is active, the window records its own scene, and the selected
+        /// desktop execution mode has no implementation in this build. The window then
+        /// keeps its last image and reports the reason; it never records inline instead.
+        /// </summary>
+        private static bool IsWindowHeldForUnavailableDesktopExecutionMode()
+        {
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            if (!presentation.IsInVR ||
+                presentation.VrMirrorMode != EVrMirrorMode.FullIndependentRender ||
+                presentation.VrDesktopFrameExecutionMode != EVrDesktopFrameExecutionMode.SeparateDomain)
+            {
+                return false;
+            }
+
+            Debug.RenderingWarningEvery(
+                "XRWindow.DesktopExecutionModeUnavailable",
+                TimeSpan.FromSeconds(5),
+                "[FrameOutput] Desktop execution mode {0} is not available yet. The desktop window keeps its last image. Select Inline to record the desktop view.",
+                presentation.VrDesktopFrameExecutionMode);
+            return true;
+        }
+
         private static FrameOutputPacingDecision EvaluateWindowPresentPacing(bool mirrorByComposition)
         {
             IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
@@ -2973,7 +3025,10 @@ namespace XREngine.Rendering
                 long desktopWorkStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 // A held desktop keeps its last image. Recording and presenting it again would
                 // take the render-thread time that the hold gives to the next XR frame.
-                bool windowHeldForXrFrame = IsWindowHeldForXrFramePriority();
+                bool windowHeldForXrFrame =
+                    IsWindowHeldForXrFramePriority() ||
+                    IsWindowHeldForVrMirrorOff() ||
+                    IsWindowHeldForUnavailableDesktopExecutionMode();
 
                 // Viewport/pipeline rendering is isolated so that exceptions during scene rendering
                 // do not prevent Vulkan's RenderFrameCallback (acquire/record/submit/present) from
@@ -3005,7 +3060,10 @@ namespace XREngine.Rendering
                             // layout. Backend admission may defer an unready frame while
                             // the expensive internal resource generation stays frozen.
                             if (!windowHeldForXrFrame)
+                            {
+                                FramePacingTimeline.Mark(EFramePacingMark.DesktopRenderStart);
                                 RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                            }
                         }
                         RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);
                         RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.Viewports, viewportsPhaseStart);

@@ -370,6 +370,16 @@ internal sealed partial class VulkanCommandRuntime
 
         static bool ContainsPass(IReadOnlyCollection<RenderPassMetadata> metadata, int candidate)
         {
+            // Index the common list shapes so the per-operation check does not
+            // allocate an interface enumerator.
+            if (metadata is IReadOnlyList<RenderPassMetadata> list)
+            {
+                for (int index = 0; index < list.Count; index++)
+                    if (list[index].PassIndex == candidate)
+                        return true;
+                return false;
+            }
+
             foreach (RenderPassMetadata pass in metadata)
                 if (pass.PassIndex == candidate)
                     return true;

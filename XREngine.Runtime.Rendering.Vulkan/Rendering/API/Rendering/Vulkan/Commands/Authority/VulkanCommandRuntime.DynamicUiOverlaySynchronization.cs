@@ -29,10 +29,8 @@ internal sealed partial class VulkanCommandRuntime
                     commandBufferHandle,
                     out VulkanRecordedImageLayoutState? recorded))
             {
-                recorded = new VulkanRecordedImageLayoutState
-                {
-                    RecordingGeneration = CommandBuffers.ResolveRecordingGeneration(commandBuffer),
-                };
+                recorded = Synchronization.RentRecordedImageLayoutState(
+                    CommandBuffers.ResolveRecordingGeneration(commandBuffer));
                 Synchronization._recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
             }
 
@@ -235,10 +233,8 @@ internal sealed partial class VulkanCommandRuntime
                     unchecked((ulong)primary.Handle),
                     out VulkanRecordedImageLayoutState? primaryState))
             {
-                primaryState = new VulkanRecordedImageLayoutState
-                {
-                    RecordingGeneration = CommandBuffers.ResolveRecordingGeneration(primary),
-                };
+                primaryState = Synchronization.RentRecordedImageLayoutState(
+                    CommandBuffers.ResolveRecordingGeneration(primary));
                 Synchronization._recordedImageLayoutsByCommandBuffer[
                     unchecked((ulong)primary.Handle)] = primaryState;
             }
@@ -301,11 +297,8 @@ internal sealed partial class VulkanCommandRuntime
                     unchecked((ulong)primary.Handle),
                     out VulkanRecordedImageLayoutState? primaryState))
             {
-                primaryState = new VulkanRecordedImageLayoutState
-                {
-                    RecordingGeneration =
-                        CommandBuffers.ResolveRecordingGeneration(primary),
-                };
+                primaryState = Synchronization.RentRecordedImageLayoutState(
+                    CommandBuffers.ResolveRecordingGeneration(primary));
                 Synchronization._recordedImageLayoutsByCommandBuffer[
                     unchecked((ulong)primary.Handle)] = primaryState;
             }
@@ -687,6 +680,10 @@ internal sealed partial class VulkanCommandRuntime
             ImageLayout.TransferDstOptimal => (
                 PipelineStageFlags2.TransferBit,
                 AccessFlags2.TransferWriteBit,
+                ImageLayout.Undefined),
+            ImageLayout.TransferSrcOptimal => (
+                PipelineStageFlags2.TransferBit,
+                AccessFlags2.TransferReadBit,
                 ImageLayout.Undefined),
             ImageLayout.General => (
                 PipelineStageFlags2.AllCommandsBit,

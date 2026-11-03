@@ -83,6 +83,7 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     /// Gets whether desktop-facing VR outputs may be skipped to protect the active XR budget band.
     /// </summary>
     bool VrDesktopAutoSkipWhenOverBudget => RuntimeRenderingHostServiceDefaults.VrDesktopAutoSkipWhenOverBudget;
+    EVrDesktopFrameExecutionMode VrDesktopFrameExecutionMode => EVrDesktopFrameExecutionMode.Inline;
 
     /// <summary>
     /// Evaluates whether an output is due for this frame according to host pacing policy.

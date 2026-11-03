@@ -128,6 +128,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             _resources.Images.RetireOwnedResources(new RetiredImageResources(
                 depth.Image, depth.Memory, depth.View, [], default, 0),
                 "Swapchain.Depth.Shutdown");
+        RetireOffscreenColorResources("Swapchain.OffscreenColor.Shutdown");
         DrainCompletedDependencies();
         DestroySwapchain();
     }
@@ -247,6 +248,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 _resources.Images.RetireOwnedResources(new RetiredImageResources(
                     depth.Image, depth.Memory, depth.View, [], default, 0),
                     "Swapchain.Depth");
+            RetireOffscreenColorResources("Swapchain.OffscreenColor");
             VulkanResourceSlotHandle[] oldImageLifetimeSlots =
                 _resources.DetachExternalImageLifetimesForHandleReuse(oldImages);
 
@@ -308,6 +310,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                     _resources.Images.RetireOwnedResources(new RetiredImageResources(
                         failedDepth.Image, failedDepth.Memory, failedDepth.View, [], default, 0),
                         "Swapchain.Depth.RecreateFailure");
+                RetireOffscreenColorResources("Swapchain.OffscreenColor.RecreateFailure");
 
                 Image[] failedImages = _output.Desktop.Images ?? [];
                 ImageView[] failedViews = _output.Desktop.ImageViews ?? [];
@@ -653,6 +656,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             _resources.Images.RetireOwnedResources(new RetiredImageResources(
                 depth.Image, depth.Memory, depth.View, [], default, 0),
                 "Swapchain.Depth.CreateFailure");
+        RetireOffscreenColorResources("Swapchain.OffscreenColor.CreateFailure");
         DestroySwapchain();
     }
 

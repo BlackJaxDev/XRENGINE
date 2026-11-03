@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using XREngine.Execution;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -22,6 +23,7 @@ internal sealed partial class VulkanFrameLoop
 
         OpenXrPreparedEyeCommandBufferInput preparedFirstEye = default;
         OpenXrPreparedEyeCommandBufferInput preparedSecondEye = default;
+        RenderWorkBatchLease claimedEyeLease = default;
         bool trackerOwnsSubmission = false;
         try
         {
@@ -64,6 +66,11 @@ internal sealed partial class VulkanFrameLoop
 
             int firstLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(0);
             int secondLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(1);
+            // Claim both eye lanes before the freeze touches their backend attachments.
+            claimedEyeLease = OpenXrEyeRecordWorkerScheduler.RentAndClaimLanes(
+                _commandRuntime,
+                firstLaneId,
+                secondLaneId);
             if (!TryFreezeOpenXrEyeRecordWorkerInput(
                     in preparedFirstEye,
                     firstLaneId,
@@ -94,7 +101,10 @@ internal sealed partial class VulkanFrameLoop
             VulkanOpenXrEyeWorkerCommandResult result;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.WorkerRecordAndSubmit"))
             {
+                RenderWorkBatchLease lease = claimedEyeLease;
+                claimedEyeLease = default;
                 result = workers.Execute(
+                    lease,
                     in frozenFirstEye,
                     in frozenSecondEye,
                     in preparedFirstEye,
@@ -140,6 +150,10 @@ internal sealed partial class VulkanFrameLoop
             }
             finally
             {
+                // The worker service owns the lease once it starts; release it here only
+                // when a failure happened before that hand-off.
+                if (claimedEyeLease.IsValid)
+                    claimedEyeLease.Dispose();
                 _commandRuntime.OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
             }
         }

@@ -199,12 +199,16 @@ internal sealed partial class VulkanFrameLoop
 
         try
         {
+            // Visibility operations can be captured with OpenXR eye work, so they
+            // use the pool that keeps operations for the frames in flight.
             _frameOperationQueue.EnqueuePrepared(
-                new AdvancedVisibilityOp(
+                AdvancedVisibilityOp.Rent(
+                    _openXrCapturedOperationWorkspace,
+                    RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId,
                     passIndex,
-                    vulkanRequest,
+                    in vulkanRequest,
                     inputLease,
-                    context));
+                    in context));
         }
         catch
         {

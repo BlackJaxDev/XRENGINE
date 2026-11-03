@@ -149,14 +149,14 @@ internal sealed partial class VulkanFramePlanner
         ArgumentNullException.ThrowIfNull(ops);
         if (count <= 0 || count > ops.Length)
             throw new ArgumentOutOfRangeException(nameof(count));
-        FrameOpContext fallback = ops[0].Context;
-        FrameOpContext best = fallback;
+        // FrameOpContext is large; read it by reference and copy only the result.
+        int bestIndex = 0;
         int bestScore = int.MinValue;
 
         for (int index = 0; index < count; index++)
         {
             FrameOp op = ops[index];
-            FrameOpContext context = op.Context;
+            ref readonly FrameOpContext context = ref op.ContextReference;
             if (context.ResourceRegistry is null)
                 continue;
 
@@ -170,19 +170,20 @@ internal sealed partial class VulkanFramePlanner
             score += ScoreFrameOpFrameBufferTargets(op, context.ResourceRegistry);
 
             if (score > bestScore ||
-                (score == bestScore && ComparePlannerContextTieBreak(context, best) < 0))
+                (score == bestScore &&
+                 ComparePlannerContextTieBreak(in context, in ops[bestIndex].ContextReference) < 0))
             {
                 bestScore = score;
-                best = context;
+                bestIndex = index;
             }
         }
 
-        return best;
+        return ops[bestIndex].Context;
     }
 
     internal static int ScoreFrameOpFrameBufferTargets(FrameOp op, RenderResourceRegistry registry)
     {
-        int score = ScoreFrameOpFrameBufferTarget(op.Context.OutputFrameBuffer, registry);
+        int score = ScoreFrameOpFrameBufferTarget(op.ContextReference.OutputFrameBuffer, registry);
         score += ScoreFrameOpFrameBufferTarget(op.Target, registry);
         if (op is BlitOp blit)
         {
