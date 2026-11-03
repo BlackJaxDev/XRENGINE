@@ -26,7 +26,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// from sampler type mismatch on the default texture unit.
         /// </summary>
         private static XRTexture2DArray? _dummyShadowMapArray;
-        private static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= CreateDummyShadowMapArray();
+        private static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= GenericRenderObject.CreateProcessShared(CreateDummyShadowMapArray);
 
         private static XRTexture2DArray CreateDummyShadowMapArray()
         {

@@ -37,44 +37,44 @@ namespace XREngine.Scene
         /// This prevents sampling from stale texture unit state.
         /// </summary>
         private static XRTexture2D? _dummyShadowMap;
-        internal static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
+        internal static XRTexture2D DummyShadowMap => _dummyShadowMap ??= GenericRenderObject.CreateProcessShared(static () => new XRTexture2D(1, 1, ColorF4.White));
 
         /// <summary>
         /// A 1x1x1 dummy depth texture array used as a fallback for forward cascaded shadow sampling.
         /// </summary>
         private static XRTexture2DArray? _dummyShadowMapArray;
-        internal static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= new XRTexture2DArray(
+        internal static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= GenericRenderObject.CreateProcessShared(static () => new XRTexture2DArray(
             1, 1, 1,
             EPixelInternalFormat.DepthComponent16,
             EPixelFormat.DepthComponent,
-            EPixelType.Float);
+            EPixelType.Float));
 
         private static XRTexture2DArray? _dummyPbrTextureArray;
-        internal static XRTexture2DArray DummyPbrTextureArray => _dummyPbrTextureArray ??= new XRTexture2DArray(
+        internal static XRTexture2DArray DummyPbrTextureArray => _dummyPbrTextureArray ??= GenericRenderObject.CreateProcessShared(static () => new XRTexture2DArray(
             1, 1, 1,
             EPixelInternalFormat.Rgb16f,
             EPixelFormat.Rgb,
-            EPixelType.Float);
+            EPixelType.Float));
 
         private static XRTextureCube? _dummyPointShadowMap;
-        internal static XRTextureCube DummyPointShadowMap => _dummyPointShadowMap ??= new XRTextureCube(1u, EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.Float, true, 1)
+        internal static XRTextureCube DummyPointShadowMap => _dummyPointShadowMap ??= GenericRenderObject.CreateProcessShared(static () => new XRTextureCube(1u, EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.Float, true, 1)
         {
             Resizable = false,
-        };
+        });
 
         private static XRTexture2DArray? _dummyAmbientOcclusionArray;
-        private static XRTexture2DArray DummyAmbientOcclusionArray => _dummyAmbientOcclusionArray ??= new XRTexture2DArray(
+        private static XRTexture2DArray DummyAmbientOcclusionArray => _dummyAmbientOcclusionArray ??= GenericRenderObject.CreateProcessShared(static () => new XRTexture2DArray(
             1, 1, 2,
             EPixelInternalFormat.R16f,
             EPixelFormat.Red,
-            EPixelType.Float);
+            EPixelType.Float));
 
         /// <summary>
         /// A 1x1 black cubemap used as a fallback environment/reflection map when no light probe is available.
         /// Prevents "program texture usage" GL errors from unbound samplerCube uniforms.
         /// </summary>
         private static XRTextureCube? _dummyEnvironmentCubemap;
-        private static XRTextureCube DummyEnvironmentCubemap => _dummyEnvironmentCubemap ??= new XRTextureCube(1u);
+        private static XRTextureCube DummyEnvironmentCubemap => _dummyEnvironmentCubemap ??= GenericRenderObject.CreateProcessShared(static () => new XRTextureCube(1u));
 
         private static bool _loggedForwardLightingOnce = false;
         private static bool _loggedShadowMapEnabledOnce = false;

@@ -1417,6 +1417,14 @@ namespace XREngine.Rendering.Vulkan
             bool includeSampler = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
 
             bool allowSynchronousTextureUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
+            if (!texture.IsApiWrapperPublicationReady)
+            {
+                // A texture still in CPU construction has no wrapper yet; the lookup would throw.
+                WarnOnce(
+                    $"Material '{Data.Name ?? "<unnamed>"}' texture '{texture.Name ?? "<unnamed>"}' ({texture.GetType().Name}) " +
+                    $"on binding '{binding.Name}' is not published yet.");
+                return false;
+            }
             if (WrapperLookup.GetOrCreate(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
             {
                 WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' does not have a Vulkan image wrapper.");
