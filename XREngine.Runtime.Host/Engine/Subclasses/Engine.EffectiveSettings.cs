@@ -1002,6 +1002,13 @@ namespace XREngine
                     EditorPreferencesOverrides?.AudioArchitectureV2Override);
 
             /// <summary>
+            /// Gets whether the split VR desktop frame waits for enough XR slack before it
+            /// starts the next desktop frame. Resolved from: User Setting > Engine Default (on).
+            /// </summary>
+            public static bool VrDesktopSplitSlackGate
+                => UserSettings?.VrDesktopSplitSlackGate ?? true;
+
+            /// <summary>
             /// Gets the effective audio sample rate.
             /// Cascade: Editor Prefs Override > Game Override > User Preference
             /// </summary>

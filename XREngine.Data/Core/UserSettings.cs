@@ -232,6 +232,13 @@ namespace XREngine
                     _vrTargetFramesPerSecondOverride.SetOverride(value.Value);
             }
         }
+        [Category("Performance")]
+        [Description("In VR with the WorkerRecord desktop mode, start the next desktop frame only when it can finish before the next VR frame. Turn off for a faster desktop view; the desktop frame can then delay a VR frame.")]
+        public bool VrDesktopSplitSlackGate
+        {
+            get => _vrDesktopSplitSlackGate;
+            set => SetField(ref _vrDesktopSplitSlackGate, value);
+        }
         [Category("Quality")]
         [Description("Preferred global illumination mode.")]
         public EGlobalIlluminationMode GlobalIlluminationMode
@@ -292,6 +299,7 @@ namespace XREngine
         private OverrideableSetting<float> _targetFramesPerSecondOverride = new();
         private OverrideableSetting<float> _unfocusedTargetFramesPerSecondOverride = new();
         private OverrideableSetting<float> _vrTargetFramesPerSecondOverride = new();
+        private bool _vrDesktopSplitSlackGate = true;
 
         /// <summary>
         /// User override for the number of job worker threads.

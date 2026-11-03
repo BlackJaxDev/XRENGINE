@@ -50,6 +50,26 @@ To see how fast the engine could go without runtime pacing, read
 
 The implied rate does not include GPU work that finishes after `xrEndFrame`.
 
+## Desktop View Rate In VR
+
+With the `WorkerRecord` VR desktop frame mode, a render worker records the
+desktop frame while the render thread renders the next VR frame. This mode
+needs at least two render worker threads. Set `RenderWorkerThreadCountOverride`
+in `UserSettings`, or `XRE_RENDER_WORKER_THREADS=2`. With fewer workers, every
+desktop frame fails, and `desktop-execution-mode.log` records the failure.
+
+`UserSettings.VrDesktopSplitSlackGate` controls when the next desktop frame
+starts. The engine reads it each frame, so a change applies at once.
+
+- On (the default): the next desktop frame starts only if the time left before
+  the next VR frame can hold it. This protects VR frame deadlines, but the
+  desktop view can run at half the VR rate or less.
+- Off: the next desktop frame always starts. The desktop view can run at the VR
+  rate, but a slow desktop frame can delay a VR frame.
+
+The FPS overlay shows the presented desktop rate and the OpenXR submitted rate,
+so you can compare the two modes.
+
 ## Testing
 
 The Unit Testing World supports `VR.Mode = "Emulated"` for desktop stereo

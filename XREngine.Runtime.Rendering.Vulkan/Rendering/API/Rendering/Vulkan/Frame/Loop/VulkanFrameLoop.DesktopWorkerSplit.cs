@@ -37,11 +37,13 @@ internal sealed partial class VulkanFrameLoop
     /// <summary>
     /// True when the follow-on first half can finish before the next XR frame needs the
     /// render thread. A first half that runs past the XR wake delays the eye batch, and
-    /// the eye frame then misses its deadline. Without an XR frame estimate, the first
-    /// half always runs.
+    /// the eye frame then misses its deadline. Without an XR frame estimate, or with the
+    /// slack gate user setting off, the first half always runs.
     /// </summary>
     private bool CanRunFollowOnDesktopFirstHalf()
     {
+        if (!RuntimeRenderingHostServices.Presentation.VrDesktopSplitSlackGate)
+            return true;
         double slackMs = RuntimeEngine.VRState.OpenXRApi?.NextFrameSlackMs ?? -1.0;
         return slackMs < 0.0 || slackMs >= _desktopWorkerFirstHalfCostMs + DesktopWorkerFirstHalfSlackMarginMs;
     }

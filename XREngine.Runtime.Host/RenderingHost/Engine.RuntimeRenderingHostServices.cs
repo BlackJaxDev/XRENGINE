@@ -1548,6 +1548,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
         };
     public bool VrDesktopAutoSkipWhenOverBudget => RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget;
     public EVrDesktopFrameExecutionMode VrDesktopFrameExecutionMode => RuntimeEngine.Rendering.Settings.VrDesktopFrameExecutionMode;
+    public bool VrDesktopSplitSlackGate => Engine.EffectiveSettings.VrDesktopSplitSlackGate;
     public FrameOutputPacingDecision EvaluateFrameOutputPacing(
         EVrOutputViewKind viewKind,
         EFrameOutputKind outputKind,

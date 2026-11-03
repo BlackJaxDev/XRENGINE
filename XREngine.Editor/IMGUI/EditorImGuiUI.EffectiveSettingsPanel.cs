@@ -470,7 +470,8 @@ public static partial class EditorImGuiUI
             nameof(Engine.EffectiveSettings.AudioTransport) or
             nameof(Engine.EffectiveSettings.AudioEffects) or
             nameof(Engine.EffectiveSettings.AudioArchitectureV2) or
-            nameof(Engine.EffectiveSettings.AudioSampleRate);
+            nameof(Engine.EffectiveSettings.AudioSampleRate) or
+            nameof(Engine.EffectiveSettings.VrDesktopSplitSlackGate);
 
     private static bool HasActiveUserSettingsSessionOverride(string settingName)
     {
