@@ -233,7 +233,7 @@ namespace XREngine
             }
         }
         [Category("Performance")]
-        [Description("In VR with the WorkerRecord desktop mode, start the next desktop frame only when it can finish before the next VR frame. Turn off for a faster desktop view; the desktop frame can then delay a VR frame.")]
+        [Description("In VR with the WorkerRecord desktop mode, start the next desktop frame only when it can finish before the next VR frame. Off by default: the desktop view runs faster, but a slow desktop frame can delay a VR frame.")]
         public bool VrDesktopSplitSlackGate
         {
             get => _vrDesktopSplitSlackGate;
@@ -299,7 +299,7 @@ namespace XREngine
         private OverrideableSetting<float> _targetFramesPerSecondOverride = new();
         private OverrideableSetting<float> _unfocusedTargetFramesPerSecondOverride = new();
         private OverrideableSetting<float> _vrTargetFramesPerSecondOverride = new();
-        private bool _vrDesktopSplitSlackGate = true;
+        private bool _vrDesktopSplitSlackGate = false;
 
         /// <summary>
         /// User override for the number of job worker threads.

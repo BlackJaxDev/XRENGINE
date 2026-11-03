@@ -72,6 +72,39 @@ namespace XREngine
                 ConfigureJobManagerHooks);
         }
 
+        /// <summary>
+        /// Render workers that the split VR desktop frame needs: one for the desktop
+        /// record lane plus one more lane in the render domain.
+        /// </summary>
+        private const int SplitDesktopRenderWorkerCount = 2;
+
+        /// <summary>
+        /// Raises a 0 or automatic render worker request to the split desktop minimum when
+        /// the <see cref="EVrDesktopFrameExecutionMode.WorkerRecord"/> mode is requested.
+        /// Without those workers, every split desktop frame fails. An explicit count of 1 or
+        /// more stays unchanged. The mode is read before the unit-testing world applies it, so
+        /// its environment override is read here too.
+        /// </summary>
+        private static int ResolveSplitDesktopRenderWorkerCount(int requestedRenderWorkers)
+        {
+            if (requestedRenderWorkers > 0)
+                return requestedRenderWorkers;
+
+            EVrDesktopFrameExecutionMode mode = Enum.TryParse(
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
+                    ignoreCase: true,
+                    out EVrDesktopFrameExecutionMode environmentMode)
+                ? environmentMode
+                : RuntimeEngine.Rendering.Settings.VrDesktopFrameExecutionMode;
+            if (mode != EVrDesktopFrameExecutionMode.WorkerRecord)
+                return requestedRenderWorkers;
+
+            Debug.Out(
+                $"[ExecutionTopology] The WorkerRecord VR desktop mode needs {SplitDesktopRenderWorkerCount} render workers; " +
+                $"raised the render worker request from {requestedRenderWorkers} to {SplitDesktopRenderWorkerCount}.");
+            return SplitDesktopRenderWorkerCount;
+        }
+
         internal static EngineExecutionTopology ResolveExecutionTopology()
         {
             int generalWorkers = ReadExecutionIntegerOverride(
@@ -89,6 +122,7 @@ namespace XREngine
                 EffectiveSettings.RenderWorkerThreadCount,
                 MapExecutionSettingSource(EffectiveSettings.GetRenderWorkerThreadCountSource()),
                 out EEngineExecutionSettingSource renderWorkersSource);
+            renderWorkers = ResolveSplitDesktopRenderWorkerCount(renderWorkers);
             int renderWorkerCap = ReadExecutionIntegerOverride(
                 XREngineEnvironmentVariables.RenderWorkerThreadCap,
                 EffectiveSettings.RenderWorkerThreadCap,

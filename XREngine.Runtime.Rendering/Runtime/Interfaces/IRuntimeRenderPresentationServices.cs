@@ -89,7 +89,7 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     /// Gets whether the split VR desktop frame starts its next desktop frame only when
     /// the XR slack can hold it. False lets the desktop run at its own rate.
     /// </summary>
-    bool VrDesktopSplitSlackGate => true;
+    bool VrDesktopSplitSlackGate => false;
 
     /// <summary>
     /// Evaluates whether an output is due for this frame according to host pacing policy.

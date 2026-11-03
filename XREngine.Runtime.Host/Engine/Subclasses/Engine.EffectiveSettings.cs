@@ -1003,10 +1003,10 @@ namespace XREngine
 
             /// <summary>
             /// Gets whether the split VR desktop frame waits for enough XR slack before it
-            /// starts the next desktop frame. Resolved from: User Setting > Engine Default (on).
+            /// starts the next desktop frame. Resolved from: User Setting > Engine Default (off).
             /// </summary>
             public static bool VrDesktopSplitSlackGate
-                => UserSettings?.VrDesktopSplitSlackGate ?? true;
+                => UserSettings?.VrDesktopSplitSlackGate ?? false;
 
             /// <summary>
             /// Gets the effective audio sample rate.
