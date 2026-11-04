@@ -1927,6 +1927,13 @@ namespace XREngine.Rendering.Commands
             if (!VulkanFeatureProfile.EnableBindlessMaterialTable && !materialTableRequired)
                 return true;
 
+            // The per-material bucket scan binds each material through its own
+            // program and never reads the table, so building rows for it only
+            // costs render-thread time.
+            if (ZeroReadbackMaterialDrawPath == EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic &&
+                MeshPrimitivePathPreference == EMeshPrimitivePathPreference.TraditionalOnly)
+                return true;
+
             _materialTable ??= new GPUMaterialTable(128);
             BeginMaterialTextureReadinessUpdate();
             var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
