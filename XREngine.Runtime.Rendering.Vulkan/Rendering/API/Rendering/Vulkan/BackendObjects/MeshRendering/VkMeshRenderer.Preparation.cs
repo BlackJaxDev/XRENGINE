@@ -427,13 +427,19 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		string? identity = preparedProgramIdentity ?? preparedProgram.Data?.Name;
+		string? identity = preparedProgramIdentity ?? ResolveProgramInterfaceIdentity(preparedProgram.Data);
+		// The captured identity can be the renderer's identity at enqueue time, so it alone
+		// cannot prove a relink: the two programs must also share one interface.
 		bool replacingSameInterface =
 			_program is not null &&
 			!ReferenceEquals(_program, preparedProgram) &&
 			string.Equals(
 				_activeProgramIdentity,
 				identity,
+				StringComparison.Ordinal) &&
+			string.Equals(
+				ResolveProgramInterfaceIdentity(_program.Data),
+				ResolveProgramInterfaceIdentity(preparedProgram.Data),
 				StringComparison.Ordinal);
 		if (!ReferenceEquals(_program, preparedProgram) ||
 			_program is null ||
@@ -472,6 +478,19 @@ internal unsafe partial class VkMeshRenderer
 	/// program interface when that interface is rebuilt in place or its backend
 	/// wrapper is replaced.
 	/// </summary>
+	/// <summary>
+	/// Names the program interface for relink detection. Generated programs, such as the
+	/// GPU-driven combined programs, can share a display name across materials; their
+	/// descriptor key is unique per shader set and variant, so it identifies the interface.
+	/// </summary>
+	private static string? ResolveProgramInterfaceIdentity(XRRenderProgram? program)
+	{
+		if (program is null)
+			return null;
+		XRRenderProgramDescriptor descriptor = program.ProgramDescriptor;
+		return descriptor.IsEmpty ? program.Name : descriptor.StableKey;
+	}
+
 	private void ObserveActiveProgramLinkGeneration(
 		VkRenderProgram program,
 		bool replacingSameInterface = false)
@@ -526,7 +545,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private bool CanReuseCapturedPreparedRenderState(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
 	{
-		string? identity = preparedProgramIdentity ?? preparedProgram.Data?.Name;
+		string? identity = preparedProgramIdentity ?? ResolveProgramInterfaceIdentity(preparedProgram.Data);
 		return ReferenceEquals(_lastPreparedMaterial, material) &&
 			ReferenceEquals(_program, preparedProgram) &&
 			string.Equals(_activeProgramIdentity, identity, StringComparison.Ordinal) &&
