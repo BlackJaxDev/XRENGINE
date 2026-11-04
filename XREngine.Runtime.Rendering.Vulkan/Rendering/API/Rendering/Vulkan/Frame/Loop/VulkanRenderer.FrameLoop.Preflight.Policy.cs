@@ -19,15 +19,20 @@ namespace XREngine.Rendering.Vulkan
         }
 
         /// <summary>
-        /// Drops the mesh requests that a render callback queued when its window
+        /// Drops the scene work that a render callback queued when its window
         /// skips the desktop frame, for example while it is held for an XR frame.
-        /// The pre-render shadow pass queues requests on every callback. Without a
-        /// desktop frame to take them, they join the next frame's cohort as
-        /// duplicates and each keeps a canonical publication pinned. Frame
-        /// operations, view history, and output completions stay queued.
+        /// The pre-render shadow pass queues mesh requests, and the skinning
+        /// prepass queues compute operations, on every callback. Without a
+        /// desktop frame to take them, they join the next frame as duplicates,
+        /// overflow its plan, and keep canonical publications pinned. Texture
+        /// uploads, receipt-bound operations, view history, and output
+        /// completions stay queued.
         /// </summary>
         internal void DiscardSkippedDesktopFrameWork()
-            => _ = MeshOperationRequests.DiscardPending();
+        {
+            _ = _framePlanner.Operations.DiscardSkippedSceneOperations();
+            _ = MeshOperationRequests.DiscardPending();
+        }
 
         private void DrainSkippedResizeFrameOps(
             string reason,

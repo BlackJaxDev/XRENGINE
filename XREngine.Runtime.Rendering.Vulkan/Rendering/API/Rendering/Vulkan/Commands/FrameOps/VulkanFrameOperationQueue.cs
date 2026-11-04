@@ -958,6 +958,40 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     }
 
     /// <summary>
+    /// Abandons the scene operations of a render callback that no desktop frame
+    /// takes. Texture uploads and receipt-bound operations stay queued for the
+    /// next accepted output, the same rule as the skip drain, and the frame view
+    /// history and output completions are kept. The method does not allocate.
+    /// </summary>
+    internal int DiscardSkippedSceneOperations()
+    {
+        using (SyncRoot.EnterScope())
+        {
+            Span<FrameOp> operations = CollectionsMarshal.AsSpan(Pending);
+            int retainedCount = 0;
+            for (int index = 0; index < operations.Length; index++)
+            {
+                FrameOp operation = operations[index];
+                if (operation is TextureUploadFrameOp ||
+                    operation.ContextReference.OutputCompletionReceiptId != 0UL)
+                {
+                    operations[retainedCount++] = operation;
+                    continue;
+                }
+
+                ReadOnlySpan<FrameOp> abandoned = operations.Slice(index, 1);
+                FailPendingSubmissionMarkers(abandoned);
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(abandoned);
+            }
+
+            int discardedCount = Pending.Count - retainedCount;
+            if (discardedCount != 0)
+                Pending.RemoveRange(retainedCount, discardedCount);
+            return discardedCount;
+        }
+    }
+
+    /// <summary>
     /// Abandons scene work while PresentNow cannot accept a frame. Receipt-bound
     /// operations cannot use the ordinary skip drain, which preserves them for a
     /// future accepted output; a paused renderer has no such output until a

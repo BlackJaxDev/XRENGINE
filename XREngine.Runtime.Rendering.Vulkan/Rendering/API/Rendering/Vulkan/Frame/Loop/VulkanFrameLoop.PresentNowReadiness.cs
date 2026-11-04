@@ -1196,7 +1196,7 @@ internal sealed partial class VulkanFrameLoop
         // cohort. Work that this attempt did not take must not stay queued: it
         // would join that cohort as a duplicate, and each stale request keeps a
         // canonical publication pinned until the publication ring is full.
-        DiscardPausedPresentNowSceneWork();
+        DiscardSkippedDesktopFrameWork();
         attempt.PresentNowReadinessRetry = retry;
         Debug.VulkanEvery(
             $"Vulkan.PresentNow.FrameRetry.{retry.Stage}.{GetHashCode()}",
