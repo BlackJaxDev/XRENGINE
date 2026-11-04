@@ -1398,7 +1398,8 @@ namespace XREngine.Scene
 
         private static bool IsTextureReadyForShadowSampling(XRTexture? texture)
         {
-            if (texture is null)
+            // A shadow page still in CPU construction has no backend wrapper to sample.
+            if (texture is null || !texture.IsApiWrapperPublicationReady)
                 return false;
 
             AbstractRenderer? renderer = AbstractRenderer.Current;
