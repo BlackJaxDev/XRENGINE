@@ -98,6 +98,26 @@ internal sealed class VulkanAcceptedFramePlan
 
     internal FrameOp[] StaticOperations => _staticOperations;
     internal FrameOp[] DynamicUiOperations => _dynamicUiOperations;
+
+    /// <summary>
+    /// Returns true when a transferred operation targets an OpenXR eye or the
+    /// OpenXR mirror. Only such a plan depends on the captured OpenXR view set.
+    /// </summary>
+    internal bool HasOpenXrTargetOperations()
+        => HasOpenXrTarget(_staticOperations.AsSpan(0, StaticOperationCount)) ||
+           HasOpenXrTarget(_dynamicUiOperations.AsSpan(0, DynamicUiOperationCount));
+
+    private static bool HasOpenXrTarget(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+        {
+            if (operations[index].ContextReference.ContextKind is
+                EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror)
+                return true;
+        }
+        return false;
+    }
+
     internal FrameOp[] TextureUploadOperations => _textureUploadOperations;
     internal Span<FrameOp> AuthoredOperations
         => _authoredOperations.AsSpan(0, _authoredOperationCount);

@@ -526,10 +526,15 @@ internal sealed partial class VulkanFrameLoop
         acceptedPlan.PreparedMeshIngress.CopyFrom(_preparedMeshIngress);
         _preparedMeshIngress.Clear();
 
+        // A desktop plan without OpenXR eye or mirror work does not read the view
+        // set. A long desktop prepare spans several XR frames, so requiring an
+        // unchanged view set for such a plan would make every attempt retry.
+        bool requiresCurrentOpenXrViews = acceptedPlan.HasOpenXrTargetOperations();
         FramePlan logicalPlan;
         try
         {
-            if (!RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
+            if (requiresCurrentOpenXrViews &&
+                !RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
             {
                 retry = watchdog.CreateRetry(
                     EVulkanPresentNowReadinessStage.FramePlanSeal,
@@ -561,7 +566,8 @@ internal sealed partial class VulkanFrameLoop
                 requiredOutputContract: provisionalContract,
                 historyReservations: acceptedPlan.FrameViewHistory,
                 publicationSnapshot: openXrPublication);
-            if (!RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
+            if (requiresCurrentOpenXrViews &&
+                !RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
             {
                 logicalPlan.Reset();
                 retry = watchdog.CreateRetry(
@@ -763,7 +769,8 @@ internal sealed partial class VulkanFrameLoop
         acceptedPlan.DeclareDependencies(logicalPlan);
         acceptedPlan.MarkNonTextureDependenciesReady();
         _ = acceptedPlan.SynchronizeTextureDependencies();
-        if (!RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
+        if (requiresCurrentOpenXrViews &&
+            !RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
         {
             logicalPlan.Reset();
             retry = watchdog.CreateRetry(
