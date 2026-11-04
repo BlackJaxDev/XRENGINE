@@ -169,6 +169,7 @@ public static partial class RuntimeEngine
                 private bool _enableGpuMeshBvhPickLogging = false;
                 private bool _enableZeroReadbackMaterialScatter = false;
                 private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
+                private bool _zeroReadbackUberMaterialsUseMaterialTable;
                 private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy = null;
                 private TextureRuntimeLogMode _textureLogMode = TextureRuntimeLogMode.Summary;
                 private double _textureSlowCpuDecodeResizeMilliseconds = 5.0;
@@ -335,6 +336,21 @@ public static partial class RuntimeEngine
                 {
                     get => _zeroReadbackMaterialDrawPath;
                     set => SetField(ref _zeroReadbackMaterialDrawPath, value);
+                }
+
+                /// <summary>
+                /// When true, zero-readback material-table passes also draw converted uber
+                /// materials through the shared table program. The table shades the base map,
+                /// tint, normal map and emission; uber-only effects such as matcap, rim and
+                /// glitter are not drawn. When false, a scene with any uber material draws every
+                /// material with its own program.
+                /// </summary>
+                [Category("GPU Rendering")]
+                [Description("Draw converted uber materials through the shared zero-readback material table. Faster, but shades only base color, tint, normal map and emission; matcap, rim, glitter and other uber effects are not drawn.")]
+                public bool ZeroReadbackUberMaterialsUseMaterialTable
+                {
+                    get => _zeroReadbackUberMaterialsUseMaterialTable;
+                    set => SetField(ref _zeroReadbackUberMaterialsUseMaterialTable, value);
                 }
 
                 /// <summary>

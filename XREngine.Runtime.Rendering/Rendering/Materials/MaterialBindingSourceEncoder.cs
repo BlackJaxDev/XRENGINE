@@ -25,7 +25,17 @@ namespace XREngine.Rendering.Materials
                 material.GetSurfaceTexture(EMaterialTextureSemantic.Roughness)?.Texture;
             MaterialSurfaceTextureBinding? emissiveBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Emissive);
             XRTexture? emissive = emissiveBinding?.Texture;
-            if (!hasSurfaceBindings)
+            bool uberSource = !hasSurfaceBindings && IsUberSource(material);
+            if (uberSource)
+            {
+                // Converted uber materials name their samplers by role. Their texture
+                // order follows the source shader, so slot 2 is often a matcap or mask.
+                albedo = FindTextureBySampler(material, "_MainTex");
+                normal = FindTextureBySampler(material, "_BumpMap");
+                rm = null;
+                emissive = FindTextureBySampler(material, "_EmissionMap");
+            }
+            else if (!hasSurfaceBindings)
             {
                 albedo = material.Textures.Count > 0 ? material.Textures[0] : null;
                 normal = material.Textures.Count > 1 ? material.Textures[1] : null;
@@ -61,8 +71,26 @@ namespace XREngine.Rendering.Materials
                 emissiveBinding?.UvRotation ?? 0.0f);
         }
 
+        /// <summary>True for a converted uber material, which carries the uber lighting-mode parameter.</summary>
+        private static bool IsUberSource(XRMaterial material)
+            => material.Parameter<ShaderInt>("_LightingMode") is not null;
+
+        private static XRTexture? FindTextureBySampler(XRMaterial material, string samplerName)
+        {
+            EventList<XRTexture?> textures = material.Textures;
+            for (int index = 0; index < textures.Count; index++)
+                if (textures[index] is { } texture &&
+                    string.Equals(texture.SamplerName, samplerName, StringComparison.Ordinal))
+                    return texture;
+            return null;
+        }
+
         private static Vector4 ResolveBaseColorOpacity(XRMaterial material)
         {
+            // Converted uber materials tint the base map with _Color.
+            if (material.Parameter<ShaderVector4>("_Color") is { } uberColor)
+                return uberColor.Value;
+
             Vector3 baseColor = material.Parameter<ShaderVector3>("BaseColor")?.Value ?? Vector3.One;
             float opacity = material.Parameter<ShaderFloat>("Opacity")?.Value ?? 1.0f;
 

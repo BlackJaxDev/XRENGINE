@@ -271,9 +271,11 @@ namespace XREngine.Rendering.Commands
         private bool _uberDrawPathSceneHasUber;
 
         /// <summary>
-        /// The shared material-table shader cannot express uber materials, so a scene that holds any
-        /// uses per-material programs. A traditional GPU indirect draw has this choice. A meshlet
-        /// draw has no per-material bucket shader and keeps the table.
+        /// The shared material-table shader expresses only the base surface of uber materials, so a
+        /// scene that holds any uses per-material programs unless
+        /// <c>ZeroReadbackUberMaterialsUseMaterialTable</c> accepts the base look. A traditional GPU
+        /// indirect draw has this choice. A meshlet draw has no per-material bucket shader and keeps
+        /// the table.
         /// </summary>
         private void SelectMaterialDrawPathForScene(GPUScene scene)
         {
@@ -297,7 +299,7 @@ namespace XREngine.Rendering.Commands
                 }
             }
 
-            if (_uberDrawPathSceneHasUber)
+            if (_uberDrawPathSceneHasUber && !RuntimeEngine.Rendering.Settings.ZeroReadbackUberMaterialsUseMaterialTable)
                 _passZeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic;
         }
 

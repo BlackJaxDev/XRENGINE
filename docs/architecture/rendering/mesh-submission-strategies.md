@@ -209,7 +209,7 @@ Default derivation:
 
 Dynamic material-table layouts for additional deferred, forward+, Uber, and annotated custom shader paths are planned.
 
-The shared material-table shader cannot express uber materials. When a scene holds any uber material, a traditional GPU indirect pass uses per-material programs instead of a requested material-table path. The atlas supplies one UV set and no vertex colors, and vertex-mode UDIM discard is not applied on this path; a material that needs that discard logs a warning.
+The shared material-table shader expresses only the base surface of uber materials. When a scene holds any uber material, a traditional GPU indirect pass uses per-material programs instead of a requested material-table path, unless `ZeroReadbackUberMaterialsUseMaterialTable` is on. With that setting, uber materials stay in the table: the row takes the base map from `_MainTex`, the tint from `_Color`, the normal map from `_BumpMap` and the emission map from `_EmissionMap`, and uber-only effects (matcap, rim, glitter and others) are not drawn. On the imported-avatar VR benchmark the setting raised the eye rate from 34 to 47 Hz. The atlas supplies one UV set and no vertex colors, and vertex-mode UDIM discard is not applied on this path; a material that needs that discard logs a warning.
 
 `SkinnedAtlasPublisher` writes deformed vertices over each mesh's atlas range. A recorded compute dispatch does not prove that it ran, because a backend can discard the frame that holds it. A renderer therefore dispatches each frame after a change until the viewport history ledger commits a frame at or after that change. It then reuses its output. A viewport with no history sequence does not reuse the output and dispatches each frame.
 
