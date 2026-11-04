@@ -682,6 +682,7 @@ public static partial class RuntimeEngine
                 private bool _openXrDebugRenderRightThenLeft = false;
                 private bool _openXrPrepareFrameAfterDesktopRender = true;
                 private float _openXrDeadlineSafetyMarginMs = 1.0f;
+                private uint _openXrStereoSubmissionWaitMs = 50u;
                 private float _openXrPoseTimeOffsetMs = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
                 private OpenXrCollectVisiblePosePolicy _openXrCollectVisiblePosePolicy = OpenXrCollectVisiblePosePolicy.Predicted;
                 private float _openXrCollectVisibleFrustumPaddingDegrees = 2.0f;
@@ -2435,6 +2436,19 @@ public static partial class RuntimeEngine
                 {
                     get => _openXrDeadlineSafetyMarginMs;
                     set => SetField(ref _openXrDeadlineSafetyMarginMs, MathF.Max(0.0f, value));
+                }
+
+                /// <summary>
+                /// Longest time, in milliseconds, that a Vulkan OpenXR stereo frame waits for a free
+                /// eye submission slot. When the wait ends without a slot, the frame goes to the
+                /// compositor without layers and the headset shows a black frame.
+                /// </summary>
+                [Category("VR")]
+                [Description("Longest time, in milliseconds, that a Vulkan OpenXR stereo frame waits for a free eye submission slot. A frame that gets no slot goes to the compositor without layers (a black frame). Range 1 to 1000.")]
+                public uint OpenXrStereoSubmissionWaitMs
+                {
+                    get => _openXrStereoSubmissionWaitMs;
+                    set => SetField(ref _openXrStereoSubmissionWaitMs, Math.Clamp(value, 1u, 1000u));
                 }
 
                 /// <summary>

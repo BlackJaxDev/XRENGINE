@@ -16,10 +16,6 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
-    // Longest wait for the oldest eye submission before a stereo frame goes out
-    // without a projection layer.
-    private const uint OpenXrStereoSubmissionReservationTimeoutMs = 50u;
-
     internal bool TryRenderOpenXrEyeMirrorFrameBuffer(
         XRFrameBuffer targetFrameBuffer,
         Extent2D extent,
@@ -386,10 +382,10 @@ internal sealed partial class VulkanFrameLoop
         // A frame that cannot reserve a slot goes to the runtime without a
         // projection layer, which shows black in the headset. A late frame is
         // reprojected instead, so wait for the oldest eye submission for a
-        // few display periods before giving up.
+        // few display periods (OpenXrStereoSubmissionWaitMs) before giving up.
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket,
-                timeoutMs: OpenXrStereoSubmissionReservationTimeoutMs))
+                timeoutMs: RuntimeEngine.Rendering.Settings.OpenXrStereoSubmissionWaitMs))
         {
             RecordOpenXrRenderFailure(in renderRequest, "submission-reservation");
             return false;
