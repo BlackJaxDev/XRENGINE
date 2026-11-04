@@ -1124,6 +1124,9 @@ internal sealed partial class VulkanFrameLoop
         _framePlanner.FramePlanBuilder.ProvisionFrameSlots(frameDataSlotCount);
         _commandRuntime.EnsureCommandBufferFrameDataSlotCapacity(frameDataSlotCount);
         ResourceRuntime.EnsureMappedFrameArenaFrameSlotCapacity(frameDataSlotCount);
+        // Eye recordings use slots after the desktop slots. Without matching
+        // timing pools, eye command buffers record no GPU timestamps.
+        EnsureFrameTimingSlotCapacity(frameDataSlotCount);
         if (FrameDataArena is not { } storage || !storage.TryEnsureFrameSlotCount(frameDataSlotCount))
             throw new InvalidOperationException($"OpenXR could not reserve {frameDataSlotCount} immutable storage slots within the mapped-memory budget.");
     }
