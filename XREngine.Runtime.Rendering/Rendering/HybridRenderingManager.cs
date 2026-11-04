@@ -6153,6 +6153,11 @@ namespace XREngine.Rendering
                 reason);
         }
 
+        private static readonly string AtlasPositionBufferKey = ECommonBufferType.Position.ToString();
+        private static readonly string AtlasNormalBufferKey = ECommonBufferType.Normal.ToString();
+        private static readonly string AtlasTangentBufferKey = ECommonBufferType.Tangent.ToString();
+        private static readonly string AtlasTexCoord0BufferKey = $"{ECommonBufferType.TexCoord}{0}";
+
         private XRMeshRenderer? ConfigureIndirectRendererForTier(GPUScene scene, EAtlasTier tier)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ConfigureIndirectRendererForTier");
@@ -6181,19 +6186,28 @@ namespace XREngine.Rendering
             if (positions is null || indices is null)
                 return null;
 
+            // The bucket scan configures the same tier renderer once per material
+            // slot. Each buffer change rebuilds the backend buffer bindings, so
+            // only a changed atlas buffer may touch the collection.
             static void SetOrRemoveBuffer(XRMeshRenderer renderer, string key, XRDataBuffer? buffer)
             {
-                if (renderer.Buffers.ContainsKey(key))
+                bool present = renderer.Buffers.TryGetValue(key, out XRDataBuffer? current);
+                if (present && ReferenceEquals(current, buffer))
+                    return;
+                if (!present && buffer is null)
+                    return;
+
+                if (present)
                     renderer.Buffers.Remove(key);
 
                 if (buffer is not null)
                     renderer.Buffers.Add(key, buffer);
             }
 
-            SetOrRemoveBuffer(vaoRenderer, ECommonBufferType.Position.ToString(), positions);
-            SetOrRemoveBuffer(vaoRenderer, ECommonBufferType.Normal.ToString(), normals);
-            SetOrRemoveBuffer(vaoRenderer, ECommonBufferType.Tangent.ToString(), tangents);
-            SetOrRemoveBuffer(vaoRenderer, $"{ECommonBufferType.TexCoord}{0}", uv0);
+            SetOrRemoveBuffer(vaoRenderer, AtlasPositionBufferKey, positions);
+            SetOrRemoveBuffer(vaoRenderer, AtlasNormalBufferKey, normals);
+            SetOrRemoveBuffer(vaoRenderer, AtlasTangentBufferKey, tangents);
+            SetOrRemoveBuffer(vaoRenderer, AtlasTexCoord0BufferKey, uv0);
 
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
