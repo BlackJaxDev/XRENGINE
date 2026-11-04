@@ -1548,7 +1548,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
         };
     public bool VrDesktopAutoSkipWhenOverBudget => RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget;
     public EVrDesktopFrameExecutionMode VrDesktopFrameExecutionMode => RuntimeEngine.Rendering.Settings.VrDesktopFrameExecutionMode;
-    public bool VrDesktopSplitSlackGate => Engine.EffectiveSettings.VrDesktopSplitSlackGate;
+    public bool VrDesktopSplitSlackGate
+        => Engine.EffectiveSettings.VrDesktopSplitSlackGate &&
+           Engine.UserSettings.VrRenderPriority != EVrRenderPriority.Desktop;
     public FrameOutputPacingDecision EvaluateFrameOutputPacing(
         EVrOutputViewKind viewKind,
         EFrameOutputKind outputKind,
@@ -1556,7 +1558,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
     {
         ulong frameId = Engine.Time.Timer.CollectFrameId;
         float targetRateHz = GetVrOutputTargetRateHz(viewKind);
-        bool autoSkipWhenOverBudget = RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget;
+        // With desktop priority, no desktop frame waits for XR slack or the XR budget.
+        bool desktopPriority = Engine.UserSettings.VrRenderPriority == EVrRenderPriority.Desktop;
+        bool autoSkipWhenOverBudget = !desktopPriority && RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget;
         bool xrFramePriorityEnabled = autoSkipWhenOverBudget;
 
         if (!xrCritical &&

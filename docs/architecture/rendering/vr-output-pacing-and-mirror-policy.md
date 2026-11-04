@@ -78,6 +78,15 @@ The eyes render first in the render loop. With `VrDesktopAutoSkipWhenOverBudget`
 
 The desktop keeps a minimum rate of 15 Hz, so the window cannot freeze. A frame that is due at this rate waits for the start of the next slack window (just after `xrEndFrame`). It runs only when its measured cost goes past the next XR wake by at most 1.5 ms. When the cost does not fit, a 4 Hz fallback frame runs early in a slack window, with at least 1.5 ms of slack left. Below 1 Hz, a frame runs at any time. A frame that starts just before an XR wake delays the eye frame by most of its cost and makes the eye frame miss its display slot; on the imported avatar at 90 Hz, this change reduced missed slots from 42 to 13 of about 450 frames.
 
+## Render priority
+
+The user setting `UserSettings.VrRenderPriority` selects which output gets render-thread time first while VR is active. The default is `Vr`.
+
+- `Vr`: the XR frame priority above applies. Desktop frames that do not fit before the next XR frame are held, and the window keeps its last image.
+- `Desktop`: every due desktop frame runs. The XR budget skip, the XR slack hold and the WorkerRecord slack gate are off. A late eye frame is reprojected by the XR runtime.
+
+On the imported-avatar benchmark scene at 90 Hz (zero-readback, WorkerRecord), `Desktop` gave 31 Hz VR and 31 Hz desktop with the avatar visible, and `Vr` gave 30 Hz VR and 12 Hz desktop. When the eyes cannot reach the runtime rate, the hold mostly costs desktop frames.
+
 ## Next-frame collect
 
 Only one OpenXR frame can be between `xrBeginFrame` and `xrEndFrame`. In single-pass stereo, the collect thread therefore collects the commands for the next frame while the current frame renders, after the swap publishes the current commands. When the next frame is located, the swap assigns these commands to it and publishes its located view set. Without this, each frame waits for a collect pass after `xrWaitFrame` returns, and that wait adds to the render time.

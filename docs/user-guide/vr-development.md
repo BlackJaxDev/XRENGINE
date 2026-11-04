@@ -68,6 +68,16 @@ starts. The engine reads it each frame, so a change applies at once.
   frame can hold it. This protects VR frame deadlines, but the desktop view can
   run at half the VR rate or less.
 
+`UserSettings.VrRenderPriority` selects which output gets render time first
+while VR is active. The engine reads it each frame.
+
+- `Vr` (the default): the headset comes first. A desktop frame runs only when
+  it fits before the next headset frame, so the desktop view can drop to a low
+  rate when the headset frames are slow.
+- `Desktop`: every due desktop frame runs. This also turns off
+  `VrDesktopSplitSlackGate`. Headset frames can be late, and the runtime
+  reprojects them.
+
 The FPS overlay shows the presented desktop rate and the OpenXR submitted rate,
 so you can compare the two modes.
 

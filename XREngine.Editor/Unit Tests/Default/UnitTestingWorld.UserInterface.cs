@@ -608,6 +608,20 @@ public static partial class EditorUnitTests
         }
 
         /// <summary>
+        /// Sets the VR render priority user setting by name (<c>Vr</c> or <c>Desktop</c>),
+        /// for a timed external A/B probe such as MCP <c>invoke_method</c>. Returns false
+        /// for an unknown name.
+        /// </summary>
+        public static bool SetVrRenderPriority(string priority)
+        {
+            if (!Enum.TryParse(priority, ignoreCase: true, out EVrRenderPriority value))
+                return false;
+
+            Engine.UserSettings.VrRenderPriority = value;
+            return true;
+        }
+
+        /// <summary>
         /// Updates the presented desktop rate and the submitted OpenXR rate from their running
         /// totals. The first call only stores the totals.
         /// </summary>
