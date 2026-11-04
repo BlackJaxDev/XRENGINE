@@ -2667,6 +2667,12 @@ namespace XREngine.Rendering
             bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
             long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
+            // The stereo frame owns its compute deformation. Without this, the eyes
+            // read skinned outputs that only a desktop frame updates, so the avatar
+            // pose in the headset advances at the desktop rate.
+            if (!Suppress3DSceneRendering)
+                SkinningPrepassDispatcher.Instance.RunVisible(MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands);
+
             LastRenderedTargetFBO = targetFbo;
             _ = Interlocked.Increment(ref _sceneRenderSequenceId);
             bool recorded = _renderPipeline.TryRenderWithFrozenDesktopHistory(
