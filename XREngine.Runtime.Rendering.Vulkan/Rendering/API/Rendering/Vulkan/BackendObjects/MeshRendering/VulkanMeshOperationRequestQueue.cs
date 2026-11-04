@@ -20,17 +20,20 @@ internal sealed class VulkanMeshOperationRequestQueue
     // A frame can contain a full shadow-caster cohort followed by the main-view
     // and composition draws.  Keeping only one 1K cohort allowed the shadow
     // pass to consume the entire queue, dropping the later fullscreen present
-    // draw while the camera was moving.  Four cohorts cover the current
-    // directional-cascade workload without allocating in the render hot path.
+    // draw while the camera was moving.  The shadow lane holds the same cohort
+    // as the accepted frame plan's shadow lane, so a frame that the plan can
+    // accept never overflows here. One skinned avatar with many submeshes casts
+    // into every directional cascade and needs more than 3K shadow requests.
     /// <summary>
     /// Declared immutable frame-manifest capacity. This is not the background
     /// scheduling slice and cannot be tuned to hide readiness bugs.
     /// </summary>
-    internal const int Capacity = 4096;
+    internal const int Capacity =
+        TerminalCompositionCapacity + UiCapacity + MainSceneCapacity + ShadowCapacity;
     internal const int TerminalCompositionCapacity = 256;
     internal const int UiCapacity = 256;
     internal const int MainSceneCapacity = 1536;
-    internal const int ShadowCapacity = 2048;
+    internal const int ShadowCapacity = VulkanAcceptedFramePlan.ShadowCapacity;
     private static readonly int BackgroundSchedulingCapacity =
         ResolveBackgroundSchedulingCapacity();
     private readonly VulkanMeshRenderRequest[] _entries = new VulkanMeshRenderRequest[Capacity];
