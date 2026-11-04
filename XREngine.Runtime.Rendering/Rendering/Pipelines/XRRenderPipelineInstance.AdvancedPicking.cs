@@ -4,6 +4,9 @@ namespace XREngine.Rendering;
 
 public sealed partial class XRRenderPipelineInstance
 {
+    // Publications that a committed picking source may lag behind the newest
+    // candidate. It stays well inside the table journal capacity.
+    private const ulong MaxPickingSourcePublicationLag = 16UL;
     private readonly object _advancedPickingSync = new();
     private ulong _advancedPickingGeneration;
     private AdvancedPickingRequest? _pendingAdvancedPickingRequest;
@@ -198,11 +201,26 @@ public sealed partial class XRRenderPipelineInstance
         }
 
         AdvancedGpuScenePublicationLease previous;
+        AdvancedGpuScenePublicationLease staleSource = default;
         lock (_advancedPickingSync)
         {
             if (requiresSubmissionAcceptance)
             {
                 previous = _advancedPickingCandidateLease;
+                // The source moves forward only when a frame commits. While frames
+                // keep failing, it would pin one old publication forever, and the
+                // database could not reclaim its table journals for any later
+                // publication. Drop a source that lags far behind; picking is then
+                // unavailable until the next commit.
+                if (_advancedPickingSourceLease.IsValid &&
+                    replacement.Reference.Sequence >
+                        _advancedPickingSourceLease.Reference.Sequence + MaxPickingSourcePublicationLag)
+                {
+                    staleSource = _advancedPickingSourceLease;
+                    _advancedPickingSourceLease = default;
+                    _advancedPickingSourceResourceGeneration = -1;
+                    _advancedPickingSourcePackageGeneration = -1L;
+                }
                 _advancedPickingCandidateLease = replacement;
                 _advancedPickingCandidateResourceGeneration = ResourceGeneration;
                 _advancedPickingCandidatePackageGeneration = package.PackageGeneration;
@@ -216,6 +234,7 @@ public sealed partial class XRRenderPipelineInstance
             }
         }
         previous.Dispose();
+        staleSource.Dispose();
     }
 
     /// <summary>Ends the source-only picking retention for a settled one-shot
