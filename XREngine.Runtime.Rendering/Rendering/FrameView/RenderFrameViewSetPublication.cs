@@ -11,10 +11,22 @@ public static class RenderFrameViewSetPublication
     private static ulong _revision;
     private static bool _hasLatest;
 
+    /// <summary>
+    /// Publishes <paramref name="viewSet"/> for <paramref name="frameId"/>. The
+    /// revision changes only when the view set changes. OpenXR publishes its
+    /// located views again on every collect until the next locate, and a revision
+    /// change for an equal set would invalidate each consumer that captured it.
+    /// </summary>
     public static void Publish(ulong frameId, in RenderFrameViewSet viewSet)
     {
         lock (Sync)
         {
+            if (_hasLatest && _latest.Equals(viewSet))
+            {
+                _latestFrameId = frameId;
+                return;
+            }
+
             _latest = viewSet;
             _latestFrameId = frameId;
             _hasLatest = true;
