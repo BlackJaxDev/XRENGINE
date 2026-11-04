@@ -301,7 +301,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		XRMesh? mesh = Mesh;
 		bool hasSkinning = mesh?.HasSkinning == true;
-		bool hasBlendshapes = mesh?.BlendshapeCount > 0;
+		bool hasBlendshapes = mesh?.HasBlendshapeDeformation == true;
 		bool computeDeformationBlocked = !XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
 		bool useComputeSkinning =
 			hasSkinning &&

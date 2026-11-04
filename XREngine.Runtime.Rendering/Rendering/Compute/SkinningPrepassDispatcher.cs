@@ -374,7 +374,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
              mesh.HasSkinning &&
              RuntimeEngine.Rendering.Settings.AllowSkinning) ||
             (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
-             mesh.BlendshapeCount > 0 &&
+             mesh.HasBlendshapeDeformation &&
              RuntimeEngine.Rendering.Settings.AllowBlendshapes);
         if (!forceSkinning &&
             computeDeformationRequested &&
@@ -392,9 +392,9 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         bool doSkinning = (forceSkinning || computeSkinningEnabledForBackend)
             && mesh.HasSkinning
             && RuntimeEngine.Rendering.Settings.AllowSkinning;
-        bool hasBlendshapePath = mesh.BlendshapeCount > 0
+        bool hasBlendshapePath = mesh.HasBlendshapeDeformation
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
-        bool blendshapePathRequested = mesh.BlendshapeCount > 0
+        bool blendshapePathRequested = mesh.HasBlendshapeDeformation
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
             && (computeBlendshapesEnabledForBackend || doSkinning || forceBlendshapes);
         bool precombinePathRequested = hasBlendshapePath
@@ -756,7 +756,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         {
             return false;
         }
-        if (!settings.AllowBlendshapes || mesh.BlendshapeCount == 0 || rendererBlendshapeState.ActiveCount <= 0)
+        if (!settings.AllowBlendshapes || !mesh.HasBlendshapeDeformation || rendererBlendshapeState.ActiveCount <= 0)
             return false;
         if (meshBlendshapeState.SparseShapeRanges is null
             || meshBlendshapeState.SparseRecords is null
@@ -782,7 +782,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         var settings = RuntimeEngine.Rendering.Settings;
         return settings.EnableBlendshapePcaBasisCompression
             && settings.AllowBlendshapes
-            && mesh.HasBlendshapes
+            && mesh.HasBlendshapeDeformation
             && mesh.HasBlendshapeBasisCompressionPayload
             && renderer.CaptureBlendshapeResources().ActiveCount > 0;
     }
@@ -1025,7 +1025,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                         && !renderer.HasExternalSkinPaletteSource
                         && !renderer.HasGpuDrivenBoneSource
                         && skinningInCompute;
-                    bool blendshapePathRequested = mesh.BlendshapeCount > 0
+                    bool blendshapePathRequested = mesh.HasBlendshapeDeformation
                         && RuntimeEngine.Rendering.Settings.AllowBlendshapes
                         && (computeBlendshapesEnabledForBackend
                             || skinningInCompute

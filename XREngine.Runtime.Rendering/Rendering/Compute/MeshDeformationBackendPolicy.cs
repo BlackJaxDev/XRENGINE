@@ -18,15 +18,18 @@ public static class MeshDeformationBackendPolicy
 
     /// <summary>
     /// Returns true when <paramref name="mesh"/> has the inputs that the compute
-    /// blendshape prepass reads. A mesh without blendshapes always qualifies. A
-    /// mesh that has only the dense per-vertex blendshape layout must keep the
-    /// vertex-shader path for skinning too, because blendshapes apply before skinning.
+    /// blendshape prepass reads. A mesh without blendshape deformation always
+    /// qualifies. This includes a mesh chunk that has blendshape names but no
+    /// delta data, which an importer makes when it splits one source mesh by
+    /// material. A mesh that has only the dense per-vertex blendshape layout must
+    /// keep the vertex-shader path for skinning too, because blendshapes apply
+    /// before skinning.
     /// </summary>
     public static bool MeshSupportsComputeDeformation(XRMesh? mesh)
     {
         if (mesh is null)
             return false;
-        if (mesh.BlendshapeCount == 0)
+        if (!mesh.HasBlendshapeDeformation)
             return true;
 
         XRMeshBlendshapeBufferState state = mesh.GetBlendshapeBufferStateSnapshot();

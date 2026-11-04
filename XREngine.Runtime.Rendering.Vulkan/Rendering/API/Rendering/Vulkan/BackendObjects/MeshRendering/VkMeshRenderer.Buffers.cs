@@ -140,7 +140,7 @@ internal unsafe partial class VkMeshRenderer
 		bool allowSkinning = RuntimeEngine.Rendering.Settings.AllowSkinning;
 		bool allowBlendshapes = RuntimeEngine.Rendering.Settings.AllowBlendshapes;
 		bool hasSkinning = skinningState?.UtilizedBones.Length > 0;
-		bool hasBlendshapes = mesh?.BlendshapeCount > 0;
+		bool hasBlendshapes = mesh?.HasBlendshapeDeformation == true;
 		bool useComputeSkinning = hasSkinning
 			&& allowSkinning
 			&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
@@ -216,7 +216,7 @@ internal unsafe partial class VkMeshRenderer
 			&& RuntimeEngine.Rendering.Settings.AllowSkinning
 			&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
 			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
-		bool useComputeBlendshapes = mesh?.BlendshapeCount > 0
+		bool useComputeBlendshapes = mesh?.HasBlendshapeDeformation == true
 			&& RuntimeEngine.Rendering.Settings.AllowBlendshapes
 			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh)
 			&& (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
@@ -230,7 +230,7 @@ internal unsafe partial class VkMeshRenderer
 			AddMeshDeformSourceBuffers();
 		}
 
-		bool directBlendshapePath = mesh?.BlendshapeCount > 0
+		bool directBlendshapePath = mesh?.HasBlendshapeDeformation == true
 			&& RuntimeEngine.Rendering.Settings.AllowBlendshapes
 			&& !useComputeBlendshapes;
 		if (directBlendshapePath
