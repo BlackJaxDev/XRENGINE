@@ -312,6 +312,8 @@ public static class XREngineEnvironmentVariables
         "XRE_VULKAN_PRESENT_NOW_READINESS_WATCHDOG_MS";
     public const string VulkanMeshSchedulingCapacity =
         "XRE_VULKAN_MESH_SCHEDULING_CAPACITY";
+    /// <summary>Set to <c>0</c> to keep Vulkan skinning and blendshapes on the vertex-shader path.</summary>
+    public const string VulkanComputeDeformation = "XRE_VULKAN_COMPUTE_DEFORMATION";
     public const string VulkanFrameOpSignatureDiffLimit = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF_LIMIT";
     public const string VulkanFrameOpSignatureDiff = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF";
     public const string VulkanFrameDataReuseDiag = "XRE_VULKAN_FRAME_DATA_REUSE_DIAG";

@@ -302,16 +302,16 @@ internal unsafe partial class VkMeshRenderer
 		XRMesh? mesh = Mesh;
 		bool hasSkinning = mesh?.HasSkinning == true;
 		bool hasBlendshapes = mesh?.BlendshapeCount > 0;
-		bool isVulkan = RuntimeEngine.Rendering.State.IsVulkan;
+		bool computeDeformationBlocked = !XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
 		bool useComputeSkinning =
 			hasSkinning &&
 			RuntimeEngine.Rendering.Settings.AllowSkinning &&
 			RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-			!isVulkan;
+			!computeDeformationBlocked;
 		bool useComputeBlendshapes =
 			hasBlendshapes &&
 			RuntimeEngine.Rendering.Settings.AllowBlendshapes &&
-			!isVulkan &&
+			!computeDeformationBlocked &&
 			(RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
 
 		return new GeneratedProgramState(
@@ -333,7 +333,7 @@ internal unsafe partial class VkMeshRenderer
 			useComputeSkinning,
 			hasBlendshapes,
 			useComputeBlendshapes,
-			RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass && !isVulkan,
+			RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass && !RuntimeEngine.Rendering.State.IsVulkan,
 			MeshRenderer.MeshDeformEnabled,
 			material.DirectionalCascadeShadowMaterialKind,
 			material.PointShadowMaterialKind,

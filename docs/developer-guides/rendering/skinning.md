@@ -26,6 +26,27 @@ redundant compute dispatches while preserving authored deformation quality.
   when possible; stale cooked payloads are rejected so source assets or caches
   are recooked instead of silently falling back to a legacy path.
 
+## Compute Or Vertex Path
+
+`MeshDeformationBackendPolicy` makes one decision per mesh for the vertex
+program generator, the renderer buffer set, and the skinning prepass. All three
+must agree, or a draw reads compute outputs that the prepass never writes.
+
+- When `CalculateSkinningInComputeShader` or `CalculateBlendshapesInComputeShader`
+  is on, OpenGL and Vulkan both use the compute path. The prepass skins each
+  visible mesh one time per frame, and every pass (shadow cascades, eyes,
+  desktop) reads the skinned outputs.
+- A mesh with blendshapes needs the sparse blendshape buffers
+  (`SparseShapeRanges`, `SparseRecords`, `QuantizedDeltas`,
+  `QuantizationMetadata`). A mesh that has only the dense per-vertex layout keeps
+  the vertex-shader path for skinning too, because blendshapes apply before
+  skinning. The prepass logs a warning for such a mesh.
+- Set `XRE_VULKAN_COMPUTE_DEFORMATION=0` to keep Vulkan on the vertex-shader path.
+- Blendshape precombine stays off on Vulkan.
+- The compute output streams use SSBO bindings 39 to 45
+  (`MeshDeformationBindingLayout`). Do not put other graphics-program SSBOs in
+  that range.
+
 ## Payloads And Shader Variants
 
 - Cooked skinning payloads use version `3`; stale cooked meshes under `Cache/`

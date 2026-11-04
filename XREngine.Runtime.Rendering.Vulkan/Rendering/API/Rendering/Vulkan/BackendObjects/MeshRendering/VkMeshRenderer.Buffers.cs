@@ -144,11 +144,11 @@ internal unsafe partial class VkMeshRenderer
 		bool useComputeSkinning = hasSkinning
 			&& allowSkinning
 			&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-			&& !RuntimeEngine.Rendering.State.IsVulkan;
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
 		bool useVertexSkinning = hasSkinning && allowSkinning && !useComputeSkinning;
 		bool useComputeBlendshapes = hasBlendshapes
 			&& allowBlendshapes
-			&& !RuntimeEngine.Rendering.State.IsVulkan
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh)
 			&& (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
 		bool useVertexBlendshapes = hasBlendshapes && allowBlendshapes && !useComputeBlendshapes;
 
@@ -215,10 +215,10 @@ internal unsafe partial class VkMeshRenderer
 		bool useComputeSkinning = mesh?.HasSkinning == true
 			&& RuntimeEngine.Rendering.Settings.AllowSkinning
 			&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-			&& !RuntimeEngine.Rendering.State.IsVulkan;
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
 		bool useComputeBlendshapes = mesh?.BlendshapeCount > 0
 			&& RuntimeEngine.Rendering.Settings.AllowBlendshapes
-			&& !RuntimeEngine.Rendering.State.IsVulkan
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh)
 			&& (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
 
 		if (useComputeSkinning || useComputeBlendshapes)

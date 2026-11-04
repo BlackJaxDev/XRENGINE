@@ -365,31 +365,27 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
         bool computeSkinningEnabledForBackend =
             RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-            !RuntimeEngine.Rendering.State.IsVulkan;
+            MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
         bool computeBlendshapesEnabledForBackend =
             RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
-            !RuntimeEngine.Rendering.State.IsVulkan;
+            MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
+        bool computeDeformationRequested =
+            (RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+             mesh.HasSkinning &&
+             RuntimeEngine.Rendering.Settings.AllowSkinning) ||
+            (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
+             mesh.BlendshapeCount > 0 &&
+             RuntimeEngine.Rendering.Settings.AllowBlendshapes);
         if (!forceSkinning &&
-            RuntimeEngine.Rendering.State.IsVulkan &&
-            RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-            mesh.HasSkinning &&
-            RuntimeEngine.Rendering.Settings.AllowSkinning)
+            computeDeformationRequested &&
+            !MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh))
         {
-            Debug.VulkanWarningEvery(
-                $"Vulkan.ComputeSkinning.Disabled.{mesh.Name ?? "UnnamedMesh"}",
+            Debug.RenderingWarningEvery(
+                $"ComputeDeformation.Disabled.{mesh.Name ?? "UnnamedMesh"}",
                 TimeSpan.FromSeconds(5),
-                "[Vulkan] Compute skinning is disabled for mesh '{0}' because the Vulkan compute-output path is not yet stable; using GPU vertex skinning instead.",
-                mesh.Name ?? "<unnamed>");
-        }
-        if (RuntimeEngine.Rendering.State.IsVulkan &&
-            RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
-            mesh.BlendshapeCount > 0 &&
-            RuntimeEngine.Rendering.Settings.AllowBlendshapes)
-        {
-            Debug.VulkanWarningEvery(
-                $"Vulkan.ComputeBlendshapes.Disabled.{mesh.Name ?? "UnnamedMesh"}",
-                TimeSpan.FromSeconds(5),
-                "[Vulkan] Compute blendshapes are disabled for mesh '{0}' because the Vulkan compute-output path is not yet stable; using GPU vertex blendshapes instead.",
+                MeshDeformationBackendPolicy.AllowsComputeDeformation
+                    ? "Compute deformation is off for mesh '{0}' because it has no sparse blendshape data; using vertex-shader deformation instead."
+                    : "Compute deformation is off for mesh '{0}' because XRE_VULKAN_COMPUTE_DEFORMATION=0; using vertex-shader deformation instead.",
                 mesh.Name ?? "<unnamed>");
         }
 
@@ -976,10 +972,10 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
         bool computeSkinningEnabledForBackend =
             RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-            !RuntimeEngine.Rendering.State.IsVulkan;
+            MeshDeformationBackendPolicy.AllowsComputeDeformation;
         bool computeBlendshapesEnabledForBackend =
             RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
-            !RuntimeEngine.Rendering.State.IsVulkan;
+            MeshDeformationBackendPolicy.AllowsComputeDeformation;
         bool precombineEnabledForBackend =
             RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass &&
             !RuntimeEngine.Rendering.State.IsVulkan;

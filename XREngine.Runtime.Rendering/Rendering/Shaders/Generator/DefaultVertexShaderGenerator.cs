@@ -264,12 +264,12 @@ namespace XREngine.Rendering.Shaders.Generator
         private static string MultiviewViewIndexBuiltin => RuntimeEngine.Rendering.State.IsVulkan ? "gl_ViewIndex" : "gl_ViewID_OVR";
 
         private bool UseComputeSkinning => RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-            && !RuntimeEngine.Rendering.State.IsVulkan
+            && XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(Mesh)
             && Mesh.HasSkinning
             && RuntimeEngine.Rendering.Settings.AllowSkinning;
         private bool UseComputeBlendshapes => Mesh.HasBlendshapeDeformation
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
-            && !RuntimeEngine.Rendering.State.IsVulkan
+            && XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(Mesh)
             && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || UseComputeSkinning);
         private bool UseComputeDeformation => UseComputeSkinning || UseComputeBlendshapes;
         private bool UsePrecombinedDirectBlendshapes => Mesh.HasBlendshapeDeformation
