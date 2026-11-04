@@ -588,6 +588,7 @@ public static partial class EditorUnitTests
                 timestampSeconds = System.Diagnostics.Stopwatch.GetTimestamp() / (double)System.Diagnostics.Stopwatch.Frequency,
                 desktopPresentedTotal = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPresentAcceptedTotal,
                 xrSubmittedTotal = RuntimeEngine.VRState.OpenXRApi?.SmokeSubmittedFrameCount ?? 0L,
+                xrNoLayerTotal = RuntimeEngine.VRState.OpenXRApi?.SmokeNoLayerFrameCount ?? 0L,
             };
 
         /// <summary>
