@@ -129,11 +129,15 @@ internal unsafe partial class VkMeshRenderer
 					name,
 					out AutoUniformBlockInfo existingBlock) &&
 				existingBlock.Frequency != EVulkanBindingFrequency.Unknown;
+			// A frequency-owned block replaces each slot view with an exact-size
+			// reservation when it writes, so the array only has to have the right
+			// shape. Checking the size there rebuilt the array whenever programs
+			// with different block sizes shared this renderer.
 			bool valid = AutoUniformBuffersValid(
 					name,
 					existing,
 					bufferCount,
-					size,
+					frequencyOwnedArena ? 1u : size,
 					requireMappedPointers: !frequencyOwnedArena) &&
 				(!useFrameArena || !existing[0].OwnsBuffer);
 			if (valid)
