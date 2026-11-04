@@ -591,6 +591,22 @@ public static partial class EditorUnitTests
             };
 
         /// <summary>
+        /// Sets one boolean engine rendering setting by property name, for a timed external
+        /// A/B probe such as MCP <c>invoke_method</c>. Returns false when no writable
+        /// boolean property has that name.
+        /// </summary>
+        public static bool SetRenderingSettingBool(string propertyName, bool value)
+        {
+            object settings = RuntimeEngine.Rendering.Settings;
+            System.Reflection.PropertyInfo? property = settings.GetType().GetProperty(propertyName);
+            if (property is null || !property.CanWrite || property.PropertyType != typeof(bool))
+                return false;
+
+            property.SetValue(settings, value);
+            return true;
+        }
+
+        /// <summary>
         /// Updates the presented desktop rate and the submitted OpenXR rate from their running
         /// totals. The first call only stores the totals.
         /// </summary>
