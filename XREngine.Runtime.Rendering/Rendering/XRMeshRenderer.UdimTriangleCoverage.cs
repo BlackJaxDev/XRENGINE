@@ -9,7 +9,7 @@ namespace XREngine.Rendering;
 
 public partial class XRMeshRenderer
 {
-    internal const uint UdimTriangleCoverageBinding = 40u;
+    internal const uint UdimTriangleCoverageBinding = 78u;
     private UdimTriangleCoverage? _udimTriangleCoverage;
     private UdimTriangleCoveragePublisher? _udimTriangleCoveragePublisher;
     private bool _udimTriangleCoveragePublisherAttached;

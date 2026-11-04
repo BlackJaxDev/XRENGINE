@@ -2,7 +2,7 @@
 #define XRENGINE_EXTENDED_EFFECTS_GLSL
 
 #if defined(XRENGINE_VULKAN) && !defined(XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS)
-layout(std430, set = 0, binding = 40) readonly buffer SourceUdimTriangleCoverage
+layout(std430, set = 0, binding = 78) readonly buffer SourceUdimTriangleCoverage
 {
     uvec4 sourceUdimTriangleMasks[];
 };
