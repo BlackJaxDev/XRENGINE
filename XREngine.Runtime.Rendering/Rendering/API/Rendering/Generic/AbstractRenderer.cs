@@ -300,6 +300,12 @@ namespace XREngine.Rendering
         /// <summary>Allows the backend to pace a desktop frame before scene preparation begins.</summary>
         public virtual void PrepareRenderFramePacing() { }
 
+        /// <summary>
+        /// Drops the desktop work that this render callback queued when the window
+        /// skips its frame. The next callback queues its own complete work.
+        /// </summary>
+        public virtual void DiscardSkippedDesktopFrameWork() { }
+
         /// <summary>Executes one renderer frame independently from host loop ownership.</summary>
         public void RenderFrame(double delta)
             => RenderFrameCallback(delta);

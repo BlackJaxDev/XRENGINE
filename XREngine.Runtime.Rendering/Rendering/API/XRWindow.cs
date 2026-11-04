@@ -3144,6 +3144,13 @@ namespace XREngine.Rendering
                     {
                         if (!windowHeldForXrFrame)
                             frameRenderer.RenderWindow(delta);
+                        else
+                        {
+                            // The pre-render pass still queued this callback's shadow
+                            // work. No desktop frame takes it, so drop it before it
+                            // joins the next frame's work and pins old publications.
+                            frameRenderer.DiscardSkippedDesktopFrameWork();
+                        }
                         succeeded = true;
                     }
                     finally

@@ -1185,6 +1185,11 @@ internal sealed partial class VulkanFrameLoop
     {
         PublishPresentNowRetryDiagnostic(ref attempt, in retry);
         ResetIncompleteAcceptedPresentNowPlan(ref attempt);
+        // The next callback renders the scene again and queues a complete new
+        // cohort. Work that this attempt did not take must not stay queued: it
+        // would join that cohort as a duplicate, and each stale request keeps a
+        // canonical publication pinned until the publication ring is full.
+        DiscardPausedPresentNowSceneWork();
         attempt.PresentNowReadinessRetry = retry;
         Debug.VulkanEvery(
             $"Vulkan.PresentNow.FrameRetry.{retry.Stage}.{GetHashCode()}",

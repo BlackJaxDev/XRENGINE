@@ -262,6 +262,9 @@ public sealed partial class VulkanRenderer :
     public override void PrepareRenderFramePacing()
         => _frameLoop.PrepareDesktopFramePacing();
 
+    public override void DiscardSkippedDesktopFrameWork()
+        => _frameLoop.DiscardSkippedDesktopFrameWork();
+
     internal override void RequestFrameAdmissionRecovery(string reason)
         => _frameLoop.RequestPresentNowRecovery(reason);
 
