@@ -434,6 +434,8 @@ The `OpenGLImGuiBackend` implements `IImGuiRendererBackend`:
 - `Update(deltaSeconds)` — Calls `OpenGLImGuiController.Update(...)` with the queued multi-viewport input callback
 - `Render()` — Calls `OpenGLImGuiController.Render()` to issue GL draw calls for ImGui data while applying the UI clip-space and framebuffer-sRGB policies
 
+With multi-viewports enabled, each native window reports pointer events only while the pointer is over it. Popup and combo viewports use `NoFocusOnClick`, so the main window stays focused while the user clicks in them, and its last pointer position is stale. `ImGuiPointerOwnerTracker` (in `XREngine.Runtime.Rendering/Rendering/UI/`) records which window reported the most recent pointer, button, or wheel input. The OpenGL and Vulkan multi-viewport controllers push the main-window pointer position into ImGui only when the main window owns the pointer. Ownership returns to the main window when its pointer moves or when the owning platform window closes.
+
 ImGui rendering happens within the viewport render callback, managed by the base `AbstractRenderer.TryRenderImGui()` method which handles context switching and thread safety with a lock.
 
 ---
