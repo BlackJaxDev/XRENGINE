@@ -56,11 +56,18 @@ namespace XREngine.Rendering.Commands
                 _ => "Unknown",
             };
 
+        /// <remarks>
+        /// The dynamic tier holds deformed meshes. Compute writes their vertices over the atlas
+        /// every frame and every pass reads them, so the tier must be device-local. On Vulkan,
+        /// dynamic and stream usages select host-visible memory, which put every skinned vertex
+        /// fetch and every deformation copy on the PCIe bus. CPU updates still reach a
+        /// device-local buffer through staging uploads.
+        /// </remarks>
         private static EBufferUsage GetTierUsage(EAtlasTier tier)
             => tier switch
             {
                 EAtlasTier.Static => EBufferUsage.StaticDraw,
-                EAtlasTier.Dynamic => EBufferUsage.DynamicDraw,
+                EAtlasTier.Dynamic => EBufferUsage.StaticCopy,
                 EAtlasTier.Streaming => EBufferUsage.StreamDraw,
                 _ => EBufferUsage.DynamicDraw,
             };
