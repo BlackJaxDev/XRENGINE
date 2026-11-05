@@ -504,6 +504,7 @@ Each declared resource has one ownership class (`EAdvancedRenderResourceOwnershi
 - Per-frame hot paths allocate no managed heap memory in steady state.
 - OpenGL 4.6 and Vulkan use the same logical contracts. Backend encodings can differ.
 - An unsupported opaque material in a required Advanced mode renders an observable error material or fails selection. It does not enter the classic opaque renderer.
+- A canonical texture whose image is still loading does not fail the frame. Its row keeps the non-resident encoded reference, so each material binding samples its own fallback (for example black, white, or a flat normal) until the image is ready. Every frame builds the scene publication again, so the real image (the streaming preview first, then the full image) replaces the fallback as soon as it is ready. A texture view with the wrong shape still fails the publication.
 
 ## Capability Floor
 
