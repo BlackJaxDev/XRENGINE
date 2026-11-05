@@ -608,6 +608,36 @@ public static partial class EditorUnitTests
         }
 
         /// <summary>
+        /// Sets one engine rendering setting by property name from its text form, for a timed
+        /// external A/B probe such as MCP <c>invoke_method</c>. Accepts bool, enum (by name),
+        /// integer and floating-point properties. Returns false when no writable property has
+        /// that name or the text does not parse.
+        /// </summary>
+        public static bool SetRenderingSettingValue(string propertyName, string value)
+        {
+            object settings = RuntimeEngine.Rendering.Settings;
+            System.Reflection.PropertyInfo? property = settings.GetType().GetProperty(propertyName);
+            if (property is null || !property.CanWrite)
+                return false;
+
+            Type type = property.PropertyType;
+            object? parsed = null;
+            if (type.IsEnum && Enum.TryParse(type, value, ignoreCase: true, out object? enumValue))
+                parsed = enumValue;
+            else if (type == typeof(bool) && bool.TryParse(value, out bool boolValue))
+                parsed = boolValue;
+            else if (type == typeof(int) && int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int intValue))
+                parsed = intValue;
+            else if (type == typeof(float) && float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float floatValue))
+                parsed = floatValue;
+            if (parsed is null)
+                return false;
+
+            property.SetValue(settings, parsed);
+            return true;
+        }
+
+        /// <summary>
         /// Sets the VR render priority user setting by name (<c>Vr</c> or <c>Desktop</c>),
         /// for a timed external A/B probe such as MCP <c>invoke_method</c>. Returns false
         /// for an unknown name.
