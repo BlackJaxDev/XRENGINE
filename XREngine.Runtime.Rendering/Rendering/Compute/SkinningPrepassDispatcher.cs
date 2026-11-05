@@ -300,12 +300,15 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
     /// <summary>
     /// Runs forced deformation for the mesh atlas. It does not refit bounds or refresh the pose
-    /// from render state, so an unchanged renderer reuses a confirmed output and costs no dispatch.
+    /// from render state. It dispatches on every call and never reuses an earlier output.
     /// </summary>
     /// <remarks>
-    /// A recorded dispatch does not prove that it ran, because a backend can discard the frame that
-    /// holds it. Reuse without proof keeps an empty output for a skeleton that never moves. The
-    /// renderer dispatches each frame until a frame at or after its last change commits.
+    /// The deformation output buffer is shared by all render lanes. A lane can record a dispatch
+    /// and submit it one or more frames later, as the desktop worker lane does in VR. If another
+    /// lane reuses that output, it copies a pose that has not been written yet, or a pose from a
+    /// different frame, so the avatar holds a pose and then jumps. A recorded dispatch also does
+    /// not prove that it ran, because a backend can discard the frame that holds it. Each atlas
+    /// publish therefore writes the output in the same command stream that copies it.
     /// </remarks>
     /// <param name="renderer">The renderer to deform.</param>
     /// <param name="currentSequence">The current frame's history sequence, or zero when it is not tracked.</param>
@@ -329,7 +332,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             requireLiveBounds: false,
             requireCommittedOutput: true,
             currentSequence,
-            committedSequence);
+            committedSequence,
+            allowOutputReuse: false);
         lock (_syncRoot)
         {
             if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
@@ -348,7 +352,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         bool requireLiveBounds = true,
         bool requireCommittedOutput = false,
         ulong currentSequence = 0UL,
-        ulong committedSequence = 0UL)
+        ulong committedSequence = 0UL,
+        bool allowOutputReuse = true)
     {
         if (AbstractRenderer.Current is null)
             return;
@@ -506,7 +511,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
             bool forceLivePoseRefresh = forceSkinning && needsLiveSkinnedBounds;
 
-            if (!forceLivePoseRefresh &&
+            if (allowOutputReuse &&
+                !forceLivePoseRefresh &&
                 resources.HasFrameOutput(frameId, doSkinning, doBlendshapes, usePrecombinedBlendshapes) &&
                 (!needsLiveSkinnedBounds || resources.HasValidSkinnedBounds))
             {
@@ -516,7 +522,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             if (!resources.Validate(mesh, doSkinning, doBlendshapes, isInterleaved, usePrecombinedBlendshapes))
                 return;
 
-            bool canReuseOutput = !needsLiveSkinnedBounds &&
+            bool canReuseOutput = allowOutputReuse &&
+                !needsLiveSkinnedBounds &&
                 resources.CanReuseOutput(doSkinning, doBlendshapes, usePrecombinedBlendshapes);
             if (requireCommittedOutput)
             {
