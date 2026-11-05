@@ -115,6 +115,7 @@ internal sealed partial class VulkanFrameLoop
     {
         _api = api ?? throw new ArgumentNullException(nameof(api));
         _deviceContext = deviceContext;
+        FrameOp.PublishOpenXrCapturedWorkspace(_openXrCapturedOperationWorkspace);
         _outputRuntime = outputRuntime;
         _framePlanner = framePlanner;
         _resourceRuntime = resourceRuntime;
