@@ -246,18 +246,19 @@ namespace XREngine.Rendering.Models.Materials
         /// Handles the <c>_VTX</c> vertex-stage suffix automatically.
         /// This returns the minimal (cheapest) flag — used for auto-detection.
         /// </summary>
+        private static readonly FrozenDictionary<string, EUniformRequirements>.AlternateLookup<ReadOnlySpan<char>> UniformToRequirementBySpan =
+            UniformToRequirement.GetAlternateLookup<ReadOnlySpan<char>>();
+
         public static EUniformRequirements GetRequirement(string uniformName)
         {
             if (UniformToRequirement.TryGetValue(uniformName, out var req))
                 return req;
 
-            // Strip _VTX suffix for vertex-stage engine uniforms
-            if (uniformName.EndsWith(VtxSuffix, StringComparison.Ordinal))
-            {
-                string baseName = uniformName[..^VtxSuffix.Length];
-                if (UniformToRequirement.TryGetValue(baseName, out req))
-                    return req;
-            }
+            // Strip _VTX suffix for vertex-stage engine uniforms. The span lookup avoids a
+            // substring per call; draw-state hashing calls this for every uniform of every draw.
+            if (uniformName.EndsWith(VtxSuffix, StringComparison.Ordinal) &&
+                UniformToRequirementBySpan.TryGetValue(uniformName.AsSpan(0, uniformName.Length - VtxSuffix.Length), out req))
+                return req;
 
             return EUniformRequirements.None;
         }

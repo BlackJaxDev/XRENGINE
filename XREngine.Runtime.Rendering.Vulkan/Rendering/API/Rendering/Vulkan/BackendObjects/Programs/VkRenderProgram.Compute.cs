@@ -1033,31 +1033,49 @@ internal unsafe partial class VkRenderProgram
         return true;
     }
 
+    /// <summary>
+    /// Hash of the program's descriptor bindings below one set limit. The bindings change only
+    /// when the program interface is rebuilt, so the hash is cached per limit; computing it
+    /// sorted a copy of every binding on each compute dispatch.
+    /// </summary>
+    /// <remarks>Recording threads read the cache, so one immutable entry is swapped as a whole.</remarks>
+    private sealed record ComputeSchemaBindingHash(uint Limit, ulong Hash);
+    private ComputeSchemaBindingHash? _computeSchemaBindingHash;
+
+    private void InvalidateComputeSchemaBindingHash()
+        => Volatile.Write(ref _computeSchemaBindingHash, null);
+
+    private static void MixSchema(ref ulong value, ulong part)
+    {
+        value ^= part;
+        value *= 1099511628211UL;
+    }
+
     private ulong ComputeComputeDescriptorSchemaFingerprint(
         IReadOnlyList<DescriptorSetLayout> descriptorLayouts,
         uint descriptorSetLimit)
     {
-        ulong hash = 1469598103934665603UL;
-
-        static void Mix(ref ulong value, ulong part)
+        ComputeSchemaBindingHash? cached = Volatile.Read(ref _computeSchemaBindingHash);
+        if (cached is null || cached.Limit != descriptorSetLimit)
         {
-            value ^= part;
-            value *= 1099511628211UL;
+            ulong bindingHash = 1469598103934665603UL;
+            foreach (DescriptorBindingInfo binding in _programDescriptorBindings.OrderBy(b => b.Set).ThenBy(b => b.Binding))
+            {
+                if (binding.Set >= descriptorSetLimit)
+                    continue;
+                MixSchema(ref bindingHash, binding.Set);
+                MixSchema(ref bindingHash, binding.Binding);
+                MixSchema(ref bindingHash, (ulong)binding.DescriptorType);
+                MixSchema(ref bindingHash, binding.Count);
+                MixSchema(ref bindingHash, (ulong)binding.StageFlags);
+            }
+            cached = new ComputeSchemaBindingHash(descriptorSetLimit, bindingHash);
+            Volatile.Write(ref _computeSchemaBindingHash, cached);
         }
 
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings.OrderBy(b => b.Set).ThenBy(b => b.Binding))
-        {
-            if (binding.Set >= descriptorSetLimit)
-                continue;
-            Mix(ref hash, binding.Set);
-            Mix(ref hash, binding.Binding);
-            Mix(ref hash, (ulong)binding.DescriptorType);
-            Mix(ref hash, binding.Count);
-            Mix(ref hash, (ulong)binding.StageFlags);
-        }
-
-        foreach (DescriptorSetLayout layout in descriptorLayouts)
-            Mix(ref hash, layout.Handle);
+        ulong hash = cached.Hash;
+        for (int index = 0; index < descriptorLayouts.Count; index++)
+            MixSchema(ref hash, descriptorLayouts[index].Handle);
 
         return hash;
     }

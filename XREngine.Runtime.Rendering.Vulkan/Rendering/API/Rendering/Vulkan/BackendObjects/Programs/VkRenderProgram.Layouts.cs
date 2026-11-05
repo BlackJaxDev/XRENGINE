@@ -39,6 +39,7 @@ internal unsafe partial class VkRenderProgram
             _descriptorSetLayouts = result.Layouts;
             _programDescriptorBindings.Clear();
             _programDescriptorBindings.AddRange(result.Bindings);
+            InvalidateComputeSchemaBindingHash();
             _hasGlobalTextureArrayOnlySet = entry.HasGlobalTextureArrayOnlySet;
             _canBindGlobalTextureArraySeparately = entry.CanBindGlobalTextureArraySeparately;
             _descriptorSetLayoutsBeforeGlobalMaterial = entry.LayoutsBeforeGlobalMaterial;
@@ -354,6 +355,7 @@ internal unsafe partial class VkRenderProgram
             BackendContext.Resources.ProgramInterfaces.Release(entry);
 
         _programDescriptorBindings.Clear();
+        InvalidateComputeSchemaBindingHash();
         _autoUniformBlocks.Clear();
         _autoUniformBlocksByBinding.Clear();
         _bindingSchema = null;

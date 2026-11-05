@@ -2251,8 +2251,10 @@ namespace XREngine.Rendering
         // Ensure or create a combined graphics program for the given material ID (MVP: combined program only)
         private XRRenderProgram? EnsureCombinedProgram(uint materialID, XRMaterial material, XRMeshRenderer? vaoRenderer)
         {
-            GpuDebug($"=== EnsureCombinedProgram: materialID={materialID} ===");
-            
+            // Guarded: the string overload of GpuDebug formats its message before the level check.
+            if (IsEnabled(LogCategory.Draw, LogLevel.Debug))
+                GpuDebug($"=== EnsureCombinedProgram: materialID={materialID} ===");
+
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             long shaderStateRevision = material.ShaderStateRevision;
             (uint materialId, int rendererKey) useKey = (materialID, rendererKey);
