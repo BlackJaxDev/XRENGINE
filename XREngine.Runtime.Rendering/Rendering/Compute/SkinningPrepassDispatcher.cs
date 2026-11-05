@@ -300,7 +300,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
     /// <summary>
     /// Runs forced deformation for the mesh atlas. It does not refit bounds or refresh the pose
-    /// from render state. It dispatches on every call and never reuses an earlier output.
+    /// from render state. It reuses only an output dispatched earlier in the same render
+    /// frame, and never an output from an earlier frame.
     /// </summary>
     /// <remarks>
     /// The deformation output buffer is shared by all render lanes. A lane can record a dispatch
@@ -511,8 +512,10 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
             bool forceLivePoseRefresh = forceSkinning && needsLiveSkinnedBounds;
 
-            if (allowOutputReuse &&
-                !forceLivePoseRefresh &&
+            // A dispatch from this render frame belongs to the same output and the same
+            // submission, so even the atlas path reuses it. Only output from an earlier
+            // frame can come from another lane that has not submitted it yet.
+            if (!forceLivePoseRefresh &&
                 resources.HasFrameOutput(frameId, doSkinning, doBlendshapes, usePrecombinedBlendshapes) &&
                 (!needsLiveSkinnedBounds || resources.HasValidSkinnedBounds))
             {
