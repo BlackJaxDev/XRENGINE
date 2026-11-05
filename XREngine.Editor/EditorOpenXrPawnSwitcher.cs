@@ -32,7 +32,7 @@ internal static class EditorOpenXrPawnSwitcher
     private static EditorVrAvatarLease? _avatarLease;
     private static IRuntimeRenderWorld? _vrPawnWorld;
     private static EditorWorldIntegration? _vrEditorIntegration;
-    private static EVrDesktopView _desktopView = EVrDesktopView.FirstPerson;
+    private static EVrDesktopView _desktopView = EVrDesktopView.EditorCamera;
     private static XRViewport? _editorUiViewport;
     private static IRuntimeRenderWorld? _editorUiWorld;
     private static IRuntimeScreenSpaceUserInterface? _editorUiCanvas;
@@ -107,6 +107,9 @@ internal static class EditorOpenXrPawnSwitcher
         _configured = settings.VR.AllowDesktopEditing && settings.VR.Mode != UnitTestingVrLaunchMode.OpenVR;
         _startsOnLaunch = settings.VR.Mode is UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR;
         _requested = _configured && _startsOnLaunch;
+        _desktopView = Enum.IsDefined(settings.VR.DesktopView)
+            ? settings.VR.DesktopView
+            : EVrDesktopView.EditorCamera;
         _desktopPawnWorld = null;
         _desktopPawn = null;
         _preparedRuntimeJson = null;
@@ -169,7 +172,10 @@ internal static class EditorOpenXrPawnSwitcher
         return true;
     }
 
-    /// <summary>Changes only the VR pawn's desktop camera; input remains with the same pawn.</summary>
+    /// <summary>
+    /// Changes the desktop view. The editor camera view also gives local player input
+    /// to the editor camera. The other views keep input on the VR pawn.
+    /// </summary>
     public static void SetDesktopView(EVrDesktopView view)
     {
         _desktopView = view;
@@ -178,29 +184,97 @@ internal static class EditorOpenXrPawnSwitcher
 
     private static void ApplyDesktopView()
     {
+        if (_vrPawn is not { } vrPawn)
+        {
+            SynchronizeDesktopEditorUi();
+            return;
+        }
+
+        PossessDesktopViewInputOwner(vrPawn);
         SynchronizeDesktopEditorUi();
-        if (_vrPawn?.SceneNode?.GetComponent<VRPlayerCharacterComponent>() is not { } player)
-            return;
 
-        player.SpectatorEnabled = _desktopView is EVrDesktopView.Spectator or EVrDesktopView.TextureOutput;
-        player.ShowSpectatorOnDesktop = _desktopView == EVrDesktopView.Spectator;
-        if (player.ShowSpectatorOnDesktop)
+        if (vrPawn.SceneNode?.GetComponent<VRPlayerCharacterComponent>() is { } player)
+        {
+            player.SpectatorEnabled = _desktopView is EVrDesktopView.Spectator or EVrDesktopView.TextureOutput;
+            player.ShowSpectatorOnDesktop = _desktopView == EVrDesktopView.Spectator;
+            if (player.ShowSpectatorOnDesktop)
+                return;
+        }
+        else if (_desktopView != EVrDesktopView.EditorCamera)
+        {
+            // A VR pawn without a player character has no spectator camera to show.
             return;
+        }
 
-        if (RuntimePlayerControllerServices.Current?.GetLocalPlayer(ELocalPlayerIndex.One)?.Viewport is not XRViewport viewport
-            || ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport)
-            || ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport)
-            || ReferenceEquals(viewport, RuntimeEngine.VRState.StereoViewport))
+        if (ResolveDesktopViewport() is not XRViewport viewport)
             return;
 
         CameraComponent? camera = _desktopView == EVrDesktopView.EditorCamera
             ? _desktopPawn?.CameraComponent as CameraComponent
-            : _vrPawn.CameraComponent as CameraComponent;
+            : vrPawn.CameraComponent as CameraComponent;
         if (camera is not null && !ReferenceEquals(viewport.CameraComponent, camera))
         {
             viewport.CameraComponent = camera;
             camera.Camera.InvalidateTemporalHistory();
         }
+    }
+
+    /// <summary>
+    /// Gives local player input to the pawn that the desktop view shows. The editor
+    /// camera view possesses the desktop editor pawn, so VR action input does not reach
+    /// the VR pawn while it shows. Headset and controller tracking do not use this input.
+    /// </summary>
+    private static void PossessDesktopViewInputOwner(PawnComponent vrPawn)
+    {
+        if (!_requested || RuntimeEngine.VRState.OpenXRApi?.IsSessionRunning != true)
+            return;
+
+        PawnComponent inputPawn = _desktopView == EVrDesktopView.EditorCamera
+            ? ResolveEditorCameraInputPawn() ?? vrPawn
+            : vrPawn;
+        if (!ReferenceEquals(Engine.State.MainPlayer.ControlledPawnComponent, inputPawn))
+            inputPawn.PossessByLocalPlayer(ELocalPlayerIndex.One);
+    }
+
+    private static PawnComponent? ResolveEditorCameraInputPawn()
+    {
+        if (_vrPawnWorld is not { } world || world.WorldContext is not RuntimeWorld runtimeWorld)
+            return null;
+
+        if (ResolveDesktopPawn(world) is { } desktopPawn)
+            return desktopPawn;
+
+        try
+        {
+            return CreateDesktopEditorPawn(world, runtimeWorld);
+        }
+        catch (Exception ex)
+        {
+            LastError = $"Could not create the editor camera pawn: {ex.Message}";
+            Debug.LogWarning(LastError);
+            return null;
+        }
+    }
+
+    /// <summary>Creates a desktop editor pawn in the editor scene and caches it for this world.</summary>
+    private static PawnComponent CreateDesktopEditorPawn(IRuntimeRenderWorld world, RuntimeWorld runtimeWorld)
+    {
+        SceneNode root = new() { Name = "Editor Desktop Rig" };
+        PawnComponent desktopPawn;
+        try
+        {
+            (_, desktopPawn) = BootstrapPawnFactory.CreateDesktopEditorPawn(root);
+            EditorWorldIntegrationRegistry.GetOrAttach(runtimeWorld).AddToEditorScene(root);
+        }
+        catch
+        {
+            root.Destroy();
+            throw;
+        }
+
+        _desktopPawnWorld = world;
+        _desktopPawn = desktopPawn;
+        return desktopPawn;
     }
 
     private static async Task StartSelectedRuntimeAsync(EditorOpenXrRuntimeChoice choice)
@@ -409,7 +483,7 @@ internal static class EditorOpenXrPawnSwitcher
                 if (_ownedVrRoot is not null && _avatarLease is null)
                     TryAttachDesktopAvatar(world);
 
-                _vrPawn.PossessByLocalPlayer(ELocalPlayerIndex.One);
+                // ApplyDesktopView possesses the pawn that the selected desktop view uses.
                 StartMonitoringEditorUi();
                 ApplyDesktopView();
                 return;
@@ -422,24 +496,7 @@ internal static class EditorOpenXrPawnSwitcher
                 return;
             }
 
-            PawnComponent? desktopPawn = ResolveDesktopPawn(world);
-            if (desktopPawn is null)
-            {
-                SceneNode root = new() { Name = "Editor Desktop Rig" };
-                try
-                {
-                    (_, desktopPawn) = BootstrapPawnFactory.CreateDesktopEditorPawn(root);
-                    EditorWorldIntegrationRegistry.GetOrAttach(runtimeWorld).AddToEditorScene(root);
-                }
-                catch
-                {
-                    root.Destroy();
-                    throw;
-                }
-                _desktopPawnWorld = world;
-                _desktopPawn = desktopPawn;
-            }
-
+            PawnComponent desktopPawn = ResolveDesktopPawn(world) ?? CreateDesktopEditorPawn(world, runtimeWorld);
             desktopPawn.PossessByLocalPlayer(ELocalPlayerIndex.One);
             DestroyOwnedVrPawn();
         }
