@@ -1719,7 +1719,7 @@ internal sealed partial class VulkanCommandRuntime
                 InvalidatePrimaryGraphicsPipelineAdmission(ref state);
             state.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
             state.RecordingDeferredReason =
-                $"Mesh draw did not record. pass={info.PassIndex} target='{target?.Name ?? "<swapchain>"}' reason={failureReason}";
+                $"Mesh draw did not record. pass={info.PassIndex} target='{target?.Name ?? "<swapchain>"}' mesh='{payload.Draw.Renderer.Mesh?.Name ?? "<unnamed>"}' reason={failureReason}";
             return info.OperationIndex;
         }
         int originalIndex = state.Ops.GetHeader(info.OperationIndex).OriginalIndex;

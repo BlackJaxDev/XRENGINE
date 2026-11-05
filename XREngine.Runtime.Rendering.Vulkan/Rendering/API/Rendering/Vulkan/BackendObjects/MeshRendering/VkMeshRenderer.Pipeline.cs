@@ -683,7 +683,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private static readonly ConditionalWeakTable<IReadOnlyList<RenderPassMetadata>, Tuple<long, ulong>> PassMetadataListHashes = new();
 
-	private static ulong ComputePassMetadataHash(IReadOnlyCollection<RenderPassMetadata>? passMetadata, int passIndex)
+	private static ulong ComputePassMetadataHash(IReadOnlyCollection<RenderPassMetadata>? passMetadata, int passIndex, EVulkanMeshDrawPassStateFlags passStateFlags)
 	{
 		VulkanStableHash64 hash = new(schemaVersion: 3);
 		hash.Add(passIndex);
@@ -698,10 +698,10 @@ internal unsafe partial class VkMeshRenderer
 				AddMetadata(ref hash, metadata);
 		}
 
-		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false);
-		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false);
-		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false);
-		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.PointLightLayeredShadowPass ?? false);
+		// The draw captured this state when its pass queued it. Warm-up and recording
+		// run later and must not read the ambient rendering state, which another
+		// pipeline or pass can have changed by then.
+		hash.Add((int)passStateFlags);
 		return hash.Value;
 	}
 
@@ -868,7 +868,7 @@ internal unsafe partial class VkMeshRenderer
 		ulong programPipelineHash = _program!.GetGraphicsPipelineFingerprint();
 		ulong vertexLayoutHash = ComputeVertexLayoutHash();
 		ulong descriptorLayoutHash = _program.DescriptorSchemaFingerprint;
-		ulong passMetadataHash = ComputePassMetadataHash(passMetadata, passIndex);
+		ulong passMetadataHash = ComputePassMetadataHash(passMetadata, passIndex, draw.PassStateFlags);
 		ulong featureProfileHash = ComputeFeatureProfileHash();
 		bool useNativeNegativeOneToOneDepth = RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl;
 

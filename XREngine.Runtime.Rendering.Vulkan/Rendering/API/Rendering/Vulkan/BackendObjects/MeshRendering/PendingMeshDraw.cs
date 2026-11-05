@@ -52,6 +52,8 @@ internal readonly record struct PendingMeshDraw(
     internal static readonly PendingMeshDraw Empty;
 
     internal Vector4 SourceFlatDirection { get; init; }
+    /// <summary>Pass state that the queuing pass had when it queued this draw.</summary>
+    internal EVulkanMeshDrawPassStateFlags PassStateFlags { get; init; }
     internal RenderCaptureOwnerToken? CaptureOwnerToken { get; init; }
     internal EPrimitiveType IndirectTopology { get; init; } = EPrimitiveType.Triangles;
     internal IRenderResourceLeaseOwner? IndexedIndirectAuthoringLease { get; init; }

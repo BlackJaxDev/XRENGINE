@@ -61,6 +61,8 @@ internal readonly record struct VulkanMeshRenderRequest(
         => ref request._producer;
 
     internal Vector4 SourceFlatDirection { get; init; }
+    /// <summary>Pass state that the queuing pass had when it queued this request.</summary>
+    internal EVulkanMeshDrawPassStateFlags PassStateFlags { get; init; }
     internal VulkanMeshIndexedIndirectPayload? IndexedIndirect { get; init; }
     internal VulkanRequiredProducerInsertionToken RequiredProducerInsertionToken { get; init; }
 

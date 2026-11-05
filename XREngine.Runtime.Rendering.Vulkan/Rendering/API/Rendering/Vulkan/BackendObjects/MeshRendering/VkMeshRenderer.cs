@@ -609,6 +609,7 @@ internal unsafe partial class VkMeshRenderer(
         {
             SourceFlatDirection = sourceFlatDirection,
             IndexedIndirect = indexedIndirect,
+            PassStateFlags = CaptureDrawPassStateFlags(),
         };
         VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult =
             _meshRequests?.TryEnqueue(in request)
@@ -1066,6 +1067,7 @@ internal unsafe partial class VkMeshRenderer(
         draw = draw with
         {
             SourceFlatDirection = request.SourceFlatDirection,
+            PassStateFlags = request.PassStateFlags,
             PreparationCompatibilitySignature =
                 request.PreparationCompatibilitySignature,
             IndirectTopology = request.IndexedIndirect?.Topology ?? EPrimitiveType.Triangles,
@@ -1266,6 +1268,10 @@ internal unsafe partial class VkMeshRenderer(
             default);
         draw = draw with
         {
+            PassStateFlags = CaptureDrawPassStateFlags(),
+        };
+        draw = draw with
+        {
             AutoUniformPublication =
                 VulkanAutoUniformPublicationSnapshot.Capture(
                     draw,
@@ -1273,6 +1279,27 @@ internal unsafe partial class VkMeshRenderer(
         };
 
         return true;
+    }
+
+    /// <summary>
+    /// Captures the pass state of the active rendering pipeline that changes the
+    /// graphics pipeline of a draw. Call it while the queuing pass is active.
+    /// </summary>
+    private static EVulkanMeshDrawPassStateFlags CaptureDrawPassStateFlags()
+    {
+        if (RuntimeEngine.Rendering.State.RenderingPipelineState is not { } state)
+            return EVulkanMeshDrawPassStateFlags.None;
+
+        EVulkanMeshDrawPassStateFlags flags = EVulkanMeshDrawPassStateFlags.None;
+        if (state.ShadowPass)
+            flags |= EVulkanMeshDrawPassStateFlags.ShadowPass;
+        if (state.UseDepthNormalMaterialVariants)
+            flags |= EVulkanMeshDrawPassStateFlags.DepthNormalMaterialVariants;
+        if (state.DirectionalCascadeLayeredShadowPass)
+            flags |= EVulkanMeshDrawPassStateFlags.DirectionalCascadeLayeredShadowPass;
+        if (state.PointLightLayeredShadowPass)
+            flags |= EVulkanMeshDrawPassStateFlags.PointLightLayeredShadowPass;
+        return flags;
     }
 
     private static readonly bool s_nameFallbackCallbacks =
