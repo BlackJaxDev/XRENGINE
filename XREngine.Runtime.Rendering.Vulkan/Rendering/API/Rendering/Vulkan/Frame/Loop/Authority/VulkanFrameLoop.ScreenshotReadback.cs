@@ -542,26 +542,19 @@ internal sealed partial class VulkanFrameLoop
         return null;
     }
 
+    /// <summary>
+    /// Returns true when the PNG must apply the linear-to-sRGB transfer. A single-layer float
+    /// color target holds linear display values, and the sRGB desktop swapchain applies the
+    /// transfer when it presents them. The readback must apply the same transfer, or the file
+    /// is darker and more saturated than the window. This does not depend on the identity of
+    /// the last presented image: viewport targets, post-process outputs and the present source
+    /// all hold the same linear encoding.
+    /// </summary>
     private bool ShouldEncodeScreenshotForSrgbDisplay(in BlitImageInfo source, bool isComposited)
-    {
-        if (isComposited ||
-            OutputRuntime.Desktop.ImageFormat is not (Format.B8G8R8A8Srgb or Format.R8G8B8A8Srgb) ||
-            source.Format is not (Format.R16G16B16A16Sfloat or Format.R32G32B32A32Sfloat or Format.B10G11R11UfloatPack32) ||
-            source.BaseArrayLayer != 0 || source.MipLevel != 0 || source.LayerCount != 1)
-            return false;
-
-        _outputRuntime.PresentationSource.Submitted.Capture(
-            out VulkanPresentationSourceTuple presented,
-            out VulkanResidentTemplateDependencyLease? lease);
-        return presented.HasLogicalSource && presented.IsComplete &&
-            ResourceRuntime.TryValidateRetainedPresentationSourceForReplay(presented, lease, out _) &&
-            source.Image.Handle == presented.Image.Handle &&
-            source.Format == presented.Format &&
-            source.AspectMask == presented.Aspect &&
-            source.Samples == presented.Samples &&
-            source.Extent.Width == presented.Width &&
-            source.Extent.Height == presented.Height;
-    }
+        => !isComposited &&
+            OutputRuntime.Desktop.ImageFormat is Format.B8G8R8A8Srgb or Format.R8G8B8A8Srgb &&
+            source.Format is Format.R16G16B16A16Sfloat or Format.R32G32B32A32Sfloat or Format.B10G11R11UfloatPack32 &&
+            source.BaseArrayLayer == 0 && source.MipLevel == 0 && source.LayerCount == 1;
 
     private void PrepareScreenshotReadbackRequest(
         VulkanScreenshotReadbackSlot slot,
