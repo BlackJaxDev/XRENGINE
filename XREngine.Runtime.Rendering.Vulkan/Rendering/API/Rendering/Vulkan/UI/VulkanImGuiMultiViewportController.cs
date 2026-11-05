@@ -148,7 +148,12 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             return false;
         }
 
-        public void PrepareForNewFrame(ImGuiIOPtr io)
+        /// <summary>
+        /// Replays platform-window input and the main-window pointer before <c>ImGui.NewFrame</c>.
+        /// </summary>
+        /// <param name="io">The ImGui IO of the editor context.</param>
+        /// <param name="mainButtonActivity">Whether the main window reported mouse button or wheel input this frame.</param>
+        public void PrepareForNewFrame(ImGuiIOPtr io, bool mainButtonActivity)
         {
             if (!_installed || _disposed)
                 return;
@@ -158,6 +163,8 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             EnsureMainViewportPlatformData();
 
             _pointerOwner.BeginFrame();
+            if (mainButtonActivity)
+                _pointerOwner.NoteMainPointerActivity();
             foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
             {
                 if (window.IsDisposed)

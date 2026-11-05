@@ -24,6 +24,7 @@ public sealed class ImGuiPointerOwnerTracker
     private float _lastMainPointerX = float.NaN;
     private float _lastMainPointerY = float.NaN;
     private bool _platformActivityThisFrame;
+    private bool _mainButtonActivity;
 
     /// <summary>
     /// Gets the ImGui viewport ID of the platform window that owns the pointer, or
@@ -53,6 +54,18 @@ public sealed class ImGuiPointerOwnerTracker
     }
 
     /// <summary>
+    /// Records mouse button or wheel input from the main window.
+    /// </summary>
+    /// <remarks>
+    /// The main window reports buttons and wheel only while the pointer is over it or while it
+    /// captures the mouse. A click there therefore returns ownership to the main window, also
+    /// when the pointer moved in from a popup and stopped in the same frame, so that the main
+    /// position did not change after the popup took ownership.
+    /// </remarks>
+    public void NoteMainPointerActivity()
+        => _mainButtonActivity = true;
+
+    /// <summary>
     /// Returns pointer ownership to the main window when the owning platform window is gone.
     /// </summary>
     public void ReleasePlatformWindow(uint viewportId)
@@ -74,8 +87,10 @@ public sealed class ImGuiPointerOwnerTracker
         bool moved = x != _lastMainPointerX || y != _lastMainPointerY;
         _lastMainPointerX = x;
         _lastMainPointerY = y;
+        bool mainActivity = moved || _mainButtonActivity;
+        _mainButtonActivity = false;
 
-        if (moved && !_platformActivityThisFrame)
+        if (mainActivity && !_platformActivityThisFrame)
             OwnerViewportId = MainWindow;
 
         return MainWindowOwnsPointer;

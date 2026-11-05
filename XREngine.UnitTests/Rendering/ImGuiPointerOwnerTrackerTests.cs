@@ -62,6 +62,22 @@ public sealed class ImGuiPointerOwnerTrackerTests
     }
 
     [Test]
+    public void MainButtonActivity_ReturnsOwnershipWhenMainPointerDidNotMove()
+    {
+        ImGuiPointerOwnerTracker tracker = new();
+        tracker.BeginFrame();
+        tracker.NotePlatformPointerActivity(PopupViewport);
+        tracker.UpdateMainPointer(10.0f, 20.0f).ShouldBeFalse();
+
+        tracker.BeginFrame();
+        tracker.UpdateMainPointer(10.0f, 20.0f).ShouldBeFalse();
+
+        tracker.BeginFrame();
+        tracker.NoteMainPointerActivity();
+        tracker.UpdateMainPointer(10.0f, 20.0f).ShouldBeTrue();
+    }
+
+    [Test]
     public void ReleasedPlatformWindow_ReturnsOwnershipToMainWindow()
     {
         ImGuiPointerOwnerTracker tracker = new();

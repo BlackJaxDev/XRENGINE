@@ -74,8 +74,8 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
         // Publish group focus before input so a detached click cannot be split
         // between conflicting focus events from separate native windows.
         io.AddFocusEvent(_viewports?.IsAnyWindowFocused() ?? _outputHost.MainWindowFocused);
-        _input.FlushPendingInputEvents(io);
-        _viewports?.PrepareForNewFrame(io);
+        bool mainButtonActivity = _input.FlushPendingInputEvents(io);
+        _viewports?.PrepareForNewFrame(io, mainButtonActivity);
 
         ImGui.NewFrame();
     }

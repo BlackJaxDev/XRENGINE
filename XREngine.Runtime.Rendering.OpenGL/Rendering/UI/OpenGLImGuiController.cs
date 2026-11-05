@@ -69,6 +69,11 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
 
     public void MakeCurrent() => ImGui.SetCurrentContext(Context);
 
+    /// <summary>
+    /// Gets whether the main window reported mouse button or wheel input in the latest <see cref="Update"/>.
+    /// </summary>
+    public bool MainWindowButtonActivity { get; private set; }
+
     public void Update(float deltaSeconds, Action? queueAdditionalInput = null, bool? applicationFocused = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -92,6 +97,7 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
         // One focus state must precede all window input. A false/true pair can
         // clear a detached click when ImGui splits its press and release across frames.
         io.AddFocusEvent(applicationFocused ?? input.IsFocused);
+        MainWindowButtonActivity = false;
         ReplayInput(io, input, CollectionsMarshal.AsSpan(_orderedInputScratch),
             multipleViewports ? origin.X : 0,
             multipleViewports ? origin.Y : 0,
@@ -175,6 +181,7 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
                 case WindowInputEventKind.MouseButton:
                     io.AddMouseButtonEvent((int)item.MouseButton, item.IsDown);
                     if (viewportId != 0) io.AddMouseViewportEvent(viewportId);
+                    else MainWindowButtonActivity = true;
                     pointerActivity = true;
                     break;
                 case WindowInputEventKind.Text:
@@ -188,6 +195,7 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
                 case WindowInputEventKind.Scroll:
                     io.AddMouseWheelEvent(item.X, item.Y);
                     if (viewportId != 0) io.AddMouseViewportEvent(viewportId);
+                    else MainWindowButtonActivity = true;
                     pointerActivity = true;
                     break;
             }

@@ -13,8 +13,13 @@ internal sealed class VulkanImGuiInputRouter(XRWindow windowHost) : IDisposable
 
     public void Dispose() => _events.Clear();
 
-    internal void FlushPendingInputEvents(ImGuiIOPtr io)
+    /// <summary>
+    /// Replays the pending main-window UI input into ImGui.
+    /// </summary>
+    /// <returns><see langword="true"/> when the main window reported mouse button or wheel input.</returns>
+    internal bool FlushPendingInputEvents(ImGuiIOPtr io)
     {
+        bool buttonActivity = false;
         windowHost.ConsumeUiInputSnapshot(_events);
         bool viewports = (io.ConfigFlags & ImGuiConfigFlags.ViewportsEnable) != 0;
         var origin = windowHost.DesktopWindowBackend?.ClientScreenPosition ?? default;
@@ -31,6 +36,7 @@ internal sealed class VulkanImGuiInputRouter(XRWindow windowHost) : IDisposable
                     break;
                 case WindowInputEventKind.MouseButton:
                     io.AddMouseButtonEvent((int)item.MouseButton, item.IsDown);
+                    buttonActivity = true;
                     break;
                 case WindowInputEventKind.Text:
                     io.AddInputCharacter(item.Character);
@@ -40,9 +46,12 @@ internal sealed class VulkanImGuiInputRouter(XRWindow windowHost) : IDisposable
                     break;
                 case WindowInputEventKind.Scroll:
                     io.AddMouseWheelEvent(item.X, item.Y);
+                    buttonActivity = true;
                     break;
             }
         }
+
+        return buttonActivity;
     }
 
     private void ReplayModifier(ImGuiIOPtr io, EKey key, bool down)

@@ -251,6 +251,8 @@ namespace XREngine.Rendering.OpenGL
 
                     var io = ImGui.GetIO();
                     _pointerOwner.BeginFrame();
+                    if (_controller?.MainWindowButtonActivity == true)
+                        _pointerOwner.NoteMainPointerActivity();
                     foreach (PlatformWindow window in _platformWindows.Values)
                     {
                         if (window.IsDisposed)
