@@ -25,6 +25,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         private readonly Dictionary<uint, VulkanImGuiPlatformWindow> _platformWindows = [];
         private readonly List<PendingPlatformWindowDisposal> _pendingPlatformWindowDisposals = [];
         private readonly List<ImGuiPlatformMonitor> _monitorScratch = [];
+        private readonly ImGuiPointerOwnerTracker _pointerOwner = new();
         private IDisposable? _callbackRegistration;
         private nint _monitorData;
         private int _monitorCapacity;
@@ -156,6 +157,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             PrepareImplicitWindowForNewFrame();
             EnsureMainViewportPlatformData();
 
+            _pointerOwner.BeginFrame();
             foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
             {
                 if (window.IsDisposed)
@@ -168,11 +170,19 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 window.DrainInput();
             }
 
+            ReleaseStalePointerOwner();
+
             if (!_mainWindow.Events.IsFocused)
                 return;
 
             WindowInputSnapshot input = _mainWindow.Input;
             if (!input.HasMouse)
+                return;
+
+            // A popup viewport does not take focus on click, so the main window stays
+            // focused while its last pointer position is stale. Do not let that stale
+            // position replace the position that the popup window reported.
+            if (!_pointerOwner.UpdateMainPointer(input.PointerX, input.PointerY))
                 return;
             IVector2 origin = _mainWindow.ClientScreenPosition;
             IVector2 cursorPosition = new(origin.X + (int)input.PointerX, origin.Y + (int)input.PointerY);
@@ -700,6 +710,20 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             _pendingPlatformWindowDisposals.Clear();
         }
 
+        /// <summary>
+        /// Returns pointer ownership to the main window when the owning platform window
+        /// is gone or no longer accepts input.
+        /// </summary>
+        private void ReleaseStalePointerOwner()
+        {
+            uint owner = _pointerOwner.OwnerViewportId;
+            if (owner == ImGuiPointerOwnerTracker.MainWindow)
+                return;
+
+            if (!_platformWindows.TryGetValue(owner, out VulkanImGuiPlatformWindow? window) || window.IsDisposed || !window.AcceptsInputs)
+                _pointerOwner.ReleasePlatformWindow(owner);
+        }
+
         private uint ResolveHoveredViewportId(IVector2 screenPosition)
         {
             foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
@@ -747,6 +771,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                     case WindowInputEventKind.MouseButton:
                         io.AddMouseButtonEvent((int)item.MouseButton, item.IsDown);
                         io.AddMouseViewportEvent(viewportId);
+                        _pointerOwner.NotePlatformPointerActivity(viewportId);
                         break;
                     case WindowInputEventKind.Text:
                         io.AddInputCharacter(item.Character);
@@ -754,10 +779,12 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                     case WindowInputEventKind.Pointer:
                         io.AddMousePosEvent(screenOrigin.X + item.X, screenOrigin.Y + item.Y);
                         io.AddMouseViewportEvent(viewportId);
+                        _pointerOwner.NotePlatformPointerActivity(viewportId);
                         break;
                     case WindowInputEventKind.Scroll:
                         io.AddMouseWheelEvent(item.X, item.Y);
                         io.AddMouseViewportEvent(viewportId);
+                        _pointerOwner.NotePlatformPointerActivity(viewportId);
                         break;
                 }
             }
