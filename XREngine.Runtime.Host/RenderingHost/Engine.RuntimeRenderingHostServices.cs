@@ -1548,6 +1548,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
         };
     public bool VrDesktopAutoSkipWhenOverBudget => RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget;
     public EVrDesktopFrameExecutionMode VrDesktopFrameExecutionMode => RuntimeEngine.Rendering.Settings.VrDesktopFrameExecutionMode;
+    public EVrRenderPriority VrRenderPriority => Engine.UserSettings.VrRenderPriority;
     public bool VrDesktopSplitSlackGate
         => Engine.EffectiveSettings.VrDesktopSplitSlackGate &&
            Engine.UserSettings.VrRenderPriority != EVrRenderPriority.Desktop;

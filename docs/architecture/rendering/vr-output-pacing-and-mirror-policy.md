@@ -85,6 +85,8 @@ The user setting `UserSettings.VrRenderPriority` selects which output gets rende
 - `Vr`: the XR frame priority above applies. Desktop frames that do not fit before the next XR frame are held, and the window keeps its last image.
 - `Desktop`: every due desktop frame runs. The XR budget skip, the XR slack hold and the WorkerRecord slack gate are off. A late eye frame is reprojected by the XR runtime.
 
+The priority output also owns the per-frame mesh deformation (compute skinning and blendshapes, and the mesh atlas publish). `SkinningPrepassDispatcher.OwnsDeformation` makes the decision. With `Vr`, the stereo eye render dispatches the deformation inside its own submission, and the desktop and its shadow views only read the latest results. With `Desktop`, the desktop render owns it and the eyes only read. The reading output never waits for the owner, so the two outputs keep independent rates. Its pose can be one owner frame old. Both outputs submit to one graphics queue, so queue order keeps a read from overlapping a write. Shadow views never dispatch the deformation, because they render before the owning pipeline is active. Without an active VR session, every render owns the deformation.
+
 On the imported-avatar benchmark scene at 90 Hz (zero-readback, WorkerRecord), `Desktop` gave 31 Hz VR and 31 Hz desktop with the avatar visible, and `Vr` gave 30 Hz VR and 12 Hz desktop. When the eyes cannot reach the runtime rate, the hold mostly costs desktop frames.
 
 ## Next-frame collect

@@ -92,6 +92,12 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     bool VrDesktopSplitSlackGate => false;
 
     /// <summary>
+    /// Gets which output gets render-thread time first while VR is active. The
+    /// priority output also owns the per-frame mesh deformation.
+    /// </summary>
+    EVrRenderPriority VrRenderPriority => EVrRenderPriority.Vr;
+
+    /// <summary>
     /// Evaluates whether an output is due for this frame according to host pacing policy.
     /// </summary>
     FrameOutputPacingDecision EvaluateFrameOutputPacing(

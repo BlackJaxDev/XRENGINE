@@ -971,6 +971,34 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
     }
 
+    /// <summary>
+    /// Returns whether the current render owns the per-frame mesh deformation.
+    /// </summary>
+    /// <param name="stereoRender">True for the stereo (eye) render of a VR session.</param>
+    /// <param name="shadowPass">True for a shadow view.</param>
+    /// <remarks>
+    /// The eye and desktop outputs run at independent rates, and each submits its own
+    /// GPU work. Only one of them dispatches skinning and blendshapes, so that the
+    /// other never waits for it. The priority output in
+    /// <see cref="IRuntimeRenderPresentationServices.VrRenderPriority"/> is the owner.
+    /// The other output reads the results of the last owner submission. Both submit to
+    /// one queue, so queue order keeps a read from overlapping a write.
+    /// A shadow view only reads the results: it renders before the owning pipeline is
+    /// active, so work that it dispatched would belong to no output.
+    /// Without an active VR session every render owns the deformation.
+    /// </remarks>
+    internal static bool OwnsDeformation(bool stereoRender, bool shadowPass)
+    {
+        IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+        if (!presentation.IsInVR)
+            return true;
+        if (shadowPass)
+            return false;
+
+        bool vrOwnsDeformation = presentation.VrRenderPriority != EVrRenderPriority.Desktop;
+        return stereoRender == vrOwnsDeformation;
+    }
+
     public void RunVisible(RenderCommandCollection commands)
     {
         if (commands is null)

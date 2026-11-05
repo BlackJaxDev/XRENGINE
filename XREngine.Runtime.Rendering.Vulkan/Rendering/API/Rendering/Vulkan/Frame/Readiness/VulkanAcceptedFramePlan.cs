@@ -111,6 +111,10 @@ internal sealed class VulkanAcceptedFramePlan
     {
         for (int index = 0; index < operations.Length; index++)
         {
+            // A submission marker only reports when earlier work was submitted. It
+            // reads no view, so its context does not make the plan depend on the view set.
+            if (operations[index] is SubmissionMarkerOp)
+                continue;
             if (operations[index].ContextReference.ContextKind is
                 EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror)
                 return true;

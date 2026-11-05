@@ -2408,9 +2408,12 @@ namespace XREngine.Rendering
 
                 // Visibility-driven compute deformation (skinning/blendshapes).
                 // This runs on the render thread and uses the swapped (rendering) command buffers.
-                // Skip when 3D scene rendering is suppressed — the stale commands don't need re-skinning.
+                // Skip when 3D scene rendering is suppressed, because the stale commands do not
+                // need new skinning. Shadow views and outputs that do not own the deformation
+                // only read the results of the owning output.
                 var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-                if (!Suppress3DSceneRendering)
+                if (!Suppress3DSceneRendering &&
+                    SkinningPrepassDispatcher.OwnsDeformation(stereoRender: false, shadowPass))
                     SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
                 LastRenderedTargetFBO = targetFbo;
@@ -2670,7 +2673,8 @@ namespace XREngine.Rendering
             // The stereo frame owns its compute deformation. Without this, the eyes
             // read skinned outputs that only a desktop frame updates, so the avatar
             // pose in the headset advances at the desktop rate.
-            if (!Suppress3DSceneRendering)
+            if (!Suppress3DSceneRendering &&
+                SkinningPrepassDispatcher.OwnsDeformation(stereoRender: true, shadowPass: false))
                 SkinningPrepassDispatcher.Instance.RunVisible(MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands);
 
             LastRenderedTargetFBO = targetFbo;
