@@ -381,8 +381,15 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             return false;
         }
 
-        DescriptorUpdateTemplateEntry[] entries = new DescriptorUpdateTemplateEntry[writes.Length];
-        DescriptorUpdateTemplateSignature[] signature = new DescriptorUpdateTemplateSignature[writes.Length];
+        // Compute descriptor refreshes run every eye frame. Keep the entry and
+        // signature scratch off the heap; only a new cache entry copies the signature.
+        const int StackTemplateEntries = 16;
+        Span<DescriptorUpdateTemplateEntry> entries = writes.Length <= StackTemplateEntries
+            ? stackalloc DescriptorUpdateTemplateEntry[writes.Length]
+            : new DescriptorUpdateTemplateEntry[writes.Length];
+        Span<DescriptorUpdateTemplateSignature> signature = writes.Length <= StackTemplateEntries
+            ? stackalloc DescriptorUpdateTemplateSignature[writes.Length]
+            : new DescriptorUpdateTemplateSignature[writes.Length];
         nuint totalSize = 0;
         for (int index = 0; index < writes.Length; index++)
         {
@@ -1616,8 +1623,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
         PipelineBindPoint bindPoint,
         PipelineLayout pipelineLayout,
         uint setIndex,
-        DescriptorUpdateTemplateEntry[] entries,
-        DescriptorUpdateTemplateSignature[] signature,
+        ReadOnlySpan<DescriptorUpdateTemplateEntry> entries,
+        ReadOnlySpan<DescriptorUpdateTemplateSignature> signature,
         out DescriptorUpdateTemplate updateTemplate)
     {
         updateTemplate = default;
@@ -1666,7 +1673,7 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             CachedDescriptorUpdateTemplate created = new()
             {
                 Template = updateTemplate,
-                Signature = signature,
+                Signature = signature.ToArray(),
                 Hash = hash,
             };
             if (bucket is null)
@@ -3271,8 +3278,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
     }
 
     private static bool TemplateSignaturesEqual(
-        DescriptorUpdateTemplateSignature[] left,
-        DescriptorUpdateTemplateSignature[] right)
+        ReadOnlySpan<DescriptorUpdateTemplateSignature> left,
+        ReadOnlySpan<DescriptorUpdateTemplateSignature> right)
     {
         if (left.Length != right.Length)
             return false;
