@@ -2563,13 +2563,14 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		int drawUniformSlot,
 		int frameIndex,
-		out string reason)
+		out string reason,
+		VulkanFrameTelemetry? telemetry = null)
 	{
 		// The primary reuse refresh and secondary recording paths can prepare the
 		// same renderer concurrently. They mutate the active program, descriptor
 		// allocation, and dynamic UBO state, so they must share RecordDraw's lock.
 		lock (_recordDrawSync)
-			return TryPrewarmFrameDataForRecordingNoLock(draw, drawUniformSlot, frameIndex, out reason);
+			return TryPrewarmFrameDataForRecordingNoLock(draw, drawUniformSlot, frameIndex, out reason, telemetry);
 	}
 
 	/// <summary>
@@ -2667,16 +2668,12 @@ internal unsafe partial class VkMeshRenderer
 		}
 	}
 
-	private bool TryPrewarmFrameDataForRecordingNoLock(
-		in PendingMeshDraw draw,
-		int drawUniformSlot,
-		int frameIndex,
-		out string reason)
+	/// <summary>Activates the draw's program for a frame-data prewarm.</summary>
+	private bool TryActivatePrewarmProgramNoLock(in PendingMeshDraw draw, out XRMaterial material, out string reason)
 	{
-		if (!IsFrameDataOwnerOpen(draw, out reason))
-			return false;
+		reason = "Ready";
 		ActivateDrawMaterializationSnapshot(draw);
-		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+		material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 
 		if (!IsActive)
 			Generate();
@@ -2722,38 +2719,72 @@ internal unsafe partial class VkMeshRenderer
 			reason = "program pending";
 			return false;
 		}
+		return true;
+	}
 
+	/// <summary>
+	/// Times one prewarm step when a frame telemetry is supplied and fine-grained
+	/// profiling is on. A default scope records nothing.
+	/// </summary>
+	private static VulkanCpuStageScope PrewarmStage(VulkanFrameTelemetry? telemetry, EVulkanCpuStage stage)
+		=> telemetry is null ? default : new VulkanCpuStageScope(telemetry, stage);
+
+	private bool TryPrewarmFrameDataForRecordingNoLock(
+		in PendingMeshDraw draw,
+		int drawUniformSlot,
+		int frameIndex,
+		out string reason,
+		VulkanFrameTelemetry? telemetry = null)
+	{
+		if (!IsFrameDataOwnerOpen(draw, out reason))
+			return false;
+		XRMaterial material;
+		bool programReady;
+		using (PrewarmStage(telemetry, EVulkanCpuStage.PrewarmProgramActivation))
+			programReady = TryActivatePrewarmProgramNoLock(draw, out material, out reason);
+		if (!programReady)
+			return false;
+
+		VulkanCpuStageScope bufferStage = PrewarmStage(telemetry, EVulkanCpuStage.PrewarmBufferPreparation);
 		EnsureRuntimeDeformationBuffersCurrent();
 		bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
 		EnsureBuffers(usesShaderGeneratedVertices);
-
-		if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
+		bool buffersReady = AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices);
+		bufferStage.Dispose();
+		if (!buffersReady)
 		{
 			reason = $"buffers not ready: {bufferDetail}";
 			return false;
 		}
 
-		// A captured snapshot already holds the scoped and lighting bindings of its frame.
-		if (draw.ProgramBindingSnapshot is { } programBindingSnapshot)
+		using (PrewarmStage(telemetry, EVulkanCpuStage.PrewarmBindingApplication))
 		{
-			_program?.ClearBindings();
-			_program?.ApplyBindingSnapshot(programBindingSnapshot);
-		}
-		else
-		{
-			ApplyScopedProgramBindingsForPreparation(material);
-		}
-		if (_program?.Data is { } programData)
-			NotifyDrawUniforms(material, programData, draw);
+			// A captured snapshot already holds the scoped and lighting bindings of its frame.
+			if (draw.ProgramBindingSnapshot is { } programBindingSnapshot)
+			{
+				_program?.ClearBindings();
+				_program?.ApplyBindingSnapshot(programBindingSnapshot);
+			}
+			else
+			{
+				ApplyScopedProgramBindingsForPreparation(material);
+			}
+			if (_program?.Data is { } programData)
+				NotifyDrawUniforms(material, programData, draw);
 
-		BuildVertexInputState();
+			BuildVertexInputState();
+		}
 
-		if (!EnsureDescriptorSets(material, drawUniformSlot, frameIndex, draw.ProgramBindingSnapshot))
+		bool descriptorsReady;
+		using (PrewarmStage(telemetry, EVulkanCpuStage.PrewarmDescriptorSets))
+			descriptorsReady = EnsureDescriptorSets(material, drawUniformSlot, frameIndex, draw.ProgramBindingSnapshot);
+		if (!descriptorsReady)
 		{
 			reason = $"descriptors pending ({_lastDescriptorPreparationFailure}); program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 			return false;
 		}
 
+		using VulkanCpuStageScope frameSourceStage = PrewarmStage(telemetry, EVulkanCpuStage.PrewarmFrameSourceDescriptors);
 		if (!TryRefreshFrameSourceDescriptorSetsForDraw(
 				frameIndex,
 				drawUniformSlot,

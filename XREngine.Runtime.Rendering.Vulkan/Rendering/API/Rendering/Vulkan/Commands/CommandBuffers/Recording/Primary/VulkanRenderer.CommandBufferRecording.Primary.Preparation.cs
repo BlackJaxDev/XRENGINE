@@ -517,7 +517,8 @@ namespace XREngine.Rendering.Vulkan
                             pendingDraw,
                             drawSlot,
                             recordingState.FrameDataSlot,
-                            out string prewarmReason))
+                            out string prewarmReason,
+                            _frameTelemetry))
                     {
                         Debug.VulkanWarningEvery(
                             $"Vulkan.MeshFrameData.PreRecordReservationFailed.{meshRenderer.GetHashCode()}.{drawSlot}",
