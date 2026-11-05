@@ -584,6 +584,11 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 activeSkinPalette = _globalInputs.GlobalSkinPalette;
             }
 
+            // The renderer palette is rewritten every frame. Give this dispatch its own copy so a
+            // later frame cannot change the pose before the queued dispatch runs on the GPU.
+            if (doSkinning && !useSharedSkinPaletteBuffer && activeSkinPalette is not null)
+                activeSkinPalette = resources.PublishSkinPaletteSnapshot(activeSkinPalette);
+
             uint blendBase = 0u;
             if (useGlobalBlendWeights && _globalInputs.TryGetBlendshapeWeightsSlice(renderer, out uint packedBlendBase, out _))
                 blendBase = packedBlendBase;
