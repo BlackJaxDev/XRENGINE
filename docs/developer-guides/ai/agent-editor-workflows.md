@@ -193,6 +193,20 @@ passed.
 4. Always export suspicious render targets/textures to PNG and visually inspect them. For this engine, useful first checks are directional shadow atlas/cascade depth, Velocity, AmbientOcclusionTexture, LightingAccumTexture, BloomBlurTexture mips, TsrOutputTexture, and the final post-process output.
 5. Keep capture output under the current run root's `renderdoc/` folder, close RenderDoc/`rdc` sessions when done, and record durable findings alongside the MCP/log observations.
 
+### Window Videos
+
+Use `Tools/Record-WindowVideo.ps1` when the user asks for a video of a window. The [record-window-video skill](../../../.agents/skills/record-window-video/SKILL.md) has the full procedure. The script uses the ffmpeg `gfxcapture` filter (Windows Graphics Capture), which records one window at its real presentation rate, also when another window covers it. `gdigrab` cannot see Vulkan swapchain output, and the MCP viewport sequence capture is limited to about 8 frames per second by its readback.
+
+The script needs ffmpeg 8.0 or later. If no ffmpeg on the machine has `gfxcapture`, ask the user, then run `Tools/Dependencies/Get-PortableFfmpeg.ps1`. It extracts a portable build to `Build/_AgentValidation/00000000-000000-shared/tools/ffmpeg` and installs nothing.
+
+```powershell
+# Editor window of an isolated MCP session, and the Monado preview window, at the same time.
+Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','Tools/Record-WindowVideo.ps1','-Window','Monado','-Seconds','20','-Fps','60'
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Record-WindowVideo.ps1 -Window Editor -SessionName <name> -Seconds 20 -Fps 60
+```
+
+For a VR recording, start the session with the Monado OpenXR environment of the benchmark (`XRE_UNIT_TEST_VR_MODE=MonadoOpenXR` and `XR_RUNTIME_JSON` that points to `Build/Deps/Monado/openxr_monado.json`), wait until the scene shows, then record. The script prints the frame count and the number of changed frames. A changed-frame count near 1 means a frozen or black capture.
+
 ## Windowless RenderBench Profiling
 
 Use the dedicated RenderBench process for Vulkan component and presentationless
