@@ -1349,6 +1349,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         ReadOnlySpan<AdvancedTextureRecord> records = textures.PhysicalRecords;
         records.CopyTo(_textureRecordScratch);
         _encodedTextureScratch[0] = CreateFallbackTextureReference();
+        int loadingTextureCount = 0;
         for (int denseIndex = 0; denseIndex < records.Length; ++denseIndex)
         {
             _imageDescriptorScratch[denseIndex] = new DescriptorImageInfo
@@ -1430,6 +1431,25 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 !HasCompatibleLayerCount(record, descriptor.ArrayLayers) ||
                 !_resources.Images.IsAvailableForDescriptor(descriptor.View))
             {
+                // A texture that is still loading draws with the fallback of each
+                // material binding (for example black, white or a flat normal) until
+                // its image is ready. The row keeps encoded reference 0, which is not
+                // resident, so the shader uses the binding fallback. The cold readiness
+                // call above has scheduled the upload, and every frame builds the
+                // publication again, so the real image replaces the fallback as soon
+                // as it is ready. This keeps loading from failing whole frames.
+                // A view that exists but has the wrong shape is a real error.
+                bool stillLoading =
+                    !descriptorReady ||
+                    !descriptor.IsReady ||
+                    descriptor.View.Handle == 0 ||
+                    !_resources.Images.IsAvailableForDescriptor(descriptor.View);
+                if (stillLoading)
+                {
+                    ++loadingTextureCount;
+                    continue;
+                }
+
                 failure =
                     EVulkanAdvancedSceneResourceFailure.TextureDescriptorNotReady;
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} ('{source.Name ?? source.GetType().Name}', sourceId={RuntimeHelpers.GetHashCode(source)}, framebufferAttachment={source.FrameBufferAttachment.HasValue}, dimension={record.Dimension}, sourceGeneration={record.Generation}, descriptorGeneration={descriptorSource.DescriptorGeneration}, wrapper={descriptorSource.GetType().Name}, ready={descriptorSource.IsDescriptorReady}, snapshotReady={descriptorReady}, snapshotView=0x{descriptor.View.Handle:X}, snapshotType={descriptor.ViewType}, snapshotSamples={descriptor.Samples}, snapshotLayers={descriptor.ArrayLayers}, compatibleLayers={HasCompatibleLayerCount(record, descriptor.ArrayLayers)}, viewAvailable={_resources.Images.IsAvailableForDescriptor(descriptor.View)}) is not ready for an exact Vulkan sampled-image descriptor after bounded cold preparation.";
@@ -1466,6 +1486,15 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     defaultSamplerDescriptor,
                     (uint)record.Dimension,
                     EAdvancedResourceReferenceFlags.Resident);
+        }
+
+        if (loadingTextureCount > 0)
+        {
+            Debug.VulkanEvery(
+                "Vulkan.AdvancedScene.LoadingTextureFallback",
+                TimeSpan.FromSeconds(2),
+                "[AdvancedScene] {0} canonical texture(s) are still loading and draw with their binding fallback this frame.",
+                loadingTextureCount);
         }
 
         failure = EVulkanAdvancedSceneResourceFailure.None;
