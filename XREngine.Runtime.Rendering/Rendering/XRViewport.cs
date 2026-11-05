@@ -2410,10 +2410,11 @@ namespace XREngine.Rendering
                 // This runs on the render thread and uses the swapped (rendering) command buffers.
                 // Skip when 3D scene rendering is suppressed, because the stale commands do not
                 // need new skinning. Shadow views and outputs that do not own the deformation
-                // only read the results of the owning output.
+                // only read the results of the owning output. A two-pass VR eye uses this mono
+                // path, so it passes its eye identity, not the stereo flag.
                 var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
                 if (!Suppress3DSceneRendering &&
-                    SkinningPrepassDispatcher.OwnsDeformation(stereoRender: false, shadowPass))
+                    SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
                     SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
                 LastRenderedTargetFBO = targetFbo;
@@ -2674,7 +2675,7 @@ namespace XREngine.Rendering
             // read skinned outputs that only a desktop frame updates, so the avatar
             // pose in the headset advances at the desktop rate.
             if (!Suppress3DSceneRendering &&
-                SkinningPrepassDispatcher.OwnsDeformation(stereoRender: true, shadowPass: false))
+                SkinningPrepassDispatcher.OwnsDeformation(vrEyeRender: true, shadowPass: false))
                 SkinningPrepassDispatcher.Instance.RunVisible(MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands);
 
             LastRenderedTargetFBO = targetFbo;
@@ -2844,6 +2845,12 @@ namespace XREngine.Rendering
 
             return fallback;
         }
+
+        /// <summary>
+        /// True when this viewport renders a VR eye output, in any view render mode.
+        /// </summary>
+        internal bool IsVrEyeOutput
+            => ResolveOutputViewKind() is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye;
 
         private bool IsDesktopFacingOutput()
         {

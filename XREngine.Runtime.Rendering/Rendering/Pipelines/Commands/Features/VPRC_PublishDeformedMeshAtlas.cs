@@ -13,7 +13,8 @@ public class VPRC_PublishDeformedMeshAtlas : ViewportRenderCommand
     {
         if (DefaultRenderPipeline.DrawsFromMeshAtlas &&
             SkinningPrepassDispatcher.OwnsDeformation(
-                ActivePipelineInstance.RenderState.StereoPass,
+                ActivePipelineInstance.RenderState.StereoPass ||
+                    ActivePipelineInstance.RenderState.WindowViewport?.IsVrEyeOutput == true,
                 ActivePipelineInstance.RenderState.ShadowPass) &&
             ActivePipelineInstance.RenderState.Scene is { } scene)
             SkinnedAtlasPublisher.Instance.Run(
