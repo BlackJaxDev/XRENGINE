@@ -2674,9 +2674,15 @@ namespace XREngine.Rendering
             // The stereo frame owns its compute deformation. Without this, the eyes
             // read skinned outputs that only a desktop frame updates, so the avatar
             // pose in the headset advances at the desktop rate.
+            // The stereo pipeline is installed as the current pipeline while it
+            // dispatches, so that the dispatches use that pipeline's frame snapshot pool
+            // and frame-operation context instead of allocating new snapshots each frame.
             if (!Suppress3DSceneRendering &&
                 SkinningPrepassDispatcher.OwnsDeformation(vrEyeRender: true, shadowPass: false))
-                SkinningPrepassDispatcher.Instance.RunVisible(MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands);
+            {
+                using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
+                    SkinningPrepassDispatcher.Instance.RunVisible(MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands);
+            }
 
             LastRenderedTargetFBO = targetFbo;
             _ = Interlocked.Increment(ref _sceneRenderSequenceId);
