@@ -225,6 +225,7 @@ public static class XREngineEnvironmentVariables
     public const string DiagPostProcess = "XRE_DIAG_POSTPROCESS";
     public const string DiagDeferredLighting = "XRE_DIAG_DEFERRED_LIGHTING";
     public const string DebugPresentClear = "XRE_DEBUG_PRESENT_CLEAR";
+    public const string DebugRetryRecoveryClear = "XRE_DEBUG_RETRY_RECOVERY_CLEAR";
     public const string PushSubDataBreakdown = "XRE_PUSHSUBDATA_BREAKDOWN";
     public const string PushSubDataTrace = "XRE_PUSHSUBDATA_TRACE";
     public const string DispatchTrace = "XRE_DISPATCH_TRACE";

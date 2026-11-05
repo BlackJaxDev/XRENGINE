@@ -1549,6 +1549,7 @@ namespace XREngine
         private bool _diagQuadBlit = XREngine.Rendering.RenderDiagnosticsFlags.DiagQuadBlit;
         private bool _diagPostProcess = XREngine.Rendering.RenderDiagnosticsFlags.DiagPostProcess;
         private bool _debugPresentClear = XREngine.Rendering.RenderDiagnosticsFlags.DebugPresentClear;
+        private bool _debugRetryRecoveryClear = XREngine.Rendering.RenderDiagnosticsFlags.DebugRetryRecoveryClear;
         private bool _pushSubDataBreakdown = XREngine.Rendering.RenderDiagnosticsFlags.PushSubDataBreakdown;
         private bool _pushSubDataTrace = XREngine.Rendering.RenderDiagnosticsFlags.PushSubDataTrace;
         private bool _dispatchTrace = XREngine.Rendering.RenderDiagnosticsFlags.DispatchTrace;
@@ -2000,6 +2001,21 @@ namespace XREngine
             {
                 if (SetField(ref _debugPresentClear, value))
                     XREngine.Rendering.RenderDiagnosticsFlags.SetDebugPresentClear(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Debug Retry Recovery Clear")]
+        [Description("When a desktop frame must retry, show a dark purple clear with only the editor overlay instead of the last completed frame. Use it to see each retried frame. Seed env: XRE_DEBUG_RETRY_RECOVERY_CLEAR.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DebugRetryRecoveryClear)]
+        [DefaultValue(false)]
+        public bool DebugRetryRecoveryClear
+        {
+            get => _debugRetryRecoveryClear;
+            set
+            {
+                if (SetField(ref _debugRetryRecoveryClear, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDebugRetryRecoveryClear(value);
             }
         }
 
@@ -3259,6 +3275,7 @@ namespace XREngine
             XREngine.Rendering.RenderDiagnosticsFlags.SetDiagQuadBlit(_diagQuadBlit);
             XREngine.Rendering.RenderDiagnosticsFlags.SetDiagPostProcess(_diagPostProcess);
             XREngine.Rendering.RenderDiagnosticsFlags.SetDebugPresentClear(_debugPresentClear);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDebugRetryRecoveryClear(_debugRetryRecoveryClear);
             XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataBreakdown(_pushSubDataBreakdown);
             XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataTrace(_pushSubDataTrace);
             XREngine.Rendering.RenderDiagnosticsFlags.SetDispatchTrace(_dispatchTrace);
@@ -3325,6 +3342,7 @@ namespace XREngine
             XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagQuadBlit, BooleanValue(_diagQuadBlit));
             XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagPostProcess, BooleanValue(_diagPostProcess));
             XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DebugPresentClear, BooleanValue(_debugPresentClear));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DebugRetryRecoveryClear, BooleanValue(_debugRetryRecoveryClear));
             XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.PushSubDataBreakdown, BooleanValue(_pushSubDataBreakdown));
             XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.PushSubDataTrace, BooleanValue(_pushSubDataTrace));
             XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DispatchTrace, BooleanValue(_dispatchTrace));
@@ -3403,6 +3421,7 @@ namespace XREngine
             DiagQuadBlit = source.DiagQuadBlit;
             DiagPostProcess = source.DiagPostProcess;
             DebugPresentClear = source.DebugPresentClear;
+            DebugRetryRecoveryClear = source.DebugRetryRecoveryClear;
             PushSubDataBreakdown = source.PushSubDataBreakdown;
             PushSubDataTrace = source.PushSubDataTrace;
             DispatchTrace = source.DispatchTrace;

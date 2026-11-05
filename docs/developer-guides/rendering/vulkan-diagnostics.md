@@ -17,6 +17,7 @@ The constants for all variables are in `XREngine.Data/Environment/XREngineEnviro
 | `XRE_VULKAN_CRASH_BREADCRUMBS`, `XRE_VULKAN_DEVICE_FAULT` | Enable crash breadcrumbs and `VK_EXT_device_fault`/`VK_KHR_device_fault` reports on device loss. |
 | `XRE_VULKAN_RENDERDOC_FRIENDLY` | Selects a capture-friendly device configuration. |
 | `XRE_FORCE_SWAPCHAIN_MAGENTA=1` | Clears the swapchain to magenta after main composition. If magenta shows, presentation works and scene output is the suspect. |
+| `XRE_DEBUG_RETRY_RECOVERY_CLEAR=1` | Shows a dark purple recovery clear, with only the editor overlay, for each retried desktop frame. By default a retried frame shows the last completed frame again. |
 | `XRE_SKIP_IMGUI=1` | Removes the ImGui overlay from the frame. |
 | `XRE_SKIP_UI_PIPELINE=1` | Removes screen-space UI pipeline operations from the frame. |
 | `XRE_VK_TRACE_DRAW=1` | Logs every Vulkan draw, including FBO-targeted UI batches. Very heavy. |
@@ -43,6 +44,7 @@ Use these flags when the final image is black, stale, or different from the scen
 | Variable | Code owner | Behavior | Use when |
 |---|---|---|---|
 | `XRE_FORCE_SWAPCHAIN_MAGENTA=1` | `RenderDiagnosticsFlags.ForceSwapchainMagenta`, `VulkanRenderer.CommandBufferRecording.Primary.Finalization` | Clears the Vulkan swapchain to magenta after main composition. The log records the forced clear. | Confirm that acquire, final layout, submit, and present reach the swapchain. |
+| `XRE_DEBUG_RETRY_RECOVERY_CLEAR=1` | `RenderDiagnosticsFlags.DebugRetryRecoveryClear`, `EditorPreferences.DebugRetryRecoveryClear`, `VulkanFrameLoop.ResolveRejectedDesktopRecoveryPolicy` | When a desktop frame must retry, the recovery frame clears to dark purple (0.06, 0.015, 0.08) and draws only the overlay. When it is off, the recovery frame shows the last completed scene again, and uses the clear only when no valid completed scene exists. | Count or see the retried desktop frames while you remove their causes. |
 | `XRE_SKIP_IMGUI=1` | `RenderDiagnosticsFlags.SkipImGui`, `EditorPreferences.Vulkan.SkipImGui` | Skips Vulkan ImGui overlay recording. | Isolate overlay command recording from scene output faults. |
 | `XRE_SKIP_UI_PIPELINE=1` | `RenderDiagnosticsFlags.SkipUiPipeline`, `EditorPreferences.Vulkan.SkipUiPipeline` | Skips screen-space UI pipeline operations on the Vulkan command buffer. | Isolate UI pipeline commands from scene and ImGui commands. |
 
