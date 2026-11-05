@@ -472,6 +472,14 @@ public static class UnitTestingWorldSettingsStore
             applied = true;
         }
 
+        if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestVrDesktopView, out XREngine.Components.VR.EVrDesktopView desktopView))
+        {
+            settings.VR.DesktopView = desktopView;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.DesktopView));
+            applied = true;
+        }
+
         if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestVrViewRenderMode, out EVrViewRenderMode viewRenderMode))
         {
             settings.VR.ViewRenderMode = viewRenderMode;
@@ -824,6 +832,7 @@ public static class UnitTestingWorldSettingsStore
                 : EVrViewRenderMode.SequentialViews,
             PreviewStereoViews = settings.PreviewVRStereoViews,
             AllowDesktopEditing = settings.AllowEditingInVR,
+            DesktopView = settings.VR.DesktopView,
             Foveation = settings.VR.Foveation,
             OpenXrEyeResolution = settings.VR.OpenXrEyeResolution,
             OpenXrRuntimeJson = settings.VR.OpenXrRuntimeJson,
@@ -957,6 +966,7 @@ public static class UnitTestingWorldSettingsStore
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestSceneOnlyVrPawn)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestAllowDesktopEditingInVr)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrDesktopView)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrViewRenderMode)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrRenderPipeline)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrRvcPipelineMode)

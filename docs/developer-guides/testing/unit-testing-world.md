@@ -232,6 +232,18 @@ Desktop creates only the desktop rig at launch. Runtime selection occurs when
 enabling the checkbox. Cancel preserves desktop control; runtime discovery failures
 remain visible and never silently substitute a different runtime.
 
+`VR.DesktopView` selects the desktop view when an OpenXR session starts with
+`VR.AllowDesktopEditing=true`. The toolbar **Desktop view** list changes it at runtime.
+
+| Value | Desktop shows | Mouse and keyboard input |
+|---|---|---|
+| `EditorCamera` (default) | The editor camera and its post-processing settings. | The editor camera. VR action input, such as thumbstick locomotion, does not reach the VR pawn. Headset and controller tracking continue. |
+| `FirstPerson` | The smoothed camera that follows the headset. | The VR pawn. |
+| `Spectator` | The spectator camera. | The VR pawn. |
+| `TextureOutput` | The first-person camera. The spectator renders to a texture. | The VR pawn. |
+
+Benchmark and OpenXR smoke scripts set `FirstPerson`, so their desktop output stays comparable across runs.
+
 There are two no-headset VR lanes:
 
 Lane 1 is scene-only VR. It builds the VR-shaped pawn, transforms, and stereo preview without entering the OpenXR API:
@@ -346,6 +358,7 @@ For script-driven launches, these process-scoped overrides select the lane witho
 - `XRE_UNIT_TEST_VR_MODE=Desktop|Emulated|MonadoOpenXR|OpenVR|OpenXR`
 - `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1`
 - `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`
+- `XRE_UNIT_TEST_VR_DESKTOP_VIEW=EditorCamera|FirstPerson|Spectator|TextureOutput` sets `VR.DesktopView`.
 - `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0`
 - `XRE_UNIT_TEST_VR_MIRROR_MODE=BlitSubmittedEye|CyclopeanReconstruct|LowRatePreview|FullIndependentRender` selects the desktop view for a VR pawn. Desktop editing and stereo preview still use `FullIndependentRender`.
 - `XRE_UNIT_TEST_VR_DESKTOP_FRAME_EXECUTION_MODE=Inline|WorkerRecord|SeparateDomain` sets `VrDesktopFrameExecutionMode` for a recording desktop view. `WorkerRecord` needs at least two background render workers; when the render worker count is 0 or automatic, startup uses two, and an explicit count of 1 fails every desktop frame with a logged reason; `SeparateDomain` holds the window until it is implemented.
