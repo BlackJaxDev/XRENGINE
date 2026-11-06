@@ -105,6 +105,7 @@ The render thread never mutates planner-owned collections.
 - A completion carries the rendered sample. `DirectionalLightComponent` stores the latest rendered sample per cascade slot.
 - A sampleable stale atlas slot uses its rendered sample, not the current cascade slice. A slot's texture content and its uniform payload always come from the same generation.
 - If a resident stale tile has no rendered sample, the slot is not sampleable and the receiver uses a visible fallback.
+- The collect thread fits the cascade slices and records each request's matrix before the swap. While the render thread draws, the collect thread can already refit the slices for the next frame. So at the swap boundary, `PublishCascadeRenderCameras` copies the slice matrices into `RenderSliceMatrices` and the cascade cameras into `RenderCameras`. All tile draws (per tile, grouped, legacy layered, and the Advanced shadow lane) use these copies. Then a tile's content always matches the matrix that its atlas slot records for reprojection. `XRE_DIRECTIONAL_SHADOW_AUDIT=1` in a Debug build logs `[CascadeDrawMatrix]` with `liveRefitted=True` when a draw would otherwise have used the next frame's fit.
 - The receiver selects the cascade from the current view. For a rendered slot, it uses the rendered split and matrix from `DirectionalShadowRecords`. `XRENGINE_CanSampleRenderedCascade` rejects an invalid page or a `StaleTile` slot older than `DirectionalShadowAtlasMaxStaleFrames`. Sampling fades near the tile border.
 
 ### Cadence, stale age, and forced refresh
