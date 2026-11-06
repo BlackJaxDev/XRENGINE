@@ -1041,7 +1041,6 @@ namespace XREngine
         private const int ImportedParallaxRefineSteps = 5;
         private const string UberParallaxModeParameter = "_ParallaxMode";
         private const float UberParallaxOcclusionMode = 1.0f;
-        private const float UberParallaxSilhouetteMode = 2.0f;
 
         private static TextureType NormalizeTextureType(TextureType textureType)
             => textureType switch
@@ -1129,22 +1128,41 @@ namespace XREngine
                 : shader;
 
         /// <summary>
-        /// Selects the deferred GBuffer shader for a surface-detail texture. A height map selects the
-        /// height-to-normal variant and also silhouette parallax occlusion mapping
-        /// (<c>Snippets/SurfaceDetailParallax.glsl</c>), which offsets UVs and depth along the view ray.
+        /// UV0 domain of the material that the importer creates on this thread: true when a mesh that
+        /// uses the material has UV0 outside the unit square (a tiled surface). Null outside
+        /// <see cref="ProcessMaterial"/>, for example for factory calls from other importers.
         /// </summary>
-        private static XRShader SelectDeferredSurfaceDetailShader(XRShader shader, bool isHeightMap)
+        [ThreadStatic]
+        private static bool? t_importedMaterialUv0Tiled;
+
+        /// <summary>
+        /// True when an imported height map should drive parallax occlusion mapping. Parallax needs a
+        /// tiled UV layout: on atlas-mapped meshes (UV0 inside [0, 1], for example sculpted props) the
+        /// parallax ray crosses UV island borders and samples unrelated texels. Those materials keep
+        /// height-to-normal shading only.
+        /// </summary>
+        private static bool UsesImportedParallax(bool usesHeightMap)
+            => usesHeightMap && t_importedMaterialUv0Tiled == true;
+
+        /// <summary>
+        /// Selects the deferred GBuffer shader for a surface-detail texture. A height map selects the
+        /// height-to-normal variant. With <paramref name="usesParallax"/>, it also selects parallax
+        /// occlusion mapping (<c>Snippets/SurfaceDetailParallax.glsl</c>), which offsets UVs and depth
+        /// along the view ray.
+        /// </summary>
+        private static XRShader SelectDeferredSurfaceDetailShader(XRShader shader, bool isHeightMap, bool usesParallax)
         {
             XRShader selected = SelectSurfaceDetailShader(shader, isHeightMap);
-            return isHeightMap
+            return isHeightMap && usesParallax
                 ? ShaderHelper.CreateDefinedShaderVariant(selected, ImportedHeightMapParallaxShaderDefine) ?? selected
                 : selected;
         }
 
         /// <summary>
         /// Appends the parallax occlusion parameters read by <c>Snippets/SurfaceDetailParallax.glsl</c>.
-        /// The silhouette clip starts disabled. <see cref="ApplyImportedParallaxUvDomain"/> enables it
-        /// when every mesh that uses the material keeps UV0 inside the unit square.
+        /// The silhouette clip starts disabled: it discards where the ray leaves UV [0, 1], which matches
+        /// mesh edges only for a single quad mapped to the whole texture. Set
+        /// <c>ParallaxSilhouette</c> to 1 on such materials.
         /// </summary>
         private static void AppendSurfaceParallaxParameters(ref ShaderVar[] parameters)
         {
@@ -1158,45 +1176,25 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Enables the parallax silhouette clip of an imported material when its UV0 domain is the unit square.
-        /// The clip discards fragments whose parallax ray leaves UV [0, 1]. Tiled UV layouts (for example
-        /// brick walls with UVs far outside [0, 1]) keep parallax and depth offset without the clip,
-        /// because a unit-square clip would remove most of the surface.
+        /// Returns true when a scene mesh that uses <paramref name="materialIndex"/> has a UV0 coordinate
+        /// outside the unit square, with a small tolerance for authoring noise at the edges.
         /// </summary>
-        /// <param name="material">The imported material. Materials without parallax parameters are ignored.</param>
-        /// <param name="uvInsideUnitSquare">True when all UV0 coordinates of all meshes that use the material are inside [0, 1].</param>
-        public static void ApplyImportedParallaxUvDomain(XRMaterial material, bool uvInsideUnitSquare)
-        {
-            int silhouette = uvInsideUnitSquare ? 1 : 0;
-            material.Parameter<ShaderInt>(ImportedParallaxSilhouetteParameter)?.SetValue(silhouette);
-            if (material.Parameter<ShaderFloat>(UberParallaxModeParameter) is { } uberMode && uberMode.Value > 0.0f)
-                uberMode.SetValue(uvInsideUnitSquare ? UberParallaxSilhouetteMode : UberParallaxOcclusionMode);
-        }
-
-        /// <summary>
-        /// Returns true when every UV0 coordinate of every scene mesh that uses <paramref name="materialIndex"/>
-        /// lies inside the unit square, with a small tolerance for authoring noise at the edges.
-        /// Meshes without UV0 make the result false.
-        /// </summary>
-        private static bool IsMaterialUv0InsideUnitSquare(AScene scene, int materialIndex)
+        private static bool IsMaterialUv0Tiled(AScene scene, int materialIndex)
         {
             const float tolerance = 1e-3f;
-            bool anyMesh = false;
             foreach (Mesh mesh in scene.Meshes)
             {
-                if (mesh.MaterialIndex != materialIndex)
+                if (mesh.MaterialIndex != materialIndex ||
+                    mesh.TextureCoordinateChannelCount <= 0 ||
+                    mesh.TextureCoordinateChannels[0] is not { Count: > 0 } uvs)
                     continue;
-
-                anyMesh = true;
-                if (mesh.TextureCoordinateChannelCount <= 0 || mesh.TextureCoordinateChannels[0] is not { Count: > 0 } uvs)
-                    return false;
 
                 foreach (Vector3 uv in uvs)
                     if (uv.X < -tolerance || uv.X > 1.0f + tolerance || uv.Y < -tolerance || uv.Y > 1.0f + tolerance)
-                        return false;
+                        return true;
             }
 
-            return anyMesh;
+            return false;
         }
 
         /// <summary>
@@ -1267,6 +1265,8 @@ namespace XREngine
             int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
 
             int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
+
+            bool usesParallax = UsesImportedParallax(usesHeightMap);
             int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
             int metallicIndex = ResolveTextureIndex(textures, TextureType.Metalness);
@@ -1355,32 +1355,32 @@ namespace XREngine
                     {
                         // Sparse metallic slot is intentional: the shader expects Texture2=metallic and Texture3=roughness.
                         mat.Textures = [diffuse, normal, metallic, roughness];
-                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalRoughnessMetallicDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalRoughnessMetallicDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal && hasMetallic)
                     {
                         mat.Textures = [diffuse, normal, metallic];
-                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalMetallicFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalMetallicFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal && hasSpecular && hasAlphaMask)
                     {
                         mat.Textures = [diffuse, normal, specular, alphaMask];
-                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecAlphaFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecAlphaFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal && hasSpecular)
                     {
                         mat.Textures = [diffuse, normal, specular];
-                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal && hasAlphaMask)
                     {
                         mat.Textures = [diffuse, normal, alphaMask];
-                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalAlphaFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalAlphaFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal)
                     {
                         mat.Textures = [diffuse, normal];
-                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasMetallic && hasRoughness)
                     {
@@ -1438,7 +1438,7 @@ namespace XREngine
                     {
                         var parameters = mat.Parameters;
                         AppendSurfaceDetailParameters(ref parameters, usesHeightMap);
-                        if (usesHeightMap)
+                        if (usesParallax)
                             AppendSurfaceParallaxParameters(ref parameters);
                         mat.Parameters = parameters;
                     }
@@ -1521,6 +1521,7 @@ namespace XREngine
                 diffuseIndex = 0;
 
             int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
+
             int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
 
@@ -1934,6 +1935,8 @@ namespace XREngine
                 diffuseIndex = 0;
 
             int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
+
+            bool usesParallax = UsesImportedParallax(usesHeightMap);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
 
             XRTexture? diffuseSrc = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
@@ -1961,7 +1964,7 @@ namespace XREngine
 
             // A height map also drives Uber parallax occlusion. The same file binds to _ParallaxMap;
             // _BumpMap keeps the height-to-normal lighting detail (NormalMapMode = 1).
-            XRTexture2D? parallaxMap = usesHeightMap && normalPath is not null
+            XRTexture2D? parallaxMap = usesParallax && normalPath is not null
                 ? GetOrCreateUberSamplerTexture(normalPath, "_ParallaxMap")
                 : null;
 
@@ -1987,8 +1990,6 @@ namespace XREngine
 
             if (parallaxMap is not null)
             {
-                // Occlusion mode until ApplyImportedParallaxUvDomain proves the UV0 domain is the
-                // unit square; then it selects the silhouette mode.
                 mat.Parameter<ShaderFloat>(UberParallaxModeParameter)?.SetValue(UberParallaxOcclusionMode);
                 mat.Parameter<ShaderFloat>("_ParallaxStrength")?.SetValue(ImportedParallaxScale);
                 mat.SetUberFeatureEnabled("parallax", true);
@@ -3087,10 +3088,17 @@ namespace XREngine
                     textures.AddRange(maps);
             }
             ReadProperties(matInfo, out string name, out TextureFlags flags, out ShadingMode mode, out var propDic);
-            XRMaterial material = _materialFactory(SourceFilePath, name, textures, flags, mode, propDic);
-            // A remapped material owns its parallax settings.
-            if (!ReferenceEquals(material, ResolveMaterialRemap(name)))
-                ApplyImportedParallaxUvDomain(material, IsMaterialUv0InsideUnitSquare(scene, materialIndex));
+            bool? previousUv0Tiled = t_importedMaterialUv0Tiled;
+            t_importedMaterialUv0Tiled = IsMaterialUv0Tiled(scene, materialIndex);
+            XRMaterial material;
+            try
+            {
+                material = _materialFactory(SourceFilePath, name, textures, flags, mode, propDic);
+            }
+            finally
+            {
+                t_importedMaterialUv0Tiled = previousUv0Tiled;
+            }
             _materials.Add(material);
             return material;
         }

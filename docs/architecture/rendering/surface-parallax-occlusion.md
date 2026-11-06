@@ -1,41 +1,42 @@
 # Surface parallax occlusion mapping
 
-Imported materials whose surface-detail texture is a height map (for example an
-OBJ `bump` map such as the Sponza brick walls) render with silhouette parallax
-occlusion mapping (POM). Lighting normals still come from the height map through
-the Sobel height-to-normal path (`NormalMapMode = 1`).
+Imported materials whose surface-detail texture is a height map and whose UVs
+tile (for example the OBJ `bump` maps on the Sponza brick walls) render with
+parallax occlusion mapping (POM) and a depth offset. Lighting normals still come
+from the height map through the Sobel height-to-normal path
+(`NormalMapMode = 1`).
 
 ## Import selection
 
 `ModelAssetImporter` resolves the surface-detail texture. A normal map wins over
-a height map. When the result is a height map:
+a height map. Before it creates a material, `ProcessMaterial` scans UV0 of every
+scene mesh that uses the material. The material is tiled when any UV0 coordinate
+is outside `[0, 1]` (tolerance `1e-3`).
 
-- **Default deferred:** the shader is the existing `TexturedNormal*Deferred.fs`
-  family with two defines: `XRENGINE_HEIGHTMAP_MODE` (height-to-normal) and
-  `XRENGINE_HEIGHTMAP_POM` (parallax). The material gets the parameters
-  `ParallaxScale`, `ParallaxMinSteps`, `ParallaxMaxSteps`, `ParallaxRefineSteps`
-  and `ParallaxSilhouette`. Its render options require the `Camera` and
-  `ClipSpacePolicy` engine uniforms.
-- **Forward+ Uber:** the same file binds to `_ParallaxMap`, the `parallax`
-  feature is enabled and `_ParallaxMode` selects occlusion (`1`) or silhouette
-  occlusion (`2`). `_BumpMap` keeps the height-to-normal lighting detail.
+- **Height map, tiled UVs:** parallax is enabled.
+  - **Default deferred:** the shader is the existing `TexturedNormal*Deferred.fs`
+    family with two defines: `XRENGINE_HEIGHTMAP_MODE` (height-to-normal) and
+    `XRENGINE_HEIGHTMAP_POM` (parallax). The material gets the parameters
+    `ParallaxScale`, `ParallaxMinSteps`, `ParallaxMaxSteps`,
+    `ParallaxRefineSteps` and `ParallaxSilhouette`. Its render options require
+    the `Camera` and `ClipSpacePolicy` engine uniforms.
+  - **Forward+ Uber:** the same file binds to `_ParallaxMap`, the `parallax`
+    feature is enabled and `_ParallaxMode` is occlusion (`1`). `_BumpMap` keeps
+    the height-to-normal lighting detail.
+- **Height map, UV0 inside `[0, 1]`:** height-to-normal only. These are usually
+  atlas-mapped meshes such as sculpted props. The parallax ray crosses UV island
+  borders and samples gutters or unrelated texels, which tears the surface.
+- Forward textured (non-Uber) imports keep height-to-normal only.
+- Materials created outside `ProcessMaterial` (for example by the native FBX
+  path) have no UV scan and keep height-to-normal only.
 
-Forward textured (non-Uber) imports keep height-to-normal only.
+### Silhouette clip
 
-### Silhouette clip and the UV domain
-
-The silhouette clip discards fragments whose parallax ray leaves the UV square
-`[0, 1]`. This approximates the mesh edge only when the mesh UVs cover that
-square. Tiled layouts, such as walls with UVs far outside `[0, 1]`, would lose
-most of the surface. After the importer creates a material, it scans UV0 of every
-scene mesh that uses the material:
-
-- All UV0 inside `[0, 1]` (tolerance `1e-3`): `ParallaxSilhouette = 1`, Uber
-  `_ParallaxMode = 2`.
-- Otherwise, or no UV0: `ParallaxSilhouette = 0`, Uber `_ParallaxMode = 1`.
-  Parallax and the depth offset stay active.
-
-A material from the import material remap keeps its own settings.
+`ParallaxSilhouette = 1` (Uber `_ParallaxMode = 2`) discards fragments whose
+parallax ray leaves the UV square `[0, 1]`. That matches the mesh edge only for a
+single quad mapped to the whole texture. On tiled surfaces it removes most of the
+surface, and on atlas meshes it cuts holes. The importer never enables it; set
+it on a material that fits that layout.
 
 ## Default shader contract
 
