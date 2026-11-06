@@ -21,7 +21,8 @@ internal sealed class TextureTransitionQueue
         string reason,
         JobPriority priority,
         TextureUploadPriorityClass uploadPriorityClass,
-        out CancellationTokenSource? previousPendingLoadCts)
+        out CancellationTokenSource? previousPendingLoadCts,
+        bool requestDriven = false)
     {
         previousPendingLoadCts = null;
         lock (record.Sync)
@@ -44,6 +45,7 @@ internal sealed class TextureTransitionQueue
             record.PendingTransitionReason = reason;
             record.PendingTransitionPriority = priority;
             record.PendingTransitionUploadPriorityClass = uploadPriorityClass;
+            record.PendingTransitionRequestDriven = requestDriven;
             record.PendingSparseTransitionRequest = default;
             record.PendingSparseTransitionResult = null;
             record.UploadGeneration++;
@@ -88,6 +90,7 @@ internal sealed class TextureTransitionQueue
         record.PendingTransitionReason = string.Empty;
         record.PendingTransitionPriority = JobPriority.Low;
         record.PendingTransitionUploadPriorityClass = TextureUploadPriorityClass.Background;
+        record.PendingTransitionRequestDriven = false;
     }
 
     public static void CancelPendingLoad(CancellationTokenSource? cts)

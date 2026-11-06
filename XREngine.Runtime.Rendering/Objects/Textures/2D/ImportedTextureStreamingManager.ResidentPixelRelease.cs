@@ -29,8 +29,8 @@ internal sealed partial class ImportedTextureStreamingManager
     /// </summary>
     private static bool CanReleasePublishedResidentPixels(ImportedTextureStreamingRecord record)
         => record.Source is not null &&
-           ReferenceEquals(record.Backend, VulkanDenseBackend) &&
-           RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
+           RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
+           ReferenceEquals(record.Backend, VulkanDenseBackend);
 
     private static void RecordResidentPixelRelease(long releasedBytes)
     {

@@ -82,6 +82,30 @@ internal sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
     public string PendingTransitionReason = string.Empty;
     public JobPriority PendingTransitionPriority = JobPriority.Low;
     public TextureUploadPriorityClass PendingTransitionUploadPriorityClass = TextureUploadPriorityClass.Background;
+
+    /// <summary>
+    /// True if an explicit residency request, not visibility, raised the target of the pending
+    /// transition. Such a promotion does not set <see cref="PinUntilFrameId"/>, and a cancel of the
+    /// request cancels it.
+    /// </summary>
+    public bool PendingTransitionRequestDriven;
+
+    /// <summary>
+    /// The largest side that the active explicit residency requests need. Zero if no request is active.
+    /// The manager sets the request fields one time in each evaluation, under <see cref="Sync"/>.
+    /// They are not visibility: they do not change <see cref="LastVisibleFrameId"/>.
+    /// </summary>
+    public uint RequestedMaxDimension;
+
+    /// <summary>The highest job priority of the active explicit residency requests.</summary>
+    public JobPriority RequestPriority = JobPriority.Low;
+
+    /// <summary>The earliest deadline frame of the active explicit residency requests.</summary>
+    public long RequestDeadlineFrameId = long.MaxValue;
+
+    /// <summary>The request refresh that last wrote the request fields. The manager uses it to reset each record one time in each refresh.</summary>
+    public long RequestRefreshSequence = long.MinValue;
+
     public float BaseLodBias;
     public float CurrentStreamingLodBias;
     public float PromotionFadeStartBias;
@@ -219,6 +243,9 @@ internal readonly record struct ImportedTextureStreamingSnapshot(
     double LastTextureUploadMilliseconds,
     long FailedTransitionCooldownUntilFrameId,
     uint FailedTransitionTargetMaxDimension,
-    int ConsecutiveTransitionFailureCount);
+    int ConsecutiveTransitionFailureCount,
+    uint RequestedMaxDimension = 0,
+    JobPriority RequestPriority = JobPriority.Low,
+    long RequestDeadlineFrameId = long.MaxValue);
 
 

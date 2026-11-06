@@ -117,7 +117,7 @@ Put completion logic on `CutscenePlayer.Finished` or `CutsceneDirectorComponent.
 
 ## Residency
 
-`CutsceneResidencyPlanner` decides which level of each asset must be resident, and by which time, around the playhead. The levels are T0 (proxy), T1 (coarse), and T2 (target). The planner sends requests to an `IResidencyBackend` and does no IO itself. It is not connected to `CutscenePlayer` or the director yet, and no texture or mesh backend exists yet.
+`CutsceneResidencyPlanner` decides which level of each asset must be resident, and by which time, around the playhead. The levels are T0 (proxy), T1 (coarse), and T2 (target). The planner sends requests to an `IResidencyBackend` and does no IO itself. It is not connected to `CutscenePlayer` or the director yet. `TextureResidencyBackend` is the texture backend; no mesh backend exists yet.
 
 - **Input:** a `CutsceneResidencyManifest` holds a shared asset table and `ResidencyBucket` entries in time order, with no overlap. Each `ResidencyEntry` gives an asset index, a target level, and a screen coverage. A bucket can mark a camera cut at its start.
 - **Calls:** call `Open` one time. It requests T0 for each asset. Then call `Update(position, rate, seek, deltaSeconds)` one time in each frame on the update thread. `seek` is null when no seek occurred. A backend reports complete work with `NotifyCompleted`, from any thread. The next update applies it and raises `LoadCompleted`.
@@ -128,6 +128,11 @@ Put completion logic on `CutscenePlayer.Finished` or `CutsceneDirectorComponent.
 - **Backend contract:** `IResidencyBackend.Cancel` on a complete ticket releases the data that the ticket holds. Set the level that `GetLevel` reports before the call to `NotifyCompleted`. A level that only a cache supplies, with no ticket, is not held.
 - **Playback wait:** `PlaybackWaitEnabled` is off by default. When it is on, forward play that crosses a camera cut sets `IsHoldingPlayback` until the next shot has its target levels or `PlaybackWaitMaximumSeconds` (default 1 second) passes. The caller holds the clock at `PlaybackHoldTime`. A jump, a scrub, and reverse play never hold. `PlaybackWaitTimeoutCount` counts the waits that reached the maximum.
 - **Close:** `Close` cancels all work and releases all levels, T0 included. After it, a completion runs no callback and `Update` does nothing.
+- **Textures:** `TextureResidencyBackend` sends the levels to the imported texture streaming manager as explicit residency requests (see [Texture Streaming](../../architecture/rendering/texture-streaming.md#explicit-residency-requests)). T0 is the texture preview, T1 is the first mip with a largest side of at most `CoarseMaxDimension` (default 512), and T2 is the full source size. The texture quality setting and the VRAM budget can lower T2. A request is not visibility and does not pin the texture. A cancel of a complete ticket releases the hold, and the texture returns to visibility-driven residency. `GetLevel` reports the highest level of a ticket whose mip is resident now.
+  - Create it with an `AssetManager` (it finds loaded textures by asset ID) or with a `Func<Guid, XRTexture2D?>`. It works on textures that are already loaded. It does not load assets.
+  - Call `AttachPlanner(planner)` before `planner.Open()`, so that the backend can report complete work. Call `SetPlayhead(position, rate)` before each `planner.Update`, so that request deadlines become frame deadlines (`EstimatedFramesPerSecond`, default 60). Without a playhead, requests have no deadline.
+  - By default it selects the `Cutscene` texture streaming budget profile and selects `Default` again at `Dispose`. The profile is global, so keep only one such backend active. The `Cutscene` limits are provisional engine settings.
+  - The backend rejects a request when the asset is not a loaded texture, when streaming does not track the texture, or when the source size for T1 is not known yet. It logs a warning and counts the rejection in `RejectedRequestCount`.
 
 ## Author A Cutscene
 

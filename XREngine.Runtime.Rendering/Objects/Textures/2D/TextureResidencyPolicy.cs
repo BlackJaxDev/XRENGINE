@@ -223,6 +223,25 @@ internal static class TextureResidencyPolicy
         if (leftRecentlyBound != rightRecentlyBound)
             return leftRecentlyBound ? -1 : 1;
 
+        // An explicit request ranks after visible and bound textures, and before the others.
+        // It does not change the order of visible textures. Among requests, the earlier
+        // deadline goes first, then the higher priority.
+        bool leftRequested = !leftVisible && HasUnmetResidencyRequest(left);
+        bool rightRequested = !rightVisible && HasUnmetResidencyRequest(right);
+        if (leftRequested != rightRequested)
+            return leftRequested ? -1 : 1;
+
+        if (leftRequested)
+        {
+            int deadlineCompare = left.RequestDeadlineFrameId.CompareTo(right.RequestDeadlineFrameId);
+            if (deadlineCompare != 0)
+                return deadlineCompare;
+
+            int requestPriorityCompare = right.RequestPriority.CompareTo(left.RequestPriority);
+            if (requestPriorityCompare != 0)
+                return requestPriorityCompare;
+        }
+
         if (leftVisible && rightVisible)
         {
             int priorityCompare = CalculatePriorityScore(right).CompareTo(CalculatePriorityScore(left));
@@ -273,6 +292,24 @@ internal static class TextureResidencyPolicy
             return JobPriority.Low;
 
         bool isPromotion = targetResidentSize > currentResidentSize || targetCommittedBytes > currentCommittedBytes;
+        JobPriority priority = ResolveVisibilityTransitionJobPriority(snapshot, frameId, targetResidentSize, isPromotion);
+        if (!isPromotion || snapshot.RequestedMaxDimension == 0)
+            return priority;
+
+        // An explicit request raises the priority of a promotion to its own priority.
+        // At or after its deadline frame, the promotion gets the highest priority.
+        JobPriority requestPriority = frameId >= snapshot.RequestDeadlineFrameId
+            ? JobPriority.Highest
+            : snapshot.RequestPriority;
+        return requestPriority > priority ? requestPriority : priority;
+    }
+
+    private static JobPriority ResolveVisibilityTransitionJobPriority(
+        ImportedTextureStreamingSnapshot snapshot,
+        long frameId,
+        uint targetResidentSize,
+        bool isPromotion)
+    {
         bool visibleThisFrame = snapshot.LastVisibleFrameId == frameId;
         bool recentlyBound = IsRecentlyBound(snapshot, frameId);
         if (visibleThisFrame)
@@ -306,6 +343,61 @@ internal static class TextureResidencyPolicy
     internal static bool IsRecentlyBound(ImportedTextureStreamingSnapshot snapshot, long frameId)
         => IsRecentlyBound(snapshot.LastBoundFrameId, frameId);
 
+    /// <summary>
+    /// True if an explicit residency request needs more than the texture has: its preview is not
+    /// ready, or the requested size is larger than the resident size.
+    /// </summary>
+    internal static bool HasUnmetResidencyRequest(ImportedTextureStreamingSnapshot snapshot)
+        => snapshot.RequestedMaxDimension != 0
+            && (!snapshot.PreviewReady || snapshot.RequestedMaxDimension > snapshot.ResidentMaxDimension);
+
+    /// <summary>
+    /// Converts a requested mip to the largest side, in texels, that the request needs.
+    /// Mip 0 is the full source size, and each step halves it. The result is at least 1.
+    /// </summary>
+    internal static uint ResolveRequestedMaxDimension(uint sourceMaxDimension, int targetMip)
+    {
+        if (sourceMaxDimension == 0)
+            return 1u;
+
+        int shift = Math.Clamp(targetMip, 0, 31);
+        return Math.Max(1u, sourceMaxDimension >> shift);
+    }
+
+    /// <summary>
+    /// Gets the resident size that an explicit residency request adds to the policy target.
+    /// A request is not visibility: the caller takes the larger of this value and the visibility target.
+    /// Before the preview is ready, the request asks for the preview only. When promotions are blocked,
+    /// the request adds nothing. The result never exceeds the source size.
+    /// </summary>
+    /// <param name="requestedMaxDimension">The largest side that the requests need. Zero means no request.</param>
+    /// <param name="sourceMaxDimension">The largest side of the source. Zero if it is not known yet.</param>
+    /// <param name="previewMaxDimension">The preview size of the backend.</param>
+    /// <param name="previewReady">True if the preview is published.</param>
+    /// <param name="allowPromotions">False if the budget blocks promotions in this frame.</param>
+    internal static uint ResolveRequestedResidentSize(
+        uint requestedMaxDimension,
+        uint sourceMaxDimension,
+        uint previewMaxDimension,
+        bool previewReady,
+        bool allowPromotions)
+    {
+        if (requestedMaxDimension == 0)
+            return 0u;
+
+        if (!previewReady || sourceMaxDimension == 0)
+        {
+            return sourceMaxDimension == 0
+                ? previewMaxDimension
+                : Math.Min(sourceMaxDimension, previewMaxDimension);
+        }
+
+        if (!allowPromotions)
+            return 0u;
+
+        return Math.Min(requestedMaxDimension, sourceMaxDimension);
+    }
+
     internal static bool IsRecentlyBound(long lastBoundFrameId, long frameId)
         => lastBoundFrameId != long.MinValue
             && frameId >= lastBoundFrameId
@@ -326,6 +418,9 @@ internal static class TextureResidencyPolicy
 
         if (isPromotion && IsRecentlyBound(snapshot, frameId))
             return importsActive ? "bound import-era promotion" : "recent material binding promotion";
+
+        if (isPromotion && HasUnmetResidencyRequest(snapshot))
+            return "residency request promotion";
 
         if (isPromotion)
             return "recent visibility promotion";

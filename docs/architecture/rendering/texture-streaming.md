@@ -60,6 +60,31 @@ The `XRTS` payload stores a preview mip and per-mip offsets. Streamability check
 - A dense upload after sparse residency clears the sparse state first (`XRTexture2D.ApplyResidentData`), and OpenGL recreates storage when it leaves sparse storage. `Texture.SparseStateClearedForDenseUpload` marks this boundary in logs.
 - OpenGL sparse residency applies only to eligible textures (page-aligned `Rgba8`). Promotions use a shared context with fence-gated exposure and storage-generation checks. Committed-byte telemetry is an estimate.
 
+## Explicit Residency Requests
+
+A caller can request a mip of a streamed texture before the texture is visible. The cutscene residency planner uses this through `TextureResidencyBackend` (see the [cutscene guide](../../developer-guides/animation/cutscenes.md#residency)).
+
+- `ImportedTextureStreamingManager.RequestResidency(texture, targetMip, deadlineFrame, priority, generation)` returns a `TextureResidencyTicket`. Mip 0 is the full source size; each step halves it. A large mip asks for the preview only. `CancelResidency(ticket)` ends the request. `GetResidencyRequestState(ticket)` returns `Pending`, `Resident`, or `None`. The event `ResidencyRequestCompleted` occurs one time for each request, after the state becomes `Resident`.
+- The texture must be tracked by streaming. A request registers a native imported texture the same way a first material use does. Otherwise the manager rejects the request, logs a warning, and returns `TextureResidencyTicket.None`.
+- A request is a demand signal separate from visibility. Each evaluation writes the largest requested size, the highest priority, and the earliest deadline to the record. The policy target becomes the larger of the visibility target and the requested size. A request does not change `LastVisibleFrameId`, and a promotion that only a request raised does not set the visible pin (`PinUntilFrameId`).
+- Requests use the normal transition path. The per-frame limits, the texture quality cap, the failed-promotion cooldown, the Vulkan preview freeze, and the VRAM budget fit apply to them. The publish rule does not change: publication occurs on the render thread only, after the GPU receipt and a generation check.
+- Order: a requested texture that is not visible ranks after visible and recently bound textures, and before other textures. Among requests, the earlier deadline goes first, then the higher priority. A request raises the job priority of its promotion to its own priority, and to `Highest` at or after its deadline frame.
+- Cancel: if the request raised a promotion that is still pending, and no other request needs that size, the cancel clears the pending transition and cancels its token. The generation is no longer current, so the result never publishes. The cancel of a resident request only releases the hold; the texture returns to visibility-driven residency, and the normal demotion rules apply.
+- A request is `Resident` when the preview is ready and the resident size covers the requested size after the texture quality cap. If a budget demotion removes the mip, the state goes back to `Pending`; the event does not occur again. A budget that is too small keeps the request `Pending`.
+
+## Budget Profiles
+
+`ImportedTextureStreamingManager.SetBudgetProfile(ETextureStreamingBudgetProfile)` selects the per-frame limits (`TextureStreamingBudgetLimits`). The limits fade from one profile to the other over `TextureStreamingBudgetProfileFadeFrames` evaluations (default 30; 0 changes them in one frame).
+| Limit | `Default` | `Cutscene` setting (provisional default) |
+|---|---|---|
+| Transitions in one frame | 2 | `TextureStreamingCutsceneMaxTransitionsPerFrame` (6) |
+| Promotions in one frame | 1 | `TextureStreamingCutsceneMaxPromotionsPerFrame` (4) |
+| Promotion bytes in one frame | 32 MB | `TextureStreamingCutsceneMaxPromotionMegabytesPerFrame` (96) |
+| Promotion cooldown | 6 frames | `TextureStreamingCutscenePromotionCooldownFrames` (2) |
+| Mip fade after a promotion | 90 frames | `TextureStreamingCutscenePromotionFadeFrames` (12) |
+
+The settings are on `RuntimeEngine.Rendering.EngineSettings`. The `Cutscene` values are provisional: they are not measured yet, so profile a cutscene before you change them. The short mip fade prevents a texture that loaded for a cutscene jump from looking late. Neither profile changes the VRAM budget fit, the import-era promotion limit, the demotion cooldown, or the visible pin.
+
 ## Vulkan Upload And Publication Contract
 
 Vulkan imported textures never use one-shot layout transitions or copies for live streaming. `VulkanTextureUploadService` owns the whole path.

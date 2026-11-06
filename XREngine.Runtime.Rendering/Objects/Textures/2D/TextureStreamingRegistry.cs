@@ -24,6 +24,10 @@ internal sealed class TextureStreamingRegistry
     public bool IsTracked(XRTexture2D texture)
         => _recordsByTexture.TryGetValue(texture, out _);
 
+    /// <summary>Gets the record of a tracked texture. It does not create a record.</summary>
+    public bool TryGetRecord(XRTexture2D texture, out ImportedTextureStreamingRecord? record)
+        => _recordsByTexture.TryGetValue(texture, out record);
+
     public bool TryGetGenerationState(
         XRTexture2D texture,
         out long publishedGeneration,
@@ -372,7 +376,10 @@ internal sealed class TextureStreamingRegistry
                     texture.LastTextureUploadDurationMilliseconds,
                     record.FailedTransitionCooldownUntilFrameId,
                     record.FailedTransitionTargetMaxDimension,
-                    record.ConsecutiveTransitionFailureCount));
+                    record.ConsecutiveTransitionFailureCount,
+                    record.RequestedMaxDimension,
+                    record.RequestPriority,
+                    record.RequestDeadlineFrameId));
             }
             finally
             {

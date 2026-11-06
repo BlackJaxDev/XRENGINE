@@ -177,6 +177,12 @@ public static partial class RuntimeEngine
                 private double _textureSlowTransitionMilliseconds = 8.0;
                 private double _textureSlowQueueWaitMilliseconds = 100.0;
                 private double _textureUploadFrameBudgetMilliseconds = 2.0;
+                private int _textureStreamingCutsceneMaxTransitionsPerFrame = 6;
+                private int _textureStreamingCutsceneMaxPromotionsPerFrame = 4;
+                private int _textureStreamingCutsceneMaxPromotionMegabytesPerFrame = 96;
+                private int _textureStreamingCutscenePromotionCooldownFrames = 2;
+                private int _textureStreamingCutscenePromotionFadeFrames = 12;
+                private int _textureStreamingBudgetProfileFadeFrames = 30;
 
                 /// <summary>
                 /// Whether to enable frame logging for performance profiling.
@@ -311,6 +317,79 @@ public static partial class RuntimeEngine
                 {
                     get => _textureUploadFrameBudgetMilliseconds;
                     set => SetField(ref _textureUploadFrameBudgetMilliseconds, Math.Clamp(value, 0.1, 100.0));
+                }
+
+                /// <summary>
+                /// Maximum number of texture residency transitions that one frame queues while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: maximum residency transitions (promotions and demotions) queued in one frame. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutsceneMaxTransitionsPerFrame
+                {
+                    get => _textureStreamingCutsceneMaxTransitionsPerFrame;
+                    set => SetField(ref _textureStreamingCutsceneMaxTransitionsPerFrame, Math.Clamp(value, 1, 64));
+                }
+
+                /// <summary>
+                /// Maximum number of texture promotions that one frame queues while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: maximum promotions queued in one frame. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutsceneMaxPromotionsPerFrame
+                {
+                    get => _textureStreamingCutsceneMaxPromotionsPerFrame;
+                    set => SetField(ref _textureStreamingCutsceneMaxPromotionsPerFrame, Math.Clamp(value, 1, 64));
+                }
+
+                /// <summary>
+                /// Maximum megabytes that the promotions of one frame add while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: maximum megabytes that the promotions of one frame add. The VRAM budget fit still applies. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutsceneMaxPromotionMegabytesPerFrame
+                {
+                    get => _textureStreamingCutsceneMaxPromotionMegabytesPerFrame;
+                    set => SetField(ref _textureStreamingCutsceneMaxPromotionMegabytesPerFrame, Math.Clamp(value, 1, 1024));
+                }
+
+                /// <summary>
+                /// Frames after a promotion before a texture that is not visible can promote again, while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: frames after a promotion before a texture that is not visible can promote again. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutscenePromotionCooldownFrames
+                {
+                    get => _textureStreamingCutscenePromotionCooldownFrames;
+                    set => SetField(ref _textureStreamingCutscenePromotionCooldownFrames, Math.Clamp(value, 0, 600));
+                }
+
+                /// <summary>
+                /// Frames over which a promoted texture fades in its new mips while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. A long fade makes a
+                /// texture that loaded for a cutscene jump look late. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: frames over which a promoted texture fades in its new mips. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutscenePromotionFadeFrames
+                {
+                    get => _textureStreamingCutscenePromotionFadeFrames;
+                    set => SetField(ref _textureStreamingCutscenePromotionFadeFrames, Math.Clamp(value, 0, 600));
+                }
+
+                /// <summary>
+                /// Frames over which the texture streaming limits fade from one budget profile to the other.
+                /// Zero changes the limits in one frame.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Frames over which texture streaming limits fade between the Default and Cutscene budget profiles. Zero changes them in one frame.")]
+                public int TextureStreamingBudgetProfileFadeFrames
+                {
+                    get => _textureStreamingBudgetProfileFadeFrames;
+                    set => SetField(ref _textureStreamingBudgetProfileFadeFrames, Math.Clamp(value, 0, 600));
                 }
 
                 /// <summary>
