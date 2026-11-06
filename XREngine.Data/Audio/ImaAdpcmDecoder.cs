@@ -59,8 +59,10 @@ public sealed class ImaAdpcmDecoder : IStreamingAudioDecoder
 
         // A bad step index would read outside the step table, so check each header one time here.
         for (long offset = 0; offset + ImaAdpcm.HeaderBytes <= data.Length; offset += _blockBytes)
+        {
             if (data[offset + 2] > ImaAdpcm.MaxStepIndex)
                 throw new InvalidDataException($"The IMA ADPCM block at byte {offset} has the step index {data[offset + 2]}. The largest valid index is {ImaAdpcm.MaxStepIndex}.");
+        }
     }
 
     /// <inheritdoc/>

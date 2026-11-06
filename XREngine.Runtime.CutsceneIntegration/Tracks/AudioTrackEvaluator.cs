@@ -386,7 +386,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         IStreamingAudioDecoder decoder;
         try
         {
-            decoder = _openDecoder(ResolvePath(clip.SourcePath));
+            decoder = _openDecoder(ResolveSourcePath(clip.SourcePath, _assetDirectory));
         }
         catch (Exception error)
         {
@@ -410,11 +410,18 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         return true;
     }
 
-    private string ResolvePath(string path)
+    /// <summary>
+    /// Gets the full path of the source file of an audio clip. A relative path starts at the folder of the cutscene asset
+    /// file, or at the current folder if the asset has no file. The bake of the audio proxies uses the same rule, so it
+    /// reads the file that playback opens.
+    /// </summary>
+    /// <param name="sourcePath">The <see cref="AudioTrackClip.SourcePath"/> of the clip.</param>
+    /// <param name="assetDirectory">The folder of the cutscene asset file, or null.</param>
+    public static string ResolveSourcePath(string sourcePath, string? assetDirectory)
     {
-        if (Path.IsPathRooted(path) || string.IsNullOrEmpty(_assetDirectory))
-            return Path.GetFullPath(path);
-        return Path.GetFullPath(Path.Combine(_assetDirectory, path));
+        if (Path.IsPathRooted(sourcePath) || string.IsNullOrEmpty(assetDirectory))
+            return Path.GetFullPath(sourcePath);
+        return Path.GetFullPath(Path.Combine(assetDirectory, sourcePath));
     }
 
     private int IndexOf(CutsceneAudioChannel channel)

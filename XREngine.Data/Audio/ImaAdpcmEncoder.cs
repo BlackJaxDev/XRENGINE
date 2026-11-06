@@ -107,8 +107,10 @@ public static class ImaAdpcmEncoder
         short[] steps = ImaAdpcm.StepTable;
         int best = 0;
         for (int i = 1; i <= ImaAdpcm.MaxStepIndex; i++)
+        {
             if (Math.Abs(steps[i] - magnitude) < Math.Abs(steps[best] - magnitude))
                 best = i;
+        }
         return best;
     }
 }

@@ -18,6 +18,13 @@ public sealed class ImaAdpcmTests
     private const double SineMaxErrorLimit = 0.012;
     private const double SineRmsErrorLimit = 0.0046;
 
+    // A full-scale square needs about 11 samples to reach the new level, and then rings down. The first run measured a
+    // largest error of 0.114 from 12 samples after an edge and 0.0087 from 39 samples. The limits keep a small margin.
+    private const int SquareSettleSamples = 12;
+    private const float SquareSettledError = 0.13f;
+    private const int SquareQuietSamples = 39;
+    private const float SquareQuietError = 0.01f;
+
     private static float[] Sine(int frames, double frequency, double amplitude, int sampleRate = Rate)
     {
         float[] samples = new float[frames];
@@ -84,6 +91,24 @@ public sealed class ImaAdpcmTests
 
     private static WavStreamingDecoder OpenWav(byte[] wav)
         => new(new MemoryStream(wav), leaveOpen: false);
+
+    // The low-pass filter holds the first and the last sample, so the frames near the ends are a short transient.
+    private const int EdgeFrames = 64;
+
+    private static double Rms(float[] samples, int skip)
+    {
+        double sum = 0.0;
+        int count = 0;
+        for (int i = skip; i < samples.Length - skip; i++, count++)
+            sum += samples[i] * (double)samples[i];
+        return count > 0 ? Math.Sqrt(sum / count) : 0.0;
+    }
+
+    private static float[] RoundTrip(float[] source)
+    {
+        using ImaAdpcmDecoder decoder = new(ImaAdpcmEncoder.Encode(source, Block), Block, source.Length, Rate);
+        return DecodeAll(decoder, 1000);
+    }
 
     [Test]
     public void RandomAccessDecode_EqualsSequentialDecode_Exactly()
@@ -205,11 +230,12 @@ public sealed class ImaAdpcmTests
         {
             float[] mono = AudioProxyBuilder.ToMono(wav, Rate);
 
-            // ceil(44101 * 22050 / 44100) frames. Each output frame is the source frame at twice its index.
+            // ceil(44101 * 22050 / 44100) frames. Each output frame is the filtered source frame at twice its index.
+            // 440 Hz is far below the cutoff, so the filter keeps it.
             mono.Length.ShouldBe(22051);
             float[] expected = Sine(mono.Length, 440.0, 0.5);
-            for (int i = 0; i < mono.Length; i++)
-                Math.Abs(mono[i] - expected[i]).ShouldBeLessThan(1e-4f);
+            for (int i = EdgeFrames; i < mono.Length - EdgeFrames; i++)
+                Math.Abs(mono[i] - expected[i]).ShouldBeLessThan(1e-3f, $"output frame {i}");
         }
 
         byte[] opposite = BuildStereoWav(sourceRate, frames, (f, c) => (c == 0 ? 0.5 : -0.5) * Math.Sin(2.0 * Math.PI * 440.0 * f / sourceRate));
@@ -224,7 +250,8 @@ public sealed class ImaAdpcmTests
     [Test]
     public void Builder_InterpolatesBetweenSourceFrames_At48000()
     {
-        // A ramp stays a ramp under linear interpolation, so each output frame has a known value.
+        // A ramp stays a ramp under a symmetric FIR filter with a DC gain of one and under linear interpolation, so each
+        // output frame away from the ends has a known value.
         const int sourceRate = 48000;
         const int frames = 48000;
         byte[] ramp = BuildStereoWav(sourceRate, frames, (f, c) => f / 65536.0);
@@ -232,10 +259,10 @@ public sealed class ImaAdpcmTests
         float[] mono = AudioProxyBuilder.ToMono(wav, Rate);
 
         mono.Length.ShouldBe(22050);
-        for (int i = 0; i < mono.Length; i++)
+        for (int i = EdgeFrames; i < mono.Length - EdgeFrames; i++)
         {
             double position = (double)i * sourceRate / Rate;
-            Math.Abs(mono[i] - position / 65536.0).ShouldBeLessThan(2e-5, $"output frame {i}");
+            Math.Abs(mono[i] - position / 65536.0).ShouldBeLessThan(5e-5, $"output frame {i}");
         }
     }
 
@@ -257,8 +284,130 @@ public sealed class ImaAdpcmTests
         using ImaAdpcmDecoder decoder = proxy.CreateDecoder();
         float[] decoded = DecodeAll(decoder, 1000);
         float[] expected = Sine(decoded.Length, 440.0, 0.5);
-        for (int i = 0; i < decoded.Length; i++)
-            Math.Abs(decoded[i] - expected[i]).ShouldBeLessThan((float)SineMaxErrorLimit);
+        for (int i = EdgeFrames; i < decoded.Length - EdgeFrames; i++)
+            Math.Abs(decoded[i] - expected[i]).ShouldBeLessThan((float)SineMaxErrorLimit, $"frame {i}");
+    }
+
+    [Test]
+    public void Builder_RemovesContentAboveTheTargetNyquist_BeforeTheDecimation()
+    {
+        // Without the filter, a 15 kHz tone at 44.1 kHz folds to 7.05 kHz at full level.
+        const int sourceRate = 44100;
+        byte[] high = BuildStereoWav(sourceRate, sourceRate, (f, c) => 0.5 * Math.Sin(2.0 * Math.PI * 15000.0 * f / sourceRate));
+        using (WavStreamingDecoder wav = OpenWav(high))
+            Rms(AudioProxyBuilder.ToMono(wav, Rate), EdgeFrames).ShouldBeLessThan(0.002);
+
+        // A 5 kHz tone is in the pass band and keeps its level (RMS of a 0.5 sine is about 0.354).
+        byte[] low = BuildStereoWav(sourceRate, sourceRate, (f, c) => 0.5 * Math.Sin(2.0 * Math.PI * 5000.0 * f / sourceRate));
+        using (WavStreamingDecoder wav = OpenWav(low))
+            Rms(AudioProxyBuilder.ToMono(wav, Rate), EdgeFrames).ShouldBeInRange(0.35, 0.357);
+    }
+
+    [Test]
+    public void Builder_AtTheTargetRate_CopiesTheSamplesWithNoFilter()
+    {
+        byte[] wav = BuildStereoWav(Rate, 5000, (f, c) => ((f * 37) % 2000 - 1000) / 2048.0);
+        using WavStreamingDecoder decoder = OpenWav(wav);
+        float[] mono = AudioProxyBuilder.ToMono(decoder, Rate);
+
+        mono.Length.ShouldBe(5000);
+        for (int f = 0; f < mono.Length; f++)
+            mono[f].ShouldBe((float)(Math.Round(((f * 37) % 2000 - 1000) / 2048.0 * 32768.0) / 32768.0), $"frame {f}");
+    }
+
+    [TestCase(0, 0)]
+    [TestCase(1, 1)]
+    [TestCase(2, 1)]
+    [TestCase(3, 2)]
+    public void Builder_VeryShortSources_GiveTheExpectedFrameCount(int sourceFrames, int expectedFrames)
+    {
+        byte[] wav = BuildStereoWav(44100, sourceFrames, (f, c) => 0.25);
+        using WavStreamingDecoder decoder = OpenWav(wav);
+        AudioProxyAsset proxy = AudioProxyBuilder.Build(decoder, "game://Audio/Short.wav", 0UL);
+
+        proxy.FrameCount.ShouldBe(expectedFrames);
+        using ImaAdpcmDecoder proxyDecoder = proxy.CreateDecoder();
+        float[] decoded = DecodeAll(proxyDecoder, 16);
+        foreach (float value in decoded)
+            value.ShouldBe(0.25f, 1e-6f);
+    }
+
+    [Test]
+    public void Codec_ZeroOneAndTwoSamples_EncodeAndDecode()
+    {
+        ImaAdpcmEncoder.Encode([], Block).Length.ShouldBe(0);
+        using (ImaAdpcmDecoder empty = new([], Block))
+        {
+            empty.TotalFrames.ShouldBe(0);
+            empty.Read(new float[8]).ShouldBe(0);
+        }
+
+        byte[] one = ImaAdpcmEncoder.Encode([0.5f], Block);
+        one.Length.ShouldBe(4);
+        RoundTrip([0.5f]).ShouldBe([0.5f]);
+        using (ImaAdpcmDecoder headerOnly = new(one, Block))
+            headerOnly.TotalFrames.ShouldBe(1);
+
+        byte[] two = ImaAdpcmEncoder.Encode([0.0f, 0.5f], Block);
+        two.Length.ShouldBe(5);
+        float[] decoded = RoundTrip([0.0f, 0.5f]);
+        decoded[0].ShouldBe(0.0f);
+        Math.Abs(decoded[1] - 0.5f).ShouldBeLessThan(0.06f);
+    }
+
+    [Test]
+    public void Codec_Silence_DecodesToExactZero()
+    {
+        float[] decoded = RoundTrip(new float[Block * 3 + 10]);
+        foreach (float value in decoded)
+            value.ShouldBe(0.0f);
+    }
+
+    [Test]
+    public void Codec_ConstantAndOffsetSignals_StayNearTheSource()
+    {
+        // A constant value: each header holds it, and every code adds zero.
+        float constant = ImaAdpcmEncoder.ToPcm16(0.3f) / 32768.0f;
+        foreach (float value in RoundTrip(Enumerable.Repeat(0.3f, Block * 2 + 5).ToArray()))
+            value.ShouldBe(constant);
+
+        // Full scale clips to the 16 bit range.
+        RoundTrip([1.0f, 1.0f, 1.0f])[2].ShouldBe(32767.0f / 32768.0f);
+        RoundTrip([-1.0f, -1.0f, -1.0f])[2].ShouldBe(-1.0f);
+
+        // A sine with a DC offset keeps the error of a plain sine.
+        float[] offset = Sine(Rate, 440.0, 0.3);
+        for (int i = 0; i < offset.Length; i++)
+            offset[i] += 0.5f;
+        float[] decoded = RoundTrip(offset);
+        for (int i = 0; i < offset.Length; i++)
+            Math.Abs(decoded[i] - offset[i]).ShouldBeLessThan((float)SineMaxErrorLimit, $"frame {i}");
+    }
+
+    [Test]
+    public void Codec_FullScaleSquare_SettlesAfterEachEdge_AndNeverLeavesTheRange()
+    {
+        // 50 samples high, 50 samples low. The step must grow at each edge, so the error is large for a few samples.
+        const int half = 50;
+        float[] square = new float[Block * 4];
+        for (int i = 0; i < square.Length; i++)
+            square[i] = (i / half) % 2 == 0 ? 1.0f : -1.0f;
+
+        float[] decoded = RoundTrip(square);
+        double[] worst = new double[half];
+        for (int i = 0; i < square.Length; i++)
+            worst[i % half] = Math.Max(worst[i % half], Math.Abs(decoded[i] - square[i]));
+        TestContext.Out.WriteLine($"Square error by samples after an edge: {string.Join(", ", worst.Select(e => e.ToString("0.####")))}");
+
+        for (int i = 0; i < square.Length; i++)
+        {
+            decoded[i].ShouldBeInRange(-1.0f, 1.0f);
+            float error = Math.Abs(decoded[i] - square[i]);
+            if (i % half >= SquareQuietSamples)
+                error.ShouldBeLessThan(SquareQuietError, $"sample {i}");
+            else if (i % half >= SquareSettleSamples)
+                error.ShouldBeLessThan(SquareSettledError, $"sample {i}");
+        }
     }
 
     [Test]

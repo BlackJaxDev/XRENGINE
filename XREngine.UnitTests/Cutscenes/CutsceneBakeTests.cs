@@ -850,6 +850,77 @@ public sealed class CutsceneBakeTests
         }
     }
 
+    [Test]
+    public void Bake_RelativeSourcePath_StartsAtTheAssetFolder()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "xre-audio-relative-" + Guid.NewGuid().ToString("N"));
+        string otherRoot = Path.Combine(Path.GetTempPath(), "xre-audio-other-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Audio"));
+        Directory.CreateDirectory(Path.Combine(root, "Cutscenes"));
+        try
+        {
+            File.WriteAllBytes(Path.Combine(root, "Audio", "Line.wav"), BuildMonoWav(22050, 2205, 0.25));
+            Rig rig = MakeRig();
+            rig.Asset.FilePath = Path.Combine(root, "Cutscenes", "Intro.asset");
+            AudioTrack voice = new() { Name = "Voice", BindingSlot = rig.Bind(CreateNode("Speaker", Vector3.Zero)) };
+            voice.Clips.Add(new AudioTrackClip { Start = T(0), Duration = T(1), SourcePath = "../Audio/Line.wav" });
+            rig.Asset.Tracks.Add(voice);
+
+            // In the asset folder, the reference is portable.
+            List<CutsceneCompileDiagnostic> diagnostics = [];
+            using (AssetSerializationServices.Install(new FakeAssetRootServices(root)))
+            {
+                List<AudioProxyAsset> proxies = CutsceneBakeTool.BakeAudioProxies(rig.Asset, null, diagnostics);
+                proxies.Count.ShouldBe(1);
+                proxies[0].SourceReference.ShouldBe("game://Audio/Line.wav");
+                proxies[0].FrameCount.ShouldBe(2205);
+            }
+
+            // Outside the asset folders, the relative path is the reference. It has no part of the local path.
+            using (AssetSerializationServices.Install(new FakeAssetRootServices(otherRoot)))
+            {
+                List<AudioProxyAsset> proxies = CutsceneBakeTool.BakeAudioProxies(rig.Asset, null, diagnostics);
+                proxies.Count.ShouldBe(1);
+                proxies[0].SourceReference.ShouldBe("../Audio/Line.wav");
+            }
+            diagnostics.ShouldBeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Bake_MissingSourceFile_GivesOneDiagnosticAndNoProxy()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "xre-audio-missing-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(root));
+            Rig rig = MakeRig();
+            AudioTrack voice = new() { Name = "Voice", BindingSlot = rig.Bind(CreateNode("Speaker", Vector3.Zero)) };
+            voice.Clips.Add(new AudioTrackClip { Start = T(0), Duration = T(1), SourcePath = Path.Combine(root, "Audio", "Gone.wav") });
+            rig.Asset.Tracks.Add(voice);
+
+            List<CutsceneCompileDiagnostic> diagnostics = [];
+            CutsceneBakeOptions options = new(rig.Resolver) { Collector = rig.Collector, SceneRoots = rig.Roots, Diagnostics = diagnostics };
+            CutsceneResidencyManifest manifest = CutsceneBakeTool.Bake(rig.Asset, options, out CutsceneT0Report report, out List<AudioProxyAsset> proxies);
+
+            proxies.ShouldBeEmpty();
+            manifest.AssetKinds.ShouldNotContain(EResidencyAssetKind.Audio);
+            report.TotalBytes.ShouldBe(0);
+            CutsceneCompileDiagnostic diagnostic = diagnostics.Single(d => d.Message.Contains("audio proxy of 'game://Audio/Gone.wav'"));
+            diagnostic.TrackIndex.ShouldBe(rig.Asset.Tracks.Count - 1);
+            diagnostic.ClipIndex.ShouldBe(0);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     /// <summary>A 16-bit mono WAV file of a 440 Hz sine.</summary>
     private static byte[] BuildMonoWav(int sampleRate, int frames, double amplitude)
     {

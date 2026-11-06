@@ -48,6 +48,7 @@ public class CutsceneAsset : XRAsset
         get => _manifestContentHash;
         set => SetField(ref _manifestContentHash, value);
     }
+
     /// <summary>
     /// The audio proxies that the bake made: one small mono IMA ADPCM copy of each audio clip source file. Each proxy
     /// refers to its source with <see cref="AudioProxyAsset.SourceReference"/>. The manifest lists each proxy as an

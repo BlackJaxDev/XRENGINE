@@ -153,7 +153,7 @@ public static class CutsceneBakeTool
                 if (track.Clips[c] is not AudioTrackClip clip || string.IsNullOrWhiteSpace(clip.SourcePath))
                     continue;
 
-                string fullPath = ResolveSourcePath(clip.SourcePath, assetDirectory);
+                string fullPath = AudioTrackEvaluator.ResolveSourcePath(clip.SourcePath, assetDirectory);
                 if (!TryGetSourceReference(clip.SourcePath, fullPath, out string? reference))
                 {
                     diagnostics.Add(new CutsceneCompileDiagnostic(t, c,
@@ -295,13 +295,6 @@ public static class CutsceneBakeTool
         return roots;
     }
 
-    private static string ResolveSourcePath(string path, string? assetDirectory)
-    {
-        if (Path.IsPathRooted(path) || string.IsNullOrEmpty(assetDirectory))
-            return Path.GetFullPath(path);
-        return Path.GetFullPath(Path.Combine(assetDirectory, path));
-    }
-
     private static bool TryGetSourceReference(string sourcePath, string fullPath, [NotNullWhen(true)] out string? reference)
     {
         if (AssetSerializationServices.Current.TryCreatePortableAssetReference(fullPath, out reference))
@@ -333,11 +326,19 @@ public static class CutsceneBakeTool
             AudioProxyAsset? proxy = proxies[i];
             if (proxy is not null
                 && proxy.SourceContentHash == hash
-                && string.Equals(proxy.SourceReference, reference, StringComparison.OrdinalIgnoreCase))
+                && string.Equals(proxy.SourceReference, reference, StringComparison.OrdinalIgnoreCase)
+                && IsCurrentFormat(proxy))
                 return proxy;
         }
         return null;
     }
+
+    // A proxy of an older format, or with data that does not agree with its frame count, is made again.
+    private static bool IsCurrentFormat(AudioProxyAsset proxy)
+        => proxy.SampleRate == ImaAdpcmDecoder.ProxySampleRate
+        && proxy.BlockSamples == AudioProxyAsset.DefaultBlockSamples
+        && proxy.FrameCount >= 0
+        && proxy.EncodedData.Length == ImaAdpcmEncoder.GetEncodedBytes(proxy.FrameCount, proxy.BlockSamples);
 
     private static CutsceneT0Report CreateReport(CutsceneResidencyManifestBuilder builder, CutsceneBakeOptions options)
     {

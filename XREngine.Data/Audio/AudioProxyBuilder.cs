@@ -7,11 +7,12 @@ namespace XREngine.Data;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The mix is the mean of the channels of each frame. The resampler is linear: output frame <c>i</c> is at source
-/// position <c>i * sourceRate / targetRate</c>, which the builder computes with integers, so the result is deterministic
-/// and does not drift on long files. Between two source frames it interpolates on a straight line, and after the last
-/// source frame it holds that frame. A linear resampler has no low-pass filter, so a source above 44.1 kHz can give some
-/// alias noise above 11 kHz. That is acceptable for a short preview of the sound during a seek. The output has
+/// The mix is the mean of the channels of each frame. When the source rate is above the target rate, a low-pass FIR
+/// filter (<see cref="AudioProxyLowPassFilter"/>, cutoff at 0.9 times the target Nyquist frequency) runs first. Without
+/// it, a 44.1 kHz source would be a plain 2:1 decimation, and all content from 11 to 22 kHz (for example sibilance and
+/// cymbals) would fold back below 11 kHz, into the band that the listener hears. Then a linear resampler
+/// (<see cref="AudioProxyLinearResampler"/>) computes output frame <c>i</c> at source position
+/// <c>i * sourceRate / targetRate</c> with integers, so the result is deterministic and does not drift. The output has
 /// <c>ceil(n * targetRate / sourceRate)</c> frames for <c>n</c> source frames.
 /// </para>
 /// <para>
@@ -64,15 +65,14 @@ public static class AudioProxyBuilder
         if (channels <= 0 || sourceRate <= 0)
             throw new InvalidDataException($"The audio source has {channels} channels at {sourceRate} Hz. A proxy needs one or more channels and a positive sample rate.");
 
-        long expected = source.TotalFrames > 0 ? CeilDiv(source.TotalFrames * targetSampleRate, sourceRate) : 0;
-        List<float> output = new((int)Math.Min(expected + 1, int.MaxValue / 2));
+        bool filter = sourceRate > targetSampleRate;
+        AudioProxyLowPassFilter? lowPass = filter ? new AudioProxyLowPassFilter(sourceRate, targetSampleRate, ReadFrames) : null;
+        AudioProxyLinearResampler resampler = new(sourceRate, targetSampleRate, source.TotalFrames);
         float[] interleaved = new float[ReadFrames * channels];
         float[] mono = new float[ReadFrames];
+        float[] filtered = new float[Math.Max(ReadFrames, lowPass?.HalfLength ?? 0)];
 
         source.SeekToFrame(0);
-        long baseFrame = 0;
-        float previous = 0.0f;
-        long next = 0;
         while (true)
         {
             int read = source.Read(interleaved);
@@ -80,32 +80,19 @@ public static class AudioProxyBuilder
                 break;
 
             Downmix(interleaved, channels, mono, read);
-            long end = baseFrame + read;
-
-            // Output frame i needs source frames idx and idx + 1. Write each frame whose two source frames are known.
-            while (true)
+            if (lowPass is null)
             {
-                long position = next * sourceRate;
-                long index = position / targetSampleRate;
-                if (index + 1 >= end)
-                    break;
-
-                float first = index < baseFrame ? previous : mono[index - baseFrame];
-                float second = mono[index + 1 - baseFrame];
-                float fraction = (float)(position - index * targetSampleRate) / targetSampleRate;
-                output.Add(first + (second - first) * fraction);
-                next++;
+                resampler.Push(mono.AsSpan(0, read));
+                continue;
             }
 
-            previous = mono[read - 1];
-            baseFrame = end;
+            int count = lowPass.Process(mono.AsSpan(0, read), filtered);
+            resampler.Push(filtered.AsSpan(0, count));
         }
 
-        // The last frames sit at or after the last source frame, so they hold it.
-        long total = CeilDiv(baseFrame * targetSampleRate, sourceRate);
-        for (; next < total; next++)
-            output.Add(previous);
-        return [.. output];
+        if (lowPass is not null)
+            resampler.Push(filtered.AsSpan(0, lowPass.Flush(filtered)));
+        return resampler.Finish();
     }
 
     private static void Downmix(float[] interleaved, int channels, float[] mono, int frames)
@@ -126,7 +113,4 @@ public static class AudioProxyBuilder
             mono[f] = sum * scale;
         }
     }
-
-    private static long CeilDiv(long value, long divisor)
-        => (value + divisor - 1) / divisor;
 }
