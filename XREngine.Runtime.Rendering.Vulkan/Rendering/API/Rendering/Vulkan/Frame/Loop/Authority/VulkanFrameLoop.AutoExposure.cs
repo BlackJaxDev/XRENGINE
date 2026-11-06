@@ -144,7 +144,7 @@ internal sealed partial class VulkanFrameLoop
             meteringMip = Math.Clamp(sampledSmallestMip - offset, 0, sampledSmallestMip);
         }
 
-        float alpha = 1.0f - MathF.Exp(-settings.ExposureTransitionSpeed * deltaTime);
+        float alpha = settings.ComputeGpuAutoExposureBlend(deltaTime);
 
         bool exposureLayoutManagedByRenderGraph = false;
 

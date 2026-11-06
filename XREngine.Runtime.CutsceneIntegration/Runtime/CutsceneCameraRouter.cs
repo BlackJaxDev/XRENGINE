@@ -6,8 +6,8 @@ namespace XREngine.Cutscenes;
 /// <summary>
 /// Shows the camera that a cutscene selects on one desktop viewport.
 /// The router claims the camera of the viewport, so fallback code cannot replace it.
-/// It resets the temporal history of the viewport once for each discontinuity of the player,
-/// and once when an attach or a detach changes the camera.
+/// For each discontinuity of the player, its <see cref="DiscontinuityHandler"/> resets the temporal render state of the
+/// viewport once. The router also resets the temporal history once when an attach or a detach changes the camera.
 /// The router does not touch the eye cameras of a headset.
 /// </summary>
 public sealed class CutsceneCameraRouter
@@ -15,6 +15,7 @@ public sealed class CutsceneCameraRouter
     private readonly CutscenePlayer _player;
     private readonly Action<CameraComponent?> _onActiveCameraChanged;
     private readonly Action<CutsceneDiscontinuity> _onDiscontinuity;
+    private readonly CutsceneDiscontinuityHandler _discontinuityHandler = new();
     private XRViewport? _viewport;
     private bool _claimed;
 
@@ -29,6 +30,9 @@ public sealed class CutsceneCameraRouter
         _onActiveCameraChanged = OnActiveCameraChanged;
         _onDiscontinuity = OnDiscontinuity;
     }
+
+    /// <summary>The handler that resets the temporal render state of the viewport at each discontinuity.</summary>
+    public CutsceneDiscontinuityHandler DiscontinuityHandler => _discontinuityHandler;
 
     /// <summary>The viewport that shows the camera, or null if the router is detached.</summary>
     public XRViewport? Viewport => _viewport;
@@ -92,8 +96,7 @@ public sealed class CutsceneCameraRouter
         }
     }
 
-    // A scrub raises a discontinuity in each frame. A change event would allocate its arguments when another
-    // object listens to the camera. The history consumers read the epoch, so they do not need the event.
+    // The player raised ActiveCameraChanged before this event, so the viewport shows the camera of the new shot here.
     private void OnDiscontinuity(CutsceneDiscontinuity discontinuity)
-        => _viewport?.InvalidateTemporalHistory(publishNotifications: false);
+        => _discontinuityHandler.Handle(_viewport);
 }

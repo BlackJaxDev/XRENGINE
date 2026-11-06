@@ -93,6 +93,23 @@ public partial class XRCamera
     public void InvalidateTemporalHistory()
         => InvalidateTemporalHistory(publishNotifications: true);
 
+    private long _autoExposureResetCount;
+
+    /// <summary>
+    /// Resets the automatic exposure adaptation of this camera in every pipeline state that it has, so the next exposure
+    /// update uses the metered value with no blend from the old exposure. Call it after an instantaneous cut or a jump in time.
+    /// <see cref="InvalidateTemporalHistory()"/> does not do this, because smooth exposure adaptation is not view history.
+    /// It does not allocate.
+    /// </summary>
+    public void ResetAutoExposureHistory()
+    {
+        Interlocked.Increment(ref _autoExposureResetCount);
+        PostProcessStates.ResetAutoExposureHistory();
+    }
+
+    /// <summary>The number of <see cref="ResetAutoExposureHistory"/> calls on this camera.</summary>
+    internal long AutoExposureResetCount => Interlocked.Read(ref _autoExposureResetCount);
+
     /// <summary>Allows repeatedly slow frames to discard history without allocating property events.</summary>
     internal void InvalidateTemporalHistory(bool publishNotifications)
     {

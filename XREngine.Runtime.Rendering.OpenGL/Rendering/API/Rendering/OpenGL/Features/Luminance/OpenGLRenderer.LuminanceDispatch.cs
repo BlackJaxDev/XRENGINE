@@ -189,7 +189,7 @@ public partial class OpenGLRenderer
 
         // Calculate time-based lerp factor
         // alpha = 1 - exp(-speed * dt)
-        float alpha = 1.0f - MathF.Exp(-settings.ExposureTransitionSpeed * deltaTime);
+        float alpha = settings.ComputeGpuAutoExposureBlend(deltaTime);
         glProgram.Uniform("ExposureTransitionSpeed", alpha);
 
         if (sourceTex is XRTexture2DArray)

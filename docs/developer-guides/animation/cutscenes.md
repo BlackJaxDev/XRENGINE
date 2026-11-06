@@ -148,6 +148,37 @@ An event track does not use its binding slot. The binding table does not check i
 
 Put completion logic on `CutscenePlayer.Finished` or `CutsceneDirectorComponent.Finished`, not on an event at the end of a clip. The player raises `Finished` from its state: once when forward playback or a jump seek, for example a skip, reaches the end. A skip that jumps over the last events with `Skip` still raises it. A scrub and a stop do not raise it. A later move away from the end lets it be raised again.
 
+## Simulation Control Tracks
+
+A physics chain or a particle emitter keeps state from frame to frame, so its state is not a function of the time. A `SimulationControlTrack` tells what the simulations on its bound node do after a discontinuity. The track has no clips, and it applies for the full cutscene. It controls each `PhysicsChainComponent` and each `ParticleEmitterComponent` of the node. A discontinuity is a jump seek, a scrub step, a camera cut, a hard resync to the audio, or a stop.
+
+| `Policy` | After a discontinuity |
+|---|---|
+| `SettleFromReset` (default) | The simulation resets to the current pose and then runs normally. |
+| `WarmUp` | The simulation resets and then runs fixed steps for `WarmUpSeconds` (default 1 s). The steps use at most `WarmUpBudgetMilliseconds` (default 2 ms) of wall time in each frame, and the rest continue in the next frames. |
+
+`Seed` (default 0) is the random seed of a particle emitter at a reset or a warm-up, so each run gives the same particles.
+
+| Target | Reset | Warm-up | Hold |
+|---|---|---|---|
+| `PhysicsChainComponent` | `ResetSimulationToCurrentPose()`. The chain applies the reset at the start of its next simulation step, after it reads the current pose of its bones, and the reset replaces that step. The cutscene tick writes no bone. | None. A chain with `WarmUp` settles from the reset, and the track adds one diagnostic. | A reset request in each held frame. |
+| `ParticleEmitterComponent` | `Prewarm(0, Seed, 0)`: clears the particles and sets the seed. | `Prewarm(WarmUpSeconds, Seed, WarmUpBudgetMilliseconds)`. The emitter runs steps of `PrewarmStepSeconds` (1/60 s), at least one in each call, and continues the rest in its own update in place of the normal step. | `IsSimulating` is false during the hold. The release puts back the earlier value. |
+
+The player applies the policies at the end of `Tick`, never in `Seek` or `Stop`. A stop releases a hold at once, and its reset waits for the next tick. One discontinuity gives one reset of each simulation, also when a cut and a jump occur in the same tick. If two tracks bind the same node, the first track controls each simulation, and the second track adds one diagnostic. A node with no simulation adds one diagnostic.
+
+During a scrub, each step resets the simulations, and they hold the reset pose. A held emitter is cleared once, not at each step. The hold ends, and a `WarmUp` track starts its warm-up, when the player plays at a rate within 0.05 of one (`SimulationControlEvaluator.ResumeRateTolerance`), when `EndScrub` ends a scrub, or at a jump. A scrub with only `UpdateScrub` seeks and no `BeginScrub` holds until playback at a rate near one or a jump. A tick with no discontinuity and no hold does no simulation work and does not allocate.
+
+## Discontinuity Resets
+
+`CutsceneCameraRouter` owns a `CutsceneDiscontinuityHandler`. At each `Discontinuity`, after the router claimed the camera of the new shot, the handler resets the target viewport once:
+
+| Reset | Effect in the Default, Advanced, and RVC pipelines |
+|---|---|
+| `XRViewport.InvalidateTemporalHistory(publishNotifications: false)` | Advances `XRCamera.TemporalHistoryEpoch`. The camera loses its previous view-projection (camera motion vectors), and the frame view history marks the view as having no valid history. TAA and TSR history then reset. Spatial hash AO, the only temporal AO pass, follows that history. |
+| `XRCamera.ResetAutoExposureHistory()` | Auto exposure does not read the epoch, and it blends from the exposure of the previous frame. The reset makes the next update set the metered exposure in one step, on the GPU path (OpenGL, Vulkan, and WebGPU) and on the CPU path. |
+
+The handler does not reset GI history (radiance cascades, ReSTIR reservoirs, surfels, and DDGI probes), the previous model matrix and skin palette of each mesh, the Advanced deformation history, or the RVC temporal cache. These have no reset hook for a view discontinuity. Without a target viewport, no render state resets.
+
 ## Residency
 
 `CutsceneResidencyPlanner` decides which level of each asset must be resident, and by which time, around the playhead. The levels are T0 (proxy), T1 (coarse), and T2 (target). The planner sends requests to an `IResidencyBackend` and does no IO itself. The director and the editor preview run it through a `CutsceneResidencySession` (see [Residency In Playback](#residency-in-playback)). `TextureResidencyBackend` is the texture backend and `AudioResidencyBackend` is the audio backend; no mesh backend exists yet.
@@ -290,7 +321,7 @@ cutscene_open { "close": true }
 ## Limits
 
 - The panel has no split, snap to other clips, or multi-select.
-- The panel has no buttons for event tracks, property tracks, or audio tracks. Add them in the asset.
+- The panel has no buttons for event tracks, property tracks, audio tracks, or simulation control tracks. Add them in the asset.
 - A property track supports only `float`, `Vector3`, and `Quaternion` members.
 - An audio track decodes on the update thread, in the director tick. A clip with no audio proxy has no scrub sound, and a jump starts its sound after the decoder seek on the update thread: the clock does not count the seek time, but the frame of the seek is long. A clip with a current proxy plays the proxy at once and seeks in the background (see [Tier Change](#tier-change)). The proxy is mono, so a stereo clip is mono until the crossfade.
 - The first refill after the first restart on a listener allocates about 700 bytes, with or without a proxy: the listener buffer pool makes its fifth `AudioBuffer`, because the restart keeps four buffers in the queue and the refill takes one more before the pool has one. Later restarts, play steps, and scrub grains do not allocate.

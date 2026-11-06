@@ -19,6 +19,7 @@ public sealed class CutscenePlayer
     private readonly CameraCutTrackEvaluator _cameraCut;
     private readonly AnimationClipTrackEvaluator _animation;
     private readonly AudioTrackEvaluator _audio;
+    private readonly SimulationControlEvaluator _simulation;
     private readonly CutsceneEventDispatcher _events;
     private readonly List<CutsceneCompileDiagnostic> _diagnostics = [];
 
@@ -29,6 +30,10 @@ public sealed class CutscenePlayer
     private CameraComponent? _reportedCamera;
     private bool _heldByGate;
     private bool _stopJumpPending;
+
+    // The intent of the last discontinuity since the simulations were updated. A stop raises one outside the tick,
+    // so the simulations apply it in the next tick.
+    private ESeekIntent? _simulationDiscontinuity;
 
     // True when no step has handled the events at the current position yet: after the open, a stop, or a move backward.
     private bool _playStartInclusive = true;
@@ -106,6 +111,7 @@ public sealed class CutscenePlayer
             new PropertyTrackEvaluator(compiled, snapshot, _diagnostics),
             _audio,
         ];
+        _simulation = new SimulationControlEvaluator(compiled, bindings, _diagnostics);
         _events = new CutsceneEventDispatcher(compiled.Asset, _diagnostics);
 
         // Normal playback with audio follows the audio device, so the clock starts in audio mode.
@@ -211,6 +217,9 @@ public sealed class CutscenePlayer
     /// <summary>True while <see cref="PlaybackGate"/> holds playback. The audio sources stay stopped while it is true.</summary>
     public bool IsHeldByGate => _heldByGate;
 
+    /// <summary>The evaluator that applies the policies of the simulation control tracks.</summary>
+    internal SimulationControlEvaluator Simulation => _simulation;
+
     /// <summary>The problems that the evaluators found. Each problem is added once.</summary>
     public IReadOnlyList<CutsceneCompileDiagnostic> Diagnostics => _diagnostics;
 
@@ -270,6 +279,7 @@ public sealed class CutscenePlayer
         _animation.RestoreForStop(restoreEverySlot || _compiled.Asset.ForceRestoreAll, _snapshot);
         for (int i = 0; i < _evaluators.Length; i++)
             _evaluators[i].Reset();
+        _simulation.Release();
         if (restoreEverySlot)
             _snapshot.RestoreAll();
         else
@@ -278,7 +288,10 @@ public sealed class CutscenePlayer
         // The camera returns to the previous one and the position jumps to zero, so history must reset once.
         bool cameraChanged = PublishActiveCamera();
         if (cameraChanged || from != CutsceneTime.Zero)
+        {
+            _simulationDiscontinuity = ESeekIntent.Jump;
             Discontinuity?.Invoke(new CutsceneDiscontinuity(from, CutsceneTime.Zero, ESeekIntent.Jump));
+        }
     }
 
     /// <summary>Sets the playback rate. A negative value plays backward. A rate other than one stops the audio sources at once.</summary>
@@ -360,8 +373,21 @@ public sealed class CutscenePlayer
     /// a long decoder seek, because the sound starts only after it. That time is measured as wall time. With a time dilation
     /// other than one, the delta and the removed time have different scales; the audio clock then disagrees with the delta anyway.
     /// </summary>
+    /// <remarks>
+    /// At the end of each tick, the simulation control tracks apply their policies for the discontinuity of the tick, or for
+    /// a discontinuity of a <see cref="Stop"/> since the last tick. So a simulation reset occurs only in a tick.
+    /// </remarks>
     /// <param name="deltaSeconds">The time since the last tick, in seconds. The restart exclusion treats it as wall time.</param>
     public void Tick(double deltaSeconds)
+    {
+        TickTransport(deltaSeconds);
+
+        ESeekIntent? discontinuity = _simulationDiscontinuity;
+        _simulationDiscontinuity = null;
+        _simulation.ApplyTick(discontinuity, State, _clock.Rate);
+    }
+
+    private void TickTransport(double deltaSeconds)
     {
         CutsceneTime duration = _compiled.Asset.Duration;
 
@@ -403,7 +429,10 @@ public sealed class CutscenePlayer
             // A seek that changes the camera still raises only one discontinuity.
             bool seekCameraChanged = PublishActiveCamera();
             if (target != from || seekCameraChanged)
+            {
+                _simulationDiscontinuity = _pendingIntent;
                 Discontinuity?.Invoke(new CutsceneDiscontinuity(from, target, _pendingIntent));
+            }
 
             // A handler can stop or seek the player. The rest of this tick then belongs to the old transport.
             bool scrub = _pendingIntent == ESeekIntent.Scrub || State == ECutsceneTransportState.Scrubbing;
@@ -442,7 +471,10 @@ public sealed class CutscenePlayer
 
         // A cut during playback and a hard resync to the audio are jumps of the picture, so each raises one discontinuity.
         if (PublishActiveCamera() || hardResync)
+        {
+            _simulationDiscontinuity = ESeekIntent.Jump;
             Discontinuity?.Invoke(new CutsceneDiscontinuity(before, position, ESeekIntent.Jump));
+        }
 
         bool completed;
         if (hardResync)

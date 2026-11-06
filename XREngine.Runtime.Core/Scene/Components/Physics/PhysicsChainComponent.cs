@@ -43,6 +43,7 @@ public partial class PhysicsChainComponent : XRComponent
     }
     private int _particlesVersion;
     private int _particleStateVersion;
+    private int _poseResetRequested;
 
     private static string FormatRoot(Transform? root)
         => root?.ToString() ?? "<null>";
@@ -260,6 +261,13 @@ public partial class PhysicsChainComponent : XRComponent
     /// </summary>
     internal bool BeginWorldLateTick()
     {
+        // A requested reset replaces the simulation step of this frame, so the frame shows the reset pose.
+        if (TryApplyRequestedPoseReset())
+        {
+            CompleteWorldLateTick();
+            return false;
+        }
+
         if (_preUpdateCount == 0)
         {
             ApplyPendingGpuBoneSync();
@@ -318,7 +326,7 @@ public partial class PhysicsChainComponent : XRComponent
     }
 
     internal bool CanPrepareWorldLateTickInputsInParallel
-        => _preUpdateCount != 0 && !UseGPU && Multithread;
+        => _preUpdateCount != 0 && !UseGPU && Multithread && Volatile.Read(ref _poseResetRequested) == 0;
 
     internal bool BeginWorldLateTickParallelPreparation()
     {
@@ -1512,6 +1520,44 @@ public partial class PhysicsChainComponent : XRComponent
         _cpuBackendWorld?.ResetSimulationClock(_runtimeHandle, this);
         _preUpdateCount = 0;
         InitializeRootBoneTracking();
+    }
+
+    /// <summary>
+    /// Asks the chain to reset its simulation to the current pose of its bones. The reset does not occur in this call.
+    /// It occurs at the start of the next simulation step of the chain, after the step reads the current pose, and it
+    /// replaces that step. Thus the call is safe from any tick, and many calls before one step give one reset.
+    /// Call it in each frame to hold the chain in the pose of its bones.
+    /// </summary>
+    public void ResetSimulationToCurrentPose()
+        => Volatile.Write(ref _poseResetRequested, 1);
+
+    /// <summary>True while a reset from <see cref="ResetSimulationToCurrentPose"/> waits for the next simulation step.</summary>
+    [YamlIgnore]
+    public bool IsSimulationResetPending
+        => Volatile.Read(ref _poseResetRequested) != 0;
+
+    /// <summary>
+    /// Applies a reset that <see cref="ResetSimulationToCurrentPose"/> requested. The bones go back to their rest
+    /// rotations under the current parent pose, as in a normal step, and the particles move to those bones.
+    /// </summary>
+    /// <returns>True if a reset was applied.</returns>
+    private bool TryApplyRequestedPoseReset()
+    {
+        if (Interlocked.Exchange(ref _poseResetRequested, 0) == 0)
+            return false;
+
+        for (int i = 0; i < _particleTrees.Count; ++i)
+        {
+            ParticleTree pt = _particleTrees[i];
+            if (pt.Particles is not { Count: > 0 })
+                continue;
+
+            InitTransforms(pt);
+            RefreshPreparedParticleTree(pt);
+        }
+
+        ResetParticlesPosition();
+        return true;
     }
 
     private void InitializeRootBoneTracking()

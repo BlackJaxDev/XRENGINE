@@ -388,7 +388,46 @@ uniform ColorGradeStruct ColorGrade;";
         private float _lastUpdateTime = float.MinValue;
         private float _lastLumDot = 0.0f;
         private bool _gpuAutoExposureReadyThisFrame;
+        private long _autoExposureResetRequests;
+        private long _autoExposureResetsApplied;
         internal const float MaxGpuAutoExposureDeltaSeconds = 1.0f / 15.0f;
+
+        /// <summary>
+        /// Makes the next automatic exposure update go to the metered exposure in one step, with no adaptation from the
+        /// earlier exposure. Use it after a camera cut or a jump in time, where the old exposure belongs to another view.
+        /// The GPU path applies the step at its next successful dispatch. The CPU path also ignores its update interval once.
+        /// Any thread can call it. It does not allocate.
+        /// </summary>
+        public void ResetAutoExposureHistory()
+            => Interlocked.Increment(ref _autoExposureResetRequests);
+
+        /// <summary>True while a reset from <see cref="ResetAutoExposureHistory"/> waits for an exposure update.</summary>
+        [Browsable(false)]
+        public bool IsAutoExposureResetPending
+            => Volatile.Read(ref _autoExposureResetRequests) != Volatile.Read(ref _autoExposureResetsApplied);
+
+        /// <summary>
+        /// The blend factor of a GPU exposure update from the current exposure toward the metered exposure.
+        /// It is one while a reset is pending, so the update replaces the old exposure.
+        /// </summary>
+        /// <param name="deltaTime">The render delta in seconds.</param>
+        internal float ComputeGpuAutoExposureBlend(float deltaTime)
+            => IsAutoExposureResetPending
+                ? 1.0f
+                : 1.0f - MathF.Exp(-ExposureTransitionSpeed * SanitizeGpuAutoExposureDeltaSeconds(deltaTime));
+
+        // A request that arrives after the capture stays pending for the next update.
+        private void MarkAutoExposureResetApplied(long capturedRequests)
+        {
+            long applied = Volatile.Read(ref _autoExposureResetsApplied);
+            while (capturedRequests > applied)
+            {
+                long previous = Interlocked.CompareExchange(ref _autoExposureResetsApplied, capturedRequests, applied);
+                if (previous == applied)
+                    return;
+                applied = previous;
+            }
+        }
 
         [Browsable(false)]
         internal bool UseGpuAutoExposureThisFrame => AutoExposure && _gpuAutoExposureReadyThisFrame;
@@ -411,8 +450,10 @@ uniform ColorGradeStruct ColorGrade;";
             if (!RequiresAutoExposure || RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
 
+            long resetRequests = Volatile.Read(ref _autoExposureResetRequests);
+            bool snap = resetRequests != Volatile.Read(ref _autoExposureResetsApplied);
             float time = RuntimeEngine.ElapsedTime;
-            if (time - _lastUpdateTime < _secBetweenExposureUpdates)
+            if (!snap && time - _lastUpdateTime < _secBetweenExposureUpdates)
                 return;
 
             _lastUpdateTime = time;
@@ -420,7 +461,8 @@ uniform ColorGradeStruct ColorGrade;";
             void OnResult(bool success, float dot)
             {
                 _lastLumDot = dot;
-                LerpExposure(success, dot);
+                if (LerpExposure(success, dot, snap) && snap)
+                    MarkAutoExposureResetApplied(resetRequests);
             }
 
             RuntimeEngine.Rendering.State.CalculateFrontBufferDotLuminanceAsync(rect, false, AutoExposureLuminanceWeights, OnResult);
@@ -433,8 +475,10 @@ uniform ColorGradeStruct ColorGrade;";
             if (!RequiresAutoExposure || RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
 
+            long resetRequests = Volatile.Read(ref _autoExposureResetRequests);
+            bool snap = resetRequests != Volatile.Read(ref _autoExposureResetsApplied);
             float time = RuntimeEngine.ElapsedTime;
-            if (time - _lastUpdateTime < _secBetweenExposureUpdates)
+            if (!snap && time - _lastUpdateTime < _secBetweenExposureUpdates)
                 return;
 
             _lastUpdateTime = time;
@@ -442,7 +486,8 @@ uniform ColorGradeStruct ColorGrade;";
             void OnResult(bool success, float dot)
             {
                 _lastLumDot = dot;
-                LerpExposure(success, dot);
+                if (LerpExposure(success, dot, snap) && snap)
+                    MarkAutoExposureResetApplied(resetRequests);
             }
 
             switch (tex)
@@ -482,8 +527,12 @@ uniform ColorGradeStruct ColorGrade;";
             double rawRenderDeltaSeconds = RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds;
             float deltaTime = _lastUpdateTime == float.MinValue ? 0.0f : SanitizeGpuAutoExposureDeltaSeconds(rawRenderDeltaSeconds);
 
+            // The backend reads ComputeGpuAutoExposureBlend, so a pending reset gives a blend of one in this dispatch.
+            long resetRequests = Volatile.Read(ref _autoExposureResetRequests);
             bool success = renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow, gpuProgramBinding);
             _gpuAutoExposureReadyThisFrame = success;
+            if (success)
+                MarkAutoExposureResetApplied(resetRequests);
 
             // Only consume the timestamp budget when the GPU dispatch actually succeeded.
             // If GPU fails, leaving _lastUpdateTime untouched lets the CPU fallback path
@@ -492,10 +541,11 @@ uniform ColorGradeStruct ColorGrade;";
                 _lastUpdateTime = RuntimeEngine.ElapsedTime;
         }
 
-        private void LerpExposure(bool success, float lumDot)
+        /// <returns>True if the exposure was set from a metered value.</returns>
+        private bool LerpExposure(bool success, float lumDot, bool snap)
         {
             if (!success)
-                return;
+                return false;
 
             GetResolvedExposureBounds(out float minExposure, out float maxExposure);
 
@@ -508,7 +558,7 @@ uniform ColorGradeStruct ColorGrade;";
                     Exposure = minExposure;
                 if (Exposure > maxExposure)
                     Exposure = maxExposure;
-                return;
+                return false;
             }
 
             float exposure = ExposureDividend / lumDot;
@@ -518,11 +568,13 @@ uniform ColorGradeStruct ColorGrade;";
             exposure = ClampExposureToResolvedBounds(exposure);
 
             //If the current exposure is an invalid value, that means we want the exposure to be set immediately.
+            //A reset of the exposure history also sets it immediately.
             float currentExposure = Exposure;
-            if (!float.IsFinite(currentExposure) || currentExposure < minExposure || currentExposure > maxExposure)
+            if (snap || !float.IsFinite(currentExposure) || currentExposure < minExposure || currentExposure > maxExposure)
                 Exposure = exposure;
             else
                 Exposure = Interp.Lerp(currentExposure, exposure, ExposureTransitionSpeed);
+            return true;
         }
 
         public void Lerp(ColorGradingSettings source, ColorGradingSettings dest, float time)

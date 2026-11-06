@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Extensions;
@@ -76,6 +77,8 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     private float _emitAccumulator;
     private float _totalTime;
     private uint _randomSeed;
+    private int _prewarmStepsRemaining;
+    private double _prewarmBudgetMilliseconds;
     private string _currentShaderHash = "";
 
     // Shader assembler
@@ -192,6 +195,17 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     [YamlIgnore]
     [Browsable(false)]
     public uint DeadParticleCount => _counters.DeadCount;
+
+    /// <summary>The length of one prewarm step, in seconds.</summary>
+    public const float PrewarmStepSeconds = 1.0f / 60.0f;
+
+    /// <summary>True while a <see cref="Prewarm"/> has steps that did not run yet.</summary>
+    [Browsable(false)]
+    public bool IsPrewarming => _prewarmStepsRemaining > 0;
+
+    /// <summary>The number of prewarm steps that did not run yet.</summary>
+    [Browsable(false)]
+    public int PrewarmStepsRemaining => _prewarmStepsRemaining;
 
     [YamlIgnore]
     [Browsable(false)]
@@ -699,7 +713,19 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         if (!IsSimulating || !_buffersInitialized)
             return;
 
-        float deltaTime = Delta;
+        // A prewarm that did not complete in its budget continues here, in place of the normal step.
+        if (_prewarmStepsRemaining > 0)
+        {
+            ContinuePrewarm();
+            return;
+        }
+
+        StepSimulation(Delta);
+    }
+
+    /// <summary>Advances the emitter by one step: spawn, update, and the render bounds.</summary>
+    private void StepSimulation(float deltaTime)
+    {
         _totalTime += deltaTime;
 
         // Update emitter parameters
@@ -915,6 +941,51 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
             IsSimulating = true;
             RegisterTick(ETickGroup.DuringPhysics, ETickOrder.Scene, Update);
         }
+    }
+
+    /// <summary>
+    /// Clears all particles, sets the random seed, and runs fixed steps of <see cref="PrewarmStepSeconds"/> for
+    /// <paramref name="seconds"/> of simulation time. The steps run now until <paramref name="budgetMilliseconds"/>
+    /// of wall time is used. The emitter runs at least one step in each call, so a prewarm always advances.
+    /// The steps that remain continue in the next updates of the emitter, with the same budget in each update,
+    /// in place of the normal step. The same seed and duration give the same particles.
+    /// </summary>
+    /// <param name="seconds">The simulation time to run. Zero only clears the particles and sets the seed.</param>
+    /// <param name="seed">The random seed of the spawn shader.</param>
+    /// <param name="budgetMilliseconds">The wall time that the steps can use in each frame.</param>
+    /// <returns>True if the prewarm is complete.</returns>
+    public bool Prewarm(float seconds, int seed, double budgetMilliseconds)
+    {
+        Clear();
+        _totalTime = 0.0f;
+        _emitAccumulator = 0.0f;
+        _randomSeed = unchecked((uint)seed);
+        _prewarmStepsRemaining = float.IsFinite(seconds) && seconds > 0.0f
+            ? (int)MathF.Ceiling(seconds / PrewarmStepSeconds)
+            : 0;
+        _prewarmBudgetMilliseconds = double.IsFinite(budgetMilliseconds) ? Math.Max(0.0, budgetMilliseconds) : 0.0;
+        return ContinuePrewarm();
+    }
+
+    /// <summary>
+    /// Runs more prewarm steps until the budget of the last <see cref="Prewarm"/> call is used.
+    /// The update of the emitter calls it while <see cref="IsPrewarming"/> is true.
+    /// </summary>
+    /// <returns>True if the prewarm is complete.</returns>
+    public bool ContinuePrewarm()
+    {
+        if (_prewarmStepsRemaining <= 0)
+            return true;
+
+        long start = System.Diagnostics.Stopwatch.GetTimestamp();
+        do
+        {
+            StepSimulation(PrewarmStepSeconds);
+            _prewarmStepsRemaining--;
+        }
+        while (_prewarmStepsRemaining > 0 && System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds < _prewarmBudgetMilliseconds);
+
+        return _prewarmStepsRemaining <= 0;
     }
 
     /// <summary>

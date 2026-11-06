@@ -77,7 +77,7 @@ public sealed partial class WebGpuRendererHost
             ? settings.ComputePhysicalExposureMultiplier() : 1.0f;
         float fallback = settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
             ? exposureBase : settings.Exposure;
-        float alpha = 1.0f - MathF.Exp(-settings.ExposureTransitionSpeed * ColorGradingSettings.SanitizeGpuAutoExposureDeltaSeconds(deltaTime));
+        float alpha = settings.ComputeGpuAutoExposureBlend(deltaTime);
         program.Uniform("LuminanceWeights", settings.AutoExposureLuminanceWeights);
         program.Uniform("AutoExposureBias", settings.AutoExposureBias);
         program.Uniform("AutoExposureScale", settings.AutoExposureScale);
