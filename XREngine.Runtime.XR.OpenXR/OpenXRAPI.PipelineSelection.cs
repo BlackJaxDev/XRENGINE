@@ -57,8 +57,7 @@ public unsafe partial class OpenXRAPI
                         "The Forward+ oracle fallback is forbidden for an explicit RVC selection.";
                     return false;
                 }
-                if (RvcRenderPipeline.UsesComposedAdvancedFamily &&
-                    !TryValidateOpenXrEyeAdvancedBinding(viewport, eyeName, out diagnostic, ref pendingResources))
+                if (!TryValidateOpenXrEyeAdvancedBinding(viewport, eyeName, out diagnostic, ref pendingResources))
                     return false;
                 break;
 

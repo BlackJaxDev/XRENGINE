@@ -233,8 +233,6 @@ public static class XREngineEnvironmentVariables
     public const string UploadStageLogging = "XRE_UPLOAD_STAGE_LOGGING";
     public const string CrashBreadcrumbs = "XRE_CRASH_BREADCRUMBS";
     public const string DeferredDebug = "XRE_DEFERRED_DEBUG";
-    /// <summary>Set to <c>1</c> to render RVC eyes through the composed Advanced stage family instead of the Default chain.</summary>
-    public const string RvcStandalone = "XRE_RVC_STANDALONE";
     public const string DebugModelRender = "XRE_DEBUG_MODEL_RENDER";
     public const string ModelRenderDiag = "XRE_MODEL_RENDER_DIAG";
     public const string DebugModelRenderZero = "XRE_DEBUG_MODEL_RENDER_ZERO";
