@@ -235,7 +235,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             return false;
 
         if (EnforceAdvancedLatePassEligibility &&
-            activeInstance.Pipeline is AdvancedRenderPipeline advanced &&
+            activeInstance.Pipeline?.ResolveAdvancedStageFamily() is { } advanced &&
             !advanced.TryValidateLatePassProfile(RenderPass, out string? reason))
         {
             ReportAdvancedLatePassRejection(reason);

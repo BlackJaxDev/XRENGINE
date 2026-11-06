@@ -198,7 +198,7 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
                     requirements.ComputePrograms.Contains(pass), path), scenePath ?? string.Empty, path, pass: pass,
                     sourcePath: worldSourcePath);
         }
-        if (pipeline is IAdvancedRenderStageFamilyHost family)
+        if (pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } family)
             _nativeAdmission.IncludeShadingDebug(requirements, family.AdvancedStageFamilyDefinition.ShadingDebugView);
         _nativeAdmission.IncludeProbeLighting(requirements, pipeline is XREngine.Rendering.GI.Contracts.IGlobalIlluminationPlanHost giHost &&
             giHost.GlobalIlluminationPlan.RequiresNativeProbeIblBindings);

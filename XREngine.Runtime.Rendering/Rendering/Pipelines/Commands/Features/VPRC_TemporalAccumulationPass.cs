@@ -801,7 +801,7 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
     /// </summary>
     private static bool IsBoundAdvancedOpenXrEye()
         => CurrentRenderingPipeline is { } instance &&
-           instance.AssignedPipeline is AdvancedRenderPipeline { IsOpenXrEyeProfile: true } &&
+           instance.AssignedPipeline?.ResolveAdvancedStageFamily() is { IsOpenXrEyeProfile: true } &&
            instance.AdvancedOutputBinding.IsBound;
 
     private static bool IsHistoryIsolationPolicyDisabled(EVrTemporalHistoryPolicy policy)
@@ -1408,7 +1408,7 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
 
         BindStrictHistoryBegin(instance, state);
         PublishTemporalUniformData(state, captureResolve: true);
-        if ((instance.Pipeline is IAdvancedRenderStageFamilyHost ||
+        if ((instance.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } ||
              RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.WebGPU) &&
             instance.RenderState.FrameViewSet is { } logicalViews)
         {
@@ -1447,7 +1447,7 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
     private static RenderFrameViewDescriptor? GetFrozenAdvancedTemporalView(
         XRRenderPipelineInstance instance, XRCamera camera)
     {
-        if (instance.Pipeline is not IAdvancedRenderStageFamilyHost ||
+        if (instance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } ||
             instance.RenderState.FrameViewSet is not { } views)
             return null;
 

@@ -203,7 +203,15 @@ namespace XREngine
                             break;
                         case RvcRenderPipeline rvcPipeline:
                             ApplyRvcSettings(rvcPipeline);
-                            viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                            if (RvcRenderPipeline.UsesComposedAdvancedFamily)
+                            {
+                                rvcPipeline.SynchronizeAdvancedStageFamilyFeatures();
+                                ApplyOpenXrEyeAdvancedOutputBinding(viewport, rvcPipeline, request);
+                            }
+                            else
+                            {
+                                viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                            }
                             break;
                         default:
                             viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
@@ -326,7 +334,7 @@ namespace XREngine
             /// </summary>
             private static void ApplyOpenXrEyeAdvancedOutputBinding(
                 XRViewport viewport,
-                AdvancedRenderPipeline pipeline,
+                IAdvancedRenderStageFamilyHost pipeline,
                 in RenderPipelineRequest request)
             {
                 IRuntimeRendererHost? renderer = viewport.Window?.Renderer

@@ -8,7 +8,7 @@ public sealed class VPRC_PrecomputeBRDF : ViewportRenderCommand
 {
     protected override void Execute()
     {
-        if (ActivePipelineInstance.Pipeline is IAdvancedRenderStageFamilyHost)
+        if (ActivePipelineInstance.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
         {
             AdvancedRenderPipelineOutputBinding binding = ActivePipelineInstance.AdvancedOutputBinding;
             AdvancedVisibilityFamilyReservation reservation = binding.Reservation;

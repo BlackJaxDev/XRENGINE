@@ -227,7 +227,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return false;
         }
         renderer = rendererHost;
-        if (ActivePipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost familyHost)
+        if (ActivePipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } familyHost)
         {
             string pipelineType = ActivePipelineInstance.Pipeline?.GetType().FullName ?? "null";
             failureReason = $"The active pipeline does not host the Advanced stage family (actual: {pipelineType}).";
@@ -642,7 +642,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         AdvancedRenderStageDescriptor descriptor = Descriptor;
         bool hasAmbientOcclusion = context.ResourceLayout is null
             ? !Shaders.Compilation.WebPipelineRasterProgram.IsActive ||
-                ParentPipeline is not IAdvancedRenderStageFamilyHost familyHost ||
+                ParentPipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } familyHost ||
                 familyHost.AdvancedStageFamilyDefinition.UsesWebAmbientOcclusion
             : context.HasResource(AdvancedAmbientOcclusionContract.ResourceName);
         if (descriptor.Stage == EAdvancedRenderStage.AmbientOcclusion && !hasAmbientOcclusion)

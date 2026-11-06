@@ -1665,7 +1665,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     internal static bool RuntimeEnableMsaaDeferred
         => RuntimeEnableMsaa
         && !UseOpenXrVulkanDesktopStartupSafePath
-        && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as AdvancedRenderPipeline)?.EnableDeferredMsaa == true;
+        && RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.ResolveAdvancedStageFamily()?.EnableDeferredMsaa == true;
 
     private const string TonemappingStageKey = CommonPostProcessStages.StageKeys.Tonemapping;
     private const string ColorGradingStageKey = CommonPostProcessStages.StageKeys.ColorGrading;

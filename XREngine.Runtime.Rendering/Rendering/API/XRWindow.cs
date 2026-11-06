@@ -3307,7 +3307,7 @@ namespace XREngine.Rendering
                 {
                     XRViewport viewport = window.Viewports[index];
                     if (!ReferenceEquals(viewport.World, world) ||
-                        viewport.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                        viewport.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
                         continue;
 
                     ++ownerCount;

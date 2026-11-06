@@ -2167,7 +2167,7 @@ namespace XREngine.Rendering
                 {
                     XRViewport registered = window.Viewports[viewportIndex];
                     if (!ReferenceEquals(registered.World, world) ||
-                        registered.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                        registered.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
                         continue;
 
                     bool listed = false;
@@ -2186,7 +2186,7 @@ namespace XREngine.Rendering
             for (int index = 0; index < desktopConsumers.Length; ++index)
             {
                 XRViewport consumer = desktopConsumers[index];
-                if (consumer.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                if (consumer.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
                     continue;
 
                 ++ownerCount;

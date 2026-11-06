@@ -14,7 +14,7 @@ namespace XREngine.Rendering;
 /// It runs only the RVC command chain. VR selects it only through
 /// <see cref="EVrRenderPipeline.Rvc"/>.
 /// </summary>
-public sealed class RvcRenderPipeline : DefaultRenderPipeline
+public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderStageFamilyHost
 {
     private const RenderPipelineResourceUsage RvcSampledColorAttachment =
         RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment;
@@ -59,6 +59,83 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
     private RvcCapabilityMatrix _lastRvcCapabilityMatrix;
     private RvcPipelineResolution _lastRvcResolution;
     private RvcPipelinePlan _lastRvcPlan;
+    private AdvancedRenderPipeline? _advancedStageFamily;
+
+    /// <summary>
+    /// True when <see cref="XREngineEnvironmentVariables.RvcStandalone"/> selects the
+    /// composed Advanced stage family for RVC eyes. The Default chain is used otherwise.
+    /// </summary>
+    internal static bool UsesComposedAdvancedFamily { get; } =
+        XREnvironment.IsEnabled(XREngineEnvironmentVariables.RvcStandalone);
+
+    bool IAdvancedRenderStageFamilyHost.UsesAdvancedStageFamily => UsesComposedAdvancedFamily;
+
+    AdvancedRenderPipeline IAdvancedRenderStageFamilyHost.AdvancedStageFamilyDefinition => AdvancedStageFamily;
+
+    /// <summary>
+    /// The Advanced stage family that this pipeline executes as its own frame when
+    /// <see cref="UsesComposedAdvancedFamily"/> is set. It renders one mono eye, or
+    /// both eyes as one layered target when this pipeline is stereo.
+    /// </summary>
+    internal AdvancedRenderPipeline AdvancedStageFamily
+        => _advancedStageFamily ??= CreateAdvancedStageFamily();
+
+    private AdvancedRenderPipeline CreateAdvancedStageFamily()
+    {
+        AdvancedRenderPipeline family = AdvancedRenderPipeline.CreateOpenXrEyeStageFamilyDefinition(Stereo);
+        RenderPipelineFeatureSynchronizer.CopyPipelineFeatures(this, family);
+        return family;
+    }
+
+    /// <summary>Copies this pipeline's shared visual features into the composed Advanced family.</summary>
+    public void SynchronizeAdvancedStageFamilyFeatures()
+    {
+        if (UsesComposedAdvancedFamily)
+            RenderPipelineFeatureSynchronizer.CopyPipelineFeatures(this, AdvancedStageFamily);
+    }
+
+    public override IRenderPipelineEditorUIProvider? EditorUIProvider
+        => UsesComposedAdvancedFamily ? AdvancedStageFamily.EditorUIProvider : base.EditorUIProvider;
+
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        if (UsesComposedAdvancedFamily)
+            AdvancedStageFamily.DescribeRequirements(requirements);
+        else
+            base.DescribeRequirements(requirements);
+    }
+
+    internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
+        => UsesComposedAdvancedFamily
+            ? AdvancedStageFamily.GetRequestedInternalResolutionForCamera(camera)
+            : base.GetRequestedInternalResolutionForCamera(camera);
+
+    internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
+        => UsesComposedAdvancedFamily
+            ? AdvancedStageFamily.GetRequestedInternalResolutionForCamera(camera, effectiveAntiAliasingMode)
+            : base.GetRequestedInternalResolutionForCamera(camera, effectiveAntiAliasingMode);
+
+    internal override RenderPipelineResourceVariant BuildResourceVariantForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
+        => UsesComposedAdvancedFamily
+            ? AdvancedStageFamily.BuildResourceVariantForGenerationKey(instance, viewport)
+            : base.BuildResourceVariantForGenerationKey(instance, viewport);
+
+    internal override bool UsesStereoResources(XRRenderPipelineInstance instance, XRViewport? viewport)
+        => UsesComposedAdvancedFamily
+            ? AdvancedStageFamily.UsesStereoResources(instance, viewport)
+            : base.UsesStereoResources(instance, viewport);
+
+    protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
+        => UsesComposedAdvancedFamily
+            ? AdvancedStageFamily.GetHostedPassIndicesAndSorters()
+            : base.GetPassIndicesAndSorters();
+
+    protected override void DescribeRenderPasses(RenderPassMetadataCollection metadata)
+    {
+        // The Advanced family declares no Default pass dependencies.
+        if (!UsesComposedAdvancedFamily)
+            base.DescribeRenderPasses(metadata);
+    }
 
     public RvcRenderPipeline() : this(stereo: false)
     {
@@ -287,6 +364,12 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
+        // The OpenXR eye profile of the Advanced family acquires the shared
+        // preparation itself. RVC stages are not appended yet: their kernels do
+        // not exist, and the family must match the Advanced oracle first.
+        if (UsesComposedAdvancedFamily)
+            return AdvancedStageFamily.CreateHostedCommandChain(this);
+
         ViewportRenderCommandContainer commands = base.GenerateCommandChain();
         commands.Insert(0, new VPRC_AcquireAdvancedPreparation());
         AppendRvcPassCommands(commands);
@@ -309,6 +392,12 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
 
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
+        if (UsesComposedAdvancedFamily)
+        {
+            AdvancedStageFamily.DescribeHostedResources(builder);
+            return;
+        }
+
         base.DescribeResources(builder);
         if ((((DefaultPipelineResourceFeature)builder.Profile.FeatureMask) & DefaultPipelineResourceFeature.RvcResourcesEnabled) != 0)
             DeclareRvcResources(builder);
@@ -327,6 +416,9 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
         XRRenderPipelineInstance instance,
         XRViewport? viewport)
     {
+        if (UsesComposedAdvancedFamily)
+            return AdvancedStageFamily.BuildResourceFeatureMaskForGenerationKey(instance, viewport);
+
         ulong mask = base.BuildResourceFeatureMaskForGenerationKey(instance, viewport);
         // A mode change that starts or stops planning RVC stages replaces the generation.
         if (RequiresRvcResources)
