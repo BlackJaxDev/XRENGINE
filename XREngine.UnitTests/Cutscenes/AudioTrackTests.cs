@@ -6,6 +6,7 @@ using Shouldly;
 using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Cutscenes;
+using XREngine.Data;
 using XREngine.Scene;
 
 namespace XREngine.UnitTests.Cutscenes;
@@ -55,6 +56,7 @@ public sealed class AudioTrackTests
 
         public Dictionary<uint, FakeSource> Sources { get; } = [];
         public bool ClockAvailable { get; set; } = true;
+        public bool Recording { get; set; } = true;
         public long LatencyNanoseconds { get; set; }
 
         public string? DeviceName => null;
@@ -90,7 +92,8 @@ public sealed class AudioTrackTests
         {
             FakeSource s = Sources[source.Id];
             s.Playing = true;
-            s.Log.Add("play");
+            if (Recording)
+                s.Log.Add("play");
         }
 
         public void Stop(AudioSourceHandle source)
@@ -98,7 +101,8 @@ public sealed class AudioTrackTests
             FakeSource s = Sources[source.Id];
             s.Playing = false;
             s.Processed = s.Queue.Count;
-            s.Log.Add("stop");
+            if (Recording)
+                s.Log.Add("stop");
         }
 
         public void Pause(AudioSourceHandle source) => Sources[source.Id].Playing = false;
@@ -113,7 +117,8 @@ public sealed class AudioTrackTests
             foreach (AudioBufferHandle buffer in buffers)
             {
                 s.Queue.Add(buffer.Id);
-                s.Log.Add($"queue {_firstSample[buffer.Id]}");
+                if (Recording)
+                    s.Log.Add($"queue {_firstSample[buffer.Id]}");
             }
         }
 
@@ -164,6 +169,43 @@ public sealed class AudioTrackTests
             foreach (FakeSource source in Sources.Values)
                 source.SampleFrame = frame;
         }
+
+        /// <summary>Marks the first queued buffer of each source as played, as the device does.</summary>
+        public void ConsumeOneBuffer()
+        {
+            foreach (FakeSource source in Sources.Values)
+                source.Processed = Math.Min(source.Queue.Count, source.Processed + 1);
+        }
+    }
+
+    /// <summary>A decoder that wraps another decoder and counts the seeks that go backward from its read position.</summary>
+    private sealed class CountingDecoder(IStreamingAudioDecoder inner) : IStreamingAudioDecoder
+    {
+        private long _position;
+
+        public int BackwardSeeks { get; private set; }
+        public int Seeks { get; private set; }
+        public int SampleRate => inner.SampleRate;
+        public int Channels => inner.Channels;
+        public long TotalFrames => inner.TotalFrames;
+
+        public void SeekToFrame(long frame)
+        {
+            Seeks++;
+            if (frame < _position)
+                BackwardSeeks++;
+            inner.SeekToFrame(frame);
+            _position = Math.Clamp(frame, 0L, TotalFrames);
+        }
+
+        public int Read(Span<float> destination)
+        {
+            int read = inner.Read(destination);
+            _position += read;
+            return read;
+        }
+
+        public void Dispose() => inner.Dispose();
     }
 
     /// <summary>A cutscene with one audio clip on a node with two listeners, each with its own fake transport.</summary>
@@ -175,6 +217,15 @@ public sealed class AudioTrackTests
         public required FakeTransport[] Transports { get; init; }
         public required ListenerContext[] Listeners { get; init; }
         public required CutsceneBindingTable Table { get; init; }
+        public required List<CountingDecoder> Decoders { get; init; }
+        public required List<string> Fired { get; init; }
+        public required List<CutsceneDiscontinuity> Discontinuities { get; init; }
+
+        public void SetHeardTime(double seconds, long restartFrame)
+        {
+            foreach (FakeTransport transport in Transports)
+                transport.SetSampleFrame((long)Math.Round(seconds * SampleRate) - restartFrame);
+        }
 
         public IEnumerable<FakeSource> AllSources
         {
@@ -228,7 +279,7 @@ public sealed class AudioTrackTests
         return path;
     }
 
-    private static Rig MakeRig()
+    private static Rig MakeRig(ECutsceneEventSeekPolicy policy = ECutsceneEventSeekPolicy.Skip, params double[] eventTimes)
     {
         string path = WriteRampWav(SampleRate * 3);
         SceneNode node = new("Speaker");
@@ -244,13 +295,30 @@ public sealed class AudioTrackTests
         AudioTrack track = new() { Name = "Dialog", BindingSlot = 0 };
         track.Clips.Add(new AudioTrackClip { Start = T(0), Duration = T(3), SourcePath = path });
         asset.Tracks.Add(track);
+        if (eventTimes.Length > 0)
+        {
+            EventTrack events = new() { Name = "Events", SeekPolicy = policy };
+            foreach (double time in eventTimes)
+                events.Events.Add(new CutsceneEvent { Time = T(time), Key = "e" });
+            asset.Tracks.Add(events);
+        }
 
         List<CutsceneCompileDiagnostic> diagnostics = [];
         CompiledCutscene compiled = CutsceneCompiler.Compile(asset, diagnostics);
         diagnostics.ShouldBeEmpty();
         CutsceneBindingTable table = CutsceneBindingTable.Resolve(compiled, new FakeResolver(node));
         table.Diagnostics.ShouldBeEmpty();
-        CutscenePlayer player = new(compiled, table, new CutsceneStateSnapshot(table));
+        List<CountingDecoder> decoders = [];
+        CutscenePlayer player = new(compiled, table, new CutsceneStateSnapshot(table), file =>
+        {
+            CountingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(file));
+            decoders.Add(decoder);
+            return decoder;
+        });
+        List<string> fired = [];
+        List<CutsceneDiscontinuity> discontinuities = [];
+        player.EventFired += e => fired.Add($"{e.Event.Time.ToSeconds():0.###}{(e.FromSeek ? " seek" : "")}");
+        player.Discontinuity += discontinuities.Add;
 
         foreach (FakeTransport transport in transports)
             transport.ClearLogs();
@@ -262,6 +330,9 @@ public sealed class AudioTrackTests
             Transports = transports,
             Listeners = listeners,
             Table = table,
+            Decoders = decoders,
+            Fired = fired,
+            Discontinuities = discontinuities,
         };
     }
 
@@ -457,5 +528,218 @@ public sealed class AudioTrackTests
         player.Diagnostics.Count.ShouldBe(2);
         player.Diagnostics[1].Message.ShouldContain("missing.flac");
         player.Stop();
+    }
+    /// <summary>Plays in steps of 20 ms. Before each step, the device reports a heard time at an offset from the clock.</summary>
+    private static void PlayWithHeardOffset(Rig rig, int steps, double offsetSeconds)
+    {
+        const long restartFrame = 160;
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        for (int i = 0; i < steps; i++)
+        {
+            double heard = Math.Max(0.02, rig.Player.Position.ToSeconds() + 0.02 + offsetSeconds);
+            rig.SetHeardTime(heard, restartFrame);
+            rig.Player.Tick(0.02);
+        }
+    }
+
+    [Test]
+    public void Events_FireOnce_WhileTheAudioPullsTheClockBack()
+    {
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.1, 0.25);
+        PlayWithHeardOffset(rig, 20, -0.03);
+
+        rig.Fired.ShouldBe(["0.1", "0.25"]);
+        rig.Discontinuities.ShouldBeEmpty();
+        rig.Player.Position.ShouldBeGreaterThan(T(0.25));
+    }
+
+    [Test]
+    public void Events_FireOnce_WhileTheAudioPullsTheClockForward()
+    {
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.1, 0.25);
+        PlayWithHeardOffset(rig, 20, 0.03);
+
+        rig.Fired.ShouldBe(["0.1", "0.25"]);
+        rig.Discontinuities.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Events_FireOnce_AfterAReverseStepAndForwardPlayback()
+    {
+        // The high-water mark keeps play dispatch from firing an event again below the highest position that playback reached.
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.05);
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.SetHeardTime(0.06, 160);
+        rig.Player.Tick(0.04);
+        rig.Fired.ShouldBe(["0.05"]);
+
+        rig.Player.SetRate(-1.0);
+        rig.Player.Tick(0.03);
+        rig.Player.Position.ShouldBeLessThan(T(0.05));
+
+        rig.Player.SetRate(1.0);
+        rig.Player.Tick(0.02);
+        rig.Player.Tick(0.02);
+        rig.Player.Position.ShouldBeGreaterThan(T(0.05));
+        rig.Fired.ShouldBe(["0.05"]);
+    }
+    [Test]
+    public void HardResync_RaisesADiscontinuity_AndSkipsTheCrossedEvents()
+    {
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.3);
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        rig.SetHeardTime(0.5, 160);
+        rig.Player.Tick(0.02);
+
+        rig.Player.Position.ShouldBe(T(0.5));
+        rig.Discontinuities.Count.ShouldBe(1);
+        rig.Discontinuities[0].Intent.ShouldBe(ESeekIntent.Jump);
+        rig.Discontinuities[0].To.ShouldBe(T(0.5));
+        rig.Fired.ShouldBeEmpty();
+
+        // Later playback does not fire the skipped event.
+        rig.SetHeardTime(0.52, 160);
+        rig.Player.Tick(0.02);
+        rig.Fired.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void HardResync_WithFireLatest_FiresTheLastCrossedEventOnce()
+    {
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.FireLatest, 0.2, 0.3);
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        rig.SetHeardTime(0.5, 160);
+        rig.Player.Tick(0.02);
+        rig.SetHeardTime(0.52, 160);
+        rig.Player.Tick(0.02);
+
+        rig.Fired.ShouldBe(["0.3 seek"]);
+        rig.Discontinuities.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public void HeardFrame_IsNotBelowTheRestartFrame()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Seek(T(1.0), ESeekIntent.Jump);
+        rig.Player.Play();
+        rig.Player.Tick(0.0);
+
+        // The device has played nothing of the new queue yet, and 300 ms of output is still ahead of the listener.
+        foreach (FakeTransport transport in rig.Transports)
+        {
+            transport.SetSampleFrame(0);
+            transport.LatencyNanoseconds = 300_000_000;
+        }
+        rig.Player.Tick(0.02);
+
+        rig.Discontinuities.Count.ShouldBe(1);
+        rig.Player.Position.ShouldBeGreaterThanOrEqualTo(T(1.0));
+        rig.Player.Position.ShouldBeLessThanOrEqualTo(T(1.02));
+    }
+
+    [Test]
+    public void PauseAndRateChange_ResumeWithoutABackwardDecoderSeek()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.Player.Tick(0.02);
+
+        rig.Player.Pause();
+        rig.Player.Tick(0.02);
+        rig.Player.Play();
+        foreach (FakeTransport transport in rig.Transports)
+            transport.ClearLogs();
+        rig.Player.Tick(0.02);
+        int frame = (int)rig.Player.Position.ToSamples(SampleRate);
+        foreach (FakeSource source in rig.AllSources)
+            FirstQueuedSample(source).ShouldBe(frame);
+
+        rig.Player.SetRate(2.0);
+        rig.Player.Tick(0.02);
+        rig.Player.SetRate(1.0);
+        foreach (FakeTransport transport in rig.Transports)
+            transport.ClearLogs();
+        rig.Player.Tick(0.02);
+        frame = (int)rig.Player.Position.ToSamples(SampleRate);
+        foreach (FakeSource source in rig.AllSources)
+            FirstQueuedSample(source).ShouldBe(frame);
+
+        rig.Decoders.Count.ShouldBe(1);
+        rig.Decoders[0].BackwardSeeks.ShouldBe(0);
+    }
+
+    [Test]
+    public void ScrubSeekWhilePlaying_IsSilent()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        rig.Player.Seek(T(1.0), ESeekIntent.Scrub);
+        rig.Player.Tick(0.0);
+
+        rig.Player.IsAudioMuted.ShouldBeTrue();
+        foreach (FakeSource source in rig.AllSources)
+        {
+            source.Playing.ShouldBeFalse();
+            source.Gain.ShouldBe(0.0f);
+        }
+    }
+
+    [Test]
+    public void Release_RestoresThePlayOnQueueFlagOfEachSource()
+    {
+        using Rig rig = MakeRig();
+        AudioSource[] sources = [.. rig.Component.ActiveListeners.Values];
+        sources[0].AutoPlayOnQueue = false;
+        sources[1].AutoPlayOnQueue = true;
+
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        sources[0].AutoPlayOnQueue.ShouldBeFalse();
+        sources[1].AutoPlayOnQueue.ShouldBeFalse();
+
+        rig.Player.Stop();
+        sources[0].AutoPlayOnQueue.ShouldBeFalse();
+        sources[1].AutoPlayOnQueue.ShouldBeTrue();
+    }
+
+    [Test]
+    public void SteadyStateRefillTick_DoesNotAllocate()
+    {
+        using Rig rig = MakeRig();
+        foreach (FakeTransport transport in rig.Transports)
+            transport.Recording = false;
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        // Warm up the buffer pools and the queues with a few refills.
+        for (int i = 0; i < 4; i++)
+        {
+            foreach (FakeTransport transport in rig.Transports)
+                transport.ConsumeOneBuffer();
+            rig.SetHeardTime(rig.Player.Position.ToSeconds() + 0.02, 160 + i * AudioTrackEvaluator.ChunkFrames);
+            rig.Player.Tick(0.02);
+        }
+
+        foreach (FakeTransport transport in rig.Transports)
+            transport.ConsumeOneBuffer();
+        rig.SetHeardTime(rig.Player.Position.ToSeconds() + 0.02, 160 + 4 * AudioTrackEvaluator.ChunkFrames);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        rig.Player.Tick(0.02);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        allocated.ShouldBe(0L);
+        rig.Discontinuities.ShouldBeEmpty();
+        foreach (FakeSource source in rig.AllSources)
+            source.Queue.Count.ShouldBe(4);
     }
 }

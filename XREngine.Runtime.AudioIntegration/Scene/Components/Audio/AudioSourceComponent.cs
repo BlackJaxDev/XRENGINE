@@ -399,6 +399,39 @@ namespace XREngine.Components
             }
             return anyQueued;
         }
+        /// <summary>
+        /// Queues one buffer of 16-bit PCM on each source in a list that the caller keeps. Unlike the other overloads,
+        /// this method does not enumerate <see cref="ActiveListeners"/>, so it does not allocate on the heap.
+        /// The caller must refresh its list when the listeners change. The data is copied, so the caller can reuse the array.
+        /// </summary>
+        /// <param name="sources">The sources of this component to queue the buffer on.</param>
+        /// <param name="frequency">The sample rate in Hz.</param>
+        /// <param name="stereo">True for interleaved stereo data.</param>
+        /// <param name="buffer">The PCM data.</param>
+        /// <param name="batch">A one-element array that the method uses to pass each new buffer, so the call makes no array.</param>
+        /// <returns>The number of sources that accepted the buffer.</returns>
+        public int EnqueueStreamingBuffer(ReadOnlySpan<AudioSource> sources, int frequency, bool stereo, short[] buffer, AudioBuffer[] batch)
+        {
+            ArgumentNullException.ThrowIfNull(batch);
+            if (batch.Length != 1)
+                throw new ArgumentException("The batch array must have exactly one element.", nameof(batch));
+
+            int accepted = 0;
+            for (int i = 0; i < sources.Length; i++)
+            {
+                AudioSource source = sources[i];
+                AudioBuffer audioBuffer = source.ParentListener.TakeBuffer();
+                source.SetBufferData(audioBuffer, buffer, frequency, stereo);
+                batch[0] = audioBuffer;
+                if (source.QueueBuffers(MaxStreamingBuffers, batch))
+                    accepted++;
+                batch[0] = null!;
+            }
+            _streamingStereo = stereo;
+            StreamingBufferEnqueuedShort?.Invoke((frequency, stereo, buffer));
+            return accepted;
+        }
+
         public void EnqueueStreamingBuffers(int frequency, bool stereo, params byte[][] buffers)
         {
             //if (Type == ESourceType.Static)

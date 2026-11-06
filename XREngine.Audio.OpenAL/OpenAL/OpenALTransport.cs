@@ -559,6 +559,9 @@ namespace XREngine.Audio
 
             // The first value is the offset in 32.32 fixed point. The second value is the latency in nanoseconds.
             long* values = stackalloc long[2];
+
+            // An error from an earlier call must not make this query look failed, so clear it first.
+            Api.GetError();
             _getSourcei64v(source.Id, SampleOffsetLatencySoft, values);
             if (Api.GetError() != AudioError.NoError)
                 return false;

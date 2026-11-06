@@ -56,13 +56,13 @@ An `AudioTrack` plays `AudioTrackClip` entries through the `AudioSourceComponent
 - `Volume`: multiplies the gain of the component and the blend weight of the clip.
 - `ClipOffset`: skips the start of the file. `Speed` must be 1, and `Extrapolation` must not be `Loop`. A clip with another value adds one diagnostic and plays nothing.
 
-The track streams the active clip with an `IStreamingAudioDecoder` (`VorbisStreamingDecoder` or `WavStreamingDecoder`), and it feeds the sources through `AudioSourceComponent.EnqueueStreamingBuffers`. Each buffer holds 2048 frames, and the track keeps 4 buffers in the queue. While a clip plays, the track sets `ExternalBufferManagement` on the component and turns off `AutoPlayOnQueue` on its sources. A stop or the end of the clip puts these values and the source gain back.
+The track streams the active clip with an `IStreamingAudioDecoder` (`VorbisStreamingDecoder` or `WavStreamingDecoder`), and it feeds the sources through `AudioSourceComponent.EnqueueStreamingBuffer`. The track keeps its own list of the sources and rebuilds it only when the listeners change, so a refill does not allocate. Each buffer holds 2048 frames, and the track keeps 4 buffers in the queue. The track also keeps the last 6 buffers of decoded frames, so a restart near the current position (a resume, a return to rate 1, or a new listener) does not seek the decoder backward. While a clip plays, the track sets `ExternalBufferManagement` on the component and turns off `AutoPlayOnQueue` on its sources. A stop or the end of the clip puts back these values and the source gain.
 
 | State | Result |
 |---|---|
 | Forward playback at rate 1 | The sources play the clip from the cutscene time. |
-| Jump seek or scrub step to a new time | Every active source stops, the decoder seeks, and the sources play again from the new time. |
-| Pause, scrub, stop, or any rate other than 1 | The sources stop and their gain is zero. Playback at rate 1 starts again from the current time. |
+| Jump seek to a new time during playback | Every active source stops, the decoder seeks, and the sources play again from the new time. |
+| Pause, scrub (with or without `BeginScrub`), stop, or any rate other than 1 | The sources stop and their gain is zero. Playback at rate 1 starts again from the current time. |
 | A listener comes into range | All sources of the track restart together, so they stay aligned. |
 | No clip, or a time after the clip duration | The sources stop. A `Hold` clip has no sound after its duration. |
 
@@ -70,7 +70,9 @@ An audio track plays one clip at a time. An overlapping clip on the same track a
 
 ### Audio Clock
 
-A cutscene with an audio track that has `DrivesClock` set (the default) starts its clock in `AudioDisciplined` mode. Each frame, the first such track with an active clip reads the playback clock of its first source through `IAudioTransport.TryGetPlaybackClock`. The heard position is the frame count before the queue, plus the source position, minus the output latency. The clock moves toward that position by at most 5 percent of the frame step, and it jumps when the difference is more than 100 ms.
+A cutscene with an audio track that has `DrivesClock` set (the default) starts its clock in `AudioDisciplined` mode. In each play step, after the clock advances and before the evaluation and the event dispatch, the player reads the heard position from the first such track of the last evaluation. The track reads the playback clock of its first source through `IAudioTransport.TryGetPlaybackClock`. The heard position is the frame count before the queue, plus the source position, minus the output latency. It is never less than the frame of the last restart, because no earlier frame was queued. The clock moves toward that position by at most 5 percent of the frame step. When the difference is more than 100 ms, the clock jumps (a hard resync): the player raises `Discontinuity` with `Jump` intent, and the events across the jump follow the seek policy of each track.
+
+Play dispatch keeps a high-water mark: a play step never fires an event at or below the highest position that playback reached. So a clock correction never fires an event twice. A seek, a hard resync, and a stop move the mark to the new position. Reverse playback followed by forward playback does not fire the crossed events again. A seek back does.
 
 | Transport | Clock |
 |---|---|

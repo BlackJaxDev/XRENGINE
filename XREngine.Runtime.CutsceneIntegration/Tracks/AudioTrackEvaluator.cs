@@ -10,7 +10,8 @@ namespace XREngine.Cutscenes;
 /// only during forward playback at rate one. A pause, a scrub, and any other rate stop the sources and set their gain to zero.
 /// After a jump, the evaluator seeks every active source to the new time.
 /// While the clock is in <see cref="ECutsceneClockMode.AudioDisciplined"/> mode, the first active track with
-/// <see cref="AudioTrack.DrivesClock"/> corrects the clock toward the position that the listener hears.
+/// <see cref="AudioTrack.DrivesClock"/> gives the position that the listener hears through <see cref="TryReadHeardPosition"/>.
+/// The player corrects the clock with it before the evaluation and the event dispatch of a step.
 /// If the transport cannot report that position, the clock changes to <see cref="ECutsceneClockMode.Wall"/> and a diagnostic
 /// tells why. The clock goes back to audio mode when the position is available again.
 /// </summary>
@@ -39,6 +40,11 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
 
     private bool _playing;
     private bool _discontinuity;
+
+    // The track that corrects the clock, from the last evaluation. The player reads it before the next evaluation.
+    private CutsceneAudioChannel? _clockChannel;
+    private AudioTrackClip? _clockClip;
+    private int _clockClipIndex = -1;
 
     /// <summary>Creates an evaluator with one channel for each audio track.</summary>
     /// <param name="compiled">The compiled cutscene.</param>
@@ -131,6 +137,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
 
         CutsceneAudioChannel? clockChannel = null;
         AudioTrackClip? clockClip = null;
+        int clockClipIndex = -1;
         List<CutsceneTrack> tracks = context.Compiled.Asset.Tracks;
         for (int i = 0; i < clips.Length; i++)
         {
@@ -179,6 +186,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
             {
                 clockChannel = channel;
                 clockClip = clip;
+                clockClipIndex = active.ClipIndex;
             }
         }
 
@@ -187,8 +195,9 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
             if (!_touched[i] && (_channels[i].ClipIndex >= 0 || _channels[i].Component is not null))
                 _channels[i].Release();
 
-        if (clockChannel is not null && clockClip is not null)
-            Discipline(clockChannel, clockClip);
+        _clockChannel = clockChannel;
+        _clockClip = clockClip;
+        _clockClipIndex = clockClipIndex;
     }
 
     /// <summary>Stops every source, closes every decoder, and gives each component back with its earlier settings.</summary>
@@ -199,6 +208,9 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         Array.Clear(_touched);
         _discontinuity = false;
         _playing = false;
+        _clockChannel = null;
+        _clockClip = null;
+        _clockClipIndex = -1;
         if (IsClockFallbackActive)
         {
             IsClockFallbackActive = false;
@@ -219,20 +231,30 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         throw new NotSupportedException($"No streaming decoder supports the extension '{extension}'. Use an Ogg Vorbis or WAV file.");
     }
 
-    private void Discipline(CutsceneAudioChannel channel, AudioTrackClip clip)
+    /// <summary>
+    /// Reads the cutscene time that the listener hears now, from the track that corrects the clock in the last evaluation.
+    /// The player calls this after it advances the clock and before it evaluates, so the correction and the events of a step use one position.
+    /// If the transport cannot report a clock, this changes the clock to <see cref="ECutsceneClockMode.Wall"/> and adds one diagnostic.
+    /// When the clock is available again, the mode goes back to <see cref="ECutsceneClockMode.AudioDisciplined"/>.
+    /// </summary>
+    /// <param name="position">The heard cutscene time.</param>
+    /// <returns>False if no track can give a position now, or if the clock is not in audio mode.</returns>
+    public bool TryReadHeardPosition(out CutsceneTime position)
     {
-        bool audioMode = _clock.Mode == ECutsceneClockMode.AudioDisciplined;
-        if (!audioMode && !IsClockFallbackActive)
-            return;
+        position = default;
+        if (!_playing || _clockChannel is not { } channel || _clockClip is not { } clip)
+            return false;
+        if (_clock.Mode != ECutsceneClockMode.AudioDisciplined && !IsClockFallbackActive)
+            return false;
 
-        // A new queue has no stable position yet, and a channel with no listener has nothing to measure.
-        if (!channel.IsStreaming || channel.RestartedThisFrame)
-            return;
+        // A channel with no listener, or a channel that closed or changed its clip, has nothing to measure.
+        if (!channel.IsStreaming || channel.ClipIndex != _clockClipIndex)
+            return false;
 
         if (!channel.TryReadHeardFrame(out long frame))
         {
             if (IsClockFallbackActive)
-                return;
+                return false;
             IsClockFallbackActive = true;
             _clock.Mode = ECutsceneClockMode.Wall;
             string message = $"The audio transport of track '{channel.Track.Name}' cannot report a playback clock. The cutscene clock uses wall time until the clock is available.";
@@ -240,7 +262,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
                 Report(channel.TrackIndex, -1, message);
             else
                 Debug.LogWarning(ELogCategory.Audio, "Cutscene audio: {0}", message);
-            return;
+            return false;
         }
 
         if (IsClockFallbackActive)
@@ -252,9 +274,9 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
 
         // The clip speed is one, so the heard time on the timeline is the clip start plus the file time after the clip offset.
         CutsceneTime fileTime = CutsceneTime.FromSamples(frame, channel.SampleRate);
-        _clock.Discipline(clip.Start + (fileTime - clip.ClipOffset));
+        position = clip.Start + (fileTime - clip.ClipOffset);
+        return true;
     }
-
     private bool CanPlay(in CutsceneActiveClip active, CutsceneTrack track, AudioTrackClip clip)
     {
         if (Math.Abs(clip.Speed - 1.0) > 1e-9)

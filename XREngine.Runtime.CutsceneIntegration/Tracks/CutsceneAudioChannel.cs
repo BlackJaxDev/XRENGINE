@@ -6,9 +6,13 @@ namespace XREngine.Cutscenes;
 
 /// <summary>
 /// The streaming state of one audio track. The channel owns the decoder of the active clip and feeds the
-/// sources of the bound <see cref="AudioSourceComponent"/> through <see cref="AudioSourceComponent.EnqueueStreamingBuffers(int, bool, short[][])"/>.
+/// sources of the bound <see cref="AudioSourceComponent"/> through
+/// <see cref="AudioSourceComponent.EnqueueStreamingBuffer(ReadOnlySpan{AudioSource}, int, bool, short[], AudioBuffer[])"/>.
+/// The channel keeps its own array of the sources and rebuilds it only when the listeners change, so the frame path does not allocate.
 /// Each buffer holds <see cref="AudioTrackEvaluator.ChunkFrames"/> frames. The last buffer of a clip is padded with silence,
 /// so every queued buffer has the same length and the play position follows from the number of queued buffers.
+/// The channel keeps the last decoded frames in a ring. A restart inside that ring, for example a resume after a pause,
+/// reads from the ring and does not seek the decoder backward.
 /// </summary>
 internal sealed class CutsceneAudioChannel
 {
@@ -16,30 +20,37 @@ internal sealed class CutsceneAudioChannel
     private const int QueueTarget = 4;
     private const int ChunkFrames = AudioTrackEvaluator.ChunkFrames;
 
+    /// <summary>The ring holds the queue and two more buffers, so a restart near the heard frame is inside it.</summary>
+    private const int HistoryFrames = (QueueTarget + 2) * ChunkFrames;
+
     private readonly float[] _decoded = new float[ChunkFrames * MaxChannels];
     private readonly short[] _mono = new short[ChunkFrames];
     private readonly short[] _stereo = new short[ChunkFrames * MaxChannels];
-    private readonly short[][] _monoBatch;
-    private readonly short[][] _stereoBatch;
+    private readonly AudioBuffer[] _batch = new AudioBuffer[1];
+    private readonly float[] _history = new float[HistoryFrames * MaxChannels];
 
     private AudioSourceComponent? _component;
     private bool _savedExternalBufferManagement;
     private AudioSource[] _sources = [];
+    private bool[] _savedAutoPlay = [];
     private int _sourceCount;
 
     private IStreamingAudioDecoder? _decoder;
     private long _endFrame;
+    private long _decoderFrame;
+    private long _historyCount;
+    private long _readFrame;
     private long _nextFrame;
+    private long _restartFrame;
     private bool _endOfData;
     private bool _streaming;
+    private bool _needsRestart;
     private float _appliedGain = float.NaN;
 
     public CutsceneAudioChannel(int trackIndex, AudioTrack track)
     {
         TrackIndex = trackIndex;
         Track = track;
-        _monoBatch = [_mono];
-        _stereoBatch = [_stereo];
     }
 
     /// <summary>The index of the track in the cutscene asset.</summary>
@@ -60,15 +71,12 @@ internal sealed class CutsceneAudioChannel
     /// <summary>True while the sources play the stream.</summary>
     public bool IsStreaming => _streaming;
 
-    /// <summary>True if the last service restarted the stream, so the queue is new and the clock has no stable value yet.</summary>
-    public bool RestartedThisFrame { get; private set; }
-
     /// <summary>The number of sources that the channel feeds.</summary>
     public int SourceCount => _sourceCount;
 
     /// <summary>
     /// Takes control of the buffers of a component. A different component releases the earlier one first.
-    /// While the channel holds a component, the component does not unqueue buffers itself and does not play on a queue.
+    /// While the channel holds a component, the component does not unqueue buffers itself and its sources do not play on a queue.
     /// </summary>
     public void Bind(AudioSourceComponent component)
     {
@@ -93,18 +101,20 @@ internal sealed class CutsceneAudioChannel
         ClipIndex = clipIndex;
         long clipEnd = (clip.ClipOffset + clip.Duration).ToSamples(decoder.SampleRate);
         _endFrame = Math.Clamp(clipEnd, 0L, decoder.TotalFrames);
+        _decoderFrame = 0;
+        _historyCount = 0;
+        _readFrame = 0;
     }
 
     /// <summary>
-    /// Keeps the sources at the clip frame. A restart stops the sources, seeks the decoder, fills the queue, and plays again.
+    /// Keeps the sources at the clip frame. A restart stops the sources, moves the read position, fills the queue, and plays again.
     /// Without a restart, the channel unqueues played buffers and adds new ones.
     /// </summary>
     /// <param name="targetFrame">The frame in the file at the cutscene time.</param>
-    /// <param name="restart">True to seek even if the stream plays, for example after a jump.</param>
+    /// <param name="restart">True to restart even if the stream plays, for example after a jump.</param>
     /// <param name="gain">The gain to set on each source.</param>
     public void Service(long targetFrame, bool restart, float gain)
     {
-        RestartedThisFrame = false;
         if (_component is null || _decoder is null)
             return;
 
@@ -117,7 +127,7 @@ internal sealed class CutsceneAudioChannel
             return;
         }
 
-        if (!_streaming || restart)
+        if (!_streaming || restart || _needsRestart)
             Restart(targetFrame);
         else
             Pump();
@@ -127,6 +137,7 @@ internal sealed class CutsceneAudioChannel
     /// <summary>
     /// Reads the frame of the clip file that the listener hears now, from the clock of the first source.
     /// The value is the number of frames before the queue, plus the source position, minus the output latency.
+    /// It is never less than the frame of the last restart: no earlier frame was queued, so the device still plays older output.
     /// </summary>
     /// <param name="frame">The heard frame in the file.</param>
     /// <returns>False if the transport has no clock for the source.</returns>
@@ -142,23 +153,29 @@ internal sealed class CutsceneAudioChannel
 
         long queueStart = _nextFrame - (long)primary.BuffersQueued * ChunkFrames;
         long latencyFrames = (long)((Int128)latencyNanoseconds * _decoder.SampleRate / 1_000_000_000L);
-        frame = Math.Max(0L, queueStart + sampleFrame - latencyFrames);
+        frame = Math.Max(_restartFrame, queueStart + sampleFrame - latencyFrames);
         return true;
     }
 
-    /// <summary>Stops the sources and drops the queue, but keeps the decoder. The next service restarts the stream.</summary>
+    /// <summary>
+    /// Stops the sources and drops the queue, but keeps the decoder and the ring of decoded frames.
+    /// The next service restarts the stream, and a restart inside the ring needs no decoder seek.
+    /// </summary>
     public void Silence()
     {
         if (_component is null)
             return;
 
         if (_streaming)
-            _component.StopAndRewindAllSources();
+            StopSources();
         _streaming = false;
         ApplyGain(0.0f);
     }
 
-    /// <summary>Stops the sources, closes the decoder, and gives the component back with its earlier settings.</summary>
+    /// <summary>
+    /// Stops the sources, closes the decoder, and gives the component back with its earlier settings:
+    /// buffer management, the play-on-queue flag of each source, and the source gain.
+    /// </summary>
     public void Release()
     {
         bool streaming = _streaming;
@@ -168,16 +185,11 @@ internal sealed class CutsceneAudioChannel
             return;
 
         if (streaming)
-            component.StopAndRewindAllSources();
-        for (int i = 0; i < _sourceCount; i++)
-        {
-            _sources[i].AutoPlayOnQueue = true;
-            _sources[i].Gain = component.Gain;
-        }
+            StopSources();
+        RestoreSources();
         component.ExternalBufferManagement = _savedExternalBufferManagement;
         _component = null;
         _sourceCount = 0;
-        Array.Clear(_sources);
         _appliedGain = float.NaN;
     }
 
@@ -195,6 +207,8 @@ internal sealed class CutsceneAudioChannel
         ClipIndex = -1;
         _streaming = false;
         _endOfData = false;
+        _needsRestart = false;
+        _historyCount = 0;
     }
 
     // Rebuilds the source list when the number of listeners changes. The enumeration of the listener table allocates,
@@ -206,15 +220,19 @@ internal sealed class CutsceneAudioChannel
         if (count == _sourceCount)
             return false;
 
+        RestoreSources();
         if (_sources.Length < count)
+        {
             _sources = new AudioSource[count];
-        Array.Clear(_sources);
+            _savedAutoPlay = new bool[count];
+        }
         int index = 0;
         foreach (KeyValuePair<ListenerContext, AudioSource> pair in component.ActiveListeners)
         {
             if (index >= _sources.Length)
                 break;
             AudioSource source = pair.Value;
+            _savedAutoPlay[index] = source.AutoPlayOnQueue;
             source.AutoPlayOnQueue = false;
             _sources[index++] = source;
         }
@@ -223,22 +241,43 @@ internal sealed class CutsceneAudioChannel
         return true;
     }
 
+    // Puts back the play-on-queue flag and the gain of each source in the list, then clears the list.
+    private void RestoreSources()
+    {
+        float gain = _component?.Gain ?? 1.0f;
+        for (int i = 0; i < _sourceCount; i++)
+        {
+            _sources[i].AutoPlayOnQueue = _savedAutoPlay[i];
+            _sources[i].Gain = gain;
+        }
+        Array.Clear(_sources);
+        _sourceCount = 0;
+    }
+
     private void Restart(long targetFrame)
     {
-        AudioSourceComponent component = _component!;
         IStreamingAudioDecoder decoder = _decoder!;
-        component.StopAndRewindAllSources();
+        StopSources();
 
         long frame = Math.Clamp(targetFrame, 0L, _endFrame);
-        decoder.SeekToFrame(frame);
+        long historyStart = _decoderFrame - _historyCount;
+        if (frame < historyStart || frame > _decoderFrame)
+        {
+            decoder.SeekToFrame(frame);
+            _decoderFrame = frame;
+            _historyCount = 0;
+        }
+
+        _readFrame = frame;
         _nextFrame = frame;
+        _restartFrame = frame;
         _endOfData = frame >= _endFrame;
+        _needsRestart = false;
         Fill();
 
         _streaming = true;
-        RestartedThisFrame = true;
         if (_sources[0].BuffersQueued > 0)
-            component.PlayStoppedSources();
+            PlaySources();
     }
 
     private void Pump()
@@ -255,7 +294,7 @@ internal sealed class CutsceneAudioChannel
         // A source that ran out of buffers stops. Start it again when new buffers are in its queue.
         AudioSource primary = _sources[0];
         if (!primary.IsPlaying && primary.BuffersQueued > 0)
-            _component!.PlayStoppedSources();
+            PlaySources();
     }
 
     private void Fill()
@@ -266,12 +305,11 @@ internal sealed class CutsceneAudioChannel
         int target = Math.Min(QueueTarget, Math.Max(1, component.MaxStreamingBuffers));
         bool stereo = channels == 2;
         short[] pcm = stereo ? _stereo : _mono;
-        short[][] batch = stereo ? _stereoBatch : _monoBatch;
 
         while (!_endOfData && _sources[0].BuffersQueued < target)
         {
-            int wanted = (int)Math.Min(ChunkFrames, _endFrame - _nextFrame);
-            int frames = wanted > 0 ? decoder.Read(_decoded.AsSpan(0, wanted * channels)) : 0;
+            int wanted = (int)Math.Min(ChunkFrames, _endFrame - _readFrame);
+            int frames = wanted > 0 ? ReadFrames(wanted) : 0;
             if (frames <= 0)
             {
                 _endOfData = true;
@@ -284,14 +322,93 @@ internal sealed class CutsceneAudioChannel
             // The padding keeps every buffer at the same length, so the clock can count buffers.
             Array.Clear(pcm, samples, pcm.Length - samples);
 
-            if (!component.EnqueueStreamingBuffers(decoder.SampleRate, stereo, batch))
+            int accepted = component.EnqueueStreamingBuffer(_sources.AsSpan(0, _sourceCount), decoder.SampleRate, stereo, pcm, _batch);
+            if (accepted < _sourceCount)
+            {
+                // The frames stay in the ring, so the read position goes back and a later fill offers them again.
+                _readFrame -= frames;
+
+                // Some sources took the buffer and some did not, so their queues differ. All of them restart at the next service.
+                if (accepted > 0)
+                    _needsRestart = true;
                 break;
+            }
+
             _nextFrame += ChunkFrames;
 
-            // A short read means the end of the clip or of the file, so the decoder position and the frame count stay equal.
+            // A short read means the end of the clip or of the file, so the read position and the frame count stay equal.
             if (frames < ChunkFrames || _nextFrame >= _endFrame)
                 _endOfData = true;
         }
+    }
+
+    // Reads frames at the read position into the decode buffer. Frames before the decoder position come from the ring.
+    // New frames come from the decoder and go into the ring too.
+    private int ReadFrames(int frames)
+    {
+        IStreamingAudioDecoder decoder = _decoder!;
+        int channels = decoder.Channels;
+        int got = 0;
+        while (got < frames)
+        {
+            if (_readFrame < _decoderFrame)
+            {
+                int count = (int)Math.Min(_decoderFrame - _readFrame, frames - got);
+                int ring = (int)(_readFrame % HistoryFrames);
+                count = Math.Min(count, HistoryFrames - ring);
+                _history.AsSpan(ring * channels, count * channels).CopyTo(_decoded.AsSpan(got * channels));
+                got += count;
+                _readFrame += count;
+                continue;
+            }
+
+            int want = frames - got;
+            Span<float> destination = _decoded.AsSpan(got * channels, want * channels);
+            int read = decoder.Read(destination);
+            if (read <= 0)
+                break;
+
+            StoreHistory(destination[..(read * channels)], channels);
+            got += read;
+            _readFrame += read;
+            if (read < want)
+                break;
+        }
+        return got;
+    }
+
+    private void StoreHistory(ReadOnlySpan<float> samples, int channels)
+    {
+        int frames = samples.Length / channels;
+        int done = 0;
+        while (done < frames)
+        {
+            int ring = (int)((_decoderFrame + done) % HistoryFrames);
+            int count = Math.Min(frames - done, HistoryFrames - ring);
+            samples.Slice(done * channels, count * channels).CopyTo(_history.AsSpan(ring * channels));
+            done += count;
+        }
+        _decoderFrame += frames;
+        _historyCount = Math.Min(HistoryFrames, _historyCount + frames);
+    }
+
+    // The same steps as AudioSourceComponent.StopAndRewindAllSources, on the cached list, so no enumeration allocates.
+    private void StopSources()
+    {
+        for (int i = 0; i < _sourceCount; i++)
+        {
+            AudioSource source = _sources[i];
+            source.Stop();
+            source.UnqueueConsumedBuffers();
+            source.Rewind();
+        }
+    }
+
+    private void PlaySources()
+    {
+        for (int i = 0; i < _sourceCount; i++)
+            if (!_sources[i].IsPlaying)
+                _sources[i].Play();
     }
 
     private void ApplyGain(float gain)

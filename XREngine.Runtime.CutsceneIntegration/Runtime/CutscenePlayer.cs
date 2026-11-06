@@ -32,11 +32,22 @@ public sealed class CutscenePlayer
     private bool _playStartInclusive = true;
     private bool _finishedRaised;
 
+    // The highest position up to which playback has handled the events. A play step never fires an event at or below it,
+    // so a clock correction cannot fire an event twice. A seek, a hard resync, and a stop move it to the new position.
+    private CutsceneTime _playHighWater;
+
     /// <summary>Creates a player.</summary>
     /// <param name="compiled">The compiled cutscene.</param>
     /// <param name="bindings">The table that holds the bound nodes.</param>
     /// <param name="snapshot">The store of the original values of the bound nodes.</param>
-    public CutscenePlayer(CompiledCutscene compiled, CutsceneBindingTable bindings, CutsceneStateSnapshot snapshot)
+    /// <param name="openAudioDecoder">
+    /// Opens the streaming decoder of an audio clip file. If it is null, <see cref="AudioTrackEvaluator.OpenDefaultDecoder"/> is used.
+    /// </param>
+    public CutscenePlayer(
+        CompiledCutscene compiled,
+        CutsceneBindingTable bindings,
+        CutsceneStateSnapshot snapshot,
+        Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder = null)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(bindings);
@@ -48,7 +59,7 @@ public sealed class CutscenePlayer
         _buffer = new CutsceneActiveClip[Math.Max(1, compiled.MaxActiveClips)];
         _cameraCut = new CameraCutTrackEvaluator(_diagnostics);
         _animation = new AnimationClipTrackEvaluator(compiled, bindings, _diagnostics);
-        _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics);
+        _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics, openAudioDecoder);
         _evaluators =
         [
             new TransformTrackEvaluator(bindings.SlotCount, _diagnostics),
@@ -173,6 +184,7 @@ public sealed class CutscenePlayer
         _hasPendingSeek = false;
         CutsceneTime from = _clock.Position;
         _clock.SetPosition(CutsceneTime.Zero);
+        _playHighWater = CutsceneTime.Zero;
         _playStartInclusive = true;
         _finishedRaised = false;
         _animation.RestoreForStop(restoreEverySlot || _compiled.Asset.ForceRestoreAll, _snapshot);
@@ -221,6 +233,7 @@ public sealed class CutscenePlayer
         CutsceneTime duration = _compiled.Asset.Duration;
         CutsceneTime target = position.Clamp(CutsceneTime.Zero, duration);
         _clock.SetPosition(target);
+        _playHighWater = target;
         _playStartInclusive = eventsAtPositionPending;
         _finishedRaised = finishedRaised && target >= duration;
     }
@@ -266,7 +279,9 @@ public sealed class CutscenePlayer
         CutsceneTime duration = _compiled.Asset.Duration;
 
         // Audio plays only in forward playback at rate one. Other states stop the sources before any evaluation.
-        _audio.SetTransport(State == ECutsceneTransportState.Playing, _clock.Rate);
+        // A scrub seek is silent also without BeginScrub.
+        bool scrubSeek = _hasPendingSeek && _pendingIntent == ESeekIntent.Scrub;
+        _audio.SetTransport(State == ECutsceneTransportState.Playing && !scrubSeek, _clock.Rate);
 
         if (_hasPendingSeek)
         {
@@ -275,6 +290,7 @@ public sealed class CutscenePlayer
             CutsceneTime from = _clock.Position;
             CutsceneTime target = _pendingTarget.Clamp(CutsceneTime.Zero, duration);
             _clock.SetPosition(target);
+            _playHighWater = target;
             if (target != from)
                 _audio.MarkDiscontinuity();
             EvaluateAt(target, 0.0);
@@ -299,16 +315,44 @@ public sealed class CutscenePlayer
         int playVersion = _events.TransportVersion;
         CutsceneTime before = _clock.Position;
         _clock.Advance(deltaSeconds);
+
+        // The audio correction comes before the evaluation and the event dispatch, so both use the final position of the step.
+        if (_audio.TryReadHeardPosition(out CutsceneTime heard))
+            _clock.Discipline(heard);
+        bool hardResync = _clock.ConsumeHardResync();
+
         CutsceneTime position = _clock.Position.Clamp(CutsceneTime.Zero, duration);
         _clock.SetPosition(position);
         EvaluateAt(position, deltaSeconds);
 
-        // A cut during playback is a jump of the picture, so it raises one discontinuity.
-        if (PublishActiveCamera())
+        // A cut during playback and a hard resync to the audio are jumps of the picture, so each raises one discontinuity.
+        if (PublishActiveCamera() || hardResync)
             Discontinuity?.Invoke(new CutsceneDiscontinuity(before, position, ESeekIntent.Jump));
 
-        // Reverse playback fires no event. The dispatcher fires nothing for a range that does not go forward.
-        if (_events.TransportVersion != playVersion || !_events.DispatchPlay(before, position, _playStartInclusive))
+        bool completed;
+        if (hardResync)
+        {
+            // Events across a resync follow the seek policy of each track, as for a jump seek.
+            // The mark moves first, so a handler that stops or seeks the player sets its own value.
+            _playHighWater = position;
+            completed = _events.TransportVersion == playVersion
+                && _events.DispatchSeek(before, position, _playStartInclusive, scrub: false);
+        }
+        else
+        {
+            // Reverse playback fires no event. Events at or below the high-water mark fired already.
+            CutsceneTime from = before;
+            bool inclusive = _playStartInclusive;
+            if (from < _playHighWater)
+            {
+                from = _playHighWater;
+                inclusive = false;
+            }
+            if (position > _playHighWater)
+                _playHighWater = position;
+            completed = _events.TransportVersion == playVersion && _events.DispatchPlay(from, position, inclusive);
+        }
+        if (!completed)
             return;
         TrackDirection(before, position);
 
