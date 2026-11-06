@@ -40,7 +40,7 @@ public sealed class CutsceneEventTests
 
         public float Range = 5f;
 
-        public ProbeSettings Settings { get; } = new();
+        public ProbeSettings Settings { get; set; } = new();
 
         public string Label { get; set; } = "Label";
     }
@@ -335,6 +335,152 @@ public sealed class CutsceneEventTests
         fired.ShouldBeEmpty();
     }
 
+    [Test]
+    public void FinishedHandler_ThatStops_LeavesThePlayerStopped()
+    {
+        (CutscenePlayer player, _, _) = MakeEventRig(4, ECutsceneEventSeekPolicy.Skip);
+        player.Finished += player.Stop;
+
+        player.Play();
+        player.Tick(10);
+
+        player.State.ShouldBe(ECutsceneTransportState.Stopped);
+        player.Position.ShouldBe(CutsceneTime.Zero);
+    }
+
+    [Test]
+    public void EventHandler_ThatStops_EndsTheTick()
+    {
+        (CutscenePlayer player, List<string> fired, _) = MakeEventRig(
+            4, ECutsceneEventSeekPolicy.Skip,
+            Event(0, "z"), Event(1, "a"), Event(1.5, "b"), Event(4, "end"));
+        bool stopOnA = true;
+        int finished = 0;
+        player.Finished += () => finished++;
+        player.EventFired += e =>
+        {
+            if (stopOnA && e.Event.Key == "a")
+                player.Stop();
+        };
+
+        player.Play();
+        player.Tick(10);
+
+        fired.ShouldBe(["z@0", "a@1"]);
+        finished.ShouldBe(0);
+        player.State.ShouldBe(ECutsceneTransportState.Stopped);
+        player.Position.ShouldBe(CutsceneTime.Zero);
+
+        // The stop made the start inclusive again, so the event at zero fires on the next pass.
+        stopOnA = false;
+        player.Play();
+        player.Tick(0.5);
+        fired.ShouldBe(["z@0", "a@1", "z@0"]);
+    }
+
+    [Test]
+    public void EventHandler_ThatSeeks_EndsTheTick_AndTheSeekRunsNext()
+    {
+        (CutscenePlayer player, List<string> fired, _) = MakeEventRig(
+            4, ECutsceneEventSeekPolicy.Skip,
+            Event(1, "a"), Event(1.5, "b"), Event(4, "end"));
+        bool seekOnA = true;
+        int finished = 0;
+        player.Finished += () => finished++;
+        player.EventFired += e =>
+        {
+            if (seekOnA && e.Event.Key == "a")
+            {
+                seekOnA = false;
+                player.Seek(T(2), ESeekIntent.Jump);
+            }
+        };
+
+        player.Play();
+        player.Tick(10);
+
+        fired.ShouldBe(["a@1"]);
+        finished.ShouldBe(0);
+        player.State.ShouldBe(ECutsceneTransportState.Playing);
+
+        player.Tick(0);
+        player.Position.ShouldBe(T(2));
+
+        player.Tick(10);
+        fired.ShouldBe(["a@1", "end@4"]);
+        finished.ShouldBe(1);
+    }
+
+    [Test]
+    public void Handler_ThatThrows_DoesNotStopTheOtherEvents()
+    {
+        (CutscenePlayer player, List<string> fired, _) = MakeEventRig(
+            10, ECutsceneEventSeekPolicy.Skip,
+            Event(1, "bad"), Event(2, "good"), Event(3, "bad"));
+        player.EventFired += e =>
+        {
+            if (e.Event.Key == "bad")
+                throw new InvalidOperationException("handler failure");
+        };
+
+        player.Play();
+        player.Tick(5);
+
+        fired.ShouldBe(["bad@1", "good@2", "bad@3"]);
+        player.Diagnostics.Count(d => d.Message.Contains("handler failure", StringComparison.Ordinal)).ShouldBe(1);
+        player.Position.ShouldBe(T(5));
+    }
+
+    [Test]
+    public void PreviewHost_Recompile_KeepsTheEventAtABackwardSeekTarget()
+    {
+        CutsceneAsset asset = new() { Duration = T(10) };
+        EventTrack track = new() { Name = "Events", FireInPreview = true };
+        track.Events.Add(Event(1, "a"));
+        asset.Tracks.Add(track);
+        CutscenePreviewHost host = new(new FakeResolver());
+        List<string> fired = [];
+        host.EventFired += e => fired.Add(e.Event.Key);
+
+        host.Begin(asset);
+        host.Seek(T(3), ESeekIntent.Jump);
+        host.Tick(0.0);
+        host.Seek(T(1), ESeekIntent.Jump);
+        host.Tick(0.0);
+        host.NotifyAssetEdited();
+        host.Tick(0.0);
+        host.Play();
+        host.Tick(0.5);
+        host.End();
+
+        fired.ShouldBe(["a"]);
+    }
+
+    [Test]
+    public void PreviewHost_LoopRange_DoesNotFireEventsAfterTheLoopEnd()
+    {
+        CutsceneAsset asset = new() { Duration = T(10) };
+        EventTrack track = new() { Name = "Events", FireInPreview = true };
+        track.Events.Add(Event(1.5, "inside"));
+        track.Events.Add(Event(2.5, "outside"));
+        asset.Tracks.Add(track);
+        CutscenePreviewHost host = new(new FakeResolver());
+        List<string> fired = [];
+        host.EventFired += e => fired.Add(e.Event.Key);
+
+        host.Begin(asset);
+        host.SetLoopRange(T(1), T(2));
+        host.Seek(T(1), ESeekIntent.Jump);
+        host.Tick(0.0);
+        host.Play();
+        for (int i = 0; i < 12; i++)
+            host.Tick(0.75);
+        host.End();
+
+        fired.ShouldNotContain("outside");
+        fired.Count.ShouldBeGreaterThan(1);
+    }
+
     // Property tracks.
 
     private sealed class PropertyRig : IDisposable
@@ -514,6 +660,32 @@ public sealed class CutsceneEventTests
         rig.Player.Diagnostics.ShouldContain(d => d.TrackIndex == 1 && d.Message.Contains("Label"));
         rig.Player.Diagnostics.ShouldContain(d => d.TrackIndex == 2 && d.Message.Contains("NoSuchComponent"));
         rig.Probe.Label.ShouldBe("Label");
+    }
+
+    [Test]
+    public void PropertyTrack_RechecksTheOwnerChain_WhenAClipBecomesActive()
+    {
+        using PropertyRig rig = MakePropertyRig(
+            10,
+            Track("Settings.Exposure", FloatClip(0, 1, 5, 5), FloatClip(2, 1, 7, 7)));
+        ProbeSettings first = rig.Probe.Settings;
+
+        SeekAndTick(rig.Player, 0.5);
+        first.Exposure.ShouldBe(5f);
+
+        SeekAndTick(rig.Player, 1.5);
+        first.Exposure.ShouldBe(1f);
+
+        ProbeSettings second = new();
+        rig.Probe.Settings = second;
+        SeekAndTick(rig.Player, 2.5);
+
+        second.Exposure.ShouldBe(7f);
+        first.Exposure.ShouldBe(1f);
+        rig.Player.Diagnostics.ShouldContain(d => d.TrackIndex == 0 && d.Message.Contains("changed", StringComparison.Ordinal));
+
+        rig.Player.Stop();
+        second.Exposure.ShouldBe(1f);
     }
 
     [Test]

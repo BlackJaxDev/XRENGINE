@@ -34,10 +34,8 @@ public sealed class CutsceneEventDispatcher
                 diagnostics.Add(new CutsceneCompileDiagnostic(trackIndex, -1, $"The event track '{track.Name}' has clips. An event track uses only its events, so the clips have no effect."));
 
             for (int eventIndex = 0; eventIndex < track.Events.Count; eventIndex++)
-            {
                 if (track.Events[eventIndex] is { } cutsceneEvent)
                     entries.Add((cutsceneEvent.Time.Flicks, trackIndex, eventIndex));
-            }
         }
 
         // Time order first. Events at the same time keep the order of their tracks and of their lists.
@@ -68,6 +66,16 @@ public sealed class CutsceneEventDispatcher
     /// </summary>
     public bool IsPreview { get; set; }
 
+    /// <summary>
+    /// A count of the transport changes. The player increments it at each stop and each seek, also from inside a handler.
+    /// A dispatch stops at once when the count changes, so a handler that stops or moves the player ends the dispatch.
+    /// </summary>
+    public int TransportVersion { get; private set; }
+
+    /// <summary>Records a transport change. A dispatch that is in progress fires no more events.</summary>
+    public void AdvanceTransportVersion()
+        => TransportVersion++;
+
     /// <summary>The number of events of all event tracks.</summary>
     public int EventCount => _times.Length;
 
@@ -75,18 +83,23 @@ public sealed class CutsceneEventDispatcher
     /// <param name="from">The position before the step.</param>
     /// <param name="to">The position after the step.</param>
     /// <param name="includeFrom">True if an event at <paramref name="from"/> has not fired yet.</param>
-    public void DispatchPlay(CutsceneTime from, CutsceneTime to, bool includeFrom)
+    /// <returns>False if a handler changed the transport, which ended the dispatch early.</returns>
+    public bool DispatchPlay(CutsceneTime from, CutsceneTime to, bool includeFrom)
     {
         if (_times.Length == 0 || to <= from)
-            return;
+            return true;
 
+        int version = TransportVersion;
         int end = FindFirstAfter(to.Flicks);
         for (int i = FindFirst(from.Flicks, includeFrom); i < end; i++)
         {
             if (IsPreview && !_tracks[i].FireInPreview)
                 continue;
             Fire(i, fromSeek: false);
+            if (TransportVersion != version)
+                return false;
         }
+        return true;
     }
 
     /// <summary>
@@ -97,11 +110,13 @@ public sealed class CutsceneEventDispatcher
     /// <param name="to">The target of the seek.</param>
     /// <param name="includeFrom">True if an event at <paramref name="from"/> has not fired yet.</param>
     /// <param name="scrub">True if the seek is a step of a scrub.</param>
-    public void DispatchSeek(CutsceneTime from, CutsceneTime to, bool includeFrom, bool scrub)
+    /// <returns>False if a handler changed the transport, which ended the dispatch early.</returns>
+    public bool DispatchSeek(CutsceneTime from, CutsceneTime to, bool includeFrom, bool scrub)
     {
         if (_times.Length == 0 || to <= from)
-            return;
+            return true;
 
+        int version = TransportVersion;
         int end = FindFirstAfter(to.Flicks);
         for (int i = FindFirst(from.Flicks, includeFrom); i < end; i++)
         {
@@ -119,7 +134,10 @@ public sealed class CutsceneEventDispatcher
                         Fire(i, fromSeek: true);
                     break;
             }
+            if (TransportVersion != version)
+                return false;
         }
+        return true;
     }
 
     // A later crossed event of the same track and key replaces this one. The scan is quadratic in the crossed
@@ -129,10 +147,8 @@ public sealed class CutsceneEventDispatcher
         int trackIndex = _trackIndices[index];
         string key = _events[index].Key;
         for (int j = index + 1; j < end; j++)
-        {
             if (_trackIndices[j] == trackIndex && string.Equals(_events[j].Key, key, StringComparison.Ordinal))
                 return false;
-        }
         return true;
     }
 

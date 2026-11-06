@@ -150,6 +150,8 @@ public sealed class CutscenePlayer
 
     private void StopCore(bool restoreEverySlot)
     {
+        // A tick that raised the handler that called this method must not continue after the stop.
+        _events.AdvanceTransportVersion();
         State = ECutsceneTransportState.Stopped;
         _hasPendingSeek = false;
         CutsceneTime from = _clock.Position;
@@ -186,22 +188,34 @@ public sealed class CutscenePlayer
         _pendingTarget = target;
         _pendingIntent = intent;
         _hasPendingSeek = true;
+        _events.AdvanceTransportVersion();
     }
 
     /// <summary>
     /// Sets the position at once, with no evaluation and no side effect. Use it for a player that replaces another
-    /// player at the same position, for example after a recompile. The events up to the position count as handled,
-    /// and a position at the end counts as finished. A later <see cref="Seek"/> or play step evaluates.
+    /// player at the same position, for example after a recompile. The event and finish state of the replaced player
+    /// carries over, so no event fires twice and none is lost. A later <see cref="Seek"/> or play step evaluates.
     /// </summary>
     /// <param name="position">The position. The player limits it to the range from zero to the duration.</param>
-    public void RestorePosition(CutsceneTime position)
+    /// <param name="eventsAtPositionPending">The <see cref="EventsAtPositionPending"/> value of the replaced player.</param>
+    /// <param name="finishedRaised">The <see cref="FinishedRaised"/> value of the replaced player.</param>
+    public void RestorePosition(CutsceneTime position, bool eventsAtPositionPending, bool finishedRaised)
     {
         CutsceneTime duration = _compiled.Asset.Duration;
         CutsceneTime target = position.Clamp(CutsceneTime.Zero, duration);
         _clock.SetPosition(target);
-        _playStartInclusive = target == CutsceneTime.Zero;
-        _finishedRaised = target >= duration;
+        _playStartInclusive = eventsAtPositionPending;
+        _finishedRaised = finishedRaised && target >= duration;
     }
+
+    /// <summary>
+    /// True if the events at the current position have not fired yet. This is true after the open, after a stop,
+    /// and after a backward move. Forward playback from the position then fires them.
+    /// </summary>
+    public bool EventsAtPositionPending => _playStartInclusive;
+
+    /// <summary>True if <see cref="Finished"/> was raised for the current stay at the end.</summary>
+    public bool FinishedRaised => _finishedRaised;
 
     /// <summary>Starts a scrub. The clock does not move the position until <see cref="EndScrub"/>.</summary>
     public void BeginScrub()
@@ -237,6 +251,7 @@ public sealed class CutscenePlayer
         if (_hasPendingSeek)
         {
             _hasPendingSeek = false;
+            int version = _events.TransportVersion;
             CutsceneTime from = _clock.Position;
             CutsceneTime target = _pendingTarget.Clamp(CutsceneTime.Zero, duration);
             _clock.SetPosition(target);
@@ -247,8 +262,10 @@ public sealed class CutscenePlayer
             if (target != from || seekCameraChanged)
                 Discontinuity?.Invoke(new CutsceneDiscontinuity(from, target, _pendingIntent));
 
+            // A handler can stop or seek the player. The rest of this tick then belongs to the old transport.
             bool scrub = _pendingIntent == ESeekIntent.Scrub || State == ECutsceneTransportState.Scrubbing;
-            _events.DispatchSeek(from, target, _playStartInclusive, scrub);
+            if (_events.TransportVersion != version || !_events.DispatchSeek(from, target, _playStartInclusive, scrub))
+                return;
             TrackDirection(from, target);
             UpdateFinished(target, duration, mayRaise: !scrub);
             return;
@@ -257,6 +274,7 @@ public sealed class CutscenePlayer
         if (State != ECutsceneTransportState.Playing)
             return;
 
+        int playVersion = _events.TransportVersion;
         CutsceneTime before = _clock.Position;
         _clock.Advance(deltaSeconds);
         CutsceneTime position = _clock.Position.Clamp(CutsceneTime.Zero, duration);
@@ -268,13 +286,15 @@ public sealed class CutscenePlayer
             Discontinuity?.Invoke(new CutsceneDiscontinuity(before, position, ESeekIntent.Jump));
 
         // Reverse playback fires no event. The dispatcher fires nothing for a range that does not go forward.
-        _events.DispatchPlay(before, position, _playStartInclusive);
+        if (_events.TransportVersion != playVersion || !_events.DispatchPlay(before, position, _playStartInclusive))
+            return;
         TrackDirection(before, position);
 
+        // The state is final before the finish handlers run, so a handler can stop or restart the player.
         double rate = _clock.Rate;
-        UpdateFinished(position, duration, mayRaise: rate > 0.0);
         if ((rate > 0.0 && position >= duration) || (rate < 0.0 && position <= CutsceneTime.Zero))
             State = ECutsceneTransportState.Paused;
+        UpdateFinished(position, duration, mayRaise: rate > 0.0);
     }
 
     // A forward move handled the events up to its end. A backward move lands before events that have not fired in this pass.

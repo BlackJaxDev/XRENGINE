@@ -18,6 +18,7 @@ internal sealed class CutsceneAnimationBinding
     private readonly int _slot;
     private readonly SceneNode _node;
     private readonly AnimationClipTrack _track;
+    private readonly AnimationClipTrack[] _slotTracks;
     private readonly List<CutsceneCompileDiagnostic> _diagnostics;
     private readonly CutsceneAnimationLease _lease = new();
 
@@ -60,6 +61,7 @@ internal sealed class CutsceneAnimationBinding
         int slot,
         SceneNode node,
         AnimationClipTrack track,
+        AnimationClipTrack[] slotTracks,
         AnimationClip[] clips,
         AnimationSlotLayout layout,
         HumanoidComponent? humanoid,
@@ -69,6 +71,7 @@ internal sealed class CutsceneAnimationBinding
         _slot = slot;
         _node = node;
         _track = track;
+        _slotTracks = slotTracks;
         _clips = clips;
         _diagnostics = diagnostics;
         _humanoid = humanoid;
@@ -129,6 +132,7 @@ internal sealed class CutsceneAnimationBinding
     {
         HumanoidComponent? humanoid = node.GetComponent<HumanoidComponent>();
         AnimationClipTrack? firstTrack = null;
+        List<AnimationClipTrack> slotTracks = [];
         List<AnimationClip> clips = [];
         List<AnimationSamplingBinding> samplingBindings = [];
         CutsceneClipBindingRoot root = new(node);
@@ -142,11 +146,12 @@ internal sealed class CutsceneAnimationBinding
             int[] entries = new int[track.Clips.Count];
             Array.Fill(entries, -1);
             entryByTrackAndClip[trackIndex] = entries;
+            slotTracks.Add(track);
 
             if (firstTrack is null)
                 firstTrack = track;
             else
-                Report(diagnostics, trackIndex, -1, $"The track '{track.Name}' shares a binding with the track '{firstTrack.Name}'. Their clips blend by weight, and only the root offset and the finish behavior of '{firstTrack.Name}' apply.");
+                Report(diagnostics, trackIndex, -1, $"The track '{track.Name}' shares a binding with the track '{firstTrack.Name}'. Their clips blend by weight, and only the root offset of '{firstTrack.Name}' applies. A stop restores the pose if any of the tracks has the restore setting.");
 
             for (int clipIndex = 0; clipIndex < track.Clips.Count; clipIndex++)
             {
@@ -184,7 +189,7 @@ internal sealed class CutsceneAnimationBinding
             return null;
         }
 
-        return new CutsceneAnimationBinding(slot, node, firstTrack, [.. clips], layout, humanoid, humanoid is not null && (anyRootMotion || hasOffset), diagnostics);
+        return new CutsceneAnimationBinding(slot, node, firstTrack, [.. slotTracks], [.. clips], layout, humanoid, humanoid is not null && (anyRootMotion || hasOffset), diagnostics);
     }
 
     /// <summary>Clears the clips of the last evaluation.</summary>
@@ -274,12 +279,22 @@ internal sealed class CutsceneAnimationBinding
     {
         if (_written)
         {
-            if (forceAll || _track.WhenFinished == ECutsceneFinishBehavior.RestoreState)
+            if (forceAll || AnyTrackRestores())
                 ReturnToOriginal(snapshot);
             else
                 _driver?.ReleaseMotion();
         }
         Forget();
+    }
+
+    // The rule of the state snapshot: a shared pose is restored if any track of the slot restores.
+    // The setting is read at the stop, so a change after the open takes effect.
+    private bool AnyTrackRestores()
+    {
+        for (int i = 0; i < _slotTracks.Length; i++)
+            if (_slotTracks[i].WhenFinished == ECutsceneFinishBehavior.RestoreState)
+                return true;
+        return false;
     }
 
     /// <summary>Ends the lease and forgets the original values.</summary>

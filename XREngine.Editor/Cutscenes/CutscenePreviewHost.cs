@@ -186,13 +186,16 @@ public sealed class CutscenePreviewHost
             Recompile();
 
         CutscenePlayer player = _player;
-        if (_hasPendingSeek)
+        bool seeking = _hasPendingSeek;
+        if (seeking)
         {
             _hasPendingSeek = false;
             player.Seek(_pendingTarget, _pendingIntent);
         }
 
         bool wasPlaying = player.State == ECutsceneTransportState.Playing;
+        if (wasPlaying && _hasLoopRange && !seeking)
+            deltaSeconds = LimitStepToLoopRange(player, deltaSeconds);
         player.Tick(deltaSeconds);
 
         if (wasPlaying && _hasLoopRange)
@@ -302,6 +305,8 @@ public sealed class CutscenePreviewHost
         ECutsceneTransportState state = previous.State;
         double rate = previous.Rate;
         CutsceneTime position = previous.Position;
+        bool eventsAtPositionPending = previous.EventsAtPositionPending;
+        bool finishedRaised = previous.FinishedRaised;
 
         Release();
         Open(_asset!);
@@ -309,7 +314,7 @@ public sealed class CutscenePreviewHost
         // The new player continues at the old position. A recompile is an edit and not a move in time,
         // so the events up to the position must not fire again.
         CutscenePlayer player = _player!;
-        player.RestorePosition(position);
+        player.RestorePosition(position, eventsAtPositionPending, finishedRaised);
         player.SetRate(rate);
         switch (state)
         {
@@ -331,6 +336,21 @@ public sealed class CutscenePreviewHost
             _pendingIntent = ESeekIntent.Jump;
             _hasPendingSeek = true;
         }
+    }
+
+    /// <summary>
+    /// Shortens a play step so that it stops at the edge of the loop range. A longer step would fire the events
+    /// after the loop end on each pass, before the wrap moves the position back.
+    /// </summary>
+    private double LimitStepToLoopRange(CutscenePlayer player, double deltaSeconds)
+    {
+        double rate = player.Rate;
+        CutsceneTime position = player.Position;
+        if (rate > 0.0 && position < _loopEnd)
+            return Math.Min(deltaSeconds, (_loopEnd - position).ToSeconds() / rate);
+        if (rate < 0.0 && position > _loopStart)
+            return Math.Min(deltaSeconds, (position - _loopStart).ToSeconds() / -rate);
+        return deltaSeconds;
     }
 
     private void RelayEvent(CutsceneFiredEvent fired)

@@ -10,8 +10,10 @@ namespace XREngine.Cutscenes;
 /// The state of one animated member: the property tracks that write it, the typed <see cref="AnimationMember"/>
 /// that writes it, and its original value. Property tracks with the same slot, component, and member path share
 /// one binding, so their clips blend by weight and one original value is restored.
-/// The binding finds the member at the first frame with weight on a node, and again only when the node of the slot
-/// changes. The first write after an open or a stop reads the original value, which boxes it once.
+/// The binding finds the member at the first frame with weight on a node, and again when the node of the slot
+/// changes. Each time a clip becomes active, it walks the member path again. If an object on the path was replaced,
+/// it binds to the new object and adds a diagnostic. In between, a replaced object is not seen.
+/// The first write after an open or a stop reads the original value, which boxes it once.
 /// The frame path samples typed curves and writes through the typed setter of the member, so it does not box.
 /// </summary>
 internal sealed class CutscenePropertyBinding
@@ -41,6 +43,10 @@ internal sealed class CutscenePropertyBinding
     private Vector3 _originalVector;
     private Quaternion _originalRotation;
     private bool _written;
+    private bool _wasActive;
+    private bool _reportedOwnerChange;
+    private PropertyInfo?[] _pathProperties = [];
+    private FieldInfo?[] _pathFields = [];
     private bool _reportedWrite;
 
     /// <summary>Creates a binding for the first property track of a member.</summary>
@@ -97,6 +103,8 @@ internal sealed class CutscenePropertyBinding
     /// <param name="bindings">The table that holds the bound nodes.</param>
     public void Evaluate(CutsceneBindingTable bindings)
     {
+        bool becameActive = !_wasActive && _count > 0;
+        _wasActive = _count > 0;
         if (_count == 0)
         {
             if (_written)
@@ -120,6 +128,16 @@ internal sealed class CutscenePropertyBinding
             _hasOriginal = false;
             Resolve(node);
         }
+        else if (becameActive && _member is not null && !ReferenceEquals(FindOwner(node), _owner))
+        {
+            // The member left its original value when the last clip ended, so only the record moves.
+            if (_written)
+                ApplyOriginal();
+            _written = false;
+            _hasOriginal = false;
+            ReportOwnerChangeOnce();
+            Resolve(node);
+        }
         if (_member is null)
             return;
 
@@ -138,7 +156,10 @@ internal sealed class CutscenePropertyBinding
 
     /// <summary>Forgets that the member was written. The snapshot restores the member itself.</summary>
     public void ForgetWrite()
-        => _written = false;
+    {
+        _written = false;
+        _wasActive = false;
+    }
 
     /// <summary>Writes the original value to the member and clears the record, so the next write records a new original value.</summary>
     public void RestoreOriginal()
@@ -257,6 +278,8 @@ internal sealed class CutscenePropertyBinding
             return;
         }
 
+        PropertyInfo?[] pathProperties = new PropertyInfo?[path.Length - 1];
+        FieldInfo?[] pathFields = new FieldInfo?[path.Length - 1];
         for (int i = 0; i < path.Length - 1; i++)
         {
             Type ownerType = owner.GetType();
@@ -279,6 +302,8 @@ internal sealed class CutscenePropertyBinding
                 Report($"The member '{path[i]}' in the path '{_track.MemberPath}' of the property track '{_track.Name}' is null. The track writes nothing.");
                 return;
             }
+            pathProperties[i] = property;
+            pathFields[i] = field;
             owner = next;
         }
 
@@ -322,6 +347,32 @@ internal sealed class CutscenePropertyBinding
         _field = leafField;
         _kind = kind;
         _reportedWrite = false;
+        _pathProperties = pathProperties;
+        _pathFields = pathFields;
+    }
+
+    /// <summary>Walks the bound path again from the node. It returns null if an object on the path is missing.</summary>
+    private object? FindOwner(SceneNode node)
+    {
+        object? owner = FindTarget(node);
+        for (int i = 0; i < _pathProperties.Length && owner is not null; i++)
+        {
+            PropertyInfo? property = _pathProperties[i];
+            FieldInfo? field = _pathFields[i];
+            Type? declaring = property?.DeclaringType ?? field?.DeclaringType;
+            if (declaring is null || !declaring.IsInstanceOfType(owner))
+                return null;
+            owner = property is not null ? property.GetValue(owner) : field!.GetValue(owner);
+        }
+        return owner;
+    }
+
+    private void ReportOwnerChangeOnce()
+    {
+        if (_reportedOwnerChange)
+            return;
+        _reportedOwnerChange = true;
+        Report($"An object on the member path '{_track.MemberPath}' of the property track '{_track.Name}' changed after the bind. The track now writes the new object. A change while a clip is active is seen only when the next clip becomes active.");
     }
 
     private object? FindTarget(SceneNode node)

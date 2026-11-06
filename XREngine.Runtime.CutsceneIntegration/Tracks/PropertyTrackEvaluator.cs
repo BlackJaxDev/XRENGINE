@@ -35,10 +35,8 @@ public sealed class PropertyTrackEvaluator : ICutsceneTrackEvaluator
             // The first track of a member makes the binding. Later tracks of the same member share it.
             int clipCapacity = 0;
             for (int other = trackIndex; other < tracks.Count; other++)
-            {
                 if (tracks[other] is PropertyTrack candidate && CutscenePropertyBinding.IsSameMember(track, candidate))
                     clipCapacity += candidate.Clips.Count;
-            }
 
             CutscenePropertyBinding binding = new(trackIndex, track, clipCapacity, diagnostics);
             bindings.Add(binding);

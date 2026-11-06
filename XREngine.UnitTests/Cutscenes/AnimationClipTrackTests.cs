@@ -770,6 +770,37 @@ AnimationClip:
     }
 
     [Test]
+    public void SharedSlot_KeepStateFirst_RestoreStateSecond_RestoresTheBonePose()
+    {
+        (SceneNode root, _) = HumanoidNode();
+        Transform arm = Bone(root, "LeftArm");
+        Quaternion armBefore = arm.Rotation;
+        FakeResolver resolver = new();
+        resolver.ById[root.ID] = root;
+
+        CutsceneAsset asset = new() { Duration = T(10) };
+        asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.SceneObject, ObjectId = root.ID });
+        AnimationClipTrack keep = new() { Name = "Keep", BindingSlot = 0, WhenFinished = ECutsceneFinishBehavior.KeepState };
+        keep.Clips.Add(Entry(HumanoidClip(), 0, 2));
+        asset.Tracks.Add(keep);
+        asset.Tracks.Add(new AnimationClipTrack { Name = "Restore", BindingSlot = 0, WhenFinished = ECutsceneFinishBehavior.RestoreState });
+
+        CompiledCutscene compiled = CutsceneCompiler.Compile(asset, []);
+        using CutsceneBindingTable table = CutsceneBindingTable.Resolve(compiled, resolver);
+        CutscenePlayer player = new(compiled, table, new CutsceneStateSnapshot(table));
+
+        player.Seek(T(1), ESeekIntent.Jump);
+        player.Tick(0);
+        ShouldBeNotBindPose(arm);
+
+        player.Stop();
+
+        ShouldBeNear(arm.Rotation, armBefore);
+        ((Transform)root.Transform).Translation.ShouldBe(OriginalPosition);
+        player.Diagnostics.ShouldContain(d => d.Message.Contains("if any of the tracks", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void KeepState_LeavesPoseAtStop_AndReleasesLease()
     {
         SceneNode node = PlainNode();

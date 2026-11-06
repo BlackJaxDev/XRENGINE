@@ -23,7 +23,7 @@ Each frame runs in this order: store write, humanoid solve, root placement, and 
 - **Root placement:** a humanoid root is the start transform, then `RootOffsetPosition` and `RootOffsetRotation`, then the clip motion of this frame. The result is absolute, so repeated seeks do not drift. A target without a `HumanoidComponent` has no root placement. A root offset on such a target adds a diagnostic.
 - **Lease:** while a clip has weight, the lease sets `EvaluationSuspended` on a sibling `AnimStateMachineComponent` and `AnimationClipComponent`. This flag is separate from `SuspendedByClip`. The lease puts back the earlier flag at clip exit and at stop. Playback time and the play and pause state of those components do not change.
 - **No clip:** a target that has no clip with weight returns to its original values. For a humanoid, this includes each transform under the node and each member that the clips write.
-- **Finish behavior:** a `KeepState` stop keeps the pose, and the next run records it as the new original value. If two tracks share a binding, a shared record of the slot, such as the root transform, is restored if any of the tracks has `RestoreState`. Animation tracks on one slot share one pose: the pose and the clip members follow the finish behavior of the first animation track.
+- **Finish behavior:** a `KeepState` stop keeps the pose, and the next run records it as the new original value. If two tracks share a binding, the slot is restored if any of the tracks has `RestoreState`. This includes the root transform, the bone and muscle pose, and the clip members.
 - **Pose preview:** if `HumanoidComponent.PosePreviewMode` is not `AnimatedPose`, the preview mode owns the pose. The track writes nothing and adds one diagnostic.
 
 These features are not available from a sampled store. The open adds a diagnostic for each case:
@@ -43,7 +43,7 @@ A `PropertyTrack` animates one member of a component on its bound node. Set thes
 
 The member must be a `float`, `Vector3`, or `Quaternion`. Each `PropertyTrackClip` has a `FloatCurve`, a `Vector3Curve`, and a `QuaternionCurve`. The type of the member selects the curve, and the other curves have no effect.
 
-- **Binding:** the track finds the member at the first frame with weight, and again only when the node of the slot changes. A missing component, a missing member, or an unsupported type adds one diagnostic, and the track writes nothing. The write uses the typed setter of an `AnimationMember`, so a frame does not box the value.
+- **Binding:** the track finds the member at the first frame with weight, and again when the node of the slot changes. Each time a clip becomes active, the track walks the member path again. If an object on the path was replaced, the track writes the new object and adds one diagnostic. A replacement while a clip stays active is not seen until the next clip becomes active. A missing component, a missing member, or an unsupported type adds one diagnostic, and the track writes nothing. The write uses the typed setter of an `AnimationMember`, so a frame does not box the value.
 - **Weights:** the rules of the transform track apply. A total of zero leaves the original value. A total above one normalizes. A total below one blends from the original value. Rotations blend as a normalized sum in one hemisphere.
 - **Shared member:** tracks with the same slot, `ComponentType`, and `MemberPath` blend by weight and share one original value. The member is restored if any of the tracks has `RestoreState`.
 - **No clip and stop:** a member with no clip with weight gets its original value back. A stop restores or keeps the value by the finish behavior, through `CutsceneStateSnapshot`.
@@ -62,9 +62,9 @@ Subscribe to `CutscenePlayer.EventFired` or `CutsceneDirectorComponent.EventFire
 | Backward seek | Fires nothing. Forward playback fires the events again when it crosses them. |
 | Scrub | Fires nothing, unless the track sets `FireDuringScrub`. Then a forward scrub step fires by `SeekPolicy`. |
 
-The events of a tick fire after the evaluation, so a handler sees the state of the new position. A handler that throws adds one diagnostic for its track, and the other events still fire.
+The events of a tick fire after the evaluation, so a handler sees the state of the new position. A handler that throws adds one diagnostic for its track, and the other events still fire. A handler can call `Stop`, `Seek`, or `Play`. A stop or a seek ends the tick at once: the remaining events of the step do not fire, and `Finished` is not raised for that step. The state of the player is final before `Finished` is raised, so a `Finished` handler can stop or restart the player.
 
-The editor preview sets `CutscenePlayer.IsPreview`. A preview fires only the tracks that set `FireInPreview`, so gameplay script does not run while an author moves the playhead. `CutscenePreviewHost.EventFired` gives those events to the editor. A recompile after an edit does not fire the events before the position again.
+The editor preview sets `CutscenePlayer.IsPreview`. A preview fires only the tracks that set `FireInPreview`, so gameplay script does not run while an author moves the playhead. `CutscenePreviewHost.EventFired` gives those events to the editor. A recompile after an edit does not fire the events before the position again, and an event at the position that has not fired yet still fires. With a loop range, a play step stops at the loop edge, so events after the loop end do not fire.
 
 An event track does not use its binding slot. The binding table does not check it.
 
