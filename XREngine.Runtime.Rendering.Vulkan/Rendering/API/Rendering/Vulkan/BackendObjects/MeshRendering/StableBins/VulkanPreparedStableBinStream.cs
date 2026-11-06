@@ -1792,6 +1792,7 @@ internal sealed partial class VulkanPreparedStableBinStream
                 S13aPublicationTelemetry.StepProbe programProbe =
                     S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                 VkRenderProgram program = null!;
+                reason = string.Empty;
                 VulkanAdvancedVisibilityPipelineReadiness rasterReadiness =
                     VulkanAdvancedVisibilityPipelineReadiness.Failed;
                 if (fragmentDepth)
