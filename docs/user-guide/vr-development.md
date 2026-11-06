@@ -28,9 +28,10 @@ also removes the limit. While VR is active, this setting replaces the desktop
 The engine applies the change when a VR session starts or stops.
 
 On the desktop, when VSync is off and `TargetFramesPerSecond` is null or below
-1, the engine limits rendering to the primary display refresh rate (60 Hz if
-the rate cannot be read). An uncapped desktop keeps the GPU at 100%, and then
-the whole PC becomes slow. Set `XRE_DESKTOP_RENDER_UNCAPPED=1` to remove this
+1, the engine limits rendering to 60 Hz, or to the primary display refresh rate
+if that is lower. An uncapped or high-rate desktop keeps the GPU almost always
+busy, and then the whole PC becomes slow. Set `TargetFramesPerSecond` for a
+higher rate. Set `XRE_DESKTOP_RENDER_UNCAPPED=1` to remove this
 limit, for example for desktop frame-rate benchmarks.
 
 While no engine window has focus and `UnfocusedTargetFramesPerSecond` is null,

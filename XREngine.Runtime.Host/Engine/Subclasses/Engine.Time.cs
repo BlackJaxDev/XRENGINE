@@ -135,10 +135,11 @@ namespace XREngine
             /// Resolves the desktop render limit. VSync paces presentation itself, so it needs no engine limit.
             /// </summary>
             /// <remarks>
-            /// With VSync off and no target (null or below 1), the limit is the primary display refresh rate.
-            /// An uncapped desktop keeps the GPU at 100% all the time, even at a low frame rate. The Windows
-            /// compositor must then wait for the GPU, and the whole PC becomes slow. Set
-            /// <see cref="XREngineEnvironmentVariables.DesktopRenderUncapped"/> to 1 to remove the limit for benchmarks.
+            /// With VSync off and no target (null or below 1), the limit is the primary display refresh rate,
+            /// but not more than <see cref="DefaultDesktopRenderFrequency"/>. An uncapped or high-rate desktop
+            /// keeps the GPU almost always busy. The Windows compositor must then wait for the GPU, and the
+            /// whole PC becomes slow. Set <see cref="XREngineEnvironmentVariables.DesktopRenderUncapped"/> to 1
+            /// to remove the limit for benchmarks.
             /// </remarks>
             private static float ResolveConfiguredRenderFrequency(float? configuredTargetRenderFrequency, EVSyncMode vSync)
             {
@@ -150,8 +151,14 @@ namespace XREngine
 
                 return IsDesktopRenderUncapped()
                     ? 0.0f
-                    : DesktopDisplayRefreshRate.Get();
+                    : Math.Min(DesktopDisplayRefreshRate.Get(), DefaultDesktopRenderFrequency);
             }
+
+            /// <summary>
+            /// Highest default desktop render limit, in hertz, when VSync is off and no frame-rate target is set.
+            /// Set <see cref="EffectiveSettings.TargetFramesPerSecond"/> for a higher rate.
+            /// </summary>
+            public const float DefaultDesktopRenderFrequency = 60.0f;
 
             private static bool IsDesktopRenderUncapped()
             {
