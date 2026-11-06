@@ -145,6 +145,14 @@ internal partial class Program
 
         ValidateDebugGpuRecordLayouts();
 
+        // The editor runs next to games and VR compositors. Lower its GPU scheduling class
+        // so that a heavy editor frame does not make the rest of the PC slow.
+        if (!IsEnabledEnvironmentFlag(XREngineEnvironmentVariables.EditorNormalGpuPriority))
+        {
+            XREngine.Runtime.Platform.Desktop.WindowsGpuSchedulingPriority.TryLowerForCurrentProcess(out string gpuPriorityMessage);
+            WriteBootstrapTrace(gpuPriorityMessage);
+        }
+
         //Begin tracking how long editor startup takes, preferring the first non-black frame but
         //falling back to the first stable rendered frame so dark scenes do not keep the timer running indefinitely.
         StartEditorStartupTimer();

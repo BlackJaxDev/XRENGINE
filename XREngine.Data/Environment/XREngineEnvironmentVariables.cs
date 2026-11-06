@@ -444,6 +444,11 @@ public static class XREngineEnvironmentVariables
     /// By default the engine then limits the desktop to the primary display refresh rate.
     /// </summary>
     public const string DesktopRenderUncapped = "XRE_DESKTOP_RENDER_UNCAPPED";
+    /// <summary>
+    /// Set to 1 to keep the editor at the Normal Windows GPU scheduling class.
+    /// By default the editor uses BelowNormal, so other apps and the desktop get the GPU first.
+    /// </summary>
+    public const string EditorNormalGpuPriority = "XRE_EDITOR_NORMAL_GPU_PRIORITY";
     /// <summary>Set to 0 to keep the full process affinity on CPUs whose L3 caches have different sizes; overrides <c>PreferLargestCacheCores</c>.</summary>
     public const string PreferLargestCacheCores = "XRE_PREFER_LARGEST_CACHE_CORES";
     public const string RenderWorkerQos = "XRE_RENDER_WORKER_QOS";
