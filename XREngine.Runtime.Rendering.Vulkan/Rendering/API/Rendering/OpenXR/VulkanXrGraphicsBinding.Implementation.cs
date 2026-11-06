@@ -1870,6 +1870,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 SubmissionMetadata: submissionMetadata,
                 ViewBatchStructuralIdentity: productionBatch.StructuralIdentity);
 
+            // The stereo publish command buffer also fills the eye preview textures, so
+            // they need no separate tracked submissions.
+            bool copyPreviews = ShouldCopyDirectVulkanEyeSwapchainPreview();
             bool stereoRenderedAndPublished = renderer.OpenXrFrameLoop.TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages(
                 in renderRequest,
                 stereoViewport.RenderPipelineInstance,
@@ -1883,8 +1886,12 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 target.Extent,
                 $"true stereo right eye swapchain image {rightImageIndex}",
                 flipY: false,
+                copyPreviews ? GetOpenXrPreviewTexture(0) : null,
+                copyPreviews ? GetOpenXrPreviewTexture(1) : null,
                 faultInjectionStage,
-                out injectedFailureStage);
+                out injectedFailureStage,
+                out bool leftPreviewCopied,
+                out bool rightPreviewCopied);
 
             if (!stereoRenderedAndPublished)
             {
@@ -1949,9 +1956,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 rightImageIndex);
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishLeft"))
-                PublishVulkanEyeMirror(renderer, target.LeftColorView, 0, leftImageIndex, width, height);
+                PublishVulkanEyeMirror(renderer, target.LeftColorView, 0, leftImageIndex, width, height, leftPreviewCopied);
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishRight"))
-                PublishVulkanEyeMirror(renderer, target.RightColorView, 1, rightImageIndex, width, height);
+                PublishVulkanEyeMirror(renderer, target.RightColorView, 1, rightImageIndex, width, height, rightPreviewCopied);
 
             RecordVulkanTrueSinglePassStereoOutput(
                 stereoViewport.CurrentFrameOutputRequest,
@@ -2367,13 +2374,18 @@ Target:                 new RenderFrameViewTargetDescriptor(
             viewIndex,
             imageIndex);
 
+    /// <param name="previewCopiedInBatch">
+    /// True when the eye's render submission already filled its preview texture. The
+    /// method then only records the preview as issued.
+    /// </param>
     private void PublishVulkanEyeMirror(
         VulkanRenderer renderer,
         XRTexture? sourceTexture,
         uint viewIndex,
         uint imageIndex,
         uint width,
-        uint height)
+        uint height,
+        bool previewCopiedInBatch = false)
     {
         ClearPreviewEyeFrameId(viewIndex);
         if (sourceTexture is null)
@@ -2381,13 +2393,13 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         XRTexture2D? previewTexture = GetOpenXrPreviewTexture(viewIndex);
         bool shouldCopyPreview = ShouldCopyDirectVulkanEyeSwapchainPreview();
-        bool copiedPreview = shouldCopyPreview &&
+        bool copiedPreview = previewCopiedInBatch || (shouldCopyPreview &&
             renderer.OpenXrFrameLoop.TryCopyOpenXrEyeMirrorTexture(
                 sourceTexture,
                 previewTexture,
                 $"preview eye {viewIndex}",
                 CaptureEyeSubmissionIdentity(viewIndex, imageIndex),
-                flipY: false);
+                flipY: false));
         bool copiedDesktopMirror = false;
         if (ShouldCopyVulkanEyeToDesktopMirror(viewIndex))
         {

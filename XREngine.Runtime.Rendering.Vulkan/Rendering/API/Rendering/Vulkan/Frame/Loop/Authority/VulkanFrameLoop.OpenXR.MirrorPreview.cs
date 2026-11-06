@@ -375,10 +375,16 @@ internal sealed partial class VulkanFrameLoop
         Extent2D rightDestinationExtent,
         string rightDestinationLabel,
         bool flipY,
+        XRTexture2D? leftPreviewTexture,
+        XRTexture2D? rightPreviewTexture,
         EOpenXrStrictSpsFaultInjectionStage faultInjectionStage,
-        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage,
+        out bool leftPreviewCopied,
+        out bool rightPreviewCopied)
     {
         injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
+        leftPreviewCopied = false;
+        rightPreviewCopied = false;
         // A frame that cannot reserve a slot goes to the runtime without a
         // projection layer, which shows black in the headset. A late frame is
         // reprojected instead, so wait for the oldest eye submission for a
@@ -458,6 +464,8 @@ internal sealed partial class VulkanFrameLoop
                     rightDestinationExtent,
                     rightDestinationLabel,
                     flipY,
+                    leftPreviewTexture,
+                    rightPreviewTexture,
                     out OpenXrStereoLayerBlitPlan plan))
             {
                 RecordOpenXrRenderFailure(in renderRequest, "stereo-blit-plan");
@@ -499,6 +507,8 @@ internal sealed partial class VulkanFrameLoop
             if (submission.SubmissionReceipt.SubmissionAccepted)
             {
                 UpdateStereoLayerBlitTrackedLayouts(in plan);
+                leftPreviewCopied = plan.LeftPreview.IsValid;
+                rightPreviewCopied = plan.RightPreview.IsValid;
             }
             else if (!commandBuffersCompleted && !IsDeviceLost)
             {
