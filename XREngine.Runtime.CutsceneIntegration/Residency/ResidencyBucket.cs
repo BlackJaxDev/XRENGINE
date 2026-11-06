@@ -3,6 +3,11 @@ namespace XREngine.Cutscenes;
 /// <summary>The assets that a time range of a cutscene needs, and the level of each asset.</summary>
 public sealed class ResidencyBucket
 {
+    /// <summary>Creates an empty bucket. The serializers use this constructor. <see cref="CutsceneResidencyManifest.Validate"/> checks the values.</summary>
+    public ResidencyBucket()
+    {
+    }
+
     /// <summary>Creates a bucket.</summary>
     /// <param name="start">The first time of the range.</param>
     /// <param name="end">The end of the range. The range does not include it. It must be after <paramref name="start"/>.</param>
@@ -21,17 +26,17 @@ public sealed class ResidencyBucket
     }
 
     /// <summary>The first time of the range.</summary>
-    public CutsceneTime Start { get; }
+    public CutsceneTime Start { get; set; }
 
     /// <summary>The end of the range. The range does not include it.</summary>
-    public CutsceneTime End { get; }
+    public CutsceneTime End { get; set; }
 
     /// <summary>
-    /// The assets that the range needs. The manifest checks the entries one time, when it is created.
+    /// The assets that the range needs. The planner checks the entries one time, when it is created.
     /// Do not change the array after that.
     /// </summary>
-    public ResidencyEntry[] Entries { get; }
+    public ResidencyEntry[] Entries { get; set; } = [];
 
     /// <summary>True if a camera cut occurs at <see cref="Start"/>. The playback wait holds only at a cut.</summary>
-    public bool StartsAtCut { get; }
+    public bool StartsAtCut { get; set; }
 }

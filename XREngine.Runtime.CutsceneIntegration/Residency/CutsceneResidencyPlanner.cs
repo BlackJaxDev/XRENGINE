@@ -74,12 +74,16 @@ public sealed partial class CutsceneResidencyPlanner
     private CutsceneTime _lookBehind = CutsceneTime.FromSeconds(DefaultLookBehindSeconds);
 
     /// <summary>Creates a planner for one open cutscene.</summary>
-    /// <param name="manifest">The residency manifest of the cutscene. Do not change its arrays after this call.</param>
+    /// <param name="manifest">
+    /// The residency manifest of the cutscene. The constructor calls <see cref="CutsceneResidencyManifest.Validate"/>.
+    /// Do not change its arrays after this call.
+    /// </param>
     /// <param name="backend">The backend that loads and releases the levels.</param>
     public CutsceneResidencyPlanner(CutsceneResidencyManifest manifest, IResidencyBackend backend)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(backend);
+        manifest.Validate();
 
         Manifest = manifest;
         _backend = backend;

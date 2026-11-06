@@ -23,6 +23,11 @@ namespace XREngine.Editor.Cutscenes;
 /// An author can still move a bound node with a gizmo during a preview. That undo entry holds a preview value as its
 /// previous value, so <see cref="End"/> removes the transform changes of bound nodes that were recorded since <see cref="Begin"/>.
 /// </para>
+/// <para>
+/// A host with a residency backend factory runs a <see cref="CutsceneResidencySession"/> for each compile of the preview.
+/// The planner uses the baked manifest while it is current, and the approximate manifest otherwise. The playback wait is
+/// off by default, because an author expects the preview to follow the clock.
+/// </para>
 /// </remarks>
 public sealed class CutscenePreviewHost
 {
@@ -31,12 +36,17 @@ public sealed class CutscenePreviewHost
     private readonly List<CutsceneCompileDiagnostic> _compileDiagnostics = [];
     private readonly HashSet<XRBase> _boundTransforms = new(ReferenceEqualityComparer.Instance);
     private readonly Action<CutsceneFiredEvent> _relayEvent;
+    private readonly Func<IResidencyBackend?>? _residencyBackendFactory;
+    private readonly ICutsceneResidencyAssetCollector _residencyCollector;
 
     private long _undoMark;
     private CutsceneAsset? _asset;
     private CutscenePlayer? _player;
     private CutsceneBindingTable? _bindings;
     private CutsceneCameraRouter? _router;
+    private CutsceneResidencySession? _residency;
+    private bool _playbackWaitEnabled;
+    private double _playbackWaitMaximumSeconds = CutsceneResidencyPlanner.DefaultPlaybackWaitMaximumSeconds;
     private volatile bool _recompileRequested;
     private bool _hasPendingSeek;
     private CutsceneTime _pendingTarget;
@@ -48,12 +58,54 @@ public sealed class CutscenePreviewHost
     /// <summary>Creates a host.</summary>
     /// <param name="resolver">The object that finds the bound scene nodes.</param>
     /// <param name="viewport">The viewport that shows the cutscene camera, or null to not route the camera.</param>
-    public CutscenePreviewHost(ICutsceneBindingResolver resolver, XRViewport? viewport = null)
+    /// <param name="residencyBackendFactory">
+    /// Creates the texture residency backend at each compile, or null to run the preview without residency.
+    /// The residency session owns each backend and disposes it.
+    /// </param>
+    /// <param name="residencyCollector">The collector for the approximate manifest, or null for <see cref="CutsceneRenderableAssetCollector"/>.</param>
+    public CutscenePreviewHost(
+        ICutsceneBindingResolver resolver,
+        XRViewport? viewport = null,
+        Func<IResidencyBackend?>? residencyBackendFactory = null,
+        ICutsceneResidencyAssetCollector? residencyCollector = null)
     {
         ArgumentNullException.ThrowIfNull(resolver);
         _resolver = resolver;
         _viewport = viewport;
         _relayEvent = RelayEvent;
+        _residencyBackendFactory = residencyBackendFactory;
+        _residencyCollector = residencyCollector ?? CutsceneRenderableAssetCollector.Instance;
+    }
+
+    /// <summary>The residency session of the active preview, or null when the preview runs without residency.</summary>
+    public CutsceneResidencySession? Residency => _residency;
+
+    /// <summary>
+    /// True to hold forward play at a camera cut until the next shot is resident, for at most
+    /// <see cref="PlaybackWaitMaximumSeconds"/>. The default is false for the preview. A change applies at once.
+    /// </summary>
+    public bool PlaybackWaitEnabled
+    {
+        get => _playbackWaitEnabled;
+        set
+        {
+            _playbackWaitEnabled = value;
+            if (_residency is { } residency)
+                residency.Planner.PlaybackWaitEnabled = value;
+        }
+    }
+
+    /// <summary>The maximum time in seconds of one playback wait. It must be greater than zero. The default is 1 second.</summary>
+    public double PlaybackWaitMaximumSeconds
+    {
+        get => _playbackWaitMaximumSeconds;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+            _playbackWaitMaximumSeconds = value;
+            if (_residency is { } residency)
+                residency.Planner.PlaybackWaitMaximumSeconds = value;
+        }
     }
 
     /// <summary>The asset of the active preview, or null when no preview is active.</summary>
@@ -180,8 +232,12 @@ public sealed class CutscenePreviewHost
             return;
 
         // A paused preview writes nothing. It also keeps the undo system active for the edits of the author.
+        // The planner still updates, so that the dwell gate of a scrub opens when the playhead stays in place.
         if (!_recompileRequested && !_hasPendingSeek && _player.State != ECutsceneTransportState.Playing)
+        {
+            _residency?.UpdateIdle(_player, deltaSeconds);
             return;
+        }
 
         using Undo.RecordingSuppressionScope suppression = Undo.SuppressRecording();
 
@@ -199,7 +255,12 @@ public sealed class CutscenePreviewHost
         bool wasPlaying = player.State == ECutsceneTransportState.Playing;
         if (wasPlaying && _hasLoopRange && !seeking)
             deltaSeconds = LimitStepToLoopRange(player, deltaSeconds);
+
+        // A loop wrap is a jump seek, so the next tick reports it to the planner as a jump.
+        CutsceneResidencySession? residency = _residency;
+        residency?.BeginTick();
         player.Tick(deltaSeconds);
+        residency?.CompleteTick(player, deltaSeconds);
 
         if (wasPlaying && _hasLoopRange)
             WrapInsideLoopRange(player);
@@ -266,6 +327,37 @@ public sealed class CutscenePreviewHost
             _router = new CutsceneCameraRouter(_player);
             _router.Attach(_viewport);
         }
+
+        OpenResidency(compiled, _bindings, _player);
+    }
+
+    private void OpenResidency(CompiledCutscene compiled, CutsceneBindingTable bindings, CutscenePlayer player)
+    {
+        if (_residencyBackendFactory is null)
+            return;
+
+        IResidencyBackend? backend = _residencyBackendFactory();
+        if (backend is null)
+        {
+            _compileDiagnostics.Add(new CutsceneCompileDiagnostic(-1, -1, "The residency backend factory gave no backend. The preview runs without residency."));
+            return;
+        }
+
+        CutsceneResidencySession residency;
+        try
+        {
+            residency = CutsceneResidencySession.Create(compiled, bindings, backend, _residencyCollector, _compileDiagnostics);
+        }
+        catch
+        {
+            (backend as IDisposable)?.Dispose();
+            throw;
+        }
+
+        residency.Planner.PlaybackWaitEnabled = _playbackWaitEnabled;
+        residency.Planner.PlaybackWaitMaximumSeconds = _playbackWaitMaximumSeconds;
+        _residency = residency;
+        residency.Open(player);
     }
 
     private void Release()
@@ -273,16 +365,26 @@ public sealed class CutscenePreviewHost
         CutscenePlayer? player = _player;
         CutsceneBindingTable? bindings = _bindings;
         CutsceneCameraRouter? router = _router;
+        CutsceneResidencySession? residency = _residency;
         _player = null;
         _bindings = null;
         _router = null;
+        _residency = null;
         if (player is not null)
             player.EventFired -= _relayEvent;
 
         // A restore failure must not leave the camera claim or the spawned instances behind.
+        // The planner closes first, so that no completion arrives for a closed preview.
         try
         {
-            player?.StopAndRestoreAll();
+            try
+            {
+                residency?.Close();
+            }
+            finally
+            {
+                player?.StopAndRestoreAll();
+            }
         }
         finally
         {

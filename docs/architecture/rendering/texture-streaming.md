@@ -75,7 +75,7 @@ A caller can request a mip of a streamed texture before the texture is visible. 
 
 ## Budget Profiles
 
-`ImportedTextureStreamingManager.SetBudgetProfile(ETextureStreamingBudgetProfile)` selects the per-frame limits (`TextureStreamingBudgetLimits`). The limits fade from one profile to the other over `TextureStreamingBudgetProfileFadeFrames` evaluations (default 30; 0 changes them in one frame).
+`ImportedTextureStreamingManager.SetBudgetProfile(ETextureStreamingBudgetProfile)` selects the per-frame limits (`TextureStreamingBudgetLimits`). The limits fade from one profile to the other over `TextureStreamingBudgetProfileFadeFrames` evaluations (default 30; 0 changes them in one frame). The profile is global to the manager. The cutscene `TextureResidencyBackend` instances of one manager share the `Cutscene` profile with a reference count, so the profile goes back to `Default` only when the last backend is disposed.
 
 | Limit | `Default` | `Cutscene` setting (provisional default) |
 |---|---|---|

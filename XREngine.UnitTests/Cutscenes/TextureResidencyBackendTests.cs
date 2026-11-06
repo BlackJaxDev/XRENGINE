@@ -36,6 +36,23 @@ public sealed class TextureResidencyBackendTests
     }
 
     [Test]
+    public void Backends_ShareTheCutsceneProfile_UntilTheLastDispose()
+    {
+        TextureResidencyBackend first = CreateBackend();
+        TextureResidencyBackend second = CreateBackend();
+        TextureResidencyBackend.GetBudgetProfileOwnerCount(_host.Manager).ShouldBe(2);
+
+        first.Dispose();
+        first.Dispose();
+        _host.Manager.BudgetProfile.ShouldBe(ETextureStreamingBudgetProfile.Cutscene);
+        TextureResidencyBackend.GetBudgetProfileOwnerCount(_host.Manager).ShouldBe(1);
+
+        second.Dispose();
+        _host.Manager.BudgetProfile.ShouldBe(ETextureStreamingBudgetProfile.Default);
+        TextureResidencyBackend.GetBudgetProfileOwnerCount(_host.Manager).ShouldBe(0);
+    }
+
+    [Test]
     public void Levels_MapToPreviewCoarseAndFullMips()
     {
         using TextureResidencyBackend backend = CreateBackend();

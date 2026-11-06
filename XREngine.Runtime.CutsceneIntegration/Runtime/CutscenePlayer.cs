@@ -27,6 +27,8 @@ public sealed class CutscenePlayer
     private ESeekIntent _pendingIntent;
     private ECutsceneTransportState _stateBeforeScrub;
     private CameraComponent? _reportedCamera;
+    private bool _heldByGate;
+    private bool _stopJumpPending;
 
     // True when no step has handled the events at the current position yet: after the open, a stop, or a move backward.
     private bool _playStartInclusive = true;
@@ -172,6 +174,21 @@ public sealed class CutscenePlayer
     /// <summary>The clock that moves the position. The caller can change its mode.</summary>
     public CutsceneClock Clock => _clock;
 
+    /// <summary>
+    /// The gate that can hold a play step before the evaluation, or null. The residency session sets it for the playback wait.
+    /// </summary>
+    public ICutscenePlaybackGate? PlaybackGate { get; set; }
+
+    /// <summary>
+    /// The intent of the move that the last <see cref="Tick"/> made other than a play step, or null.
+    /// It is the intent of a resolved seek, or <see cref="ESeekIntent.Jump"/> for a hard resync to the audio and for a
+    /// <see cref="Stop"/> since the tick before. The residency planner reads it after each tick.
+    /// </summary>
+    public ESeekIntent? LastTickSeek { get; private set; }
+
+    /// <summary>True while <see cref="PlaybackGate"/> holds playback. The audio sources stay stopped while it is true.</summary>
+    public bool IsHeldByGate => _heldByGate;
+
     /// <summary>The problems that the evaluators found. Each problem is added once.</summary>
     public IReadOnlyList<CutsceneCompileDiagnostic> Diagnostics => _diagnostics;
 
@@ -221,6 +238,8 @@ public sealed class CutscenePlayer
         _events.AdvanceTransportVersion();
         State = ECutsceneTransportState.Stopped;
         _hasPendingSeek = false;
+        _heldByGate = false;
+        _stopJumpPending = true;
         CutsceneTime from = _clock.Position;
         _clock.SetPosition(CutsceneTime.Zero);
         _playHighWater = CutsceneTime.Zero;
@@ -328,14 +347,22 @@ public sealed class CutscenePlayer
         // starts only after its restart, so the clock does not count that time. A seek in this tick sets the position, so it drops the value.
         double restartSeconds = _audio.ConsumeRestartSeconds();
 
+        LastTickSeek = _stopJumpPending ? ESeekIntent.Jump : null;
+        _stopJumpPending = false;
+
+        // A seek or a state other than play ends a gate hold. The gate decides again at the next play step.
+        if (_hasPendingSeek || State != ECutsceneTransportState.Playing)
+            _heldByGate = false;
+
         // Audio plays only in forward playback at rate one. Other states stop the sources before any evaluation.
-        // A scrub seek is silent also without BeginScrub.
+        // A scrub seek is silent also without BeginScrub, and a gate hold keeps the sources stopped.
         bool scrubSeek = _hasPendingSeek && _pendingIntent == ESeekIntent.Scrub;
-        _audio.SetTransport(State == ECutsceneTransportState.Playing && !scrubSeek, _clock.Rate);
+        _audio.SetTransport(State == ECutsceneTransportState.Playing && !scrubSeek && !_heldByGate, _clock.Rate);
 
         if (_hasPendingSeek)
         {
             _hasPendingSeek = false;
+            LastTickSeek = _pendingIntent;
             int version = _events.TransportVersion;
             CutsceneTime from = _clock.Position;
             CutsceneTime target = _pendingTarget.Clamp(CutsceneTime.Zero, duration);
@@ -377,9 +404,14 @@ public sealed class CutscenePlayer
         }
         bool hardResync = _clock.ConsumeHardResync();
         if (hardResync)
+        {
             AudioHardResyncCount++;
+            LastTickSeek = ESeekIntent.Jump;
+        }
 
         CutsceneTime position = _clock.Position.Clamp(CutsceneTime.Zero, duration);
+        if (PlaybackGate is { } gate)
+            position = ApplyGate(gate, before, position, hardResync, deltaSeconds);
         _clock.SetPosition(position);
         EvaluateAt(position, deltaSeconds);
 
@@ -419,6 +451,25 @@ public sealed class CutscenePlayer
         if ((rate > 0.0 && position >= duration) || (rate < 0.0 && position <= CutsceneTime.Zero))
             State = ECutsceneTransportState.Paused;
         UpdateFinished(position, duration, mayRaise: rate > 0.0);
+    }
+
+    /// <summary>
+    /// Asks the gate for the position of a play step before the evaluation, so that a held frame never shows the state
+    /// after the hold position. A new hold stops the audio sources at once.
+    /// </summary>
+    private CutsceneTime ApplyGate(ICutscenePlaybackGate gate, CutsceneTime before, CutsceneTime position, bool hardResync, double deltaSeconds)
+    {
+        double rate = _clock.Rate;
+        CutsceneTime allowed = gate.LimitPlayStep(before, position, rate, hardResync ? ESeekIntent.Jump : null, deltaSeconds);
+        CutsceneTime low = before < position ? before : position;
+        CutsceneTime high = before < position ? position : before;
+        allowed = allowed.Clamp(low, high);
+
+        bool held = allowed != position;
+        if (held && !_heldByGate)
+            _audio.SetTransport(playing: false, rate);
+        _heldByGate = held;
+        return allowed;
     }
 
     // A forward move handled the events up to its end. A backward move lands before events that have not fired in this pass.

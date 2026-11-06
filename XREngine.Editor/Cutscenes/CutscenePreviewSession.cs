@@ -48,6 +48,9 @@ public static class CutscenePreviewSession
     /// <summary>The player of the preview or of the director, or null if nothing is open.</summary>
     public static CutscenePlayer? Player => _host?.Player ?? DirectorPlayer;
 
+    /// <summary>The residency session of the preview or of the director, or null if residency does not run.</summary>
+    public static CutsceneResidencySession? Residency => _host?.Residency ?? (_director is { IsOpen: true } director ? director.Residency : null);
+
     private static CutscenePlayer? DirectorPlayer => _director is { IsOpen: true } director ? director.Player : null;
 
     /// <summary>
@@ -61,6 +64,7 @@ public static class CutscenePreviewSession
         _initialized = true;
 
         CutsceneDirectorComponent.DefaultBindingResolverFactory = CreateResolverForDirector;
+        CutsceneDirectorComponent.DefaultResidencyBackendFactory = static _ => CreateResidencyBackend();
         Engine.Assets.SaveGuard = GetSaveRejection;
         Engine.PlayMode.PreEnterPlay += Close;
 
@@ -87,6 +91,10 @@ public static class CutscenePreviewSession
         ArgumentNullException.ThrowIfNull(world);
         return new CutsceneSceneBindingResolver(Engine.Assets, world.RootNodes, world);
     }
+
+    /// <summary>Creates the texture residency backend of the editor. It finds the textures in the asset manager of the engine.</summary>
+    public static IResidencyBackend CreateResidencyBackend()
+        => new TextureResidencyBackend(Engine.Assets);
 
     /// <summary>Finds the scene viewport of a world. The sequencer panel draws over this viewport.</summary>
     /// <param name="world">The world.</param>
@@ -121,7 +129,7 @@ public static class CutscenePreviewSession
         Close();
         _sessionDiagnostics.Clear();
 
-        CutscenePreviewHost host = new(CreateResolver(world), FindSceneViewport(world));
+        CutscenePreviewHost host = new(CreateResolver(world), FindSceneViewport(world), CreateResidencyBackend);
         host.Begin(asset);
         _host = host;
         _previewWorld = world;
@@ -180,8 +188,8 @@ public static class CutscenePreviewSession
         Seek(target, intent);
         if (_host is { } host)
             host.Tick(0.0);
-        else
-            DirectorPlayer?.Tick(0.0);
+        else if (_director is { IsOpen: true } director)
+            director.AdvanceFrame(0.0);
     }
 
     /// <summary>Starts or resumes playback at a rate.</summary>

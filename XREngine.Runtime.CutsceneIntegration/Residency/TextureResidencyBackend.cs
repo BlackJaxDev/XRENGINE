@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using XREngine.Core.Files;
 using XREngine.Rendering;
 
@@ -19,9 +20,10 @@ namespace XREngine.Cutscenes;
 /// become frame deadlines. The backend works on textures that are already loaded. It does not load assets.
 /// </para>
 /// <para>
-/// By default, the backend selects the <see cref="ETextureStreamingBudgetProfile.Cutscene"/> budget profile while it
-/// exists and selects <see cref="ETextureStreamingBudgetProfile.Default"/> at <see cref="Dispose"/>. The profile is
-/// global, so only one such backend must be active at a time.
+/// By default, the backend holds the <see cref="ETextureStreamingBudgetProfile.Cutscene"/> budget profile while it
+/// exists. The profile is global to the streaming manager, so the backends of one manager share it with a reference count:
+/// the first backend selects the cutscene profile, and the last <see cref="Dispose"/> selects
+/// <see cref="ETextureStreamingBudgetProfile.Default"/> again.
 /// </para>
 /// </remarks>
 public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
@@ -37,6 +39,9 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
 
     /// <summary>A mip so high that the request asks for the preview only.</summary>
     private const int PreviewMip = 31;
+
+    private static readonly Lock ProfileOwnersSync = new();
+    private static readonly ConditionalWeakTable<ImportedTextureStreamingManager, StrongBox<int>> ProfileOwners = new();
 
     private readonly ImportedTextureStreamingManager _manager;
     private readonly Func<Guid, XRTexture2D?> _resolveTexture;
@@ -55,7 +60,7 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
 
     /// <summary>Creates a backend that finds textures in the loaded assets of an asset manager.</summary>
     /// <param name="assets">The asset manager that holds the loaded textures.</param>
-    /// <param name="useCutsceneBudgetProfile">True to select the cutscene budget profile until <see cref="Dispose"/>.</param>
+    /// <param name="useCutsceneBudgetProfile">True to hold the cutscene budget profile until <see cref="Dispose"/>.</param>
     public TextureResidencyBackend(AssetManager assets, bool useCutsceneBudgetProfile = true)
         : this(ImportedTextureStreamingManager.Instance, CreateAssetResolver(assets), useCutsceneBudgetProfile)
     {
@@ -63,7 +68,7 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
 
     /// <summary>Creates a backend that finds textures with a callback.</summary>
     /// <param name="resolveTexture">Returns the loaded texture of an asset, or null if the asset is not a loaded texture.</param>
-    /// <param name="useCutsceneBudgetProfile">True to select the cutscene budget profile until <see cref="Dispose"/>.</param>
+    /// <param name="useCutsceneBudgetProfile">True to hold the cutscene budget profile until <see cref="Dispose"/>.</param>
     public TextureResidencyBackend(Func<Guid, XRTexture2D?> resolveTexture, bool useCutsceneBudgetProfile = true)
         : this(ImportedTextureStreamingManager.Instance, resolveTexture, useCutsceneBudgetProfile)
     {
@@ -83,7 +88,7 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
         _manager.ResidencyRequestCompleted += _onRequestCompleted;
         _ownsBudgetProfile = useCutsceneBudgetProfile;
         if (_ownsBudgetProfile)
-            _manager.SetBudgetProfile(ETextureStreamingBudgetProfile.Cutscene);
+            AcquireBudgetProfile(_manager);
     }
 
     /// <summary>The largest side of T1, in texels. The default is <see cref="DefaultCoarseMaxDimension"/>.</summary>
@@ -205,8 +210,8 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     }
 
     /// <summary>
-    /// Cancels all tickets of this backend, stops the completion reports, and selects the
-    /// default budget profile if this backend selected the cutscene profile.
+    /// Cancels all tickets of this backend, stops the completion reports, and releases the hold on the cutscene
+    /// budget profile. The last holder of the manager selects the default profile.
     /// </summary>
     public void Dispose()
     {
@@ -227,7 +232,37 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
         }
 
         if (_ownsBudgetProfile)
-            _manager.SetBudgetProfile(ETextureStreamingBudgetProfile.Default);
+            ReleaseBudgetProfile(_manager);
+    }
+
+    /// <summary>The number of backends that hold the cutscene budget profile of a manager.</summary>
+    /// <param name="manager">The streaming manager.</param>
+    internal static int GetBudgetProfileOwnerCount(ImportedTextureStreamingManager manager)
+    {
+        lock (ProfileOwnersSync)
+            return ProfileOwners.TryGetValue(manager, out StrongBox<int>? owners) ? owners.Value : 0;
+    }
+
+    private static void AcquireBudgetProfile(ImportedTextureStreamingManager manager)
+    {
+        lock (ProfileOwnersSync)
+        {
+            StrongBox<int> owners = ProfileOwners.GetValue(manager, static _ => new StrongBox<int>());
+            if (owners.Value++ == 0)
+                manager.SetBudgetProfile(ETextureStreamingBudgetProfile.Cutscene);
+        }
+    }
+
+    private static void ReleaseBudgetProfile(ImportedTextureStreamingManager manager)
+    {
+        lock (ProfileOwnersSync)
+        {
+            if (!ProfileOwners.TryGetValue(manager, out StrongBox<int>? owners) || owners.Value <= 0)
+                return;
+
+            if (--owners.Value == 0)
+                manager.SetBudgetProfile(ETextureStreamingBudgetProfile.Default);
+        }
     }
 
     private void OnRequestCompleted(TextureResidencyTicket ticket)

@@ -26,8 +26,12 @@ public class CutsceneDirectorComponent : XRComponent
     private CutscenePlayer? _player;
     private CutsceneBindingTable? _bindings;
     private CutsceneCameraRouter? _router;
+    private CutsceneResidencySession? _residency;
     private XRViewport? _targetViewport;
     private bool _tickRegistered;
+    private bool _residencyEnabled = true;
+    private bool _playbackWaitEnabled;
+    private double _playbackWaitMaximumSeconds = CutsceneResidencyPlanner.DefaultPlaybackWaitMaximumSeconds;
     private readonly Dictionary<string, SceneNode> _runtimeSlots = [];
 
     /// <summary>Creates a director component.</summary>
@@ -85,6 +89,71 @@ public class CutsceneDirectorComponent : XRComponent
     [YamlIgnore]
     public ICutsceneBindingResolver? BindingResolver { get; set; }
 
+    /// <summary>
+    /// True to run progressive residency while a cutscene is open. The default is true.
+    /// A change takes effect at the next open.
+    /// </summary>
+    public bool ResidencyEnabled
+    {
+        get => _residencyEnabled;
+        set => SetField(ref _residencyEnabled, value);
+    }
+
+    /// <summary>
+    /// True to hold forward playback at a camera cut until the next shot is resident, for at most
+    /// <see cref="PlaybackWaitMaximumSeconds"/>. The clock and the audio hold. A jump and a scrub never hold.
+    /// The default is false. A change applies to an open cutscene at once.
+    /// </summary>
+    public bool PlaybackWaitEnabled
+    {
+        get => _playbackWaitEnabled;
+        set
+        {
+            if (SetField(ref _playbackWaitEnabled, value) && _residency is { } residency)
+                residency.Planner.PlaybackWaitEnabled = value;
+        }
+    }
+
+    /// <summary>The maximum time in seconds of one playback wait. It must be greater than zero. The default is 1 second.</summary>
+    public double PlaybackWaitMaximumSeconds
+    {
+        get => _playbackWaitMaximumSeconds;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+            if (SetField(ref _playbackWaitMaximumSeconds, value) && _residency is { } residency)
+                residency.Planner.PlaybackWaitMaximumSeconds = value;
+        }
+    }
+
+    /// <summary>
+    /// Creates the texture residency backend of a director that has no <see cref="ResidencyBackendFactory"/>.
+    /// The application composition registers it at startup, because this project cannot reach the asset manager.
+    /// If residency is on and no factory gives a backend, the open adds a diagnostic and residency is off.
+    /// </summary>
+    public static Func<CutsceneDirectorComponent, IResidencyBackend?>? DefaultResidencyBackendFactory { get; set; }
+
+    /// <summary>
+    /// Creates the texture residency backend at each open. The session owns the backend and disposes it at the close.
+    /// If it is null, an open uses <see cref="DefaultResidencyBackendFactory"/>.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public Func<IResidencyBackend?>? ResidencyBackendFactory { get; set; }
+
+    /// <summary>
+    /// The collector that finds the assets of the bound nodes for the approximate manifest.
+    /// If it is null, the open uses <see cref="CutsceneRenderableAssetCollector"/>.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public ICutsceneResidencyAssetCollector? ResidencyAssetCollector { get; set; }
+
+    /// <summary>The residency session of the open cutscene, or null when residency is off or no cutscene is open.</summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public CutsceneResidencySession? Residency => _residency;
+
     /// <summary>The active player, or null when no cutscene is open.</summary>
     [Browsable(false)]
     [YamlIgnore]
@@ -141,8 +210,26 @@ public class CutsceneDirectorComponent : XRComponent
     }
 
     /// <summary>
-    /// Restores the state of the bound nodes, destroys the instances that the cutscene spawned,
-    /// and unregisters the tick. A call on a closed component does nothing.
+    /// Runs one director frame now: the player tick and the residency update. The registered tick calls it with the
+    /// dilated frame time. A tool that seeks the player and needs the result at once can call it with zero.
+    /// A call on a closed component does nothing.
+    /// </summary>
+    /// <param name="deltaSeconds">The time since the last frame, in seconds.</param>
+    public void AdvanceFrame(double deltaSeconds)
+    {
+        if (_player is not { } player)
+            return;
+
+        // A handler in the tick can close the director, so the session is read before the tick.
+        CutsceneResidencySession? residency = _residency;
+        residency?.BeginTick();
+        player.Tick(deltaSeconds);
+        residency?.CompleteTick(player, deltaSeconds);
+    }
+
+    /// <summary>
+    /// Closes the residency session, restores the state of the bound nodes, destroys the instances that the cutscene
+    /// spawned, and unregisters the tick. A call on a closed component does nothing.
     /// </summary>
     public void Close()
     {
@@ -154,19 +241,30 @@ public class CutsceneDirectorComponent : XRComponent
 
         CutscenePlayer? player = _player;
         CutsceneBindingTable? bindings = _bindings;
+        CutsceneResidencySession? residency = _residency;
         _player = null;
         _bindings = null;
+        _residency = null;
         if (player is not null)
         {
             player.EventFired -= _relayEvent;
             player.Finished -= _relayFinished;
         }
 
-        // Stop restores the original values with the restore setting of the asset.
-        player?.Stop();
-        _router?.Detach();
-        _router = null;
-        bindings?.Dispose();
+        // The planner closes before the restore, so that no completion arrives for a closed cutscene.
+        // A close failure must not leave the bound nodes with cutscene values.
+        try
+        {
+            residency?.Close();
+        }
+        finally
+        {
+            // Stop restores the original values with the restore setting of the asset.
+            player?.Stop();
+            _router?.Detach();
+            _router = null;
+            bindings?.Dispose();
+        }
     }
 
     /// <inheritdoc/>
@@ -174,6 +272,14 @@ public class CutsceneDirectorComponent : XRComponent
     {
         Close();
         base.OnComponentDeactivated();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnEndPlay()
+    {
+        // The world or the scene ends play, so the residency planner and the budget profile must not stay.
+        Close();
+        base.OnEndPlay();
     }
 
     /// <inheritdoc/>
@@ -224,8 +330,39 @@ public class CutsceneDirectorComponent : XRComponent
             _router.Attach(viewport);
         }
 
+        OpenResidency(compiled, bindings, _player);
+
         _tickRegistered = true;
         RegisterTick(ETickGroup.Normal, DirectorTickOrder, _tick);
+    }
+
+    private void OpenResidency(CompiledCutscene compiled, CutsceneBindingTable bindings, CutscenePlayer player)
+    {
+        if (!_residencyEnabled)
+            return;
+
+        IResidencyBackend? backend = ResidencyBackendFactory is { } factory ? factory() : DefaultResidencyBackendFactory?.Invoke(this);
+        if (backend is null)
+        {
+            Fail("Residency is on, but the director has no residency backend factory and the application registered no default factory. Residency is off for this open.");
+            return;
+        }
+
+        CutsceneResidencySession residency;
+        try
+        {
+            residency = CutsceneResidencySession.Create(compiled, bindings, backend, ResidencyAssetCollector ?? CutsceneRenderableAssetCollector.Instance, _diagnostics);
+        }
+        catch
+        {
+            (backend as IDisposable)?.Dispose();
+            throw;
+        }
+
+        residency.Planner.PlaybackWaitEnabled = _playbackWaitEnabled;
+        residency.Planner.PlaybackWaitMaximumSeconds = _playbackWaitMaximumSeconds;
+        _residency = residency;
+        residency.Open(player);
     }
 
     private void Fail(string message)
@@ -238,5 +375,5 @@ public class CutsceneDirectorComponent : XRComponent
         => Finished?.Invoke();
 
     private void TickDirector()
-        => _player?.Tick(RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds);
+        => AdvanceFrame(RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds);
 }

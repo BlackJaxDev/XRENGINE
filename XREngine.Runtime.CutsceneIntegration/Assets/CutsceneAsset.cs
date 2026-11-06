@@ -7,6 +7,8 @@ public class CutsceneAsset : XRAsset
 {
     private CutsceneTime _duration;
     private bool _forceRestoreAll;
+    private CutsceneResidencyManifest? _manifest;
+    private ulong _manifestContentHash;
 
     /// <summary>The length of the cutscene.</summary>
     public CutsceneTime Duration
@@ -27,4 +29,21 @@ public class CutsceneAsset : XRAsset
 
     /// <summary>The targets that the tracks refer to by index.</summary>
     public List<CutsceneBindingReference> Bindings { get; set; } = [];
+
+    /// <summary>
+    /// The residency manifest that the bake made, or null. Playback uses it only while <see cref="ManifestContentHash"/>
+    /// matches <see cref="CutsceneManifestHash.Compute"/>. Otherwise it uses the approximate manifest and adds a diagnostic.
+    /// </summary>
+    public CutsceneResidencyManifest? Manifest
+    {
+        get => _manifest;
+        set => SetField(ref _manifest, value);
+    }
+
+    /// <summary>The content hash of the asset at the time of the bake. See <see cref="CutsceneManifestHash"/>.</summary>
+    public ulong ManifestContentHash
+    {
+        get => _manifestContentHash;
+        set => SetField(ref _manifestContentHash, value);
+    }
 }

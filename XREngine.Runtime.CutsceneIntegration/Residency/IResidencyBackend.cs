@@ -28,4 +28,23 @@ public interface IResidencyBackend
     /// </summary>
     /// <param name="assetId">The asset.</param>
     EResidencyLevel GetLevel(Guid assetId);
+
+    /// <summary>
+    /// Sets the planner that receives complete work. <see cref="CutsceneResidencySession"/> calls it one time,
+    /// before <see cref="CutsceneResidencyPlanner.Open"/>. The default does nothing.
+    /// </summary>
+    /// <param name="planner">The planner that uses this backend.</param>
+    void AttachPlanner(CutsceneResidencyPlanner planner)
+    {
+    }
+
+    /// <summary>
+    /// Sets the playhead before a planner update, so that the backend can convert request deadlines.
+    /// <see cref="CutsceneResidencySession"/> calls it before each planner update. The default does nothing.
+    /// </summary>
+    /// <param name="position">The playhead position.</param>
+    /// <param name="rate">The playback rate. Zero is a pause.</param>
+    void SetPlayhead(CutsceneTime position, double rate)
+    {
+    }
 }
