@@ -51,6 +51,7 @@ public sealed partial class CutsceneResidencyPlanner
     private readonly int[] _requestLevels;
     private readonly int[] _order;
 
+    private readonly CutsceneResidencyBucketCursor _cursor;
     private readonly Dictionary<long, int> _ticketAssets;
     private readonly Comparison<int> _compareRequests;
     private readonly Comparison<int> _compareProxyRequests;
@@ -116,16 +117,20 @@ public sealed partial class CutsceneResidencyPlanner
         _requestLevels = new int[assetCount];
         _order = new int[assetCount];
 
+        _cursor = new CutsceneResidencyBucketCursor(manifest);
         Array.Fill(_firstNeeded, long.MaxValue);
-        for (int b = bucketCount - 1; b >= 0; b--)
+        for (int b = 0; b < bucketCount; b++)
         {
-            ResidencyEntry[] entries = _buckets[b].Entries;
-            for (int e = 0; e < entries.Length; e++)
+            _cursor.MoveTo(b);
+            ReadOnlySpan<int> members = _cursor.Members;
+            for (int e = 0; e < members.Length; e++)
             {
-                ResidencyEntry entry = entries[e];
-                _firstNeeded[entry.AssetIndex] = _bucketStarts[b];
-                if (entry.ScreenCoverage > _maxCoverage[entry.AssetIndex])
-                    _maxCoverage[entry.AssetIndex] = entry.ScreenCoverage;
+                int asset = members[e];
+                if (_firstNeeded[asset] == long.MaxValue)
+                    _firstNeeded[asset] = _bucketStarts[b];
+                float coverage = _cursor.GetCoverage(asset);
+                if (coverage > _maxCoverage[asset])
+                    _maxCoverage[asset] = coverage;
             }
         }
         Array.Copy(_firstNeeded, _lastNeeded, assetCount);

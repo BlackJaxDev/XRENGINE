@@ -32,8 +32,11 @@ public sealed class CutsceneResidencyWiringTests
         public FakeResidencyBackend Inner { get; } = new();
         public List<string> Calls { get; } = [];
         public bool Disposed { get; private set; }
+        public int DisposeCount { get; private set; }
+        public bool ThrowOnRequest { get; set; }
 
-        public ResidencyTicket Request(in ResidencyRequest request) => Inner.Request(in request);
+        public ResidencyTicket Request(in ResidencyRequest request)
+            => ThrowOnRequest ? throw new InvalidOperationException("The test backend failed.") : Inner.Request(in request);
 
         public void Cancel(ResidencyTicket ticket) => Inner.Cancel(ticket);
 
@@ -52,6 +55,7 @@ public sealed class CutsceneResidencyWiringTests
         {
             Calls.Add(Inner.Planner is { IsClosed: true } ? "dispose-after-close" : "dispose");
             Disposed = true;
+            DisposeCount++;
         }
     }
 
@@ -123,8 +127,8 @@ public sealed class CutsceneResidencyWiringTests
         List<CutsceneCompileDiagnostic> diagnostics = [];
         CutsceneResidencySession session = CutsceneResidencySession.Create(compiled, bindings, backend, new NoAssets(), diagnostics);
         diagnostics.ShouldBeEmpty();
-        session.Planner.PlaybackWaitEnabled = true;
-        session.Planner.PlaybackWaitMaximumSeconds = maximumWait;
+        session.PlaybackWaitEnabled = true;
+        session.PlaybackWaitMaximumSeconds = maximumWait;
         session.Open(player);
         return (player, session, backend, node);
     }
@@ -199,7 +203,7 @@ public sealed class CutsceneResidencyWiringTests
     public void PlaybackWait_Off_DoesNotHold()
     {
         (CutscenePlayer player, CutsceneResidencySession session, _, SceneNode node) = MakePlayback();
-        session.Planner.PlaybackWaitEnabled = false;
+        session.PlaybackWaitEnabled = false;
         player.Play();
         Step(player, session, 1.9);
         Step(player, session, 0.2);
@@ -355,5 +359,201 @@ public sealed class CutsceneResidencyWiringTests
 
         backend.Calls.Count(c => c == "playhead").ShouldBe(playheads + 1);
         host.End();
+    }
+
+    [Test]
+    public void StopThenPlay_BeforeATick_IsReportedAsAJump()
+    {
+        (CutscenePlayer player, CutsceneResidencySession session, _, _) = MakePlayback();
+        player.Play();
+        Step(player, session, 1.0);
+        int generation = session.Planner.Generation;
+
+        player.Stop();
+        player.Play();
+        Step(player, session, 0.1);
+
+        player.LastTickSeek.ShouldBe(ESeekIntent.Jump);
+        session.Planner.Generation.ShouldBe(generation + 1);
+
+        // A stop on its own is also a jump at the next tick.
+        player.Stop();
+        Step(player, session, 0.0);
+        player.LastTickSeek.ShouldBe(ESeekIntent.Jump);
+        session.Planner.Generation.ShouldBe(generation + 2);
+        session.Close();
+    }
+
+    [Test]
+    public void Hold_DefersTheEventAtTheCut_AndSilencesAudioUntilTheSameTickAsTheRelease()
+    {
+        (SceneNode node, CutsceneAsset asset) = MakeAsset();
+        EventTrack events = new() { Name = "Events" };
+        events.Events.Add(new CutsceneEvent { Time = T(2), Key = "cut" });
+        asset.Tracks.Add(events);
+        asset.ManifestContentHash = CutsceneManifestHash.Compute(asset);
+        CompiledCutscene compiled = CutsceneCompiler.Compile(asset, []);
+        CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, new FakeResolver(node));
+        CutscenePlayer player = new(compiled, bindings, new CutsceneStateSnapshot(bindings));
+        List<string> fired = [];
+        player.EventFired += e => fired.Add(e.Event.Key);
+        TrackingBackend backend = new();
+        CutsceneResidencySession session = CutsceneResidencySession.Create(compiled, bindings, backend, new NoAssets(), []);
+        session.PlaybackWaitEnabled = true;
+        session.Open(player);
+
+        player.Play();
+        Step(player, session, 1.9);
+        player.IsAudioMuted.ShouldBeFalse();
+        Step(player, session, 0.2);
+        player.IsHeldByGate.ShouldBeTrue();
+        player.IsAudioMuted.ShouldBeTrue();
+        fired.ShouldBeEmpty();
+
+        Step(player, session, 0.1);
+        player.IsAudioMuted.ShouldBeTrue();
+        fired.ShouldBeEmpty();
+
+        backend.Inner.SetLevel(ShotB, EResidencyLevel.Target);
+        Step(player, session, 0.1);
+        player.IsHeldByGate.ShouldBeFalse();
+        player.IsAudioMuted.ShouldBeFalse();
+        fired.ShouldBe(["cut"]);
+        session.Close();
+    }
+
+    [Test]
+    public void Pause_DuringAHold_KeepsTheHold()
+    {
+        (CutscenePlayer player, CutsceneResidencySession session, _, SceneNode node) = MakePlayback(maximumWait: 0.5);
+        player.Play();
+        Step(player, session, 1.9);
+        Step(player, session, 0.2);
+        session.Planner.IsHoldingPlayback.ShouldBeTrue();
+
+        player.Pause();
+        Step(player, session, 2.0);
+        session.Planner.IsHoldingPlayback.ShouldBeTrue();
+
+        // The paused time does not count toward the maximum wait, so a resume still holds before the cut.
+        player.Play();
+        Step(player, session, 0.1);
+        session.Planner.IsHoldingPlayback.ShouldBeTrue();
+        player.IsHeldByGate.ShouldBeTrue();
+        X(node).ShouldBe(0f);
+        session.Planner.PlaybackWaitTimeoutCount.ShouldBe(0);
+        session.Close();
+    }
+
+    [Test]
+    public void Director_ClosesResidency_AtEndPlay_AndAtDeactivation()
+    {
+        foreach (bool endPlay in new[] { true, false })
+        {
+            (SceneNode node, CutsceneAsset asset) = MakeAsset();
+            SceneNode host = new("Director", new Transform());
+            host.SetWorldContext(new TestWorld());
+            CutsceneDirectorComponent director = host.AddComponent<CutsceneDirectorComponent>()!;
+            director.Asset = asset;
+            director.BindingResolver = new FakeResolver(node);
+            TrackingBackend backend = new();
+            director.ResidencyBackendFactory = () => backend;
+            director.OpenAsync().IsCompletedSuccessfully.ShouldBeTrue();
+            CutsceneResidencySession residency = director.Residency.ShouldNotBeNull();
+
+            if (endPlay)
+                director.NotifyEndPlay();
+            else
+                director.NotifyComponentDeactivated();
+
+            director.IsOpen.ShouldBeFalse();
+            residency.IsClosed.ShouldBeTrue();
+            backend.DisposeCount.ShouldBe(1);
+        }
+    }
+
+    [Test]
+    public void ResidencyFailure_LeavesAnOpenCutsceneWithoutResidency()
+    {
+        (SceneNode node, CutsceneAsset asset) = MakeAsset();
+        TrackingBackend previewBackend = new() { ThrowOnRequest = true };
+        CutscenePreviewHost preview = new(new FakeResolver(node), residencyBackendFactory: () => previewBackend);
+
+        preview.Begin(asset);
+
+        preview.IsActive.ShouldBeTrue();
+        preview.Residency.ShouldBeNull();
+        preview.Player!.PlaybackGate.ShouldBeNull();
+        previewBackend.DisposeCount.ShouldBe(1);
+        List<CutsceneCompileDiagnostic> diagnostics = [];
+        preview.CopyDiagnostics(diagnostics);
+        diagnostics.Count(d => d.Message.Contains("Residency failed to open", StringComparison.Ordinal)).ShouldBe(1);
+        preview.Seek(T(3), ESeekIntent.Jump);
+        preview.Tick(0.0);
+        X(node).ShouldBe(100f);
+        preview.End();
+
+        SceneNode host = new("Director", new Transform());
+        host.SetWorldContext(new TestWorld());
+        CutsceneDirectorComponent director = host.AddComponent<CutsceneDirectorComponent>()!;
+        director.Asset = asset;
+        director.BindingResolver = new FakeResolver(node);
+        director.ResidencyBackendFactory = () => throw new InvalidOperationException("The factory failed.");
+
+        director.OpenAsync().IsCompletedSuccessfully.ShouldBeTrue();
+
+        director.IsOpen.ShouldBeTrue();
+        director.Residency.ShouldBeNull();
+        director.Diagnostics.Count(d => d.Message.Contains("Residency failed to open", StringComparison.Ordinal)).ShouldBe(1);
+        director.Player!.Play();
+        director.AdvanceFrame(3.0);
+        X(node).ShouldBe(100f);
+        director.Close();
+    }
+
+    [Test]
+    public void PreviewRecompiles_KeepTheBackend_AndReportTheStaleManifestOnce()
+    {
+        (SceneNode node, CutsceneAsset asset) = MakeAsset();
+        TrackingBackend backend = new();
+        CutscenePreviewHost host = new(new FakeResolver(node), residencyBackendFactory: () => backend);
+        host.Begin(asset);
+        host.Tick(0.0);
+        CutsceneResidencySession residency = host.Residency.ShouldNotBeNull();
+        residency.ManifestState.ShouldBe(ECutsceneManifestState.Current);
+
+        TransformTrackClip clip = (TransformTrackClip)asset.Tracks[0].Clips[0];
+        for (int i = 0; i < 10; i++)
+        {
+            clip.Duration = T(4) - new CutsceneTime(i + 1);
+            host.NotifyAssetEdited();
+            host.Tick(1.0 / 60.0);
+            host.Residency.ShouldBeSameAs(residency);
+            host.Player!.PlaybackGate.ShouldBeSameAs(residency);
+        }
+
+        host.CompileCount.ShouldBe(11);
+        residency.RefreshCount.ShouldBe(0);
+        backend.DisposeCount.ShouldBe(0);
+
+        // The edits stopped, so the session selects the manifest one time.
+        host.Tick(CutscenePreviewHost.ResidencyRefreshDelaySeconds);
+        residency.RefreshCount.ShouldBe(1);
+        residency.ManifestState.ShouldBe(ECutsceneManifestState.Stale);
+
+        // A later edit in the same stale state gives no new warning.
+        clip.Duration = T(3);
+        host.NotifyAssetEdited();
+        host.Tick(0.0);
+        host.Tick(CutscenePreviewHost.ResidencyRefreshDelaySeconds);
+        residency.RefreshCount.ShouldBe(2);
+
+        backend.DisposeCount.ShouldBe(0);
+        List<CutsceneCompileDiagnostic> diagnostics = [];
+        host.CopyDiagnostics(diagnostics);
+        diagnostics.Count(d => d.Message.Contains("stale", StringComparison.Ordinal)).ShouldBe(1);
+
+        host.End();
+        backend.DisposeCount.ShouldBe(1);
     }
 }

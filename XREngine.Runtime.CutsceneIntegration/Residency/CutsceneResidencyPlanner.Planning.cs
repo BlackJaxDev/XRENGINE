@@ -77,20 +77,23 @@ public sealed partial class CutsceneResidencyPlanner
             if (behind)
                 until += _windowAhead + 1;
 
-            ResidencyEntry[] entries = _buckets[b].Entries;
-            for (int e = 0; e < entries.Length; e++)
+            // The window buckets are in order, so the cursor decodes only the deltas after the first bucket.
+            _cursor.MoveTo(b);
+            ReadOnlySpan<int> members = _cursor.Members;
+            for (int e = 0; e < members.Length; e++)
             {
-                ResidencyEntry entry = entries[e];
-                int asset = entry.AssetIndex;
-                if (entry.TargetLevel > _desiredLevels[asset])
-                    _desiredLevels[asset] = entry.TargetLevel;
+                int asset = members[e];
+                int level = _cursor.GetLevel(asset);
+                float coverage = _cursor.GetCoverage(asset);
+                if (level > _desiredLevels[asset])
+                    _desiredLevels[asset] = level;
                 if (until < _untilNeeded[asset])
                 {
                     _untilNeeded[asset] = until;
                     _deadlines[asset] = deadline;
                 }
-                if (entry.ScreenCoverage > _coverages[asset])
-                    _coverages[asset] = entry.ScreenCoverage;
+                if (coverage > _coverages[asset])
+                    _coverages[asset] = coverage;
             }
         }
 

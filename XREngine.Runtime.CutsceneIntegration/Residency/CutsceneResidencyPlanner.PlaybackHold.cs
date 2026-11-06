@@ -14,7 +14,8 @@ public sealed partial class CutsceneResidencyPlanner
 
     /// <summary>
     /// True if forward playback holds at a camera cut until the next shot has its target levels.
-    /// The default is false. A jump or a scrub never holds.
+    /// The default is false. A jump or a scrub never holds and ends a hold. Reverse play ends a hold.
+    /// A pause (rate 0) keeps a hold, and the paused time does not count toward the maximum wait.
     /// </summary>
     public bool PlaybackWaitEnabled { get; set; }
 
@@ -45,11 +46,14 @@ public sealed partial class CutsceneResidencyPlanner
     {
         if (_holding)
         {
-            if (!PlaybackWaitEnabled || rate <= 0.0 || TargetsResident(_holdBucket))
+            // Reverse play ends the hold. A pause keeps it, and the paused time does not count toward the maximum wait.
+            if (!PlaybackWaitEnabled || rate < 0.0 || TargetsResident(_holdBucket))
             {
                 ReleaseHold();
                 return;
             }
+            if (rate == 0.0)
+                return;
 
             _holdSeconds += deltaSeconds;
             if (_holdSeconds >= _playbackWaitMaximumSeconds)
@@ -92,11 +96,12 @@ public sealed partial class CutsceneResidencyPlanner
 
     private bool TargetsResident(int bucket)
     {
-        ResidencyEntry[] entries = _buckets[bucket].Entries;
-        for (int e = 0; e < entries.Length; e++)
+        _cursor.MoveTo(bucket);
+        ReadOnlySpan<int> members = _cursor.Members;
+        for (int e = 0; e < members.Length; e++)
         {
-            ResidencyEntry entry = entries[e];
-            if ((int)_backend.GetLevel(_assets[entry.AssetIndex]) < entry.TargetLevel)
+            int asset = members[e];
+            if ((int)_backend.GetLevel(_assets[asset]) < _cursor.GetLevel(asset))
                 return false;
         }
         return true;

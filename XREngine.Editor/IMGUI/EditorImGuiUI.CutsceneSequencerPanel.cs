@@ -445,6 +445,8 @@ public static partial class EditorImGuiUI
 
     private static void MarkCutsceneEdited(CutsceneAsset asset)
     {
+        // The residency strip computes the content hash again only after an edit.
+        _cutsceneEditVersion++;
         asset.MarkDirty();
         CutscenePreviewSession.NotifyAssetEdited();
     }

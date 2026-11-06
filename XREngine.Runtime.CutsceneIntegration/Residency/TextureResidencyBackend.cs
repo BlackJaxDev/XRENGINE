@@ -190,23 +190,38 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     public EResidencyLevel GetLevel(Guid assetId)
     {
         lock (_sync)
+            return GetLevelLocked(assetId);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>The backend takes its lock one time for all the assets.</remarks>
+    public void GetLevels(ReadOnlySpan<Guid> assetIds, Span<EResidencyLevel> levels)
+    {
+        if (levels.Length < assetIds.Length)
+            throw new ArgumentException("The level span is shorter than the asset span.", nameof(levels));
+
+        lock (_sync)
+            for (int i = 0; i < assetIds.Length; i++)
+                levels[i] = GetLevelLocked(assetIds[i]);
+    }
+
+    private EResidencyLevel GetLevelLocked(Guid assetId)
+    {
+        if (!_assetTickets.TryGetValue(assetId, out List<TicketLevel>? tickets))
+            return EResidencyLevel.None;
+
+        int level = (int)EResidencyLevel.None;
+        for (int i = 0; i < tickets.Count; i++)
         {
-            if (!_assetTickets.TryGetValue(assetId, out List<TicketLevel>? tickets))
-                return EResidencyLevel.None;
-
-            int level = (int)EResidencyLevel.None;
-            for (int i = 0; i < tickets.Count; i++)
+            TicketLevel entry = tickets[i];
+            if (entry.Level > level
+                && _manager.GetResidencyRequestState(new TextureResidencyTicket(entry.TicketId)) == ETextureResidencyRequestState.Resident)
             {
-                TicketLevel entry = tickets[i];
-                if (entry.Level > level
-                    && _manager.GetResidencyRequestState(new TextureResidencyTicket(entry.TicketId)) == ETextureResidencyRequestState.Resident)
-                {
-                    level = entry.Level;
-                }
+                level = entry.Level;
             }
-
-            return (EResidencyLevel)level;
         }
+
+        return (EResidencyLevel)level;
     }
 
     /// <summary>

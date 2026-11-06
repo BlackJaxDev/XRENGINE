@@ -181,8 +181,9 @@ public sealed class CutscenePlayer
 
     /// <summary>
     /// The intent of the move that the last <see cref="Tick"/> made other than a play step, or null.
-    /// It is the intent of a resolved seek, or <see cref="ESeekIntent.Jump"/> for a hard resync to the audio and for a
-    /// <see cref="Stop"/> since the tick before. The residency planner reads it after each tick.
+    /// It is the intent of a resolved seek, or <see cref="ESeekIntent.Jump"/> for a <see cref="Stop"/> since the tick before.
+    /// A hard resync to the audio is a correction of normal play, so it gives null. The player passes this value to
+    /// <see cref="PlaybackGate"/> in a play step, and the residency session reads it after each tick.
     /// </summary>
     public ESeekIntent? LastTickSeek { get; private set; }
 
@@ -404,14 +405,11 @@ public sealed class CutscenePlayer
         }
         bool hardResync = _clock.ConsumeHardResync();
         if (hardResync)
-        {
             AudioHardResyncCount++;
-            LastTickSeek = ESeekIntent.Jump;
-        }
 
         CutsceneTime position = _clock.Position.Clamp(CutsceneTime.Zero, duration);
         if (PlaybackGate is { } gate)
-            position = ApplyGate(gate, before, position, hardResync, deltaSeconds);
+            position = ApplyGate(gate, before, position, deltaSeconds);
         _clock.SetPosition(position);
         EvaluateAt(position, deltaSeconds);
 
@@ -455,19 +453,20 @@ public sealed class CutscenePlayer
 
     /// <summary>
     /// Asks the gate for the position of a play step before the evaluation, so that a held frame never shows the state
-    /// after the hold position. A new hold stops the audio sources at once.
+    /// after the hold position. The gate gets <see cref="LastTickSeek"/>, so a <see cref="Stop"/> before this play step is a jump.
+    /// A new hold stops the audio sources at once, and a release starts them again before the evaluation of the same tick.
     /// </summary>
-    private CutsceneTime ApplyGate(ICutscenePlaybackGate gate, CutsceneTime before, CutsceneTime position, bool hardResync, double deltaSeconds)
+    private CutsceneTime ApplyGate(ICutscenePlaybackGate gate, CutsceneTime before, CutsceneTime position, double deltaSeconds)
     {
         double rate = _clock.Rate;
-        CutsceneTime allowed = gate.LimitPlayStep(before, position, rate, hardResync ? ESeekIntent.Jump : null, deltaSeconds);
+        CutsceneTime allowed = gate.LimitPlayStep(before, position, rate, LastTickSeek, deltaSeconds);
         CutsceneTime low = before < position ? before : position;
         CutsceneTime high = before < position ? position : before;
         allowed = allowed.Clamp(low, high);
 
         bool held = allowed != position;
-        if (held && !_heldByGate)
-            _audio.SetTransport(playing: false, rate);
+        if (held != _heldByGate)
+            _audio.SetTransport(playing: !held, rate);
         _heldByGate = held;
         return allowed;
     }

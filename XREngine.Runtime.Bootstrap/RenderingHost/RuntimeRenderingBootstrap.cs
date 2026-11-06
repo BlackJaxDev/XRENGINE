@@ -146,6 +146,10 @@ public static class RuntimeRenderingBootstrap
                 leases.Add(RuntimeEngineStartupPolicyServices.Install(DesktopEngineStartupPolicy.Instance));
                 leases.Add(RuntimeAssetBootstrap.InstallEngineAssetServices());
                 leases.Add(XREngine.Cutscenes.CutsceneSerializationRegistration.Install());
+
+                // A windowed host streams textures, so a cutscene director gets texture residency from the engine asset manager.
+                leases.Add(XREngine.Cutscenes.CutsceneResidencyRegistration.InstallDefaultBackendFactory(
+                    static _ => new XREngine.Cutscenes.TextureResidencyBackend(Engine.Assets)));
             }
             leases.Add(renderers);
             BuiltInPhysicsBackendModules.RegisterDesktop(physics);

@@ -10,14 +10,15 @@ public static partial class EditorImGuiUI
     private const float CutsceneResidencyStripHeight = 12.0f;
     private const float CutsceneLanesTop = CutsceneRulerHeight + CutsceneResidencyStripHeight;
 
-    /// <summary>The time between two hash checks of a closed asset in the panel, in seconds. A hash serializes the asset.</summary>
-    private const double CutsceneManifestStateRefreshSeconds = 1.0;
-
     private static float _cutsceneT0BudgetMiB = CutsceneBakeOptions.DefaultT0BudgetBytes / (1024.0f * 1024.0f);
     private static string? _cutsceneResidencyMessage;
     private static CutsceneAsset? _cutsceneManifestStateAsset;
     private static ECutsceneManifestState _cutsceneManifestState;
-    private static double _cutsceneManifestStateTime = double.NegativeInfinity;
+    private static int _cutsceneManifestStateVersion = -1;
+    private static int _cutsceneEditVersion;
+    private static CutsceneResidencyManifest? _cutsceneStripManifest;
+    private static CutsceneResidencyBucketCursor? _cutsceneStripCursor;
+    private static EResidencyLevel[] _cutsceneStripLevels = [];
 
     /// <summary>Draws the manifest state, the bake controls, the playback wait option, and the planner state.</summary>
     private static void DrawCutsceneResidencyBar(CutsceneAsset asset)
@@ -103,7 +104,10 @@ public static partial class EditorImGuiUI
         drawList.AddRectFilled(new Vector2(timelineLeft, top), new Vector2(timelineLeft + timelineWidth, bottom), ImGui.GetColorU32(ImGuiCol.FrameBgHovered));
 
         if (manifest is not null)
-            DrawCutsceneResidencyBuckets(manifest, residency, drawList, timelineLeft, top, bottom);
+        {
+            PrepareCutsceneStrip(manifest, residency);
+            DrawCutsceneResidencyBuckets(manifest, residency is not null, drawList, timelineLeft, top, bottom);
+        }
 
         if (state != ECutsceneManifestState.Current)
         {
@@ -121,7 +125,24 @@ public static partial class EditorImGuiUI
         }
     }
 
-    private static void DrawCutsceneResidencyBuckets(CutsceneResidencyManifest manifest, CutsceneResidencySession? residency, ImDrawListPtr drawList, float timelineLeft, float top, float bottom)
+    /// <summary>
+    /// Makes the decode cursor for the manifest, and with an open session reads the levels of all manifest assets in one
+    /// backend call for this frame, so the strip takes no lock for each entry.
+    /// </summary>
+    private static void PrepareCutsceneStrip(CutsceneResidencyManifest manifest, CutsceneResidencySession? residency)
+    {
+        if (!ReferenceEquals(manifest, _cutsceneStripManifest))
+        {
+            _cutsceneStripManifest = manifest;
+            _cutsceneStripCursor = new CutsceneResidencyBucketCursor(manifest);
+            if (_cutsceneStripLevels.Length < manifest.Assets.Length)
+                _cutsceneStripLevels = new EResidencyLevel[manifest.Assets.Length];
+        }
+
+        residency?.Backend.GetLevels(manifest.Assets, _cutsceneStripLevels);
+    }
+
+    private static void DrawCutsceneResidencyBuckets(CutsceneResidencyManifest manifest, bool live, ImDrawListPtr drawList, float timelineLeft, float top, float bottom)
     {
         Vector2 clipMin = drawList.GetClipRectMin();
         Vector2 clipMax = drawList.GetClipRectMax();
@@ -135,55 +156,53 @@ public static partial class EditorImGuiUI
             if (right < clipMin.X || left > clipMax.X)
                 continue;
 
-            drawList.AddRectFilled(new Vector2(left, top), new Vector2(MathF.Max(left + 1.0f, right - 1.0f), bottom), CutsceneBucketColor(manifest, bucket, residency));
+            drawList.AddRectFilled(new Vector2(left, top), new Vector2(MathF.Max(left + 1.0f, right - 1.0f), bottom), CutsceneBucketColor(b, live));
             if (bucket.StartsAtCut)
                 drawList.AddLine(new Vector2(left, top - 3.0f), new Vector2(left, bottom), cutColor, 2.0f);
         }
     }
 
-    private static uint CutsceneBucketColor(CutsceneResidencyManifest manifest, ResidencyBucket bucket, CutsceneResidencySession? residency)
+    private static uint CutsceneBucketColor(int bucket, bool live)
     {
-        ResidencyEntry[] entries = bucket.Entries;
-        if (entries.Length == 0)
+        CutsceneResidencyBucketCursor cursor = _cutsceneStripCursor!;
+        cursor.MoveTo(bucket);
+        ReadOnlySpan<int> members = cursor.Members;
+        if (members.Length == 0)
             return ImGui.ColorConvertFloat4ToU32(new Vector4(0.35f, 0.35f, 0.35f, 0.6f));
 
-        if (residency is null)
+        if (!live)
         {
             int highest = 0;
-            for (int e = 0; e < entries.Length; e++)
-                highest = Math.Max(highest, entries[e].TargetLevel);
+            for (int e = 0; e < members.Length; e++)
+                highest = Math.Max(highest, cursor.GetLevel(members[e]));
             return ImGui.ColorConvertFloat4ToU32(highest >= (int)EResidencyLevel.Target
                 ? new Vector4(0.25f, 0.45f, 0.85f, 0.9f)
                 : new Vector4(0.25f, 0.45f, 0.85f, 0.5f));
         }
 
         int resident = 0;
-        for (int e = 0; e < entries.Length; e++)
-        {
-            ResidencyEntry entry = entries[e];
-            if ((int)residency.Backend.GetLevel(manifest.Assets[entry.AssetIndex]) >= entry.TargetLevel)
+        for (int e = 0; e < members.Length; e++)
+            if ((int)_cutsceneStripLevels[members[e]] >= cursor.GetLevel(members[e]))
                 resident++;
-        }
 
-        if (resident == entries.Length)
+        if (resident == members.Length)
             return ImGui.ColorConvertFloat4ToU32(new Vector4(0.25f, 0.75f, 0.35f, 0.9f));
         return ImGui.ColorConvertFloat4ToU32(resident > 0 ? new Vector4(0.90f, 0.75f, 0.20f, 0.9f) : new Vector4(0.80f, 0.25f, 0.20f, 0.9f));
     }
 
     /// <summary>
-    /// Gets the manifest state for the panel. An open session gives the state of its open. Otherwise the panel computes
-    /// the hash at most one time in <see cref="CutsceneManifestStateRefreshSeconds"/>, because a hash serializes the asset.
+    /// Gets the manifest state for the panel. An open session gives the state of its last manifest selection. Otherwise the
+    /// panel computes the hash only when the asset or the panel edit version changed, because a hash walks all the track data.
     /// </summary>
     private static ECutsceneManifestState GetCutsceneManifestState(CutsceneAsset asset, CutsceneResidencySession? residency)
     {
         if (residency is not null)
             return residency.ManifestState;
 
-        double now = ImGui.GetTime();
-        if (!ReferenceEquals(asset, _cutsceneManifestStateAsset) || now - _cutsceneManifestStateTime >= CutsceneManifestStateRefreshSeconds)
+        if (!ReferenceEquals(asset, _cutsceneManifestStateAsset) || _cutsceneManifestStateVersion != _cutsceneEditVersion)
         {
             _cutsceneManifestStateAsset = asset;
-            _cutsceneManifestStateTime = now;
+            _cutsceneManifestStateVersion = _cutsceneEditVersion;
             try
             {
                 _cutsceneManifestState = CutsceneManifestHash.GetState(asset);
@@ -227,7 +246,7 @@ public static partial class EditorImGuiUI
                 asset.Manifest = manifest;
                 asset.ManifestContentHash = CutsceneManifestHash.Compute(asset);
                 asset.MarkDirty();
-                _cutsceneManifestStateAsset = null;
+                _cutsceneEditVersion++;
                 _cutsceneResidencyMessage = $"Baked {manifest.Buckets.Length} buckets. {report.Describe()}{(diagnostics.Count > 0 ? $" {diagnostics.Count} problems: {diagnostics[0].Message}" : string.Empty)}";
             }
             catch (CutsceneBakeException ex)

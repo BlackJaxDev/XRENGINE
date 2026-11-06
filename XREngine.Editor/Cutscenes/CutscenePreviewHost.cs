@@ -24,13 +24,19 @@ namespace XREngine.Editor.Cutscenes;
 /// previous value, so <see cref="End"/> removes the transform changes of bound nodes that were recorded since <see cref="Begin"/>.
 /// </para>
 /// <para>
-/// A host with a residency backend factory runs a <see cref="CutsceneResidencySession"/> for each compile of the preview.
-/// The planner uses the baked manifest while it is current, and the approximate manifest otherwise. The playback wait is
-/// off by default, because an author expects the preview to follow the clock.
+/// A host with a residency backend factory runs one <see cref="CutsceneResidencySession"/> from <see cref="Begin"/> to
+/// <see cref="End"/>. A recompile keeps the session, the backend, and the budget profile, and moves the playback gate to
+/// the new player at once. The manifest selection (the content hash and the approximate manifest) and the planner swap
+/// wait until no edit came for <see cref="ResidencyRefreshDelaySeconds"/>, so a clip drag does not repeat that work in
+/// each frame. The planner uses the baked manifest while it is current, and the approximate manifest otherwise. The
+/// playback wait is off by default, because an author expects the preview to follow the clock.
 /// </para>
 /// </remarks>
 public sealed class CutscenePreviewHost
 {
+    /// <summary>The time in seconds with no edit after which the residency session selects the manifest again.</summary>
+    public const double ResidencyRefreshDelaySeconds = 0.25;
+
     private readonly ICutsceneBindingResolver _resolver;
     private readonly XRViewport? _viewport;
     private readonly List<CutsceneCompileDiagnostic> _compileDiagnostics = [];
@@ -38,6 +44,7 @@ public sealed class CutscenePreviewHost
     private readonly Action<CutsceneFiredEvent> _relayEvent;
     private readonly Func<IResidencyBackend?>? _residencyBackendFactory;
     private readonly ICutsceneResidencyAssetCollector _residencyCollector;
+    private readonly List<CutsceneCompileDiagnostic> _residencyDiagnostics = [];
 
     private long _undoMark;
     private CutsceneAsset? _asset;
@@ -45,6 +52,9 @@ public sealed class CutscenePreviewHost
     private CutsceneBindingTable? _bindings;
     private CutsceneCameraRouter? _router;
     private CutsceneResidencySession? _residency;
+    private CompiledCutscene? _compiled;
+    private bool _residencyRefreshPending;
+    private double _residencyRefreshSeconds;
     private bool _playbackWaitEnabled;
     private double _playbackWaitMaximumSeconds = CutsceneResidencyPlanner.DefaultPlaybackWaitMaximumSeconds;
     private volatile bool _recompileRequested;
@@ -91,7 +101,7 @@ public sealed class CutscenePreviewHost
         {
             _playbackWaitEnabled = value;
             if (_residency is { } residency)
-                residency.Planner.PlaybackWaitEnabled = value;
+                residency.PlaybackWaitEnabled = value;
         }
     }
 
@@ -104,7 +114,7 @@ public sealed class CutscenePreviewHost
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
             _playbackWaitMaximumSeconds = value;
             if (_residency is { } residency)
-                residency.Planner.PlaybackWaitMaximumSeconds = value;
+                residency.PlaybackWaitMaximumSeconds = value;
         }
     }
 
@@ -159,6 +169,7 @@ public sealed class CutscenePreviewHost
         using Undo.RecordingSuppressionScope suppression = Undo.SuppressRecording();
         _undoMark = Undo.MarkHistory();
         _asset = asset;
+        _residencyDiagnostics.Clear();
         Open(asset);
         _player!.Pause();
 
@@ -235,14 +246,17 @@ public sealed class CutscenePreviewHost
         // The planner still updates, so that the dwell gate of a scrub opens when the playhead stays in place.
         if (!_recompileRequested && !_hasPendingSeek && _player.State != ECutsceneTransportState.Playing)
         {
+            AdvanceResidencyRefresh(deltaSeconds, recompiled: false);
             _residency?.UpdateIdle(_player, deltaSeconds);
             return;
         }
 
         using Undo.RecordingSuppressionScope suppression = Undo.SuppressRecording();
 
-        if (_recompileRequested)
+        bool recompiled = _recompileRequested;
+        if (recompiled)
             Recompile();
+        AdvanceResidencyRefresh(deltaSeconds, recompiled);
 
         CutscenePlayer player = _player;
         bool seeking = _hasPendingSeek;
@@ -278,11 +292,13 @@ public sealed class CutscenePreviewHost
         using Undo.RecordingSuppressionScope suppression = Undo.SuppressRecording();
         try
         {
-            Release();
+            Release(closeResidency: true);
         }
         finally
         {
             _asset = null;
+            _compiled = null;
+            _residencyRefreshPending = false;
             _recompileRequested = false;
             _hasPendingSeek = false;
             _hasLoopRange = false;
@@ -303,6 +319,7 @@ public sealed class CutscenePreviewHost
     {
         ArgumentNullException.ThrowIfNull(destination);
         destination.AddRange(_compileDiagnostics);
+        destination.AddRange(_residencyDiagnostics);
         if (_bindings is { } bindings)
             destination.AddRange(bindings.Diagnostics);
         if (_player is { } player)
@@ -313,6 +330,7 @@ public sealed class CutscenePreviewHost
     {
         _compileDiagnostics.Clear();
         CompiledCutscene compiled = CutsceneCompiler.Compile(asset, _compileDiagnostics);
+        _compiled = compiled;
         CompileCount++;
 
         _bindings = CutsceneBindingTable.Resolve(compiled, _resolver);
@@ -333,43 +351,67 @@ public sealed class CutscenePreviewHost
 
     private void OpenResidency(CompiledCutscene compiled, CutsceneBindingTable bindings, CutscenePlayer player)
     {
+        if (_residency is { } residency)
+        {
+            // A recompile keeps the session and the backend. The gate moves now; the manifest waits for the edits to stop.
+            residency.AttachPlayer(player);
+            _residencyRefreshPending = true;
+            _residencyRefreshSeconds = 0.0;
+            return;
+        }
+
         if (_residencyBackendFactory is null)
             return;
 
-        IResidencyBackend? backend = _residencyBackendFactory();
-        if (backend is null)
-        {
-            _compileDiagnostics.Add(new CutsceneCompileDiagnostic(-1, -1, "The residency backend factory gave no backend. The preview runs without residency."));
-            return;
-        }
-
-        CutsceneResidencySession residency;
-        try
-        {
-            residency = CutsceneResidencySession.Create(compiled, bindings, backend, _residencyCollector, _compileDiagnostics);
-        }
-        catch
-        {
-            (backend as IDisposable)?.Dispose();
-            throw;
-        }
-
-        residency.Planner.PlaybackWaitEnabled = _playbackWaitEnabled;
-        residency.Planner.PlaybackWaitMaximumSeconds = _playbackWaitMaximumSeconds;
-        _residency = residency;
-        residency.Open(player);
+        _residency = CutsceneResidencySession.TryOpen(
+            compiled, bindings, _residencyBackendFactory, _residencyCollector, player,
+            _playbackWaitEnabled, _playbackWaitMaximumSeconds, _residencyDiagnostics);
     }
 
-    private void Release()
+    /// <summary>
+    /// Counts the time with no edit and selects the residency manifest again when it reaches
+    /// <see cref="ResidencyRefreshDelaySeconds"/>. A failure closes the session with a diagnostic; the preview continues.
+    /// </summary>
+    private void AdvanceResidencyRefresh(double deltaSeconds, bool recompiled)
+    {
+        if (!_residencyRefreshPending || recompiled || _residency is not { } residency || _compiled is not { } compiled || _bindings is not { } bindings)
+            return;
+
+        _residencyRefreshSeconds += Math.Max(0.0, deltaSeconds);
+        if (_residencyRefreshSeconds < ResidencyRefreshDelaySeconds)
+            return;
+
+        _residencyRefreshPending = false;
+        try
+        {
+            residency.Refresh(compiled, bindings, _residencyCollector, _residencyDiagnostics);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _residency = null;
+            try
+            {
+                residency.Close();
+            }
+            catch (Exception cleanup) when (cleanup is not OutOfMemoryException)
+            {
+                Debug.LogException(cleanup, "The residency session did not close cleanly after a failed refresh.");
+            }
+            _residencyDiagnostics.Add(new CutsceneCompileDiagnostic(-1, -1, $"Residency failed to refresh after an edit, so the preview runs without residency: {ex.Message}"));
+        }
+    }
+
+    private void Release(bool closeResidency)
     {
         CutscenePlayer? player = _player;
         CutsceneBindingTable? bindings = _bindings;
         CutsceneCameraRouter? router = _router;
-        CutsceneResidencySession? residency = _residency;
+        CutsceneResidencySession? residency = closeResidency ? _residency : null;
         _player = null;
         _bindings = null;
         _router = null;
-        _residency = null;
+        if (closeResidency)
+            _residency = null;
         if (player is not null)
             player.EventFired -= _relayEvent;
 
@@ -413,7 +455,7 @@ public sealed class CutscenePreviewHost
         bool eventsAtPositionPending = previous.EventsAtPositionPending;
         bool finishedRaised = previous.FinishedRaised;
 
-        Release();
+        Release(closeResidency: false);
         Open(_asset!);
 
         // The new player continues at the old position. A recompile is an edit and not a move in time,

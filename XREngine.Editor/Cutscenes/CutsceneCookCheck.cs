@@ -3,7 +3,7 @@ using XREngine.Cutscenes;
 namespace XREngine.Editor.Cutscenes;
 
 /// <summary>
-/// Checks a cutscene asset before a cook. A shipping cook rejects an asset whose residency manifest is missing or stale,
+/// Checks a cutscene asset before a cook. A shipping cook rejects an asset whose residency manifest is missing, stale, or not valid,
 /// because playback would then use the approximate manifest. A development cook accepts it; the editor shows the warning.
 /// </summary>
 /// <remarks>The project builder does not call this check yet. Call it for each <see cref="CutsceneAsset"/> before the asset is cooked.</remarks>
@@ -19,7 +19,20 @@ public static class CutsceneCookCheck
         if (!shippingCook)
             return null;
 
-        return CutsceneManifestHash.GetState(asset) switch
+        ECutsceneManifestState state = CutsceneManifestHash.GetState(asset);
+        if (state == ECutsceneManifestState.Current)
+        {
+            try
+            {
+                asset.Manifest!.Validate();
+            }
+            catch (ArgumentException ex)
+            {
+                return $"The residency manifest of the cutscene '{asset.Name}' is not valid: {ex.Message} Bake it again in the cutscene sequencer.";
+            }
+        }
+
+        return state switch
         {
             ECutsceneManifestState.Missing => $"The cutscene '{asset.Name}' has no residency manifest. A shipping cook needs a baked manifest. Bake it in the cutscene sequencer.",
             ECutsceneManifestState.Stale => $"The residency manifest of the cutscene '{asset.Name}' is stale, because the cutscene changed after the bake. Bake it again in the cutscene sequencer.",

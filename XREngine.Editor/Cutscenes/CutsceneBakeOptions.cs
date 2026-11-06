@@ -42,6 +42,12 @@ public sealed class CutsceneBakeOptions
     /// <summary>The largest allowed sum of the T0 sizes of the manifest assets, in bytes. It must be greater than zero.</summary>
     public long T0BudgetBytes { get; init; } = DefaultT0BudgetBytes;
 
+    /// <summary>
+    /// True (the default) to merge equal buckets and store delta buckets with key buckets at each cut and at least every
+    /// <see cref="CutsceneResidencyManifestBuilder.DefaultKeyInterval"/>. False stores one key bucket for each sample.
+    /// </summary>
+    public bool CompressManifest { get; init; } = true;
+
     /// <summary>The number of largest assets that the T0 report lists.</summary>
     public int ReportAssetCount { get; init; } = DefaultReportAssetCount;
 

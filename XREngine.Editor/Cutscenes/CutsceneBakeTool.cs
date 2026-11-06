@@ -18,6 +18,7 @@ namespace XREngine.Editor.Cutscenes;
 /// </para>
 /// <para>
 /// Each sample gives one bucket that ends at the next sample. A bucket that starts at a camera cut clip has the cut flag.
+/// The builder then merges equal buckets and stores delta buckets (see <see cref="CutsceneResidencyManifestBuilder"/>).
 /// The bake writes to the bound nodes and restores every recorded value at the end. Run it on the update thread and not
 /// while a preview of the same scene is open. The bake does not change the asset; the caller stores the result in
 /// <see cref="CutsceneAsset.Manifest"/> with <see cref="CutsceneManifestHash.Compute"/>.
@@ -50,7 +51,7 @@ public static class CutsceneBakeTool
 
         List<CutsceneCompileDiagnostic> diagnostics = options.Diagnostics ?? [];
         ICutsceneResidencyAssetCollector collector = options.Collector ?? CutsceneRenderableAssetCollector.Instance;
-        CutsceneResidencyManifestBuilder builder = new();
+        CutsceneResidencyManifestBuilder builder = new() { Compress = options.CompressManifest };
 
         CompiledCutscene compiled = CutsceneCompiler.Compile(asset, diagnostics);
         CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, options.Resolver, options.RuntimeSlots);

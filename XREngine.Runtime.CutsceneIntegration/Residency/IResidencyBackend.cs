@@ -30,6 +30,18 @@ public interface IResidencyBackend
     EResidencyLevel GetLevel(Guid assetId);
 
     /// <summary>
+    /// Gets the levels of many assets in one call, for a view that reads all of them in each frame.
+    /// The default calls <see cref="GetLevel"/> for each asset. A backend with a lock can take it one time.
+    /// </summary>
+    /// <param name="assetIds">The assets.</param>
+    /// <param name="levels">Receives the level of each asset. It must be at least as long as <paramref name="assetIds"/>.</param>
+    void GetLevels(ReadOnlySpan<Guid> assetIds, Span<EResidencyLevel> levels)
+    {
+        for (int i = 0; i < assetIds.Length; i++)
+            levels[i] = GetLevel(assetIds[i]);
+    }
+
+    /// <summary>
     /// Sets the planner that receives complete work. <see cref="CutsceneResidencySession"/> calls it one time,
     /// before <see cref="CutsceneResidencyPlanner.Open"/>. The default does nothing.
     /// </summary>

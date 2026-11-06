@@ -15,7 +15,7 @@ public interface ICutscenePlaybackGate
     /// <param name="from">The position before the step.</param>
     /// <param name="to">The position after the clock step.</param>
     /// <param name="rate">The playback rate.</param>
-    /// <param name="seek">A jump if the step is a hard resync to the audio, otherwise null.</param>
+    /// <param name="seek">The <see cref="CutscenePlayer.LastTickSeek"/> of the tick: a jump after a <see cref="CutscenePlayer.Stop"/> in the same tick, otherwise null.</param>
     /// <param name="deltaSeconds">The wall time of the step, in seconds.</param>
     CutsceneTime LimitPlayStep(CutsceneTime from, CutsceneTime to, double rate, ESeekIntent? seek, double deltaSeconds);
 }

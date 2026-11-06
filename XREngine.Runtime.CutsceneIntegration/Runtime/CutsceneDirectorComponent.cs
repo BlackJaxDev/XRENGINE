@@ -110,7 +110,7 @@ public class CutsceneDirectorComponent : XRComponent
         set
         {
             if (SetField(ref _playbackWaitEnabled, value) && _residency is { } residency)
-                residency.Planner.PlaybackWaitEnabled = value;
+                residency.PlaybackWaitEnabled = value;
         }
     }
 
@@ -122,7 +122,7 @@ public class CutsceneDirectorComponent : XRComponent
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
             if (SetField(ref _playbackWaitMaximumSeconds, value) && _residency is { } residency)
-                residency.Planner.PlaybackWaitMaximumSeconds = value;
+                residency.PlaybackWaitMaximumSeconds = value;
         }
     }
 
@@ -341,28 +341,17 @@ public class CutsceneDirectorComponent : XRComponent
         if (!_residencyEnabled)
             return;
 
-        IResidencyBackend? backend = ResidencyBackendFactory is { } factory ? factory() : DefaultResidencyBackendFactory?.Invoke(this);
-        if (backend is null)
-        {
-            Fail("Residency is on, but the director has no residency backend factory and the application registered no default factory. Residency is off for this open.");
-            return;
-        }
-
-        CutsceneResidencySession residency;
-        try
-        {
-            residency = CutsceneResidencySession.Create(compiled, bindings, backend, ResidencyAssetCollector ?? CutsceneRenderableAssetCollector.Instance, _diagnostics);
-        }
-        catch
-        {
-            (backend as IDisposable)?.Dispose();
-            throw;
-        }
-
-        residency.Planner.PlaybackWaitEnabled = _playbackWaitEnabled;
-        residency.Planner.PlaybackWaitMaximumSeconds = _playbackWaitMaximumSeconds;
-        _residency = residency;
-        residency.Open(player);
+        // A residency failure is a diagnostic. The cutscene still opens and plays without residency.
+        Func<IResidencyBackend?> createBackend = ResidencyBackendFactory ?? (() => DefaultResidencyBackendFactory?.Invoke(this));
+        _residency = CutsceneResidencySession.TryOpen(
+            compiled,
+            bindings,
+            createBackend,
+            ResidencyAssetCollector ?? CutsceneRenderableAssetCollector.Instance,
+            player,
+            _playbackWaitEnabled,
+            _playbackWaitMaximumSeconds,
+            _diagnostics);
     }
 
     private void Fail(string message)

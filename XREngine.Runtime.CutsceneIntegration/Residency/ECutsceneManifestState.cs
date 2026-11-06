@@ -11,4 +11,7 @@ public enum ECutsceneManifestState
 
     /// <summary>The manifest belongs to the current content of the asset.</summary>
     Current,
+
+    /// <summary>The manifest data is not valid, or the content hash could not be computed. Playback uses the approximate manifest.</summary>
+    Invalid,
 }
