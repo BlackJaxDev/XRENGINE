@@ -20,7 +20,11 @@ preserves the command exit code. A shared mutex allows one wrapped command
 at a time across checkouts in the same Windows session. Each command uses
 at most two MSBuild workers with low priority, no worker reuse, and no shared
 C# compiler server. The node-reuse environment setting applies only during
-the command. Editor and RenderBench session builds use this wrapper.
+the command. The wrapper also limits the command to the upper half of the
+logical CPUs. Child processes (MSBuild nodes, `csc`, and test hosts) inherit
+this limit, so a build cannot fill every core. Set
+`XRE_AGENT_BUILD_AFFINITY_MASK` to a hex mask to use other CPUs, or to `0` to
+keep the full affinity. Editor and RenderBench session builds use this wrapper.
 
 Raw `dotnet` commands and other build tools do not acquire this lock. Agents
 must use the wrapper for builds and run applications with `--no-build`.
