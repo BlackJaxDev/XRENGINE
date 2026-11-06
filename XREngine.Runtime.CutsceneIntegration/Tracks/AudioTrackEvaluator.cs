@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Scene;
@@ -42,6 +41,9 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     private bool _playing;
     private bool _discontinuity;
 
+    // The wall time from the first restart of the last evaluation to the end of the restart of the clock track, or zero.
+    private double _clockRestartSeconds;
+
     // The track that corrects the clock, from the last evaluation. The player reads it before the next evaluation.
     private CutsceneAudioChannel? _clockChannel;
     private AudioTrackClip? _clockClip;
@@ -54,24 +56,36 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     /// <param name="openDecoder">
     /// Opens a decoder for a full file path. If it is null, <see cref="OpenDefaultDecoder"/> opens Ogg Vorbis and WAV files.
     /// </param>
-    /// <param name="getTimestamp">
-    /// Gives the time in <see cref="Stopwatch"/> ticks, to measure the time of the audio restarts. If it is null, <see cref="Stopwatch.GetTimestamp"/> is used.
-    /// </param>
     public AudioTrackEvaluator(
         CompiledCutscene compiled,
         CutsceneClock clock,
         List<CutsceneCompileDiagnostic> diagnostics,
-        Func<string, IStreamingAudioDecoder>? openDecoder = null,
-        Func<long>? getTimestamp = null)
+        Func<string, IStreamingAudioDecoder>? openDecoder = null)
+        : this(compiled, clock, diagnostics, openDecoder, TimeProvider.System)
+    {
+    }
+
+    /// <summary>Creates an evaluator with a wall clock for the restart time. A test gives a fake clock.</summary>
+    /// <param name="compiled">The compiled cutscene.</param>
+    /// <param name="clock">The clock that the audio corrects.</param>
+    /// <param name="diagnostics">The list that receives the problems that the evaluator finds.</param>
+    /// <param name="openDecoder">Opens a decoder for a full file path, or null for <see cref="OpenDefaultDecoder"/>.</param>
+    /// <param name="time">The wall clock that measures the time of the audio restarts.</param>
+    internal AudioTrackEvaluator(
+        CompiledCutscene compiled,
+        CutsceneClock clock,
+        List<CutsceneCompileDiagnostic> diagnostics,
+        Func<string, IStreamingAudioDecoder>? openDecoder,
+        TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(diagnostics);
+        ArgumentNullException.ThrowIfNull(time);
         _clock = clock;
         _diagnostics = diagnostics;
         _openDecoder = openDecoder ?? OpenDefaultDecoder;
         _assetDirectory = Path.GetDirectoryName(compiled.Asset.FilePath);
-        Func<long> timestamp = getTimestamp ?? Stopwatch.GetTimestamp;
 
         List<CutsceneTrack> tracks = compiled.Asset.Tracks;
         _channelOfTrack = new CutsceneAudioChannel?[tracks.Count];
@@ -80,7 +94,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         {
             if (tracks[i] is not AudioTrack track)
                 continue;
-            CutsceneAudioChannel channel = new(i, track, timestamp);
+            CutsceneAudioChannel channel = new(i, track, time);
             _channelOfTrack[i] = channel;
             channels.Add(channel);
         }
@@ -125,21 +139,27 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     {
         bool audible = playing && Math.Abs(rate - 1.0) < 1e-9;
         if (_playing && !audible)
+        {
             for (int i = 0; i < _channels.Length; i++)
                 _channels[i].Silence();
+
+            // The sources stopped, so the time of the last restart has no meaning for the next clock advance.
+            _clockRestartSeconds = 0.0;
+        }
         _playing = audible;
     }
 
     /// <summary>
-    /// Returns the wall time in seconds that the restarts of all tracks took since the last call, and sets it to zero.
-    /// A restart includes the decoder seek, which can take a long time. The sources start to play at its end,
-    /// so the player removes this time from the next clock advance.
+    /// Returns the wall time in seconds that delayed the start of the track that corrects the clock in the last evaluation,
+    /// and sets it to zero. A restart includes the decoder seek, which can take a long time, and the sources of the clock track
+    /// start only at the end of their restart. The value is the sum of the restarts in service order, up to and including
+    /// the restart of the clock track. It is zero if the clock track did not restart, and also if no track corrects the clock.
+    /// The player removes this time from the next clock advance. The value is wall time, not scaled by a time dilation.
     /// </summary>
     public double ConsumeRestartSeconds()
     {
-        double seconds = 0.0;
-        for (int i = 0; i < _channels.Length; i++)
-            seconds += _channels[i].ConsumeRestartSeconds();
+        double seconds = _clockRestartSeconds;
+        _clockRestartSeconds = 0.0;
         return seconds;
     }
 
@@ -160,6 +180,8 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         CutsceneAudioChannel? clockChannel = null;
         AudioTrackClip? clockClip = null;
         int clockClipIndex = -1;
+        double restartSum = 0.0;
+        double clockRestartSeconds = 0.0;
         List<CutsceneTrack> tracks = context.Compiled.Asset.Tracks;
         for (int i = 0; i < clips.Length; i++)
         {
@@ -203,12 +225,21 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
             }
 
             float gain = channel.Component!.Gain * clip.Volume * active.Weight;
-            channel.Service(active.LocalTime.ToSamples(channel.SampleRate), restart, gain);
+            bool restarted = channel.Service(active.LocalTime.ToSamples(channel.SampleRate), restart, gain, out double restartSeconds);
+            restartSum += restartSeconds;
             if (clockChannel is null && channel.Track.DrivesClock)
             {
                 clockChannel = channel;
                 clockClip = clip;
                 clockClipIndex = active.ClipIndex;
+
+                // The restarts before this one and its own delay the start of the clock sources. Later restarts do not.
+                if (restarted)
+                    clockRestartSeconds = restartSum;
+
+                // A track that becomes the clock track with no restart has no warm-up offset, so its first reading must not step.
+                else if (!ReferenceEquals(channel, _clockChannel))
+                    channel.ClearPendingStep();
             }
         }
 
@@ -220,6 +251,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         _clockChannel = clockChannel;
         _clockClip = clockClip;
         _clockClipIndex = clockClipIndex;
+        _clockRestartSeconds = clockRestartSeconds;
     }
 
     /// <summary>Stops every source, closes every decoder, and gives each component back with its earlier settings.</summary>
@@ -233,6 +265,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         _clockChannel = null;
         _clockClip = null;
         _clockClipIndex = -1;
+        _clockRestartSeconds = 0.0;
         if (IsClockFallbackActive)
         {
             IsClockFallbackActive = false;

@@ -43,16 +43,27 @@ public sealed class CutscenePlayer
     /// <param name="openAudioDecoder">
     /// Opens the streaming decoder of an audio clip file. If it is null, <see cref="AudioTrackEvaluator.OpenDefaultDecoder"/> is used.
     /// </param>
-    /// <param name="getTimestamp">
-    /// Gives the time in <see cref="System.Diagnostics.Stopwatch"/> ticks, to measure the time of the audio restarts.
-    /// If it is null, <see cref="System.Diagnostics.Stopwatch.GetTimestamp"/> is used. A test can give a fake time.
-    /// </param>
     public CutscenePlayer(
         CompiledCutscene compiled,
         CutsceneBindingTable bindings,
         CutsceneStateSnapshot snapshot,
-        Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder = null,
-        Func<long>? getTimestamp = null)
+        Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder = null)
+        : this(compiled, bindings, snapshot, openAudioDecoder, TimeProvider.System)
+    {
+    }
+
+    /// <summary>Creates a player with a wall clock for the audio restart time. A test gives a fake clock.</summary>
+    /// <param name="compiled">The compiled cutscene.</param>
+    /// <param name="bindings">The table that holds the bound nodes.</param>
+    /// <param name="snapshot">The store of the original values of the bound nodes.</param>
+    /// <param name="openAudioDecoder">Opens the streaming decoder of an audio clip file, or null for the default decoders.</param>
+    /// <param name="time">The wall clock that measures the time of the audio restarts.</param>
+    internal CutscenePlayer(
+        CompiledCutscene compiled,
+        CutsceneBindingTable bindings,
+        CutsceneStateSnapshot snapshot,
+        Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder,
+        TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(bindings);
@@ -64,7 +75,7 @@ public sealed class CutscenePlayer
         _buffer = new CutsceneActiveClip[Math.Max(1, compiled.MaxActiveClips)];
         _cameraCut = new CameraCutTrackEvaluator(_diagnostics);
         _animation = new AnimationClipTrackEvaluator(compiled, bindings, _diagnostics);
-        _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics, openAudioDecoder, getTimestamp);
+        _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics, openAudioDecoder, time);
         _evaluators =
         [
             new TransformTrackEvaluator(bindings.SlotCount, _diagnostics),
@@ -304,16 +315,17 @@ public sealed class CutscenePlayer
     /// <summary>
     /// Resolves a pending seek or advances the clock, then evaluates the tracks once.
     /// When playback reaches the end of the range, the position stays at the end and the state becomes paused.
-    /// The clock does not count the time that the audio restarts of the last tick took, for example a long decoder seek,
-    /// because the sound starts only after them.
+    /// The clock does not count the time that delayed the start of the clock audio track in the last tick, for example
+    /// a long decoder seek, because the sound starts only after it. That time is measured as wall time. With a time dilation
+    /// other than one, the delta and the removed time have different scales; the audio clock then disagrees with the delta anyway.
     /// </summary>
-    /// <param name="deltaSeconds">The wall time since the last tick, in seconds.</param>
+    /// <param name="deltaSeconds">The time since the last tick, in seconds. The restart exclusion treats it as wall time.</param>
     public void Tick(double deltaSeconds)
     {
         CutsceneTime duration = _compiled.Asset.Duration;
 
-        // The time of the audio restarts in the last tick, for example a long decoder seek, is in this delta. The sound
-        // starts only after the restart, so the clock does not count that time. A seek in this tick sets the position, so it drops the value.
+        // The time that delayed the clock track in the last tick, for example a long decoder seek, is in this delta. The sound
+        // starts only after its restart, so the clock does not count that time. A seek in this tick sets the position, so it drops the value.
         double restartSeconds = _audio.ConsumeRestartSeconds();
 
         // Audio plays only in forward playback at rate one. Other states stop the sources before any evaluation.
