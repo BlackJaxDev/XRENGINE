@@ -624,6 +624,21 @@ public static partial class EditorUnitTests
         public static bool SetUserSettingValue(string propertyName, string value)
             => SetSettingValue(Engine.UserSettings, propertyName, value);
 
+        /// <summary>
+        /// Moves the camera node of local player one by a world-space offset, for an external
+        /// camera-motion probe such as MCP <c>invoke_method</c>. Returns false when the player
+        /// has no pawn with a plain transform.
+        /// </summary>
+        public static bool TranslateLocalPlayerCamera(float dx, float dy, float dz)
+        {
+            if (Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent is not { } pawn ||
+                pawn.SceneNode.Transform is not Transform transform)
+                return false;
+
+            transform.Translation += new Vector3(dx, dy, dz);
+            return true;
+        }
+
         private static bool SetSettingValue(object settings, string propertyName, string value)
         {
             System.Reflection.PropertyInfo? property = settings.GetType().GetProperty(propertyName);
