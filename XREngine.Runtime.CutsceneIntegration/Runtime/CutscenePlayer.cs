@@ -18,6 +18,7 @@ public sealed class CutscenePlayer
     private readonly ICutsceneTrackEvaluator[] _evaluators;
     private readonly CameraCutTrackEvaluator _cameraCut;
     private readonly AnimationClipTrackEvaluator _animation;
+    private readonly CutsceneEventDispatcher _events;
     private readonly List<CutsceneCompileDiagnostic> _diagnostics = [];
 
     private bool _hasPendingSeek;
@@ -25,6 +26,10 @@ public sealed class CutscenePlayer
     private ESeekIntent _pendingIntent;
     private ECutsceneTransportState _stateBeforeScrub;
     private CameraComponent? _reportedCamera;
+
+    // True when no step has handled the events at the current position yet: after the open, a stop, or a move backward.
+    private bool _playStartInclusive = true;
+    private bool _finishedRaised;
 
     /// <summary>Creates a player.</summary>
     /// <param name="compiled">The compiled cutscene.</param>
@@ -49,7 +54,36 @@ public sealed class CutscenePlayer
             new ActivationTrackEvaluator(bindings.SlotCount, _diagnostics),
             _cameraCut,
             new CameraPropertyTrackEvaluator(bindings.SlotCount, _diagnostics),
+            new PropertyTrackEvaluator(compiled, snapshot, _diagnostics),
         ];
+        _events = new CutsceneEventDispatcher(compiled.Asset, _diagnostics);
+    }
+
+    /// <summary>
+    /// Raised for each event that fires. Forward playback fires each event that it crosses, once. A seek fires
+    /// events only by <see cref="EventTrack.SeekPolicy"/>. A scrub and reverse playback fire no event.
+    /// The events of a tick fire after the evaluation, so a handler sees the state of the new position.
+    /// </summary>
+    public event Action<CutsceneFiredEvent>? EventFired
+    {
+        add => _events.Fired += value;
+        remove => _events.Fired -= value;
+    }
+
+    /// <summary>
+    /// Raised once when the position reaches the end of the cutscene by forward playback or by a jump seek, for example a skip.
+    /// The player raises it from its state and not from an event, so a skip that jumps over the last events still raises it.
+    /// A scrub and a stop do not raise it. A later move away from the end lets it be raised again.
+    /// </summary>
+    public event Action? Finished;
+
+    /// <summary>
+    /// True for an editor preview. A preview fires only the event tracks that have <see cref="EventTrack.FireInPreview"/> set.
+    /// </summary>
+    public bool IsPreview
+    {
+        get => _events.IsPreview;
+        set => _events.IsPreview = value;
     }
 
     /// <summary>
@@ -120,6 +154,8 @@ public sealed class CutscenePlayer
         _hasPendingSeek = false;
         CutsceneTime from = _clock.Position;
         _clock.SetPosition(CutsceneTime.Zero);
+        _playStartInclusive = true;
+        _finishedRaised = false;
         _animation.RestoreForStop(restoreEverySlot || _compiled.Asset.ForceRestoreAll, _snapshot);
         for (int i = 0; i < _evaluators.Length; i++)
             _evaluators[i].Reset();
@@ -150,6 +186,21 @@ public sealed class CutscenePlayer
         _pendingTarget = target;
         _pendingIntent = intent;
         _hasPendingSeek = true;
+    }
+
+    /// <summary>
+    /// Sets the position at once, with no evaluation and no side effect. Use it for a player that replaces another
+    /// player at the same position, for example after a recompile. The events up to the position count as handled,
+    /// and a position at the end counts as finished. A later <see cref="Seek"/> or play step evaluates.
+    /// </summary>
+    /// <param name="position">The position. The player limits it to the range from zero to the duration.</param>
+    public void RestorePosition(CutsceneTime position)
+    {
+        CutsceneTime duration = _compiled.Asset.Duration;
+        CutsceneTime target = position.Clamp(CutsceneTime.Zero, duration);
+        _clock.SetPosition(target);
+        _playStartInclusive = target == CutsceneTime.Zero;
+        _finishedRaised = target >= duration;
     }
 
     /// <summary>Starts a scrub. The clock does not move the position until <see cref="EndScrub"/>.</summary>
@@ -195,6 +246,11 @@ public sealed class CutscenePlayer
             bool seekCameraChanged = PublishActiveCamera();
             if (target != from || seekCameraChanged)
                 Discontinuity?.Invoke(new CutsceneDiscontinuity(from, target, _pendingIntent));
+
+            bool scrub = _pendingIntent == ESeekIntent.Scrub || State == ECutsceneTransportState.Scrubbing;
+            _events.DispatchSeek(from, target, _playStartInclusive, scrub);
+            TrackDirection(from, target);
+            UpdateFinished(target, duration, mayRaise: !scrub);
             return;
         }
 
@@ -211,9 +267,37 @@ public sealed class CutscenePlayer
         if (PublishActiveCamera())
             Discontinuity?.Invoke(new CutsceneDiscontinuity(before, position, ESeekIntent.Jump));
 
+        // Reverse playback fires no event. The dispatcher fires nothing for a range that does not go forward.
+        _events.DispatchPlay(before, position, _playStartInclusive);
+        TrackDirection(before, position);
+
         double rate = _clock.Rate;
+        UpdateFinished(position, duration, mayRaise: rate > 0.0);
         if ((rate > 0.0 && position >= duration) || (rate < 0.0 && position <= CutsceneTime.Zero))
             State = ECutsceneTransportState.Paused;
+    }
+
+    // A forward move handled the events up to its end. A backward move lands before events that have not fired in this pass.
+    private void TrackDirection(CutsceneTime from, CutsceneTime to)
+    {
+        if (to > from)
+            _playStartInclusive = false;
+        else if (to < from)
+            _playStartInclusive = true;
+    }
+
+    private void UpdateFinished(CutsceneTime position, CutsceneTime duration, bool mayRaise)
+    {
+        if (position < duration)
+        {
+            _finishedRaised = false;
+            return;
+        }
+        if (_finishedRaised || !mayRaise)
+            return;
+
+        _finishedRaised = true;
+        Finished?.Invoke();
     }
 
     private bool PublishActiveCamera()

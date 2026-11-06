@@ -30,6 +30,7 @@ public sealed class CutscenePreviewHost
     private readonly XRViewport? _viewport;
     private readonly List<CutsceneCompileDiagnostic> _compileDiagnostics = [];
     private readonly HashSet<XRBase> _boundTransforms = new(ReferenceEqualityComparer.Instance);
+    private readonly Action<CutsceneFiredEvent> _relayEvent;
 
     private long _undoMark;
     private CutsceneAsset? _asset;
@@ -52,6 +53,7 @@ public sealed class CutscenePreviewHost
         ArgumentNullException.ThrowIfNull(resolver);
         _resolver = resolver;
         _viewport = viewport;
+        _relayEvent = RelayEvent;
     }
 
     /// <summary>The asset of the active preview, or null when no preview is active.</summary>
@@ -64,10 +66,11 @@ public sealed class CutscenePreviewHost
     public int CompileCount { get; private set; }
 
     /// <summary>
-    /// True if a preview runs the event tracks. Gameplay script must not run while an author drags the playhead,
-    /// and the timeline has no event track type yet, so the value is always false.
+    /// Raised for each event that fires in the preview. Gameplay script must not run while an author drags the playhead,
+    /// so the preview fires only the event tracks that have <see cref="EventTrack.FireInPreview"/> set.
+    /// The subscription stays across a recompile and a new <see cref="Begin"/>.
     /// </summary>
-    public bool FireEventsInPreview => false;
+    public event Action<CutsceneFiredEvent>? EventFired;
 
     /// <summary>The current position, or zero when no preview is active.</summary>
     public CutsceneTime Position => _player?.Position ?? CutsceneTime.Zero;
@@ -250,7 +253,8 @@ public sealed class CutscenePreviewHost
             if (_bindings.GetNode(slot)?.Transform is { } transform)
                 _boundTransforms.Add(transform);
 
-        _player = new CutscenePlayer(compiled, _bindings, new CutsceneStateSnapshot(_bindings));
+        _player = new CutscenePlayer(compiled, _bindings, new CutsceneStateSnapshot(_bindings)) { IsPreview = true };
+        _player.EventFired += _relayEvent;
         if (_viewport is not null)
         {
             _router = new CutsceneCameraRouter(_player);
@@ -266,6 +270,8 @@ public sealed class CutscenePreviewHost
         _player = null;
         _bindings = null;
         _router = null;
+        if (player is not null)
+            player.EventFired -= _relayEvent;
 
         // A restore failure must not leave the camera claim or the spawned instances behind.
         try
@@ -300,7 +306,10 @@ public sealed class CutscenePreviewHost
         Release();
         Open(_asset!);
 
+        // The new player continues at the old position. A recompile is an edit and not a move in time,
+        // so the events up to the position must not fire again.
         CutscenePlayer player = _player!;
+        player.RestorePosition(position);
         player.SetRate(rate);
         switch (state)
         {
@@ -323,6 +332,9 @@ public sealed class CutscenePreviewHost
             _hasPendingSeek = true;
         }
     }
+
+    private void RelayEvent(CutsceneFiredEvent fired)
+        => EventFired?.Invoke(fired);
 
     private void WrapInsideLoopRange(CutscenePlayer player)
     {

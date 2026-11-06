@@ -23,7 +23,7 @@ Each frame runs in this order: store write, humanoid solve, root placement, and 
 - **Root placement:** a humanoid root is the start transform, then `RootOffsetPosition` and `RootOffsetRotation`, then the clip motion of this frame. The result is absolute, so repeated seeks do not drift. A target without a `HumanoidComponent` has no root placement. A root offset on such a target adds a diagnostic.
 - **Lease:** while a clip has weight, the lease sets `EvaluationSuspended` on a sibling `AnimStateMachineComponent` and `AnimationClipComponent`. This flag is separate from `SuspendedByClip`. The lease puts back the earlier flag at clip exit and at stop. Playback time and the play and pause state of those components do not change.
 - **No clip:** a target that has no clip with weight returns to its original values. For a humanoid, this includes each transform under the node and each member that the clips write.
-- **Finish behavior:** a `KeepState` stop keeps the pose, and the next run records it as the new original value. If two tracks share a binding, the finish behavior of the first track applies.
+- **Finish behavior:** a `KeepState` stop keeps the pose, and the next run records it as the new original value. If two tracks share a binding, a shared record of the slot, such as the root transform, is restored if any of the tracks has `RestoreState`. Animation tracks on one slot share one pose: the pose and the clip members follow the finish behavior of the first animation track.
 - **Pose preview:** if `HumanoidComponent.PosePreviewMode` is not `AnimatedPose`, the preview mode owns the pose. The track writes nothing and adds one diagnostic.
 
 These features are not available from a sampled store. The open adds a diagnostic for each case:
@@ -33,6 +33,44 @@ These features are not available from a sampled store. The open adds a diagnosti
 | Additive clip | Plays as an absolute pose, without its reference pose. |
 | Flip settings on a sibling `AnimationClipComponent` | The clips do not use them. |
 | A track that calls code at the sample time | The member is not sampled. |
+
+## Property Tracks
+
+A `PropertyTrack` animates one member of a component on its bound node. Set these values:
+
+- `ComponentType`: the short or full type name of the component. An empty value selects the scene node itself.
+- `MemberPath`: the property or field to animate. Separate nested members with a period, for example `Parameters.VerticalFieldOfView`. Each member before the last must hold an object of a reference type.
+
+The member must be a `float`, `Vector3`, or `Quaternion`. Each `PropertyTrackClip` has a `FloatCurve`, a `Vector3Curve`, and a `QuaternionCurve`. The type of the member selects the curve, and the other curves have no effect.
+
+- **Binding:** the track finds the member at the first frame with weight, and again only when the node of the slot changes. A missing component, a missing member, or an unsupported type adds one diagnostic, and the track writes nothing. The write uses the typed setter of an `AnimationMember`, so a frame does not box the value.
+- **Weights:** the rules of the transform track apply. A total of zero leaves the original value. A total above one normalizes. A total below one blends from the original value. Rotations blend as a normalized sum in one hemisphere.
+- **Shared member:** tracks with the same slot, `ComponentType`, and `MemberPath` blend by weight and share one original value. The member is restored if any of the tracks has `RestoreState`.
+- **No clip and stop:** a member with no clip with weight gets its original value back. A stop restores or keeps the value by the finish behavior, through `CutsceneStateSnapshot`.
+
+## Event Tracks
+
+An `EventTrack` holds a list of `CutsceneEvent` entries. Each event has a `Time`, a `Key`, and a `Payload`. Events are the only side effect of a cutscene. They never change state that a seek or a scrub needs, so put that state on a sampled track.
+
+Subscribe to `CutscenePlayer.EventFired` or `CutsceneDirectorComponent.EventFired`. The director subscription stays across a close and a later open. Each call gets a `CutsceneFiredEvent` with the track index, the event index, the event, and `FromSeek`.
+
+| Movement | Result |
+|---|---|
+| Forward playback | Fires each crossed event once, in time order. An event at the end of a frame fires in that frame and not in the next one. After the open, a stop, or a backward move, an event at the start position also fires. |
+| Reverse playback | Fires nothing. |
+| Forward jump seek | Fires by `SeekPolicy`: `Skip` (default) fires nothing, `FireLatest` fires the last crossed event of each key, and `FireAll` fires all crossed events in time order. |
+| Backward seek | Fires nothing. Forward playback fires the events again when it crosses them. |
+| Scrub | Fires nothing, unless the track sets `FireDuringScrub`. Then a forward scrub step fires by `SeekPolicy`. |
+
+The events of a tick fire after the evaluation, so a handler sees the state of the new position. A handler that throws adds one diagnostic for its track, and the other events still fire.
+
+The editor preview sets `CutscenePlayer.IsPreview`. A preview fires only the tracks that set `FireInPreview`, so gameplay script does not run while an author moves the playhead. `CutscenePreviewHost.EventFired` gives those events to the editor. A recompile after an edit does not fire the events before the position again.
+
+An event track does not use its binding slot. The binding table does not check it.
+
+### Completion
+
+Put completion logic on `CutscenePlayer.Finished` or `CutsceneDirectorComponent.Finished`, not on an event at the end of a clip. The player raises `Finished` from its state: once when forward playback or a jump seek, for example a skip, reaches the end. A skip that jumps over the last events with `Skip` still raises it. A scrub and a stop do not raise it. A later move away from the end lets it be raised again.
 
 ## Author A Cutscene
 
@@ -121,6 +159,7 @@ cutscene_open { "close": true }
 ## Limits
 
 - The panel has no split, snap to other clips, or multi-select.
-- The timeline has no event track type, so `CutscenePreviewHost.FireEventsInPreview` is always false.
+- The panel has no buttons for event tracks or property tracks. Add them in the asset.
+- A property track supports only `float`, `Vector3`, and `Quaternion` members.
 - Bindings created by the panel use the object ID and a node path. Root node names must stay the same for the path fallback.
 - The default resolver is registered by the editor only.

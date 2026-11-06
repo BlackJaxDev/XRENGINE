@@ -7,6 +7,8 @@ namespace XREngine.Cutscenes;
 /// <summary>
 /// Records the original transform, activation, and field of view of the bound nodes before the cutscene writes them,
 /// and puts them back when the cutscene ends. All storage is allocated when the snapshot is created.
+/// A property track keeps the original value of its member in its member binding, which the evaluator registers here,
+/// so the snapshot restores it by the same finish rules.
 /// </summary>
 public sealed class CutsceneStateSnapshot
 {
@@ -19,6 +21,7 @@ public sealed class CutsceneStateSnapshot
     private readonly bool[] _hasActive;
     private readonly float[] _fieldOfView;
     private readonly bool[] _hasFieldOfView;
+    private readonly CutscenePropertyBinding?[] _properties;
 
     /// <summary>Creates a snapshot with storage for each slot of a binding table.</summary>
     /// <param name="table">The table that holds the bound nodes.</param>
@@ -35,6 +38,19 @@ public sealed class CutsceneStateSnapshot
         _hasActive = new bool[count];
         _fieldOfView = new float[count];
         _hasFieldOfView = new bool[count];
+        _properties = new CutscenePropertyBinding?[table.TrackCount];
+    }
+
+    /// <summary>
+    /// Connects a property track to the binding that holds the original value of its member.
+    /// Tracks that write the same member share one binding.
+    /// </summary>
+    /// <param name="trackIndex">The index of the property track.</param>
+    /// <param name="binding">The member binding of the track.</param>
+    internal void RegisterProperty(int trackIndex, CutscenePropertyBinding binding)
+    {
+        if ((uint)trackIndex < (uint)_properties.Length)
+            _properties[trackIndex] = binding;
     }
 
     /// <summary>
@@ -193,6 +209,8 @@ public sealed class CutsceneStateSnapshot
                 RestoreActive(slot);
             else if (track is CameraPropertyTrack)
                 RestoreFieldOfView(slot);
+            else if (track is PropertyTrack)
+                PropertyOf(trackIndex)?.RestoreOriginal();
         }
 
         // A record that no track restored keeps its live value, which is the original value of the next run.
@@ -201,7 +219,7 @@ public sealed class CutsceneStateSnapshot
             CutsceneTrack track = _table.GetTrack(trackIndex);
             int slot = track.BindingSlot;
             if ((uint)slot < (uint)_hasTransform.Length && !ShouldRestore(track, trackIndex, forceAll, perTrack))
-                Forget(track, slot);
+                Forget(track, trackIndex, slot);
         }
     }
 
@@ -223,9 +241,16 @@ public sealed class CutsceneStateSnapshot
             RestoreActive(slot);
             RestoreFieldOfView(slot);
         }
+
+        for (int trackIndex = 0; trackIndex < _properties.Length; trackIndex++)
+            _properties[trackIndex]?.RestoreOriginal();
     }
 
-    private void Forget(CutsceneTrack track, int slot)
+    // The asset can get tracks after the open. Those tracks have no registered binding.
+    private CutscenePropertyBinding? PropertyOf(int trackIndex)
+        => (uint)trackIndex < (uint)_properties.Length ? _properties[trackIndex] : null;
+
+    private void Forget(CutsceneTrack track, int trackIndex, int slot)
     {
         if (track is TransformTrack or AnimationClipTrack)
             _hasTransform[slot] = false;
@@ -233,6 +258,8 @@ public sealed class CutsceneStateSnapshot
             _hasActive[slot] = false;
         else if (track is CameraPropertyTrack)
             _hasFieldOfView[slot] = false;
+        else if (track is PropertyTrack)
+            PropertyOf(trackIndex)?.ForgetOriginal();
     }
 
     private void RestoreTransform(int slot)

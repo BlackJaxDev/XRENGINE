@@ -206,6 +206,10 @@ public sealed class CutsceneBindingTable : IDisposable
         for (int trackIndex = 0; trackIndex < _asset.Tracks.Count; trackIndex++)
         {
             CutsceneTrack track = _asset.Tracks[trackIndex];
+
+            // An event track does not act on a binding, so its slot value has no meaning.
+            if (track is EventTrack)
+                continue;
             if ((uint)track.BindingSlot >= (uint)_nodes.Length)
                 AddDiagnostic(trackIndex, $"The track '{track.Name}' uses the binding slot {track.BindingSlot}, which does not exist. The track is skipped.");
         }
@@ -217,7 +221,7 @@ public sealed class CutsceneBindingTable : IDisposable
         for (int trackIndex = 0; trackIndex < _asset.Tracks.Count; trackIndex++)
         {
             CutsceneTrack track = _asset.Tracks[trackIndex];
-            if (track.BindingSlot != slot)
+            if (track.BindingSlot != slot || track is EventTrack)
                 continue;
             if (builder.Length > 0)
                 builder.Append(", ");
@@ -229,7 +233,7 @@ public sealed class CutsceneBindingTable : IDisposable
     private int FirstTrackOfSlot(int slot)
     {
         for (int trackIndex = 0; trackIndex < _asset.Tracks.Count; trackIndex++)
-            if (_asset.Tracks[trackIndex].BindingSlot == slot)
+            if (_asset.Tracks[trackIndex] is not EventTrack && _asset.Tracks[trackIndex].BindingSlot == slot)
                 return trackIndex;
         return -1;
     }

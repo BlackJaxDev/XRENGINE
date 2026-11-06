@@ -18,6 +18,8 @@ public class CutsceneDirectorComponent : XRComponent
     public const int DirectorTickOrder = 300000;
 
     private readonly WorldTick _tick;
+    private readonly Action<CutsceneFiredEvent> _relayEvent;
+    private readonly Action _relayFinished;
     private readonly List<CutsceneCompileDiagnostic> _diagnostics = [];
 
     private CutsceneAsset? _asset;
@@ -33,7 +35,21 @@ public class CutsceneDirectorComponent : XRComponent
     {
         // The delegate is created once, so the frame path never allocates.
         _tick = TickDirector;
+        _relayEvent = RelayEvent;
+        _relayFinished = RelayFinished;
     }
+
+    /// <summary>
+    /// Raised for each event that the open cutscene fires. See <see cref="CutscenePlayer.EventFired"/>.
+    /// The subscription stays across a close and a later open.
+    /// </summary>
+    public event Action<CutsceneFiredEvent>? EventFired;
+
+    /// <summary>
+    /// Raised when the open cutscene reaches its end by playback or by a skip. See <see cref="CutscenePlayer.Finished"/>.
+    /// Put completion logic here and not in an event at the end of a clip. The subscription stays across a close and a later open.
+    /// </summary>
+    public event Action? Finished;
 
     /// <summary>The cutscene to play. A change takes effect at the next open.</summary>
     public CutsceneAsset? Asset
@@ -140,6 +156,11 @@ public class CutsceneDirectorComponent : XRComponent
         CutsceneBindingTable? bindings = _bindings;
         _player = null;
         _bindings = null;
+        if (player is not null)
+        {
+            player.EventFired -= _relayEvent;
+            player.Finished -= _relayFinished;
+        }
 
         // Stop restores the original values with the restore setting of the asset.
         player?.Stop();
@@ -194,6 +215,8 @@ public class CutsceneDirectorComponent : XRComponent
         _diagnostics.AddRange(bindings.Diagnostics);
         _bindings = bindings;
         _player = new CutscenePlayer(compiled, bindings, new CutsceneStateSnapshot(bindings));
+        _player.EventFired += _relayEvent;
+        _player.Finished += _relayFinished;
 
         if (_targetViewport is { } viewport)
         {
@@ -207,6 +230,12 @@ public class CutsceneDirectorComponent : XRComponent
 
     private void Fail(string message)
         => _diagnostics.Add(new CutsceneCompileDiagnostic(-1, -1, message));
+
+    private void RelayEvent(CutsceneFiredEvent fired)
+        => EventFired?.Invoke(fired);
+
+    private void RelayFinished()
+        => Finished?.Invoke();
 
     private void TickDirector()
         => _player?.Tick(RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds);

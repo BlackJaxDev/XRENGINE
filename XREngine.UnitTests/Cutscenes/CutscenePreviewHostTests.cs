@@ -231,8 +231,49 @@ public sealed class CutscenePreviewHostTests
     [Test]
     public void Preview_DoesNotFireEventsByDefault()
     {
-        (_, _, CutscenePreviewHost host) = MakeRig();
-        host.FireEventsInPreview.ShouldBeFalse();
+        (_, CutsceneAsset asset, CutscenePreviewHost host) = MakeRig();
+        EventTrack events = new() { Name = "Events", SeekPolicy = ECutsceneEventSeekPolicy.FireAll };
+        events.Events.Add(new CutsceneEvent { Time = T(1), Key = "gameplay" });
+        asset.Tracks.Add(events);
+        int fired = 0;
+        host.EventFired += _ => fired++;
+
+        host.Begin(asset);
+        host.Seek(T(5), ESeekIntent.Jump);
+        host.Tick(0.0);
+        host.Seek(T(0), ESeekIntent.Jump);
+        host.Tick(0.0);
+        host.Play();
+        host.Tick(2.0);
+        host.End();
+
+        fired.ShouldBe(0);
+    }
+
+    [Test]
+    public void Recompile_DoesNotFireTheEventsBeforeThePosition()
+    {
+        (_, CutsceneAsset asset, CutscenePreviewHost host) = MakeRig();
+        EventTrack events = new() { Name = "Events", SeekPolicy = ECutsceneEventSeekPolicy.FireAll, FireInPreview = true };
+        events.Events.Add(new CutsceneEvent { Time = T(1), Key = "a" });
+        events.Events.Add(new CutsceneEvent { Time = T(4), Key = "b" });
+        asset.Tracks.Add(events);
+        List<string> fired = [];
+        host.EventFired += e => fired.Add(e.Event.Key);
+
+        host.Begin(asset);
+        host.Seek(T(3), ESeekIntent.Jump);
+        host.Tick(0.0);
+        fired.ShouldBe(["a"]);
+
+        host.NotifyAssetEdited();
+        host.Tick(0.0);
+        fired.ShouldBe(["a"]);
+
+        host.Play();
+        host.Tick(2.0);
+        host.End();
+        fired.ShouldBe(["a", "b"]);
     }
 
     [Test]

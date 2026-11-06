@@ -81,6 +81,18 @@ public sealed class CutsceneAssetSerializationTests
         };
         prop.Clips.Add(propClip);
         asset.Tracks.Add(prop);
+
+        EventTrack events = new() { Name = "Events", SeekPolicy = ECutsceneEventSeekPolicy.FireLatest, FireInPreview = true, FireDuringScrub = true };
+        events.Events.Add(new CutsceneEvent { Time = new CutsceneTime(BigFlicks), Key = "door", Payload = "open" });
+        asset.Tracks.Add(events);
+
+        PropertyTrack member = new() { Name = "Member", BindingSlot = 1, ComponentType = "LightComponent", MemberPath = "Settings.Intensity" };
+        PropertyTrackClip memberClip = (PropertyTrackClip)Fill(new PropertyTrackClip());
+        memberClip.FloatCurve = new CutsceneFloatCurve { Times = [new CutsceneTime(BigFlicks)], Values = [3f] };
+        memberClip.Vector3Curve = new CutsceneVector3Curve { Times = [new CutsceneTime(BigFlicks)], Values = [new Vector3(1, 2, 3)] };
+        memberClip.QuaternionCurve = new CutsceneQuaternionCurve { Times = [new CutsceneTime(BigFlicks)], Values = [Quaternion.CreateFromAxisAngle(Vector3.UnitX, 0.25f)] };
+        member.Clips.Add(memberClip);
+        asset.Tracks.Add(member);
         return asset;
     }
 
@@ -144,6 +156,24 @@ public sealed class CutsceneAssetSerializationTests
         pa.FieldOfView.Times.ShouldBe(pe.FieldOfView.Times);
         pa.FieldOfView.Values.ShouldBe(pe.FieldOfView.Values);
         pa.FieldOfView.DefaultValue.ShouldBe(45f);
+
+        EventTrack ea = (EventTrack)actual.Tracks[4];
+        ea.SeekPolicy.ShouldBe(ECutsceneEventSeekPolicy.FireLatest);
+        ea.FireInPreview.ShouldBeTrue();
+        ea.FireDuringScrub.ShouldBeTrue();
+        ea.Events.Count.ShouldBe(1);
+        ea.Events[0].Time.ShouldBe(new CutsceneTime(BigFlicks));
+        ea.Events[0].Key.ShouldBe("door");
+        ea.Events[0].Payload.ShouldBe("open");
+
+        PropertyTrack ma = (PropertyTrack)actual.Tracks[5];
+        ma.ComponentType.ShouldBe("LightComponent");
+        ma.MemberPath.ShouldBe("Settings.Intensity");
+        PropertyTrackClip me = (PropertyTrackClip)expected.Tracks[5].Clips[0];
+        PropertyTrackClip mc = (PropertyTrackClip)ma.Clips[0];
+        mc.FloatCurve.Values.ShouldBe(me.FloatCurve.Values);
+        mc.Vector3Curve.Values.ShouldBe(me.Vector3Curve.Values);
+        mc.QuaternionCurve.Values.ShouldBe(me.QuaternionCurve.Values);
     }
 
     [Test]
@@ -176,5 +206,8 @@ public sealed class CutsceneAssetSerializationTests
         new ActivationTrack().WhenFinished.ShouldBe(ECutsceneFinishBehavior.RestoreState);
         new ActivationClip().Speed.ShouldBe(1.0);
         new ActivationClip().Extrapolation.ShouldBe(ECutsceneClipExtrapolation.None);
+        new EventTrack().SeekPolicy.ShouldBe(ECutsceneEventSeekPolicy.Skip);
+        new EventTrack().FireInPreview.ShouldBeFalse();
+        new EventTrack().FireDuringScrub.ShouldBeFalse();
     }
 }
