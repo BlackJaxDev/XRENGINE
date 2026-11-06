@@ -97,7 +97,8 @@ public static GameStartupSettings LoadOrGenerateGameSettings(Func<GameStartupSet
 Use `Engine.Assets.LoadAsync<T>(filePath, priority, bypassJobThread, cancellationToken)` when the caller can stop needing the asset, for example when a world or a cutscene closes.
 
 - Cancellation is cooperative. The load checks the token before it starts, while it waits for the path gate, before it reads or imports the file, and before it puts the asset in the cache. It does not stop a file read or an import that is in progress.
-- A canceled load throws `OperationCanceledException`, releases the path gate, and adds no entry to the cache. The load destroys an asset that it made but did not publish.
+- A canceled load throws `OperationCanceledException`, releases the path gate, and adds no entry to the cache.
+- A cancelable load keeps the objects that it makes out of `XRObjectBase.ObjectsCache` until its last token check. A cancel destroys all of them at once, so a later load of the same path can register the same persistent IDs. A load that runs inside a cancelable load gets its own batch.
 - Each call owns its own load attempt. A token cancels only the call that received it. Another call for the same path continues and loads the asset itself.
 - The task completes only after the load work stops. After the task reports cancellation, the load does not change the cache.
 - A load that waits in the job queue sees the cancel only when a job thread starts it.

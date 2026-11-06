@@ -1,12 +1,14 @@
 using NUnit.Framework;
 using Shouldly;
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Data.Core;
 using TestContext = NUnit.Framework.TestContext;
 
 namespace XREngine.UnitTests.Core;
@@ -21,6 +23,7 @@ public sealed class AssetLoadCancellationTests
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     private string _rootPath = string.Empty;
+    private string _cachePath = string.Empty;
     private string _sourcePath = string.Empty;
     private AssetManager _manager = null!;
     private IDisposable? _factory;
@@ -30,9 +33,9 @@ public sealed class AssetLoadCancellationTests
     {
         _rootPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "AssetLoadCancellation", Guid.NewGuid().ToString("N"));
         string assetsPath = Path.Combine(_rootPath, "Assets");
-        string cachePath = Path.Combine(_rootPath, "Cache");
+        _cachePath = Path.Combine(_rootPath, "Cache");
         Directory.CreateDirectory(assetsPath);
-        Directory.CreateDirectory(cachePath);
+        Directory.CreateDirectory(_cachePath);
 
         _sourcePath = Path.GetFullPath(Path.Combine(assetsPath, "sample.cancelstub"));
         File.WriteAllText(_sourcePath, "payload");
@@ -42,7 +45,7 @@ public sealed class AssetLoadCancellationTests
         {
             MonitorGameAssetsForChanges = false,
             GameAssetsPath = assetsPath,
-            GameCachePath = cachePath,
+            GameCachePath = _cachePath,
         };
         BlockingStubAsset.Reset();
     }
@@ -53,6 +56,7 @@ public sealed class AssetLoadCancellationTests
         BlockingStubAsset.Release.Set();
         _manager.Dispose();
         _factory?.Dispose();
+        XRObjectBase.ProcessPendingDestructions();
         try
         {
             if (Directory.Exists(_rootPath))
@@ -78,10 +82,10 @@ public sealed class AssetLoadCancellationTests
     }
 
     [Test]
-    public async Task LoadAsync_CanceledDuringLoad_ReleasesGateAndLaterLoadSucceeds()
+    public async Task LoadAsync_CanceledDuringLoad_DiscardsAssetReleasesGateAndLaterLoadSucceeds()
     {
         using var cts = new CancellationTokenSource();
-        Task<BlockingStubAsset?> canceledLoad = StartLoad(cts.Token);
+        Task<BlockingStubAsset?> canceledLoad = StartLoadOnDedicatedThread(cts.Token);
         BlockingStubAsset.Entered.Wait(Timeout).ShouldBeTrue();
 
         cts.Cancel();
@@ -89,12 +93,56 @@ public sealed class AssetLoadCancellationTests
 
         await Should.ThrowAsync<OperationCanceledException>(() => canceledLoad.WaitAsync(Timeout));
         _manager.TryGetAssetByPath(_sourcePath, out _).ShouldBeFalse();
+        BlockingStubAsset.Instances.TryPeek(out BlockingStubAsset? canceledAsset).ShouldBeTrue();
+        canceledAsset.IsDestroyed.ShouldBeTrue();
 
-        BlockingStubAsset? asset = await StartLoad(CancellationToken.None).WaitAsync(Timeout);
+        // A different thread proves that the gate is free. Monitor is re-entrant, so the same thread would not.
+        BlockingStubAsset? asset = await StartLoadOnDedicatedThread(CancellationToken.None).WaitAsync(Timeout);
         asset.ShouldNotBeNull();
+        asset.ShouldNotBeSameAs(canceledAsset);
         asset.Payload.ShouldBe("payload");
         _manager.TryGetAssetByPath(_sourcePath, out XRAsset? cached).ShouldBeTrue();
         cached.ShouldBeSameAs(asset);
+    }
+
+    [Test]
+    public async Task LoadAsync_CanceledThenReloaded_ReloadedGraphOwnsPersistentIds()
+    {
+        using var cts = new CancellationTokenSource();
+        Task<BlockingStubAsset?> canceledLoad = StartLoadOnDedicatedThread(cts.Token);
+        BlockingStubAsset.Entered.Wait(Timeout).ShouldBeTrue();
+        cts.Cancel();
+        BlockingStubAsset.Release.Set();
+        await Should.ThrowAsync<OperationCanceledException>(() => canceledLoad.WaitAsync(Timeout));
+
+        BlockingStubAsset.Instances.TryPeek(out BlockingStubAsset? canceledRoot).ShouldBeTrue();
+        ChildStubAsset canceledChild = canceledRoot.Child.ShouldNotBeNull();
+
+        // Force a new import so that the reload makes new objects with the same persistent IDs.
+        Directory.Delete(_cachePath, recursive: true);
+        Directory.CreateDirectory(_cachePath);
+
+        BlockingStubAsset? reloaded = await StartLoadOnDedicatedThread(CancellationToken.None).WaitAsync(Timeout);
+        XRObjectBase.ProcessPendingDestructions();
+
+        reloaded.ShouldNotBeNull();
+        reloaded.ShouldNotBeSameAs(canceledRoot);
+        ChildStubAsset reloadedChild = reloaded.Child.ShouldNotBeNull();
+        reloaded.ID.ShouldBe(BlockingStubAsset.RootId);
+        reloadedChild.ID.ShouldBe(BlockingStubAsset.ChildId);
+
+        XRObjectBase.ObjectsCache.TryGetValue(BlockingStubAsset.RootId, out XRObjectBase? cachedRoot).ShouldBeTrue();
+        cachedRoot.ShouldBeSameAs(reloaded);
+        XRObjectBase.ObjectsCache.TryGetValue(BlockingStubAsset.ChildId, out XRObjectBase? cachedChild).ShouldBeTrue();
+        cachedChild.ShouldBeSameAs(reloadedChild);
+
+        canceledRoot.IsDestroyed.ShouldBeTrue();
+        canceledChild.IsDestroyed.ShouldBeTrue();
+        foreach (XRObjectBase value in XRObjectBase.ObjectsCache.Values)
+        {
+            ReferenceEquals(value, canceledRoot).ShouldBeFalse();
+            ReferenceEquals(value, canceledChild).ShouldBeFalse();
+        }
     }
 
     [Test]
@@ -102,9 +150,13 @@ public sealed class AssetLoadCancellationTests
     {
         using var firstCts = new CancellationTokenSource();
         using var secondCts = new CancellationTokenSource();
-        Task<BlockingStubAsset?> firstLoad = StartLoad(firstCts.Token);
+        using var contended = new ManualResetEventSlim(false);
+        _manager.AssetLoadGateContended += _ => contended.Set();
+
+        Task<BlockingStubAsset?> firstLoad = StartLoadOnDedicatedThread(firstCts.Token);
         BlockingStubAsset.Entered.Wait(Timeout).ShouldBeTrue();
-        Task<BlockingStubAsset?> secondLoad = StartLoad(secondCts.Token);
+        Task<BlockingStubAsset?> secondLoad = StartLoadOnDedicatedThread(secondCts.Token);
+        contended.Wait(Timeout).ShouldBeTrue();
 
         firstCts.Cancel();
         BlockingStubAsset.Release.Set();
@@ -120,11 +172,17 @@ public sealed class AssetLoadCancellationTests
     [Test]
     public async Task LoadAsync_WaiterCanceledWhileGateHeld_StopsWithoutWaitingForTheOtherLoad()
     {
-        Task<BlockingStubAsset?> firstLoad = StartLoad(CancellationToken.None);
+        using var contended = new ManualResetEventSlim(false);
+        _manager.AssetLoadGateContended += _ => contended.Set();
+
+        Task<BlockingStubAsset?> firstLoad = StartLoadOnDedicatedThread(CancellationToken.None);
         BlockingStubAsset.Entered.Wait(Timeout).ShouldBeTrue();
 
         using var waitingCts = new CancellationTokenSource();
-        Task<BlockingStubAsset?> waitingLoad = StartLoad(waitingCts.Token);
+        Task<BlockingStubAsset?> waitingLoad = StartLoadOnDedicatedThread(waitingCts.Token);
+
+        // The waiter is now in the poll loop of the path gate.
+        contended.Wait(Timeout).ShouldBeTrue();
         waitingCts.Cancel();
 
         await Should.ThrowAsync<OperationCanceledException>(() => waitingLoad.WaitAsync(Timeout));
@@ -136,32 +194,55 @@ public sealed class AssetLoadCancellationTests
         BlockingStubAsset.LoadCount.ShouldBe(1);
     }
 
-    private Task<BlockingStubAsset?> StartLoad(CancellationToken cancellationToken)
-        => Task.Run(() => _manager.LoadAsync<BlockingStubAsset>(_sourcePath, JobPriority.Normal, bypassJobThread: true, cancellationToken));
+    /// <summary>
+    /// Starts a load on a new thread. The load bypasses the job thread, so it runs on that thread.
+    /// </summary>
+    private Task<BlockingStubAsset?> StartLoadOnDedicatedThread(CancellationToken cancellationToken)
+        => Task.Factory.StartNew(
+            () => _manager.LoadAsync<BlockingStubAsset>(_sourcePath, JobPriority.Normal, bypassJobThread: true, cancellationToken),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap();
 
     [XR3rdPartyExtensions("cancelstub")]
     private sealed class BlockingStubAsset : XRAsset
     {
         public static readonly ManualResetEventSlim Entered = new(false);
         public static readonly ManualResetEventSlim Release = new(false);
+        public static readonly ConcurrentQueue<BlockingStubAsset> Instances = new();
         public static int LoadCount;
+        public static Guid RootId;
+        public static Guid ChildId;
 
         public string? Payload { get; set; }
+        public ChildStubAsset? Child { get; set; }
 
         public static void Reset()
         {
             Entered.Reset();
             Release.Reset();
+            Instances.Clear();
             LoadCount = 0;
+            RootId = Guid.NewGuid();
+            ChildId = Guid.NewGuid();
         }
 
         public override bool Load3rdParty(string filePath)
         {
             Interlocked.Increment(ref LoadCount);
+            Instances.Enqueue(this);
+            AdoptPersistentID(RootId);
+            var child = new ChildStubAsset();
+            child.AdoptPersistentID(ChildId);
+            Child = child;
             Entered.Set();
             Release.Wait(Timeout);
             Payload = File.ReadAllText(filePath);
             return true;
         }
+    }
+
+    private sealed class ChildStubAsset : XRAsset
+    {
     }
 }
