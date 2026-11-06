@@ -8,6 +8,8 @@ namespace XREngine.Data;
 /// A forward seek decodes and drops the frames up to the target, so it costs the decode time of the skipped frames.
 /// A backward seek opens the stream again at its start and decodes and drops the frames up to the target, so its cost is
 /// O(n) in the target frame: a jump near the end of a long file decodes almost the whole file.
+/// The decoder itself does not allocate after the open, but NVorbis allocates on the heap for each decoded packet
+/// (about 10 bytes for each frame of stereo audio). So a read and a seek allocate in proportion to the frames that they decode.
 /// </summary>
 public sealed class VorbisStreamingDecoder : IStreamingAudioDecoder
 {
