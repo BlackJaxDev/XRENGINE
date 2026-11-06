@@ -3,6 +3,7 @@ using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Cutscenes;
@@ -26,8 +27,10 @@ public class CutsceneDirectorComponent : XRComponent
     private CutscenePlayer? _player;
     private CutsceneBindingTable? _bindings;
     private CutsceneCameraRouter? _router;
+    private CutsceneVrCameraRouter? _vrRouter;
     private CutsceneResidencySession? _residency;
     private XRViewport? _targetViewport;
+    private TransformBase? _vrRigOrigin;
     private bool _tickRegistered;
     private bool _residencyEnabled = true;
     private bool _playbackWaitEnabled;
@@ -73,6 +76,32 @@ public class CutsceneDirectorComponent : XRComponent
         get => _targetViewport;
         set => SetField(ref _targetViewport, value);
     }
+
+    /// <summary>
+    /// The rig origin that <see cref="ECutsceneVrCameraMode.RigAnchor"/> moves: the transform whose child is the tracked headset.
+    /// Use a <see cref="Transform"/> that no other system writes during the cutscene. A change takes effect at the next open.
+    /// The close puts back the local position and rotation that it had at the open.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public TransformBase? VrRigOrigin
+    {
+        get => _vrRigOrigin;
+        set => SetField(ref _vrRigOrigin, value);
+    }
+
+    /// <summary>
+    /// The VR state and the headset fade that the VR camera modes use. If it is null, the director uses
+    /// <see cref="RuntimeCutsceneVrHost.Instance"/>. A change takes effect at the next open.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public ICutsceneVrHost? VrHost { get; set; }
+
+    /// <summary>The router of an open cutscene in <see cref="ECutsceneVrCameraMode.RigAnchor"/> mode during a VR session, or null.</summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public CutsceneVrCameraRouter? VrRouter => _vrRouter;
 
     /// <summary>
     /// Creates the binding resolver of a director that has no <see cref="BindingResolver"/>.
@@ -225,6 +254,9 @@ public class CutsceneDirectorComponent : XRComponent
         residency?.BeginTick();
         player.Tick(deltaSeconds);
         residency?.CompleteTick(player, deltaSeconds);
+
+        // A handler in the tick can close the director, so the router is read after the tick.
+        _vrRouter?.Update();
     }
 
     /// <summary>
@@ -250,6 +282,11 @@ public class CutsceneDirectorComponent : XRComponent
             player.EventFired -= _relayEvent;
             player.Finished -= _relayFinished;
         }
+
+        // The rig goes back before the stop, so the discontinuity of the stop does not start a fade.
+        CutsceneVrCameraRouter? vrRouter = _vrRouter;
+        _vrRouter = null;
+        vrRouter?.Detach();
 
         // The planner closes before the restore, so that no completion arrives for a closed cutscene.
         // A close failure must not leave the bound nodes with cutscene values.
@@ -310,6 +347,15 @@ public class CutsceneDirectorComponent : XRComponent
             return;
         }
 
+        // A VR camera mode that cannot run fails the open before any change. The director never uses another mode.
+        ICutsceneVrHost vrHost = VrHost ?? RuntimeCutsceneVrHost.Instance;
+        bool rigAnchor = vrHost.IsInVR && asset.VrCameraMode == ECutsceneVrCameraMode.RigAnchor;
+        if (CutsceneVrCameraRouter.Validate(asset.VrCameraMode, vrHost, _targetViewport, _vrRigOrigin) is { } vrFailure)
+        {
+            Fail(vrFailure);
+            return;
+        }
+
         CompiledCutscene compiled = CutsceneCompiler.Compile(asset, _diagnostics);
         CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, resolver, _runtimeSlots);
         if (cancellationToken.IsCancellationRequested)
@@ -328,6 +374,16 @@ public class CutsceneDirectorComponent : XRComponent
         {
             _router = new CutsceneCameraRouter(_player);
             _router.Attach(viewport);
+        }
+
+        if (CutsceneVrCameraRouter.TryGetDesktopVisibilityNote(vrHost, _targetViewport, out string? desktopNote))
+            _diagnostics.Add(new CutsceneCompileDiagnostic(-1, -1, desktopNote));
+
+        // Validate accepted the rig origin, so it is a Transform here.
+        if (rigAnchor && _vrRigOrigin is Transform rigOrigin)
+        {
+            _vrRouter = new CutsceneVrCameraRouter(_player, vrHost, rigOrigin, asset.RigCutFadeSeconds, _diagnostics);
+            _vrRouter.Attach();
         }
 
         OpenResidency(compiled, bindings, _player);

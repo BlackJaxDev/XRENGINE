@@ -306,6 +306,9 @@ internal sealed partial class BrowserUnavailableHostServices : IDisposable
         public RuntimeOpenVrSubmitResult SubmitEyes(nint leftEyeHandle, nint rightEyeHandle,
             RuntimeOpenVrTextureType textureType, RuntimeOpenVrColorSpace colorSpace,
             RuntimeOpenVrSubmitFlags flags) => throw Unsupported("OpenVrCompositor.SubmitEyes");
+
+        public void FadeToColor(float seconds, float red, float green, float blue, float alpha)
+            => throw Unsupported("OpenVrCompositor.FadeToColor");
     }
 
     private sealed class BrowserThirdPartyAssetServices : IRuntimeThirdPartyAssetLoadingServices

@@ -296,6 +296,38 @@ Set `TargetViewport` to show the camera that the cut tracks select. The director
 
 A claim changes only the camera that shows the scene. The screen-space UI of the viewport stays on the camera from before the claim, so the editor panels and a player HUD stay visible. A gameplay system must hide a HUD itself if a cutscene must not show it.
 
+### VR Camera Modes
+
+In VR, a cutscene never takes head tracking away from the user. No mode writes an eye camera or the head pose, and no mode changes the VR view mode, the VR render pipeline, or the desktop mirror mode (see the exact VR pipeline selection contract in [OpenXR VR rendering](../../architecture/rendering/openxr-vr-rendering.md)). `CutsceneAsset.VrCameraMode` selects the mode:
+
+| Mode | Behavior |
+|---|---|
+| `SpectatorOnly` (default) | The shot camera shows only on `TargetViewport`, the desktop viewport. The headset view does not change. |
+| `RigAnchor` | The rig origin follows the position and the heading of the shot camera, and the user is head-tracked relative to the shot. Each camera cut and each full discontinuity (a seek, a scrub step, or a stop) fades the headset through black. |
+| `WorldScreen` | Not supported. The open fails in VR (see below). |
+
+The mode applies only when a VR session runs at the open (`ICutsceneVrHost.IsInVR`). Outside VR, each mode shows the shots on the desktop viewport only. The director reads VR state through `CutsceneDirectorComponent.VrHost`; if it is null, it uses `RuntimeCutsceneVrHost.Instance`, which reads `RuntimeEngine.VRState` and the presentation settings.
+
+**Failures.** `CutsceneVrCameraRouter.Validate` checks the mode before the open changes anything. A mode that cannot run fails the open: the director adds the reason to `Diagnostics` and stays closed. It does not claim a viewport, move the rig, or use another mode. These cases fail:
+
+- `TargetViewport` renders a headset eye (in any mode). A cutscene claims only a desktop viewport.
+- `RigAnchor` when the VR runtime gives no headset fade. Only OpenVR has one (the compositor fade), so `RigAnchor` fails on OpenXR.
+- `RigAnchor` with no `VrRigOrigin`, or with a rig origin that is not a `Transform`.
+- `WorldScreen`. The engine can render a camera to a texture (`AdvancedOffscreenTextureCaptureComponent`), but no component shows a completed capture on a surface in the world: no material binds the capture lease in the eye pass and releases it after the GPU read. The mode stays unsupported until that consumer exists.
+- A mode value that is not known.
+
+If the VR mirror mode is `Off`, `BlitSubmittedEye`, or `CyclopeanReconstruct`, the desktop does not show the claimed viewport. The open then adds one note to `Diagnostics` and does not change the mirror mode.
+
+**RigAnchor.** Set `CutsceneDirectorComponent.VrRigOrigin` before the open. Use the transform whose child is the tracked headset, and that no other system writes during the cutscene, for example the root of a flying VR pawn. A character pawn root is a physics body, and `VRPlayerCharacterComponent` writes its playspace root in each frame, so neither is a good rig origin. The router (`CutsceneDirectorComponent.VrRouter`) runs after the player tick in each frame:
+
+- The rig origin moves to the world position of the shot camera, and turns to its heading on the horizontal plane. The rig stays upright: a pitch or a roll of the camera does not tilt the horizon. The camera node therefore marks the rig origin (the floor point of the user) for the shot, not the eye position.
+- A cut, or a `Full` discontinuity, starts a fade to black over half of `CutsceneAsset.RigCutFadeSeconds` (default 0.5 s; it must be finite and greater than zero). The rig holds during this half. At black, the rig moves to the newest shot, and the headset fades back in over the other half. The desktop shows the new shot at once. More cuts during the fade to black move the rig once. A `ClockResync` discontinuity does not fade.
+- Between cuts, the rig follows the shot camera. In a gap between shots, the rig holds, and the next shot fades in again.
+- The fade uses `IRuntimeOpenVrCompositor.FadeToColor`, the OpenVR compositor fade over the submitted image. The compositor animates it on wall time, so the router times its phases with `ICutsceneVrHost.TimeSeconds` and not with the cutscene clock.
+- At the close, the router puts back the local position and rotation that the rig origin had at the open. The headset goes black at once, the rig moves back, and the headset fades in over half of the fade time. A close during a fade also ends with the scene visible.
+- If the headset fade stops being available during playback (the VR session ends), the rig goes back at once, the router adds one diagnostic, and the rig stays there for the rest of the cutscene.
+- A frame without a fade change does not allocate.
+
 ## MCP Tools
 
 | Tool | Arguments | Result |
