@@ -219,6 +219,8 @@ public sealed partial class VulkanRenderer :
             _frameLoop.TryRecordAdvancedVisibilityDiagnosticCopy;
         _commandRuntime.AdvancedCounterDiagnosticCopy =
             _frameLoop.TryRecordAdvancedCounterDiagnosticCopy;
+        _commandRuntime.PrimaryDiagnosticSubmissionSettled =
+            _frameLoop.SettlePrimaryDiagnosticSubmission;
         _commandRuntime.ProvisionAdvancedVisibilityWorkspace =
             _framePlanner.FramePlanBuilder.ProvisionAdvancedVisibilityFamily;
         _framePlanner.FramePlanBuilder.AcquireAdvancedVisibilityPlanLease =

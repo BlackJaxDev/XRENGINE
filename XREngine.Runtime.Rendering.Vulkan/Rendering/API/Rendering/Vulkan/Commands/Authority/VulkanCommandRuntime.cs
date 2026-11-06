@@ -47,6 +47,14 @@ internal sealed partial class VulkanCommandRuntime
     // state or creating their own auxiliary submission.
     internal AdvancedVisibilityDiagnosticCopyRecorder? AdvancedVisibilityDiagnosticCopy { get; set; }
     internal AdvancedCounterDiagnosticCopyRecorder? AdvancedCounterDiagnosticCopy { get; set; }
+
+    /// <summary>
+    /// Settles diagnostic copies recorded into a primary command buffer that a
+    /// non-desktop path submitted. Accepted submissions pass the graphics
+    /// timeline value that completes them; rejected ones pass zero, which
+    /// cancels the copies so their sidecar slots return to the ring.
+    /// </summary>
+    internal Action<CommandBuffer, ulong>? PrimaryDiagnosticSubmissionSettled { get; set; }
     internal bool ThreadLocalScratchDisposed { get; set; }
 
     public VulkanCommandRecorder Recorder { get; } = new();

@@ -464,6 +464,22 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    /// <summary>
+    /// Settles the diagnostic copies of a primary command buffer that a path
+    /// other than the desktop frame submitted. A non-zero value marks them
+    /// submitted against the graphics timeline; zero cancels them.
+    /// </summary>
+    internal void SettlePrimaryDiagnosticSubmission(CommandBuffer commandBuffer, ulong graphicsTimelineValue)
+    {
+        VulkanGpuDiagnosticReadbackSidecar? sidecar = _gpuDiagnosticReadbackSidecar;
+        if (sidecar is null || commandBuffer.Handle == 0)
+            return;
+        if (graphicsTimelineValue != 0UL)
+            sidecar.MarkPrimarySubmissionAccepted(commandBuffer, graphicsTimelineValue);
+        else
+            sidecar.CancelPrimarySubmission(commandBuffer);
+    }
+
     private void ConsumePrimaryGpuDiagnosticReadback(
         in VulkanGpuDiagnosticReadbackReservation reservation,
         in VulkanFrameDataSlice slice,
