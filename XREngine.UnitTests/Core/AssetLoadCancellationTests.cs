@@ -27,6 +27,8 @@ public sealed class AssetLoadCancellationTests
     private string _sourcePath = string.Empty;
     private AssetManager _manager = null!;
     private IDisposable? _factory;
+    private IDisposable? _nestingFactory;
+    private IDisposable? _innerFactory;
 
     [SetUp]
     public void SetUp()
@@ -41,6 +43,8 @@ public sealed class AssetLoadCancellationTests
         File.WriteAllText(_sourcePath, "payload");
 
         _factory = RuntimeCookedBinarySerializer.RegisterRuntimeFactory<BlockingStubAsset>(static () => new BlockingStubAsset());
+        _nestingFactory = RuntimeCookedBinarySerializer.RegisterRuntimeFactory<NestingStubAsset>(static () => new NestingStubAsset());
+        _innerFactory = RuntimeCookedBinarySerializer.RegisterRuntimeFactory<InnerStubAsset>(static () => new InnerStubAsset());
         _manager = new AssetManager
         {
             MonitorGameAssetsForChanges = false,
@@ -56,6 +60,9 @@ public sealed class AssetLoadCancellationTests
         BlockingStubAsset.Release.Set();
         _manager.Dispose();
         _factory?.Dispose();
+        _nestingFactory?.Dispose();
+        _innerFactory?.Dispose();
+        NestingStubAsset.Manager = null;
         XRObjectBase.ProcessPendingDestructions();
         try
         {
@@ -194,6 +201,48 @@ public sealed class AssetLoadCancellationTests
         BlockingStubAsset.LoadCount.ShouldBe(1);
     }
 
+    [Test]
+    public async Task LoadAsync_OuterCanceled_InnerAssetsCachedDuringTheLoadSurvive()
+    {
+        string assetsPath = Path.GetDirectoryName(_sourcePath)!;
+        string outerPath = Path.Combine(assetsPath, "outer.neststub");
+        NestingStubAsset.Manager = _manager;
+        NestingStubAsset.TypedInnerPath = Path.GetFullPath(Path.Combine(assetsPath, "typed.innerstub"));
+        NestingStubAsset.GenericInnerPath = Path.GetFullPath(Path.Combine(assetsPath, "generic.innerstub"));
+        File.WriteAllText(outerPath, "outer");
+        File.WriteAllText(NestingStubAsset.TypedInnerPath, "typed");
+        File.WriteAllText(NestingStubAsset.GenericInnerPath, "generic");
+        InnerStubAsset.LoadCount = 0;
+
+        using var cts = new CancellationTokenSource();
+        Task<NestingStubAsset?> outerLoad = Task.Factory.StartNew(
+            () => _manager.LoadAsync<NestingStubAsset>(outerPath, JobPriority.Normal, bypassJobThread: true, cts.Token),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap();
+        BlockingStubAsset.Entered.Wait(Timeout).ShouldBeTrue();
+        cts.Cancel();
+        BlockingStubAsset.Release.Set();
+        await Should.ThrowAsync<OperationCanceledException>(() => outerLoad.WaitAsync(Timeout));
+        XRObjectBase.ProcessPendingDestructions();
+
+        _manager.TryGetAssetByPath(Path.GetFullPath(outerPath), out _).ShouldBeFalse();
+        AssertInnerAssetSurvived(NestingStubAsset.TypedInnerPath, "typed");
+        AssertInnerAssetSurvived(NestingStubAsset.GenericInnerPath, "generic");
+        InnerStubAsset.LoadCount.ShouldBe(2);
+    }
+
+    private void AssertInnerAssetSurvived(string innerPath, string payload)
+    {
+        _manager.TryGetAssetByPath(innerPath, out XRAsset? cached).ShouldBeTrue();
+        InnerStubAsset inner = cached.ShouldBeOfType<InnerStubAsset>();
+        inner.IsDestroyed.ShouldBeFalse();
+        inner.Payload.ShouldBe(payload);
+        XRObjectBase.ObjectsCache.TryGetValue(inner.ID, out XRObjectBase? registered).ShouldBeTrue();
+        registered.ShouldBeSameAs(inner);
+        _manager.Load(innerPath, typeof(InnerStubAsset), JobPriority.Normal, bypassJobThread: true).ShouldBeSameAs(inner);
+    }
+
     /// <summary>
     /// Starts a load on a new thread. The load bypasses the job thread, so it runs on that thread.
     /// </summary>
@@ -244,5 +293,44 @@ public sealed class AssetLoadCancellationTests
 
     private sealed class ChildStubAsset : XRAsset
     {
+    }
+
+    /// <summary>
+    /// Loads two inner assets, one through the typed route and one through the generic route, then blocks.
+    /// </summary>
+    [XR3rdPartyExtensions("neststub")]
+    private sealed class NestingStubAsset : XRAsset
+    {
+        public static AssetManager? Manager;
+        public static string TypedInnerPath = string.Empty;
+        public static string GenericInnerPath = string.Empty;
+
+        public InnerStubAsset? TypedInner { get; set; }
+        public InnerStubAsset? GenericInner { get; set; }
+
+        public override bool Load3rdParty(string filePath)
+        {
+            AssetManager manager = Manager.ShouldNotBeNull();
+            TypedInner = manager.Load(TypedInnerPath, typeof(InnerStubAsset), JobPriority.Normal, bypassJobThread: true) as InnerStubAsset;
+            GenericInner = manager.Load<InnerStubAsset>(GenericInnerPath, JobPriority.Normal, bypassJobThread: true);
+            BlockingStubAsset.Entered.Set();
+            BlockingStubAsset.Release.Wait(Timeout);
+            return true;
+        }
+    }
+
+    [XR3rdPartyExtensions("innerstub")]
+    private sealed class InnerStubAsset : XRAsset
+    {
+        public static int LoadCount;
+
+        public string? Payload { get; set; }
+
+        public override bool Load3rdParty(string filePath)
+        {
+            Interlocked.Increment(ref LoadCount);
+            Payload = File.ReadAllText(filePath);
+            return true;
+        }
     }
 }

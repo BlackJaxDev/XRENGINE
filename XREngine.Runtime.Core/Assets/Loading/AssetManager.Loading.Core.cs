@@ -23,13 +23,24 @@ namespace XREngine
         private static int t_isolatedPublicationLoadDepth;
 
         /// <summary>
-        /// Occurs on the waiting thread when a cancelable load finds that a different load holds the path gate.
-        /// The argument is the full asset path.
+        /// Diagnostic hook for tests. Do not use it in runtime code.
+        /// Occurs on the waiting thread when a cancelable load finds that a different load holds the path gate,
+        /// before the load starts to poll the gate. The argument is the full asset path.
         /// </summary>
         internal event Action<string>? AssetLoadGateContended;
 
         private object GetAssetLoadGate(string filePath)
             => _assetLoadGates.GetOrAdd(filePath, static _ => new object());
+
+        /// <summary>
+        /// Removes a destroyed asset from the asset caches. An aborted publication batch destroys its objects
+        /// without the destruction callbacks, so the cache can still hold such an asset.
+        /// </summary>
+        private void EvictDestroyedPathCacheEntry(string filePath, XRAsset destroyedAsset)
+        {
+            AssetDestroyed(destroyedAsset);
+            LoadedAssetsByPathInternal.TryRemove(new KeyValuePair<string, XRAsset>(filePath, destroyedAsset));
+        }
 
         private void EvictMismatchedPathCacheEntry(string filePath, XRAsset existingAsset, Type requestedType)
         {
@@ -105,13 +116,15 @@ namespace XREngine
                     AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.CheckingCache, "Checking asset cache...", 0.05f);
                     if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
                     {
-                        if (existingAsset is T tAsset)
+                        if (existingAsset.IsDestroyed)
+                            EvictDestroyedPathCacheEntry(filePath, existingAsset);
+                        else if (existingAsset is T tAsset)
                         {
                             AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Using cached asset.", 1.0f);
                             return tAsset;
                         }
-
-                        EvictMismatchedPathCacheEntry(filePath, existingAsset, typeof(T));
+                        else
+                            EvictMismatchedPathCacheEntry(filePath, existingAsset, typeof(T));
                     }
 
                     string extension = Path.GetExtension(filePath);
@@ -253,13 +266,15 @@ namespace XREngine
                     AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.CheckingCache, "Checking asset cache...", 0.05f);
                     if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
                     {
-                        if (existingAsset.GetType().IsAssignableTo(type))
+                        if (existingAsset.IsDestroyed)
+                            EvictDestroyedPathCacheEntry(filePath, existingAsset);
+                        else if (existingAsset.GetType().IsAssignableTo(type))
                         {
                             AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Using cached asset.", 1.0f);
                             return existingAsset;
                         }
-
-                        EvictMismatchedPathCacheEntry(filePath, existingAsset, type);
+                        else
+                            EvictMismatchedPathCacheEntry(filePath, existingAsset, type);
                     }
 
                     string extension = Path.GetExtension(filePath);
@@ -271,38 +286,15 @@ namespace XREngine
 
                     string normalizedExtension = extension[1..].ToLowerInvariant();
 
-                    if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, type, out XRAsset? publishedAsset))
-                    {
-                        AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Loaded published asset from archive.", 1.0f);
-                        PostLoaded(filePath, publishedAsset);
-                        return publishedAsset;
-                    }
-
-                    if (!File.Exists(filePath))
-                    {
-                        AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
-                        return null;
-                    }
-
-                    AssetLoadProgressContext.ReportStage(
-                        normalizedExtension == AssetExtension ? AssetLoadProgressStage.ParsingAssetGraph : AssetLoadProgressStage.ImportingThirdParty,
-                        normalizedExtension == AssetExtension ? "Reading serialized asset graph..." : "Importing third-party asset...",
-                        0.35f);
                     ObjectCachePublicationScope? publication = BeginLoadObjectPublication(CancellationToken.None);
                     try
                     {
-                        file = normalizedExtension == AssetExtension
-                            ? DeserializeAssetFile(filePath, type)
-                            : Load3rdPartyWithCache(filePath, normalizedExtension, type);
-                        CompleteLoadObjectPublication(publication);
+                        file = LoadUncachedCore(filePath, normalizedExtension, type, publication);
                     }
                     finally
                     {
                         EndLoadObjectPublication(publication);
                     }
-                    AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Finalizing, "Finalizing asset graph...", 0.95f);
-                    PostLoaded(filePath, file);
-                    AssetLoadProgressContext.ReportStage(file is null ? AssetLoadProgressStage.Failed : AssetLoadProgressStage.Completed, file is null ? "Asset load failed." : "Asset ready.", 1.0f);
                 }
 #if !DEBUG
             }
@@ -312,6 +304,41 @@ namespace XREngine
                 return null;
             }
 #endif
+            return file;
+        }
+
+        private XRAsset? LoadUncachedCore(
+            string filePath,
+            string normalizedExtension,
+            Type type,
+            ObjectCachePublicationScope? publication)
+        {
+            if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, type, out XRAsset? publishedAsset))
+            {
+                CompleteLoadObjectPublication(publication);
+                AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Loaded published asset from archive.", 1.0f);
+                PostLoaded(filePath, publishedAsset);
+                return publishedAsset;
+            }
+
+            if (!File.Exists(filePath))
+            {
+                AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
+                return null;
+            }
+
+            AssetLoadProgressContext.ReportStage(
+                normalizedExtension == AssetExtension ? AssetLoadProgressStage.ParsingAssetGraph : AssetLoadProgressStage.ImportingThirdParty,
+                normalizedExtension == AssetExtension ? "Reading serialized asset graph..." : "Importing third-party asset...",
+                0.35f);
+            XRAsset? file = normalizedExtension == AssetExtension
+                ? DeserializeAssetFile(filePath, type)
+                : Load3rdPartyWithCache(filePath, normalizedExtension, type);
+            CompleteLoadObjectPublication(publication);
+
+            AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Finalizing, "Finalizing asset graph...", 0.95f);
+            PostLoaded(filePath, file);
+            AssetLoadProgressContext.ReportStage(file is null ? AssetLoadProgressStage.Failed : AssetLoadProgressStage.Completed, file is null ? "Asset load failed." : "Asset ready.", 1.0f);
             return file;
         }
     }

@@ -98,7 +98,8 @@ Use `Engine.Assets.LoadAsync<T>(filePath, priority, bypassJobThread, cancellatio
 
 - Cancellation is cooperative. The load checks the token before it starts, while it waits for the path gate, before it reads or imports the file, and before it puts the asset in the cache. It does not stop a file read or an import that is in progress.
 - A canceled load throws `OperationCanceledException`, releases the path gate, and adds no entry to the cache.
-- A cancelable load keeps the objects that it makes out of `XRObjectBase.ObjectsCache` until its last token check. A cancel destroys all of them at once, so a later load of the same path can register the same persistent IDs. A load that runs inside a cancelable load gets its own batch.
+- A cancelable load keeps the objects that it makes out of `XRObjectBase.ObjectsCache` until its last token check. A cancel destroys all of them at once, so a later load of the same path can register the same persistent IDs. A load that runs inside a cancelable load on the same thread gets its own batch, so a cancel of the outer load does not destroy an inner asset that is already in the cache.
+- The batch covers only the thread that runs the load. An importer that makes objects on worker threads publishes those objects at once, and a cancel does not remove them.
 - Each call owns its own load attempt. A token cancels only the call that received it. Another call for the same path continues and loads the asset itself.
 - The task completes only after the load work stops. After the task reports cancellation, the load does not change the cache.
 - A load that waits in the job queue sees the cancel only when a job thread starts it.
