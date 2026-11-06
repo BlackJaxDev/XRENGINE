@@ -995,6 +995,8 @@ public unsafe partial class OpenXRAPI
 
         AddOptionalExtension(extensions, availableExtensions, KhrWin32ConvertPerformanceCounterTime.ExtensionName);
         AddOptionalExtension(extensions, availableExtensions, OxrExtDebugUtils.ExtensionName);
+        // Eye-tracked foveation reads the runtime gaze, so this instance must enable it too.
+        AddOptionalExtension(extensions, availableExtensions, ExtEyeGazeInteractionExtensionName);
 
         return [.. extensions];
     }
