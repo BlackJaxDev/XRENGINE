@@ -240,8 +240,8 @@ public static partial class EditorImGuiUI
 
             if (primary is XRRenderPipelineInstance instance && instance.Pipeline is not null)
             {
-                if (ImGui.SmallButton($"Open Pipeline Graph##{label}"))
-                    OpenRenderPipelineGraph(instance.Pipeline);
+                if (ImGui.SmallButton($"Open in Workbench##{label}"))
+                    OpenRenderPipelineWorkbench(instance.Pipeline, instance);
                 ImGui.SameLine();
                 ImGui.TextDisabled(instance.DebugDescriptor);
             }

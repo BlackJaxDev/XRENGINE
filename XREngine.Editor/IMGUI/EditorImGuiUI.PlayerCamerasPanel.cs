@@ -298,8 +298,8 @@ public static partial class EditorImGuiUI
             if (drewAction)
                 ImGui.SameLine();
 
-            if (ImGui.SmallButton("Open Pipeline Graph"))
-                OpenRenderPipelineGraph(entry.Pipeline);
+            if (ImGui.SmallButton("Open in Workbench"))
+                OpenRenderPipelineWorkbench(entry.Pipeline, entry.PipelineInstance);
         }
 
         ImGui.Separator();
@@ -318,8 +318,8 @@ public static partial class EditorImGuiUI
     {
         if (entry.Pipeline is not null)
         {
-            if (ImGui.SmallButton("Open Pipeline Graph"))
-                OpenRenderPipelineGraph(entry.Pipeline);
+            if (ImGui.SmallButton("Open in Workbench"))
+                OpenRenderPipelineWorkbench(entry.Pipeline, entry.PipelineInstance);
 
             DrawRuntimeObjectInspector("Render Pipeline", entry.Pipeline, PlayerCameraPanelVisited, defaultOpen: false);
         }

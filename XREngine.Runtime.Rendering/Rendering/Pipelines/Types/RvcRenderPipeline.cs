@@ -14,7 +14,7 @@ namespace XREngine.Rendering;
 /// It runs only the RVC command chain. VR selects it only through
 /// <see cref="EVrRenderPipeline.Rvc"/>.
 /// </summary>
-public sealed class RvcRenderPipeline : DefaultRenderPipeline
+public sealed class RvcRenderPipeline : DefaultRenderPipeline, IRenderPipelineViewSetupSource
 {
     private const RenderPipelineResourceUsage RvcSampledColorAttachment =
         RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment;
@@ -72,6 +72,26 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
     }
 
     public override string DebugName => "RvcRenderPipeline";
+
+    private static readonly RenderPipelineViewSetup BothEyesSetup = new("Both eyes", 2u, null);
+    private static readonly RenderPipelineViewSetup SeparateEyeRequestSetup = new("Separate eye", 1u, null);
+    private static readonly RenderPipelineViewSetup LeftEyeSetup = new("Separate eye (left)", 1u, 0u);
+    private static readonly RenderPipelineViewSetup RightEyeSetup = new("Separate eye (right)", 1u, 1u);
+
+    /// <summary>
+    /// Returns the both-eye setup when the pipeline renders stereo views in one execution, and the
+    /// separate-eye setup otherwise. A separate-eye instance names its eye from its active resource generation.
+    /// </summary>
+    public RenderPipelineViewSetup GetViewSetup(XRRenderPipelineInstance? instance)
+    {
+        if (Stereo)
+            return BothEyesSetup;
+
+        if (instance?.ActiveGeneration is not { } generation || generation.Key.ReservedViewCount > 1u)
+            return SeparateEyeRequestSetup;
+
+        return generation.Key.ReservedEyeIndex == 0u ? LeftEyeSetup : RightEyeSetup;
+    }
 
     [Category("RVC")]
     [DisplayName("Pipeline Mode")]
