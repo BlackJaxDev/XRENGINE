@@ -352,6 +352,15 @@ internal static class TextureResidencyPolicy
             && (!snapshot.PreviewReady || snapshot.RequestedMaxDimension > snapshot.ResidentMaxDimension);
 
     /// <summary>
+    /// True if the live explicit requests of a record still need a transition to <paramref name="targetResidentSize"/>.
+    /// Before the preview is ready, any request needs the preview. After that, the requested size must be at least the target.
+    /// The caller holds the record lock.
+    /// </summary>
+    internal static bool RequestCoversTarget(uint requestedMaxDimension, bool previewReady, uint targetResidentSize)
+        => requestedMaxDimension != 0
+            && (!previewReady || requestedMaxDimension >= targetResidentSize);
+
+    /// <summary>
     /// Converts a requested mip to the largest side, in texels, that the request needs.
     /// Mip 0 is the full source size, and each step halves it. The result is at least 1.
     /// </summary>

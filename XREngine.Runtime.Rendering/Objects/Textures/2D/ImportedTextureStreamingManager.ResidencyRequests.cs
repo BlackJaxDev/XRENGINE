@@ -19,11 +19,14 @@ internal sealed partial class ImportedTextureStreamingManager
     private readonly List<long> _completedResidencyRequestScratch = [];
     private long _nextResidencyTicketId;
     private long _residencyRefreshSequence;
+    private bool _requestImportDeferralLogged;
 
     /// <summary>
     /// Occurs one time for each request when its mip becomes resident. The manager sets the request
     /// state to <see cref="ETextureResidencyRequestState.Resident"/> before it raises the event.
     /// The event runs on the evaluation thread, outside the manager locks. Keep handlers short.
+    /// A cancel can occur between the state change and the event, so a handler can receive one
+    /// event for a ticket that it already cancelled. Handlers must ignore such tickets.
     /// </summary>
     internal event Action<TextureResidencyTicket>? ResidencyRequestCompleted;
 
@@ -48,7 +51,7 @@ internal sealed partial class ImportedTextureStreamingManager
     /// <param name="targetMip">The mip to make resident. 0 is the full source size. A large value requests the preview only.</param>
     /// <param name="deadlineFrame">The collect frame (see <see cref="CurrentFrameId"/>) at which the caller needs the mip. Use <see cref="long.MaxValue"/> for no deadline.</param>
     /// <param name="priority">The job priority of the promotion. A promotion at or after its deadline uses <see cref="JobPriority.Highest"/>.</param>
-    /// <param name="generation">The caller generation. Diagnostics show it.</param>
+    /// <param name="generation">The caller generation. The rejection and cancel logs show it. The manager does not compare it.</param>
     /// <returns>The ticket, or <see cref="TextureResidencyTicket.None"/> if streaming does not track the texture.</returns>
     internal TextureResidencyTicket RequestResidency(
         XRTexture2D texture,
@@ -63,7 +66,7 @@ internal sealed partial class ImportedTextureStreamingManager
         if (!TryGetStreamingRecord(texture, out ImportedTextureStreamingRecord? record))
         {
             Debug.TexturesWarning(
-                $"[TextureStreaming] Residency request rejected for '{texture.Name ?? texture.FilePath}': texture streaming does not track the texture.");
+                $"[TextureStreaming] Residency request rejected for '{texture.Name ?? texture.FilePath}' (generation {generation}): texture streaming does not track the texture.");
             return TextureResidencyTicket.None;
         }
 
@@ -94,6 +97,7 @@ internal sealed partial class ImportedTextureStreamingManager
         ImportedTextureStreamingRecord record;
         CancellationTokenSource? canceledLoad = null;
         uint canceledDimension = 0;
+        int canceledGeneration = 0;
         string backendName = string.Empty;
         lock (_residencyRequestSync)
         {
@@ -103,6 +107,7 @@ internal sealed partial class ImportedTextureStreamingManager
             RemoveActiveRequestNoLock(request);
             request.State = ETextureResidencyRequestState.None;
             record = request.Record;
+            canceledGeneration = request.Generation;
             lock (record.Sync)
             {
                 WriteRequestAggregateNoLock(record);
@@ -110,7 +115,8 @@ internal sealed partial class ImportedTextureStreamingManager
                     && record.PendingTransitionRequestDriven
                     && record.PendingMaxDimension > record.ResidentMaxDimension
                     && record.PendingSparseTransitionResult is not { ExposureDeferred: true };
-                if (pendingPromotion && record.PendingMaxDimension > record.RequestedMaxDimension)
+                if (pendingPromotion
+                    && !TextureResidencyPolicy.RequestCoversTarget(record.RequestedMaxDimension, record.PreviewReady, record.PendingMaxDimension))
                 {
                     canceledLoad = record.PendingLoadCts;
                     canceledDimension = record.PendingMaxDimension;
@@ -131,7 +137,7 @@ internal sealed partial class ImportedTextureStreamingManager
                 record.FilePath,
                 canceledDimension,
                 backendName,
-                "residency request canceled");
+                $"residency request canceled (generation {canceledGeneration})");
             CancelPendingLoad(canceledLoad);
         }
 
@@ -159,6 +165,22 @@ internal sealed partial class ImportedTextureStreamingManager
         lock (record.Sync)
             sourceMaxDimension = Math.Max(record.SourceWidth, record.SourceHeight);
         return sourceMaxDimension != 0;
+    }
+
+    /// <summary>
+    /// While imports are active, the policy queues no promotion of a texture that is not visible.
+    /// That includes request-driven promotions. This writes one diagnostic for each import period,
+    /// so the wait is not silent. The evaluation thread calls it.
+    /// </summary>
+    private void LogRequestDeferredByImportsOnce(ImportedTextureStreamingSnapshot snapshot)
+    {
+        if (_requestImportDeferralLogged)
+            return;
+
+        _requestImportDeferralLogged = true;
+        Debug.Textures(
+            $"[TextureStreaming] Residency request promotion of '{snapshot.TextureName ?? snapshot.FilePath}' waits: "
+            + "active model imports block promotions of textures that are not visible.");
     }
 
     private bool TryGetStreamingRecord(XRTexture2D texture, [NotNullWhen(true)] out ImportedTextureStreamingRecord? record)

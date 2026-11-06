@@ -166,9 +166,12 @@ public sealed class TextureResidencyRequestTests
         manager.SetBudgetProfile(ETextureStreamingBudgetProfile.Cutscene);
         manager.Evaluate(101);
         manager.BudgetProfileBlend.ShouldBe(0.5f);
-        TextureStreamingBudgetLimits halfway = manager.ActiveBudgetLimits;
-        halfway.MaxPromotionTransitionsPerFrame.ShouldBeInRange(2, 3);
-        halfway.PromotionFadeFrames.ShouldBeInRange(12, 90);
+        manager.ActiveBudgetLimits.ShouldBe(new TextureStreamingBudgetLimits(
+            MaxResidentTransitionsPerFrame: 4,
+            MaxPromotionTransitionsPerFrame: 3,
+            MaxPromotionBytesPerFrame: 64L * 1024L * 1024L,
+            PromotionCooldownFrames: 4,
+            PromotionFadeFrames: 51));
 
         manager.Evaluate(102);
         manager.ActiveBudgetLimits.ShouldBe(cutscene);
@@ -233,5 +236,144 @@ public sealed class TextureResidencyRequestTests
         manager.Evaluate(102);
 
         _host.Backend.Loads.ShouldHaveSingleItem().Priority.ShouldBe(JobPriority.Highest);
+    }
+    [Test]
+    public void CancelBetweenSnapshotAndQueue_DoesNotQueueOrPublish()
+    {
+        ImportedTextureStreamingManager manager = _host.Manager;
+        (XRTexture2D texture, ImportedTextureStreamingRecord record) = _host.AddTexture("race");
+        TextureResidencyTicket ticket = manager.RequestResidency(texture, targetMip: 0, deadlineFrame: long.MaxValue, JobPriority.Normal, generation: 1);
+
+        // The snapshot holds the request. The estimate of the assigned 1024 size runs after the snapshot
+        // and before the queue step, so the cancel lands in that window.
+        bool canceled = false;
+        _host.Backend.EstimateHook = size =>
+        {
+            if (size != 1024u || canceled)
+                return;
+
+            canceled = true;
+            manager.CancelResidency(ticket).ShouldBeTrue();
+        };
+
+        manager.Evaluate(102);
+
+        canceled.ShouldBeTrue();
+        _host.Backend.Loads.ShouldBeEmpty();
+        lock (record.Sync)
+        {
+            record.PendingMaxDimension.ShouldBe(0u);
+            record.PendingLoadCts.ShouldBeNull();
+            record.ResidentMaxDimension.ShouldBe(64u);
+        }
+
+        _host.Backend.EstimateHook = null;
+        manager.Evaluate(105);
+        _host.Backend.Loads.ShouldBeEmpty();
+        lock (record.Sync)
+            record.ResidentMaxDimension.ShouldBe(64u);
+    }
+
+    [Test]
+    public void VisibleTextureRaisedByRequest_KeepsPinAndSurvivesCancel()
+    {
+        ImportedTextureStreamingManager manager = _host.Manager;
+        (XRTexture2D texture, ImportedTextureStreamingRecord record) = _host.AddTexture("visible");
+        lock (record.Sync)
+        {
+            record.LastVisibleFrameId = 102L;
+            record.MaxProjectedPixelSpan = 100.0f;
+            record.MaxScreenCoverage = 0.01f;
+        }
+
+        TextureResidencyTicket ticket = manager.RequestResidency(texture, targetMip: 0, deadlineFrame: long.MaxValue, JobPriority.Normal, generation: 1);
+        manager.Evaluate(102);
+
+        FakeTextureStreamingResidencyBackend.ScheduledLoad load = _host.Backend.Loads.ShouldHaveSingleItem();
+        load.MaxResidentDimension.ShouldBe(1024u);
+        lock (record.Sync)
+            record.PendingTransitionRequestDriven.ShouldBeFalse();
+
+        manager.CancelResidency(ticket).ShouldBeTrue();
+        load.CancellationToken.IsCancellationRequested.ShouldBeFalse();
+
+        _host.Backend.CompleteLast().ShouldBeTrue();
+        lock (record.Sync)
+        {
+            record.ResidentMaxDimension.ShouldBe(1024u);
+            record.PinUntilFrameId.ShouldBe(102L + 180L);
+        }
+    }
+
+    [Test]
+    public void CancelWhileAnotherRequestNeedsPendingSize_KeepsPromotion()
+    {
+        ImportedTextureStreamingManager manager = _host.Manager;
+        (XRTexture2D texture, ImportedTextureStreamingRecord record) = _host.AddTexture("shared");
+        TextureResidencyTicket first = manager.RequestResidency(texture, 0, long.MaxValue, JobPriority.Normal, 1);
+        TextureResidencyTicket second = manager.RequestResidency(texture, 0, long.MaxValue, JobPriority.Normal, 2);
+        manager.Evaluate(102);
+        FakeTextureStreamingResidencyBackend.ScheduledLoad load = _host.Backend.Loads.ShouldHaveSingleItem();
+
+        manager.CancelResidency(first).ShouldBeTrue();
+
+        load.CancellationToken.IsCancellationRequested.ShouldBeFalse();
+        lock (record.Sync)
+            record.PendingMaxDimension.ShouldBe(1024u);
+
+        _host.Backend.CompleteLast().ShouldBeTrue();
+        manager.Evaluate(103);
+        manager.GetResidencyRequestState(second).ShouldBe(ETextureResidencyRequestState.Resident);
+    }
+
+    [Test]
+    public void ResidentRequest_ReturnsToPendingAfterDemotion()
+    {
+        ImportedTextureStreamingManager manager = _host.Manager;
+        (XRTexture2D texture, ImportedTextureStreamingRecord record) = _host.AddTexture("demoted");
+        List<TextureResidencyTicket> completed = [];
+        manager.ResidencyRequestCompleted += completed.Add;
+        TextureResidencyTicket ticket = manager.RequestResidency(texture, 0, long.MaxValue, JobPriority.Normal, 1);
+        manager.Evaluate(102);
+        _host.Backend.CompleteLast().ShouldBeTrue();
+        manager.Evaluate(103);
+        manager.GetResidencyRequestState(ticket).ShouldBe(ETextureResidencyRequestState.Resident);
+
+        // A budget demotion lowers the published size.
+        lock (record.Sync)
+            record.ResidentMaxDimension = 256u;
+        manager.Evaluate(110);
+
+        manager.GetResidencyRequestState(ticket).ShouldBe(ETextureResidencyRequestState.Pending);
+        completed.ShouldBe([ticket]);
+        _host.Backend.Loads[^1].MaxResidentDimension.ShouldBe(1024u);
+    }
+
+    [Test]
+    public void RequestOrdering_EarlierDeadlineGoesFirst()
+    {
+        ImportedTextureStreamingManager manager = _host.Manager;
+        (XRTexture2D late, _) = _host.AddTexture("late");
+        (XRTexture2D early, _) = _host.AddTexture("early");
+        manager.RequestResidency(late, 0, deadlineFrame: 500L, JobPriority.Highest, generation: 1);
+        manager.RequestResidency(early, 0, deadlineFrame: 200L, JobPriority.Normal, generation: 1);
+
+        manager.Evaluate(102);
+
+        _host.Backend.Loads.ShouldHaveSingleItem().Target.ShouldBeSameAs(early);
+    }
+
+    [Test]
+    public void RequestOrdering_SameDeadlineHigherPriorityGoesFirst()
+    {
+        ImportedTextureStreamingManager manager = _host.Manager;
+        (XRTexture2D normal, _) = _host.AddTexture("normal");
+        (XRTexture2D high, _) = _host.AddTexture("high");
+        manager.RequestResidency(normal, 0, deadlineFrame: 300L, JobPriority.Normal, generation: 1);
+        manager.RequestResidency(high, 0, deadlineFrame: 300L, JobPriority.High, generation: 1);
+
+        manager.Evaluate(102);
+
+        _host.Backend.Loads.ShouldHaveSingleItem().Target.ShouldBeSameAs(high);
     }
 }

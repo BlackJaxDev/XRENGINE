@@ -11,6 +11,12 @@ namespace XREngine.UnitTests.Rendering;
 /// </summary>
 internal sealed class FakeTextureStreamingResidencyBackend : ITextureResidencyBackend
 {
+    /// <summary>
+    /// Runs on each size estimate, with the resident size. The evaluation estimates the current size while it
+    /// collects snapshots and the assigned size after that, so a test can act between the two steps.
+    /// </summary>
+    public Action<uint>? EstimateHook { get; set; }
+
     /// <summary>Each scheduled resident load, in call order.</summary>
     public List<ScheduledLoad> Loads { get; } = [];
 
@@ -33,7 +39,10 @@ internal sealed class FakeTextureStreamingResidencyBackend : ITextureResidencyBa
         ESizedInternalFormat format = ESizedInternalFormat.Rgba8,
         int sparseNumLevels = 0,
         SparseTextureStreamingPageSelection pageSelection = default)
-        => BytesFor(residentMaxDimension);
+    {
+        EstimateHook?.Invoke(residentMaxDimension);
+        return BytesFor(residentMaxDimension);
+    }
 
     public uint GetNextLowerResidentSize(uint sourceMaxDimension, uint currentResidentSize)
         => Math.Max(1u, currentResidentSize / 2u);

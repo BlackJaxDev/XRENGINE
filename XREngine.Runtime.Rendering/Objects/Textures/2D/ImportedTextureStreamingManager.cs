@@ -1175,6 +1175,8 @@ internal sealed partial class ImportedTextureStreamingManager
         }
 
         bool importsActive = Volatile.Read(ref _activeImportedModelImports) > 0;
+        if (!importsActive)
+            _requestImportDeferralLogged = false;
         bool allowPromotions = true;
         long currentManagedBytes = 0L;
         for (int i = 0; i < snapshots.Count; i++)
@@ -1316,7 +1318,11 @@ internal sealed partial class ImportedTextureStreamingManager
                 if (importsActive)
                 {
                     if (!visibleThisFrame)
+                    {
+                        if (requestDriven)
+                            LogRequestDeferredByImportsOnce(snapshot);
                         return false;
+                    }
 
                     if (queuedPromotionBytes + deltaBytes > MaxImportEraPromotionBytesPerFrame)
                         return false;
@@ -1477,7 +1483,6 @@ internal sealed partial class ImportedTextureStreamingManager
                 if (!IsFailedPromotionCoolingDown(snapshot, requestedResidentSize, frameId))
                     desiredResidentSize = Math.Max(desiredResidentSize, requestedResidentSize);
             }
-            bool requestDriven = desiredResidentSize > visibilityDesiredResidentSize;
 
             SparseTextureStreamingPageSelection budgetPageSelection = DetermineDesiredPageSelection(snapshot, desiredResidentSize, frameId);
 
@@ -1519,6 +1524,13 @@ internal sealed partial class ImportedTextureStreamingManager
                 targetCommittedBytes = snapshot.CurrentCommittedBytes;
                 pressureDemotion = false;
             }
+
+            // Only a promotion that no visibility or binding signal shares is request-driven. A visible
+            // texture that a request raises keeps its visible pin, and a cancel of the request does not
+            // cancel a promotion that visibility also needs.
+            bool requestDriven = !visibleThisFrame
+                && !recentlyBound
+                && assignedResidentSize > visibilityDesiredResidentSize;
 
             TextureRuntimeDiagnostics.LogResidencyDesired(
                 frameId,

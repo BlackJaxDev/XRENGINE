@@ -27,7 +27,7 @@ internal sealed class TextureResidencyRequest(
     /// <summary>The job priority that the caller gives the request.</summary>
     public readonly JobPriority Priority = priority;
 
-    /// <summary>The caller generation. Diagnostics show it; the manager does not compare it.</summary>
+    /// <summary>The caller generation. The rejection and cancel logs show it; the manager does not compare it.</summary>
     public readonly int Generation = generation;
 
     /// <summary>The current state.</summary>

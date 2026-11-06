@@ -29,6 +29,12 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     /// <summary>The default largest side of T1, in texels.</summary>
     public const uint DefaultCoarseMaxDimension = 512u;
 
+    /// <summary>
+    /// The screen coverage, from 0 to 1, at or above which a T1 or T2 request gets <see cref="JobPriority.High"/>.
+    /// A request below it gets <see cref="JobPriority.Normal"/>. T0 always gets <see cref="JobPriority.High"/>.
+    /// </summary>
+    public const float HighPriorityScreenCoverage = 0.25f;
+
     /// <summary>A mip so high that the request asks for the preview only.</summary>
     private const int PreviewMip = 31;
 
@@ -136,6 +142,11 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
         // at once on another thread waits until the ticket is in the map.
         lock (_sync)
         {
+            // Dispose can run between the first check and this lock. A request after it must not
+            // register, because nothing would cancel it.
+            if (_disposed)
+                return ResidencyTicket.None;
+
             TextureResidencyTicket ticket = _manager.RequestResidency(texture, targetMip, deadlineFrame, priority, request.Generation);
             if (!ticket.IsValid)
                 return Reject(request, "texture streaming does not track the texture");
@@ -284,13 +295,13 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
         if (request.TargetLevel == (int)EResidencyLevel.Proxy)
             return JobPriority.High;
 
-        return request.ScreenCoverage >= 0.25f ? JobPriority.High : JobPriority.Normal;
+        return request.ScreenCoverage >= HighPriorityScreenCoverage ? JobPriority.High : JobPriority.Normal;
     }
 
     private ResidencyTicket Reject(in ResidencyRequest request, string reason)
     {
         Interlocked.Increment(ref _rejectedRequestCount);
-        Debug.TexturesWarning($"[Cutscene] Texture residency request for asset {request.AssetId} at level T{request.TargetLevel} was not accepted: {reason}.");
+        Debug.TexturesWarning($"[Cutscene] Texture residency request for asset {request.AssetId} at level T{request.TargetLevel} (generation {request.Generation}) was not accepted: {reason}.");
         return ResidencyTicket.None;
     }
 
