@@ -504,6 +504,14 @@ public static class UnitTestingWorldSettingsStore
             applied = true;
         }
 
+        if (bool.TryParse(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrRvcQuadView), out bool vrRvcQuadView))
+        {
+            settings.VR.RvcQuadView = vrRvcQuadView;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.RvcQuadView));
+            applied = true;
+        }
+
         if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestVrFoveationMode, out EVrFoveationMode foveationMode))
         {
             settings.VR.Foveation.Mode = foveationMode;
@@ -970,6 +978,7 @@ public static class UnitTestingWorldSettingsStore
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrViewRenderMode)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrRenderPipeline)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrRvcPipelineMode)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrRvcQuadView)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrFoveationMode)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrFoveationQualityPreset)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrFoveationRequireRequested)

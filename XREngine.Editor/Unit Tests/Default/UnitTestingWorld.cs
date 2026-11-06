@@ -156,6 +156,7 @@ public static partial class EditorUnitTests
             s.VrViewRenderMode = runtimeSettings.VR.ViewRenderMode;
             s.VrRenderPipeline = runtimeSettings.VR.RenderPipeline;
             s.RvcPipelineMode = runtimeSettings.VR.RvcPipelineMode;
+            s.RvcQuadViewEnabled = runtimeSettings.VR.RvcQuadView;
             s.VrFoveationMode = runtimeSettings.VR.Foveation.Mode;
             s.VrFoveationQualityPreset = runtimeSettings.VR.Foveation.QualityPreset;
             s.VrFoveationRequireRequested = runtimeSettings.VR.Foveation.RequireRequested;

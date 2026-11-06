@@ -366,6 +366,7 @@ For script-driven launches, these process-scoped overrides select the lane witho
 - `XRE_UNIT_TEST_VR_VIEW_RENDER_MODE=SequentialViews|SinglePassStereo|ParallelCommandBufferRecording`
 - `XRE_UNIT_TEST_VR_RENDER_PIPELINE=Default|Advanced|Rvc`
 - `XRE_UNIT_TEST_VR_RVC_PIPELINE_MODE=Off|ForwardPlusOracle|VisibilityOnlyDebug|MaterialCache|SharedLighting|Full`
+- `XRE_UNIT_TEST_VR_RVC_QUAD_VIEW=true|false` sets `VR.RvcQuadView`, which requests the OpenXR quad-view configuration (wide and inset view per eye) for RVC. The runtime must expose `XR_VARJO_quad_views`.
 - `XRE_UNIT_TEST_RENDER_API=OpenGL|Vulkan` maps into `Rendering.RenderBackend`
 - `XRE_UNIT_TEST_RENDER_PIPELINE=AdvancedRenderPipeline` selects the Advanced pipeline for this process without changing the saved world settings. Pair it with `XRE_ADVANCED_RENDER_PIPELINE_MODE=Required` for validation that must fail visibly when an Advanced capability is unavailable.
 

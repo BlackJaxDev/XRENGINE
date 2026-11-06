@@ -141,6 +141,7 @@ public static class BootstrapRenderSettings
             renderSettings.VrViewRenderMode = settings.VR.ViewRenderMode;
             renderSettings.VrRenderPipeline = settings.VR.RenderPipeline;
             renderSettings.RvcPipelineMode = settings.VR.RvcPipelineMode;
+            renderSettings.RvcQuadViewEnabled = settings.VR.RvcQuadView;
             renderSettings.VrFoveationMode = settings.VR.Foveation.Mode;
             renderSettings.VrFoveationQualityPreset = settings.VR.Foveation.QualityPreset;
             renderSettings.VrFoveationRequireRequested = settings.VR.Foveation.RequireRequested;

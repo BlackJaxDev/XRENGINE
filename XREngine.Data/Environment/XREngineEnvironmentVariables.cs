@@ -85,6 +85,8 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestVrViewRenderMode = "XRE_UNIT_TEST_VR_VIEW_RENDER_MODE";
     public const string UnitTestVrRenderPipeline = "XRE_UNIT_TEST_VR_RENDER_PIPELINE";
     public const string UnitTestVrRvcPipelineMode = "XRE_UNIT_TEST_VR_RVC_PIPELINE_MODE";
+    /// <summary>Overrides the unit-test VR RvcQuadView setting (true or false).</summary>
+    public const string UnitTestVrRvcQuadView = "XRE_UNIT_TEST_VR_RVC_QUAD_VIEW";
     public const string UnitTestVrFoveationMode = "XRE_UNIT_TEST_VR_FOVEATION_MODE";
     public const string UnitTestVrFoveationQualityPreset = "XRE_UNIT_TEST_VR_FOVEATION_QUALITY_PRESET";
     public const string UnitTestVrFoveationRequireRequested = "XRE_UNIT_TEST_VR_FOVEATION_REQUIRE_REQUESTED";

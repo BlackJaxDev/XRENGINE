@@ -21,6 +21,11 @@ public class UnitTestingVrSettings
     /// mode that the RVC resolver cannot run, renders no XR output.
     /// </summary>
     public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.Off;
+    /// <summary>
+    /// Requests the OpenXR quad-view configuration (wide and inset view per eye) for
+    /// <see cref="EVrRenderPipeline.Rvc"/>. The runtime must expose XR_VARJO_quad_views.
+    /// </summary>
+    public bool RvcQuadView { get; set; } = false;
     public bool PreviewStereoViews { get; set; } = false;
     public bool AllowDesktopEditing { get; set; } = true;
     /// <summary>
