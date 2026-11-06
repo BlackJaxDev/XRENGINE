@@ -55,6 +55,10 @@ public sealed class AudioTrackTests
         private uint _nextBuffer = 1;
 
         public Dictionary<uint, FakeSource> Sources { get; } = [];
+
+        // A destroyed source answers with a detached state, as a native transport ignores a stale handle.
+        private FakeSource Get(AudioSourceHandle source)
+            => Sources.TryGetValue(source.Id, out FakeSource? state) ? state : new FakeSource();
         public bool ClockAvailable { get; set; } = true;
         public bool Recording { get; set; } = true;
         public long LatencyNanoseconds { get; set; }
@@ -90,7 +94,7 @@ public sealed class AudioTrackTests
 
         public void Play(AudioSourceHandle source)
         {
-            FakeSource s = Sources[source.Id];
+            FakeSource s = Get(source);
             s.Playing = true;
             if (Recording)
                 s.Log.Add("play");
@@ -98,22 +102,22 @@ public sealed class AudioTrackTests
 
         public void Stop(AudioSourceHandle source)
         {
-            FakeSource s = Sources[source.Id];
+            FakeSource s = Get(source);
             s.Playing = false;
             s.Processed = s.Queue.Count;
             if (Recording)
                 s.Log.Add("stop");
         }
 
-        public void Pause(AudioSourceHandle source) => Sources[source.Id].Playing = false;
+        public void Pause(AudioSourceHandle source) => Get(source).Playing = false;
 
-        public void Rewind(AudioSourceHandle source) => Sources[source.Id].Playing = false;
+        public void Rewind(AudioSourceHandle source) => Get(source).Playing = false;
 
         public void SetSourceBuffer(AudioSourceHandle source, AudioBufferHandle buffer) { }
 
         public void QueueBuffers(AudioSourceHandle source, ReadOnlySpan<AudioBufferHandle> buffers)
         {
-            FakeSource s = Sources[source.Id];
+            FakeSource s = Get(source);
             foreach (AudioBufferHandle buffer in buffers)
             {
                 s.Queue.Add(buffer.Id);
@@ -124,7 +128,7 @@ public sealed class AudioTrackTests
 
         public int UnqueueProcessedBuffers(AudioSourceHandle source, Span<AudioBufferHandle> output)
         {
-            FakeSource s = Sources[source.Id];
+            FakeSource s = Get(source);
             int count = Math.Min(Math.Min(s.Processed, output.Length), s.Queue.Count);
             for (int i = 0; i < count; i++)
                 output[i] = new AudioBufferHandle(s.Queue[i]);
@@ -133,17 +137,17 @@ public sealed class AudioTrackTests
             return count;
         }
 
-        public int GetBuffersProcessed(AudioSourceHandle source) => Sources[source.Id].Processed;
+        public int GetBuffersProcessed(AudioSourceHandle source) => Get(source).Processed;
 
-        public int GetBuffersQueued(AudioSourceHandle source) => Sources[source.Id].Queue.Count;
+        public int GetBuffersQueued(AudioSourceHandle source) => Get(source).Queue.Count;
 
         public void SetSourcePosition(AudioSourceHandle source, Vector3 position) { }
         public void SetSourceVelocity(AudioSourceHandle source, Vector3 velocity) { }
-        public void SetSourceGain(AudioSourceHandle source, float gain) => Sources[source.Id].Gain = gain;
+        public void SetSourceGain(AudioSourceHandle source, float gain) => Get(source).Gain = gain;
         public void SetSourcePitch(AudioSourceHandle source, float pitch) { }
         public void SetSourceLooping(AudioSourceHandle source, bool loop) { }
-        public bool IsSourcePlaying(AudioSourceHandle source) => Sources[source.Id].Playing;
-        public int GetSampleOffset(AudioSourceHandle source) => (int)Sources[source.Id].SampleFrame;
+        public bool IsSourcePlaying(AudioSourceHandle source) => Get(source).Playing;
+        public int GetSampleOffset(AudioSourceHandle source) => (int)Get(source).SampleFrame;
 
         public bool TryGetPlaybackClock(AudioSourceHandle source, out long sampleFrame, out long latencyNanoseconds)
         {
@@ -151,7 +155,7 @@ public sealed class AudioTrackTests
             latencyNanoseconds = 0;
             if (!ClockAvailable)
                 return false;
-            sampleFrame = Sources[source.Id].SampleFrame;
+            sampleFrame = Get(source).SampleFrame;
             latencyNanoseconds = LatencyNanoseconds;
             return true;
         }
@@ -546,10 +550,13 @@ public sealed class AudioTrackTests
     [Test]
     public void Events_FireOnce_WhileTheAudioPullsTheClockBack()
     {
-        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.1, 0.25);
+        // Each step advances 20 ms and the correction pulls 1 ms back, so the step ends are 0.02 + 0.019 k.
+        // The event is 0.5 ms after the end of step 5, inside the 1 ms band of that correction. A correction applied after
+        // the dispatch would start the next step below the event and fire it a second time.
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.1155);
         PlayWithHeardOffset(rig, 20, -0.03);
 
-        rig.Fired.ShouldBe(["0.1", "0.25"]);
+        rig.Fired.Count.ShouldBe(1);
         rig.Discontinuities.ShouldBeEmpty();
         rig.Player.Position.ShouldBeGreaterThan(T(0.25));
     }
@@ -557,10 +564,12 @@ public sealed class AudioTrackTests
     [Test]
     public void Events_FireOnce_WhileTheAudioPullsTheClockForward()
     {
-        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.1, 0.25);
+        // The correction pulls 1 ms forward, so the step ends are 0.02 + 0.021 k. The event is 0.5 ms before the end of step 5.
+        // A correction applied after the dispatch would start the next step above the event, so the event would never fire.
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.1245);
         PlayWithHeardOffset(rig, 20, 0.03);
 
-        rig.Fired.ShouldBe(["0.1", "0.25"]);
+        rig.Fired.Count.ShouldBe(1);
         rig.Discontinuities.ShouldBeEmpty();
     }
 
@@ -585,6 +594,7 @@ public sealed class AudioTrackTests
         rig.Player.Position.ShouldBeGreaterThan(T(0.05));
         rig.Fired.ShouldBe(["0.05"]);
     }
+
     [Test]
     public void HardResync_RaisesADiscontinuity_AndSkipsTheCrossedEvents()
     {
@@ -741,5 +751,82 @@ public sealed class AudioTrackTests
         rig.Discontinuities.ShouldBeEmpty();
         foreach (FakeSource source in rig.AllSources)
             source.Queue.Count.ShouldBe(4);
+    }
+    /// <summary>
+    /// Plays 30 steps of 20 ms with a 300 ms output latency, as with the NAudio output. For the first 15 steps the device has
+    /// mixed nothing of the new queue. After that, the device has mixed the time since the restart plus the latency, so the
+    /// heard time is the time since the restart.
+    /// </summary>
+    private static void PlayThroughWarmUp(Rig rig, double restartSeconds)
+    {
+        foreach (FakeTransport transport in rig.Transports)
+            transport.LatencyNanoseconds = 300_000_000;
+
+        for (int i = 0; i < 30; i++)
+        {
+            double next = rig.Player.Position.ToSeconds() + 0.02;
+            long sampleFrame = i < 15 ? 0 : (long)Math.Round((next - restartSeconds + 0.3) * SampleRate);
+            foreach (FakeTransport transport in rig.Transports)
+                transport.SetSampleFrame(sampleFrame);
+            rig.Player.Tick(0.02);
+        }
+    }
+
+    [Test]
+    public void HighLatencyStart_KeepsWallTimeUntilHeard_WithNoResync()
+    {
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.15);
+        rig.Player.Play();
+        rig.Player.Tick(0.0);
+        PlayThroughWarmUp(rig, 0.0);
+
+        rig.Discontinuities.ShouldBeEmpty();
+        rig.Fired.Count.ShouldBe(1);
+        rig.Player.IsAudioClockFallback.ShouldBeFalse();
+        rig.Player.Clock.Mode.ShouldBe(ECutsceneClockMode.AudioDisciplined);
+        rig.Player.Diagnostics.ShouldBeEmpty();
+        Math.Abs(rig.Player.Position.ToSeconds() - 0.6).ShouldBeLessThan(0.002);
+    }
+
+    [Test]
+    public void HighLatencySeek_KeepsWallTimeUntilHeard_WithNoResync()
+    {
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 1.15);
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.Player.Seek(T(1.0), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+        rig.Discontinuities.Count.ShouldBe(1);
+
+        PlayThroughWarmUp(rig, 1.0);
+
+        // Only the seek raised a discontinuity.
+        rig.Discontinuities.Count.ShouldBe(1);
+        rig.Fired.Count.ShouldBe(1);
+        rig.Player.IsAudioClockFallback.ShouldBeFalse();
+        rig.Player.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void ListenerSwapAtTheSameCount_RestartsWithTheNewSource()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        FakeTransport replacement = new();
+        using ListenerContext third = new(replacement, null);
+        rig.Component.RemoveSourceFromListener(rig.Listeners[1]);
+        rig.Component.AddSourceToListener(third);
+        rig.Component.ActiveListenerCount.ShouldBe(2);
+        replacement.ClearLogs();
+
+        rig.Player.Tick(0.02);
+
+        FakeSource source = replacement.Sources.Values.Single();
+        source.Playing.ShouldBeTrue();
+        source.Queue.Count.ShouldBe(4);
+        FirstQueuedSample(source).ShouldBe((int)rig.Player.Position.ToSamples(SampleRate));
+        rig.Player.Stop();
     }
 }

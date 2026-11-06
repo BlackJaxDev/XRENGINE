@@ -251,9 +251,11 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         if (!channel.IsStreaming || channel.ClipIndex != _clockClipIndex)
             return false;
 
-        if (!channel.TryReadHeardFrame(out long frame))
+        if (!channel.TryReadHeardFrame(out long frame, out bool warmingUp))
         {
-            if (IsClockFallbackActive)
+            // A new queue that the listener does not hear yet is expected after each restart. The clock stays on wall time
+            // for this step, and this is not a loss of the clock.
+            if (warmingUp || IsClockFallbackActive)
                 return false;
             IsClockFallbackActive = true;
             _clock.Mode = ECutsceneClockMode.Wall;

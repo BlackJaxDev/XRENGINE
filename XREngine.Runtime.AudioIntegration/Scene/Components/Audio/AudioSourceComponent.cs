@@ -1,4 +1,4 @@
-﻿using XREngine.Extensions;
+using XREngine.Extensions;
 using MathNet.Numerics;
 using System.Collections.Concurrent;
 using System.ComponentModel;
@@ -399,6 +399,7 @@ namespace XREngine.Components
             }
             return anyQueued;
         }
+
         /// <summary>
         /// Queues one buffer of 16-bit PCM on each source in a list that the caller keeps. Unlike the other overloads,
         /// this method does not enumerate <see cref="ActiveListeners"/>, so it does not allocate on the heap.
@@ -864,11 +865,24 @@ namespace XREngine.Components
             set => SetField(ref _existenceCheckInterval, value);
         }
 
+        private int _listenerVersion;
+
+        /// <summary>
+        /// A count that changes each time this component adds or removes a listener source through
+        /// <see cref="AddSourceToListener"/> or <see cref="RemoveSourceFromListener"/>. A caller that keeps its own list of
+        /// the sources compares it to see a change, also a swap that keeps the same count. A direct change of
+        /// <see cref="ActiveListeners"/> does not change it.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        public int ListenerVersion => Volatile.Read(ref _listenerVersion);
+
         public void AddSourceToListener(ListenerContext listener)
             => ActiveListeners.GetOrAdd(listener, AddSource);
 
         private AudioSource AddSource(ListenerContext x)
         {
+            Interlocked.Increment(ref _listenerVersion);
             var s = x.TakeSource();
             //s.SourceType = Type;
             s.RolloffFactor = RolloffFactor;
@@ -890,10 +904,14 @@ namespace XREngine.Components
             return s;
         }
 
-        private void RemoveSourceFromListener(ListenerContext listener)
+        /// <summary>Removes the source of this component from a listener and gives the source back to the listener.</summary>
+        /// <param name="listener">The listener.</param>
+        public void RemoveSourceFromListener(ListenerContext listener)
         {
-            if (ActiveListeners.TryRemove(listener, out var source))
-                listener.ReleaseSource(source);
+            if (!ActiveListeners.TryRemove(listener, out var source))
+                return;
+            Interlocked.Increment(ref _listenerVersion);
+            listener.ReleaseSource(source);
         }
 
         /// <summary>

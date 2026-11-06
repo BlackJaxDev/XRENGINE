@@ -34,6 +34,7 @@ internal sealed class CutsceneAudioChannel
     private AudioSource[] _sources = [];
     private bool[] _savedAutoPlay = [];
     private int _sourceCount;
+    private int _listenerVersion;
 
     private IStreamingAudioDecoder? _decoder;
     private long _endFrame;
@@ -137,15 +138,27 @@ internal sealed class CutsceneAudioChannel
     /// <summary>
     /// Reads the frame of the clip file that the listener hears now, from the clock of the first source.
     /// The value is the number of frames before the queue, plus the source position, minus the output latency.
-    /// It is never less than the frame of the last restart: no earlier frame was queued, so the device still plays older output.
     /// </summary>
     /// <param name="frame">The heard frame in the file.</param>
-    /// <returns>False if the transport has no clock for the source.</returns>
-    public bool TryReadHeardFrame(out long frame)
+    /// <param name="warmingUp">
+    /// True if the position has no valid value yet, but this is expected: the listener does not hear the queue of the last
+    /// restart yet (the value is below the restart frame), or the sources wait for a restart because their queues differ.
+    /// False if the transport cannot report a clock.
+    /// </param>
+    /// <returns>True if the frame is valid.</returns>
+    public bool TryReadHeardFrame(out long frame, out bool warmingUp)
     {
         frame = 0;
+        warmingUp = false;
         if (_sourceCount <= 0 || _decoder is null)
             return false;
+
+        // Queues that differ give a wrong queue start until the restart of the next service.
+        if (_needsRestart)
+        {
+            warmingUp = true;
+            return false;
+        }
 
         AudioSource primary = _sources[0];
         if (!primary.TryGetPlaybackClock(out long sampleFrame, out long latencyNanoseconds))
@@ -153,7 +166,16 @@ internal sealed class CutsceneAudioChannel
 
         long queueStart = _nextFrame - (long)primary.BuffersQueued * ChunkFrames;
         long latencyFrames = (long)((Int128)latencyNanoseconds * _decoder.SampleRate / 1_000_000_000L);
-        frame = Math.Max(_restartFrame, queueStart + sampleFrame - latencyFrames);
+        long heard = queueStart + sampleFrame - latencyFrames;
+
+        // No frame before the restart frame was queued, so the device still plays older output. The clock must not follow it.
+        if (heard < _restartFrame)
+        {
+            warmingUp = true;
+            return false;
+        }
+
+        frame = heard;
         return true;
     }
 
@@ -211,14 +233,16 @@ internal sealed class CutsceneAudioChannel
         _historyCount = 0;
     }
 
-    // Rebuilds the source list when the number of listeners changes. The enumeration of the listener table allocates,
-    // so it runs only on a change and not in each frame.
+    // Rebuilds the source list when the listeners change: a new count or a new listener version, which also catches a swap
+    // at the same count. The enumeration of the listener table allocates, so it runs only on a change and not in each frame.
     private bool RefreshSources()
     {
         AudioSourceComponent component = _component!;
         int count = component.ActiveListenerCount;
-        if (count == _sourceCount)
+        int version = component.ListenerVersion;
+        if (count == _sourceCount && version == _listenerVersion)
             return false;
+        _listenerVersion = version;
 
         RestoreSources();
         if (_sources.Length < count)
