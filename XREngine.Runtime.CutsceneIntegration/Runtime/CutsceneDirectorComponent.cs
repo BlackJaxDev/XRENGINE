@@ -90,6 +90,7 @@ public class CutsceneDirectorComponent : XRComponent
     /// <summary>
     /// Sets the node of a runtime slot. Call this before an open, because an animation track binds its clips
     /// at the open. On an open cutscene, this also changes the slot for the tracks that read the slot each frame.
+    /// The value stays across a close and a later open, until a call with null clears it or the component is destroyed.
     /// </summary>
     /// <param name="slotName">The slot name.</param>
     /// <param name="node">The node to use, or null to clear the slot.</param>
@@ -158,6 +159,7 @@ public class CutsceneDirectorComponent : XRComponent
     protected override void OnDestroying()
     {
         Close();
+        _runtimeSlots.Clear();
         base.OnDestroying();
     }
 

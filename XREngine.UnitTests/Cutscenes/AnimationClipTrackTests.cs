@@ -69,6 +69,15 @@ public sealed class AnimationClipTrackTests
         }
     }
 
+    /// <summary>A component with a value that only a method sets.</summary>
+    private sealed class LevelComponent : XRComponent
+    {
+        public float Level { get; private set; }
+
+        public void SetLevel(float level)
+            => Level = level;
+    }
+
     /// <summary>A transform with a discrete property whose setter throws.</summary>
     private sealed class ThrowingTransform : Transform
     {
@@ -522,6 +531,102 @@ AnimationClip:
         rig.SeekTo(1);
         rig.SeekTo(5);
         ShouldBeNear(rig.Root.Translation, kept, 1e-5f);
+    }
+
+    [TestCase(true)]
+    [TestCase(false)]
+    public void Restore_SharedSlot_RestoresWhenAnyTrackRestores(bool keepTrackFirst)
+    {
+        SceneNode node = PlainNode();
+        FakeResolver resolver = new();
+        resolver.ById[node.ID] = node;
+
+        CutsceneAsset asset = new() { Duration = T(10) };
+        asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.SceneObject, ObjectId = node.ID });
+        CutsceneTrack keep = new TransformTrack { Name = "Keep", BindingSlot = 0, WhenFinished = ECutsceneFinishBehavior.KeepState };
+        CutsceneTrack restore = new AnimationClipTrack { Name = "Restore", BindingSlot = 0, WhenFinished = ECutsceneFinishBehavior.RestoreState };
+        asset.Tracks.Add(keepTrackFirst ? keep : restore);
+        asset.Tracks.Add(keepTrackFirst ? restore : keep);
+
+        CompiledCutscene compiled = CutsceneCompiler.Compile(asset, []);
+        using CutsceneBindingTable table = CutsceneBindingTable.Resolve(compiled, resolver);
+        CutsceneStateSnapshot snapshot = new(table);
+        snapshot.CaptureTransform(0);
+        ((Transform)node.Transform).Translation = new Vector3(1, 2, 3);
+
+        snapshot.Restore(forceAll: false, default);
+
+        ((Transform)node.Transform).Translation.ShouldBe(OriginalPosition);
+    }
+
+    [Test]
+    public void Restore_KeepStateOnly_ForgetsRecord()
+    {
+        SceneNode node = PlainNode();
+        FakeResolver resolver = new();
+        resolver.ById[node.ID] = node;
+
+        CutsceneAsset asset = new() { Duration = T(10) };
+        asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.SceneObject, ObjectId = node.ID });
+        asset.Tracks.Add(new TransformTrack { Name = "Keep", BindingSlot = 0, WhenFinished = ECutsceneFinishBehavior.KeepState });
+
+        CompiledCutscene compiled = CutsceneCompiler.Compile(asset, []);
+        using CutsceneBindingTable table = CutsceneBindingTable.Resolve(compiled, resolver);
+        CutsceneStateSnapshot snapshot = new(table);
+        snapshot.CaptureTransform(0);
+        Vector3 kept = new(1, 2, 3);
+        ((Transform)node.Transform).Translation = kept;
+
+        snapshot.Restore(forceAll: false, default);
+
+        ((Transform)node.Transform).Translation.ShouldBe(kept);
+        snapshot.TryGetTransform(0, out _, out _, out _).ShouldBeFalse();
+    }
+
+    [Test]
+    public void ReturnToOriginal_RestoresOtherMethodMembersOnHumanoid()
+    {
+        (SceneNode root, _) = HumanoidNode();
+        LevelComponent level = root.AddComponent<LevelComponent>()!;
+
+        // A method member on a component that is not the humanoid or the IK solver.
+        PropAnimFloat value = new(2f, false, true);
+        value.Keyframes.Add(new FloatKeyframe(0f, 5f, 0f, EVectorInterpType.Linear));
+        AnimationMember find = new("GetComponentInHierarchy", EAnimationMemberType.Method)
+        {
+            MethodArguments = [nameof(LevelComponent)],
+            AnimatedMethodArgumentIndex = -1,
+            CacheReturnValue = true,
+        };
+        find.Children.Add(new AnimationMember(nameof(LevelComponent.SetLevel), EAnimationMemberType.Method, value)
+        {
+            MethodArguments = [0f],
+            AnimatedMethodArgumentIndex = 0,
+        });
+        AnimationMember sceneNode = new("SceneNode", EAnimationMemberType.Property);
+        sceneNode.Children.Add(find);
+        AnimationClip clip = new(sceneNode) { LengthInSeconds = 2f };
+
+        using Rig rig = MakeRig(root, 10, null, Entry(clip, 1, 2));
+        rig.SeekTo(2);
+        level.Level.ShouldBe(5f);
+
+        // A method has no getter, so its original value is its default argument.
+        rig.SeekTo(5);
+        level.Level.ShouldBe(0f);
+    }
+
+    [Test]
+    public void Fade_OfHumanoidPosedOnlyByBones_ReportsAtFirstWrite()
+    {
+        (SceneNode root, _) = HumanoidNode();
+        Bone(root, "LeftArm").Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 0.3f);
+
+        // The first write has full weight, so a report that waits for a weight below one never comes.
+        using Rig rig = MakeRig(root, 10, null, Entry(HumanoidClip(0.2f, 0.2f), 0, 4));
+        rig.SeekTo(1);
+
+        rig.Player.Diagnostics.Count(d => d.Message.Contains("no readable muscle", StringComparison.Ordinal)).ShouldBe(1);
     }
 
     // ── Lease ───────────────────────────────────────────────────────────

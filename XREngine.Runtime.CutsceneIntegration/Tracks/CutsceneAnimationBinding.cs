@@ -35,6 +35,7 @@ internal sealed class CutsceneAnimationBinding
     private readonly bool _tracksRoot;
     private readonly bool _hasMuscleMember;
     private readonly bool[] _hasLiveOriginal;
+    private readonly bool[] _ownedByDriver;
 
     private readonly Transform[] _hierarchy;
     private readonly Vector3[] _hierarchyTranslations;
@@ -54,7 +55,6 @@ internal sealed class CutsceneAnimationBinding
     private bool _reportedRejection;
     private bool _reportedRebind;
     private bool _reportedUnreadableMuscles;
-    private bool _unreadableMuscles;
 
     private CutsceneAnimationBinding(
         int slot,
@@ -85,6 +85,7 @@ internal sealed class CutsceneAnimationBinding
         _members = new AnimationMember[layout.SamplingApplyMembers.Count];
         _isMethod = new bool[_members.Length];
         _hasLiveOriginal = new bool[_members.Length];
+        _ownedByDriver = new bool[_members.Length];
         bool hasMethodMember = false;
         bool writesRoot = false;
         for (int i = 0; i < _members.Length; i++)
@@ -94,6 +95,9 @@ internal sealed class CutsceneAnimationBinding
             hasMethodMember |= _isMethod[i];
             writesRoot |= ReferenceEquals(_members[i].BoundTarget, node.Transform);
             _hasMuscleMember |= TryGetMuscle(_members[i], out _);
+            _ownedByDriver[i] = humanoid is not null
+                && _isMethod[i]
+                && _members[i].BoundTarget is HumanoidComponent or HumanoidIKSolverComponent;
         }
         _tracksRoot = placesRoot || writesRoot;
 
@@ -236,8 +240,6 @@ internal sealed class CutsceneAnimationBinding
 
         _lease.Acquire(_node);
         CaptureOriginal(snapshot);
-        if (_unreadableMuscles && _totalWeight < 1f)
-            ReportUnreadableMusclesOnce();
 
         float divisor = _totalWeight;
         for (int i = 0; i < _activeCount; i++)
@@ -382,7 +384,8 @@ internal sealed class CutsceneAnimationBinding
             _hierarchyScales[i] = transform.Scale;
         }
 
-        _unreadableMuscles = _hasMuscleMember && _driver is { HasOriginalMuscles: false } && IsAwayFromBindPose();
+        if (_hasMuscleMember && _driver is { HasOriginalMuscles: false } && IsAwayFromBindPose())
+            ReportUnreadableMusclesOnce();
     }
 
     /// <summary>Reads the value of a muscle or an IK weight method from its target. A method has no getter of its own.</summary>
@@ -443,8 +446,9 @@ internal sealed class CutsceneAnimationBinding
 
         for (int i = 0; i < _members.Length; i++)
         {
-            // The driver gave the muscles back and cleared the IK goals, so a humanoid only needs its other members.
-            if (_driver is not null && _isMethod[i])
+            // The driver owns the muscle, Body, root, and IK goal methods: it gave the muscles back and
+            // cleared the goals. A call with a default argument there would stage a new humanoid input.
+            if (_ownedByDriver[i])
                 continue;
 
             // One failed member must not stop the restore of the others, the lease release, or the stop.

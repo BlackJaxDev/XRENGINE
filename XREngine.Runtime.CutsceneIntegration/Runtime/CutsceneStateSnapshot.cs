@@ -178,20 +178,14 @@ public sealed class CutsceneStateSnapshot
     /// </param>
     public void Restore(bool forceAll, ReadOnlySpan<ECutsceneFinishBehavior> perTrack)
     {
+        // First restore each record that a track with the restore setting uses. A record is shared by the
+        // tracks of one slot, so a kept track must not clear it before a later track restores it.
         for (int trackIndex = 0; trackIndex < _table.TrackCount; trackIndex++)
         {
             CutsceneTrack track = _table.GetTrack(trackIndex);
-            ECutsceneFinishBehavior behavior = trackIndex < perTrack.Length ? perTrack[trackIndex] : track.WhenFinished;
             int slot = track.BindingSlot;
-            if ((uint)slot >= (uint)_hasTransform.Length)
+            if ((uint)slot >= (uint)_hasTransform.Length || !ShouldRestore(track, trackIndex, forceAll, perTrack))
                 continue;
-
-            // A kept value is the new original value of the next run.
-            if (!forceAll && behavior != ECutsceneFinishBehavior.RestoreState)
-            {
-                Forget(track, slot);
-                continue;
-            }
 
             if (track is TransformTrack or AnimationClipTrack)
                 RestoreTransform(slot);
@@ -200,6 +194,21 @@ public sealed class CutsceneStateSnapshot
             else if (track is CameraPropertyTrack)
                 RestoreFieldOfView(slot);
         }
+
+        // A record that no track restored keeps its live value, which is the original value of the next run.
+        for (int trackIndex = 0; trackIndex < _table.TrackCount; trackIndex++)
+        {
+            CutsceneTrack track = _table.GetTrack(trackIndex);
+            int slot = track.BindingSlot;
+            if ((uint)slot < (uint)_hasTransform.Length && !ShouldRestore(track, trackIndex, forceAll, perTrack))
+                Forget(track, slot);
+        }
+    }
+
+    private static bool ShouldRestore(CutsceneTrack track, int trackIndex, bool forceAll, ReadOnlySpan<ECutsceneFinishBehavior> perTrack)
+    {
+        ECutsceneFinishBehavior behavior = trackIndex < perTrack.Length ? perTrack[trackIndex] : track.WhenFinished;
+        return forceAll || behavior == ECutsceneFinishBehavior.RestoreState;
     }
 
     /// <summary>
