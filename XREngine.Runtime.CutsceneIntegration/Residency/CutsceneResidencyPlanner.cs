@@ -19,25 +19,13 @@ namespace XREngine.Cutscenes;
 /// descending order.
 /// </para>
 /// </remarks>
-public sealed class CutsceneResidencyPlanner
+public sealed partial class CutsceneResidencyPlanner
 {
-    /// <summary>The default time that a scrub must stay in one place before T1 and T2 work starts: 120 ms.</summary>
-    public const double DefaultDwellSeconds = 0.120;
-
     /// <summary>The default look-ahead at rate 1: 5 seconds. The look-ahead scales with the absolute rate.</summary>
     public const double DefaultLookAheadSeconds = 5.0;
 
     /// <summary>The default window behind the playhead: 0.5 seconds.</summary>
     public const double DefaultLookBehindSeconds = 0.5;
-
-    /// <summary>The default distance that a scrub can move and still count as one place for the dwell gate: 50 ms.</summary>
-    public const double DefaultDwellMoveThresholdSeconds = 0.050;
-
-    /// <summary>The default maximum playback wait at a camera cut: 1 second.</summary>
-    public const double DefaultPlaybackWaitMaximumSeconds = 1.0;
-
-    /// <summary>The largest window span in flicks. It keeps the window ends away from an overflow at a very large rate.</summary>
-    private const long MaxWindowSpan = long.MaxValue / 4;
 
     private readonly IResidencyBackend _backend;
     private readonly Guid[] _assets;
@@ -82,26 +70,11 @@ public sealed class CutsceneResidencyPlanner
     private int _generation;
     private int _pendingProxyCount;
 
-    private int _currentBucket = -1;
-    private int _windowFirst;
-    private int _windowLast = -1;
-
-    private bool _scrubbing;
-    private bool _dwellOpen;
-    private long _dwellAnchor;
-    private double _dwellSeconds;
-
-    private bool _holding;
-    private int _holdBucket = -1;
-    private int _releasedCutBucket = -1;
-    private double _holdSeconds;
-    private int _playbackWaitTimeouts;
-
-    private double _dwellTimeSeconds = DefaultDwellSeconds;
-    private double _playbackWaitMaximumSeconds = DefaultPlaybackWaitMaximumSeconds;
+    private CutsceneTime _lookAhead = CutsceneTime.FromSeconds(DefaultLookAheadSeconds);
+    private CutsceneTime _lookBehind = CutsceneTime.FromSeconds(DefaultLookBehindSeconds);
 
     /// <summary>Creates a planner for one open cutscene.</summary>
-    /// <param name="manifest">The residency manifest of the cutscene.</param>
+    /// <param name="manifest">The residency manifest of the cutscene. Do not change its arrays after this call.</param>
     /// <param name="backend">The backend that loads and releases the levels.</param>
     public CutsceneResidencyPlanner(CutsceneResidencyManifest manifest, IResidencyBackend backend)
     {
@@ -154,9 +127,10 @@ public sealed class CutsceneResidencyPlanner
         Array.Copy(_firstNeeded, _lastNeeded, assetCount);
 
         // Each asset has at most one T0 ticket and one pending ticket in the map at a time.
+        // Late completions of cancelled tickets can also arrive, so the lists have the same capacity.
         _ticketAssets = new Dictionary<long, int>(assetCount * 2);
-        _incoming = new List<ResidencyTicket>(assetCount);
-        _draining = new List<ResidencyTicket>(assetCount);
+        _incoming = new List<ResidencyTicket>(assetCount * 2);
+        _draining = new List<ResidencyTicket>(assetCount * 2);
 
         // Cache the delegates one time, so that a sort does not allocate.
         _compareRequests = CompareRequests;
@@ -174,68 +148,41 @@ public sealed class CutsceneResidencyPlanner
     public CutsceneResidencyManifest Manifest { get; }
 
     /// <summary>
-    /// The time in seconds that a scrub must stay within <see cref="DwellMoveThreshold"/> before T1 and T2 work starts.
-    /// A jump does not use this gate.
+    /// The look-ahead in the direction of travel at rate 1. The window uses this value multiplied by the absolute rate.
+    /// At rate 0 (a pause), the window uses the forward window of rate 1, so a pause keeps the prefetch. It must not be negative.
     /// </summary>
-    public double DwellSeconds
+    public CutsceneTime LookAhead
     {
-        get => _dwellTimeSeconds;
+        get => _lookAhead;
         set
         {
-            ArgumentOutOfRangeException.ThrowIfNegative(value);
-            _dwellTimeSeconds = value;
+            ArgumentOutOfRangeException.ThrowIfNegative(value.Flicks, nameof(value));
+            _lookAhead = value;
         }
     }
 
-    /// <summary>The distance that a scrub can move and still count as one place for the dwell gate.</summary>
-    public CutsceneTime DwellMoveThreshold { get; set; } = CutsceneTime.FromSeconds(DefaultDwellMoveThresholdSeconds);
-
-    /// <summary>The look-ahead in the direction of travel at rate 1. The window uses this value multiplied by the absolute rate.</summary>
-    public CutsceneTime LookAhead { get; set; } = CutsceneTime.FromSeconds(DefaultLookAheadSeconds);
-
-    /// <summary>The window behind the playhead, opposite to the direction of travel. The rate does not scale it.</summary>
-    public CutsceneTime LookBehind { get; set; } = CutsceneTime.FromSeconds(DefaultLookBehindSeconds);
-
-    /// <summary>
-    /// True if forward playback holds at a camera cut until the next shot has its target levels.
-    /// The default is false. A jump or a scrub never holds.
-    /// </summary>
-    public bool PlaybackWaitEnabled { get; set; }
-
-    /// <summary>The maximum time in seconds that one playback wait holds. It must be greater than zero.</summary>
-    public double PlaybackWaitMaximumSeconds
+    /// <summary>The window behind the playhead, opposite to the direction of travel. The rate does not scale it. It must not be negative.</summary>
+    public CutsceneTime LookBehind
     {
-        get => _playbackWaitMaximumSeconds;
+        get => _lookBehind;
         set
         {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
-            _playbackWaitMaximumSeconds = value;
+            ArgumentOutOfRangeException.ThrowIfNegative(value.Flicks, nameof(value));
+            _lookBehind = value;
         }
     }
 
     /// <summary>True after <see cref="Open"/> and before <see cref="Close"/>.</summary>
-    public bool IsOpen => _opened && !_closed;
+    public bool IsOpen => _opened && !IsClosed;
 
-    /// <summary>True after <see cref="Close"/>.</summary>
-    public bool IsClosed => _closed;
+    /// <summary>True after <see cref="Close"/>. Any thread can read it.</summary>
+    public bool IsClosed => Volatile.Read(ref _closed);
 
     /// <summary>The generation of new requests. Each jump increments it.</summary>
     public int Generation => _generation;
 
     /// <summary>The number of T0 loads that did not complete yet. At zero, every asset has its proxy.</summary>
     public int PendingProxyCount => _pendingProxyCount;
-
-    /// <summary>
-    /// True if the playback wait holds now. The caller must keep the clock, and the audio with it,
-    /// at <see cref="PlaybackHoldTime"/> while this value is true.
-    /// </summary>
-    public bool IsHoldingPlayback => _holding;
-
-    /// <summary>The time of the camera cut at which the playback wait holds. It is zero when no wait holds.</summary>
-    public CutsceneTime PlaybackHoldTime => _holding ? _buckets[_holdBucket].Start : CutsceneTime.Zero;
-
-    /// <summary>The number of playback waits that ended at <see cref="PlaybackWaitMaximumSeconds"/> before the targets were resident.</summary>
-    public int PlaybackWaitTimeoutCount => _playbackWaitTimeouts;
 
     /// <summary>
     /// Requests T0 for each asset of the manifest, in the order of the first time that the playhead needs it.
@@ -286,8 +233,8 @@ public sealed class CutsceneResidencyPlanner
             throw new InvalidOperationException("Call Open before Update.");
         if (double.IsNaN(rate))
             throw new ArgumentOutOfRangeException(nameof(rate), "The rate must be a number.");
-        if (!(deltaSeconds >= 0.0))
-            throw new ArgumentOutOfRangeException(nameof(deltaSeconds), "The frame time must be zero or more.");
+        if (!double.IsFinite(deltaSeconds) || deltaSeconds < 0.0)
+            throw new ArgumentOutOfRangeException(nameof(deltaSeconds), "The frame time must be a finite value of zero or more.");
 
         DrainCompletions();
         if (_closed)
@@ -377,38 +324,8 @@ public sealed class CutsceneResidencyPlanner
     }
 
     /// <summary>
-    /// Releases T1 and T2 data under memory pressure, starting with the data that the playhead needs
-    /// farthest from its position in time. T0 data never leaves while the planner is open.
-    /// A later plan can request the released levels again.
-    /// </summary>
-    /// <param name="maxCount">The maximum number of assets to release.</param>
-    /// <returns>The number of assets that released a level.</returns>
-    public int Evict(int maxCount)
-    {
-        if (!IsOpen || maxCount <= 0)
-            return 0;
-
-        int count = 0;
-        for (int i = 0; i < _assets.Length; i++)
-            if (_heldTickets[i].IsValid)
-                _order[count++] = i;
-
-        _order.AsSpan(0, count).Sort(_compareEviction);
-
-        int evicted = Math.Min(count, maxCount);
-        for (int k = 0; k < evicted; k++)
-        {
-            int asset = _order[k];
-            ResidencyTicket held = _heldTickets[asset];
-            _heldTickets[asset] = ResidencyTicket.None;
-            _heldLevels[asset] = 0;
-            _backend.Cancel(held);
-        }
-        return evicted;
-    }
-
-    /// <summary>
     /// Cancels all work, releases all levels, including T0, and stops the playback wait.
+    /// The order is: running work, then held T1 and T2 data, then T0 data.
     /// After this call, no completion runs a callback, and <see cref="Update"/> does nothing.
     /// A second call does nothing.
     /// </summary>
@@ -419,7 +336,7 @@ public sealed class CutsceneResidencyPlanner
             if (_closed)
                 return;
 
-            _closed = true;
+            Volatile.Write(ref _closed, true);
             _incoming.Clear();
             _draining.Clear();
             Volatile.Write(ref _incomingCount, 0);
@@ -501,253 +418,6 @@ public sealed class CutsceneResidencyPlanner
         LoadCompleted?.Invoke(_assets[asset], level);
     }
 
-    private void CancelStalePending()
-    {
-        for (int i = 0; i < _assets.Length; i++)
-            if (_pendingTickets[i].IsValid && _pendingGenerations[i] < _generation)
-                CancelPending(i);
-    }
-
-    private void CancelPending(int asset)
-    {
-        ResidencyTicket ticket = _pendingTickets[asset];
-        if (!ticket.IsValid)
-            return;
-
-        _pendingTickets[asset] = ResidencyTicket.None;
-        _ticketAssets.Remove(ticket.Id);
-        _backend.Cancel(ticket);
-    }
-
-    private void BeginScrub(long position)
-    {
-        _scrubbing = true;
-        _dwellOpen = false;
-        _dwellAnchor = position;
-        _dwellSeconds = 0.0;
-        _dirty = true;
-    }
-
-    private void UpdateDwell(long position, double deltaSeconds)
-    {
-        if (Math.Abs(position - _dwellAnchor) > DwellMoveThreshold.Flicks)
-        {
-            _dwellAnchor = position;
-            _dwellSeconds = 0.0;
-            if (_dwellOpen)
-            {
-                _dwellOpen = false;
-                _dirty = true;
-            }
-            return;
-        }
-
-        if (_dwellOpen)
-            return;
-
-        _dwellSeconds += deltaSeconds;
-        if (_dwellSeconds >= _dwellTimeSeconds)
-        {
-            _dwellOpen = true;
-            _dirty = true;
-        }
-    }
-
-    private void UpdatePlaybackWait(long previous, long position, double rate, int previousBucket, int currentBucket, double deltaSeconds)
-    {
-        if (_holding)
-        {
-            if (!PlaybackWaitEnabled || rate <= 0.0 || TargetsResident(_holdBucket))
-            {
-                ReleaseHold();
-                return;
-            }
-
-            _holdSeconds += deltaSeconds;
-            if (_holdSeconds >= _playbackWaitMaximumSeconds)
-            {
-                _playbackWaitTimeouts++;
-                ReleaseHold();
-            }
-            return;
-        }
-
-        if (!PlaybackWaitEnabled || rate <= 0.0 || currentBucket <= previousBucket)
-            return;
-
-        for (int b = previousBucket + 1; b <= currentBucket; b++)
-        {
-            if (!_buckets[b].StartsAtCut || b == _releasedCutBucket)
-                continue;
-
-            long cut = _bucketStarts[b];
-            if (cut <= previous || cut > position || TargetsResident(b))
-                continue;
-
-            _holding = true;
-            _holdBucket = b;
-            _holdSeconds = 0.0;
-            return;
-        }
-    }
-
-    private void ReleaseHold()
-    {
-        if (!_holding)
-            return;
-
-        _holding = false;
-        _releasedCutBucket = _holdBucket;
-        _holdBucket = -1;
-    }
-
-    private bool TargetsResident(int bucket)
-    {
-        ResidencyEntry[] entries = _buckets[bucket].Entries;
-        for (int e = 0; e < entries.Length; e++)
-        {
-            ResidencyEntry entry = entries[e];
-            if ((int)_backend.GetLevel(_assets[entry.AssetIndex]) < entry.TargetLevel)
-                return false;
-        }
-        return true;
-    }
-
-    private int FindBucket(long position)
-    {
-        int index = Array.BinarySearch(_bucketStarts, position);
-        return index >= 0 ? index : ~index - 1;
-    }
-
-    private void FindWindow(long position, double rate, out int first, out int last)
-    {
-        double scaled = LookAhead.Flicks * Math.Abs(rate);
-        long ahead = scaled >= MaxWindowSpan ? MaxWindowSpan : (long)scaled;
-        long behind = Math.Min(LookBehind.Flicks, MaxWindowSpan);
-
-        long low;
-        long high;
-        if (rate < 0.0)
-        {
-            low = position - ahead;
-            high = position + behind;
-        }
-        else
-        {
-            low = position - behind;
-            high = position + ahead;
-        }
-
-        // The first bucket that ends after the low edge. A bucket end is not part of the bucket.
-        int firstIndex = Array.BinarySearch(_bucketEnds, low);
-        first = firstIndex >= 0 ? firstIndex + 1 : ~firstIndex;
-
-        // The last bucket that starts at or before the high edge.
-        int lastIndex = Array.BinarySearch(_bucketStarts, high);
-        last = lastIndex >= 0 ? lastIndex : ~lastIndex - 1;
-
-        if (first > last)
-        {
-            first = 0;
-            last = -1;
-        }
-    }
-
-    private void Replan()
-    {
-        _dirty = false;
-
-        int assetCount = _assets.Length;
-        Array.Clear(_desiredLevels);
-        Array.Fill(_untilNeeded, long.MaxValue);
-        Array.Clear(_coverages);
-
-        long position = _position;
-        bool upperAllowed = !_scrubbing || _dwellOpen;
-        if (upperAllowed)
-        {
-            for (int b = _windowFirst; b <= _windowLast; b++)
-            {
-                // The nearest time of the bucket to the playhead. It is the playhead itself for the current bucket.
-                long deadline = Math.Clamp(position, _bucketStarts[b], _bucketEnds[b] - 1);
-                long until = Math.Abs(deadline - position);
-
-                ResidencyEntry[] entries = _buckets[b].Entries;
-                for (int e = 0; e < entries.Length; e++)
-                {
-                    ResidencyEntry entry = entries[e];
-                    int asset = entry.AssetIndex;
-                    if (entry.TargetLevel > _desiredLevels[asset])
-                        _desiredLevels[asset] = entry.TargetLevel;
-                    if (until < _untilNeeded[asset])
-                    {
-                        _untilNeeded[asset] = until;
-                        _deadlines[asset] = deadline;
-                    }
-                    if (entry.ScreenCoverage > _coverages[asset])
-                        _coverages[asset] = entry.ScreenCoverage;
-                }
-            }
-        }
-
-        int count = 0;
-        for (int i = 0; i < assetCount; i++)
-        {
-            int desired = _desiredLevels[i];
-            if (desired <= 0)
-            {
-                CancelPending(i);
-                continue;
-            }
-
-            _lastNeeded[i] = _deadlines[i];
-            int resident = Math.Max((int)_backend.GetLevel(_assets[i]), _heldLevels[i]);
-            if (desired <= resident)
-            {
-                CancelPending(i);
-                continue;
-            }
-
-            int next = Math.Max(resident + 1, 1);
-            if (_pendingTickets[i].IsValid && _pendingLevels[i] == next && _pendingGenerations[i] == _generation)
-                continue;
-
-            CancelPending(i);
-            _requestLevels[i] = next;
-            _order[count++] = i;
-        }
-
-        _order.AsSpan(0, count).Sort(_compareRequests);
-
-        for (int k = 0; k < count && !_closed; k++)
-        {
-            int asset = _order[k];
-            ResidencyRequest request = new(_assets[asset], _requestLevels[asset], new CutsceneTime(_deadlines[asset]), _coverages[asset], _generation);
-            ResidencyTicket ticket = _backend.Request(in request);
-            if (!ticket.IsValid)
-                continue;
-
-            _pendingTickets[asset] = ticket;
-            _pendingLevels[asset] = request.TargetLevel;
-            _pendingGenerations[asset] = _generation;
-            _ticketAssets[ticket.Id] = asset;
-        }
-    }
-
-    private int CompareRequests(int left, int right)
-    {
-        int result = _requestLevels[left].CompareTo(_requestLevels[right]);
-        if (result != 0)
-            return result;
-
-        result = _untilNeeded[left].CompareTo(_untilNeeded[right]);
-        if (result != 0)
-            return result;
-
-        result = _coverages[right].CompareTo(_coverages[left]);
-        return result != 0 ? result : left.CompareTo(right);
-    }
-
     private int CompareProxyRequests(int left, int right)
     {
         int result = _firstNeeded[left].CompareTo(_firstNeeded[right]);
@@ -756,23 +426,5 @@ public sealed class CutsceneResidencyPlanner
 
         result = _maxCoverage[right].CompareTo(_maxCoverage[left]);
         return result != 0 ? result : left.CompareTo(right);
-    }
-
-    private int CompareEviction(int left, int right)
-    {
-        long leftDistance = DistanceFromPlayhead(_lastNeeded[left]);
-        long rightDistance = DistanceFromPlayhead(_lastNeeded[right]);
-        int result = rightDistance.CompareTo(leftDistance);
-        return result != 0 ? result : left.CompareTo(right);
-    }
-
-    private long DistanceFromPlayhead(long time)
-    {
-        // An asset that no bucket needs has the time long.MaxValue. A subtraction must not overflow.
-        if (time == long.MaxValue)
-            return long.MaxValue;
-
-        long distance = time - _position;
-        return distance < 0 ? -distance : distance;
     }
 }

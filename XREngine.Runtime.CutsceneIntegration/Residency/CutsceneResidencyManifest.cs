@@ -3,6 +3,8 @@ namespace XREngine.Cutscenes;
 /// <summary>
 /// The residency data of a cutscene: a shared table of assets and the buckets that refer to it.
 /// The buckets are in time order and do not overlap.
+/// The constructor checks the data one time. Do not change the arrays after that, because a planner
+/// copies the bucket times when it is created.
 /// </summary>
 public sealed class CutsceneResidencyManifest
 {

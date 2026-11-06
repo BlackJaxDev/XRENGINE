@@ -127,9 +127,83 @@ public sealed class CutsceneResidencyPlannerTests
         CutsceneResidencyManifest manifest = new([A], [Bucket(5.0, 5.25, new ResidencyEntry(0, 2, 0.5f))]);
         CutsceneResidencyPlanner planner = Create(manifest, out FakeResidencyBackend backend);
 
+        planner.Update(S(5.0), 0.0, ESeekIntent.Scrub, Frame);
+        planner.Update(S(5.0), 0.0, null, Frame);
+        backend.UpperRequests.ShouldBeEmpty();
+
         planner.Update(S(5.1), 0.0, ESeekIntent.Jump, Frame);
 
+        ResidencyRequest request = backend.UpperRequests.Single().Request;
+        request.AssetId.ShouldBe(A);
+        request.Generation.ShouldBe(1);
+    }
+
+    [Test]
+    public void Update_Pause_KeepsForwardPrefetch()
+    {
+        CutsceneResidencyManifest manifest = new([A], [Bucket(13.0, 13.25, new ResidencyEntry(0, 1, 0.5f))]);
+        CutsceneResidencyPlanner planner = Create(manifest, out FakeResidencyBackend backend);
+
+        planner.Update(S(10.0), 1.0, null, Frame);
         backend.UpperRequests.Single().Request.AssetId.ShouldBe(A);
+
+        planner.Update(S(10.0), 0.0, null, Frame);
+
+        backend.Cancelled.ShouldBeEmpty();
+        backend.UpperRequests.Count().ShouldBe(1);
+
+        // A pause after reverse play also uses the forward window.
+        CutsceneResidencyPlanner reverse = Create(manifest, out FakeResidencyBackend reverseBackend);
+        reverse.Update(S(10.0), -1.0, null, Frame);
+        reverseBackend.UpperRequests.ShouldBeEmpty();
+        reverse.Update(S(10.0), 0.0, null, Frame);
+        reverseBackend.UpperRequests.Single().Request.AssetId.ShouldBe(A);
+    }
+
+    [Test]
+    public void Update_SortsBucketsBehindPlayheadAfterBucketsAhead()
+    {
+        CutsceneResidencyManifest manifest = new(
+            [A, B],
+            [
+                Bucket(9.6, 9.7, new ResidencyEntry(0, 1, 0.5f)),
+                Bucket(10.5, 10.75, new ResidencyEntry(1, 1, 0.5f)),
+            ]);
+        CutsceneResidencyPlanner planner = Create(manifest, out FakeResidencyBackend backend);
+
+        planner.Update(S(10.0), 1.0, null, Frame);
+
+        backend.UpperRequests.Select(r => r.Request.AssetId).ShouldBe([B, A]);
+    }
+
+    [Test]
+    public void Update_KeepsPendingTicketThatCompletesBetweenDrainAndPlan()
+    {
+        CutsceneResidencyManifest manifest = new(
+            [A, B],
+            [Bucket(0.0, 0.25, new ResidencyEntry(0, 1, 0.5f), new ResidencyEntry(1, 1, 0.5f))]);
+        CutsceneResidencyPlanner planner = Create(manifest, out FakeResidencyBackend backend);
+        planner.Update(CutsceneTime.Zero, 1.0, null, Frame);
+        ResidencyTicket upperA = backend.UpperRequests.Single(r => r.Request.AssetId == A).Ticket;
+        ResidencyTicket upperB = backend.UpperRequests.Single(r => r.Request.AssetId == B).Ticket;
+
+        // The handler of A runs after the drain and before the plan. B completes there, as on a worker thread.
+        List<(Guid Asset, int Level)> completed = [];
+        planner.LoadCompleted += (asset, level) =>
+        {
+            completed.Add((asset, level));
+            if (asset == A)
+                backend.Complete(upperB);
+        };
+
+        backend.Complete(upperA);
+        planner.Update(CutsceneTime.Zero, 1.0, null, Frame);
+        backend.Cancelled.ShouldNotContain(upperB);
+
+        planner.Update(CutsceneTime.Zero, 1.0, null, Frame);
+        completed.ShouldBe([(A, 1), (B, 1)]);
+        backend.Cancelled.ShouldBeEmpty();
+        backend.GetLevel(B).ShouldBe(EResidencyLevel.Coarse);
     }
 
     [Test]
@@ -199,7 +273,7 @@ public sealed class CutsceneResidencyPlannerTests
         planner.Close();
 
         planner.IsClosed.ShouldBeTrue();
-        backend.Cancelled.ShouldBe([upperB, upperA, proxyA, proxyB], ignoreOrder: true);
+        backend.Cancelled.ShouldBe([upperB, upperA, proxyA, proxyB]);
 
         int requestCount = backend.Requests.Count;
         int cancelCount = backend.Cancelled.Count;
@@ -254,6 +328,7 @@ public sealed class CutsceneResidencyPlannerTests
 
         int requestCount = backend.Requests.Count;
         int cancelCount = backend.Cancelled.Count;
+        int getLevelCount = backend.GetLevelCalls;
         long before = GC.GetAllocatedBytesForCurrentThread();
         RunPlayFrames(planner);
         long after = GC.GetAllocatedBytesForCurrentThread();
@@ -261,6 +336,38 @@ public sealed class CutsceneResidencyPlannerTests
         (after - before).ShouldBe(0);
         backend.Requests.Count.ShouldBe(requestCount);
         backend.Cancelled.Count.ShouldBe(cancelCount);
+
+        // Each plan reads the levels, so no call means that no frame planned again.
+        backend.GetLevelCalls.ShouldBe(getLevelCount);
+    }
+
+    [Test]
+    public void Evict_TakesAssetsOutsideWindowBeforeAssetsInside()
+    {
+        CutsceneResidencyManifest manifest = new(
+            [A, B, C],
+            [
+                Bucket(9.0, 9.25, new ResidencyEntry(0, 1, 0.5f)),
+                Bucket(11.0, 11.25, new ResidencyEntry(2, 1, 0.5f)),
+                Bucket(14.75, 15.0, new ResidencyEntry(1, 1, 0.5f)),
+            ]);
+        CutsceneResidencyPlanner planner = Create(manifest, out FakeResidencyBackend backend);
+        planner.Update(S(9.0), 2.0, null, Frame);
+        Dictionary<Guid, ResidencyTicket> upper = backend.UpperRequests.ToDictionary(r => r.Request.AssetId, r => r.Ticket);
+        upper.Count.ShouldBe(3);
+        foreach (ResidencyTicket ticket in upper.Values)
+            backend.Complete(ticket);
+        planner.Update(S(9.0), 2.0, null, Frame);
+
+        // At 10 s and rate 1, A (last needed at 9 s) is outside the window. B (14.75 s) and C (11 s) are inside.
+        planner.Update(S(10.0), 1.0, null, Frame);
+        backend.Cancelled.ShouldBeEmpty();
+
+        planner.Evict(1).ShouldBe(1);
+        backend.Cancelled.ShouldBe([upper[A]]);
+
+        planner.Evict(2).ShouldBe(2);
+        backend.Cancelled.ShouldBe([upper[A], upper[B], upper[C]]);
     }
 
     [Test]
@@ -371,6 +478,11 @@ public sealed class CutsceneResidencyPlannerTests
         held.IsHoldingPlayback.ShouldBeTrue();
         held.Update(S(1.5), 1.0, ESeekIntent.Jump, Frame);
         held.IsHoldingPlayback.ShouldBeFalse();
+
+        CutsceneResidencyPlanner noCut = CreateCutPlanner(out _, startsAtCut: false);
+        noCut.Update(S(0.5), 1.0, null, Frame);
+        noCut.Update(S(1.01), 1.0, null, Frame);
+        noCut.IsHoldingPlayback.ShouldBeFalse();
     }
 
     [Test]
@@ -398,13 +510,13 @@ public sealed class CutsceneResidencyPlannerTests
             planner.Update(CutsceneTime.FromSeconds(0.1), 0.0, null, Frame);
     }
 
-    private static CutsceneResidencyPlanner CreateCutPlanner(out FakeResidencyBackend backend)
+    private static CutsceneResidencyPlanner CreateCutPlanner(out FakeResidencyBackend backend, bool startsAtCut = true)
     {
         CutsceneResidencyManifest manifest = new(
             [A, B],
             [
                 Bucket(0.0, 1.0, new ResidencyEntry(0, 1, 0.5f)),
-                new ResidencyBucket(S(1.0), S(2.0), [new ResidencyEntry(1, 2, 0.5f)], startsAtCut: true),
+                new ResidencyBucket(S(1.0), S(2.0), [new ResidencyEntry(1, 2, 0.5f)], startsAtCut),
             ]);
         CutsceneResidencyPlanner planner = Create(manifest, out backend);
         planner.PlaybackWaitEnabled = true;

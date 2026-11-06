@@ -47,22 +47,32 @@ internal sealed class FakeResidencyBackend : IResidencyBackend
             _levels.Remove(request.AssetId);
     }
 
+    /// <summary>The number of calls to <see cref="GetLevel"/>. A plan calls it, so a frame with no plan does not.</summary>
+    public int GetLevelCalls { get; private set; }
+
     public EResidencyLevel GetLevel(Guid assetId)
-        => _levels.TryGetValue(assetId, out EResidencyLevel level) ? level : EResidencyLevel.None;
+    {
+        GetLevelCalls++;
+        return _levels.TryGetValue(assetId, out EResidencyLevel level) ? level : EResidencyLevel.None;
+    }
 
     /// <summary>Sets the resident level of an asset, as a cache would.</summary>
     public void SetLevel(Guid assetId, EResidencyLevel level)
         => _levels[assetId] = level;
 
-    /// <summary>Completes the work of a ticket and reports it to the planner.</summary>
-    public void Complete(ResidencyTicket ticket)
+    /// <summary>
+    /// Completes the work of a ticket. With <paramref name="notify"/> false, the level is resident but the planner
+    /// gets no report yet, as with a worker thread that completes between the drain and the plan of an update.
+    /// </summary>
+    public void Complete(ResidencyTicket ticket, bool notify = true)
     {
         ResidencyRequest request = _requestsByTicket[ticket.Id];
         _complete.Add(ticket.Id);
         EResidencyLevel level = (EResidencyLevel)request.TargetLevel;
-        if (GetLevel(request.AssetId) < level)
+        if (!_levels.TryGetValue(request.AssetId, out EResidencyLevel current) || current < level)
             _levels[request.AssetId] = level;
-        Planner?.NotifyCompleted(ticket);
+        if (notify)
+            Planner?.NotifyCompleted(ticket);
     }
 
     private bool HasCompleteProxy(Guid assetId)

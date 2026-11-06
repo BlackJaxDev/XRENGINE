@@ -21,7 +21,11 @@ public interface IResidencyBackend
     /// <param name="ticket">The ticket to cancel.</param>
     void Cancel(ResidencyTicket ticket);
 
-    /// <summary>Gets the highest level of an asset that is resident now.</summary>
+    /// <summary>
+    /// Gets the highest level of an asset that is resident now. Set the level before the call to
+    /// <see cref="CutsceneResidencyPlanner.NotifyCompleted"/>. The planner does not hold a level that only
+    /// a cache supplies, with no ticket. The backend can release that data at any time.
+    /// </summary>
     /// <param name="assetId">The asset.</param>
     EResidencyLevel GetLevel(Guid assetId);
 }

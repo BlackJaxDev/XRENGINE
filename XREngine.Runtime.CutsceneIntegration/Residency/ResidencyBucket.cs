@@ -26,7 +26,10 @@ public sealed class ResidencyBucket
     /// <summary>The end of the range. The range does not include it.</summary>
     public CutsceneTime End { get; }
 
-    /// <summary>The assets that the range needs.</summary>
+    /// <summary>
+    /// The assets that the range needs. The manifest checks the entries one time, when it is created.
+    /// Do not change the array after that.
+    /// </summary>
     public ResidencyEntry[] Entries { get; }
 
     /// <summary>True if a camera cut occurs at <see cref="Start"/>. The playback wait holds only at a cut.</summary>
