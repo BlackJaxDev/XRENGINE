@@ -64,7 +64,10 @@ The track streams the active clip with an `IStreamingAudioDecoder` (`VorbisStrea
 | Jump seek to a new time during playback | Every active source stops, the decoder seeks, and the sources play again from the new time. |
 | Pause, scrub (with or without `BeginScrub`), stop, or any rate other than 1 | The sources stop and their gain is zero. Playback at rate 1 starts again from the current time. |
 | A listener comes into range | All sources of the track restart together, so they stay aligned. |
+| A source runs out of buffers, for example after a long frame | The sources restart at the cutscene time, so the sound stays aligned with the picture. Until the restart, the clock does not read the old position. |
 | No clip, or a time after the clip duration | The sources stop. A `Hold` clip has no sound after its duration. |
+
+`Pause`, `BeginScrub`, and `SetRate` with a rate other than one stop the sources in the call itself, because a host can skip the ticks of a player that does not play. The edit-mode preview does this.
 
 An audio track plays one clip at a time. An overlapping clip on the same track adds one diagnostic. A missing component and a file that does not open add one diagnostic each.
 

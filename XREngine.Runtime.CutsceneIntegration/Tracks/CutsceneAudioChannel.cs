@@ -135,7 +135,10 @@ internal sealed class CutsceneAudioChannel
             return;
         }
 
-        if (!_streaming || restart || _needsRestart)
+        // A source that ran out of buffers, for example after a long frame, stops. OpenAL then counts each buffer that is
+        // queued on it as played at once, so a refill cannot fill the queue. A restart at the cutscene time rewinds the
+        // sources and keeps the sound aligned with the picture.
+        if (!_streaming || restart || _needsRestart || IsStarved())
             Restart(targetFrame);
         else
             Pump();
@@ -150,7 +153,8 @@ internal sealed class CutsceneAudioChannel
     /// <param name="frame">The heard frame in the file.</param>
     /// <param name="warmingUp">
     /// True if the position has no valid value yet, but this is expected: the listener does not hear the queue of the last
-    /// restart yet (the value is below the restart frame), or the sources wait for a restart because their queues differ.
+    /// restart yet (the value is below the restart frame), or the sources wait for a restart because their queues differ
+    /// or because the first source ran out of buffers.
     /// A warm-up that lasts longer than <see cref="WarmUpBoundSeconds"/> is a lost clock, so the value is then false.
     /// False also if the transport cannot report a clock.
     /// </param>
@@ -162,8 +166,9 @@ internal sealed class CutsceneAudioChannel
         if (_sourceCount <= 0 || _decoder is null)
             return false;
 
-        // Queues that differ give a wrong queue start until the restart of the next service.
-        if (_needsRestart)
+        // Queues that differ give a wrong queue start until the restart of the next service. A source that ran out of
+        // buffers stopped at the end of its queue, so its position is old too. The next service restarts both.
+        if (_needsRestart || IsStarved())
             return WarmUp(deltaSeconds, out warmingUp);
 
         AudioSource primary = _sources[0];
@@ -340,6 +345,10 @@ internal sealed class CutsceneAudioChannel
             PlaySources();
     }
 
+    // True if the first source stopped before the end of the data, so its queue ran out.
+    private bool IsStarved()
+        => !_endOfData && !_sources[0].IsPlaying;
+
     private void Pump()
     {
         for (int i = 0; i < _sourceCount; i++)
@@ -351,7 +360,7 @@ internal sealed class CutsceneAudioChannel
 
         Fill();
 
-        // A source that ran out of buffers stops. Start it again when new buffers are in its queue.
+        // After the last buffer of the data, a source that played its queue stops. Start it again if new buffers are in its queue.
         AudioSource primary = _sources[0];
         if (!primary.IsPlaying && primary.BuffersQueued > 0)
             PlaySources();
@@ -366,7 +375,9 @@ internal sealed class CutsceneAudioChannel
         bool stereo = channels == 2;
         short[] pcm = stereo ? _stereo : _mono;
 
-        while (!_endOfData && _sources[0].BuffersQueued < target)
+        // The loop adds at most the target count of buffers. A source that does not keep its queued buffers, for example a
+        // stopped OpenAL source, then cannot make one call decode the rest of the file.
+        for (int added = 0; added < target && !_endOfData && _sources[0].BuffersQueued < target; added++)
         {
             int wanted = (int)Math.Min(ChunkFrames, _endFrame - _readFrame);
             int frames = wanted > 0 ? ReadFrames(wanted) : 0;

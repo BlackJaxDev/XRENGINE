@@ -168,13 +168,21 @@ public sealed class CutscenePlayer
             State = ECutsceneTransportState.Playing;
     }
 
-    /// <summary>Holds the position.</summary>
+    /// <summary>Holds the position. The audio sources stop at once, also if no tick follows.</summary>
     public void Pause()
     {
         if (State == ECutsceneTransportState.Scrubbing)
             _stateBeforeScrub = ECutsceneTransportState.Paused;
         else
             State = ECutsceneTransportState.Paused;
+        SilenceAudioIfInaudible();
+    }
+
+    // A host can skip the ticks of a player that does not play, so the sources stop here and not at the next tick.
+    private void SilenceAudioIfInaudible()
+    {
+        if (State != ECutsceneTransportState.Playing || Math.Abs(_clock.Rate - 1.0) > 1e-9)
+            _audio.SetTransport(playing: false, _clock.Rate);
     }
 
     /// <summary>
@@ -216,10 +224,13 @@ public sealed class CutscenePlayer
             Discontinuity?.Invoke(new CutsceneDiscontinuity(from, CutsceneTime.Zero, ESeekIntent.Jump));
     }
 
-    /// <summary>Sets the playback rate. A negative value plays backward.</summary>
+    /// <summary>Sets the playback rate. A negative value plays backward. A rate other than one stops the audio sources at once.</summary>
     /// <param name="rate">The new rate.</param>
     public void SetRate(double rate)
-        => _clock.Rate = rate;
+    {
+        _clock.Rate = rate;
+        SilenceAudioIfInaudible();
+    }
 
     /// <summary>
     /// Asks for a new position. The player limits the target to the range from zero to the duration.
@@ -262,13 +273,14 @@ public sealed class CutscenePlayer
     /// <summary>True if <see cref="Finished"/> was raised for the current stay at the end.</summary>
     public bool FinishedRaised => _finishedRaised;
 
-    /// <summary>Starts a scrub. The clock does not move the position until <see cref="EndScrub"/>.</summary>
+    /// <summary>Starts a scrub. The clock does not move the position until <see cref="EndScrub"/>. The audio sources stop at once.</summary>
     public void BeginScrub()
     {
         if (State == ECutsceneTransportState.Scrubbing)
             return;
         _stateBeforeScrub = State;
         State = ECutsceneTransportState.Scrubbing;
+        SilenceAudioIfInaudible();
     }
 
     /// <summary>Moves the position during a scrub.</summary>

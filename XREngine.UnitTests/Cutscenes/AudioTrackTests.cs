@@ -40,6 +40,7 @@ public sealed class AudioTrackTests
         public readonly List<string> Log = [];
         public int Processed;
         public bool Playing;
+        public bool Starved;
         public float Gain = 1.0f;
         public long SampleFrame;
     }
@@ -105,6 +106,7 @@ public sealed class AudioTrackTests
         {
             FakeSource s = Get(source);
             s.Playing = true;
+            s.Starved = false;
             if (Recording)
                 s.Log.Add("play");
         }
@@ -120,7 +122,12 @@ public sealed class AudioTrackTests
 
         public void Pause(AudioSourceHandle source) => Get(source).Playing = false;
 
-        public void Rewind(AudioSourceHandle source) => Get(source).Playing = false;
+        public void Rewind(AudioSourceHandle source)
+        {
+            FakeSource s = Get(source);
+            s.Playing = false;
+            s.Starved = false;
+        }
 
         public void SetSourceBuffer(AudioSourceHandle source, AudioBufferHandle buffer) { }
 
@@ -130,6 +137,10 @@ public sealed class AudioTrackTests
             foreach (AudioBufferHandle buffer in buffers)
             {
                 s.Queue.Add(buffer.Id);
+
+                // OpenAL Soft counts a buffer that is queued on a source that ran out of data as played at once.
+                if (s.Starved)
+                    s.Processed++;
                 if (Recording)
                     s.Log.Add($"queue {_firstSample[buffer.Id]}");
             }
@@ -181,6 +192,17 @@ public sealed class AudioTrackTests
         {
             foreach (FakeSource source in Sources.Values)
                 source.SampleFrame = frame;
+        }
+
+        /// <summary>Plays every queued buffer of each source and stops it, as the device does when the queue runs out.</summary>
+        public void StarveAll()
+        {
+            foreach (FakeSource source in Sources.Values)
+            {
+                source.Playing = false;
+                source.Starved = true;
+                source.Processed = source.Queue.Count;
+            }
         }
 
         /// <summary>Marks the first queued buffer of each source as played, as the device does.</summary>
@@ -426,6 +448,59 @@ public sealed class AudioTrackTests
         rig.Player.Position.ShouldBe(CutsceneTime.FromSamples(160 + 4000 - 400, SampleRate));
         rig.Player.Clock.Mode.ShouldBe(ECutsceneClockMode.AudioDisciplined);
         rig.Player.IsAudioClockFallback.ShouldBeFalse();
+    }
+
+    [Test]
+    public void PauseRateAndScrub_SilenceTheSources_WithoutATick()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        // A preview host does not tick a paused player, so the sources must stop in the call itself.
+        rig.Player.Pause();
+        foreach (FakeSource source in rig.AllSources)
+        {
+            source.Playing.ShouldBeFalse();
+            source.Gain.ShouldBe(0.0f);
+        }
+
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.AllSources.ShouldAllBe(source => source.Playing);
+        rig.Player.SetRate(2.0);
+        rig.AllSources.ShouldAllBe(source => !source.Playing && source.Gain == 0.0f);
+
+        rig.Player.SetRate(1.0);
+        rig.Player.Tick(0.02);
+        rig.AllSources.ShouldAllBe(source => source.Playing);
+        rig.Player.BeginScrub();
+        rig.AllSources.ShouldAllBe(source => !source.Playing && source.Gain == 0.0f);
+    }
+
+    [Test]
+    public void StarvedSource_RestartsAtTheCutsceneTime_AndDoesNotDecodeTheRestOfTheFile()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        // A long frame lets the queue run out. A buffer queued on such a source is played at once.
+        foreach (FakeTransport transport in rig.Transports)
+        {
+            transport.StarveAll();
+            transport.ClearLogs();
+        }
+        rig.Player.Tick(0.5);
+
+        foreach (FakeSource source in rig.AllSources)
+        {
+            source.Playing.ShouldBeTrue();
+            source.Queue.Count.ShouldBe(4);
+            source.Processed.ShouldBe(0);
+            FirstQueuedSample(source).ShouldBeInRange((int)(rig.Player.Position.ToSeconds() * SampleRate) - 1, (int)(rig.Player.Position.ToSeconds() * SampleRate) + 1);
+        }
+        rig.Player.AudioHardResyncCount.ShouldBe(0);
     }
 
     [Test]
