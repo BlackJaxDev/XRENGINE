@@ -223,6 +223,13 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public EOpacityMapMode OpacityMapMode { get; set; } = EOpacityMapMode.Auto;
 
     /// <summary>
+    /// Controls how the surface-detail texture (normal, bump or height slot) is used: an RGB normal map,
+    /// a bump map (height-derived lighting normals), or a height map (parallax occlusion mapping plus
+    /// height-derived normals). Auto classifies the texture content.
+    /// </summary>
+    public ESurfaceDetailMapMode SurfaceDetailMapMode { get; set; } = ESurfaceDetailMapMode.Auto;
+
+    /// <summary>
     /// Enables Assimp multithreading when the Assimp backend is used.
     /// </summary>
     [DefaultValue(true)]

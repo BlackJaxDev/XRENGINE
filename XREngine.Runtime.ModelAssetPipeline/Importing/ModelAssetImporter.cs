@@ -1101,18 +1101,37 @@ namespace XREngine
         private static XRTexture? ResolveTexture(XRTexture[] textureList, int textureIndex)
             => textureIndex >= 0 && textureIndex < textureList.Length ? textureList[textureIndex] : null;
 
-        private static int ResolveSurfaceDetailTextureIndex(List<TextureSlot> textures, out bool isHeightMap)
+        /// <summary>
+        /// Resolves the surface-detail texture and how it is used. A normal slot wins over a height
+        /// (bump) slot. <see cref="ModelImportOptions.SurfaceDetailMapMode"/> selects the use; Auto
+        /// classifies the texture content with <see cref="SurfaceDetailMapClassifier"/> because OBJ
+        /// <c>map_bump</c> files can be height fields or embossed bump maps.
+        /// </summary>
+        /// <param name="usesHeightMap">True for a bump or height map (height-derived lighting normals).</param>
+        /// <param name="usesParallax">True for a height map (parallax occlusion mapping).</param>
+        private static int ResolveSurfaceDetailTexture(
+            List<TextureSlot> textures,
+            XRTexture[] textureList,
+            out bool usesHeightMap,
+            out bool usesParallax)
         {
-            int normalIndex = ResolveTextureIndex(textures, TextureType.Normals, TextureType.NormalCamera);
-            if (normalIndex >= 0)
-            {
-                isHeightMap = false;
-                return normalIndex;
-            }
+            usesHeightMap = false;
+            usesParallax = false;
+            int index = ResolveTextureIndex(textures, TextureType.Normals, TextureType.NormalCamera);
+            bool normalSlot = index >= 0;
+            if (!normalSlot)
+                index = ResolveTextureIndex(textures, TextureType.Height);
+            if (index < 0)
+                return index;
 
-            int heightIndex = ResolveTextureIndex(textures, TextureType.Height);
-            isHeightMap = heightIndex >= 0;
-            return heightIndex;
+            ESurfaceDetailMapMode mode = _currentImportOptions.Value?.SurfaceDetailMapMode ?? ESurfaceDetailMapMode.Auto;
+            if (mode == ESurfaceDetailMapMode.Auto &&
+                !SurfaceDetailMapClassifier.TryClassifyFile((ResolveTexture(textureList, index) as XRTexture2D)?.FilePath, out mode))
+                mode = normalSlot ? ESurfaceDetailMapMode.Normal : ESurfaceDetailMapMode.Bump;
+
+            usesHeightMap = mode is ESurfaceDetailMapMode.Height or ESurfaceDetailMapMode.Bump;
+            usesParallax = mode == ESurfaceDetailMapMode.Height;
+            return index;
         }
 
         private static void AppendSurfaceDetailParameters(ref ShaderVar[] parameters, bool isHeightMap)
@@ -1126,23 +1145,6 @@ namespace XREngine
             => isHeightMap
                 ? ShaderHelper.CreateDefinedShaderVariant(shader, ImportedHeightMapShaderDefine) ?? shader
                 : shader;
-
-        /// <summary>
-        /// UV0 domain of the material that the importer creates on this thread: true when a mesh that
-        /// uses the material has UV0 outside the unit square (a tiled surface). Null outside
-        /// <see cref="ProcessMaterial"/>, for example for factory calls from other importers.
-        /// </summary>
-        [ThreadStatic]
-        private static bool? t_importedMaterialUv0Tiled;
-
-        /// <summary>
-        /// True when an imported height map should drive parallax occlusion mapping. Parallax needs a
-        /// tiled UV layout: on atlas-mapped meshes (UV0 inside [0, 1], for example sculpted props) the
-        /// parallax ray crosses UV island borders and samples unrelated texels. Those materials keep
-        /// height-to-normal shading only.
-        /// </summary>
-        private static bool UsesImportedParallax(bool usesHeightMap)
-            => usesHeightMap && t_importedMaterialUv0Tiled == true;
 
         /// <summary>
         /// Selects the deferred GBuffer shader for a surface-detail texture. A height map selects the
@@ -1173,28 +1175,6 @@ namespace XREngine
             parameters[start + 2] = new ShaderInt(ImportedParallaxMaxSteps, "ParallaxMaxSteps");
             parameters[start + 3] = new ShaderInt(ImportedParallaxRefineSteps, "ParallaxRefineSteps");
             parameters[start + 4] = new ShaderInt(0, ImportedParallaxSilhouetteParameter);
-        }
-
-        /// <summary>
-        /// Returns true when a scene mesh that uses <paramref name="materialIndex"/> has a UV0 coordinate
-        /// outside the unit square, with a small tolerance for authoring noise at the edges.
-        /// </summary>
-        private static bool IsMaterialUv0Tiled(AScene scene, int materialIndex)
-        {
-            const float tolerance = 1e-3f;
-            foreach (Mesh mesh in scene.Meshes)
-            {
-                if (mesh.MaterialIndex != materialIndex ||
-                    mesh.TextureCoordinateChannelCount <= 0 ||
-                    mesh.TextureCoordinateChannels[0] is not { Count: > 0 } uvs)
-                    continue;
-
-                foreach (Vector3 uv in uvs)
-                    if (uv.X < -tolerance || uv.X > 1.0f + tolerance || uv.Y < -tolerance || uv.Y > 1.0f + tolerance)
-                        return true;
-            }
-
-            return false;
         }
 
         /// <summary>
@@ -1264,9 +1244,7 @@ namespace XREngine
 
             int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
 
-            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
-
-            bool usesParallax = UsesImportedParallax(usesHeightMap);
+            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out bool usesParallax);
             int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
             int metallicIndex = ResolveTextureIndex(textures, TextureType.Metalness);
@@ -1520,7 +1498,7 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
+            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out _);
 
             int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
@@ -1934,9 +1912,7 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
-
-            bool usesParallax = UsesImportedParallax(usesHeightMap);
+            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out bool usesParallax);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
 
             XRTexture? diffuseSrc = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
@@ -3088,17 +3064,7 @@ namespace XREngine
                     textures.AddRange(maps);
             }
             ReadProperties(matInfo, out string name, out TextureFlags flags, out ShadingMode mode, out var propDic);
-            bool? previousUv0Tiled = t_importedMaterialUv0Tiled;
-            t_importedMaterialUv0Tiled = IsMaterialUv0Tiled(scene, materialIndex);
-            XRMaterial material;
-            try
-            {
-                material = _materialFactory(SourceFilePath, name, textures, flags, mode, propDic);
-            }
-            finally
-            {
-                t_importedMaterialUv0Tiled = previousUv0Tiled;
-            }
+            XRMaterial material = _materialFactory(SourceFilePath, name, textures, flags, mode, propDic);
             _materials.Add(material);
             return material;
         }
