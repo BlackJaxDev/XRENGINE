@@ -25,13 +25,44 @@ public sealed class CutsceneSceneBindingResolver : ICutsceneBindingResolver
         _world = world;
     }
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Finds the node with an identifier under the root nodes. The object cache gives one object for each
+    /// identifier, and a world copy for play mode has the identifiers of the edit world. The cache keeps the
+    /// older object, so the method uses a cached node only if it is under the root nodes, and else searches them.
+    /// The search runs only when a cutscene opens.
+    /// </summary>
+    /// <param name="id">The object identifier.</param>
+    /// <returns>The node under the root nodes, or null.</returns>
     public SceneNode? FindNodeById(Guid id)
-        => id != Guid.Empty
-        && XRObjectBase.ObjectsCache.TryGetValue(id, out XRObjectBase? found)
-        && found is SceneNode node
-            ? node
-            : null;
+    {
+        if (id == Guid.Empty)
+            return null;
+
+        if (XRObjectBase.ObjectsCache.TryGetValue(id, out XRObjectBase? found)
+            && found is SceneNode cached
+            && IsUnderRootNodes(cached))
+            return cached;
+
+        for (int i = 0; i < _rootNodes.Count; i++)
+            if (_rootNodes[i] is SceneNode root)
+                foreach (SceneNode node in SceneNodePrefabUtility.EnumerateHierarchy(root))
+                    if (node.ID == id)
+                        return node;
+
+        return null;
+    }
+
+    private bool IsUnderRootNodes(SceneNode node)
+    {
+        SceneNode root = node;
+        while (root.Parent is SceneNode parent)
+            root = parent;
+
+        for (int i = 0; i < _rootNodes.Count; i++)
+            if (ReferenceEquals(_rootNodes[i], root))
+                return true;
+        return false;
+    }
 
     /// <inheritdoc/>
     public SceneNode? FindNodeByPath(string path)

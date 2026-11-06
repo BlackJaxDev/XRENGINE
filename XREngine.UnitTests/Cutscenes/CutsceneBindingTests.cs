@@ -4,6 +4,7 @@ using Shouldly;
 using XREngine;
 using XREngine.Core.Files;
 using XREngine.Cutscenes;
+using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -68,6 +69,49 @@ public sealed class CutsceneBindingTests
         table.GetNode(0).ShouldBeSameAs(node);
         table.IsLive(0).ShouldBeTrue();
         table.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void SceneResolver_PrefersTheNodeUnderItsRoots_WhenTheCacheHoldsAnotherCopy()
+    {
+        // A play-mode world copy keeps the identifiers of the edit world, and the cache keeps the older node.
+        SceneNode editRoot = new("Root", new Transform());
+        SceneNode editNode = new(editRoot, "Hero");
+        SceneNode playRoot = new("Root", new Transform());
+        SceneNode playNode = new(playRoot, "Hero");
+        playNode.ID = editNode.ID;
+        try
+        {
+            XRObjectBase.ObjectsCache[editNode.ID].ShouldBeSameAs(editNode);
+
+            CutsceneSceneBindingResolver playResolver = new(Engine.Assets, [playRoot]);
+            CutsceneSceneBindingResolver editResolver = new(Engine.Assets, [editRoot]);
+
+            playResolver.FindNodeById(editNode.ID).ShouldBeSameAs(playNode);
+            editResolver.FindNodeById(editNode.ID).ShouldBeSameAs(editNode);
+        }
+        finally
+        {
+            playRoot.Destroy(true);
+            editRoot.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void SceneResolver_ReturnsNull_WhenTheIdIsNotUnderItsRoots()
+    {
+        SceneNode otherRoot = new("Other", new Transform());
+        SceneNode otherNode = new(otherRoot, "Hero");
+        SceneNode root = new("Root", new Transform());
+        try
+        {
+            new CutsceneSceneBindingResolver(Engine.Assets, [root]).FindNodeById(otherNode.ID).ShouldBeNull();
+        }
+        finally
+        {
+            otherRoot.Destroy(true);
+            root.Destroy(true);
+        }
     }
 
     [Test]
