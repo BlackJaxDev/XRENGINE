@@ -85,8 +85,11 @@ internal sealed partial class VulkanFrameLoop
             failureReason = "Advanced layered Vulkan requires an enabled multiview device and one or two views.";
             return false;
         }
+        // Layered native stages render view N into layer N of the pipeline's own array
+        // resources. A view's OutputLayer names its layer inside the final OpenXR swapchain
+        // target, which is 0 for every per-eye swapchain, so it is not the render layer.
         for (int view = 0; view < request.Views.ViewCount; view++)
-            if (request.Views.GetView(view).OutputLayer != (uint)view)
+            if (request.Views.GetView(view).ViewId != (uint)view)
             {
                 failureReason = "Advanced layered Vulkan requires unique contiguous output layers in frozen view order.";
                 return false;
