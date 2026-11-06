@@ -117,7 +117,7 @@ The loop:
    pwsh Tools/Manage-McpEditorSession.ps1 Start -Name <unique-agent-session>
    ```
 
-   The command builds into the session's own .NET artifacts root, selects an unused MCP port, starts the editor asynchronously, and waits for MCP readiness. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
+   The command builds into the session's own .NET artifacts root (with hard links in place of copy-local copies where the volume allows them), selects an unused MCP port, starts the editor asynchronously, and waits for MCP readiness. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
 2. Position the view with MCP: `set_editor_camera_view` (or `focus_node_in_view` after locating the subject with `find_nodes_by_name`/`select_node_by_name`). Use `duration: 0` for an immediate cut.
 3. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Pass `output_dir` under the current run root, for example `Build/_AgentValidation/<run>/mcp-captures/`; do not rely on the default `McpCaptures/` location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
 

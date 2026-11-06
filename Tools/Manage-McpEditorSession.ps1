@@ -793,6 +793,13 @@ function Start-Session {
                 '-p:RestoreIgnoreFailedSources=true',
                 '-p:XREngineUseExistingNativeBridges=true',
                 '-p:UseSharedCompilation=false',
+                # Each session builds into a fresh artifacts folder. Hard links in place of
+                # copies stop every project output from writing its own copy of all upstream
+                # assemblies, which cuts disk writes and the paging burst before launch.
+                # MSBuild copies the file when a link is not possible (for example across volumes).
+                '-p:CreateHardLinksForCopyLocalIfPossible=true',
+                '-p:CreateHardLinksForCopyFilesToOutputDirectoryIfPossible=true',
+                '-p:CreateHardLinksForCopyAdditionalFilesIfPossible=true',
                 '/nodeReuse:false',
                 '/property:GenerateFullPaths=true',
                 '/consoleloggerparameters:NoSummary'
