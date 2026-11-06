@@ -29,7 +29,7 @@ public static partial class EngineUberBaseShaderContract
         new("Snippets/ScreenSpaceUtils.glsl", "a7a855fae8dfeddd22ead2ae94eaca8a41897459c9c933099c678497e1e6731b"),
         new("Snippets/ShadowMomentEncoding.glsl", "b0ad566842e7e9ea654685bcadba629cf2000c88088251cffc5792a9ddf1b17b"),
         new("Snippets/ShadowSampling.glsl", "f404d3585da7d87332a019d9190c56b7c8aeb82d61679fa40d2aa742d876e726"),
-        new("Uber/UberShader.frag", "21055a80c02e5f29be0adef2d161c9a5b8eaf317a3aa9c1bb545aa8237ed4d1a"),
+        new("Uber/UberShader.frag", "1725a18582ab7dda9077e76c44e7e264fc85f425b45f31eb855f960258e84df0"),
         new("Uber/UberShader.vert", "0a304c2b877f9011cd976081f51ae8bfaae03f325609889c1fbac14749af8ff8"),
         new("Uber/common.glsl", "98756dfd4a3370919006101de98c1adb99efabc6aac6c126a1476bd817281446"),
         new("Uber/dissolve.glsl", "dae8e92050de22e2be55e2b19b50000eb92fb8e259c0e4230bfbe9fd9d9b5d65"),

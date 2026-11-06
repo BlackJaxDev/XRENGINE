@@ -82,9 +82,9 @@ one program, so it holds only the last eye.
 depth with `sampleParallaxDepth` (`1 - height`) for the steep, occlusion,
 silhouette and relief modes. Simple offset mode uses the height directly.
 
-When forward lighting is active, the Uber view direction comes from
+When forward lighting is active, the parallax view direction comes from
 `XRENGINE_GetForwardResolvedCameraPosition()`, which follows the fragment's view
-index. Uber parallax does not write a depth offset.
+index. The shared `mesh.viewDir` keeps `CameraPosition`. Uber parallax does not write a depth offset.
 
 ## Limitations
 

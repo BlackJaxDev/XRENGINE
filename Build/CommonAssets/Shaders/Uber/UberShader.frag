@@ -2043,13 +2043,7 @@ void main() {
 #endif
     mesh.vertexNormal = normalize(FragNorm);
     mesh.vertexColor = FragColor0;
-#if !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-    // Single-pass stereo binds both eyes to one program; CameraPosition then holds only
-    // the last eye. The resolved forward camera follows this fragment's view index.
-    mesh.viewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - FragPos);
-#else
     mesh.viewDir = normalize(u_CameraPosition - FragPos);
-#endif
     mesh.isFrontFace = gl_FrontFacing ? 1.0 : -1.0;
 
     float normalFacing = _SourceBackfaceNormals == 0 || _FlipBackfaceNormals != 0
@@ -2094,7 +2088,13 @@ void main() {
     {
         int parallaxMode = int(_ParallaxMode);
         float parallaxValid = 1.0;
-        vec2 parallaxUV = applyParallaxWithValidity(mesh.uv[0], mesh.worldPos, mesh.viewDir, mesh.TBN, parallaxMode, parallaxValid);
+        vec3 parallaxViewDir = mesh.viewDir;
+#if !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+        // Single-pass stereo binds both eyes to one program, so CameraPosition holds only
+        // the last eye. Parallax depth is a stereo cue: use this fragment's eye.
+        parallaxViewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - mesh.worldPos);
+#endif
+        vec2 parallaxUV = applyParallaxWithValidity(mesh.uv[0], mesh.worldPos, parallaxViewDir, mesh.TBN, parallaxMode, parallaxValid);
 
         // SPOM: discard when the ray marches outside the base UV [0,1] bounds.
         if (parallaxMode == PARALLAX_SILHOUETTE_OCCLUSION && parallaxValid < 0.5) {
