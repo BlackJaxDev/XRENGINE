@@ -614,8 +614,18 @@ public static partial class EditorUnitTests
         /// that name or the text does not parse.
         /// </summary>
         public static bool SetRenderingSettingValue(string propertyName, string value)
+            => SetSettingValue(RuntimeEngine.Rendering.Settings, propertyName, value);
+
+        /// <summary>
+        /// Sets one user setting (<see cref="Engine.UserSettings"/>) by property name from its
+        /// text form, for a timed external A/B probe such as MCP <c>invoke_method</c>. Accepts
+        /// the same property types as <see cref="SetRenderingSettingValue"/>.
+        /// </summary>
+        public static bool SetUserSettingValue(string propertyName, string value)
+            => SetSettingValue(Engine.UserSettings, propertyName, value);
+
+        private static bool SetSettingValue(object settings, string propertyName, string value)
         {
-            object settings = RuntimeEngine.Rendering.Settings;
             System.Reflection.PropertyInfo? property = settings.GetType().GetProperty(propertyName);
             if (property is null || !property.CanWrite)
                 return false;
