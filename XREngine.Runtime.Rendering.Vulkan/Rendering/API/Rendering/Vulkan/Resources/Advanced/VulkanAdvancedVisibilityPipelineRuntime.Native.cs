@@ -6,8 +6,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 {
     private const int RvcShadeletTelemetryProgramIndex = 7;
     internal const string RvcShadeletTelemetryShaderPath = "Advanced/Rvc/RvcShadeletTelemetry.comp";
+    private const int FoveatedQuadFillProgramIndex = 8;
+    internal const string FoveatedQuadFillShaderPath = "Advanced/Shading/FoveatedQuadFill.comp";
 
-    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[8];
+    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[9];
 
     internal VulkanAdvancedVisibilityPipelineReadiness TryGetNativeComputePipelines(
         out VulkanAdvancedNativeComputePipelines pipelines, out string reason)
@@ -49,9 +51,13 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         readiness = TryGetNativeComputePipeline(RvcShadeletTelemetryProgramIndex, RvcShadeletTelemetryShaderPath,
             out VulkanAdvancedComputePipeline telemetry, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
+        readiness = TryGetNativeComputePipeline(FoveatedQuadFillProgramIndex, FoveatedQuadFillShaderPath,
+            out VulkanAdvancedComputePipeline foveatedFill, out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
         pipelines = new(classify, arguments, ambientOcclusion, froxels, background, shade, shadeMultisample)
         {
             RvcShadeletTelemetry = telemetry,
+            FoveatedQuadFill = foveatedFill,
         };
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }

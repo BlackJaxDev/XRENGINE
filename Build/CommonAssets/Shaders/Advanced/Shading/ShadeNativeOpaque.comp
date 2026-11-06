@@ -41,6 +41,11 @@ XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
 #endif
 
 #include "ShadeNativeOpaqueEvaluator.glslinc"
+#include "FoveatedQuadShading.glslinc"
+
+// Compacted pixel list for foveated quad shading (one entry per invocation).
+shared uint s_foveatedShadeCount;
+shared uint s_foveatedShadePixels[256];
 
 void main()
 {
@@ -81,6 +86,31 @@ void main()
         if (viewIndex != u_Push.viewIndex) return;
         pixel = uvec2(tile.packedTileCoord & 0xFFFFu,
             tile.packedTileCoord >> 16u) * 16u + gl_LocalInvocationID.xy;
+    }
+    // Foveated quad shading: a peripheral follower takes its block
+    // representative's result in the fill pass, so it does not shade here.
+    // The pixels that still shade are packed into the first invocations of the
+    // group, so whole subgroups of followers idle instead of leaving one active
+    // lane per block. Every return above is uniform for the work group, so all
+    // invocations reach these barriers.
+    if (XR_ADV_FoveatedQuadsEnabled())
+    {
+        if (gl_LocalInvocationIndex == 0u)
+            s_foveatedShadeCount = 0u;
+        barrier();
+        bool shades = false;
+        if (all(lessThan(pixel, u_Push.screenExtent)) && viewIndex < u_Push.viewCount)
+        {
+            uvec2 candidateIdentity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
+            uvec2 representative;
+            shades = !XR_ADV_TryGetFoveatedRepresentative(pixel, viewIndex, candidateIdentity, representative);
+        }
+        if (shades)
+            s_foveatedShadePixels[atomicAdd(s_foveatedShadeCount, 1u)] = pixel.x | (pixel.y << 16u);
+        barrier();
+        if (gl_LocalInvocationIndex >= s_foveatedShadeCount) return;
+        uint packedPixel = s_foveatedShadePixels[gl_LocalInvocationIndex];
+        pixel = uvec2(packedPixel & 0xFFFFu, packedPixel >> 16u);
     }
     if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount) return;
 

@@ -453,6 +453,29 @@ while the shadelet path takes over the stable opaque set.
 Near UI and hands can force 1x1 shading. That override keeps interaction-critical
 content sharp even when surrounding peripheral content is coarser.
 
+### Foveated Quad Shading
+
+The Advanced family shades in compute, so fragment shading rate does not apply
+to its opaque shading. RVC eyes therefore use foveated quad shading in compute:
+
+- Enable it with the `RvcFoveatedQuadShadingEnabled` engine setting. It has an
+  effect only on Vulkan eyes that `RvcRenderPipeline` renders without MSAA.
+- Each 4x4 pixel block gets a block size from the eccentricity of its center:
+  1 inside the mid radius, 2 between the mid and outer radii, and 4 outside the
+  outer radius. The radii come from the view record's foveation data
+  (`foveationRadii.y` and `.w`); without foveation data the kernel uses 0.55
+  and 0.85 (distance from the center in [-1, 1] framebuffer units).
+- A pixel is a follower when the top-left pixel of its block (the
+  representative) shows the same draw and primitive. Followers skip
+  `ShadeNativeOpaque.comp`.
+- `FoveatedQuadFill.comp` then copies HDR color, velocity, reactive mask,
+  shading diagnostics, and (when exported) the material surface inputs from the
+  representative to each follower.
+- The rule is in `FoveatedQuadShading.glslinc` and depends only on the
+  visibility identity and the view record, so shading and fill always agree.
+- Edges between primitives stay per pixel, because a follower needs the same
+  primitive as its representative.
+
 ## Shared Head-Space Lighting
 
 RVC shared lighting uses a world-aligned, camera-relative head-space cluster

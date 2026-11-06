@@ -56,6 +56,12 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// </summary>
     public bool RecordRvcShadeletTelemetry { get; init; }
 
+    /// <summary>
+    /// True when native opaque shading shades one pixel per peripheral 2x2 or 4x4
+    /// block of the same primitive and fills the rest. Only RVC eyes without MSAA set it.
+    /// </summary>
+    public bool RvcFoveatedQuadShading { get; init; }
+
     public bool IsValid => GetInvalidReason() is null;
 
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>

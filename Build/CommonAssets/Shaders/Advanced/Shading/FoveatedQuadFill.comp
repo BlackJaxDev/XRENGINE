@@ -1,0 +1,55 @@
+#version 450
+// Foveated quad fill. Runs after native opaque shading for one view and copies
+// each follower pixel's outputs from its block representative. See
+// FoveatedQuadShading.glslinc for the follower rule.
+#include "Advanced/Shading/AdvancedShadingInterface.glslinc"
+
+#if !defined(XR_ADV_BACKEND_VULKAN) || defined(XR_ADV_VISIBILITY_ARRAY)
+#error "The foveated quad fill binds one Vulkan view layer per dispatch."
+#endif
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_SHADING_IMAGE(rgba16f, 15) uniform image2D HDRSceneColor;
+XR_ADV_SHADING_IMAGE(rg16f, 16) uniform image2D Velocity;
+XR_ADV_SHADING_IMAGE(r8, 17) uniform image2D ReactiveMask;
+XR_ADV_SHADING_IMAGE(r32ui, 18) uniform uimage2D ShadingDiagnostics;
+XR_ADV_SHADING_IMAGE(rgba16f, 51) uniform image2D EmissionColor;
+XR_ADV_SHADING_IMAGE(rgba16f, 52) uniform image2D AlbedoOpacity;
+XR_ADV_SHADING_IMAGE(rgba16f, 53) uniform image2D Normal;
+XR_ADV_SHADING_IMAGE(rgba16f, 54) uniform image2D RMSE;
+#define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
+
+#include "FoveatedQuadShading.glslinc"
+
+// Matches the material-surface export bit of the native shading push flags.
+const uint XR_ADV_FOVEATED_FILL_MATERIAL_EXPORTS = 16u;
+
+void main()
+{
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    uint viewIndex = u_Push.viewIndex;
+    if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount)
+        return;
+    uvec2 identity = texelFetch(VisibilityIdentity, ivec2(pixel), 0).rg;
+    if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID)
+        return;
+    uvec2 representative;
+    if (!XR_ADV_TryGetFoveatedRepresentative(pixel, viewIndex, identity, representative))
+        return;
+
+    ivec2 source = ivec2(representative);
+    ivec2 target = ivec2(pixel);
+    imageStore(HDRSceneColor, target, imageLoad(HDRSceneColor, source));
+    imageStore(Velocity, target, imageLoad(Velocity, source));
+    imageStore(ReactiveMask, target, imageLoad(ReactiveMask, source));
+    imageStore(ShadingDiagnostics, target, imageLoad(ShadingDiagnostics, source));
+    if ((u_Push.flags & XR_ADV_FOVEATED_FILL_MATERIAL_EXPORTS) != 0u)
+    {
+        imageStore(EmissionColor, target, imageLoad(EmissionColor, source));
+        imageStore(AlbedoOpacity, target, imageLoad(AlbedoOpacity, source));
+        imageStore(Normal, target, imageLoad(Normal, source));
+        imageStore(RMSE, target, imageLoad(RMSE, source));
+    }
+}

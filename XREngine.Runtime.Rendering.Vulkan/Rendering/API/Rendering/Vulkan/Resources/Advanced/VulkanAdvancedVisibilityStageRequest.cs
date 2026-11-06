@@ -49,6 +49,9 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// </summary>
     internal bool RecordRvcShadeletTelemetry { get; init; }
 
+    /// <summary>Shades one pixel per peripheral block of the same primitive, then fills the rest.</summary>
+    internal bool RvcFoveatedQuadShading { get; init; }
+
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
     internal bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
 

@@ -17,6 +17,9 @@ internal sealed partial class VulkanCommandRuntime
     private static readonly string[] NativeOpaqueRepairGpuProfilerPath = ["Advanced", "Shading", "GpuOverflowRepair"];
     // Nest under the Advanced root: a separate root scope measured from the start of the frame.
     private static readonly string[] RvcShadeletTelemetryGpuProfilerPath = ["Advanced", "Rvc", "ShadeletTelemetry"];
+    private static readonly string[] FoveatedQuadFillGpuProfilerPath = ["Advanced", "Rvc", "FoveatedQuadFill"];
+    // Matches XR_ADV_SHADING_FOVEATED_QUADS in FoveatedQuadShading.glslinc.
+    private const uint FoveatedQuadShadingFlag = 1u << 28;
     private const string RvcTelemetryMissingClosureReason = "The native closure has no RVC telemetry counters or whole-array views.";
     private const string RvcTelemetryMissingKernelReason = "The RVC telemetry kernel is not current.";
     private int RecordAdvancedNativeComputePayload(
@@ -49,7 +52,8 @@ internal sealed partial class VulkanCommandRuntime
             (payload.Request.AmbientOcclusionMultiBounce ? 64u : 0u) |
             (payload.Request.AmbientOcclusionSpecularUsesVisibility ? 128u : 0u) |
             (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8) |
-            ((Math.Min(closure.MsaaSampleCount, 16u) & 0xFu) << 24), depthSlices,
+            ((Math.Min(closure.MsaaSampleCount, 16u) & 0xFu) << 24) |
+            (payload.Request.RvcFoveatedQuadShading && !closure.UsesMultisampleVisibility ? FoveatedQuadShadingFlag : 0u), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
             checked((uint)(closure.KernelTiles.NativeSize / 16u)),
@@ -205,6 +209,13 @@ internal sealed partial class VulkanCommandRuntime
         else
             RecordNativeShadingRootUse(shade.UsesAddressRoot, 1);
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
+        if ((push.Flags & FoveatedQuadShadingFlag) != 0u)
+        {
+            // Followers skipped shading; copy each block representative to them.
+            RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.FoveatedQuadFill,
+                in push, tilesX, tilesY, 1, "Rvc.FoveatedQuadFill", FoveatedQuadFillGpuProfilerPath);
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
+        }
         VulkanFrozenBufferBarrier lightingCounters = closure.LightingCounters;
         VulkanAdvancedVisibilityStageRequest lightingRequest = payload.Request;
         _ = AdvancedCounterDiagnosticCopy?.Invoke(

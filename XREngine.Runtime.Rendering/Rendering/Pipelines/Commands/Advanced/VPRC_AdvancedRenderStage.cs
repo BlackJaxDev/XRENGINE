@@ -411,6 +411,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             RecordRvcShadeletTelemetry = requiresNativeOpaqueShading &&
                 pipeline.DeclaresRvcShadeletTelemetry &&
                 ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcShadeletTelemetryEnabled: true },
+            RvcFoveatedQuadShading = requiresNativeOpaqueShading && samples <= 1u &&
+                ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcFoveatedQuadShadingEnabled: true },
         };
         if (request.RecordRvcShadeletTelemetry)
             RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryRequest();

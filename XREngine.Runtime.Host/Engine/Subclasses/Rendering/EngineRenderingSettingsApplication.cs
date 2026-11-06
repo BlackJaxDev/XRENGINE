@@ -138,6 +138,7 @@ namespace XREngine
                     or nameof(EngineSettings.RvcDiagnosticOverlayEnabled)
                     or nameof(EngineSettings.RvcDebugViewMode)
                     or nameof(EngineSettings.RvcShadeletTelemetryEnabled)
+                    or nameof(EngineSettings.RvcFoveatedQuadShadingEnabled)
                     or nameof(EngineSettings.RvcLightGridSpace)
                     or nameof(EngineSettings.RvcFovealRadiusDegrees)
                     or nameof(EngineSettings.RvcGuardBandDegrees)

@@ -677,6 +677,7 @@ public static partial class RuntimeEngine
                 private bool _rvcDiagnosticOverlayEnabled = false;
                 private ERvcDebugViewMode _rvcDebugViewMode = ERvcDebugViewMode.Disabled;
                 private bool _rvcShadeletTelemetryEnabled = false;
+                private bool _rvcFoveatedQuadShadingEnabled = false;
                 private ERvcLightGridSpace _rvcLightGridSpace = ERvcLightGridSpace.WorldAlignedCameraRelative;
                 private float _rvcFovealRadiusDegrees = RvcQualitySettings.Defaults.FovealRadiusDegrees;
                 private float _rvcGuardBandDegrees = RvcQualitySettings.Defaults.GuardBandDegrees;
@@ -736,8 +737,8 @@ public static partial class RuntimeEngine
                 private int _maxShadowTilesRenderedPerFrame = 16;
                 private float _maxShadowRenderMilliseconds = 2.0f;
                 private int _maxDirectionalCascadeAtlasStaleFrames = 4;
-                private uint _minShadowAtlasTileResolution = 128u;
                 private bool _holdDirectionalCascadesWhileCameraMoves;
+                private uint _minShadowAtlasTileResolution = 128u;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
                 /// <summary>
@@ -944,7 +945,6 @@ public static partial class RuntimeEngine
                 }
 
                 [Category("Shadows")]
-                [Category("Shadows")]
                 [Description("Keeps directional cascade tiles while the source camera moves and refreshes them after the camera settles or the stale limit. Shading reprojects held tiles with the matrix they were rendered with. Off by default: cascades refresh every frame, so shadows keep their full resolution and coverage while the camera moves.")]
                 public bool HoldDirectionalCascadesWhileCameraMoves
                 {
@@ -952,6 +952,7 @@ public static partial class RuntimeEngine
                     set => SetField(ref _holdDirectionalCascadesWhileCameraMoves, value);
                 }
 
+                [Category("Shadows")]
                 [Description("Minimum dynamic shadow atlas tile resolution in texels.")]
                 public uint MinShadowAtlasTileResolution
                 {
@@ -2780,6 +2781,18 @@ public static partial class RuntimeEngine
                 {
                     get => _rvcShadeletTelemetryEnabled;
                     set => SetField(ref _rvcShadeletTelemetryEnabled, value);
+                }
+
+                /// <summary>
+                /// Makes RVC eyes shade one pixel per peripheral 2x2 or 4x4 block of the same
+                /// triangle and copy it to the rest of the block. Vulkan eyes without MSAA only.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Makes RVC eyes shade one pixel per peripheral 2x2 or 4x4 block of the same triangle and copy it to the rest of the block. Vulkan eyes without MSAA only.")]
+                public bool RvcFoveatedQuadShadingEnabled
+                {
+                    get => _rvcFoveatedQuadShadingEnabled;
+                    set => SetField(ref _rvcFoveatedQuadShadingEnabled, value);
                 }
 
                 /// <summary>

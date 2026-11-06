@@ -181,6 +181,7 @@ internal sealed partial class VulkanFrameLoop
             AmbientOcclusionMultiBounce = request.AmbientOcclusionMultiBounce,
             AmbientOcclusionSpecularUsesVisibility = request.AmbientOcclusionSpecularUsesVisibility,
             RecordRvcShadeletTelemetry = request.RecordRvcShadeletTelemetry,
+            RvcFoveatedQuadShading = request.RvcFoveatedQuadShading,
         };
         if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
         {

@@ -64,6 +64,7 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
     private AdvancedRenderPipeline? _advancedStageFamily;
     private bool _stereo;
     private bool _rvcShadeletTelemetryEnabled;
+    private bool _rvcFoveatedQuadShadingEnabled;
 
     /// <summary>True when this pipeline renders both eyes as one layered stereo target.</summary>
     public bool Stereo => _stereo;
@@ -104,6 +105,19 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
     {
         get => _rvcShadeletTelemetryEnabled;
         set => SetField(ref _rvcShadeletTelemetryEnabled, value);
+    }
+
+    /// <summary>
+    /// True when native opaque shading shades one pixel per peripheral 2x2 or 4x4 block
+    /// of the same primitive and a fill pass copies it to the rest of the block.
+    /// </summary>
+    [Category("RVC")]
+    [DisplayName("Foveated Quad Shading")]
+    [Description("Shades one pixel per peripheral 2x2 or 4x4 block of the same triangle and copies it to the rest of the block. Vulkan eyes without MSAA only.")]
+    public bool RvcFoveatedQuadShadingEnabled
+    {
+        get => _rvcFoveatedQuadShadingEnabled;
+        set => SetField(ref _rvcFoveatedQuadShadingEnabled, value);
     }
 
     public override IRenderPipelineEditorUIProvider? EditorUIProvider
@@ -415,6 +429,7 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
             settings.RvcLightGridSpace));
 
         RvcShadeletTelemetryEnabled = settings.RvcShadeletTelemetryEnabled;
+        RvcFoveatedQuadShadingEnabled = settings.RvcFoveatedQuadShadingEnabled;
         RvcQualitySettings = new RvcQualitySettings(
             settings.RvcFovealRadiusDegrees,
             settings.RvcGuardBandDegrees,

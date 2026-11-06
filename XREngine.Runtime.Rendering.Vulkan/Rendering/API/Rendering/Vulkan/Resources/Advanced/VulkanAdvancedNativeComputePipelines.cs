@@ -16,7 +16,13 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
     /// </summary>
     internal VulkanAdvancedComputePipeline RvcShadeletTelemetry { get; init; }
 
+    /// <summary>
+    /// Copies block representatives to follower pixels after foveated quad shading.
+    /// Prepared with the family; it runs only when an RVC-hosted stage requests it.
+    /// </summary>
+    internal VulkanAdvancedComputePipeline FoveatedQuadFill { get; init; }
+
     internal bool IsCurrent => Classify.IsCurrent && BuildArguments.IsCurrent && AmbientOcclusion.IsCurrent &&
         BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent && ShadeMultisample.IsCurrent &&
-        RvcShadeletTelemetry.IsCurrent;
+        RvcShadeletTelemetry.IsCurrent && FoveatedQuadFill.IsCurrent;
 }
