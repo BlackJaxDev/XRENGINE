@@ -47,6 +47,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
+        /// <inheritdoc />
+        public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+        {
+            if (Body is not null)
+                results.Add(new RenderCommandChildContainer("Body", Body));
+        }
+
         protected override void Execute()
         {
             if (CollectionProvider is null || Body is null)

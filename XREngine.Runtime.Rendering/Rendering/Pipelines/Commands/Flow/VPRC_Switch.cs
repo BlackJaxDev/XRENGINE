@@ -57,6 +57,34 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         //private int _lastSwitch = 0;
 
+        /// <inheritdoc />
+        /// <remarks>Cases are added in ascending key order, then the default case.</remarks>
+        public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+        {
+            if (Cases is { Count: > 0 } cases)
+            {
+                int start = results.Count;
+                foreach (KeyValuePair<int, ViewportRenderCommandContainer> pair in cases)
+                {
+                    if (pair.Value is not null)
+                        results.Add(new RenderCommandChildContainer(string.Concat("Case ", pair.Key.ToString(System.Globalization.CultureInfo.InvariantCulture)), pair.Value, pair.Key));
+                }
+
+                results.Sort(start, results.Count - start, CaseKeyComparer.Instance);
+            }
+
+            if (DefaultCase is not null)
+                results.Add(new RenderCommandChildContainer("Default", DefaultCase));
+        }
+
+        private sealed class CaseKeyComparer : IComparer<RenderCommandChildContainer>
+        {
+            public static CaseKeyComparer Instance { get; } = new();
+
+            public int Compare(RenderCommandChildContainer x, RenderCommandChildContainer y)
+                => (x.CaseKey ?? int.MaxValue).CompareTo(y.CaseKey ?? int.MaxValue);
+        }
+
         protected override void Execute()
         {
             XRRenderPipelineInstance? instance = ActivePipelineInstance;

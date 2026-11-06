@@ -50,6 +50,13 @@ public sealed class VPRC_ForEachCascade : ViewportRenderCommand
         }
     }
 
+    /// <inheritdoc />
+    public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+    {
+        if (Body is not null)
+            results.Add(new RenderCommandChildContainer("Body", Body));
+    }
+
     protected override void Execute()
     {
         if (Body is null)

@@ -11,6 +11,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.RenderGraph.Diagnostics;
 using XREngine.Rendering.Resources;
 using YamlDotNet.Serialization;
 using static XREngine.Rendering.XRRenderPipelineInstance;
@@ -320,6 +321,35 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     [YamlIgnore]
     public IReadOnlyCollection<RenderPassMetadata> PassMetadata { get; private set; } = Array.Empty<RenderPassMetadata>();
     private readonly Dictionary<string, int> _renderPassIndicesByName = new(StringComparer.OrdinalIgnoreCase);
+    private RenderPipelineStructureSnapshot? _structureSnapshot;
+
+    /// <summary>
+    /// Gets the map from commands to the passes in <see cref="PassMetadata"/>. The snapshot builds on first
+    /// read after the command chain changes, so the runtime pays no cost when no tool reads it.
+    /// Resource generations own their own pass metadata; build a snapshot for those with
+    /// <see cref="RenderPipelineStructureSnapshot.Build"/>.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public RenderPipelineStructureSnapshot StructureSnapshot
+    {
+        get
+        {
+            RenderPipelineStructureSnapshot? snapshot = System.Threading.Volatile.Read(ref _structureSnapshot);
+            IReadOnlyCollection<RenderPassMetadata> passes = PassMetadata;
+            ulong generation = CommandGeneration;
+            if (snapshot is not null &&
+                snapshot.CommandGeneration == generation &&
+                ReferenceEquals(snapshot.SourcePassMetadata, passes))
+            {
+                return snapshot;
+            }
+
+            snapshot = RenderPipelineStructureSnapshot.Build(generation, CommandChain, passes);
+            System.Threading.Volatile.Write(ref _structureSnapshot, snapshot);
+            return snapshot;
+        }
+    }
 
     /// <summary>
     /// Resolves stable render-graph metadata without repeatedly scanning the pass

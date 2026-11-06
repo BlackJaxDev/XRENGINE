@@ -53,6 +53,15 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         //private bool _lastCondition = false;
 
+        /// <inheritdoc />
+        public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+        {
+            if (TrueCommands is not null)
+                results.Add(new RenderCommandChildContainer("True", TrueCommands));
+            if (FalseCommands is not null)
+                results.Add(new RenderCommandChildContainer("False", FalseCommands));
+        }
+
         protected override void Execute()
         {
             XRRenderPipelineInstance? instance = ActivePipelineInstance;

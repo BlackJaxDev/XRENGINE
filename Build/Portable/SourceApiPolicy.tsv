@@ -141,6 +141,7 @@ allow	XREngine.Runtime.Rendering/Rendering/Camera/ICameraParameterCustomEditor.c
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs	GetProperty	Optional owning component property on engine physics object
 allow	XREngine.Runtime.Rendering/Resources/Shaders/UberShaderVariantBuilder.cs	GetProperty	Uber material authored state lookup, not System.Type reflection
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/ViewportRenderCommandContainer.cs	Activator.CreateInstance	Development-only authored command construction; published commands require factories
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/RenderCommandInfo.cs	GetCustomAttribute	Editor and validation metadata for command types; runtime execution never reads it
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.cs	GetCustomAttribute	Development-only custom command attribute metadata; built-ins register statically
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.cs	Activator.CreateInstance	Development-only authored render command construction
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.cs	GetProperty	Named script command property assignment

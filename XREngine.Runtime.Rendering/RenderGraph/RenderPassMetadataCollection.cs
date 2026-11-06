@@ -1,3 +1,5 @@
+using XREngine.Rendering.Pipelines.Commands;
+
 namespace XREngine.Rendering.RenderGraph;
 
 /// <summary>
@@ -8,6 +10,12 @@ public sealed class RenderPassMetadataCollection
     private readonly Dictionary<int, RenderPassMetadata> _passes = new();
     private readonly RenderPassMetadataRevisionSource _revisionSource = new();
     private int _nextDeclarationOrder;
+
+    /// <summary>
+    /// Gets or sets the command that is describing passes now. Command containers set this
+    /// while they walk their commands so each pass records the commands that own it.
+    /// </summary>
+    internal ViewportRenderCommand? CurrentCommand { get; set; }
 
     public RenderPassBuilder ForPass(int passIndex, string? name = null, ERenderGraphPassStage stage = ERenderGraphPassStage.Graphics)
     {
@@ -29,6 +37,8 @@ public sealed class RenderPassMetadataCollection
         }
 
         EnsureDefaultDescriptorSchemas(metadata);
+        if (CurrentCommand is { } command)
+            metadata.AddContributingCommand(command);
 
         return new RenderPassBuilder(metadata);
     }

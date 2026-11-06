@@ -607,8 +607,21 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         internal void BuildRenderPassMetadata(RenderGraphDescribeContext context)
         {
-            for (int i = 0; i < _commands.Count; i++)
-                _commands[i].DescribeRenderPass(context);
+            ViewportRenderCommand? outerCommand = context.CurrentCommand;
+            try
+            {
+                for (int i = 0; i < _commands.Count; i++)
+                {
+                    ViewportRenderCommand command = _commands[i];
+                    context.CurrentCommand = command;
+                    command.DescribeRenderPass(context);
+                }
+            }
+            finally
+            {
+                // Nested containers run inside a flow command, so restore that command for later passes it opens.
+                context.CurrentCommand = outerCommand;
+            }
         }
         internal void OnBranchSelected(XRRenderPipelineInstance instance)
             => EnsureResourcesAllocated(instance);
