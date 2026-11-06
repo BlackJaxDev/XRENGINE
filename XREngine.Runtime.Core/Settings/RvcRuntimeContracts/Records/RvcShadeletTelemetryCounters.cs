@@ -2,9 +2,11 @@ namespace XREngine;
 
 /// <summary>
 /// GPU-measured shadelet reuse ceilings for one RVC frame. The telemetry kernel reads the
-/// Advanced visibility buffer of every view and does not change shading. A key is the
-/// visible draw handle and primitive, so each value is an upper bound for the reuse that a
-/// shadelet cache with finer keys can get.
+/// Advanced visibility buffer of every view and does not change shading. It counts two key
+/// levels. The primitive key (draw handle and primitive) gives loose upper bounds. The
+/// surface key adds the world-space cell of the surface point; the cell edge is the
+/// footprint of N pixels at the point's distance from the head, so it models a shadelet of
+/// N x N pixels.
 /// </summary>
 /// <param name="FrameId">Render frame that produced the counters.</param>
 /// <param name="ViewCount">Number of views that the kernel measured.</param>
@@ -17,6 +19,10 @@ namespace XREngine;
 /// <param name="StereoVisibleInBothEyes">Candidates whose surface point is also the visible surface in the second view.</param>
 /// <param name="StereoKeyMatches">Visible-in-both candidates that also have the same key in both views.</param>
 /// <param name="InsetWideKeyMatches">Inset pixels whose key matches the wide view of the same eye. Zero until quad view exists.</param>
+/// <param name="UniqueSurfaceShadelets2x2">Unique surface keys (2-pixel cells) in each 2x2 block.</param>
+/// <param name="UniqueSurfaceShadelets4x4">Unique surface keys (4-pixel cells) in each 4x4 block.</param>
+/// <param name="UniqueSurfaceShadelets8x8">Unique surface keys (8-pixel cells) in each 8x8 block.</param>
+/// <param name="StereoSurfaceKeyMatches">Primitive key matches whose second-view sample is in the same one-pixel surface cell.</param>
 public readonly record struct RvcShadeletTelemetryCounters(
     ulong FrameId,
     uint ViewCount,
@@ -28,7 +34,11 @@ public readonly record struct RvcShadeletTelemetryCounters(
     ulong StereoOffscreen,
     ulong StereoVisibleInBothEyes,
     ulong StereoKeyMatches,
-    ulong InsetWideKeyMatches)
+    ulong InsetWideKeyMatches,
+    ulong UniqueSurfaceShadelets2x2,
+    ulong UniqueSurfaceShadelets4x4,
+    ulong UniqueSurfaceShadelets8x8,
+    ulong StereoSurfaceKeyMatches)
 {
     /// <summary>Number of 32-bit words in the GPU counter record.</summary>
     public const int GpuWordCount = 16;
@@ -66,6 +76,18 @@ public readonly record struct RvcShadeletTelemetryCounters(
     /// <summary>Word index of the measured view count.</summary>
     public const int ViewCountWord = 9;
 
+    /// <summary>Word index of the 2x2 unique surface-key count.</summary>
+    public const int UniqueSurface2x2Word = 10;
+
+    /// <summary>Word index of the 4x4 unique surface-key count.</summary>
+    public const int UniqueSurface4x4Word = 11;
+
+    /// <summary>Word index of the 8x8 unique surface-key count.</summary>
+    public const int UniqueSurface8x8Word = 12;
+
+    /// <summary>Word index of the stereo surface-key match count.</summary>
+    public const int StereoSurfaceKeyMatchesWord = 13;
+
     /// <summary>Fraction of shading work that 2x2 shadelets remove inside one view.</summary>
     public double IntraView2x2ReuseRatio => ReuseRatio(UniqueShadelets2x2);
 
@@ -75,9 +97,22 @@ public readonly record struct RvcShadeletTelemetryCounters(
     /// <summary>Fraction of shading work that 8x8 shadelets remove inside one view.</summary>
     public double IntraView8x8ReuseRatio => ReuseRatio(UniqueShadelets8x8);
 
-    /// <summary>Fraction of on-screen first-view pixels that the second eye can reuse.</summary>
+    /// <summary>Surface-key form of <see cref="IntraView2x2ReuseRatio"/>.</summary>
+    public double IntraViewSurface2x2ReuseRatio => ReuseRatio(UniqueSurfaceShadelets2x2);
+
+    /// <summary>Surface-key form of <see cref="IntraView4x4ReuseRatio"/>.</summary>
+    public double IntraViewSurface4x4ReuseRatio => ReuseRatio(UniqueSurfaceShadelets4x4);
+
+    /// <summary>Surface-key form of <see cref="IntraView8x8ReuseRatio"/>.</summary>
+    public double IntraViewSurface8x8ReuseRatio => ReuseRatio(UniqueSurfaceShadelets8x8);
+
+    /// <summary>Fraction of on-screen first-view pixels whose primitive key matches in the second eye.</summary>
     public double StereoKeyMatchRatio
         => StereoCandidates == 0u ? 0.0 : (double)StereoKeyMatches / StereoCandidates;
+
+    /// <summary>Fraction of on-screen first-view pixels whose one-pixel surface key matches in the second eye.</summary>
+    public double StereoSurfaceKeyMatchRatio
+        => StereoCandidates == 0u ? 0.0 : (double)StereoSurfaceKeyMatches / StereoCandidates;
 
     /// <summary>
     /// Decodes the GPU counter record. Returns false when the record is too short.
@@ -101,7 +136,11 @@ public readonly record struct RvcShadeletTelemetryCounters(
             words[StereoOffscreenWord],
             words[StereoVisibleWord],
             words[StereoKeyMatchesWord],
-            InsetWideKeyMatches: 0u);
+            InsetWideKeyMatches: 0u,
+            words[UniqueSurface2x2Word],
+            words[UniqueSurface4x4Word],
+            words[UniqueSurface8x8Word],
+            words[StereoSurfaceKeyMatchesWord]);
         return true;
     }
 

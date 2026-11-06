@@ -1,12 +1,18 @@
 #version 450
 // RVC shadelet telemetry. Measures how much shading work a shadelet cache can
-// remove, without changing shading. A key is the visible draw handle and
-// primitive, so every count is an upper bound for finer shadelet keys.
+// remove, without changing shading. Two key levels are counted:
+//
+// - Primitive key: the visible draw handle and primitive. Every count at this
+//   level is a loose upper bound.
+// - Surface key: the primitive key plus the world-space cell that holds the
+//   surface point. The cell edge is the footprint of N pixels at the point's
+//   distance from the head, rounded up to a power of two so that neighbor
+//   cells nest. N is 2, 4 or 8 for the matching block size, and 1 for stereo.
 //
 // One dispatch covers every view: z selects the view layer. Each 8x8 group
 // counts unique keys per 2x2, 4x4 and 8x8 block. Groups of the first view also
 // reproject each visible pixel into the second view and count pixels whose
-// surface point is visible there with the same key.
+// surface point is visible there, and whose keys match.
 #include "Advanced/Shading/AdvancedShadingInterface.glslinc"
 
 #if !defined(XR_ADV_BACKEND_VULKAN)
@@ -29,7 +35,11 @@ layout(std430, set = XR_ADV_VISIBILITY_SET, binding = 68) buffer RvcShadeletTele
     uint stereoVisible;
     uint stereoKeyMatches;
     uint viewCount;
-    uint reserved[6];
+    uint uniqueSurface2x2;
+    uint uniqueSurface4x4;
+    uint uniqueSurface8x8;
+    uint stereoSurfaceKeyMatches;
+    uint reserved[2];
 } RvcCounters;
 
 const uint RVC_INVALID_KEY = 0xFFFFFFFFu;
@@ -39,14 +49,21 @@ const float RVC_STEREO_DISTANCE_TOLERANCE = 0.01;
 
 shared uint s_draw[64];
 shared uint s_primitive[64];
+shared uint s_cell2[64];
+shared uint s_cell4[64];
+shared uint s_cell8[64];
 shared uint s_unique2x2;
 shared uint s_unique4x4;
 shared uint s_unique8x8;
+shared uint s_uniqueSurface2x2;
+shared uint s_uniqueSurface4x4;
+shared uint s_uniqueSurface8x8;
 shared uint s_valid;
 shared uint s_candidates;
 shared uint s_offscreen;
 shared uint s_visible;
 shared uint s_matches;
+shared uint s_surfaceMatches;
 
 bool RvcIsValidIdentity(uvec2 identity)
 {
@@ -69,6 +86,30 @@ vec3 RvcReconstructWorld(vec2 pixelCenter, float depth, XRAdvancedViewRecord vie
     return world.xyz / world.w;
 }
 
+uint RvcHash(uint value)
+{
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    value ^= value >> 16u;
+    return value;
+}
+
+// Hashes the world-space cell of N pixel footprints that holds worldPosition.
+// The footprint uses the first view's vertical pixel angle and the distance from
+// the head center, so both eyes compute the same cell for the same point.
+uint RvcSurfaceCell(vec3 worldPosition, vec3 headCenter, float pixelAngle, float pixels)
+{
+    float edge = max(distance(worldPosition, headCenter) * pixelAngle * pixels, 1.0e-5);
+    float level = ceil(log2(edge));
+    vec3 cell = floor(worldPosition / exp2(level));
+    ivec3 c = ivec3(clamp(cell, vec3(-1.0e9), vec3(1.0e9)));
+    uint h = RvcHash(uint(c.x) ^ RvcHash(uint(c.y) ^ RvcHash(uint(c.z) ^ RvcHash(uint(int(level) + 128)))));
+    // Keep the invalid sentinel unused by valid cells.
+    return h == RVC_INVALID_KEY ? 0u : h;
+}
+
 void main()
 {
     uint local = gl_LocalInvocationIndex;
@@ -82,40 +123,69 @@ void main()
         s_unique2x2 = 0u;
         s_unique4x4 = 0u;
         s_unique8x8 = 0u;
+        s_uniqueSurface2x2 = 0u;
+        s_uniqueSurface4x4 = 0u;
+        s_uniqueSurface8x8 = 0u;
         s_valid = 0u;
         s_candidates = 0u;
         s_offscreen = 0u;
         s_visible = 0u;
         s_matches = 0u;
+        s_surfaceMatches = 0u;
     }
+
+    XRAdvancedViewRecord view0 = XR_ADV_LoadView(0u);
+    vec3 headCenter = view0.cameraPositionAndNear.xyz;
+    if (viewCount > 1u)
+        headCenter = 0.5 * (headCenter + XR_ADV_LoadView(1u).cameraPositionAndNear.xyz);
+    // Vertical angle of one pixel: 2 tan(fovY / 2) / height.
+    float pixelAngle = 2.0 / (max(abs(view0.projectionUnjittered[1][1]), 1.0e-6) * max(float(extent.y), 1.0));
 
     bool inside = layer < viewCount && all(lessThan(pixel, extent));
     uvec2 identity = inside
         ? texelFetch(RvcVisibilityIdentity, ivec3(pixel, int(layer)), 0).rg
         : uvec2(0u);
     bool valid = inside && RvcIsValidIdentity(identity);
+    XRAdvancedViewRecord view = XR_ADV_LoadView(min(layer, 1u));
+    float depth = valid ? texelFetch(RvcVisibilityDepth, ivec3(pixel, int(layer)), 0).r : 0.0;
+    bool hasSurface = valid && !RvcIsFarDepth(depth, view);
+    vec3 world = hasSurface ? RvcReconstructWorld(vec2(pixel) + 0.5, depth, view) : vec3(0.0);
     s_draw[local] = valid ? identity.x : RVC_INVALID_KEY;
     s_primitive[local] = valid ? identity.y : RVC_INVALID_KEY;
+    s_cell2[local] = hasSurface ? RvcSurfaceCell(world, headCenter, pixelAngle, 2.0) : RVC_INVALID_KEY;
+    s_cell4[local] = hasSurface ? RvcSurfaceCell(world, headCenter, pixelAngle, 4.0) : RVC_INVALID_KEY;
+    s_cell8[local] = hasSurface ? RvcSurfaceCell(world, headCenter, pixelAngle, 8.0) : RVC_INVALID_KEY;
     barrier();
 
     if (valid)
     {
-        // A pixel counts as a unique shadelet when no earlier pixel of the
-        // same block has its key.
+        // A pixel starts a unique shadelet when no earlier pixel of the same
+        // block has its key.
         uvec2 coordinate = gl_LocalInvocationID.xy;
         bool first2x2 = true;
         bool first4x4 = true;
         bool first8x8 = true;
+        bool firstSurface2x2 = true;
+        bool firstSurface4x4 = true;
+        bool firstSurface8x8 = true;
         for (uint other = 0u; other < local; ++other)
         {
             if (s_draw[other] != identity.x || s_primitive[other] != identity.y)
                 continue;
             uvec2 otherCoordinate = uvec2(other & 7u, other >> 3u);
+            bool same4x4 = all(equal(otherCoordinate >> 2u, coordinate >> 2u));
+            bool same2x2 = all(equal(otherCoordinate >> 1u, coordinate >> 1u));
             first8x8 = false;
-            if (all(equal(otherCoordinate >> 2u, coordinate >> 2u)))
+            if (same4x4)
                 first4x4 = false;
-            if (all(equal(otherCoordinate >> 1u, coordinate >> 1u)))
+            if (same2x2)
                 first2x2 = false;
+            if (s_cell8[other] == s_cell8[local])
+                firstSurface8x8 = false;
+            if (same4x4 && s_cell4[other] == s_cell4[local])
+                firstSurface4x4 = false;
+            if (same2x2 && s_cell2[other] == s_cell2[local])
+                firstSurface2x2 = false;
         }
         atomicAdd(s_valid, 1u);
         if (first2x2)
@@ -124,38 +194,45 @@ void main()
             atomicAdd(s_unique4x4, 1u);
         if (first8x8)
             atomicAdd(s_unique8x8, 1u);
+        if (firstSurface2x2)
+            atomicAdd(s_uniqueSurface2x2, 1u);
+        if (firstSurface4x4)
+            atomicAdd(s_uniqueSurface4x4, 1u);
+        if (firstSurface8x8)
+            atomicAdd(s_uniqueSurface8x8, 1u);
 
-        if (layer == 0u && viewCount > 1u)
+        if (layer == 0u && viewCount > 1u && hasSurface)
         {
-            XRAdvancedViewRecord view0 = XR_ADV_LoadView(0u);
-            float depth0 = texelFetch(RvcVisibilityDepth, ivec3(pixel, 0), 0).r;
-            if (!RvcIsFarDepth(depth0, view0))
+            XRAdvancedViewRecord view1 = XR_ADV_LoadView(1u);
+            vec4 clip1 = XR_ADV_TransformRowVector(vec4(world, 1.0), view1.viewProjectionJittered);
+            vec2 uv1 = clip1.w > 0.0
+                ? XR_ADV_ClipNdcToFramebufferUv(view1, clip1.xy / clip1.w)
+                : vec2(-1.0);
+            ivec2 pixel1 = ivec2(floor(uv1 * view1.renderSizeAndInverse.xy));
+            if (clip1.w <= 0.0 || any(lessThan(pixel1, ivec2(0))) || any(greaterThanEqual(pixel1, extent)))
             {
-                XRAdvancedViewRecord view1 = XR_ADV_LoadView(1u);
-                vec3 world = RvcReconstructWorld(vec2(pixel) + 0.5, depth0, view0);
-                vec4 clip1 = XR_ADV_TransformRowVector(vec4(world, 1.0), view1.viewProjectionJittered);
-                vec2 uv1 = clip1.w > 0.0
-                    ? XR_ADV_ClipNdcToFramebufferUv(view1, clip1.xy / clip1.w)
-                    : vec2(-1.0);
-                ivec2 pixel1 = ivec2(floor(uv1 * view1.renderSizeAndInverse.xy));
-                if (clip1.w <= 0.0 || any(lessThan(pixel1, ivec2(0))) || any(greaterThanEqual(pixel1, extent)))
+                atomicAdd(s_offscreen, 1u);
+            }
+            else
+            {
+                atomicAdd(s_candidates, 1u);
+                float depth1 = texelFetch(RvcVisibilityDepth, ivec3(pixel1, 1), 0).r;
+                if (!RvcIsFarDepth(depth1, view1))
                 {
-                    atomicAdd(s_offscreen, 1u);
-                }
-                else
-                {
-                    atomicAdd(s_candidates, 1u);
-                    float depth1 = texelFetch(RvcVisibilityDepth, ivec3(pixel1, 1), 0).r;
-                    if (!RvcIsFarDepth(depth1, view1))
+                    vec3 world1 = RvcReconstructWorld(vec2(pixel1) + 0.5, depth1, view1);
+                    float cameraDistance = distance(world, view0.cameraPositionAndNear.xyz);
+                    if (distance(world, world1) <= RVC_STEREO_DISTANCE_TOLERANCE * max(cameraDistance, 1.0e-3))
                     {
-                        vec3 world1 = RvcReconstructWorld(vec2(pixel1) + 0.5, depth1, view1);
-                        float cameraDistance = distance(world, view0.cameraPositionAndNear.xyz);
-                        if (distance(world, world1) <= RVC_STEREO_DISTANCE_TOLERANCE * max(cameraDistance, 1.0e-3))
+                        atomicAdd(s_visible, 1u);
+                        uvec2 identity1 = texelFetch(RvcVisibilityIdentity, ivec3(pixel1, 1), 0).rg;
+                        if (all(equal(identity1, identity)))
                         {
-                            atomicAdd(s_visible, 1u);
-                            uvec2 identity1 = texelFetch(RvcVisibilityIdentity, ivec3(pixel1, 1), 0).rg;
-                            if (all(equal(identity1, identity)))
-                                atomicAdd(s_matches, 1u);
+                            atomicAdd(s_matches, 1u);
+                            // Per-pixel shading reuse: the right eye's own sample
+                            // must fall in the same one-pixel surface cell.
+                            if (RvcSurfaceCell(world, headCenter, pixelAngle, 1.0) ==
+                                RvcSurfaceCell(world1, headCenter, pixelAngle, 1.0))
+                                atomicAdd(s_surfaceMatches, 1u);
                         }
                     }
                 }
@@ -172,6 +249,9 @@ void main()
         atomicAdd(RvcCounters.unique2x2, s_unique2x2);
         atomicAdd(RvcCounters.unique4x4, s_unique4x4);
         atomicAdd(RvcCounters.unique8x8, s_unique8x8);
+        atomicAdd(RvcCounters.uniqueSurface2x2, s_uniqueSurface2x2);
+        atomicAdd(RvcCounters.uniqueSurface4x4, s_uniqueSurface4x4);
+        atomicAdd(RvcCounters.uniqueSurface8x8, s_uniqueSurface8x8);
     }
     if (s_candidates != 0u)
         atomicAdd(RvcCounters.stereoCandidates, s_candidates);
@@ -181,6 +261,8 @@ void main()
         atomicAdd(RvcCounters.stereoVisible, s_visible);
     if (s_matches != 0u)
         atomicAdd(RvcCounters.stereoKeyMatches, s_matches);
+    if (s_surfaceMatches != 0u)
+        atomicAdd(RvcCounters.stereoSurfaceKeyMatches, s_surfaceMatches);
     if (all(equal(gl_WorkGroupID, uvec3(0u))))
         RvcCounters.viewCount = viewCount;
 }

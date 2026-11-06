@@ -421,12 +421,18 @@ cross-eye ceiling is low.
   `Advanced/Rvc/RvcShadeletTelemetry.comp` once over all view layers. The kernel
   reads whole-array identity and depth views (set-1 bindings 66 and 67) and
   writes counters at binding 68. Shading output does not change.
-- The key is the visible draw handle and primitive. Each count is therefore an
-  upper bound for finer shadelet keys.
-- Intra-view counts are the unique keys per 2x2, 4x4 and 8x8 pixel block.
+- It counts two key levels. The primitive key is the visible draw handle and
+  primitive; its counts are loose upper bounds. The surface key adds the
+  world-space cell that holds the surface point. The cell edge is the footprint
+  of N pixels at the point's distance from the head center, rounded up to a
+  power of two so that neighbor cells nest.
+- Intra-view counts are the unique keys per 2x2, 4x4 and 8x8 pixel block. The
+  surface key uses N = 2, 4 and 8 for those blocks.
 - Stereo counts reproject each visible first-view pixel into the second view.
   A candidate is visible in both eyes when the second view's depth gives a
-  point within 1% of the camera distance. A key match also needs the same key.
+  point within 1% of the camera distance. A primitive key match also needs the
+  same primitive. A surface key match also needs the second view's own sample
+  to fall in the same one-pixel cell, which models per-pixel shading reuse.
 - The counters return through the delayed diagnostic readback under every
   submission strategy, because the setting is an explicit opt-in. They land in
   `RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetry` and in the
