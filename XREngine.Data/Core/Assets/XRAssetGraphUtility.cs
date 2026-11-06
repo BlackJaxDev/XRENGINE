@@ -78,6 +78,27 @@ public static class XRAssetGraphUtility
         return true;
     }
 
+    /// <summary>
+    /// Refreshes the asset graph of a root, and treats each asset that <paramref name="isForeignAsset"/> accepts as an
+    /// external reference: the traversal does not claim it as embedded, does not change its source asset, and does not
+    /// visit its members. A cook uses it for a deserialized copy that can reference live assets.
+    /// </summary>
+    /// <param name="root">The root asset.</param>
+    /// <param name="isForeignAsset">Returns true for an asset that does not belong to the graph of the root.</param>
+    public static void RefreshAssetGraph(XRAsset? root, Predicate<XRAsset>? isForeignAsset)
+    {
+        Predicate<XRAsset>? previous = _isForeignAsset;
+        _isForeignAsset = isForeignAsset;
+        try
+        {
+            RefreshAssetGraph(root);
+        }
+        finally
+        {
+            _isForeignAsset = previous;
+        }
+    }
+
     public static void RefreshAssetGraph(XRAsset? root)
     {
         if (root is null)
@@ -118,6 +139,9 @@ public static class XRAssetGraphUtility
     
     [ThreadStatic]
     private static int _traversalCount;
+
+    [ThreadStatic]
+    private static Predicate<XRAsset>? _isForeignAsset;
 
     private static void TraverseObject(
         object? candidate,
@@ -163,7 +187,7 @@ public static class XRAssetGraphUtility
             {
                 // If this XRAsset is a reference to an external asset file, it should NOT become embedded
                 // in the current root's asset graph.
-                if (IsExternalAssetReference(asset))
+                if (IsExternalAssetReference(asset) || (_isForeignAsset?.Invoke(asset) ?? false))
                     return;
 
                 //Trace.WriteLine($"[XRAssetGraphUtility] Found embedded asset: {asset.GetType().Name}, root='{root.FilePath ?? root.GetType().Name}', asset FilePath='{asset.FilePath}'");

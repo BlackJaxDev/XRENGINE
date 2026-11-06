@@ -11,11 +11,14 @@ namespace XREngine.Cutscenes;
 /// <remarks>
 /// <para>
 /// A key can have more than one live texture, for example the eager and the deferred texture of one import. The index
-/// gives all of them, in the order of their runtime IDs, so the order is the same at each start.
+/// gives all of them, in the order of their runtime IDs. That order is the same within one build. It can change at the
+/// next start, because an import makes new runtime IDs, but the backend sends each request to every texture of the key.
 /// </para>
 /// <para>
-/// The index builds at its first miss, and again only after <see cref="AllowRebuild"/>. The residency session calls it one
-/// time for each manifest selection, so a selection scans the object cache at most one time, also when many keys miss.
+/// The index builds at its first miss. After <see cref="AllowRebuild"/>, the next <see cref="Find"/> builds again if the
+/// key misses, if its textures are dead, or if the object count changed since the last build (so a new duplicate of a key
+/// that hits is found). The residency session allows it one time for each manifest selection, so a selection scans the
+/// object cache at most one time, also when many keys miss. The count check is one read, and no frame path calls it.
 /// The index keeps the key of each texture that it saw, so a new build hashes only new textures. A build allocates, so
 /// it is for an open or a selection, not for each frame. All members are safe on any thread.
 /// </para>
@@ -27,6 +30,7 @@ internal sealed class TextureResidencyKeyIndex
     private readonly ConditionalWeakTable<XRTexture2D, StrongBox<Guid>> _keys = new();
     private readonly List<XRTexture2D> _buildScratch = [];
     private bool _rebuildAllowed = true;
+    private int _builtObjectCount = -1;
 
     /// <summary>The number of times that the index was built. Tests read it.</summary>
     public int BuildCount { get; private set; }
@@ -46,10 +50,12 @@ internal sealed class TextureResidencyKeyIndex
     {
         lock (_sync)
         {
+            int start = destination.Count;
             int added = AddLive(key, destination);
-            if (added > 0 || !_rebuildAllowed)
+            if (!_rebuildAllowed || (added > 0 && XRObjectBase.ObjectsCache.Count == _builtObjectCount))
                 return added;
 
+            destination.RemoveRange(start, added);
             Build();
             return AddLive(key, destination);
         }
@@ -77,6 +83,7 @@ internal sealed class TextureResidencyKeyIndex
         _rebuildAllowed = false;
         BuildCount++;
         _textures.Clear();
+        _builtObjectCount = XRObjectBase.ObjectsCache.Count;
 
         List<XRTexture2D> live = _buildScratch;
         live.Clear();

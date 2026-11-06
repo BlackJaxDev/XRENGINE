@@ -300,6 +300,94 @@ public sealed class CutsceneResidencyWiringTests
     }
 
     [Test]
+    public void SelectionAfterALoad_WaitsWhileAHoldIsActive()
+    {
+        // The baked manifest also names a texture that is still loading, so the session keeps it and selects again later.
+        Guid loading = Guid.NewGuid();
+        (SceneNode node, CutsceneAsset asset) = MakeAsset();
+        asset.Manifest = new CutsceneResidencyManifest(
+            [ShotA, ShotB, loading],
+            [
+                new ResidencyBucket(T(0), T(2), [new ResidencyEntry(0, (int)EResidencyLevel.Target, 0.5f), new ResidencyEntry(2, (int)EResidencyLevel.Target, 0.5f)]),
+                new ResidencyBucket(T(2), T(4), [new ResidencyEntry(1, (int)EResidencyLevel.Target, 0.5f)], startsAtCut: true),
+            ]);
+        asset.ManifestContentHash = CutsceneManifestHash.Compute(asset);
+        CompiledCutscene compiled = CutsceneCompiler.Compile(asset, []);
+        CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, new FakeResolver(node));
+        CutscenePlayer player = new(compiled, bindings, new CutsceneStateSnapshot(bindings));
+        FakeResidencyBackend backend = new() { Resolvable = [ShotA, ShotB], AreAssetsLoading = true };
+        List<CutsceneCompileDiagnostic> diagnostics = [];
+        using CutsceneResidencySession session = CutsceneResidencySession.Create(compiled, bindings, backend, new NoAssets(), diagnostics);
+        backend.Planner = session.Planner;
+        session.PlaybackWaitEnabled = true;
+        session.PlaybackWaitMaximumSeconds = 10.0;
+        session.Open(player);
+        session.IsWaitingForAssets.ShouldBeTrue();
+        backend.SetLevel(ShotA, EResidencyLevel.Target);
+
+        player.Play();
+        Step(player, session, 1.9);
+        Step(player, session, 0.2);
+        session.Planner.IsHoldingPlayback.ShouldBeTrue();
+        CutsceneResidencyPlanner heldPlanner = session.Planner;
+        int cancelled = backend.Cancelled.Count;
+
+        // The load ends during the hold. The selection waits, so the hold and the held tickets stay.
+        backend.AreAssetsLoading = false;
+        Step(player, session, 0.1);
+        Step(player, session, 0.1);
+        session.RefreshCount.ShouldBe(0);
+        session.Planner.ShouldBeSameAs(heldPlanner);
+        session.Planner.IsHoldingPlayback.ShouldBeTrue();
+        player.Position.ShouldBeLessThan(T(2));
+        backend.Cancelled.Count.ShouldBe(cancelled);
+
+        // The next shot is resident, so the hold ends. Then the selection runs one time.
+        backend.SetLevel(ShotB, EResidencyLevel.Target);
+        Step(player, session, 0.1);
+        Step(player, session, 0.1);
+        session.RefreshCount.ShouldBe(1);
+        session.IsWaitingForAssets.ShouldBeFalse();
+        X(node).ShouldBe(100f);
+        session.Close();
+        bindings.Dispose();
+    }
+
+    [Test]
+    public void SelectionAfterALoad_WaitsForTheHostRefresh_AfterANewPlayer()
+    {
+        Guid loading = Guid.NewGuid();
+        (SceneNode node, CutsceneAsset asset) = MakeAsset();
+        asset.Manifest = new CutsceneResidencyManifest(
+            [ShotA, loading],
+            [new ResidencyBucket(T(0), T(4), [new ResidencyEntry(0, (int)EResidencyLevel.Target, 0.5f), new ResidencyEntry(1, (int)EResidencyLevel.Target, 0.5f)])]);
+        asset.ManifestContentHash = CutsceneManifestHash.Compute(asset);
+        CompiledCutscene compiled = CutsceneCompiler.Compile(asset, []);
+        CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, new FakeResolver(node));
+        CutscenePlayer player = new(compiled, bindings, new CutsceneStateSnapshot(bindings));
+        FakeResidencyBackend backend = new() { Resolvable = [ShotA], AreAssetsLoading = true };
+        List<CutsceneCompileDiagnostic> diagnostics = [];
+        using CutsceneResidencySession session = CutsceneResidencySession.Create(compiled, bindings, backend, new NoAssets(), diagnostics);
+        session.Open(player);
+
+        // A preview recompile gives a new player. The old inputs are not used for the selection after the load.
+        CutscenePlayer recompiled = new(compiled, bindings, new CutsceneStateSnapshot(bindings));
+        session.AttachPlayer(recompiled);
+        backend.AreAssetsLoading = false;
+        session.UpdateIdle(recompiled, 1.0 / 60.0);
+        session.RefreshCount.ShouldBe(0);
+        session.IsWaitingForAssets.ShouldBeTrue();
+
+        // The refresh of the host gives the new inputs and selects with the load ended.
+        session.Refresh(compiled, bindings, new NoAssets(), diagnostics);
+        session.RefreshCount.ShouldBe(1);
+        session.IsWaitingForAssets.ShouldBeFalse();
+        session.ManifestState.ShouldBe(ECutsceneManifestState.Unmatched);
+        session.Close();
+        bindings.Dispose();
+    }
+
+    [Test]
     public void Seek_IsReportedToThePlannerWithItsIntent()
     {
         (CutscenePlayer player, CutsceneResidencySession session, _, _) = MakePlayback();

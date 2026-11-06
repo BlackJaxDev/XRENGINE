@@ -11,6 +11,7 @@ public sealed partial class TextureResidencyBackend
     private readonly Lock _resolveSync = new();
     private readonly Dictionary<Guid, XRTexture2D[]> _resolved = [];
     private readonly List<XRTexture2D> _resolveScratch = [];
+    private bool _deadHitRebuildUsed;
 
     /// <summary>True while model imports that register textures with the shared streaming manager are active.</summary>
     public static bool AreModelImportsActive
@@ -28,7 +29,11 @@ public sealed partial class TextureResidencyBackend
     /// <remarks>It clears the resolved textures and lets the key index build one more time.</remarks>
     public void BeginSelection()
     {
-        ClearResolved();
+        lock (_resolveSync)
+        {
+            _resolved.Clear();
+            _deadHitRebuildUsed = false;
+        }
         _keys?.AllowRebuild();
     }
 
@@ -113,13 +118,27 @@ public sealed partial class TextureResidencyBackend
         };
     }
 
-    /// <summary>Resolves an asset one time for each selection, and keeps the result for later calls.</summary>
+    /// <summary>
+    /// Resolves an asset one time for each selection, and keeps the result for later calls. A kept result whose textures
+    /// are all dead (for example after a reimport while a preview is open) is resolved again, and the first such result of a
+    /// selection lets the key index build one more time.
+    /// </summary>
     private XRTexture2D[] ResolveCached(Guid assetId)
     {
         lock (_resolveSync)
         {
             if (_resolved.TryGetValue(assetId, out XRTexture2D[]? textures))
-                return textures;
+            {
+                if (textures.Length == 0 || HasLive(textures))
+                    return textures;
+
+                _resolved.Remove(assetId);
+                if (!_deadHitRebuildUsed)
+                {
+                    _deadHitRebuildUsed = true;
+                    _keys?.AllowRebuild();
+                }
+            }
 
             _resolveScratch.Clear();
             _resolveTextures(assetId, _resolveScratch);
@@ -128,6 +147,14 @@ public sealed partial class TextureResidencyBackend
             _resolved.Add(assetId, textures);
             return textures;
         }
+    }
+
+    private static bool HasLive(XRTexture2D[] textures)
+    {
+        for (int i = 0; i < textures.Length; i++)
+            if (TextureResidencyKeyIndex.IsLive(textures[i]))
+                return true;
+        return false;
     }
 
     private void ClearResolved()

@@ -263,6 +263,94 @@ public sealed class TextureResidencyBackendTests
     }
 
     [Test]
+    public void Request_FindsATextureThatWasDestroyedAndMadeAgain_InTheSameSelection()
+    {
+        _host.Settings.TextureStreamingBudgetProfileFadeFrames = 0;
+        AssetManager assets = new() { MonitorGameAssetsForChanges = false };
+        string source = Path.Combine(Path.GetTempPath(), "cutscene-residency-reimport", "wall.png");
+        (XRTexture2D first, _) = _host.AddTexture("reimport-first", 1024u);
+        first.OriginalPath = source;
+        first.SamplerName = "_MainTex";
+        Guid key = CutsceneResidencyAssetKeys.ForTexture(first);
+        try
+        {
+            using TextureResidencyBackend backend = new(_host.Manager, assets, new TextureResidencyKeyIndex(), useCutsceneBudgetProfile: true);
+            backend.BeginSelection();
+            backend.CanResolve(key).ShouldBeTrue();
+
+            // A reimport while the preview is open destroys the texture and makes a new one for the same source.
+            first.Destroy(now: true);
+            (XRTexture2D second, _) = _host.AddTexture("reimport-second", 1024u);
+            second.OriginalPath = source;
+            second.SamplerName = "_MainTex";
+
+            backend.Request(new ResidencyRequest(key, (int)EResidencyLevel.Target, CutsceneTime.Zero, 0.5f, 0)).IsValid.ShouldBeTrue();
+            _host.Manager.Evaluate(102);
+            _host.Backend.Loads.ShouldHaveSingleItem().Target.ShouldBeSameAs(second);
+            backend.RejectedRequestCount.ShouldBe(0);
+        }
+        finally
+        {
+            assets.Dispose();
+        }
+    }
+
+    [Test]
+    public void KeyIndex_AddsANewDuplicateOfAKeyThatHits_AtTheNextSelection()
+    {
+        TextureResidencyKeyIndex keys = new();
+        string source = Path.Combine(Path.GetTempPath(), "cutscene-residency-key", "duplicate.png");
+        XRTexture2D eager = new() { Name = "eager", OriginalPath = source, SamplerName = "_MainTex" };
+        XRTexture2D? deferred = null;
+        try
+        {
+            Guid key = CutsceneResidencyAssetKeys.ForTexture(eager);
+            List<XRTexture2D> found = [];
+            keys.Find(key, found).ShouldBe(1);
+
+            deferred = new XRTexture2D { Name = "deferred", OriginalPath = source, SamplerName = "_MainTex" };
+            found.Clear();
+            keys.Find(key, found).ShouldBe(1);
+
+            keys.AllowRebuild();
+            found.Clear();
+            keys.Find(key, found).ShouldBe(2);
+            found.ShouldBe([eager, deferred], ignoreOrder: true);
+        }
+        finally
+        {
+            eager.Destroy(now: true);
+            deferred?.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void Request_CountsATextureThatStreamingDoesNotAccept_AndGoesOnWithTheOthers()
+    {
+        AssetManager assets = new() { MonitorGameAssetsForChanges = false };
+        string source = Path.Combine(Path.GetTempPath(), "cutscene-residency-partial", "trim.png");
+        (XRTexture2D tracked, _) = _host.AddTexture("partial-tracked", 1024u);
+        tracked.OriginalPath = source;
+        tracked.SamplerName = "_MainTex";
+        XRTexture2D untracked = new() { Name = "partial-untracked", OriginalPath = source, SamplerName = "_MainTex" };
+        Guid key = CutsceneResidencyAssetKeys.ForTexture(tracked);
+        try
+        {
+            using TextureResidencyBackend backend = new(_host.Manager, assets, new TextureResidencyKeyIndex(), useCutsceneBudgetProfile: false);
+
+            backend.Request(new ResidencyRequest(key, (int)EResidencyLevel.Proxy, CutsceneTime.Zero, 0.5f, 0)).IsValid.ShouldBeTrue();
+
+            backend.PartialRejectedTextureCount.ShouldBe(1);
+            backend.RejectedRequestCount.ShouldBe(0);
+        }
+        finally
+        {
+            untracked.Destroy(now: true);
+            assets.Dispose();
+        }
+    }
+
+    [Test]
     public void MemoryPressure_FollowsTheVramBudgetFitOfTheManager()
     {
         _host.Settings.TextureStreamingBudgetProfileFadeFrames = 0;

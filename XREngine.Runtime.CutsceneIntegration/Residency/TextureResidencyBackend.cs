@@ -22,8 +22,9 @@ namespace XREngine.Cutscenes;
 /// </para>
 /// <para>
 /// One asset can have more than one live texture, for example the eager and the deferred texture of one source file.
-/// A request then goes to each of them, in the order of their runtime IDs, and its level is resident only when it is
-/// resident for each of them. A texture that streaming does not accept is left out of the request.
+/// A request then goes to each of them, and its level is resident only when it is resident for each of them. A texture
+/// that streaming does not accept is left out of the request; <see cref="PartialRejectedTextureCount"/> counts it, and the
+/// first one of each asset gives one warning.
 /// </para>
 /// <para>
 /// By default, the backend holds the <see cref="ETextureStreamingBudgetProfile.Cutscene"/> budget profile while it
@@ -63,6 +64,8 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
     private long _playheadFlicks;
     private double _rate = 1.0;
     private int _rejectedRequestCount;
+    private int _partialRejectedTextureCount;
+    private readonly HashSet<Guid> _partialRejectionWarned = [];
     private long _nextTicketId;
 
     /// <summary>
@@ -132,6 +135,12 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
     /// </summary>
     public int RejectedRequestCount => Volatile.Read(ref _rejectedRequestCount);
 
+    /// <summary>
+    /// The number of textures that streaming did not accept in requests that other textures of the same asset accepted.
+    /// The request goes on without them, so the level of the asset can be resident while such a texture is not.
+    /// </summary>
+    public int PartialRejectedTextureCount => Volatile.Read(ref _partialRejectedTextureCount);
+
     /// <inheritdoc />
     /// <remarks>
     /// True while the last evaluation of the streaming manager fit at least one texture below its target to the VRAM
@@ -200,6 +209,7 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
             long id = ++_nextTicketId;
             BackendTicket entry = new(request.AssetId, request.TargetLevel, textures.Length);
             bool sizeUnknown = false;
+            int notAccepted = 0;
             for (int i = 0; i < textures.Length; i++)
             {
                 XRTexture2D texture = textures[i];
@@ -208,12 +218,16 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
                 if (!TryResolveTargetMip(texture, request.TargetLevel, out int targetMip))
                 {
                     sizeUnknown = true;
+                    notAccepted++;
                     continue;
                 }
 
                 TextureResidencyTicket ticket = _manager.RequestResidency(texture, targetMip, deadlineFrame, priority, request.Generation);
                 if (!ticket.IsValid)
+                {
+                    notAccepted++;
                     continue;
+                }
 
                 entry.ManagerTickets.Add(ticket);
                 _managerTickets.Add(ticket.Id, id);
@@ -224,6 +238,13 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
                 return Reject(request, sizeUnknown
                     ? "the source size of the texture is not known yet"
                     : "texture streaming does not track the texture");
+            }
+
+            if (notAccepted > 0)
+            {
+                Interlocked.Add(ref _partialRejectedTextureCount, notAccepted);
+                if (_partialRejectionWarned.Add(request.AssetId))
+                    Debug.TexturesWarning($"[Cutscene] {notAccepted} of {textures.Length} textures of asset {request.AssetId} did not accept the residency request at level T{request.TargetLevel}, because streaming does not track them or their source size is not known yet. The request goes on with the other textures.");
             }
 
             _tickets.Add(id, entry);

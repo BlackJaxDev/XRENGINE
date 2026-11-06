@@ -312,6 +312,29 @@ their payloads through independent callback-free scopes. They do not use the
 enclosing snapshot's selected-sharing table. Cooked
 assets on disk do not use it; play-mode snapshots do.
 
+## Portable Source Paths
+
+The YAML cook (`ProjectBuilder.CreateCookedBlobFromYaml`) calls
+`CookedSourcePathPolicy.MakeSourcePathsPortable` on the asset that it
+deserialized, before it serializes the cooked payload. The policy writes
+`XRAsset.OriginalPath` of the asset, and of each asset embedded in it, as a
+`game://` or `engine://` reference when the path is in an asset folder of the
+cook process. A path outside the asset folders stays absolute. Thus a cooked
+asset carries no source path of the cook machine, and a system that identifies
+an asset by its source file (for example the cutscene residency texture keys)
+gets the same value in the editor and in a cooked build.
+
+- The policy finds embedded assets with
+  `XRAssetGraphUtility.RefreshAssetGraph(root, isForeignAsset)`. A live asset
+  that the copy references (the asset services return the same instance for
+  its ID) is foreign: the traversal does not claim it, and the policy does not
+  change it.
+- The policy never fails a cook. If the graph refresh throws (for example the
+  1,000-entry collection limit), it logs one warning and makes only the root
+  path portable.
+- Cooks of live objects (`WriteCookedAsset`) and browser dependency cooks do
+  not use the policy.
+
 ## Open Items
 
 - **Index-based resolution caching.** `AotRuntimeMetadataStore.ResolveType(int)`

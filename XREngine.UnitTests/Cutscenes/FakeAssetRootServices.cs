@@ -22,11 +22,11 @@ internal sealed class FakeAssetRootServices(string gameAssetsPath) : IAssetSeria
     {
     }
 
+    /// <summary>The live assets that <see cref="TryGetAssetById"/> returns.</summary>
+    public Dictionary<Guid, XRAsset> LiveAssets { get; } = [];
+
     public bool TryGetAssetById(Guid assetId, [NotNullWhen(true)] out XRAsset? asset)
-    {
-        asset = null;
-        return false;
-    }
+        => LiveAssets.TryGetValue(assetId, out asset);
 
     public bool TryResolveAssetPathById(Guid assetId, string? referenceAssetPath, [NotNullWhen(true)] out string? assetPath)
     {

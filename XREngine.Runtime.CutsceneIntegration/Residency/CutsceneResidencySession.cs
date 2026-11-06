@@ -29,7 +29,10 @@ namespace XREngine.Cutscenes;
 /// <see cref="CutsceneManifestMatch.MaxUnresolvedTextureFraction"/> of the textures of a current baked manifest are not
 /// found, the manifest does not match the scene: the state is <see cref="ECutsceneManifestState.Unmatched"/>, and the session
 /// uses the approximate manifest. While the backend reports <see cref="IResidencyBackend.AreAssetsLoading"/>, a missing
-/// texture can still load, so the session keeps the baked manifest and selects again one time when the loading ends.
+/// texture can still load, so the session keeps the baked manifest and selects again one time when the loading ends. The
+/// new selection replaces the planner, so it waits while the planner holds playback at a cut. After
+/// <see cref="AttachPlayer"/> with another player (a preview recompile), the stored inputs are old, so the selection waits
+/// for the next <see cref="Refresh"/> of the host.
 /// Textures that are not found are not sent to the backend, and one diagnostic gives their count.
 /// </para>
 /// <para>
@@ -300,8 +303,15 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         if (_closed)
             return;
 
-        if (_player is { } previous && !ReferenceEquals(previous, player) && ReferenceEquals(previous.PlaybackGate, this))
-            previous.PlaybackGate = null;
+        if (_player is { } previous && !ReferenceEquals(previous, player))
+        {
+            if (ReferenceEquals(previous.PlaybackGate, this))
+                previous.PlaybackGate = null;
+
+            // A new player comes with a new compile, and the host can dispose the old binding table. The selection after
+            // a load must not use them, so it waits for the next refresh of the host, which gives the new inputs.
+            ClearSelectionInputs();
+        }
         _player = player;
         player.PlaybackGate = this;
     }
@@ -395,7 +405,9 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         if (!double.IsFinite(deltaSeconds) || deltaSeconds < 0.0)
             deltaSeconds = 0.0;
 
-        if (_selectWhenLoaded && !_backend.AreAssetsLoading)
+        // A new selection closes the planner, which would end a hold at a cut and let the frame show a shot that is not
+        // resident. The selection waits until the hold ends.
+        if (_selectWhenLoaded && _selectedCompiled is not null && !Planner.IsHoldingPlayback && !_backend.AreAssetsLoading)
             SelectAgainAfterLoading();
 
         _backend.SetPlayhead(position, rate);
@@ -428,6 +440,14 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         _selectedCollector = collector;
         _selectedDiagnostics = diagnostics;
         _selectWhenLoaded = selection.SelectWhenLoaded;
+    }
+
+    private void ClearSelectionInputs()
+    {
+        _selectedCompiled = null;
+        _selectedBindings = null;
+        _selectedCollector = null;
+        _selectedDiagnostics = null;
     }
 
     /// <summary>Selects the manifest one more time after the backend ended its loading. A failure gives one diagnostic.</summary>
