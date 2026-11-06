@@ -31,6 +31,8 @@ The engine resolves one `EngineExecutionTopology` and constructs one
 `EngineWorkScheduler` before creating windows or a render backend. The default
 policy reserves up to four foreground engine loops, selects general workers
 automatically with a cap of 16, and creates no background render workers.
+General workers run at below-normal thread priority, so heavy background work,
+such as startup asset loads, does not make the rest of the PC slow.
 Logical render lane 0 still exists and runs on the participating render thread.
 
 Execution settings follow the normal engine, project, user, then environment

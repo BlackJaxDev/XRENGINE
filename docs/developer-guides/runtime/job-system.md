@@ -99,7 +99,10 @@ process thread.
   number of persistent lanes. A directly constructed standalone `JobManager`
   retains its compatibility general count (`XR_JOB_WORKERS` or
   `processorCount - 4`, minimum 1, capped by `XR_JOB_WORKER_CAP` or 16) and owns
-  the same two auxiliary lanes until a process scheduler replaces it.
+  the same two auxiliary lanes until a process scheduler replaces it. The
+  general lanes run at `ThreadPriority.BelowNormal`. When background work fills
+  every allowed core, other processes and the foreground engine loops still get
+  CPU time first.
 - **Queues per affinity**: `ConcurrentQueue<Job>[5]` exists for each priority in
   `Any`, `RenderThread`, `AppThread`, `CollectVisibleSwap`, and `Remote`.
   Each tracks counts for metrics and logging.

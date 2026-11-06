@@ -37,10 +37,15 @@ internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
         _workers = new Thread[workerCount];
         for (int laneId = 0; laneId < workerCount; laneId++)
         {
+            // General lanes do background work: asset loads, imports, and shader preparation.
+            // BelowNormal keeps that work from starving other processes when it fills every
+            // allowed core, for example during startup. The foreground engine loops run at
+            // Normal or AboveNormal, so they still preempt these lanes.
             _workers[laneId] = new Thread(WorkerLoop)
             {
                 IsBackground = true,
                 Name = $"XRE-General-{laneId}",
+                Priority = ThreadPriority.BelowNormal,
             };
         }
     }
