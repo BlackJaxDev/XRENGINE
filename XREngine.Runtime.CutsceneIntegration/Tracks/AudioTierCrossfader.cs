@@ -15,8 +15,9 @@ namespace XREngine.Cutscenes;
 /// so the two signals are sample-aligned.
 /// </para>
 /// <para>
-/// The crossfade lasts <see cref="CrossfadeSeconds"/> and uses equal-power gains: the proxy gain is a cosine and the full
-/// gain is a sine of the same angle, so the sum of the squared gains is one at each frame. The caller starts it at a
+/// The crossfade lasts <see cref="CrossfadeSeconds"/> and uses equal-gain (linear) gains that sum to one at each frame.
+/// The proxy and the full decoder are coherent, sample-aligned signals, so equal gain keeps the level flat. Equal power
+/// would make the middle of the fade up to 3 dB louder and could clip. The caller starts it at a
 /// buffer boundary. All buffers are allocated when a clip opens, so a read does not allocate.
 /// </para>
 /// </remarks>
@@ -107,7 +108,7 @@ internal sealed class AudioTierCrossfader
 
     /// <summary>
     /// Mixes the start of the full decoder output with the proxy. Frame <c>k</c> of the crossfade gets the full gain
-    /// <c>sin(a)</c> and the proxy gain <c>cos(a)</c>, with <c>a = (k + 0.5) / CrossfadeFrames * pi / 2</c>.
+    /// <c>t = (k + 0.5) / CrossfadeFrames</c> and the proxy gain <c>1 - t</c>.
     /// </summary>
     /// <param name="full">The interleaved output of the full decoder. The method changes it in place.</param>
     /// <param name="fullFrame">The frame of the first sample of <paramref name="full"/>.</param>
@@ -142,7 +143,7 @@ internal sealed class AudioTierCrossfader
     }
 
     /// <summary>
-    /// Gets the equal-power gains of one crossfade frame. The sum of the squared gains is one.
+    /// Gets the equal-gain (linear) gains of one crossfade frame. The sum of the gains is one.
     /// </summary>
     /// <param name="index">The frame index in the crossfade, from zero.</param>
     /// <param name="length">The length of the crossfade in frames.</param>
@@ -150,9 +151,8 @@ internal sealed class AudioTierCrossfader
     /// <param name="fadeIn">The gain of the signal that fades in.</param>
     public static void GetGains(int index, int length, out float fadeOut, out float fadeIn)
     {
-        double angle = (index + 0.5) / length * (Math.PI / 2.0);
-        fadeOut = (float)Math.Cos(angle);
-        fadeIn = (float)Math.Sin(angle);
+        fadeIn = (float)((index + 0.5) / length);
+        fadeOut = 1.0f - fadeIn;
     }
 
     private void ReadProxyPart(long fullFrame, Span<float> destination, int frames)

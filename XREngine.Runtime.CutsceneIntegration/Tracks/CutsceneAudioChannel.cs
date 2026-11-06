@@ -404,6 +404,16 @@ internal sealed class CutsceneAudioChannel
     }
 
     /// <summary>
+    /// Stops the sources as <see cref="Silence()"/> does, and records the frame, so a later scrub to the same frame plays no grain.
+    /// </summary>
+    /// <param name="frame">The frame in the file at the playhead.</param>
+    public void Silence(long frame)
+    {
+        _lastFrame = frame;
+        Silence();
+    }
+
+    /// <summary>
     /// Stops the stream and plays scrub grains from the proxy. When the frame differs from the frame of the last service
     /// or scrub, the channel plays one grain at the frame. It waits for the end of a playing grain, and then plays the newest
     /// frame. A frame that does not move plays nothing more. A clip with no proxy stays silent.

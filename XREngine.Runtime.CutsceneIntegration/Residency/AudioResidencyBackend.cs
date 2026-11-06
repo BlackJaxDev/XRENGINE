@@ -1,3 +1,4 @@
+using System.Text;
 using XREngine.Data;
 
 namespace XREngine.Cutscenes;
@@ -9,7 +10,8 @@ namespace XREngine.Cutscenes;
 /// <remarks>
 /// <para>
 /// T0 is the proxy. It is part of the cutscene asset, so it is resident at once and the planner keeps it while the cutscene
-/// is open. T1 and T2 open the full decoder of the source file on a background task and seek it near the deadline position:
+/// is open. A stale proxy (its source hash does not match the file) never plays, so the backend does not accept T0 for it;
+/// T1 and T2 of its source still load. T1 and T2 open the full decoder of the source file on a background task and seek it near the deadline position:
 /// the file frame of the clip that plays at the deadline, or the first frame of the next clip. The ticket holds the open
 /// decoder until the planner cancels it, so the data of the file is in the cache of the operating system before the
 /// playhead gets there. The track evaluator opens its own decoder for playback.
@@ -149,6 +151,8 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
             return Reject(request, "the asset is not an audio source with a proxy");
         if (request.TargetLevel is < (int)EResidencyLevel.Proxy or > (int)EResidencyLevel.Target)
             return Reject(request, "the level must be T0, T1, or T2");
+        if (request.TargetLevel == (int)EResidencyLevel.Proxy && !source.ProxyIsCurrent)
+            return Reject(request, "the proxy does not match its source file, so it does not play");
 
         BackendTicket ticket;
         CutsceneResidencyPlanner? planner;
@@ -294,6 +298,38 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
         return ResidencyTicket.None;
     }
 
+    /// <summary>
+    /// Gets the inputs of the backend of an asset as one string: the folder of the asset file, the duration, each audio clip
+    /// (source path, start, duration, offset), and each proxy (reference, source hash, data length).
+    /// Two compiles with the same string give the same backend.
+    /// </summary>
+    /// <param name="asset">The cutscene asset.</param>
+    internal static string GetInputSignature(CutsceneAsset asset)
+    {
+        ArgumentNullException.ThrowIfNull(asset);
+        StringBuilder text = new();
+        text.Append(Path.GetDirectoryName(asset.FilePath)).Append('|').Append(asset.Duration.Flicks);
+        for (int t = 0; t < asset.Tracks.Count; t++)
+        {
+            if (asset.Tracks[t] is not AudioTrack track)
+                continue;
+            for (int c = 0; c < track.Clips.Count; c++)
+            {
+                if (track.Clips[c] is not AudioTrackClip clip)
+                    continue;
+                text.Append("|c:").Append(t).Append(',').Append(clip.SourcePath).Append(',').Append(clip.Start.Flicks)
+                    .Append(',').Append(clip.Duration.Flicks).Append(',').Append(clip.ClipOffset.Flicks);
+            }
+        }
+
+        List<AudioProxyAsset> proxies = asset.AudioProxies;
+        if (proxies is not null)
+            for (int i = 0; i < proxies.Count; i++)
+                if (proxies[i] is { } proxy)
+                    text.Append("|p:").Append(proxy.SourceReference).Append(',').Append(proxy.SourceContentHash).Append(',').Append(proxy.EncodedData.Length);
+        return text.ToString();
+    }
+
     private void CollectSources(CutsceneAsset asset)
     {
         List<AudioProxyAsset> proxies = asset.AudioProxies;
@@ -320,7 +356,9 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
                 Guid assetId = CutsceneResidencyAssetKeys.ForAudioSource(proxy.SourceReference);
                 if (!_sources.TryGetValue(assetId, out AudioSourceEntry? source))
                 {
-                    source = new AudioSourceEntry(assetId, proxy.SourceReference, fullPath, proxy);
+                    // The track evaluator compares the same hash and reports a stale proxy, so the backend does not report it again.
+                    bool current = CutsceneAudioProxySources.IsCurrent(proxy, fullPath, out _);
+                    source = new AudioSourceEntry(assetId, proxy.SourceReference, fullPath, proxy, current);
                     _sources.Add(assetId, source);
                     _sourceOrder.Add(source);
                 }
@@ -360,8 +398,9 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
     }
 
     /// <summary>One source file with a proxy, and the clips that play it.</summary>
-    private sealed class AudioSourceEntry(Guid assetId, string reference, string fullPath, AudioProxyAsset proxy)
+    private sealed class AudioSourceEntry(Guid assetId, string reference, string fullPath, AudioProxyAsset proxy, bool proxyIsCurrent)
     {
+        public bool ProxyIsCurrent { get; } = proxyIsCurrent;
         public Guid AssetId { get; } = assetId;
         public string Reference { get; } = reference;
         public string FullPath { get; } = fullPath;

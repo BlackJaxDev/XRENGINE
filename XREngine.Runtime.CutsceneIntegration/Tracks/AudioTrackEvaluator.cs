@@ -207,7 +207,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
 
     /// <summary>
     /// Sets whether a track with an audio proxy plays scrub grains while the transport is silent and the playhead moves.
-    /// The player turns them off while a playback gate holds playback, and in reverse playback at
+    /// The player turns them off for a jump seek, while a playback gate holds playback, and in reverse playback at
     /// <see cref="SilentReverseRate"/> or faster. A change to false stops a playing grain at the next evaluation.
     /// </summary>
     /// <param name="allowed">True to allow grains.</param>
@@ -276,7 +276,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
                 if (_grainsAllowed && channel.UsesTiers)
                     channel.Scrub(frame, gain);
                 else
-                    channel.Silence();
+                    channel.Silence(frame);
                 continue;
             }
 
@@ -517,7 +517,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
 
                 if (!current.TryGetValue(proxy, out bool isCurrent))
                 {
-                    isCurrent = IsCurrent(proxy, fullPath, out string? reason);
+                    isCurrent = CutsceneAudioProxySources.IsCurrent(proxy, fullPath, out string? reason);
                     current.Add(proxy, isCurrent);
                     if (!isCurrent && MarkReported(t, c, CodeProxyStale))
                         Report(t, c, $"The audio proxy of '{reference}' (clip {c} on audio track '{track.Name}') {reason} The proxy does not play: after a jump, the clip is silent until the full decoder is ready. Bake the manifest again.");
@@ -526,27 +526,6 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
             }
         }
         return result.Count > 0 ? result : null;
-    }
-
-    private static bool IsCurrent(AudioProxyAsset proxy, string fullPath, out string? reason)
-    {
-        reason = null;
-        ulong hash;
-        try
-        {
-            hash = CutsceneAudioProxySources.GetSourceHash(fullPath);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            reason = $"cannot check its source file: {ex.Message}";
-            return false;
-        }
-
-        if (hash == 0)
-            reason = "has no source file to check.";
-        else if (proxy.SourceContentHash != hash)
-            reason = "does not match its source file, because the file changed after the bake.";
-        return reason is null;
     }
 
     /// <summary>

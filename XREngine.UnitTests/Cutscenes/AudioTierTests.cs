@@ -52,15 +52,21 @@ public sealed class AudioTierTests
     /// <summary>A decoder that records its seeks, its reads, and its disposal.</summary>
     private sealed class RecordingDecoder(IStreamingAudioDecoder inner) : IStreamingAudioDecoder
     {
+        private volatile bool _disposed;
+
         public List<long> Seeks { get; } = [];
         public int Reads { get; private set; }
-        public bool Disposed { get; private set; }
+        public bool Disposed => _disposed;
+
+        /// <summary>Runs at the start of each seek, on the thread of the seek. It can throw, block, or call the owner.</summary>
+        public Action<long>? BeforeSeek { get; set; }
         public int SampleRate => inner.SampleRate;
         public int Channels => inner.Channels;
         public long TotalFrames => inner.TotalFrames;
 
         public void SeekToFrame(long frame)
         {
+            BeforeSeek?.Invoke(frame);
             Seeks.Add(frame);
             inner.SeekToFrame(frame);
         }
@@ -73,7 +79,7 @@ public sealed class AudioTierTests
 
         public void Dispose()
         {
-            Disposed = true;
+            _disposed = true;
             inner.Dispose();
         }
     }
@@ -263,7 +269,7 @@ public sealed class AudioTierTests
             writer.Write(ToneSample(f));
     }
 
-    private static (string Directory, CutsceneAsset Asset) MakeAsset(bool proxy, bool staleProxy, double clipStart = 0.0, double clipOffset = 0.0)
+    private static (string Directory, CutsceneAsset Asset) MakeAsset(bool proxy, bool staleProxy, double clipStart = 0.0, double clipOffset = 0.0, bool invalidProxy = false)
     {
         string directory = Path.Combine(Path.GetTempPath(), $"xre-audio-tier-{Guid.NewGuid():N}");
         System.IO.Directory.CreateDirectory(directory);
@@ -278,14 +284,19 @@ public sealed class AudioTierTests
         {
             using WavStreamingDecoder decoder = new(wav);
             ulong hash = staleProxy ? 12345UL : CutsceneAudioProxySources.HashSourceFile(wav);
-            asset.AudioProxies.Add(AudioProxyBuilder.Build(decoder, "tone.wav", hash));
+            AudioProxyAsset built = AudioProxyBuilder.Build(decoder, "tone.wav", hash);
+
+            // A step index above 88 in the first block header makes the proxy data invalid.
+            if (invalidProxy)
+                built.EncodedData[2] = 200;
+            asset.AudioProxies.Add(built);
         }
         return (directory, asset);
     }
 
-    private static Rig MakeRig(bool proxy = true, bool staleProxy = false)
+    private static Rig MakeRig(bool proxy = true, bool staleProxy = false, bool invalidProxy = false)
     {
-        (string directory, CutsceneAsset asset) = MakeAsset(proxy, staleProxy);
+        (string directory, CutsceneAsset asset) = MakeAsset(proxy, staleProxy, invalidProxy: invalidProxy);
         SceneNode node = new("Speaker");
         AudioSourceComponent component = node.AddComponent<AudioSourceComponent>()!;
         FakeTransport transport = new();
@@ -383,14 +394,14 @@ public sealed class AudioTierTests
     }
 
     [Test]
-    public void CrossfadeGains_AreEqualPower()
+    public void CrossfadeGains_AreEqualGain()
     {
         int length = (int)Math.Round(AudioTierCrossfader.CrossfadeSeconds * Rate);
         length.ShouldBe(960);
         for (int i = 0; i < length; i++)
         {
             AudioTierCrossfader.GetGains(i, length, out float fadeOut, out float fadeIn);
-            Math.Abs(fadeOut * fadeOut + fadeIn * fadeIn - 1.0f).ShouldBeLessThan(1e-3f);
+            Math.Abs(fadeOut + fadeIn - 1.0f).ShouldBeLessThan(1e-3f);
             if (i > 0)
             {
                 AudioTierCrossfader.GetGains(i - 1, length, out float previousOut, out float previousIn);
@@ -401,10 +412,10 @@ public sealed class AudioTierTests
 
         AudioTierCrossfader.GetGains(0, length, out float firstOut, out float firstIn);
         firstIn.ShouldBeLessThan(0.01f);
-        firstOut.ShouldBeGreaterThan(0.999f);
+        firstOut.ShouldBeGreaterThan(0.99f);
         AudioTierCrossfader.GetGains(length - 1, length, out float lastOut, out float lastIn);
         lastOut.ShouldBeLessThan(0.01f);
-        lastIn.ShouldBeGreaterThan(0.999f);
+        lastIn.ShouldBeGreaterThan(0.99f);
     }
 
     [Test]
@@ -426,24 +437,16 @@ public sealed class AudioTierTests
         int change = 4 * Chunk;
         int fade = (int)Math.Round(AudioTierCrossfader.CrossfadeSeconds * Rate);
 
-        // Before the change, the proxy follows the tone. In the crossfade, the sum of the two aligned signals follows
-        // the tone times the sum of the gains. After the crossfade, the output is the full decoder, sample for sample.
+        // Before the change and in the crossfade, the output follows the tone: the two signals are aligned and the gains
+        // sum to one, so the level does not change. After the crossfade, the output is the full decoder, sample for sample.
         for (int n = 0; n < samples.Length; n++)
         {
-            double expected;
-            if (n < change)
-                expected = ToneSample(jump + n);
-            else if (n < change + fade)
-            {
-                AudioTierCrossfader.GetGains(n - change, fade, out float fadeOut, out float fadeIn);
-                expected = ToneSample(jump + n) * (fadeOut + fadeIn);
-            }
-            else
+            if (n >= change + fade)
             {
                 samples[n].ShouldBe(ToneSample(jump + n), $"frame {n}");
                 continue;
             }
-            Math.Abs(samples[n] - expected).ShouldBeLessThan(0.02 * 32768.0, $"frame {n}");
+            ((double)Math.Abs(samples[n] - ToneSample(jump + n))).ShouldBeLessThan(0.02 * 32768.0, $"frame {n}");
         }
 
         // No step at the change: the largest difference near the change is not above the largest difference of the tone.
@@ -849,7 +852,247 @@ public sealed class AudioTierTests
             using CutsceneResidencySession withoutAudio = CutsceneResidencySession.Create(compiled, bindings, new FakeResidencyBackend(), new NoAssets(), noAudio, _ => null);
             withoutAudio.AudioPlanner.ShouldBeNull();
             noAudio.Count.ShouldBe(2);
-            noAudio[1].Message.ShouldContain("1 audio assets of the residency manifest have no audio residency backend");
+            noAudio[1].Message.ShouldContain("1 audio assets of the residency manifest have no audio residency backend, because no audio residency backend was made");
+        }
+        finally
+        {
+            System.IO.Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Worker_CloseDuringASeek_TheTaskClosesTheDecoder()
+    {
+        ManualScheduler scheduler = new();
+        (string directory, _) = MakeAsset(proxy: false, staleProxy: false);
+        try
+        {
+            RecordingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(Path.Combine(directory, "tone.wav")));
+            AudioDecoderSeekWorker worker = new(decoder, scheduler);
+            decoder.BeforeSeek = _ =>
+            {
+                worker.Close();
+                decoder.Disposed.ShouldBeFalse();
+            };
+
+            worker.Request(100);
+            scheduler.RunAll().ShouldBe(1);
+            decoder.Seeks.ShouldBe([100L]);
+            decoder.Disposed.ShouldBeTrue();
+
+            // A closed worker starts no more seeks.
+            worker.Request(200);
+            scheduler.Pending.ShouldBe(0);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Worker_NewerRequestDuringASeek_SeeksAgainToTheNewestFrame()
+    {
+        ManualScheduler scheduler = new();
+        (string directory, _) = MakeAsset(proxy: false, staleProxy: false);
+        try
+        {
+            RecordingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(Path.Combine(directory, "tone.wav")));
+            AudioDecoderSeekWorker worker = new(decoder, scheduler);
+            bool idleDuringSeek = true;
+            decoder.BeforeSeek = frame =>
+            {
+                if (frame != 100)
+                    return;
+                worker.Request(200);
+                idleDuringSeek = worker.TryGetIdle(out _, out _);
+            };
+
+            worker.Request(100);
+            scheduler.RunAll().ShouldBe(1);
+            idleDuringSeek.ShouldBeFalse();
+            decoder.Seeks.ShouldBe([100L, 200L]);
+            worker.SeekCount.ShouldBe(2);
+            worker.TryGetIdle(out long frame, out Exception? failure).ShouldBeTrue();
+            frame.ShouldBe(200L);
+            failure.ShouldBeNull();
+
+            worker.Close();
+            decoder.Disposed.ShouldBeTrue();
+        }
+        finally
+        {
+            System.IO.Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Worker_GatedSeekOnARealThread_ClosesTheDecoderAtTheEndOfTheSeek()
+    {
+        (string directory, _) = MakeAsset(proxy: false, staleProxy: false);
+        try
+        {
+            using ManualResetEventSlim entered = new();
+            using ManualResetEventSlim gate = new();
+            RecordingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(Path.Combine(directory, "tone.wav")));
+            AudioDecoderSeekWorker worker = new(decoder, TaskScheduler.Default);
+            decoder.BeforeSeek = _ =>
+            {
+                entered.Set();
+                gate.Wait(TimeSpan.FromSeconds(10));
+            };
+
+            worker.Request(100);
+            entered.Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+            worker.TryGetIdle(out _, out _).ShouldBeFalse();
+
+            // The seek still runs, so the close passes to the task.
+            worker.Close();
+            decoder.Disposed.ShouldBeFalse();
+            gate.Set();
+            SpinWait.SpinUntil(() => decoder.Disposed, TimeSpan.FromSeconds(10)).ShouldBeTrue();
+        }
+        finally
+        {
+            System.IO.Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void FailedBackgroundSeek_GivesOneDiagnostic_AndTheProxyKeepsPlaying()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.0);
+        rig.Full.BeforeSeek = _ => throw new IOException("The test seek failed.");
+        int readsAtJump = rig.Full.Reads;
+        rig.Buffers.Clear();
+
+        const long jump = Rate * 3 + 123;
+        rig.Player.Seek(CutsceneTime.FromSamples(jump, Rate), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+        rig.Scheduler.RunAll();
+        for (int i = 0; i < 4; i++)
+            rig.PlayOneBuffer();
+
+        rig.Player.Diagnostics.Count.ShouldBe(1);
+        rig.Player.Diagnostics[0].Message.ShouldContain("failed to seek in the background");
+        rig.Player.Diagnostics[0].Message.ShouldContain("The test seek failed.");
+        rig.Full.Reads.ShouldBe(readsAtJump);
+        short[] samples = Concatenate(rig.Buffers);
+        samples.Length.ShouldBe(8 * Chunk);
+        for (int n = 0; n < samples.Length; n++)
+            ((double)Math.Abs(samples[n] - ToneSample(jump + n))).ShouldBeLessThan(0.02 * 32768.0, $"frame {n}");
+    }
+
+    [Test]
+    public void InvalidProxy_GivesOneDiagnostic_AndSilenceUntilTheFullDecoderIsReady()
+    {
+        using Rig rig = MakeRig(invalidProxy: true);
+        rig.Player.Diagnostics.ShouldBeEmpty();
+
+        const long jump = Rate * 3 + 123;
+        PlayAndJump(rig, jump);
+        rig.Player.Diagnostics.Count.ShouldBe(1);
+        rig.Player.Diagnostics[0].Message.ShouldContain("does not open");
+        Concatenate(rig.Buffers).ShouldAllBe(sample => sample == 0);
+
+        rig.Scheduler.RunAll();
+        for (int i = 0; i < 4; i++)
+            rig.PlayOneBuffer();
+        short[] samples = Concatenate(rig.Buffers);
+        for (int n = 4 * Chunk + 960; n < samples.Length; n++)
+            samples[n].ShouldBe(ToneSample(jump + n), $"frame {n}");
+        rig.Player.Diagnostics.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public void JumpSeekWhilePaused_PlaysNoGrain()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Seek(T(2.0), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+        rig.Buffers.ShouldBeEmpty();
+
+        // A scrub to the same frame did not move the playhead, so it plays nothing. A move plays a grain.
+        rig.Player.Seek(T(2.0), ESeekIntent.Scrub);
+        rig.Player.Tick(0.0);
+        rig.Buffers.ShouldBeEmpty();
+        rig.Player.Seek(T(2.1), ESeekIntent.Scrub);
+        rig.Player.Tick(0.0);
+        rig.Buffers.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public void AudioBackend_StaleProxy_IsNotResidentAtT0_ButItsSourceLoads()
+    {
+        (string directory, CutsceneAsset asset) = MakeAsset(proxy: true, staleProxy: true);
+        try
+        {
+            CompiledCutscene compiled = CutsceneCompiler.Compile(asset, []);
+            ManualScheduler scheduler = new();
+            using AudioResidencyBackend backend = new(compiled, AudioTrackEvaluator.OpenDefaultDecoder, scheduler);
+            Guid id = CutsceneResidencyAssetKeys.ForAudioSource("tone.wav");
+
+            backend.Request(new ResidencyRequest(id, 0, T(0), 1.0f, 0)).IsValid.ShouldBeFalse();
+            backend.RejectedRequestCount.ShouldBe(1);
+            backend.GetLevel(id).ShouldBe(EResidencyLevel.None);
+
+            backend.Request(new ResidencyRequest(id, 1, T(1), 1.0f, 0)).IsValid.ShouldBeTrue();
+            scheduler.RunAll();
+            backend.GetLevel(id).ShouldBe(EResidencyLevel.Coarse);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Session_Refresh_KeepsTheAudioBackend_UntilTheAudioInputsChange()
+    {
+        (string directory, CutsceneAsset asset) = MakeAsset(proxy: true, staleProxy: false);
+        try
+        {
+            SceneNode node = new("Speaker");
+            asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.SceneObject, ObjectId = node.ID });
+            CompiledCutscene compiled = CutsceneCompiler.Compile(asset, []);
+            using CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, new FakeResolver(node));
+            ManualScheduler scheduler = new();
+            int created = 0;
+            bool fail = false;
+            List<CutsceneCompileDiagnostic> diagnostics = [];
+            using CutsceneResidencySession session = CutsceneResidencySession.Create(
+                compiled, bindings, new FakeResidencyBackend(), new NoAssets(), diagnostics,
+                c =>
+                {
+                    created++;
+                    return fail ? throw new InvalidOperationException("The test audio factory failed.") : new AudioResidencyBackend(c, AudioTrackEvaluator.OpenDefaultDecoder, scheduler);
+                });
+            IResidencyBackend? first = session.AudioBackend;
+            first.ShouldNotBeNull();
+
+            // A new compile with the same audio inputs keeps the audio backend.
+            session.Refresh(CutsceneCompiler.Compile(asset, []), bindings, new NoAssets(), diagnostics);
+            session.AudioBackend.ShouldBeSameAs(first);
+            created.ShouldBe(1);
+
+            // A changed clip makes a new audio part. A failure of it leaves the session as it was.
+            ((AudioTrackClip)asset.Tracks[0].Clips[0]).ClipOffset = T(0.25);
+            CompiledCutscene changed = CutsceneCompiler.Compile(asset, []);
+            fail = true;
+            CutsceneResidencyPlanner planner = session.Planner;
+            Should.Throw<InvalidOperationException>(() => session.Refresh(changed, bindings, new NoAssets(), diagnostics));
+            session.Planner.ShouldBeSameAs(planner);
+            session.AudioBackend.ShouldBeSameAs(first);
+            session.RefreshCount.ShouldBe(1);
+
+            fail = false;
+            session.Refresh(changed, bindings, new NoAssets(), diagnostics);
+            session.AudioBackend.ShouldNotBeSameAs(first);
+            session.AudioPlanner.ShouldNotBeNull();
+            created.ShouldBe(3);
+            scheduler.RunAll();
         }
         finally
         {

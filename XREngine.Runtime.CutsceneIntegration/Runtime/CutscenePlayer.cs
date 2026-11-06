@@ -382,8 +382,10 @@ public sealed class CutscenePlayer
         bool playing = State == ECutsceneTransportState.Playing && !scrubSeek;
         _audio.SetTransport(playing && !_heldByGate, _clock.Rate);
 
-        // Scrub grains play when the playhead moves with no stream, but not during a gate hold or a fast reverse play.
-        _audio.SetScrubGrains(!_heldByGate && !(playing && _clock.Rate <= -AudioTrackEvaluator.SilentReverseRate));
+        // Scrub grains play when the playhead moves with no stream, but not for a jump seek (a skip while paused is silent),
+        // during a gate hold, or in a fast reverse play.
+        bool jumpSeek = _hasPendingSeek && _pendingIntent == ESeekIntent.Jump;
+        _audio.SetScrubGrains(!jumpSeek && !_heldByGate && !(playing && _clock.Rate <= -AudioTrackEvaluator.SilentReverseRate));
 
         if (_hasPendingSeek)
         {

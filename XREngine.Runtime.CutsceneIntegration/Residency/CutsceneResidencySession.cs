@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace XREngine.Cutscenes;
 
 /// <summary>
@@ -27,6 +29,8 @@ namespace XREngine.Cutscenes;
 /// adds nothing.
 /// </para>
 /// <para>
+/// A refresh keeps the audio backend and its open decoders when the audio inputs did not change. A refresh makes the new
+/// audio part before it changes anything, so a throw leaves the session as it was.
 /// The default audio backend exists only for a cutscene with audio proxies. Its manifest comes from the audio clips of the
 /// timeline (<see cref="AudioResidencyBackend.BuildManifest"/>), because the bake lists each proxy with no bucket entries:
 /// sound has no screen coverage, so each clip range needs T2 of its source.
@@ -61,6 +65,8 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     private Func<CompiledCutscene, IResidencyBackend?> _createAudioBackend = CreateDefaultAudioBackend;
     private IResidencyBackend? _audioBackend;
     private int _reportedUnroutedAudio;
+    private string? _audioSignature;
+    private string? _audioUnroutedReason;
     private CutscenePlayer? _player;
     private bool _updatedThisTick;
     private bool _opened;
@@ -101,7 +107,8 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     public IResidencyBackend Backend => _backend;
 
     /// <summary>
-    /// The planner of the audio assets, or null if the cutscene has no audio backend. <see cref="Refresh"/> replaces it.
+    /// The planner of the audio assets, or null if the cutscene has no audio backend. <see cref="Refresh"/> replaces it
+    /// only when the audio inputs (the audio clips, the proxies, and the audio assets of the manifest) changed.
     /// It never holds playback.
     /// </summary>
     public CutsceneResidencyPlanner? AudioPlanner { get; private set; }
@@ -175,7 +182,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     /// <param name="diagnostics">The list that receives the diagnostics.</param>
     /// <param name="createAudioBackend">
     /// Creates the audio backend of a compile, or gives null for no audio planner. The session owns the result. Null uses
-    /// <see cref="CreateDefaultAudioBackend"/>. The session calls it again at each <see cref="Refresh"/>.
+    /// <see cref="CreateDefaultAudioBackend"/>. The session calls it again at a <see cref="Refresh"/> whose audio inputs changed.
     /// </param>
     public static CutsceneResidencySession Create(
         CompiledCutscene compiled,
@@ -194,7 +201,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         {
             if (createAudioBackend is not null)
                 session._createAudioBackend = createAudioBackend;
-            session.ReplaceAudio(compiled, selection);
+            session.InstallAudio(session.PrepareAudio(compiled, selection, GetAudioSignature(compiled, selection)));
         }
         catch
         {
@@ -308,6 +315,12 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
             PlaybackWaitMaximumSeconds = _playbackWaitMaximumSeconds,
         };
 
+        // The audio part is made before any change, so a throw leaves the session as it was. With the same audio inputs,
+        // the audio backend and its open decoders stay.
+        string audioSignature = GetAudioSignature(compiled, selection);
+        bool keepAudio = string.Equals(audioSignature, _audioSignature, StringComparison.Ordinal);
+        AudioParts audio = keepAudio ? default : PrepareAudio(compiled, selection, audioSignature);
+
         CutsceneResidencyPlanner previous = Planner;
         planner.LookAhead = previous.LookAhead;
         planner.LookBehind = previous.LookBehind;
@@ -322,7 +335,8 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         KeepSelectionInputs(compiled, bindings, collector, diagnostics, selection);
         if (_opened)
             planner.Open();
-        ReplaceAudio(compiled, selection);
+        if (!keepAudio)
+            InstallAudio(audio);
         Report(selection, diagnostics);
     }
 
@@ -456,47 +470,70 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     }
 
     /// <summary>
-    /// Replaces the audio backend and the audio planner for a compile. The old planner closes first, so its tickets release,
-    /// and then the old backend is disposed. An open session opens the new planner.
+    /// Makes the audio backend and the audio planner of a compile. It changes no field of the session, so a throw leaves the
+    /// session as it was. With no backend or no audio asset, the result holds only the reason for the diagnostic.
     /// </summary>
-    private void ReplaceAudio(CompiledCutscene compiled, Selection selection)
+    private AudioParts PrepareAudio(CompiledCutscene compiled, Selection selection, string signature)
     {
-        CloseAudio();
-
         IResidencyBackend? backend = _createAudioBackend(compiled);
         if (backend is null)
-            return;
+            return new AudioParts(null, null, signature, "no audio residency backend was made: the cutscene has no audio proxies, or the audio backend factory gave none");
 
-        CutsceneResidencyManifest manifest = backend is AudioResidencyBackend audio
-            ? audio.BuildManifest()
-            : selection.FullManifest.SelectKind(EResidencyAssetKind.Audio);
-        if (manifest.Assets.Length == 0)
-        {
-            (backend as IDisposable)?.Dispose();
-            return;
-        }
-
-        _audioBackend = backend;
-        CutsceneResidencyPlanner planner;
         try
         {
-            planner = new CutsceneResidencyPlanner(manifest, backend);
-            backend.AttachPlanner(planner);
+            CutsceneResidencyManifest manifest = backend is AudioResidencyBackend audio
+                ? audio.BuildManifest()
+                : selection.FullManifest.SelectKind(EResidencyAssetKind.Audio);
+            if (manifest.Assets.Length == 0)
+            {
+                (backend as IDisposable)?.Dispose();
+                return new AudioParts(null, null, signature, "no audio proxy of the cutscene matches an audio clip");
+            }
+            return new AudioParts(backend, new CutsceneResidencyPlanner(manifest, backend), signature, null);
         }
         catch
         {
-            _audioBackend = null;
             (backend as IDisposable)?.Dispose();
             throw;
         }
+    }
 
+    /// <summary>
+    /// Replaces the audio backend and the audio planner. The old planner closes first, so its tickets release, and then the
+    /// old backend is disposed. An open session opens the new planner.
+    /// </summary>
+    private void InstallAudio(AudioParts parts)
+    {
+        CloseAudio();
+        _audioSignature = parts.Signature;
+        _audioUnroutedReason = parts.UnroutedReason;
+        if (parts.Planner is not { } planner)
+            return;
+
+        _audioBackend = parts.Backend;
         AudioPlanner = planner;
+        parts.Backend!.AttachPlanner(planner);
         if (_opened)
             planner.Open();
     }
 
+    /// <summary>
+    /// Gets the inputs of the audio part of a compile as one string: the audio clips and proxies of the asset, and the audio
+    /// assets of the selected manifest. A refresh with the same string keeps the audio backend.
+    /// </summary>
+    private static string GetAudioSignature(CompiledCutscene compiled, Selection selection)
+    {
+        StringBuilder text = new(AudioResidencyBackend.GetInputSignature(compiled.Asset));
+        CutsceneResidencyManifest manifest = selection.FullManifest;
+        for (int i = 0; i < manifest.Assets.Length; i++)
+            if (manifest.AssetKinds[i] == EResidencyAssetKind.Audio)
+                text.Append("|a:").Append(manifest.Assets[i].ToString("N"));
+        return text.ToString();
+    }
+
     private void CloseAudio()
     {
+        _audioSignature = null;
         CutsceneResidencyPlanner? planner = AudioPlanner;
         IResidencyBackend? backend = _audioBackend;
         AudioPlanner = null;
@@ -608,7 +645,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         // ahead of the playhead; the track still opens them at playback.
         int unroutedAudio = AudioPlanner is null ? selection.AudioAssets : 0;
         if (unroutedAudio > 0 && unroutedAudio != _reportedUnroutedAudio)
-            Add(diagnostics, $"{unroutedAudio} audio assets of the residency manifest have no audio residency backend, because the cutscene has no audio proxy that matches an audio clip. The audio tracks open their files only when they play. Bake the manifest again.");
+            Add(diagnostics, $"{unroutedAudio} audio assets of the residency manifest have no audio residency backend, because {_audioUnroutedReason ?? "the audio part was not made"}. The audio tracks open their files only when they play.");
         _reportedUnroutedAudio = unroutedAudio;
 
         UnresolvedTextureCount = selection.Unresolved;
@@ -732,6 +769,8 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         diagnostics.Add(new CutsceneCompileDiagnostic(-1, -1, message));
         Debug.LogWarning(ELogCategory.Animation, "Cutscene residency: {0}", message);
     }
+
+    private readonly record struct AudioParts(IResidencyBackend? Backend, CutsceneResidencyPlanner? Planner, string Signature, string? UnroutedReason);
 
     private readonly record struct Selection(
         CutsceneResidencyManifest TextureManifest,

@@ -31,6 +31,7 @@ internal sealed class AudioDecoderSeekWorker
     private long _completedFrame;
     private Exception? _failure;
     private bool _running;
+    private int _seekCount;
 
     /// <summary>Creates a worker that owns a decoder.</summary>
     /// <param name="decoder">The decoder. The worker closes it.</param>
@@ -44,7 +45,14 @@ internal sealed class AudioDecoderSeekWorker
     }
 
     /// <summary>The number of seeks that the worker started. A request that a newer request cancelled does not start a seek.</summary>
-    public int SeekCount { get; private set; }
+    public int SeekCount
+    {
+        get
+        {
+            lock (_sync)
+                return _seekCount;
+        }
+    }
 
     /// <summary>
     /// Asks for a seek to a frame. A newer request cancels a waiting request and makes a running result stale.
@@ -104,43 +112,82 @@ internal sealed class AudioDecoderSeekWorker
     private void Run()
     {
         CancellationToken token = _cancel.Token;
-        while (true)
+        bool exited = false;
+        bool close = false;
+        try
         {
-            long frame;
-            int generation;
-            lock (_sync)
+            while (true)
             {
-                if (token.IsCancellationRequested || _completed == _requested)
+                long frame;
+                int generation;
+                lock (_sync)
                 {
-                    _running = false;
-                    if (!token.IsCancellationRequested)
+                    // The check and the end of the run are under one lock, so a request that comes after the check starts a new task.
+                    if (token.IsCancellationRequested || _completed == _requested)
+                    {
+                        _running = false;
+                        close = token.IsCancellationRequested;
+                        exited = true;
                         return;
-                    break;
+                    }
+                    frame = _requestFrame;
+                    generation = _requested;
+                    _seekCount++;
                 }
-                frame = _requestFrame;
-                generation = _requested;
-                SeekCount++;
-            }
 
-            Exception? failure = null;
-            try
-            {
-                _decoder.SeekToFrame(frame);
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                failure = ex;
-            }
+                Exception? failure = null;
+                try
+                {
+                    _decoder.SeekToFrame(frame);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    failure = ex;
+                }
 
-            lock (_sync)
-            {
-                _completed = generation;
-                _completedFrame = frame;
-                _failure = failure;
+                lock (_sync)
+                {
+                    _completed = generation;
+                    _completedFrame = frame;
+                    _failure = failure;
+                }
             }
         }
+        finally
+        {
+            if (!exited)
+                close = EndAfterError(token);
+            if (close)
+                CloseDecoder();
+        }
+    }
 
-        // Close ran while this task was running, so this task owns the close of the decoder.
-        _decoder.Dispose();
+    // Ends the run after an exception that the loop does not catch, for example an out-of-memory error in a long seek.
+    // The worker then reports idle with a failure, so the channel keeps the proxy. Returns true if Close ran during the run.
+    private bool EndAfterError(CancellationToken token)
+    {
+        lock (_sync)
+        {
+            _running = false;
+            if (token.IsCancellationRequested)
+                return true;
+
+            _completed = _requested;
+            _failure ??= new InvalidOperationException("The background seek of the audio decoder stopped with an unexpected error.");
+            return false;
+        }
+    }
+
+    // Close ran while this task was running, so this task closes the decoder. A failure here must not fault the task.
+    private void CloseDecoder()
+    {
+        try
+        {
+            _decoder.Dispose();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Debug.LogWarning(ELogCategory.Audio, "Cutscene audio: an audio decoder failed to close after its background seek: {0}", ex.Message);
+        }
     }
 }

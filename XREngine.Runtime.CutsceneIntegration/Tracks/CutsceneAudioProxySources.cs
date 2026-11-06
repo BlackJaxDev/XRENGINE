@@ -10,8 +10,14 @@ namespace XREngine.Cutscenes;
 /// </summary>
 public static class CutsceneAudioProxySources
 {
+    /// <summary>The largest number of files in the hash cache. A full cache is cleared before a new file is added.</summary>
+    internal const int MaxCachedHashes = 256;
+
     private static readonly Lock HashCacheSync = new();
-    private static readonly Dictionary<string, CachedHash> HashCache = new(StringComparer.OrdinalIgnoreCase);
+
+    // Windows and macOS file systems ignore case by default, and Linux file systems do not.
+    private static readonly Dictionary<string, CachedHash> HashCache = new(
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     /// <summary>
     /// Gets the source reference of a proxy: the portable asset reference of the file (<c>game://</c> or <c>engine://</c>).
@@ -69,8 +75,37 @@ public static class CutsceneAudioProxySources
     }
 
     /// <summary>
+    /// True if the <see cref="AudioProxyAsset.SourceContentHash"/> of a proxy matches its source file now.
+    /// </summary>
+    /// <param name="proxy">The proxy.</param>
+    /// <param name="fullPath">The full path of the source file.</param>
+    /// <param name="reason">The reason that the proxy is not current, as the end of a sentence, or null.</param>
+    internal static bool IsCurrent(AudioProxyAsset proxy, string fullPath, out string? reason)
+    {
+        reason = null;
+        ulong hash;
+        try
+        {
+            hash = GetSourceHash(fullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            reason = $"cannot check its source file: {ex.Message}";
+            return false;
+        }
+
+        if (hash == 0)
+            reason = "has no source file to check.";
+        else if (proxy.SourceContentHash != hash)
+            reason = "does not match its source file, because the file changed after the bake.";
+        return reason is null;
+    }
+
+    /// <summary>
     /// Gets the hash of a source file. A file with the same length and the same last write time as at an earlier call
-    /// gives the stored hash, so a recompile of an open cutscene does not read the file again.
+    /// gives the stored hash, so a recompile of an open cutscene does not read the file again. This is a heuristic: a file
+    /// that is replaced with the same length and the same write time keeps the old hash. The cache holds at most
+    /// <see cref="MaxCachedHashes"/> files.
     /// </summary>
     /// <param name="fullPath">The full path of the file.</param>
     internal static ulong GetSourceHash(string fullPath)
@@ -87,7 +122,11 @@ public static class CutsceneAudioProxySources
 
         ulong hash = HashSourceFile(fullPath);
         lock (HashCacheSync)
+        {
+            if (HashCache.Count >= MaxCachedHashes && !HashCache.ContainsKey(fullPath))
+                HashCache.Clear();
             HashCache[fullPath] = new CachedHash(length, written, hash);
+        }
         return hash;
     }
 
