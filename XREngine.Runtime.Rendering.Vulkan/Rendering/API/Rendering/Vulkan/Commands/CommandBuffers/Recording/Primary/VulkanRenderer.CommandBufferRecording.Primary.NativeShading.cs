@@ -15,7 +15,8 @@ internal sealed partial class VulkanCommandRuntime
     private static readonly string[] NativeBackgroundGpuProfilerPath = ["Advanced", "Shading", "Background"];
     private static readonly string[] NativeOpaqueGpuProfilerPath = ["Advanced", "Shading", "NativeOpaque"];
     private static readonly string[] NativeOpaqueRepairGpuProfilerPath = ["Advanced", "Shading", "GpuOverflowRepair"];
-    private static readonly string[] RvcShadeletTelemetryGpuProfilerPath = ["Rvc", "ShadeletTelemetry"];
+    // Nest under the Advanced root: a separate root scope measured from the start of the frame.
+    private static readonly string[] RvcShadeletTelemetryGpuProfilerPath = ["Advanced", "Rvc", "ShadeletTelemetry"];
     private const string RvcTelemetryMissingClosureReason = "The native closure has no RVC telemetry counters or whole-array views.";
     private const string RvcTelemetryMissingKernelReason = "The RVC telemetry kernel is not current.";
     private int RecordAdvancedNativeComputePayload(
