@@ -279,6 +279,7 @@ public sealed class AudioTrackTests
         public required string Path { get; init; }
         public required CutscenePlayer Player { get; init; }
         public required AudioSourceComponent Component { get; init; }
+        public AudioSourceComponent? MusicComponent { get; init; }
         public required FakeTransport[] Transports { get; init; }
         public required ListenerContext[] Listeners { get; init; }
         public required CutsceneBindingTable Table { get; init; }
@@ -418,6 +419,7 @@ public sealed class AudioTrackTests
             Path = path,
             Player = player,
             Component = component,
+            MusicComponent = musicComponent,
             Transports = transports,
             Listeners = listeners,
             Table = table,
@@ -1299,6 +1301,17 @@ public sealed class AudioTrackTests
         rig.Player.AudioClockReadCount.ShouldBe(10);
         rig.Player.Diagnostics.Count.ShouldBe(1);
         rig.Player.Diagnostics[0].Message.ShouldContain("stopped again after a restart");
+
+        // A full restart, here a seek, gives the dropped source the stream again.
+        dead.IgnorePlay = false;
+        dead.ClearLogs();
+        rig.Player.Seek(T(1.0), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+        FakeSource deadSource = dead.Sources.Values.Single();
+        deadSource.Playing.ShouldBeTrue();
+        deadSource.Queue.Count.ShouldBe(4);
+        FirstQueuedSample(deadSource).ShouldBe(SampleRate);
+        rig.Player.Diagnostics.Count.ShouldBe(1);
     }
 
     [Test]
@@ -1366,5 +1379,66 @@ public sealed class AudioTrackTests
         rig.Player.AudioHardResyncCount.ShouldBe(0);
         rig.Discontinuities.Count.ShouldBe(1);
         rig.Player.Position.ShouldBe(CutsceneTime.FromSamples(2 * SampleRate + 160, SampleRate));
+    }
+
+    [Test]
+    public void SoloRestartOnATrackThatDoesNotDriveTheClock_IsAvailableAgainAfterTheSourcePlays()
+    {
+        // The music track does not drive the clock, and the clock is in Wall mode, so no clock reading happens.
+        using Rig rig = MakeRig((0.0, 3.0, 0.0), ECutsceneEventSeekPolicy.Skip, []);
+        rig.Player.Clock.Mode = ECutsceneClockMode.Wall;
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        // The music source of the listener that is not first in the listener table of the music component.
+        AudioSourceComponent music = rig.MusicComponent!;
+        ListenerContext first = music.ActiveListeners.First().Key;
+        int other = ReferenceEquals(first, rig.Listeners[0]) ? 1 : 0;
+        FakeTransport transport = rig.Transports[other];
+        FakeSource source = transport.Sources[music.ActiveListeners[rig.Listeners[other]].Handle];
+
+        // The first stop gives a restart of the source alone.
+        source.Playing = false;
+        transport.ClearLogs();
+        rig.Player.Tick(0.02);
+        source.Playing.ShouldBeTrue();
+        source.Log.Count(entry => entry == "play").ShouldBe(1);
+
+        // The source plays a buffer, and much later it stops again. It gets a new restart and is not dropped.
+        transport.ConsumeOneBuffer();
+        for (int i = 0; i < 20; i++)
+            rig.Player.Tick(0.02);
+        source.Playing = false;
+        rig.Player.Tick(0.02);
+
+        source.Playing.ShouldBeTrue();
+        source.Log.Count(entry => entry == "play").ShouldBe(2);
+        rig.Player.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void SeekAfterAStarve_ThenALongFrame_DoesNotFallBack()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.SetHeardTime(0.04, 160);
+        rig.Player.Tick(0.02);
+        rig.Player.AudioClockReadCount.ShouldBe(1);
+
+        // A long frame starves the source. A seek restarts the sources before any valid reading.
+        foreach (FakeTransport transport in rig.Transports)
+            transport.StarveAll();
+        rig.Player.Tick(0.6);
+        rig.Player.Seek(T(1.0), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+
+        // A second long frame after the seek is a first starve again, so it does not count toward the bound.
+        foreach (FakeTransport transport in rig.Transports)
+            transport.StarveAll();
+        rig.Player.Tick(0.6);
+
+        rig.Player.IsAudioClockFallback.ShouldBeFalse();
+        rig.Player.Diagnostics.ShouldBeEmpty();
     }
 }

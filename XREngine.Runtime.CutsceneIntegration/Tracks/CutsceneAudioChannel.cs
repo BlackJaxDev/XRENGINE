@@ -41,9 +41,8 @@ internal sealed class CutsceneAudioChannel
     // restart moves to the end of the list, after _feedCount, and gets no buffers until the next full restart.
     private int _feedCount;
 
-    // For each source after the first: true after the restart of that source alone, until a valid clock reading while it plays.
+    // For each source after the first: true after the restart of that source alone, until the source plays a buffer.
     private bool[] _sourceRestarted = [];
-    private bool _readSinceSourceRestart;
     private readonly Action<CutsceneAudioChannel, ListenerContext> _sourceLost;
 
     private IStreamingAudioDecoder? _decoder;
@@ -185,8 +184,9 @@ internal sealed class CutsceneAudioChannel
             // The first starved restart, for example after one long frame, starts a new warm-up.
             bool repeatedStarve = starved && _starvedSinceLastRead;
             bool keepWarmUp = _needsRestart || repeatedStarve;
-            if (starved)
-                _starvedSinceLastRead = true;
+
+            // Only a starved restart marks the next starve as repeated. A seek or a resume starts a new count.
+            _starvedSinceLastRead = starved;
             long start = _time.GetTimestamp();
             Restart(targetFrame, keepWarmUp);
 
@@ -270,7 +270,6 @@ internal sealed class CutsceneAudioChannel
 
         _warmUpSeconds = 0.0;
         _starvedSinceLastRead = false;
-        _readSinceSourceRestart = true;
         frame = heard;
         firstAfterRestart = _stepPending;
         _stepPending = false;
@@ -445,8 +444,9 @@ internal sealed class CutsceneAudioChannel
     private bool IsStarved()
         => !_endOfData && !_sources[0].IsPlaying;
 
-    // A source after the first that stopped before the end of the data restarts alone, once. It gets another restart only after a
-    // valid clock reading while it plays, or after a full restart. If it stops again, the channel reports it once and gives it no
+    // A source after the first that stopped before the end of the data restarts alone, once. It gets another restart only after it
+    // played a buffer (see Pump), or after a full restart. This does not depend on a clock reading, so it also works on a track that
+    // does not drive the clock and on a transport with no playback clock. If it stops again, the channel reports it once and gives it no
     // more buffers, so it cannot make the first source restart. The loop is over the cached list, so it does not allocate.
     private void ServiceOtherSources()
     {
@@ -457,11 +457,7 @@ internal sealed class CutsceneAudioChannel
         {
             AudioSource source = _sources[i];
             if (source.IsPlaying)
-            {
-                if (_readSinceSourceRestart)
-                    _sourceRestarted[i] = false;
                 continue;
-            }
 
             if (_sourceRestarted[i])
             {
@@ -473,7 +469,6 @@ internal sealed class CutsceneAudioChannel
             }
 
             _sourceRestarted[i] = true;
-            _readSinceSourceRestart = false;
             RestartOneSource(i);
         }
     }
@@ -535,8 +530,13 @@ internal sealed class CutsceneAudioChannel
         for (int i = 0; i < _feedCount; i++)
         {
             AudioSource source = _sources[i];
-            if (source.BuffersProcessed > 0)
-                source.UnqueueConsumedBuffers();
+            if (source.BuffersProcessed <= 0)
+                continue;
+
+            // A played buffer shows that a source after a restart of its own works again, so a later stop gets a new restart.
+            if (i > 0 && source.IsPlaying)
+                _sourceRestarted[i] = false;
+            source.UnqueueConsumedBuffers();
         }
 
         Fill();
