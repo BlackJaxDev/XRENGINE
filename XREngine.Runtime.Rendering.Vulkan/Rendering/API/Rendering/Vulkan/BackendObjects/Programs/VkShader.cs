@@ -171,7 +171,7 @@ internal sealed unsafe partial class VkShader(
                     CompileStatus = ShaderCompileStatus.Pending("Vulkan", null);
                     LastCompileFailure = null;
                     LastArtifact = null;
-                    _asyncCompileTask = Task.Run(() => BuildCpuArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan));
+                    _asyncCompileTask = VulkanShaderCompileScheduler.Run(() => BuildCpuArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan));
                     _asyncCompileTasks.Add(_asyncCompileTask);
                     _ = _asyncCompileTask.ContinueWith(
                         OnAsyncCompileCompleted,
