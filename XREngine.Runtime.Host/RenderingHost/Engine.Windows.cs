@@ -511,7 +511,7 @@ namespace XREngine
             }
 
             // Set target FPS to unfocused value (VR headsets manage this independently)
-            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !RuntimeEngine.VRState.IsInVR)
+            if (!RuntimeEngine.VRState.IsInVR)
             {
                 float targetRenderFrequency = Time.ResolveRenderFrequency(false, EffectiveSettings.VSync);
                 Time.Timer.TargetRenderFrequency = targetRenderFrequency;
@@ -542,7 +542,7 @@ namespace XREngine
             }
 
             // Restore target FPS to focused value (VR headsets manage this independently)
-            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !RuntimeEngine.VRState.IsInVR)
+            if (!RuntimeEngine.VRState.IsInVR)
             {
                 float targetRenderFrequency = Time.ResolveRenderFrequency(true, EffectiveSettings.VSync);
                 Time.Timer.TargetRenderFrequency = targetRenderFrequency;

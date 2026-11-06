@@ -102,10 +102,26 @@ namespace XREngine
                     float? unfocusedTarget = EffectiveSettings.UnfocusedTargetFramesPerSecond;
                     if (HasExplicitUnfocusedRenderLimit(focusedTarget, unfocusedTarget))
                         return unfocusedTarget ?? 0.0f;
+
+                    // A background editor must not take GPU time from the app that has focus.
+                    if (unfocusedTarget is null && !IsDesktopRenderUncapped())
+                    {
+                        float focusedLimit = ResolveConfiguredRenderFrequency(focusedTarget, vSync);
+                        return focusedLimit >= 1.0f
+                            ? Math.Min(focusedLimit, DefaultUnfocusedRenderFrequency)
+                            : DefaultUnfocusedRenderFrequency;
+                    }
                 }
 
                 return ResolveConfiguredRenderFrequency(focusedTarget, vSync);
             }
+
+            /// <summary>
+            /// Render limit, in hertz, while no engine window has focus and
+            /// <see cref="EffectiveSettings.UnfocusedTargetFramesPerSecond"/> is null.
+            /// <see cref="XREngineEnvironmentVariables.DesktopRenderUncapped"/> removes this default.
+            /// </summary>
+            public const float DefaultUnfocusedRenderFrequency = 30.0f;
 
             /// <summary>
             /// Resolves the engine render limit for VR, in hertz. Null and values below 1 remove the engine limit.

@@ -155,6 +155,10 @@ namespace XREngine
                 {
                     RuntimeEngine.Rendering.SecondaryContext.InitializeIfSupported(RuntimeEngine.Windows.FirstOrDefault());
                     XRWindow.AnyWindowFocusChanged += WindowFocusChanged;
+                    // A window that opens behind another app gets no focus event. Apply the
+                    // unfocused state now, so a background launch uses the unfocused render limit.
+                    if (RuntimeEngine.Windows.FirstOrDefault() is { IsFocused: false } firstWindow)
+                        WindowFocusChanged(firstWindow, false);
                 }
 
                 // VR initialization can run asynchronously in the background

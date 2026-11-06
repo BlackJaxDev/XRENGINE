@@ -33,6 +33,14 @@ the rate cannot be read). An uncapped desktop keeps the GPU at 100%, and then
 the whole PC becomes slow. Set `XRE_DESKTOP_RENDER_UNCAPPED=1` to remove this
 limit, for example for desktop frame-rate benchmarks.
 
+While no engine window has focus and `UnfocusedTargetFramesPerSecond` is null,
+the desktop limit is 30 Hz. A window that opens behind another app starts in
+this state. `XRE_DESKTOP_RENDER_UNCAPPED=1` also removes this limit.
+
+The editor sets its Windows GPU scheduling class to BelowNormal at startup, so
+games, VR compositors, and the desktop get the GPU first. Set
+`XRE_EDITOR_NORMAL_GPU_PRIORITY=1` to keep the Normal class.
+
 The VR runtime always paces frames to the headset refresh rate through
 `xrWaitFrame` (OpenXR) or `WaitGetPoses` (OpenVR). Thus the presented VR rate
 cannot be higher than the headset refresh rate, even with no engine limit. To
