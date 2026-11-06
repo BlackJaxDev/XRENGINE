@@ -19,6 +19,9 @@ public static partial class EditorImGuiUI
     private static CutsceneResidencyManifest? _cutsceneStripManifest;
     private static CutsceneResidencyBucketCursor? _cutsceneStripCursor;
     private static EResidencyLevel[] _cutsceneStripLevels = [];
+    private static string? _cutsceneResidencyStatus;
+    private static CutsceneResidencyStatusKey _cutsceneResidencyStatusKey;
+    private static long _cutsceneEditTicks;
 
     /// <summary>Draws the manifest state, the bake controls, the playback wait option, and the planner state.</summary>
     private static void DrawCutsceneResidencyBar(CutsceneAsset asset)
@@ -29,6 +32,7 @@ public static partial class EditorImGuiUI
         {
             ECutsceneManifestState.Current => "Manifest: baked",
             ECutsceneManifestState.Stale => "Manifest: stale (approximate)",
+            ECutsceneManifestState.Invalid => "Manifest: invalid (approximate)",
             _ => "Manifest: missing (approximate)",
         });
 
@@ -50,19 +54,37 @@ public static partial class EditorImGuiUI
 
         if (residency is not null)
         {
-            CutsceneResidencyPlanner planner = residency.Planner;
             ImGui.SameLine();
-            ImGui.TextDisabled(
-                $"Assets {residency.Manifest.Assets.Length}  T0 pending {planner.PendingProxyCount}  Gen {planner.Generation}  Waits timed out {planner.PlaybackWaitTimeoutCount}{(planner.IsHoldingPlayback ? "  HOLD" : string.Empty)}");
-            if (residency.Backend is TextureResidencyBackend textures && textures.RejectedRequestCount > 0)
-            {
-                ImGui.SameLine();
-                ImGui.TextDisabled($"Rejected {textures.RejectedRequestCount}");
-            }
+            ImGui.TextDisabled(GetCutsceneResidencyStatus(residency));
         }
 
         if (_cutsceneResidencyMessage is { } message)
             ImGui.TextWrapped(message);
+    }
+
+    /// <summary>
+    /// Gets the planner status line. The text is cached and built again only when one of its values changes,
+    /// so a frame with no change allocates nothing.
+    /// </summary>
+    private static string GetCutsceneResidencyStatus(CutsceneResidencySession residency)
+    {
+        CutsceneResidencyPlanner planner = residency.Planner;
+        int rejected = residency.Backend is TextureResidencyBackend textures ? textures.RejectedRequestCount : 0;
+        CutsceneResidencyStatusKey key = new(
+            residency.Manifest.Assets.Length,
+            planner.PendingProxyCount,
+            planner.Generation,
+            planner.PlaybackWaitTimeoutCount,
+            planner.IsHoldingPlayback,
+            rejected);
+
+        if (_cutsceneResidencyStatus is null || key != _cutsceneResidencyStatusKey)
+        {
+            _cutsceneResidencyStatusKey = key;
+            _cutsceneResidencyStatus =
+                $"Assets {key.Assets}  T0 pending {key.PendingProxies}  Gen {key.Generation}  Waits timed out {key.Timeouts}{(key.Holding ? "  HOLD" : string.Empty)}{(key.Rejected > 0 ? $"  Rejected {key.Rejected}" : string.Empty)}";
+        }
+        return _cutsceneResidencyStatus;
     }
 
     private static void DrawCutscenePlaybackWaitOption()
@@ -114,7 +136,12 @@ public static partial class EditorImGuiUI
             uint marker = ImGui.ColorConvertFloat4ToU32(new Vector4(0.95f, 0.55f, 0.10f, 0.22f));
             drawList.AddRectFilled(new Vector2(timelineLeft, top), new Vector2(timelineLeft + timelineWidth, origin.Y + laneAreaHeight), marker);
             drawList.AddText(new Vector2(timelineLeft + 4.0f, top - 1.0f), ImGui.GetColorU32(ImGuiCol.Text),
-                state == ECutsceneManifestState.Stale ? "stale manifest: approximate residency" : "no manifest: approximate residency");
+                state switch
+                {
+                    ECutsceneManifestState.Stale => "stale manifest: approximate residency",
+                    ECutsceneManifestState.Invalid => "invalid manifest: approximate residency",
+                    _ => "no manifest: approximate residency",
+                });
         }
 
         if (residency?.Planner is { IsHoldingPlayback: true } planner)
@@ -192,14 +219,18 @@ public static partial class EditorImGuiUI
 
     /// <summary>
     /// Gets the manifest state for the panel. An open session gives the state of its last manifest selection. Otherwise the
-    /// panel computes the hash only when the asset or the panel edit version changed, because a hash walks all the track data.
+    /// panel computes the hash only when the asset changed, or when the panel edit version changed and no edit came for
+    /// <see cref="CutscenePreviewHost.ResidencyRefreshDelaySeconds"/>, because a hash walks all the track data. A clip drag
+    /// therefore computes it one time, after the drag stops, as the preview does.
     /// </summary>
     private static ECutsceneManifestState GetCutsceneManifestState(CutsceneAsset asset, CutsceneResidencySession? residency)
     {
         if (residency is not null)
             return residency.ManifestState;
 
-        if (!ReferenceEquals(asset, _cutsceneManifestStateAsset) || _cutsceneManifestStateVersion != _cutsceneEditVersion)
+        bool assetChanged = !ReferenceEquals(asset, _cutsceneManifestStateAsset);
+        bool editsSettled = Environment.TickCount64 - Volatile.Read(ref _cutsceneEditTicks) >= (long)(CutscenePreviewHost.ResidencyRefreshDelaySeconds * 1000.0);
+        if (assetChanged || (_cutsceneManifestStateVersion != _cutsceneEditVersion && editsSettled))
         {
             _cutsceneManifestStateAsset = asset;
             _cutsceneManifestStateVersion = _cutsceneEditVersion;
@@ -210,7 +241,7 @@ public static partial class EditorImGuiUI
             catch (Exception ex)
             {
                 Debug.LogException(ex, "The cutscene manifest state could not be computed.");
-                _cutsceneManifestState = ECutsceneManifestState.Stale;
+                _cutsceneManifestState = ECutsceneManifestState.Invalid;
             }
         }
         return _cutsceneManifestState;
@@ -260,4 +291,6 @@ public static partial class EditorImGuiUI
             }
         });
     }
+
+    private readonly record struct CutsceneResidencyStatusKey(int Assets, int PendingProxies, int Generation, int Timeouts, bool Holding, int Rejected);
 }

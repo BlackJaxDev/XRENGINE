@@ -556,4 +556,37 @@ public sealed class CutsceneResidencyWiringTests
         host.End();
         backend.DisposeCount.ShouldBe(1);
     }
+
+    [Test]
+    public void Director_OnAHostWithoutResidency_OpensWithoutAWarning()
+    {
+        (SceneNode node, CutsceneAsset asset) = MakeAsset();
+        SceneNode host = new("Director", new Transform());
+        host.SetWorldContext(new TestWorld());
+        CutsceneDirectorComponent director = host.AddComponent<CutsceneDirectorComponent>()!;
+        director.Asset = asset;
+        director.BindingResolver = new FakeResolver(node);
+        Func<CutsceneDirectorComponent, IResidencyBackend?>? previous = CutsceneDirectorComponent.DefaultResidencyBackendFactory;
+        try
+        {
+            CutsceneDirectorComponent.DefaultResidencyBackendFactory = null;
+            using (CutsceneResidencyRegistration.InstallUnavailable())
+            {
+                director.OpenAsync().IsCompletedSuccessfully.ShouldBeTrue();
+                director.IsOpen.ShouldBeTrue();
+                director.Residency.ShouldBeNull();
+                director.Diagnostics.ShouldNotContain(d => d.Message.Contains("Residency", StringComparison.Ordinal));
+                director.Close();
+            }
+
+            CutsceneResidencyRegistration.IsUnavailableOnHost.ShouldBeFalse();
+            director.OpenAsync().IsCompletedSuccessfully.ShouldBeTrue();
+            director.Diagnostics.ShouldContain(d => d.Message.Contains("Residency is off", StringComparison.Ordinal));
+        }
+        finally
+        {
+            CutsceneDirectorComponent.DefaultResidencyBackendFactory = previous;
+            director.Close();
+        }
+    }
 }

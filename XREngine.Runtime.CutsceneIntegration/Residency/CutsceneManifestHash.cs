@@ -22,6 +22,11 @@ namespace XREngine.Cutscenes;
 /// change the hash, but a rename or a move of a track or clip type does.
 /// </para>
 /// <para>
+/// A value that the hash cannot read exactly throws <see cref="NotSupportedException"/>: a dictionary, a delegate, a type
+/// object, and a value type with no settable member, for example decimal, TimeSpan, or DateTime. A new member of such a
+/// type therefore cannot escape the stale check. Playback reports the exception as an invalid manifest.
+/// </para>
+/// <para>
 /// The value is a 64-bit FNV-1a hash. It is not a security hash. The calculation uses reflection and allocates,
 /// so call it at an open, at a bake, or after an edit, and not in each frame.
 /// </para>
@@ -84,6 +89,8 @@ public static class CutsceneManifestHash
                 return AddGuid(AddByte(hash, 7), reference.ID);
             case IConvertible convertible when value.GetType().IsPrimitive:
                 return AddInt64(AddByte(hash, 8), ToInt64(convertible, value.GetType()));
+            case IDictionary:
+                throw Unsupported(value.GetType(), "a dictionary enumerates key and value pairs whose state the hash cannot read");
             case IEnumerable items:
                 hash = AddByte(hash, 9);
                 int count = 0;
@@ -96,12 +103,29 @@ public static class CutsceneManifestHash
         }
 
         Type type = value.GetType();
+        MemberInfo[] members = GetMembers(type);
+
+        // A value type with no settable member, for example decimal, TimeSpan, DateTime, or a key and value pair, keeps its
+        // state in members that the hash does not read. It would hash as a constant, so it must not pass silently.
+        if (type.IsValueType && members.Length == 0)
+            throw Unsupported(type, "the value type has no public settable property or public field");
+        if (typeof(Delegate).IsAssignableFrom(type) || typeof(Type).IsAssignableFrom(type))
+            throw Unsupported(type, "a delegate or a type object has no content to hash");
+
         hash = AddString(AddByte(hash, 10), StableTypeName(type));
-        foreach (MemberInfo member in GetMembers(type))
+        foreach (MemberInfo member in members)
         {
             hash = AddString(hash, member.Name);
             object? memberValue = member is PropertyInfo property ? property.GetValue(value) : ((FieldInfo)member).GetValue(value);
-            hash = AddValue(hash, memberValue, depth + 1);
+            try
+            {
+                hash = AddValue(hash, memberValue, depth + 1);
+            }
+            catch (NotSupportedException ex)
+            {
+                // The message names the member path from the outer object, so the author can find the member.
+                throw new NotSupportedException($"{StableTypeName(type)}.{member.Name}: {ex.Message}", ex);
+            }
         }
         return hash;
     }
@@ -159,6 +183,9 @@ public static class CutsceneManifestHash
         }
         builder.Append(']');
     }
+
+    private static NotSupportedException Unsupported(Type type, string reason)
+        => new($"The cutscene content hash cannot hash a value of type '{StableTypeName(type)}' exactly: {reason}. Use a supported member type (a primitive, an enum, a string, a Guid, a CutsceneTime, a vector, a list, an asset reference, or a class or struct of these).");
 
     /// <summary>Converts an integer value to 64 bits. An unsigned 64-bit value keeps its bits.</summary>
     private static long ToInt64(IConvertible value, Type integerType)

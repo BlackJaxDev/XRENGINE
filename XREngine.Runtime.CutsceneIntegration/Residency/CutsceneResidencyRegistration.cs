@@ -18,6 +18,35 @@ public static class CutsceneResidencyRegistration
         return new Lease(factory);
     }
 
+    /// <summary>
+    /// True while a host composition says that residency is not available, for example a headless host with no renderer.
+    /// A director with no backend then opens without residency and adds no diagnostic.
+    /// </summary>
+    public static bool IsUnavailableOnHost => Volatile.Read(ref _unavailableCount) > 0;
+
+    private static int _unavailableCount;
+
+    /// <summary>
+    /// Marks residency as not available on this host, so a director with no backend factory opens quietly.
+    /// Dispose the result to remove the mark.
+    /// </summary>
+    public static IDisposable InstallUnavailable()
+    {
+        Interlocked.Increment(ref _unavailableCount);
+        return new UnavailableLease();
+    }
+
+    private sealed class UnavailableLease : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                Interlocked.Decrement(ref _unavailableCount);
+        }
+    }
+
     private sealed class Lease(Func<CutsceneDirectorComponent, IResidencyBackend?>? installed) : IDisposable
     {
         private Func<CutsceneDirectorComponent, IResidencyBackend?>? _installed = installed;

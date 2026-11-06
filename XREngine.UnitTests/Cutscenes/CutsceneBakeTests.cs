@@ -552,6 +552,107 @@ public sealed class CutsceneBakeTests
         return (full.Build(), compressed.Build());
     }
 
+    private sealed class DictionaryClip : CutsceneClip
+    {
+        public Dictionary<string, int> Values { get; set; } = new() { ["a"] = 1 };
+    }
+
+    private sealed class DecimalClip : CutsceneClip
+    {
+        public decimal Amount { get; set; } = 1.5m;
+    }
+
+    private sealed class TimeSpanClip : CutsceneClip
+    {
+        public TimeSpan Delay { get; set; } = TimeSpan.FromSeconds(2);
+    }
+
+    [Test]
+    public void ContentHash_RejectsMemberTypesThatItCannotHashExactly()
+    {
+        foreach (CutsceneClip clip in new CutsceneClip[] { new DictionaryClip(), new DecimalClip(), new TimeSpanClip() })
+        {
+            Rig rig = MakeRig();
+            TransformTrack track = new() { Name = "Unsupported" };
+            clip.Duration = T(1);
+            track.Clips.Add(clip);
+            rig.Asset.Tracks.Add(track);
+
+            Should.Throw<NotSupportedException>(() => CutsceneManifestHash.Compute(rig.Asset)).Message.ShouldContain(clip.GetType().Name);
+        }
+    }
+
+    [Test]
+    public void ContentHash_Exception_GivesTheInvalidStateWithOneDiagnostic()
+    {
+        Rig rig = MakeRig();
+        rig.Asset.Manifest = CutsceneBakeTool.Bake(rig.Asset, rig.Options());
+        rig.Asset.ManifestContentHash = CutsceneManifestHash.Compute(rig.Asset);
+        TransformTrack track = new() { Name = "Unsupported" };
+        track.Clips.Add(new TimeSpanClip { Duration = T(1) });
+        rig.Asset.Tracks.Add(track);
+
+        using CutsceneResidencySession session = CreateSession(rig, out List<CutsceneCompileDiagnostic> diagnostics);
+
+        session.ManifestState.ShouldBe(ECutsceneManifestState.Invalid);
+        diagnostics.ShouldHaveSingleItem().Message.ShouldContain("content hash");
+    }
+
+    [Test]
+    public void ContentHash_SurvivesTheRoundTripOfFloatCurves()
+    {
+        Rig rig = MakeRig();
+        float[] awkward = [0.1f, 1.0f / 3.0f, 1e-7f, 123456.79f, -2.5e-12f, MathF.PI, 16777217.0f, float.Epsilon];
+        TransformTrack move = new() { Name = "Move" };
+        move.Clips.Add(new TransformTrackClip
+        {
+            Start = T(0.1),
+            Duration = T(1.0 / 3.0),
+            Speed = 1.0 / 3.0,
+            Position = new CutsceneVector3Curve
+            {
+                Times = [T(0), T(0.123456789), T(1.0 / 7.0)],
+                Values = [new Vector3(awkward[0], awkward[1], awkward[2]), new Vector3(awkward[3], awkward[4], awkward[5]), new Vector3(awkward[6], awkward[7], -awkward[0])],
+                DefaultValue = new Vector3(awkward[1], awkward[3], awkward[5]),
+            },
+            Rotation = new CutsceneQuaternionCurve
+            {
+                Times = [T(0), T(0.2)],
+                Values = [Quaternion.CreateFromYawPitchRoll(0.1f, 0.7f, 1.3f), Quaternion.CreateFromAxisAngle(Vector3.Normalize(new Vector3(1, 2, 3)), 2.2f)],
+            },
+            Scale = new CutsceneVector3Curve { Times = [T(0)], Values = [new Vector3(awkward[2], awkward[6], awkward[1])] },
+        });
+        rig.Asset.Tracks.Add(move);
+
+        PropertyTrack member = new() { Name = "Member", ComponentType = "LightComponent", MemberPath = "Intensity" };
+        member.Clips.Add(new PropertyTrackClip
+        {
+            Duration = T(1),
+            FloatCurve = new CutsceneFloatCurve { Times = [T(0), T(0.3)], Values = [awkward[0], awkward[4]], DefaultValue = awkward[7] },
+        });
+        rig.Asset.Tracks.Add(member);
+
+        CameraPropertyTrack lens = new() { Name = "Lens" };
+        lens.Clips.Add(new CameraPropertyClip
+        {
+            Duration = T(1),
+            FieldOfView = new CutsceneFloatCurve { Times = [T(0)], Values = [awkward[1] * 100.0f], DefaultValue = awkward[3] },
+        });
+        rig.Asset.Tracks.Add(lens);
+
+        ulong hash = CutsceneManifestHash.Compute(rig.Asset);
+        string yaml = AssetManager.Serializer.Serialize(rig.Asset, typeof(CutsceneAsset));
+        CutsceneAsset fromYaml = AssetManager.Deserializer.Deserialize<CutsceneAsset>(yaml).ShouldNotBeNull();
+        CutsceneAsset fromCooked = (CookedBinarySerializer.Deserialize(typeof(CutsceneAsset), CookedBinarySerializer.Serialize(rig.Asset)) as CutsceneAsset).ShouldNotBeNull();
+
+        CutsceneManifestHash.Compute(fromYaml).ShouldBe(hash);
+        CutsceneManifestHash.Compute(fromCooked).ShouldBe(hash);
+
+        // The test must see a change of one float bit.
+        ((TransformTrackClip)fromYaml.Tracks[^3].Clips[0]).Position.Values[0].X = BitConverter.Int32BitsToSingle(BitConverter.SingleToInt32Bits(awkward[0]) + 1);
+        CutsceneManifestHash.Compute(fromYaml).ShouldNotBe(hash);
+    }
+
     private static CutsceneResidencySession CreateSession(Rig rig, out List<CutsceneCompileDiagnostic> diagnostics)
     {
         diagnostics = [];

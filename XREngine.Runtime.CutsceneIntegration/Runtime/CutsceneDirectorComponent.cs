@@ -341,6 +341,10 @@ public class CutsceneDirectorComponent : XRComponent
         if (!_residencyEnabled)
             return;
 
+        // A host without residency, for example a headless host, registers that state. An open there is not a problem.
+        if (ResidencyBackendFactory is null && DefaultResidencyBackendFactory is null && CutsceneResidencyRegistration.IsUnavailableOnHost)
+            return;
+
         // A residency failure is a diagnostic. The cutscene still opens and plays without residency.
         Func<IResidencyBackend?> createBackend = ResidencyBackendFactory ?? (() => DefaultResidencyBackendFactory?.Invoke(this));
         _residency = CutsceneResidencySession.TryOpen(
