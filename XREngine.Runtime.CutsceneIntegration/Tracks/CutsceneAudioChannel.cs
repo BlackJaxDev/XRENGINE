@@ -14,11 +14,34 @@ namespace XREngine.Cutscenes;
 /// The channel keeps the last decoded frames in a ring. A restart inside that ring, for example a resume after a pause,
 /// reads from the ring and does not seek the decoder backward.
 /// </summary>
+/// <remarks>
+/// <para>
+/// A clip with an audio proxy uses two tiers. A restart outside the ring does not seek on the update thread: the channel
+/// fills the queue from the proxy (T0) at the exact frame in the same frame, and an <see cref="AudioDecoderSeekWorker"/>
+/// seeks the full decoder to a later buffer boundary in the background. At the first buffer boundary at which the full
+/// decoder is ready at the produced frame, the channel crossfades to it over 20 ms (<see cref="AudioTierCrossfader"/>).
+/// The output keeps the rate and the channel count of the full decoder, so the queue, the ring, and the clock frames
+/// do not change at the tier change. A stale proxy gives silence in place of the proxy, with a fade-in at the change.
+/// A clip with no proxy seeks on the update thread, as before.
+/// </para>
+/// <para>
+/// While the playhead moves in a scrub, <see cref="Scrub"/> plays short grains from the proxy (<see cref="AudioScrubGrainPlayer"/>).
+/// </para>
+/// </remarks>
 internal sealed class CutsceneAudioChannel
 {
     private const int MaxChannels = 2;
     private const int QueueTarget = 4;
     private const int ChunkFrames = AudioTrackEvaluator.ChunkFrames;
+
+    /// <summary>
+    /// The number of buffers after a restart at which the full decoder takes over first. The restart fills the queue with
+    /// <see cref="QueueTarget"/> buffers, so the first buffer that a later refill adds is the first possible change.
+    /// </summary>
+    private const int InitialTierLeadChunks = QueueTarget;
+
+    /// <summary>The largest lead after seeks that came too late, in buffers.</summary>
+    private const int MaxTierLeadChunks = 256;
 
     /// <summary>The ring holds the queue and two more buffers, so a restart near the heard frame is inside it.</summary>
     private const int HistoryFrames = (QueueTarget + 2) * ChunkFrames;
@@ -44,10 +67,33 @@ internal sealed class CutsceneAudioChannel
     // For each source after the first: true after the restart of that source alone, until the source plays a buffer.
     private bool[] _sourceRestarted = [];
     private readonly Action<CutsceneAudioChannel, ListenerContext> _sourceLost;
+    private readonly Action<CutsceneAudioChannel, Exception> _seekFailed;
+    private readonly TaskScheduler _seekScheduler;
+    private readonly AudioTierCrossfader _crossfader = new();
+    private readonly AudioScrubGrainPlayer _grains = new();
 
     private IStreamingAudioDecoder? _decoder;
+    private int _sampleRate;
+    private int _channels;
+    private long _totalFrames;
+
+    // The seek worker of a clip with two tiers. It owns the decoder, and the channel uses the decoder only while it is idle.
+    private AudioDecoderSeekWorker? _seeker;
+
+    // True while the produced frames come from the proxy, or from silence for a stale proxy, and not from the full decoder.
+    private bool _waitingForFull;
+    private bool _fadeFromSilence;
+    private int _crossfadeDone = int.MaxValue;
+    private int _tierLeadChunks = InitialTierLeadChunks;
+    private bool _seekFailureReported;
+
+    // The frame of the last service or scrub, a grain request that waits for the end of the grain before it, and a playing grain.
+    private long _lastFrame = -1;
+    private bool _grainPending;
+    private bool _grainActive;
+
     private long _endFrame;
-    private long _decoderFrame;
+    private long _producedFrame;
     private long _historyCount;
     private long _readFrame;
     private long _nextFrame;
@@ -75,13 +121,34 @@ internal sealed class CutsceneAudioChannel
     /// <param name="sourceLost">
     /// Called once when a source after the first stops again after its own restart. The channel then gives that source no buffers.
     /// </param>
-    public CutsceneAudioChannel(int trackIndex, AudioTrack track, TimeProvider time, Action<CutsceneAudioChannel, ListenerContext> sourceLost)
+    /// <param name="seekFailed">
+    /// Called once for each clip when a background seek of the full decoder fails. The clip then plays the proxy to its end.
+    /// </param>
+    /// <param name="seekScheduler">The scheduler of the background seeks of the full decoder.</param>
+    public CutsceneAudioChannel(
+        int trackIndex,
+        AudioTrack track,
+        TimeProvider time,
+        Action<CutsceneAudioChannel, ListenerContext> sourceLost,
+        Action<CutsceneAudioChannel, Exception> seekFailed,
+        TaskScheduler seekScheduler)
     {
         TrackIndex = trackIndex;
         Track = track;
         _time = time;
         _sourceLost = sourceLost;
+        _seekFailed = seekFailed;
+        _seekScheduler = seekScheduler;
     }
+
+    /// <summary>True while the produced frames come from the proxy (or from silence for a stale proxy) and not from the full decoder.</summary>
+    public bool IsWaitingForFullDecoder => _waitingForFull;
+
+    /// <summary>True if the open clip uses two tiers: a proxy, or silence for a stale proxy, until the full decoder is ready.</summary>
+    public bool UsesTiers => _seeker is not null;
+
+    /// <summary>The number of background seeks of the full decoder of the open clip that started.</summary>
+    public int BackgroundSeekCount => _seeker?.SeekCount ?? 0;
 
     /// <summary>The index of the track in the cutscene asset.</summary>
     public int TrackIndex { get; }
@@ -93,7 +160,7 @@ internal sealed class CutsceneAudioChannel
     public int ClipIndex { get; private set; } = -1;
 
     /// <summary>The sample rate of the open decoder.</summary>
-    public int SampleRate => _decoder?.SampleRate ?? 0;
+    public int SampleRate => _decoder is null ? 0 : _sampleRate;
 
     /// <summary>The bound component, or null.</summary>
     public AudioSourceComponent? Component => _component;
@@ -134,16 +201,40 @@ internal sealed class CutsceneAudioChannel
     /// <param name="clipIndex">The index of the clip.</param>
     /// <param name="clip">The clip.</param>
     /// <param name="decoder">The decoder of the clip file. The channel owns it from now on.</param>
-    public void Open(int clipIndex, AudioTrackClip clip, IStreamingAudioDecoder decoder)
+    /// <param name="proxy">The decoder of the audio proxy of the file, or null. The channel owns it from now on.</param>
+    /// <param name="useTiers">
+    /// True to seek the full decoder in the background after a restart outside the ring. Until it is ready, the channel plays
+    /// <paramref name="proxy"/>, or silence if it is null (a stale proxy). False seeks on the update thread.
+    /// </param>
+    public void Open(int clipIndex, AudioTrackClip clip, IStreamingAudioDecoder decoder, ImaAdpcmDecoder? proxy = null, bool useTiers = false)
     {
         CloseDecoder();
         _decoder = decoder;
+        _sampleRate = decoder.SampleRate;
+        _channels = decoder.Channels;
+        _totalFrames = decoder.TotalFrames;
         ClipIndex = clipIndex;
-        long clipEnd = (clip.ClipOffset + clip.Duration).ToSamples(decoder.SampleRate);
-        _endFrame = Math.Clamp(clipEnd, 0L, decoder.TotalFrames);
-        _decoderFrame = 0;
+        long clipEnd = (clip.ClipOffset + clip.Duration).ToSamples(_sampleRate);
+        _endFrame = Math.Clamp(clipEnd, 0L, _totalFrames);
+        _producedFrame = 0;
         _historyCount = 0;
         _readFrame = 0;
+        _lastFrame = -1;
+        _grainPending = false;
+        _seekFailureReported = false;
+
+        // A new decoder is at frame zero, so the full tier is ready there with no crossfade.
+        _waitingForFull = false;
+        _crossfadeDone = int.MaxValue;
+        if (!useTiers)
+        {
+            proxy?.Dispose();
+            return;
+        }
+
+        _seeker = new AudioDecoderSeekWorker(decoder, _seekScheduler);
+        _grains.Configure(_sampleRate, _channels);
+        _crossfader.Open(proxy, _sampleRate, _channels, Math.Max(ChunkFrames, _grains.GrainFrames));
     }
 
     /// <summary>
@@ -162,6 +253,8 @@ internal sealed class CutsceneAudioChannel
         restartSeconds = 0.0;
         if (_component is null || _decoder is null)
             return false;
+        _lastFrame = targetFrame;
+        _grainPending = false;
 
         // A new listener gets buffers only from now on, so all sources restart together to stay aligned.
         if (RefreshSources())
@@ -261,7 +354,7 @@ internal sealed class CutsceneAudioChannel
         _lastLatencyNanoseconds = latencyNanoseconds;
 
         long queueStart = _nextFrame - (long)primary.BuffersQueued * ChunkFrames;
-        long latencyFrames = (long)((Int128)latencyNanoseconds * _decoder.SampleRate / 1_000_000_000L);
+        long latencyFrames = (long)((Int128)latencyNanoseconds * _sampleRate / 1_000_000_000L);
         long heard = queueStart + sampleFrame - latencyFrames;
 
         // No frame before the restart frame was queued, so the device still plays older output. The clock must not follow it.
@@ -302,10 +395,66 @@ internal sealed class CutsceneAudioChannel
         // A listener change since the last service must not leave a removed source in the list.
         if (RefreshSources())
             _appliedGain = float.NaN;
-        if (_streaming)
+        if (_streaming || _grainActive)
             StopSources();
         _streaming = false;
+        _grainActive = false;
+        _grainPending = false;
         ApplyGain(0.0f);
+    }
+
+    /// <summary>
+    /// Stops the stream and plays scrub grains from the proxy. When the frame differs from the frame of the last service
+    /// or scrub, the channel plays one grain at the frame. It waits for the end of a playing grain, and then plays the newest
+    /// frame. A frame that does not move plays nothing more. A clip with no proxy stays silent.
+    /// </summary>
+    /// <param name="targetFrame">The frame in the file at the playhead.</param>
+    /// <param name="gain">The gain to set on each source.</param>
+    public void Scrub(long targetFrame, float gain)
+    {
+        if (_component is null)
+            return;
+
+        if (RefreshSources())
+            _appliedGain = float.NaN;
+        if (_streaming)
+        {
+            StopSources();
+            _streaming = false;
+        }
+
+        bool moved = targetFrame != _lastFrame;
+        _lastFrame = targetFrame;
+        if (_decoder is null || !_crossfader.HasProxy || _sourceCount == 0 || targetFrame < 0 || targetFrame >= _endFrame)
+        {
+            if (_grainActive)
+                StopSources();
+            _grainActive = false;
+            _grainPending = false;
+            ApplyGain(0.0f);
+            return;
+        }
+
+        if (moved)
+            _grainPending = true;
+        if (_grainPending && !(_grainActive && _sources[0].IsPlaying))
+        {
+            _grainPending = false;
+            PlayGrain(targetFrame);
+        }
+        ApplyGain(gain);
+    }
+
+    // Queues one grain on each source and plays it. The grain buffer is the same array each time, so this does not allocate.
+    private void PlayGrain(long frame)
+    {
+        StopSources();
+        short[] pcm = _grains.Build(_crossfader, frame);
+        _component!.EnqueueStreamingBuffer(_sources.AsSpan(0, _sourceCount), _sampleRate, _channels == 2, pcm, _batch);
+        for (int i = 0; i < _sourceCount; i++)
+            if (_sources[i].BuffersQueued > 0)
+                _sources[i].Play();
+        _grainActive = true;
     }
 
     /// <summary>
@@ -314,7 +463,9 @@ internal sealed class CutsceneAudioChannel
     /// </summary>
     public void Release()
     {
-        bool streaming = _streaming;
+        bool streaming = _streaming || _grainActive;
+        _grainActive = false;
+        _grainPending = false;
         CloseDecoder();
         AudioSourceComponent? component = _component;
         if (component is null)
@@ -339,13 +490,21 @@ internal sealed class CutsceneAudioChannel
 
     private void CloseDecoder()
     {
-        _decoder?.Dispose();
+        // A running background seek uses the decoder, so the worker closes it at the end of that seek.
+        if (_seeker is not null)
+            _seeker.Close();
+        else
+            _decoder?.Dispose();
+        _seeker = null;
+        _crossfader.Close();
         _decoder = null;
         ClipIndex = -1;
         _streaming = false;
         _endOfData = false;
         _needsRestart = false;
         _historyCount = 0;
+        _waitingForFull = false;
+        _crossfadeDone = int.MaxValue;
     }
 
     // Rebuilds the source list when the listeners change: a new count or a new listener version, which also catches a swap
@@ -408,17 +567,20 @@ internal sealed class CutsceneAudioChannel
 
     private void Restart(long targetFrame, bool keepWarmUp)
     {
-        IStreamingAudioDecoder decoder = _decoder!;
         if (!keepWarmUp)
             _warmUpSeconds = 0.0;
         StopSources();
+        _grainActive = false;
 
         long frame = Math.Clamp(targetFrame, 0L, _endFrame);
-        long historyStart = _decoderFrame - _historyCount;
-        if (frame < historyStart || frame > _decoderFrame)
+        long historyStart = _producedFrame - _historyCount;
+        if (frame < historyStart || frame > _producedFrame)
         {
-            decoder.SeekToFrame(frame);
-            _decoderFrame = frame;
+            if (_seeker is not null)
+                BeginTierChange(frame);
+            else
+                _decoder!.SeekToFrame(frame);
+            _producedFrame = frame;
             _historyCount = 0;
         }
 
@@ -483,12 +645,11 @@ internal sealed class CutsceneAudioChannel
         AudioSource primary = _sources[0];
         long queueStart = _nextFrame - (long)primary.BuffersQueued * ChunkFrames;
         long frame = queueStart + (long)Math.Min(primary.BuffersProcessed, primary.BuffersQueued) * ChunkFrames;
-        long historyStart = _decoderFrame - _historyCount;
-        if (frame < historyStart || _nextFrame > _decoderFrame)
+        long historyStart = _producedFrame - _historyCount;
+        if (frame < historyStart || _nextFrame > _producedFrame)
             return;
 
-        IStreamingAudioDecoder decoder = _decoder!;
-        int channels = decoder.Channels;
+        int channels = _channels;
         bool stereo = channels == 2;
         short[] pcm = stereo ? _stereo : _mono;
         for (; frame < _nextFrame; frame += ChunkFrames)
@@ -497,7 +658,7 @@ internal sealed class CutsceneAudioChannel
             int samples = ChunkFrames * channels;
             for (int i = 0; i < samples; i++)
                 pcm[i] = ToShort(_decoded[i]);
-            if (_component!.EnqueueStreamingBuffer(_sources.AsSpan(index, 1), decoder.SampleRate, stereo, pcm, _batch) < 1)
+            if (_component!.EnqueueStreamingBuffer(_sources.AsSpan(index, 1), _sampleRate, stereo, pcm, _batch) < 1)
                 break;
         }
         if (source.BuffersQueued > 0)
@@ -554,9 +715,8 @@ internal sealed class CutsceneAudioChannel
 
     private void Fill()
     {
-        IStreamingAudioDecoder decoder = _decoder!;
         AudioSourceComponent component = _component!;
-        int channels = decoder.Channels;
+        int channels = _channels;
         int target = Math.Min(QueueTarget, Math.Max(1, component.MaxStreamingBuffers));
         bool stereo = channels == 2;
         short[] pcm = stereo ? _stereo : _mono;
@@ -579,7 +739,7 @@ internal sealed class CutsceneAudioChannel
             // The padding keeps every buffer at the same length, so the clock can count buffers.
             Array.Clear(pcm, samples, pcm.Length - samples);
 
-            int accepted = component.EnqueueStreamingBuffer(_sources.AsSpan(0, _feedCount), decoder.SampleRate, stereo, pcm, _batch);
+            int accepted = component.EnqueueStreamingBuffer(_sources.AsSpan(0, _feedCount), _sampleRate, stereo, pcm, _batch);
             if (accepted < _feedCount)
             {
                 // The frames stay in the ring, so the read position goes back and a later fill offers them again.
@@ -599,18 +759,17 @@ internal sealed class CutsceneAudioChannel
         }
     }
 
-    // Reads frames at the read position into the decode buffer. Frames before the decoder position come from the ring.
-    // New frames come from the decoder and go into the ring too.
+    // Reads frames at the read position into the decode buffer. Frames before the produced frame come from the ring.
+    // New frames come from the full decoder, or from the proxy while the full decoder is not ready, and go into the ring too.
     private int ReadFrames(int frames)
     {
-        IStreamingAudioDecoder decoder = _decoder!;
-        int channels = decoder.Channels;
+        int channels = _channels;
         int got = 0;
         while (got < frames)
         {
-            if (_readFrame < _decoderFrame)
+            if (_readFrame < _producedFrame)
             {
-                int count = (int)Math.Min(_decoderFrame - _readFrame, frames - got);
+                int count = (int)Math.Min(_producedFrame - _readFrame, frames - got);
                 int ring = (int)(_readFrame % HistoryFrames);
                 count = Math.Min(count, HistoryFrames - ring);
                 _history.AsSpan(ring * channels, count * channels).CopyTo(_decoded.AsSpan(got * channels));
@@ -621,7 +780,7 @@ internal sealed class CutsceneAudioChannel
 
             int want = frames - got;
             Span<float> destination = _decoded.AsSpan(got * channels, want * channels);
-            int read = decoder.Read(destination);
+            int read = Produce(destination, want, atBufferStart: got == 0);
             if (read <= 0)
                 break;
 
@@ -634,18 +793,80 @@ internal sealed class CutsceneAudioChannel
         return got;
     }
 
+    // Makes new frames at the produced frame. The full decoder takes over only at the start of a buffer.
+    private int Produce(Span<float> destination, int frames, bool atBufferStart)
+    {
+        if (_waitingForFull && atBufferStart)
+            TryEnterFullTier();
+
+        if (!_waitingForFull)
+        {
+            int read = _decoder!.Read(destination);
+            if (read > 0 && _crossfadeDone < _crossfader.CrossfadeFrames)
+                _crossfader.Crossfade(destination, _producedFrame, read, ref _crossfadeDone, _fadeFromSilence);
+            return read;
+        }
+
+        // The proxy stands in for the full decoder, so it gives the frames that the full decoder would give.
+        int count = (int)Math.Clamp(_totalFrames - _producedFrame, 0L, frames);
+        _crossfader.ReadProxy(_producedFrame, destination, count);
+        return count;
+    }
+
+    // Starts the tier change after a restart outside the ring. The frames come from the proxy at once, and the full decoder
+    // seeks in the background to a buffer boundary after the frames that the restart queues.
+    private void BeginTierChange(long frame)
+    {
+        _waitingForFull = true;
+        _fadeFromSilence = !_crossfader.HasProxy;
+        _crossfadeDone = 0;
+        _tierLeadChunks = InitialTierLeadChunks;
+        _seeker!.Request(frame + (long)_tierLeadChunks * ChunkFrames);
+    }
+
+    // Changes to the full decoder if its seek is complete at the produced frame, which is the start of a buffer.
+    // A seek that ended after that frame passed asks again at a later buffer, with twice the lead.
+    private void TryEnterFullTier()
+    {
+        if (!_seeker!.TryGetIdle(out long frame, out Exception? failure))
+            return;
+
+        if (failure is not null)
+        {
+            // The decoder state is not known after a failed seek, so the clip plays the proxy to its end.
+            if (!_seekFailureReported)
+            {
+                _seekFailureReported = true;
+                _seekFailed(this, failure);
+            }
+            return;
+        }
+
+        if (frame == _producedFrame)
+        {
+            _waitingForFull = false;
+            return;
+        }
+
+        if (frame < _producedFrame)
+        {
+            _tierLeadChunks = Math.Min(_tierLeadChunks * 2, MaxTierLeadChunks);
+            _seeker.Request(_producedFrame + (long)_tierLeadChunks * ChunkFrames);
+        }
+    }
+
     private void StoreHistory(ReadOnlySpan<float> samples, int channels)
     {
         int frames = samples.Length / channels;
         int done = 0;
         while (done < frames)
         {
-            int ring = (int)((_decoderFrame + done) % HistoryFrames);
+            int ring = (int)((_producedFrame + done) % HistoryFrames);
             int count = Math.Min(frames - done, HistoryFrames - ring);
             samples.Slice(done * channels, count * channels).CopyTo(_history.AsSpan(ring * channels));
             done += count;
         }
-        _decoderFrame += frames;
+        _producedFrame += frames;
         _historyCount = Math.Min(HistoryFrames, _historyCount + frames);
     }
 
@@ -680,6 +901,6 @@ internal sealed class CutsceneAudioChannel
     }
 
     // The scale is the inverse of the 16-bit decode, so 16-bit source data passes through unchanged.
-    private static short ToShort(float sample)
+    internal static short ToShort(float sample)
         => (short)Math.Clamp(MathF.Round(sample * 32768.0f), short.MinValue, short.MaxValue);
 }

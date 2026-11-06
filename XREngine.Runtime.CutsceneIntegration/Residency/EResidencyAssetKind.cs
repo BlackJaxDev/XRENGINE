@@ -11,6 +11,6 @@ public enum EResidencyAssetKind
     /// <summary>A sub-mesh with its LOD table. No mesh backend exists yet.</summary>
     Mesh = 1,
 
-    /// <summary>An audio clip. No audio backend exists yet.</summary>
+    /// <summary>An audio clip source with a proxy. <see cref="AudioResidencyBackend"/> loads its levels.</summary>
     Audio = 2,
 }

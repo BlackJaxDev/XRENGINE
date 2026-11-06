@@ -1,5 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
-using System.IO.Hashing;
 using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Cutscenes;
@@ -154,7 +152,7 @@ public static class CutsceneBakeTool
                     continue;
 
                 string fullPath = AudioTrackEvaluator.ResolveSourcePath(clip.SourcePath, assetDirectory);
-                if (!TryGetSourceReference(clip.SourcePath, fullPath, out string? reference))
+                if (!CutsceneAudioProxySources.TryGetSourceReference(clip.SourcePath, fullPath, out string? reference))
                 {
                     diagnostics.Add(new CutsceneCompileDiagnostic(t, c,
                         $"The audio file '{Path.GetFileName(fullPath)}' of clip {c} on audio track '{track.Name}' is outside the game and engine asset folders and has a full path, so it gets no audio proxy. Move the file into an asset folder, or use a path relative to the cutscene asset."));
@@ -165,7 +163,8 @@ public static class CutsceneBakeTool
 
                 try
                 {
-                    ulong hash = HashSourceFile(fullPath);
+                    // A source with no file, for example a decoder that a test gives, has hash zero, so its proxy is always made again.
+                    ulong hash = CutsceneAudioProxySources.HashSourceFile(fullPath);
                     AudioProxyAsset? proxy = FindCurrentProxy(asset.AudioProxies, reference, hash);
                     if (proxy is null)
                     {
@@ -293,27 +292,6 @@ public static class CutsceneBakeTool
             if (bindings.GetNode(slot) is { } node && seen.Add(CutsceneResidencySceneWalker.GetRoot(node)))
                 roots.Add(CutsceneResidencySceneWalker.GetRoot(node));
         return roots;
-    }
-
-    private static bool TryGetSourceReference(string sourcePath, string fullPath, [NotNullWhen(true)] out string? reference)
-    {
-        if (AssetSerializationServices.Current.TryCreatePortableAssetReference(fullPath, out reference))
-            return true;
-
-        reference = Path.IsPathRooted(sourcePath) ? null : sourcePath.Replace('\\', '/');
-        return reference is not null;
-    }
-
-    // A source with no file, for example a decoder that a test gives, has hash zero, so its proxy is always made again.
-    private static ulong HashSourceFile(string fullPath)
-    {
-        if (!File.Exists(fullPath))
-            return 0;
-
-        XxHash64 hash = new();
-        using FileStream stream = File.OpenRead(fullPath);
-        hash.Append(stream);
-        return hash.GetCurrentHashAsUInt64();
     }
 
     private static AudioProxyAsset? FindCurrentProxy(List<AudioProxyAsset>? proxies, string reference, ulong hash)

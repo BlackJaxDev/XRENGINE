@@ -675,7 +675,9 @@ namespace XREngine.Audio
             ParentListener.ActiveTransport.Play(_transportHandle);
             unchecked { _playbackCommandVersion++; }
             _sourceState = ESourceState.Playing;
-            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Playing));
+            // The state name is a new string, so make it only while diagnostics record.
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Playing));
         }
         /// <summary>
         /// Stops the source from playing.
@@ -686,7 +688,9 @@ namespace XREngine.Audio
             ParentListener.ActiveTransport.Stop(_transportHandle);
             unchecked { _playbackCommandVersion++; }
             _sourceState = ESourceState.Stopped;
-            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Stopped));
+            // The state name is a new string, so make it only while diagnostics record.
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Stopped));
         }
         /// <summary>
         /// Pauses the source.
@@ -697,7 +701,9 @@ namespace XREngine.Audio
             ParentListener.ActiveTransport.Pause(_transportHandle);
             unchecked { _playbackCommandVersion++; }
             _sourceState = ESourceState.Paused;
-            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Paused));
+            // The state name is a new string, so make it only while diagnostics record.
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Paused));
         }
         /// <summary>
         /// Sets the source to play from the beginning (initial state).
@@ -714,7 +720,9 @@ namespace XREngine.Audio
                 _sampleOffset = 0;
             }
             _sourceState = ESourceState.Initial;
-            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Initial));
+            // The state name is a new string, so make it only while diagnostics record.
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Initial));
         }
         #endregion
 

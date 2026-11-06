@@ -66,6 +66,24 @@ public sealed class CutscenePlayer
         CutsceneStateSnapshot snapshot,
         Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder,
         TimeProvider time)
+        : this(compiled, bindings, snapshot, openAudioDecoder, time, null)
+    {
+    }
+
+    /// <summary>Creates a player with a wall clock and a scheduler for the background audio seeks. A test runs the scheduler by hand.</summary>
+    /// <param name="compiled">The compiled cutscene.</param>
+    /// <param name="bindings">The table that holds the bound nodes.</param>
+    /// <param name="snapshot">The store of the original values of the bound nodes.</param>
+    /// <param name="openAudioDecoder">Opens the streaming decoder of an audio clip file, or null for the default decoders.</param>
+    /// <param name="time">The wall clock that measures the time of the audio restarts.</param>
+    /// <param name="audioSeekScheduler">The scheduler of the background seeks of the full audio decoders, or null for the default.</param>
+    internal CutscenePlayer(
+        CompiledCutscene compiled,
+        CutsceneBindingTable bindings,
+        CutsceneStateSnapshot snapshot,
+        Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder,
+        TimeProvider time,
+        TaskScheduler? audioSeekScheduler)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(bindings);
@@ -77,7 +95,7 @@ public sealed class CutscenePlayer
         _buffer = new CutsceneActiveClip[Math.Max(1, compiled.MaxActiveClips)];
         _cameraCut = new CameraCutTrackEvaluator(_diagnostics);
         _animation = new AnimationClipTrackEvaluator(compiled, bindings, _diagnostics);
-        _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics, openAudioDecoder, time);
+        _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics, openAudioDecoder, time, audioSeekScheduler);
         _evaluators =
         [
             new TransformTrackEvaluator(bindings.SlotCount, _diagnostics),
@@ -102,7 +120,10 @@ public sealed class CutscenePlayer
     /// </summary>
     public bool IsAudioClockFallback => _audio.IsClockFallbackActive;
 
-    /// <summary>True while the audio tracks are silent: in a pause, a scrub, a stop, and at any rate other than one.</summary>
+    /// <summary>
+    /// True while the audio tracks do not stream: in a pause, a scrub, a stop, and at any rate other than one.
+    /// A track with an audio proxy can still play scrub grains when the playhead moves.
+    /// </summary>
     public bool IsAudioMuted => _audio.IsMuted;
 
     /// <summary>
@@ -358,7 +379,11 @@ public sealed class CutscenePlayer
         // Audio plays only in forward playback at rate one. Other states stop the sources before any evaluation.
         // A scrub seek is silent also without BeginScrub, and a gate hold keeps the sources stopped.
         bool scrubSeek = _hasPendingSeek && _pendingIntent == ESeekIntent.Scrub;
-        _audio.SetTransport(State == ECutsceneTransportState.Playing && !scrubSeek && !_heldByGate, _clock.Rate);
+        bool playing = State == ECutsceneTransportState.Playing && !scrubSeek;
+        _audio.SetTransport(playing && !_heldByGate, _clock.Rate);
+
+        // Scrub grains play when the playhead moves with no stream, but not during a gate hold or a fast reverse play.
+        _audio.SetScrubGrains(!_heldByGate && !(playing && _clock.Rate <= -AudioTrackEvaluator.SilentReverseRate));
 
         if (_hasPendingSeek)
         {
@@ -466,7 +491,10 @@ public sealed class CutscenePlayer
 
         bool held = allowed != position;
         if (held != _heldByGate)
+        {
             _audio.SetTransport(playing: !held, rate);
+            _audio.SetScrubGrains(!held);
+        }
         _heldByGate = held;
         return allowed;
     }
