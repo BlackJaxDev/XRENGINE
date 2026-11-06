@@ -283,16 +283,22 @@ public class CutsceneDirectorComponent : XRComponent
             player.Finished -= _relayFinished;
         }
 
-        // The rig goes back before the stop, so the discontinuity of the stop does not start a fade.
         CutsceneVrCameraRouter? vrRouter = _vrRouter;
         _vrRouter = null;
-        vrRouter?.Detach();
 
-        // The planner closes before the restore, so that no completion arrives for a closed cutscene.
-        // A close failure must not leave the bound nodes with cutscene values.
+        // A failure in one step must not leave the rig, the bound nodes, or the claimed camera with cutscene values.
         try
         {
-            residency?.Close();
+            try
+            {
+                // The rig goes back before the stop, so the discontinuity of the stop does not start a fade.
+                vrRouter?.Detach();
+            }
+            finally
+            {
+                // The planner closes before the restore, so that no completion arrives for a closed cutscene.
+                residency?.Close();
+            }
         }
         finally
         {

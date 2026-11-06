@@ -13,6 +13,7 @@ internal sealed class DesktopVrServicesLease : IDisposable
     private readonly IRuntimeVrStateServices _previousState;
     private readonly IRuntimeVrRenderingServices _previousRendering;
     private readonly IRuntimeVrLifecycleServices _previousLifecycle;
+    private readonly Action? _previousTeleportPublisher;
     private EngineRuntimeVrInputServices? _ownedInput;
     private EngineRuntimeVrStateServices? _ownedState;
     private EngineRuntimeVrRenderingServices? _ownedRendering;
@@ -28,6 +29,7 @@ internal sealed class DesktopVrServicesLease : IDisposable
         _previousState = RuntimeVrStateServices.Current;
         _previousRendering = RuntimeVrRenderingServices.Current;
         _previousLifecycle = RuntimeEngine.VRState.LifecycleServices;
+        _previousTeleportPublisher = RuntimeEngine.VRState.LocalPlayerTeleportPublisher;
 
         try
         {
@@ -44,6 +46,9 @@ internal sealed class DesktopVrServicesLease : IDisposable
             {
                 _ownedRendering = new EngineRuntimeVrRenderingServices();
                 RuntimeVrRenderingServices.Current = _ownedRendering;
+
+                // Rendering-side code, for example a cutscene rig move, cannot reference the input project.
+                RuntimeEngine.VRState.LocalPlayerTeleportPublisher = PublishLocalPlayerTeleport;
             }
         }
         catch (Exception installationFailure)
@@ -73,6 +78,7 @@ internal sealed class DesktopVrServicesLease : IDisposable
         Restore(() => RuntimeVrStateServices.Current = _previousState, ref failures);
         Restore(() => RuntimeVrInputServices.Current = _previousInput, ref failures);
         Restore(() => RuntimeEngine.VRState.LifecycleServices = _previousLifecycle, ref failures);
+        Restore(() => RuntimeEngine.VRState.LocalPlayerTeleportPublisher = _previousTeleportPublisher, ref failures);
 
         // Slot setters detach their forwarding subscriptions; providers then release their
         // separate native-device and action/session hooks.
@@ -90,6 +96,9 @@ internal sealed class DesktopVrServicesLease : IDisposable
         if (failures is { Count: > 1 })
             throw new AggregateException("Desktop VR services failed to restore cleanly.", failures);
     }
+
+    private static void PublishLocalPlayerTeleport()
+        => RuntimeVrDiscontinuityServices.Publish(EVrPoseDiscontinuity.Teleport);
 
     private static void Restore(Action action, ref List<Exception>? failures)
     {

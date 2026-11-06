@@ -46,12 +46,25 @@ internal sealed class OpenVrCompositorBackend : IRuntimeOpenVrCompositor
         return new RuntimeOpenVrSubmitResult((int)left, (int)right);
     }
 
-    public void FadeToColor(float seconds, float red, float green, float blue, float alpha)
-    {
-        CVRCompositor compositor = Valve.VR.OpenVR.Compositor
-            ?? throw new InvalidOperationException("The OpenVR compositor is unavailable.");
+    public bool IsAvailable
+        => Valve.VR.OpenVR.System is not null && Valve.VR.OpenVR.Compositor is not null;
 
-        // The fade is a foreground fade over the scene layer. A background fade would apply only when the application stops submitting.
-        compositor.FadeToColor(seconds, red, green, blue, alpha, false);
+    public bool TryFadeToColor(float seconds, float red, float green, float blue, float alpha)
+    {
+        CVRCompositor? compositor = Valve.VR.OpenVR.System is null ? null : Valve.VR.OpenVR.Compositor;
+        if (compositor is null)
+            return false;
+
+        try
+        {
+            // The fade is a foreground fade over the scene layer. A background fade would apply only when the application stops submitting.
+            compositor.FadeToColor(seconds, red, green, blue, alpha, false);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // A runtime that stopped can fail the call. The caller treats the fade as lost and reports it.
+            return false;
+        }
     }
 }

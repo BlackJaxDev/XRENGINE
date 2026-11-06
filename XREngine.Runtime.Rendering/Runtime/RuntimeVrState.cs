@@ -29,6 +29,25 @@ public sealed class RuntimeVrState
 
     public IRuntimeVrLifecycleServices LifecycleServices { get; set; } = NullRuntimeVrLifecycleServices.Instance;
 
+    /// <summary>
+    /// Publishes a teleport of the local player to the VR pose discontinuity consumers (spectator follow, calibration, and
+    /// tracker binding). The application host installs it, because those consumers are in projects that this project does not
+    /// reference. It is null when no host installed it.
+    /// </summary>
+    public Action? LocalPlayerTeleportPublisher { get; set; }
+
+    /// <summary>Calls <see cref="LocalPlayerTeleportPublisher"/>.</summary>
+    /// <returns>False if no publisher is installed.</returns>
+    public bool TryPublishLocalPlayerTeleport()
+    {
+        Action? publisher = LocalPlayerTeleportPublisher;
+        if (publisher is null)
+            return false;
+
+        publisher();
+        return true;
+    }
+
     public VRRuntime ActiveRuntime { get; set; }
     public bool IsOpenVRActive => ActiveRuntime == VRRuntime.OpenVR;
     public bool IsOpenXRActive => ActiveRuntime == VRRuntime.OpenXR;

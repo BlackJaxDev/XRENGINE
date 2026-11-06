@@ -22,6 +22,7 @@ public sealed class CutsceneVrCameraTests
     private sealed class FakeVrHost : ICutsceneVrHost
     {
         public readonly List<XRViewport> EyeViewports = [];
+        public readonly List<TransformBase> EyeCameraTransforms = [];
         public readonly List<(float Seconds, float Opacity)> Fades = [];
 
         public bool IsInVR { get; set; } = true;
@@ -34,9 +35,47 @@ public sealed class CutsceneVrCameraTests
 
         public double TimeSeconds { get; set; } = 100.0;
 
+        public ulong RenderFrameId { get; set; } = 1000;
+
+        public TransformBase? HeadTransform { get; set; }
+
+        /// <summary>True to make each fade return false.</summary>
+        public bool FadeFails { get; set; }
+
+        /// <summary>True to make each fade throw, which breaks the host contract.</summary>
+        public bool FadeThrows { get; set; }
+
+        public bool HasTeleportPublisher { get; set; } = true;
+
+        public int TeleportCount { get; private set; }
+
+        public int EyeHistoryResetCount { get; private set; }
+
         public bool IsEyeViewport(XRViewport viewport) => EyeViewports.Contains(viewport);
 
-        public void FadeHeadset(float seconds, float opacity) => Fades.Add((seconds, opacity));
+        public bool IsEyeCameraTransform(TransformBase transform) => EyeCameraTransforms.Contains(transform);
+
+        public bool TryFadeHeadset(float seconds, float opacity)
+        {
+            if (FadeThrows)
+                throw new InvalidOperationException("The compositor is gone.");
+            if (FadeFails)
+                return false;
+
+            Fades.Add((seconds, opacity));
+            return true;
+        }
+
+        public bool TryPublishTeleport()
+        {
+            if (!HasTeleportPublisher)
+                return false;
+
+            TeleportCount++;
+            return true;
+        }
+
+        public void ResetEyeViewHistory() => EyeHistoryResetCount++;
     }
 
     private sealed class FakeResolver : ICutsceneBindingResolver
@@ -94,6 +133,25 @@ public sealed class CutsceneVrCameraTests
 
         public CutscenePlayer Player => Director.Player!;
 
+        public CutsceneVrCameraRouter Router => Director.VrRouter!;
+
+        /// <summary>Runs one director frame after one render frame.</summary>
+        public void Frame(double deltaSeconds = 0)
+        {
+            Host.RenderFrameId++;
+            Director.AdvanceFrame(deltaSeconds);
+        }
+
+        /// <summary>Ends the fade to black, holds black for the render frames, and ends the fade back in.</summary>
+        public void CompleteCutFade()
+        {
+            Host.TimeSeconds += HalfFade;
+            for (int i = 0; i <= CutsceneVrCameraRouter.BlackHoldRenderFrames; i++)
+                Frame();
+            Host.TimeSeconds += HalfFade;
+            Frame();
+        }
+
         public void Dispose()
         {
             Director.Close();
@@ -121,7 +179,6 @@ public sealed class CutsceneVrCameraTests
         CameraComponent cameraA = CreateCamera(root, "Camera A");
         CameraComponent cameraB = CreateCamera(root, "Camera B");
         CameraComponent desktopCamera = CreateCamera(root, "Desktop");
-        CameraComponent eyeCamera = CreateCamera(root, "Eye");
 
         // Camera A looks down at 30 degrees, so the rig must use only its heading.
         Transform a = (Transform)cameraA.Transform;
@@ -135,9 +192,11 @@ public sealed class CutsceneVrCameraTests
         Transform rigOrigin = (Transform)rigNode.Transform;
         rigOrigin.Translation = RigStart;
         rigOrigin.Rotation = RigStartRotation;
-        Transform headset = (Transform)rigNode.NewChild("Headset").Transform;
+        SceneNode headNode = rigNode.NewChild("Headset");
+        Transform headset = (Transform)headNode.Transform;
         headset.Translation = new Vector3(0.1f, 1.7f, -0.2f);
         headset.Rotation = Quaternion.CreateFromYawPitchRoll(0.2f, -0.1f, 0.05f);
+        CameraComponent eyeCamera = CreateCamera(headNode, "Eye");
 
         FakeResolver resolver = new();
         CutsceneAsset asset = new() { Duration = T(4), VrCameraMode = mode, RigCutFadeSeconds = FadeSeconds };
@@ -151,7 +210,8 @@ public sealed class CutsceneVrCameraTests
         cut.Clips.Add(new CameraCutClip { Start = T(2), Duration = T(2), CameraBindingSlot = 1 });
         asset.Tracks.Add(cut);
 
-        FakeVrHost host = new();
+        FakeVrHost host = new() { HeadTransform = headset };
+        host.EyeCameraTransforms.Add(eyeCamera.Transform);
         XRViewport desktop = CreateViewport(desktopCamera);
         XRViewport eye = CreateViewport(eyeCamera);
         host.EyeViewports.Add(eye);
@@ -182,6 +242,19 @@ public sealed class CutsceneVrCameraTests
             RigOrigin = rigOrigin,
             Headset = headset,
         };
+    }
+
+    /// <summary>Opens a RigAnchor rig and completes the fade of the first shot, so the rig is at camera A.</summary>
+    private static Rig MakeRigAtFirstShot()
+    {
+        Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
+        rig.Director.OpenAsync().Wait();
+        rig.Player.Play();
+        rig.Frame();
+        rig.CompleteCutFade();
+        rig.RigOrigin.Translation.ShouldBe(CameraAPosition);
+        rig.Router.IsFading.ShouldBeFalse();
+        return rig;
     }
 
     private static void ShouldBeSameRotation(Quaternion actual, Quaternion expected)
@@ -234,13 +307,12 @@ public sealed class CutsceneVrCameraTests
             rig.Player.Play();
             for (int i = 0; i < 30; i++)
             {
-                rig.Director.AdvanceFrame(0.25);
+                rig.Frame(0.25);
                 rig.Host.TimeSeconds += HalfFade;
             }
             rig.Player.Seek(T(1), ESeekIntent.Jump);
-            rig.Director.AdvanceFrame(0);
-            rig.Host.TimeSeconds += HalfFade;
-            rig.Director.AdvanceFrame(0);
+            rig.Frame();
+            rig.CompleteCutFade();
             rig.Director.Close();
         }
 
@@ -261,15 +333,17 @@ public sealed class CutsceneVrCameraTests
         rig.Director.VrRouter.ShouldBeNull();
 
         rig.Player.Play();
-        rig.Director.AdvanceFrame(0);
+        rig.Frame();
         rig.DesktopViewport.CameraComponent.ShouldBeSameAs(rig.CameraA);
-        rig.Director.AdvanceFrame(2.5);
+        rig.Frame(2.5);
         rig.DesktopViewport.CameraComponent.ShouldBeSameAs(rig.CameraB);
 
         rig.EyeViewport.HasCameraClaim.ShouldBeFalse();
         rig.EyeViewport.CameraComponent.ShouldBeSameAs(rig.EyeCamera);
         ShouldBeAtOriginalPose(rig);
         rig.Host.Fades.ShouldBeEmpty();
+        rig.Host.TeleportCount.ShouldBe(0);
+        rig.Host.EyeHistoryResetCount.ShouldBe(0);
         rig.Director.Diagnostics.ShouldBeEmpty();
     }
 
@@ -296,48 +370,59 @@ public sealed class CutsceneVrCameraTests
         using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
         rig.Director.OpenAsync().Wait();
         rig.Director.IsOpen.ShouldBeTrue();
-        CutsceneVrCameraRouter router = rig.Director.VrRouter.ShouldNotBeNull();
+        CutsceneVrCameraRouter router = rig.Router;
 
         // The first shot fades the headset to black, and the rig holds until the headset is black.
         rig.Player.Play();
-        rig.Director.AdvanceFrame(0);
+        rig.Frame();
         rig.DesktopViewport.CameraComponent.ShouldBeSameAs(rig.CameraA);
         rig.Host.Fades.ShouldBe([(HalfFade, 1.0f)]);
         router.CutFadeCount.ShouldBe(1);
         ShouldBeAtOriginalPose(rig);
 
         rig.Host.TimeSeconds += HalfFade * 0.5;
-        rig.Director.AdvanceFrame(0);
+        rig.Frame();
         ShouldBeAtOriginalPose(rig);
 
-        // At black, the rig moves to camera A with only its heading, and the headset fades back in.
+        // At black, the rig moves to camera A with only its heading. The headset stays black for the render frames in flight.
         rig.Host.TimeSeconds += HalfFade * 0.5;
-        rig.Director.AdvanceFrame(0);
+        rig.Frame();
         rig.RigOrigin.Translation.ShouldBe(CameraAPosition);
         ShouldBeSameRotation(rig.RigOrigin.Rotation, Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.5f));
+        router.IsHoldingBlack.ShouldBeTrue();
+        router.RigMoveCount.ShouldBe(1);
+        rig.Host.TeleportCount.ShouldBe(1);
+        rig.Host.EyeHistoryResetCount.ShouldBe(1);
+        rig.Host.Fades.Count.ShouldBe(1);
+        for (int i = 1; i < CutsceneVrCameraRouter.BlackHoldRenderFrames; i++)
+        {
+            rig.Frame();
+            rig.Host.Fades.Count.ShouldBe(1);
+        }
+        rig.Frame();
         rig.Host.Fades.ShouldBe([(HalfFade, 1.0f), (HalfFade, 0.0f)]);
         router.IsRigMoved.ShouldBeTrue();
 
         // The camera of the shot moves, and the rig follows with no fade.
         rig.Host.TimeSeconds += HalfFade;
         ((Transform)rig.CameraA.Transform).Translation = CameraAPosition + new Vector3(0, 0, 1);
-        rig.Director.AdvanceFrame(0.5);
+        rig.Frame(0.5);
         rig.RigOrigin.Translation.ShouldBe(CameraAPosition + new Vector3(0, 0, 1));
         router.IsFading.ShouldBeFalse();
         rig.Host.Fades.Count.ShouldBe(2);
 
         // A cut fades to black again. The rig stays at camera A until the headset is black.
-        rig.Director.AdvanceFrame(2.0);
+        rig.Frame(2.0);
         rig.DesktopViewport.CameraComponent.ShouldBeSameAs(rig.CameraB);
         router.CutFadeCount.ShouldBe(2);
         rig.Host.Fades[^1].ShouldBe((HalfFade, 1.0f));
         rig.RigOrigin.Translation.ShouldBe(CameraAPosition + new Vector3(0, 0, 1));
 
-        rig.Host.TimeSeconds += HalfFade;
-        rig.Director.AdvanceFrame(0);
+        rig.CompleteCutFade();
         rig.RigOrigin.Translation.ShouldBe(CameraBPosition);
         ShouldBeSameRotation(rig.RigOrigin.Rotation, Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI));
         rig.Host.Fades[^1].ShouldBe((HalfFade, 0.0f));
+        rig.Host.TeleportCount.ShouldBe(2);
 
         // The tracked headset keeps its local pose, so its world pose follows the rig.
         rig.Headset.Translation.ShouldBe(new Vector3(0.1f, 1.7f, -0.2f));
@@ -345,7 +430,7 @@ public sealed class CutsceneVrCameraTests
     }
 
     [Test]
-    public void RigAnchor_AJumpInsideOneShot_FadesThroughBlack()
+    public void RigAnchor_WithNoRenderFrames_EndsTheBlackHoldAfterTheMaximumTime()
     {
         using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
         rig.Director.OpenAsync().Wait();
@@ -353,34 +438,45 @@ public sealed class CutsceneVrCameraTests
         rig.Director.AdvanceFrame(0);
         rig.Host.TimeSeconds += HalfFade;
         rig.Director.AdvanceFrame(0);
-        rig.Host.TimeSeconds += HalfFade;
-        rig.Director.AdvanceFrame(0.1);
-        CutsceneVrCameraRouter router = rig.Director.VrRouter!;
-        router.CutFadeCount.ShouldBe(1);
+        rig.Router.IsHoldingBlack.ShouldBeTrue();
+
+        rig.Host.TimeSeconds += CutsceneVrCameraRouter.MaximumBlackHoldSeconds * 0.5;
+        rig.Director.AdvanceFrame(0);
+        rig.Router.IsHoldingBlack.ShouldBeTrue();
+
+        rig.Host.TimeSeconds += CutsceneVrCameraRouter.MaximumBlackHoldSeconds * 0.5;
+        rig.Director.AdvanceFrame(0);
+        rig.Router.IsHoldingBlack.ShouldBeFalse();
+        rig.Host.Fades[^1].ShouldBe((HalfFade, 0.0f));
+    }
+
+    [Test]
+    public void RigAnchor_AJumpInsideOneShot_FadesThroughBlack()
+    {
+        using Rig rig = MakeRigAtFirstShot();
+        rig.Router.CutFadeCount.ShouldBe(1);
 
         rig.Player.Seek(T(1.5), ESeekIntent.Jump);
-        rig.Director.AdvanceFrame(0);
+        rig.Frame();
 
-        router.CutFadeCount.ShouldBe(2);
+        rig.Router.CutFadeCount.ShouldBe(2);
         rig.Host.Fades[^1].ShouldBe((HalfFade, 1.0f));
     }
 
     [Test]
     public void RigAnchor_Close_PutsTheRigBackBehindAFadeFromBlack()
     {
-        using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
-        rig.Director.OpenAsync().Wait();
-        rig.Player.Play();
-        rig.Director.AdvanceFrame(0);
-        rig.Host.TimeSeconds += HalfFade;
-        rig.Director.AdvanceFrame(0);
-        rig.RigOrigin.Translation.ShouldBe(CameraAPosition);
+        using Rig rig = MakeRigAtFirstShot();
         int fadesBefore = rig.Host.Fades.Count;
+        int teleportsBefore = rig.Host.TeleportCount;
+        int resetsBefore = rig.Host.EyeHistoryResetCount;
 
         rig.Director.Close();
 
         ShouldBeAtOriginalPose(rig);
         rig.Host.Fades.Skip(fadesBefore).ShouldBe([(0.0f, 1.0f), (HalfFade, 0.0f)]);
+        rig.Host.TeleportCount.ShouldBe(teleportsBefore + 1);
+        rig.Host.EyeHistoryResetCount.ShouldBe(resetsBefore + 1);
         rig.Director.VrRouter.ShouldBeNull();
     }
 
@@ -390,12 +486,103 @@ public sealed class CutsceneVrCameraTests
         using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
         rig.Director.OpenAsync().Wait();
         rig.Player.Play();
-        rig.Director.AdvanceFrame(0);
+        rig.Frame();
 
         rig.Director.Close();
 
         ShouldBeAtOriginalPose(rig);
         rig.Host.Fades[^1].Opacity.ShouldBe(0.0f);
+    }
+
+    [Test]
+    public void RigAnchor_CloseDuringTheFadeIn_PutsTheRigBackAndEndsWithTheSceneVisible()
+    {
+        using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
+        rig.Director.OpenAsync().Wait();
+        rig.Player.Play();
+        rig.Frame();
+        rig.Host.TimeSeconds += HalfFade;
+        for (int i = 0; i <= CutsceneVrCameraRouter.BlackHoldRenderFrames; i++)
+            rig.Frame();
+        rig.Router.IsFading.ShouldBeTrue();
+        rig.Router.IsHoldingBlack.ShouldBeFalse();
+        rig.RigOrigin.Translation.ShouldBe(CameraAPosition);
+        int fadesBefore = rig.Host.Fades.Count;
+
+        rig.Director.Close();
+
+        ShouldBeAtOriginalPose(rig);
+        rig.Host.Fades.Skip(fadesBefore).ShouldBe([(0.0f, 1.0f), (HalfFade, 0.0f)]);
+    }
+
+    [Test]
+    public void RigAnchor_CloseWithAFadeThatThrowsOrFails_StillRestoresEverything([Values] bool throws)
+    {
+        using Rig rig = MakeRigAtFirstShot();
+        rig.DesktopViewport.HasCameraClaim.ShouldBeTrue();
+        if (throws)
+            rig.Host.FadeThrows = true;
+        else
+            rig.Host.FadeFails = true;
+
+        Should.NotThrow(rig.Director.Close);
+
+        ShouldBeAtOriginalPose(rig);
+        rig.Director.IsOpen.ShouldBeFalse();
+        rig.DesktopViewport.HasCameraClaim.ShouldBeFalse();
+        rig.DesktopViewport.CameraComponent.ShouldBeSameAs(rig.DesktopCamera);
+    }
+
+    [Test]
+    public void RigAnchor_AFadeThatThrowsAtACut_StopsTheRouterWithoutAnException()
+    {
+        using Rig rig = MakeRigAtFirstShot();
+        rig.Host.FadeThrows = true;
+
+        Should.NotThrow(() => rig.Frame(2.5));
+
+        rig.Router.HasFailed.ShouldBeTrue();
+        ShouldBeAtOriginalPose(rig);
+        rig.DesktopViewport.CameraComponent.ShouldBeSameAs(rig.CameraB);
+        rig.Director.Diagnostics.ShouldContain(d => d.Message.Contains("fade failed at a camera cut", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void RigAnchor_FadeLostDuringUpdateInsideOneShot_PutsTheRigBackAtOnce([Values] bool sessionEnded)
+    {
+        using Rig rig = MakeRigAtFirstShot();
+        int fadesBefore = rig.Host.Fades.Count;
+        if (sessionEnded)
+            rig.Host.IsInVR = false;
+        rig.Host.CanFadeHeadset = false;
+
+        // The step stays inside the first shot, so no cut runs.
+        rig.Frame(0.1);
+
+        rig.Router.HasFailed.ShouldBeTrue();
+        ShouldBeAtOriginalPose(rig);
+        rig.Host.Fades.Count.ShouldBe(fadesBefore);
+        rig.Director.Diagnostics.ShouldContain(d => d.Message.Contains("became unavailable during playback", StringComparison.Ordinal));
+
+        // The rig stays at the pose of the user for the rest of the cutscene.
+        rig.Frame(2.5);
+        ShouldBeAtOriginalPose(rig);
+    }
+
+    [Test]
+    public void RigAnchor_WithoutATeleportPublisher_AddsOneDiagnostic()
+    {
+        using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
+        rig.Host.HasTeleportPublisher = false;
+        rig.Director.OpenAsync().Wait();
+        rig.Player.Play();
+        rig.Frame();
+        rig.CompleteCutFade();
+        rig.Frame(2.5);
+        rig.CompleteCutFade();
+
+        rig.Router.RigMoveCount.ShouldBe(2);
+        rig.Director.Diagnostics.Count(d => d.Message.Contains("teleport publisher", StringComparison.Ordinal)).ShouldBe(1);
     }
 
     [Test]
@@ -427,6 +614,45 @@ public sealed class CutsceneVrCameraTests
         rig.Director.IsOpen.ShouldBeFalse();
         rig.Director.Diagnostics.ShouldContain(d => d.Message.Contains(nameof(CutsceneDirectorComponent.VrRigOrigin), StringComparison.Ordinal));
         rig.DesktopViewport.HasCameraClaim.ShouldBeFalse();
+    }
+
+    [TestCase("head", "is the tracked head")]
+    [TestCase("eye", "is a headset eye camera")]
+    [TestCase("sibling", "not an ancestor")]
+    [TestCase("child", "not an ancestor")]
+    [TestCase("no head", "published none")]
+    public void RigAnchor_ARigOriginThatIsNotAnAncestorOfTheHead_FailsTheOpen(string kind, string expected)
+    {
+        using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
+        EyeAndHeadSnapshot before = EyeAndHeadSnapshot.Take(rig);
+        switch (kind)
+        {
+            case "head":
+                rig.Director.VrRigOrigin = rig.Headset;
+                break;
+            case "eye":
+                rig.Director.VrRigOrigin = rig.EyeCamera.Transform;
+                break;
+            case "sibling":
+                rig.Director.VrRigOrigin = rig.Root.NewChild("Elsewhere").Transform;
+                break;
+            case "child":
+                rig.Director.VrRigOrigin = rig.Headset.SceneNode!.NewChild("Under Head").Transform;
+                break;
+            case "no head":
+                rig.Host.HeadTransform = null;
+                break;
+        }
+
+        rig.Director.OpenAsync().Wait();
+
+        rig.Director.IsOpen.ShouldBeFalse();
+        rig.Director.Diagnostics.ShouldContain(d => d.Message.Contains(expected, StringComparison.Ordinal));
+        rig.DesktopViewport.HasCameraClaim.ShouldBeFalse();
+        rig.Host.Fades.ShouldBeEmpty();
+        EyeAndHeadSnapshot after = EyeAndHeadSnapshot.Take(rig);
+        after.EyeCameraLocal.ShouldBe(before.EyeCameraLocal);
+        after.HeadsetLocal.ShouldBe(before.HeadsetLocal);
     }
 
     [Test]
@@ -467,7 +693,7 @@ public sealed class CutsceneVrCameraTests
 
         rig.Director.OpenAsync().Wait();
         rig.Player.Play();
-        rig.Director.AdvanceFrame(0);
+        rig.Frame();
 
         rig.Director.IsOpen.ShouldBeTrue();
         rig.Director.VrRouter.ShouldBeNull();
@@ -493,55 +719,40 @@ public sealed class CutsceneVrCameraTests
     }
 
     [Test]
-    public void RigAnchor_FadeLostDuringPlayback_PutsTheRigBackAndReportsAFailure()
-    {
-        using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
-        rig.Director.OpenAsync().Wait();
-        rig.Player.Play();
-        rig.Director.AdvanceFrame(0);
-        rig.Host.TimeSeconds += HalfFade;
-        rig.Director.AdvanceFrame(0);
-        rig.RigOrigin.Translation.ShouldBe(CameraAPosition);
-        int fadesBefore = rig.Host.Fades.Count;
-
-        rig.Host.CanFadeHeadset = false;
-        rig.Director.AdvanceFrame(2.5);
-
-        CutsceneVrCameraRouter router = rig.Director.VrRouter!;
-        router.HasFailed.ShouldBeTrue();
-        ShouldBeAtOriginalPose(rig);
-        rig.Host.Fades.Count.ShouldBe(fadesBefore);
-        rig.Director.Diagnostics.ShouldContain(d => d.Message.Contains("fade became unavailable", StringComparison.Ordinal));
-
-        // The rig stays at the pose of the user for the rest of the cutscene.
-        rig.Director.AdvanceFrame(0.5);
-        ShouldBeAtOriginalPose(rig);
-    }
-
-    [Test]
     public void RigAnchor_FollowInsideOneShot_AllocatesNothing()
     {
-        using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
-        rig.Director.OpenAsync().Wait();
-        rig.Player.Play();
-        rig.Director.AdvanceFrame(0);
-        rig.Host.TimeSeconds += HalfFade;
-        rig.Director.AdvanceFrame(0);
-        rig.Host.TimeSeconds += HalfFade;
-        rig.Director.AdvanceFrame(0.001);
-        CutsceneVrCameraRouter router = rig.Director.VrRouter!;
-        router.IsFading.ShouldBeFalse();
+        using Rig rig = MakeRigAtFirstShot();
+        rig.Frame(0.001);
         Transform cameraA = (Transform)rig.CameraA.Transform;
 
         long before = GC.GetAllocatedBytesForCurrentThread();
         for (int i = 0; i < 500; i++)
         {
             cameraA.Translation = CameraAPosition + new Vector3(i * 0.001f, 0, 0);
-            rig.Director.AdvanceFrame(0.001);
+            rig.Frame(0.001);
         }
         long after = GC.GetAllocatedBytesForCurrentThread();
 
         (after - before).ShouldBe(0);
         rig.RigOrigin.Translation.X.ShouldBe(CameraAPosition.X + 499 * 0.001f, 1e-4f);
+    }
+
+    [Test]
+    public void RigAnchor_FramesThatWaitDuringTheFadeOut_AllocateNothing()
+    {
+        using Rig rig = MakeRigAtFirstShot();
+        rig.Frame(2.0);
+        rig.Router.IsFading.ShouldBeTrue();
+        rig.Router.IsHoldingBlack.ShouldBeFalse();
+        rig.Frame(0.001);
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 500; i++)
+            rig.Frame(0.001);
+        long after = GC.GetAllocatedBytesForCurrentThread();
+
+        (after - before).ShouldBe(0);
+        rig.Router.IsFading.ShouldBeTrue();
+        rig.RigOrigin.Translation.ShouldBe(CameraAPosition);
     }
 }
