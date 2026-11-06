@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Scene;
@@ -53,11 +54,15 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     /// <param name="openDecoder">
     /// Opens a decoder for a full file path. If it is null, <see cref="OpenDefaultDecoder"/> opens Ogg Vorbis and WAV files.
     /// </param>
+    /// <param name="getTimestamp">
+    /// Gives the time in <see cref="Stopwatch"/> ticks, to measure the time of the audio restarts. If it is null, <see cref="Stopwatch.GetTimestamp"/> is used.
+    /// </param>
     public AudioTrackEvaluator(
         CompiledCutscene compiled,
         CutsceneClock clock,
         List<CutsceneCompileDiagnostic> diagnostics,
-        Func<string, IStreamingAudioDecoder>? openDecoder = null)
+        Func<string, IStreamingAudioDecoder>? openDecoder = null,
+        Func<long>? getTimestamp = null)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(clock);
@@ -66,6 +71,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         _diagnostics = diagnostics;
         _openDecoder = openDecoder ?? OpenDefaultDecoder;
         _assetDirectory = Path.GetDirectoryName(compiled.Asset.FilePath);
+        Func<long> timestamp = getTimestamp ?? Stopwatch.GetTimestamp;
 
         List<CutsceneTrack> tracks = compiled.Asset.Tracks;
         _channelOfTrack = new CutsceneAudioChannel?[tracks.Count];
@@ -74,7 +80,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         {
             if (tracks[i] is not AudioTrack track)
                 continue;
-            CutsceneAudioChannel channel = new(i, track);
+            CutsceneAudioChannel channel = new(i, track, timestamp);
             _channelOfTrack[i] = channel;
             channels.Add(channel);
         }
@@ -122,6 +128,19 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
             for (int i = 0; i < _channels.Length; i++)
                 _channels[i].Silence();
         _playing = audible;
+    }
+
+    /// <summary>
+    /// Returns the wall time in seconds that the restarts of all tracks took since the last call, and sets it to zero.
+    /// A restart includes the decoder seek, which can take a long time. The sources start to play at its end,
+    /// so the player removes this time from the next clock advance.
+    /// </summary>
+    public double ConsumeRestartSeconds()
+    {
+        double seconds = 0.0;
+        for (int i = 0; i < _channels.Length; i++)
+            seconds += _channels[i].ConsumeRestartSeconds();
+        return seconds;
     }
 
     /// <summary>Tells the evaluator that the next evaluation is at a new position, so every active source must seek.</summary>
@@ -245,10 +264,14 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     /// (at least 500 ms) of play steps counts as a lost clock.
     /// </param>
     /// <param name="position">The heard cutscene time.</param>
+    /// <param name="firstAfterRestart">
+    /// True if this is the first valid position after the sources restarted. The clock can then move to it in one step.
+    /// </param>
     /// <returns>False if no track can give a position now, or if the clock is not in audio mode.</returns>
-    public bool TryReadHeardPosition(double deltaSeconds, out CutsceneTime position)
+    public bool TryReadHeardPosition(double deltaSeconds, out CutsceneTime position, out bool firstAfterRestart)
     {
         position = default;
+        firstAfterRestart = false;
         if (!_playing || _clockChannel is not { } channel || _clockClip is not { } clip)
             return false;
         if (_clock.Mode != ECutsceneClockMode.AudioDisciplined && !IsClockFallbackActive)
@@ -258,7 +281,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         if (!channel.IsStreaming || channel.ClipIndex != _clockClipIndex)
             return false;
 
-        if (!channel.TryReadHeardFrame(deltaSeconds, out long frame, out bool warmingUp))
+        if (!channel.TryReadHeardFrame(deltaSeconds, out long frame, out bool warmingUp, out firstAfterRestart))
         {
             // A new queue that the listener does not hear yet is expected after each restart. The clock stays on wall time
             // for this step, and this is not a loss of the clock.

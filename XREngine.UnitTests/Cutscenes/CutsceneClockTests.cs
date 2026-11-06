@@ -97,6 +97,25 @@ public sealed class CutsceneClockTests
     }
 
     [Test]
+    public void Discipline_Step_MovesToTheAudioAtOnce_WithNoHardResync()
+    {
+        CutsceneClock clock = new() { Mode = ECutsceneClockMode.AudioDisciplined };
+        clock.Advance(Frame);
+        CutsceneTime audio = clock.Position - CutsceneTime.FromSeconds(0.060);
+
+        clock.Discipline(audio, step: true);
+
+        clock.Position.ShouldBe(audio);
+        clock.ConsumeHardResync().ShouldBeFalse();
+
+        // Above the limit, a step is a hard resync as before.
+        CutsceneTime far = clock.Position + CutsceneTime.FromSeconds(0.150);
+        clock.Discipline(far, step: true);
+        clock.Position.ShouldBe(far);
+        clock.ConsumeHardResync().ShouldBeTrue();
+    }
+
+    [Test]
     public void Discipline_OutsideAudioDisciplinedMode_IsIgnored()
     {
         CutsceneClock clock = new();

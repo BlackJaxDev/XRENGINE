@@ -43,11 +43,16 @@ public sealed class CutscenePlayer
     /// <param name="openAudioDecoder">
     /// Opens the streaming decoder of an audio clip file. If it is null, <see cref="AudioTrackEvaluator.OpenDefaultDecoder"/> is used.
     /// </param>
+    /// <param name="getTimestamp">
+    /// Gives the time in <see cref="System.Diagnostics.Stopwatch"/> ticks, to measure the time of the audio restarts.
+    /// If it is null, <see cref="System.Diagnostics.Stopwatch.GetTimestamp"/> is used. A test can give a fake time.
+    /// </param>
     public CutscenePlayer(
         CompiledCutscene compiled,
         CutsceneBindingTable bindings,
         CutsceneStateSnapshot snapshot,
-        Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder = null)
+        Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder = null,
+        Func<long>? getTimestamp = null)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(bindings);
@@ -59,7 +64,7 @@ public sealed class CutscenePlayer
         _buffer = new CutsceneActiveClip[Math.Max(1, compiled.MaxActiveClips)];
         _cameraCut = new CameraCutTrackEvaluator(_diagnostics);
         _animation = new AnimationClipTrackEvaluator(compiled, bindings, _diagnostics);
-        _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics, openAudioDecoder);
+        _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics, openAudioDecoder, getTimestamp);
         _evaluators =
         [
             new TransformTrackEvaluator(bindings.SlotCount, _diagnostics),
@@ -299,11 +304,17 @@ public sealed class CutscenePlayer
     /// <summary>
     /// Resolves a pending seek or advances the clock, then evaluates the tracks once.
     /// When playback reaches the end of the range, the position stays at the end and the state becomes paused.
+    /// The clock does not count the time that the audio restarts of the last tick took, for example a long decoder seek,
+    /// because the sound starts only after them.
     /// </summary>
     /// <param name="deltaSeconds">The wall time since the last tick, in seconds.</param>
     public void Tick(double deltaSeconds)
     {
         CutsceneTime duration = _compiled.Asset.Duration;
+
+        // The time of the audio restarts in the last tick, for example a long decoder seek, is in this delta. The sound
+        // starts only after the restart, so the clock does not count that time. A seek in this tick sets the position, so it drops the value.
+        double restartSeconds = _audio.ConsumeRestartSeconds();
 
         // Audio plays only in forward playback at rate one. Other states stop the sources before any evaluation.
         // A scrub seek is silent also without BeginScrub.
@@ -341,14 +352,16 @@ public sealed class CutscenePlayer
 
         int playVersion = _events.TransportVersion;
         CutsceneTime before = _clock.Position;
-        _clock.Advance(deltaSeconds);
+        double clockSeconds = Math.Max(0.0, deltaSeconds - restartSeconds);
+        _clock.Advance(clockSeconds);
 
         // The audio correction comes before the evaluation and the event dispatch, so both use the final position of the step.
-        if (_audio.TryReadHeardPosition(deltaSeconds, out CutsceneTime heard))
+        // The first reading after a restart moves the clock in one step. The high-water mark keeps a backward step from firing an event again.
+        if (_audio.TryReadHeardPosition(clockSeconds, out CutsceneTime heard, out bool firstAfterRestart))
         {
             AudioClockDifference = heard - _clock.Position;
             AudioClockReadCount++;
-            _clock.Discipline(heard);
+            _clock.Discipline(heard, firstAfterRestart);
         }
         bool hardResync = _clock.ConsumeHardResync();
         if (hardResync)

@@ -213,13 +213,26 @@ public sealed class AudioTrackTests
         }
     }
 
-    /// <summary>A decoder that wraps another decoder and counts the seeks that go backward from its read position.</summary>
-    private sealed class CountingDecoder(IStreamingAudioDecoder inner) : IStreamingAudioDecoder
+    /// <summary>A wall clock that moves only when a test or a fake decoder moves it. The value is in Stopwatch ticks.</summary>
+    private sealed class FakeWallClock
+    {
+        public long Ticks;
+
+        public void Advance(TimeSpan time)
+            => Ticks += (long)(time.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+    }
+
+    /// <summary>
+    /// A decoder that wraps another decoder and counts the seeks that go backward from its read position.
+    /// Each seek moves the fake wall clock by <see cref="SeekTime"/>, as a slow decoder seek does.
+    /// </summary>
+    private sealed class CountingDecoder(IStreamingAudioDecoder inner, FakeWallClock wallClock) : IStreamingAudioDecoder
     {
         private long _position;
 
         public int BackwardSeeks { get; private set; }
         public int Seeks { get; private set; }
+        public TimeSpan SeekTime { get; set; }
         public int SampleRate => inner.SampleRate;
         public int Channels => inner.Channels;
         public long TotalFrames => inner.TotalFrames;
@@ -229,6 +242,7 @@ public sealed class AudioTrackTests
             Seeks++;
             if (frame < _position)
                 BackwardSeeks++;
+            wallClock.Advance(SeekTime);
             inner.SeekToFrame(frame);
             _position = Math.Clamp(frame, 0L, TotalFrames);
         }
@@ -346,12 +360,13 @@ public sealed class AudioTrackTests
         CutsceneBindingTable table = CutsceneBindingTable.Resolve(compiled, new FakeResolver(node));
         table.Diagnostics.ShouldBeEmpty();
         List<CountingDecoder> decoders = [];
+        FakeWallClock wallClock = new();
         CutscenePlayer player = new(compiled, table, new CutsceneStateSnapshot(table), file =>
         {
-            CountingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(file));
+            CountingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(file), wallClock);
             decoders.Add(decoder);
             return decoder;
-        });
+        }, () => wallClock.Ticks);
         List<string> fired = [];
         List<CutsceneDiscontinuity> discontinuities = [];
         player.EventFired += e => fired.Add($"{e.Event.Time.ToSeconds():0.###}{(e.FromSeek ? " seek" : "")}");
@@ -922,8 +937,11 @@ public sealed class AudioTrackTests
         rig.Player.Diagnostics.ShouldBeEmpty();
     }
 
-    [Test]
-    public void ListenerSwapAtTheSameCount_RestartsWithTheNewSource()
+    // The order of the listener table depends on the hash codes, so each listener is removed once. One of the two cases
+    // removes the source at the head of the channel list, which the clock reads before the next service.
+    [TestCase(0)]
+    [TestCase(1)]
+    public void ListenerSwapAtTheSameCount_RestartsWithTheNewSource(int removed)
     {
         using Rig rig = MakeRig();
         rig.Player.Play();
@@ -931,7 +949,7 @@ public sealed class AudioTrackTests
 
         FakeTransport replacement = new();
         using ListenerContext third = new(replacement, null);
-        rig.Component.RemoveSourceFromListener(rig.Listeners[1]);
+        rig.Component.RemoveSourceFromListener(rig.Listeners[removed]);
         rig.Component.AddSourceToListener(third);
         rig.Component.ActiveListenerCount.ShouldBe(2);
         replacement.ClearLogs();
@@ -987,5 +1005,94 @@ public sealed class AudioTrackTests
         rig.Player.Tick(0.02);
         rig.Player.IsAudioClockFallback.ShouldBeFalse();
         rig.Player.Clock.Mode.ShouldBe(ECutsceneClockMode.AudioDisciplined);
+    }
+
+    [Test]
+    public void WarmUpEnd_StepsTheClockToTheHeardPosition_AndFiresTheEventOnce()
+    {
+        // The clock runs on wall time while the device does not play the new queue yet. With a 50 ms latency it is then
+        // 60 ms ahead of the sound, as on a real device.
+        using Rig rig = MakeRig(ECutsceneEventSeekPolicy.Skip, 0.05);
+        rig.Player.Play();
+        rig.Player.Tick(0.0);
+        foreach (FakeTransport transport in rig.Transports)
+        {
+            transport.SetSampleFrame(0);
+            transport.LatencyNanoseconds = 50_000_000;
+        }
+        for (int i = 0; i < 4; i++)
+            rig.Player.Tick(0.02);
+        rig.Player.AudioClockReadCount.ShouldBe(0);
+        rig.Fired.ShouldBe(["0.05"]);
+
+        // The first heard frame is 720 - 400 = 320 (0.04 s). The clock is at 0.10 s, so it steps back 60 ms with no resync.
+        foreach (FakeTransport transport in rig.Transports)
+            transport.SetSampleFrame(720);
+        rig.Player.Tick(0.02);
+        rig.Player.Position.ShouldBe(CutsceneTime.FromSamples(320, SampleRate));
+
+        // On the next reading, the clock and the sound agree. The event behind the step does not fire again.
+        foreach (FakeTransport transport in rig.Transports)
+            transport.SetSampleFrame(880);
+        rig.Player.Tick(0.02);
+        Math.Abs(rig.Player.AudioClockDifference.ToSeconds()).ShouldBeLessThan(0.001);
+        rig.Player.AudioClockReadCount.ShouldBe(2);
+        rig.Player.AudioHardResyncCount.ShouldBe(0);
+        rig.Discontinuities.ShouldBeEmpty();
+        rig.Fired.ShouldBe(["0.05"]);
+    }
+
+    [Test]
+    public void LongDecoderSeek_IsNotCountedAsClockTime()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.Player.Tick(0.02);
+
+        // The seek to 2 s is outside the ring of decoded frames, so the decoder seeks. The seek takes 300 ms of wall time,
+        // and the host gives that time to the next tick.
+        rig.Decoders.Single().SeekTime = TimeSpan.FromMilliseconds(300);
+        int seeks = rig.Decoders.Single().Seeks;
+        rig.Player.Seek(T(2.0), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+        rig.Decoders.Single().Seeks.ShouldBe(seeks + 1);
+
+        // The device played 10 ms of the new queue after the seek.
+        rig.SetHeardTime(2.01, 2 * SampleRate);
+        rig.Player.Tick(0.31);
+
+        rig.Player.AudioHardResyncCount.ShouldBe(0);
+        rig.Discontinuities.Count.ShouldBe(1);
+        rig.Player.Position.ShouldBe(CutsceneTime.FromSamples(16080, SampleRate));
+        Math.Abs(rig.Player.AudioClockDifference.ToSeconds()).ShouldBeLessThan(0.002);
+    }
+
+    [Test]
+    public void DrainedSourceAtTheClipEnd_IsNotRead()
+    {
+        // The seek to 2.9 s leaves 800 frames, so one buffer holds the rest of the clip.
+        using Rig rig = MakeRig();
+        rig.Player.Seek(T(2.9), ESeekIntent.Jump);
+        rig.Player.Play();
+        rig.Player.Tick(0.0);
+        rig.SetHeardTime(2.92, (long)(2.9 * SampleRate));
+        rig.Player.Tick(0.02);
+        rig.Player.AudioClockReadCount.ShouldBe(1);
+
+        // The device played the queue and stopped. The listener still hears the output latency, so the frame stays behind the clock.
+        foreach (FakeTransport transport in rig.Transports)
+        {
+            transport.LatencyNanoseconds = 50_000_000;
+            transport.StarveAll();
+        }
+        for (int i = 0; i < 3; i++)
+            rig.Player.Tick(0.02);
+
+        rig.Player.AudioClockReadCount.ShouldBe(1);
+        rig.Player.AudioHardResyncCount.ShouldBe(0);
+        rig.Player.IsAudioClockFallback.ShouldBeFalse();
+        rig.Player.Diagnostics.ShouldBeEmpty();
+        rig.Player.Position.ShouldBe(T(2.98));
     }
 }

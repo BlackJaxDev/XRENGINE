@@ -44,12 +44,16 @@ public sealed class CutsceneClock
 
     /// <summary>
     /// Moves the position toward the audio position. The move is at most <see cref="MaxSlewFraction"/>
-    /// times the last advance step. If the difference is above <see cref="HardResyncSeconds"/>,
+    /// times the last advance step, or a full step when <paramref name="step"/> is true. If the difference is above <see cref="HardResyncSeconds"/>,
     /// the position jumps to the audio position and <see cref="ConsumeHardResync"/> returns true once.
     /// This call has no effect outside <see cref="ECutsceneClockMode.AudioDisciplined"/> mode.
     /// </summary>
     /// <param name="audioPosition">The position that the audio device reports.</param>
-    public void Discipline(CutsceneTime audioPosition)
+    /// <param name="step">
+    /// True for the first valid audio position after the sound restarts. A difference at or below <see cref="HardResyncSeconds"/>
+    /// then moves the position to the audio position in one step. This is not a hard resync, so <see cref="ConsumeHardResync"/> stays false.
+    /// </param>
+    public void Discipline(CutsceneTime audioPosition, bool step = false)
     {
         if (Mode != ECutsceneClockMode.AudioDisciplined)
             return;
@@ -59,6 +63,13 @@ public sealed class CutsceneClock
         {
             Position = audioPosition;
             _hardResync = true;
+            return;
+        }
+
+        // A restart leaves an offset of about the output latency. A slew removes it only after many steps.
+        if (step)
+        {
+            Position = audioPosition;
             return;
         }
 
