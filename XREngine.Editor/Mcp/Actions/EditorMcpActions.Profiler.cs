@@ -427,6 +427,7 @@ namespace XREngine.Editor.Mcp
                     ? OcclusionGpuElapsedTiming.Instance.CaptureRingDiagnostic(activeRenderer)
                     : default;
             RvcFrameProfileSnapshot rvcFrameProfile = RuntimeEngine.Rendering.Stats.Rvc.FrameProfile;
+            RvcShadeletTelemetryCounters rvcShadeletTelemetry = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetry;
             XRMeshCpuPreparationTelemetrySnapshot meshCpuPreparation =
                 XRMeshCpuPreparationTelemetry.CaptureSnapshot();
             var gpuScene = context.RenderWorld.VisualScene.GPUCommands;
@@ -736,6 +737,7 @@ namespace XREngine.Editor.Mcp
                     },
                     frame_outputs = BuildFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest),
                     rvc_frame_profile = BuildRvcFrameProfile(rvcFrameProfile),
+                    rvc_shadelet_telemetry = BuildRvcShadeletTelemetry(rvcShadeletTelemetry),
                     occlusion = new
                     {
                         effective_mode = OcclusionTelemetry.LastEffectiveMode.ToString(),
@@ -2050,6 +2052,33 @@ namespace XREngine.Editor.Mcp
                 outputs = outputData,
             };
         }
+
+        /// <summary>Reports the latest completed RVC shadelet telemetry record and its reuse ratios.</summary>
+        private static object BuildRvcShadeletTelemetry(in RvcShadeletTelemetryCounters telemetry)
+            => new
+            {
+                frame_id = telemetry.FrameId,
+                view_count = telemetry.ViewCount,
+                valid_pixels = telemetry.ValidPixels,
+                unique_shadelets_2x2 = telemetry.UniqueShadelets2x2,
+                unique_shadelets_4x4 = telemetry.UniqueShadelets4x4,
+                unique_shadelets_8x8 = telemetry.UniqueShadelets8x8,
+                intra_view_reuse_2x2 = telemetry.IntraView2x2ReuseRatio,
+                intra_view_reuse_4x4 = telemetry.IntraView4x4ReuseRatio,
+                intra_view_reuse_8x8 = telemetry.IntraView8x8ReuseRatio,
+                stereo_candidates = telemetry.StereoCandidates,
+                stereo_offscreen = telemetry.StereoOffscreen,
+                stereo_visible_in_both_eyes = telemetry.StereoVisibleInBothEyes,
+                stereo_key_matches = telemetry.StereoKeyMatches,
+                stereo_key_match_ratio = telemetry.StereoKeyMatchRatio,
+                inset_wide_key_matches = telemetry.InsetWideKeyMatches,
+                requests = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetryRequests,
+                dispatches = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetryDispatches,
+                readbacks_attached = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetryReadbacks,
+                readbacks_decoded = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetryDecoded,
+                skips = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetrySkips,
+                skip_reason = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetrySkipReason,
+            };
 
         private static object BuildRvcFrameProfile(in RvcFrameProfileSnapshot snapshot)
         {

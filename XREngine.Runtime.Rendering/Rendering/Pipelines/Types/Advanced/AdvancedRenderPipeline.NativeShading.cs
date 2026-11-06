@@ -43,6 +43,12 @@ public partial class AdvancedRenderPipeline
         }
     }
 
+    /// <summary>
+    /// True when this family declares the RVC shadelet telemetry counters. Only
+    /// <see cref="RvcRenderPipeline"/> sets it, before the family builds resources.
+    /// </summary>
+    internal bool DeclaresRvcShadeletTelemetry { get; set; }
+
     private void InvalidateNativeShadingResourceProfile()
         => InvalidateOwnedInstancePhysicalResources("NativeShadingProfileChanged");
 
@@ -163,6 +169,18 @@ public partial class AdvancedRenderPipeline
                 .Lifetime(RenderResourceLifetime.Transient)
                 .DebugLabel($"Advanced light/decal-index allocation and overflow counters slot {slot}")
                 .Add();
+
+            if (DeclaresRvcShadeletTelemetry)
+            {
+                VisibilityBuffer<uint>(builder,
+                        RvcShadeletTelemetryResourceNames.Counters(slot),
+                        (uint)RvcShadeletTelemetryCounters.GpuWordCount,
+                        EBufferTarget.ShaderStorageBuffer,
+                        EBufferUsage.DynamicRead)
+                    .Lifetime(RenderResourceLifetime.Transient)
+                    .DebugLabel($"RVC shadelet telemetry counters slot {slot}")
+                    .Add();
+            }
         }
 
         // 5. Native HDR Scene Output Texture

@@ -4,7 +4,10 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 {
-    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[7];
+    private const int RvcShadeletTelemetryProgramIndex = 7;
+    internal const string RvcShadeletTelemetryShaderPath = "Advanced/Rvc/RvcShadeletTelemetry.comp";
+
+    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[8];
 
     internal VulkanAdvancedVisibilityPipelineReadiness TryGetNativeComputePipelines(
         out VulkanAdvancedNativeComputePipelines pipelines, out string reason)
@@ -41,7 +44,15 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         readiness = TryGetNativeComputePipeline(6, "Advanced/Shading/ShadeNativeOpaqueMsaa.comp",
             out VulkanAdvancedComputePipeline shadeMultisample, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        pipelines = new(classify, arguments, ambientOcclusion, froxels, background, shade, shadeMultisample);
+        // The RVC telemetry kernel is small. It is prepared with the family so
+        // a compile failure is loud at admission, not a silent missing counter.
+        readiness = TryGetNativeComputePipeline(RvcShadeletTelemetryProgramIndex, RvcShadeletTelemetryShaderPath,
+            out VulkanAdvancedComputePipeline telemetry, out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
+        pipelines = new(classify, arguments, ambientOcclusion, froxels, background, shade, shadeMultisample)
+        {
+            RvcShadeletTelemetry = telemetry,
+        };
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 

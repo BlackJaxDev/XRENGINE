@@ -50,6 +50,12 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// <summary>Render time frozen with the authored stage family.</summary>
     public float RenderTimeSeconds { get; init; }
 
+    /// <summary>
+    /// True when the native opaque shading stage also records the RVC shadelet
+    /// telemetry kernel after its last view. It is not part of the family identity.
+    /// </summary>
+    public bool RecordRvcShadeletTelemetry { get; init; }
+
     public bool IsValid => GetInvalidReason() is null;
 
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>

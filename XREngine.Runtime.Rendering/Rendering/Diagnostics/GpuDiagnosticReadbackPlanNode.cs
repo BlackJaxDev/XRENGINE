@@ -17,8 +17,13 @@ public readonly record struct GpuDiagnosticReadbackPlanNode(
     ulong OutputId = 0u,
     int ResourceGeneration = 0)
 {
-    /// <summary>Whether this node is eligible for a diagnostic sidecar.</summary>
-    public bool IsInstrumentedPass => GpuDiagnosticReadbackPlan.IsInstrumented(Strategy);
+    /// <summary>
+    /// Whether this node is eligible for a diagnostic sidecar. RVC shadelet telemetry is an
+    /// explicit opt-in setting, so it is eligible under every submission strategy.
+    /// </summary>
+    public bool IsInstrumentedPass
+        => Decoder == EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry ||
+           GpuDiagnosticReadbackPlan.IsInstrumented(Strategy);
 
     /// <summary>
     /// Compatibility label for diagnostic consumers. Values are interned
@@ -35,6 +40,7 @@ public readonly record struct GpuDiagnosticReadbackPlanNode(
         EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters => "AdvancedVisibilityCounters.Raw38WordsPerView",
         EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters => "AdvancedClassificationCounters.AggregateViews",
         EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters => "AdvancedLightingCounters.PerView",
+        EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry => "RvcShadeletTelemetry.AggregateViews",
         _ => "None",
     };
 

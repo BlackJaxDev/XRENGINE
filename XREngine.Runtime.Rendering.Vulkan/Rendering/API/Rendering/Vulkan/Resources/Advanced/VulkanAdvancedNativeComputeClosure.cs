@@ -70,6 +70,31 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     internal VulkanAdvancedNativeShadingRootBinding ShadingAddressRoot { get; init; }
     internal VulkanAdvancedDdgiSurfaceClosure DdgiSurface { get; init; }
 
+    /// <summary>
+    /// RVC shadelet telemetry counters. Absent (default) when the family does not
+    /// declare them; only an RVC-hosted family does.
+    /// </summary>
+    internal VulkanFrozenBufferBarrier RvcTelemetryCounters { get; init; }
+
+    /// <summary>Whole-array identity view that the RVC telemetry kernel reads for every view.</summary>
+    internal VulkanAdvancedNativeImageClosure RvcIdentityArrayResource { get; init; }
+
+    /// <summary>Whole-array depth view that the RVC telemetry kernel reads for every view.</summary>
+    internal VulkanAdvancedNativeImageClosure RvcDepthArrayResource { get; init; }
+
+    internal DescriptorImageInfo RvcIdentityArrayDescriptor { get; init; }
+
+    internal DescriptorImageInfo RvcDepthArrayDescriptor { get; init; }
+
+    /// <summary>True when the closure carries the complete RVC telemetry inputs and counters.</summary>
+    internal bool HasRvcTelemetry
+        => HasFrozenRange(RvcTelemetryCounters) &&
+           RvcIdentityArrayResource.IsValid && RvcDepthArrayResource.IsValid &&
+           RvcIdentityArrayDescriptor.ImageView.Handle != 0 &&
+           RvcDepthArrayDescriptor.ImageView.Handle != 0 &&
+           RvcIdentityArrayDescriptor.Sampler.Handle != 0 &&
+           RvcDepthArrayDescriptor.Sampler.Handle != 0;
+
     internal bool IsValid
         => GraphRevision != 0u && DdgiSurface.IsValid &&
            Identity is { IsAllocated: true } &&

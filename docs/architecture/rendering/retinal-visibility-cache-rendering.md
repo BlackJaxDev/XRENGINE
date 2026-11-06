@@ -28,7 +28,8 @@ exists, OpenXR quad/stereo view plumbing is view-count aware, OpenXR visibility
 mask meshes can be queried, and RVC resources/passes are declared in the frame
 graph.
 
-The backend shader dispatch for the production RVC GPU stages is not yet linked.
+The backend shader dispatch for the production RVC GPU stages is not yet linked,
+except the shadelet telemetry kernel (see [Shadelet Telemetry](#shadelet-telemetry)).
 `VPRC_RvcPass` deliberately emits a throttled warning when an active graph stage
 does not have a backend kernel. This is a feature, not a placeholder accident:
 it prevents the engine from pretending the cache path is doing GPU work when it
@@ -406,6 +407,32 @@ Both backends must expose semantically identical material rows. Shadelet keys do
 not include descriptor-set handles because handles would make cache identity
 backend-specific and fragile across resource rebinding.
 
+### Shadelet Telemetry
+
+The first RVC GPU kernel measures reuse before any shading changes. It is the
+gate for stereo reuse: the design descopes stereo reuse when the measured
+cross-eye ceiling is low.
+
+- Enable it with the `RvcShadeletTelemetryEnabled` engine setting. It has an
+  effect only on Vulkan eyes that `RvcRenderPipeline` renders.
+- `RvcRenderPipeline` makes its Advanced family declare one 64-byte counter
+  buffer per frame slot (`RvcShadeletTelemetry.Counters.SlotN`).
+- After the last view of native opaque shading, the Vulkan backend dispatches
+  `Advanced/Rvc/RvcShadeletTelemetry.comp` once over all view layers. The kernel
+  reads whole-array identity and depth views (set-1 bindings 66 and 67) and
+  writes counters at binding 68. Shading output does not change.
+- The key is the visible draw handle and primitive. Each count is therefore an
+  upper bound for finer shadelet keys.
+- Intra-view counts are the unique keys per 2x2, 4x4 and 8x8 pixel block.
+- Stereo counts reproject each visible first-view pixel into the second view.
+  A candidate is visible in both eyes when the second view's depth gives a
+  point within 1% of the camera distance. A key match also needs the same key.
+- The counters return through the delayed diagnostic readback under every
+  submission strategy, because the setting is an explicit opt-in. They land in
+  `RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetry` and in the
+  `rvc_shadelet_telemetry` object of the MCP `get_render_profiler_stats` tool.
+- Inset/wide counts stay zero until quad view renders.
+
 ## Foveated Shading Rate
 
 RVC has a foveated shading-rate stage for material classes that have not yet
@@ -551,6 +578,9 @@ a documented warm-cache policy.
 | `XREngine.Runtime.XR.OpenXR/OpenXRAPI.State.cs` | View, swapchain, image, visibility-mask, and diagnostic storage sized by `RenderFrameViewSet.MaxViewCount`. |
 | `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs` | OpenGL swapchain setup and per-view Forward+ rendering path. |
 | `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs` | Vulkan swapchain setup, per-view rendering path, and quad-safe storage/prewarm plumbing. |
+| `Build/CommonAssets/Shaders/Advanced/Rvc/RvcShadeletTelemetry.comp` | Shadelet telemetry kernel: intra-view unique keys and stereo reprojection key matches. |
+| `XREngine.Runtime.Core/Settings/RvcRuntimeContracts/Records/RvcShadeletTelemetryCounters.cs` | Telemetry counter record, GPU word layout, decode, and reuse ratios. |
+| `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.NativeShading.cs` | Records the telemetry dispatch after the last native shading view and its counter readback. |
 | `XREngine.UnitTests/Rendering/RvcRenderingContractTests.cs` | Source-contract tests for resolver behavior, resources, visibility payloads, shadelets, lighting, temporal hashing, OpenXR wiring, renderer hooks, and host-service reporting. |
 
 ## Remaining Validation And Backend Work

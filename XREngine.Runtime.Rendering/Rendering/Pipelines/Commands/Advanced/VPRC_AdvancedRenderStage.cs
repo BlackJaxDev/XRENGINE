@@ -408,7 +408,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
             EnableAuthoredDecals = frozenAuthoredDecals,
             RenderTimeSeconds = state.RenderTimeSeconds,
+            RecordRvcShadeletTelemetry = requiresNativeOpaqueShading &&
+                pipeline.DeclaresRvcShadeletTelemetry &&
+                ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcShadeletTelemetryEnabled: true },
         };
+        if (request.RecordRvcShadeletTelemetry)
+            RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryRequest();
         return true;
     }
 
@@ -664,6 +669,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true,
             usesMultisampleVisibility, packedSamples,
             hasAmbientOcclusion ? AdvancedAmbientOcclusionContract.ResourceName : AdvancedRenderPipeline.WebPostProcessNeutralTextureName);
+        // RVC telemetry runs after native shading and reads every view layer.
+        if (descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
+            context.HasResource(RvcShadeletTelemetryResourceNames.Counters(0u)))
+        {
+            for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; ++slot)
+                builder.ReadWriteBuffer(RvcShadeletTelemetryResourceNames.Counters(slot));
+        }
 
         int stageIndex = (int)descriptor.Stage;
         if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)

@@ -63,6 +63,7 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
     private RvcPipelinePlan _lastRvcPlan;
     private AdvancedRenderPipeline? _advancedStageFamily;
     private bool _stereo;
+    private bool _rvcShadeletTelemetryEnabled;
 
     /// <summary>True when this pipeline renders both eyes as one layered stereo target.</summary>
     public bool Stereo => _stereo;
@@ -84,7 +85,26 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
     // The family owns the scene feature values; this pipeline's feature properties
     // forward to it, so camera-source feature copies reach it directly.
     private AdvancedRenderPipeline CreateAdvancedStageFamily()
-        => AdvancedRenderPipeline.CreateOpenXrEyeStageFamilyDefinition(Stereo);
+    {
+        AdvancedRenderPipeline family = AdvancedRenderPipeline.CreateOpenXrEyeStageFamilyDefinition(Stereo);
+        // The telemetry counters are small; declaring them for every RVC family
+        // lets the setting toggle per frame without a resource rebuild.
+        family.DeclaresRvcShadeletTelemetry = true;
+        return family;
+    }
+
+    /// <summary>
+    /// True when the native opaque shading stage also runs the RVC shadelet telemetry
+    /// kernel. The kernel only measures reuse ceilings; shading output does not change.
+    /// </summary>
+    [Category("RVC")]
+    [DisplayName("Shadelet Telemetry")]
+    [Description("Runs the RVC shadelet telemetry kernel and reads its counters back. Shading output does not change.")]
+    public bool RvcShadeletTelemetryEnabled
+    {
+        get => _rvcShadeletTelemetryEnabled;
+        set => SetField(ref _rvcShadeletTelemetryEnabled, value);
+    }
 
     public override IRenderPipelineEditorUIProvider? EditorUIProvider
         => AdvancedStageFamily.EditorUIProvider;
@@ -394,6 +414,7 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
             settings.RvcDebugViewMode,
             settings.RvcLightGridSpace));
 
+        RvcShadeletTelemetryEnabled = settings.RvcShadeletTelemetryEnabled;
         RvcQualitySettings = new RvcQualitySettings(
             settings.RvcFovealRadiusDegrees,
             settings.RvcGuardBandDegrees,

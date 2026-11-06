@@ -676,6 +676,7 @@ public static partial class RuntimeEngine
                 private bool _rvcPeripheralLightAggregationEnabled = false;
                 private bool _rvcDiagnosticOverlayEnabled = false;
                 private ERvcDebugViewMode _rvcDebugViewMode = ERvcDebugViewMode.Disabled;
+                private bool _rvcShadeletTelemetryEnabled = false;
                 private ERvcLightGridSpace _rvcLightGridSpace = ERvcLightGridSpace.WorldAlignedCameraRelative;
                 private float _rvcFovealRadiusDegrees = RvcQualitySettings.Defaults.FovealRadiusDegrees;
                 private float _rvcGuardBandDegrees = RvcQualitySettings.Defaults.GuardBandDegrees;
@@ -2758,6 +2759,18 @@ public static partial class RuntimeEngine
                 {
                     get => _rvcDebugViewMode;
                     set => SetField(ref _rvcDebugViewMode, value);
+                }
+
+                /// <summary>
+                /// Runs the RVC shadelet telemetry kernel on Vulkan eye outputs and reads its counters back.
+                /// The kernel measures intra-view and cross-eye reuse ceilings and does not change shading.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Runs the RVC shadelet telemetry kernel on Vulkan eye outputs and reads its counters back. It measures intra-view and cross-eye reuse ceilings and does not change shading.")]
+                public bool RvcShadeletTelemetryEnabled
+                {
+                    get => _rvcShadeletTelemetryEnabled;
+                    set => SetField(ref _rvcShadeletTelemetryEnabled, value);
                 }
 
                 /// <summary>

@@ -15,6 +15,9 @@ internal sealed partial class VulkanCommandRuntime
     private static readonly string[] NativeBackgroundGpuProfilerPath = ["Advanced", "Shading", "Background"];
     private static readonly string[] NativeOpaqueGpuProfilerPath = ["Advanced", "Shading", "NativeOpaque"];
     private static readonly string[] NativeOpaqueRepairGpuProfilerPath = ["Advanced", "Shading", "GpuOverflowRepair"];
+    private static readonly string[] RvcShadeletTelemetryGpuProfilerPath = ["Rvc", "ShadeletTelemetry"];
+    private const string RvcTelemetryMissingClosureReason = "The native closure has no RVC telemetry counters or whole-array views.";
+    private const string RvcTelemetryMissingKernelReason = "The RVC telemetry kernel is not current.";
     private int RecordAdvancedNativeComputePayload(
         scoped ref PrimaryCommandBufferRecordingState state,
         in VulkanAdvancedVisibilityOperationPayload payload,
@@ -207,7 +210,59 @@ internal sealed partial class VulkanCommandRuntime
             state.CommandBuffer, in lightingCounters, in lightingRequest,
             checked((int)lightingRequest.BackendPackage.CanonicalFrame.FrameGeneration),
             closure.ViewIndex, EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters);
+        if (payload.Request.RecordRvcShadeletTelemetry && closure.ViewIndex + 1u == payload.State.ViewCount)
+            RecordRvcShadeletTelemetry(ref state, in payload, in closure, in push);
         return info.OperationIndex;
+    }
+
+    /// <summary>
+    /// Runs the RVC shadelet telemetry kernel once, after the last view of the
+    /// family has shaded. It reads every view layer and only writes its counters.
+    /// </summary>
+    private void RecordRvcShadeletTelemetry(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        in VulkanAdvancedNativeComputeClosure closure,
+        in VulkanAdvancedNativeShadingPushConstants push)
+    {
+        if (!closure.HasRvcTelemetry || !payload.NativeComputePipelines.RvcShadeletTelemetry.IsCurrent)
+        {
+            RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetrySkipped(!closure.HasRvcTelemetry
+                ? RvcTelemetryMissingClosureReason
+                : RvcTelemetryMissingKernelReason);
+            Debug.VulkanWarningEvery(
+                "Vulkan.Rvc.ShadeletTelemetry.Unavailable",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] RVC shadelet telemetry was requested, but the family has no telemetry counters or kernel (closure={0}, kernel={1}).",
+                closure.HasRvcTelemetry,
+                payload.NativeComputePipelines.RvcShadeletTelemetry.IsCurrent);
+            return;
+        }
+
+        uint viewCount = payload.State.ViewCount;
+        for (uint view = 0u; view < viewCount; ++view)
+        {
+            TransitionNativeSharedInput(state.CommandBuffer, closure.Identity, view);
+            TransitionNativeInput(state.CommandBuffer, closure.Depth, view);
+        }
+        TrackAdvancedNativeImageClosure(state.CommandBuffer, closure.RvcIdentityArrayResource);
+        TrackAdvancedNativeImageClosure(state.CommandBuffer, closure.RvcDepthArrayResource);
+        TrackAdvancedNativeBufferClosure(state.CommandBuffer, closure.RvcTelemetryCounters);
+        FillNativeCounters(state.CommandBuffer, closure.RvcTelemetryCounters);
+        VulkanAdvancedNativeShadingPushConstants telemetryPush = push with { ViewIndex = 0u, KernelIndex = 0u };
+        RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.RvcShadeletTelemetry,
+            in telemetryPush, DivideRoundUp(push.Width, 8), DivideRoundUp(push.Height, 8), viewCount,
+            "Rvc.ShadeletTelemetry", RvcShadeletTelemetryGpuProfilerPath);
+        VulkanFrozenBufferBarrier counters = closure.RvcTelemetryCounters;
+        EmitNativeBufferDependency(state.CommandBuffer, in counters,
+            AccessFlags.ShaderWriteBit, AccessFlags.TransferReadBit,
+            PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.TransferBit);
+        VulkanAdvancedVisibilityStageRequest request = payload.Request;
+        bool readbackAttached = AdvancedCounterDiagnosticCopy?.Invoke(
+            state.CommandBuffer, in counters, in request,
+            checked((int)request.BackendPackage.CanonicalFrame.FrameGeneration),
+            uint.MaxValue, EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry) == true;
+        RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryDispatch(readbackAttached);
     }
 
     private void RecordNativeDispatch(CommandBuffer commandBuffer,

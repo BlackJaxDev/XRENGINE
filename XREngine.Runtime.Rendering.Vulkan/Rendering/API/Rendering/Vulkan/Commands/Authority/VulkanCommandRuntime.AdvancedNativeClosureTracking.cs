@@ -48,6 +48,12 @@ internal sealed partial class VulkanCommandRuntime
         TrackAdvancedNativeBufferClosure(commandBuffer, closure.LightingCounters);
         TrackAdvancedNativeBufferClosure(commandBuffer, closure.FroxelDecalGrid);
         TrackAdvancedNativeBufferClosure(commandBuffer, closure.DecalIndices);
+        if (closure.HasRvcTelemetry)
+        {
+            TrackAdvancedNativeImageClosure(commandBuffer, closure.RvcIdentityArrayResource);
+            TrackAdvancedNativeImageClosure(commandBuffer, closure.RvcDepthArrayResource);
+            TrackAdvancedNativeBufferClosure(commandBuffer, closure.RvcTelemetryCounters);
+        }
     }
 
     private void TrackAdvancedNativeImageClosure(CommandBuffer commandBuffer,

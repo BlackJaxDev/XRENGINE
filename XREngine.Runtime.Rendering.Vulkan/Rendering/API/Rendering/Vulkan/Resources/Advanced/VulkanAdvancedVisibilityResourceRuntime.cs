@@ -814,7 +814,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeLightIndicesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeLightingCountersBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeFroxelDecalGridBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeDecalIndicesBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeDecalIndicesBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcTelemetryCountersBinding];
         uint requiredStorageBuffers = checked((uint)(
             storageBindingNumbers.Length + nativeStorageBindingNumbers.Length));
         if (device.PhysicalDeviceCapabilities is not { } capabilities ||
@@ -832,7 +833,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeMetadataMultisampleBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDepthMultisampleBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeSelectionMultisampleBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeSamplePositionMultisampleBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeSamplePositionMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcIdentityArrayBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcDepthArrayBinding];
         ReadOnlySpan<uint> nativeStorageImageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeHdrBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeVelocityBinding,
@@ -1668,9 +1671,59 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         {
             return false;
         }
+        if (closure.HasRvcTelemetry && !TryUpdateRvcTelemetryDescriptors(descriptorSet, in closure, out reason))
+            return false;
         _resources.RecordDescriptorTableGeneration();
         reason = "Ready";
         return true;
+    }
+
+    /// <summary>
+    /// Writes the RVC telemetry bindings: whole-array identity and depth views and
+    /// the counter buffer. Families without RVC telemetry leave them unwritten;
+    /// no other native kernel uses these bindings.
+    /// </summary>
+    private unsafe bool TryUpdateRvcTelemetryDescriptors(
+        DescriptorSet descriptorSet,
+        in VulkanAdvancedNativeComputeClosure closure,
+        out string reason)
+    {
+        DescriptorImageInfo* images = stackalloc DescriptorImageInfo[2]
+        {
+            closure.RvcIdentityArrayDescriptor,
+            closure.RvcDepthArrayDescriptor,
+        };
+        DescriptorBufferInfo counters = new()
+        {
+            Buffer = closure.RvcTelemetryCounters.NativeBuffer,
+            Offset = closure.RvcTelemetryCounters.NativeOffset,
+            Range = closure.RvcTelemetryCounters.NativeSize,
+        };
+        WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[3]
+        {
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcIdentityArrayBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.CombinedImageSampler,
+                PImageInfo = images,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcDepthArrayBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.CombinedImageSampler,
+                PImageInfo = images + 1,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcTelemetryCountersBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.StorageBuffer,
+                PBufferInfo = &counters,
+            },
+        };
+        return _resources.DescriptorLifetime.TryUpdateDescriptorSets(3u, writes, out reason);
     }
 
     private readonly record struct VulkanNativeComputeDescriptorSignature(
@@ -2010,6 +2063,33 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 return false;
             }
 
+            // RVC-hosted families declare telemetry counters. The kernel reads
+            // every view layer, so it binds whole-array views beside the
+            // per-view canonical tuple.
+            VulkanFrozenBufferBarrier rvcTelemetry = default;
+            VulkanAdvancedNativeImageClosure rvcIdentityArrayResource = default;
+            VulkanAdvancedNativeImageClosure rvcDepthArrayResource = default;
+            ImageView rvcIdentityArrayView = default;
+            ImageView rvcDepthArrayView = default;
+            string rvcTelemetryName = RvcShadeletTelemetryResourceNames.Counters(frameSlot);
+            if (TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, rvcTelemetryName, out rvcTelemetry))
+            {
+                if (!Check(in generation.State, rvcTelemetryName, ref rvcTelemetry,
+                        RvcShadeletTelemetryCounters.GpuByteCount, XREngine.Data.Rendering.EBufferTarget.ShaderStorageBuffer,
+                        indirect: false, transferDst: true, out reason))
+                {
+                    return false;
+                }
+                if (!TryAcquireNativeComputeArrayView(context, storage, identity, ImageAspectFlags.ColorBit, out rvcIdentityArrayView) ||
+                    !TryAcquireNativeComputeArrayView(context, storage, depth, ImageAspectFlags.DepthBit, out rvcDepthArrayView) ||
+                    !TryCaptureNativeComputeImageClosure(identity, rvcIdentityArrayView, out rvcIdentityArrayResource) ||
+                    !TryCaptureNativeComputeImageClosure(depth, rvcDepthArrayView, out rvcDepthArrayResource))
+                {
+                    reason = "The RVC telemetry whole-array image views could not be acquired.";
+                    return false;
+                }
+            }
+
             closure = new VulkanAdvancedNativeComputeClosure(
                 graphPlan.Revision, identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics, ambientOcclusion,
                 identityMultisample, metadataMultisample, depthMultisample, selectionMultisample, samplePositionMultisample,
@@ -2041,8 +2121,18 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 viewIndex)
             {
                 DdgiSurface = ddgiSurface,
+                RvcTelemetryCounters = rvcTelemetry,
+                RvcIdentityArrayResource = rvcIdentityArrayResource,
+                RvcDepthArrayResource = rvcDepthArrayResource,
+                RvcIdentityArrayDescriptor = rvcIdentityArrayView.Handle == 0
+                    ? default
+                    : new DescriptorImageInfo { Sampler = sampler, ImageView = rvcIdentityArrayView, ImageLayout = ImageLayout.General },
+                RvcDepthArrayDescriptor = rvcDepthArrayView.Handle == 0
+                    ? default
+                    : new DescriptorImageInfo { Sampler = sampler, ImageView = rvcDepthArrayView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
             };
-            captured = closure.IsValid;
+            captured = closure.IsValid &&
+                (rvcTelemetry.NativeBuffer.Handle == 0 || closure.HasRvcTelemetry);
             reason = captured ? "Ready" : "The advanced native compute closure is incomplete.";
             return captured;
         }
@@ -2154,6 +2244,31 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         return false;
     }
 
+    /// <summary>
+    /// Acquires one view of every array layer of <paramref name="group"/> for a
+    /// kernel that reads all views of a family in one dispatch.
+    /// </summary>
+    private static bool TryAcquireNativeComputeArrayView(
+        VulkanBackendObjectContext context,
+        VulkanAdvancedNativeComputeClosureStorage storage,
+        VulkanPhysicalImageGroup group,
+        ImageAspectFlags aspect,
+        out ImageView view)
+    {
+        uint layers = Math.Max(1u, group.Template.Layers);
+        if (!TryAcquireView(context, group, Format.Undefined, aspect, 0u, 1u, 0u, out VulkanInternedImageViewReference reference, layers))
+        {
+            view = default;
+            return false;
+        }
+        view = reference.View;
+        if (storage.TryTrack(context.Resources.Images, reference))
+            return true;
+        context.Resources.Images.ReleaseInternedView(reference);
+        view = default;
+        return false;
+    }
+
     private static bool TryAcquireView(
         VulkanBackendObjectContext context,
         VulkanPhysicalImageGroup group,
@@ -2162,20 +2277,23 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         uint baseMipLevel,
         uint levelCount,
         uint arrayLayer,
-        out VulkanInternedImageViewReference reference)
+        out VulkanInternedImageViewReference reference,
+        uint arrayLayerCount = 0u)
     {
+        // A zero layer count selects one 2D layer; any other count selects a
+        // 2D-array view of that many layers starting at arrayLayer.
         ImageViewCreateInfo createInfo = new()
         {
             SType = StructureType.ImageViewCreateInfo,
             Image = group.Image,
-            ViewType = ImageViewType.Type2D,
+            ViewType = arrayLayerCount == 0u ? ImageViewType.Type2D : ImageViewType.Type2DArray,
             Format = format == Format.Undefined ? group.Format : format,
             SubresourceRange = new ImageSubresourceRange(
                 aspect,
                 baseMipLevel,
                 levelCount,
                 arrayLayer,
-                1u),
+                Math.Max(1u, arrayLayerCount)),
         };
         return context.Resources.Images.TryAcquireInternedView(
             context,
