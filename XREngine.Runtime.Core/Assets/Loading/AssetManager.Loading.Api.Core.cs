@@ -16,15 +16,50 @@ public partial class AssetManager
         where T : XRAsset, new()
         => LoadAsync<T>(filePath, progressCallback: null, priority, bypassJobThread);
 
-    public async Task<T?> LoadAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+    public Task<T?> LoadAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string filePath,
         Action<AssetLoadProgress>? progressCallback,
         JobPriority priority = JobPriority.Normal,
         bool bypassJobThread = false)
         where T : XRAsset, new()
+        => LoadAsyncCore<T>(filePath, progressCallback, priority, bypassJobThread, CancellationToken.None);
+
+    /// <summary>
+    /// Loads an asset and lets the caller cancel the load.
+    /// </summary>
+    /// <remarks>
+    /// Cancellation is cooperative. The load checks the token before it starts, after it gets the path gate,
+    /// before it reads or imports the file, and before it puts the asset in the cache.
+    /// A canceled load throws <see cref="OperationCanceledException"/>, releases the path gate,
+    /// and adds no entry to the cache. Each caller owns its own load attempt, so a token cancels only
+    /// the call that received it. A different caller that waits on the same path gate continues.
+    /// The returned task completes only after the load work stops, so no cache change occurs after
+    /// the task reports cancellation.
+    /// </remarks>
+    /// <param name="filePath">The asset file path.</param>
+    /// <param name="priority">The job priority of the load.</param>
+    /// <param name="bypassJobThread">True to run the load on the calling thread.</param>
+    /// <param name="cancellationToken">The token that cancels this load.</param>
+    /// <returns>The loaded asset, or <c>null</c> if the load fails.</returns>
+    public Task<T?> LoadAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        string filePath,
+        JobPriority priority,
+        bool bypassJobThread,
+        CancellationToken cancellationToken)
+        where T : XRAsset, new()
+        => LoadAsyncCore<T>(filePath, progressCallback: null, priority, bypassJobThread, cancellationToken);
+
+    private async Task<T?> LoadAsyncCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        string filePath,
+        Action<AssetLoadProgress>? progressCallback,
+        JobPriority priority,
+        bool bypassJobThread,
+        CancellationToken cancellationToken)
+        where T : XRAsset, new()
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (UsesRuntimeAssetCatalog)
-            return (T?)await LoadFromRuntimeSourceAsync(filePath, typeof(T), progressCallback).ConfigureAwait(false);
+            return (T?)await LoadFromRuntimeSourceAsync(filePath, typeof(T), progressCallback, cancellationToken).ConfigureAwait(false);
 
         if (!SupportsSynchronousAssetWork
             && TryGetAssetByPath(Path.GetFullPath(filePath), out XRAsset? cached)
@@ -39,15 +74,16 @@ public partial class AssetManager
                 filePath,
                 typeof(T),
                 priority,
-                CancellationToken.None,
+                cancellationToken,
                 additionalMetadata: null).ConfigureAwait(false);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         EnsureHostFileLoadRoute(bypassJobThread);
         return await RunOnJobThreadAsync(() =>
         {
             using IDisposable progressScope = AssetLoadProgressContext.Begin(filePath, progressCallback);
-            return LoadCore<T>(filePath);
+            return LoadCore<T>(filePath, cancellationToken);
         }, priority, bypassJobThread).ConfigureAwait(false);
     }
 

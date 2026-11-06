@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Threading;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -38,7 +39,53 @@ namespace XREngine
         }
 
         private T? LoadCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
+            => LoadCore<T>(filePath, CancellationToken.None);
+
+        /// <summary>
+        /// Gets the path gate. A token that can be canceled stops the wait when the caller cancels.
+        /// </summary>
+        /// <returns>True when this call holds the gate and must release it.</returns>
+        private static bool EnterAssetLoadGate(object loadGate, CancellationToken cancellationToken)
         {
+            bool taken = false;
+            if (!cancellationToken.CanBeCanceled)
+            {
+                Monitor.Enter(loadGate, ref taken);
+                return taken;
+            }
+
+            // Poll so that a canceled caller does not wait for a different caller's load to finish.
+            while (!taken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Monitor.TryEnter(loadGate, AssetLoadGatePollMilliseconds, ref taken);
+            }
+            return taken;
+        }
+
+        private const int AssetLoadGatePollMilliseconds = 10;
+
+        /// <summary>
+        /// Removes an asset that a canceled load made but did not publish.
+        /// </summary>
+        private static void DiscardCanceledAsset(XRAsset? asset)
+        {
+            if (asset is null || asset.IsDestroyed)
+                return;
+
+            try
+            {
+                asset.Destroy();
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e, $"Unable to destroy the asset that a canceled load made for '{asset.FilePath ?? asset.Name}'.");
+            }
+        }
+
+        private T? LoadCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, CancellationToken cancellationToken) where T : XRAsset, new()
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             EnsureHostFileAssetAccess();
             T? file;
             filePath = Path.GetFullPath(filePath);
@@ -48,8 +95,10 @@ namespace XREngine
             try
             {
 #endif
-                lock (loadGate)
+                bool gateTaken = EnterAssetLoadGate(loadGate, cancellationToken);
+                try
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.CheckingCache, "Checking asset cache...", 0.05f);
                     if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
                     {
@@ -73,6 +122,12 @@ namespace XREngine
 
                     if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, out T? publishedAsset))
                     {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            DiscardCanceledAsset(publishedAsset);
+                            cancellationToken.ThrowIfCancellationRequested();
+                        }
+
                         AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Loaded published asset from archive.", 1.0f);
                         PostLoaded(filePath, publishedAsset);
                         return publishedAsset;
@@ -84,6 +139,7 @@ namespace XREngine
                         return null;
                     }
 
+                    cancellationToken.ThrowIfCancellationRequested();
                     AssetLoadProgressContext.ReportStage(
                         normalizedExtension == AssetExtension ? AssetLoadProgressStage.ParsingAssetGraph : AssetLoadProgressStage.ImportingThirdParty,
                         normalizedExtension == AssetExtension ? "Reading serialized asset graph..." : "Importing third-party asset...",
@@ -91,11 +147,28 @@ namespace XREngine
                     file = normalizedExtension == AssetExtension
                         ? DeserializeAssetFile<T>(filePath)
                         : Load3rdPartyWithCache<T>(filePath, normalizedExtension);
+
+                    // The asset is not in the cache yet. A cancel here drops it, so the cache gets no entry.
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        DiscardCanceledAsset(file);
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+
                     AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Finalizing, "Finalizing asset graph...", 0.95f);
                     PostLoaded(filePath, file);
                     AssetLoadProgressContext.ReportStage(file is null ? AssetLoadProgressStage.Failed : AssetLoadProgressStage.Completed, file is null ? "Asset load failed." : "Asset ready.", file is null ? 1.0f : 1.0f);
                 }
+                finally
+                {
+                    if (gateTaken)
+                        Monitor.Exit(loadGate);
+                }
 #if !DEBUG
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception e)
             {
