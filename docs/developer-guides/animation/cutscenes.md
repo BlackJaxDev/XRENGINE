@@ -12,6 +12,8 @@ This guide describes the cutscene timeline: how to author a cutscene, how to pre
 | `CutsceneDirectorComponent` | `XREngine.Runtime.CutsceneIntegration` | Opens an asset in a world and ticks the player. |
 | `CutscenePreviewHost` | `XREngine.Editor` | Plays an asset in edit mode and restores the scene. |
 | `CutscenePreviewSession` | `XREngine.Editor` | Owns the one cutscene that the panel and the MCP tools control. |
+| `CutsceneResidencySession` | `XREngine.Runtime.CutsceneIntegration` | Connects the residency planner and its backend to a player for one open cutscene. |
+| `CutsceneBakeTool` | `XREngine.Editor` | Bakes the residency manifest of an asset with the real player. |
 
 ## Animation Clip Tracks
 
@@ -117,9 +119,9 @@ Put completion logic on `CutscenePlayer.Finished` or `CutsceneDirectorComponent.
 
 ## Residency
 
-`CutsceneResidencyPlanner` decides which level of each asset must be resident, and by which time, around the playhead. The levels are T0 (proxy), T1 (coarse), and T2 (target). The planner sends requests to an `IResidencyBackend` and does no IO itself. It is not connected to `CutscenePlayer` or the director yet. `TextureResidencyBackend` is the texture backend; no mesh backend exists yet.
+`CutsceneResidencyPlanner` decides which level of each asset must be resident, and by which time, around the playhead. The levels are T0 (proxy), T1 (coarse), and T2 (target). The planner sends requests to an `IResidencyBackend` and does no IO itself. The director and the editor preview run it through a `CutsceneResidencySession` (see [Residency In Playback](#residency-in-playback)). `TextureResidencyBackend` is the texture backend; no mesh or audio backend exists yet.
 
-- **Input:** a `CutsceneResidencyManifest` holds a shared asset table and `ResidencyBucket` entries in time order, with no overlap. Each `ResidencyEntry` gives an asset index, a target level, and a screen coverage. A bucket can mark a camera cut at its start.
+- **Input:** a `CutsceneResidencyManifest` holds a shared asset table, the kind of each asset (`EResidencyAssetKind`: `Texture`, `Mesh`, or `Audio`), and `ResidencyBucket` entries in time order, with no overlap. Each `ResidencyEntry` gives an asset index, a target level, and a screen coverage. A bucket can mark a camera cut at its start. The kind is per asset and not per entry, because one asset has one kind. The manifest is serializable: the properties have setters, and the planner constructor calls `Validate`. `SelectKind(kind)` makes a manifest of one kind with the same buckets.
 - **Calls:** call `Open` one time. It requests T0 for each asset. Then call `Update(position, rate, seek, deltaSeconds)` one time in each frame on the update thread. `seek` is null when no seek occurred. A backend reports complete work with `NotifyCompleted`, from any thread. The next update applies it and raises `LoadCompleted`.
 - **Plan:** an update plans again only when the playhead goes into another bucket, the window covers other buckets, the rate changes, a seek occurs, the dwell gate changes, or a load completes. Otherwise it allocates nothing and sends nothing. The window is 5 seconds ahead at rate 1, scaled by the absolute rate, in the direction of travel, plus 0.5 seconds behind. At rate 0 (a pause), the window is the forward window of rate 1, so a pause does not cancel the prefetch. The planner requests one level above the resident level at a time. Requests sort by level, then by the time until the playhead needs them, then by screen coverage in descending order. A bucket behind the playhead sorts after the buckets ahead of it. Running work of the current generation stays while the window needs its level or a higher one, so a load that completes during an update is not cancelled. A jump, an asset that leaves the window, and a closed dwell gate cancel the running work.
 - **Jump:** a `Jump` increments `Generation` and cancels the work of older generations. A late result of an older generation runs no callback.
@@ -131,8 +133,29 @@ Put completion logic on `CutscenePlayer.Finished` or `CutsceneDirectorComponent.
 - **Textures:** `TextureResidencyBackend` sends the levels to the imported texture streaming manager as explicit residency requests (see [Texture Streaming](../../architecture/rendering/texture-streaming.md#explicit-residency-requests)). T0 is the texture preview, T1 is the first mip with a largest side of at most `CoarseMaxDimension` (default 512), and T2 is the full source size. The texture quality setting and the VRAM budget can lower T2. A request is not visibility and does not pin the texture. A cancel of a complete ticket releases the hold, and the texture returns to visibility-driven residency. `GetLevel` reports the highest level of a ticket whose mip is resident now.
   - Create it with an `AssetManager` (it finds loaded textures by asset ID) or with a `Func<Guid, XRTexture2D?>`. It works on textures that are already loaded. It does not load assets.
   - Call `AttachPlanner(planner)` before `planner.Open()`, so that the backend can report complete work. Call `SetPlayhead(position, rate)` before each `planner.Update`, so that request deadlines become frame deadlines (`EstimatedFramesPerSecond`, default 60). Without a playhead, requests have no deadline.
-  - By default it selects the `Cutscene` texture streaming budget profile and selects `Default` again at `Dispose`. The profile is global, so keep only one such backend active. The `Cutscene` limits are provisional engine settings.
+  - By default it holds the `Cutscene` texture streaming budget profile. The profile is global to the streaming manager, so the backends of one manager share it with a reference count: the first backend selects `Cutscene`, and the last `Dispose` selects `Default` again. Two open directors therefore keep the profile until both close. The `Cutscene` limits are provisional engine settings.
   - The backend rejects a request when the asset is not a loaded texture, when streaming does not track the texture, or when the source size for T1 is not known yet. It logs a warning and counts the rejection in `RejectedRequestCount`.
+
+### Residency In Playback
+
+`CutsceneDirectorComponent` and `CutscenePreviewHost` each own one `CutsceneResidencySession` while a cutscene is open:
+
+- **Open:** `CutsceneResidencySession.Create` selects the manifest. A current baked manifest is used as it is. A missing, stale, or invalid manifest gives the approximate manifest and one diagnostic. Assets of a kind with no backend (mesh and audio) give one more diagnostic, and they stay at the residency that visibility selects. The session sends only the texture assets to the backend. The constructor calls `backend.AttachPlanner(planner)`, and `Open(player)` calls `planner.Open()` and sets the session as `player.PlaybackGate`.
+- **Frame:** the host calls `BeginTick`, then `player.Tick`, then `CompleteTick`. A play step updates the planner through the gate, before the player evaluates. Any other tick updates it in `CompleteTick` with `player.LastTickSeek`: the intent of a resolved seek, or `Jump` for a hard audio resync and for a `Stop`. A paused or scrubbing player reports rate zero. Each update calls `backend.SetPlayhead(position, rate)` first. A paused preview that does not tick the player calls `UpdateIdle`, so the dwell gate of a scrub can open. A preview loop wrap is a jump seek, so the planner sees it as a `Jump`.
+- **Close:** the director closes the session at `Close`, at component deactivation, at `OnEndPlay` (world or scene end), and at destroy. The session closes the planner and then disposes the backend. Then the player restores the targets.
+- **Backend:** the director uses `ResidencyBackendFactory`, or the static `CutsceneDirectorComponent.DefaultResidencyBackendFactory`. The editor registers the default in `CutscenePreviewSession.Initialize` as `new TextureResidencyBackend(Engine.Assets)`, and the preview session gives the same factory to each preview host. If `ResidencyEnabled` is true (the default) and no factory gives a backend, the director opens without residency and adds a diagnostic. A `CutscenePreviewHost` created without a factory runs without residency.
+- **Playback wait:** `PlaybackWaitEnabled` and `PlaybackWaitMaximumSeconds` on the director and on the preview host set the planner values. Both are off by default; the panel option is **Wait At Cuts**. When forward play crosses a camera cut whose shot is not resident, the gate limits the step to the last flick before the cut, so the frame never shows the new shot. The player stops the audio sources at once and keeps them stopped while `player.IsHeldByGate` is true. The hold ends when the targets are resident or the maximum wait passes.
+
+### Manifest Bake
+
+`CutsceneBakeTool.Bake(asset, options)` runs the compiled timeline with the real `CutscenePlayer` and a `Manual` clock. It samples 4 times each second and at the start of each camera cut clip. For each sample, it updates the world matrices, finds the assets of each shown node with an `ICutsceneResidencyAssetCollector`, and computes the screen coverage of the bounding sphere in the view of the active camera (`CutsceneResidencyView`). A sphere behind the near plane covers nothing, so the camera orientation counts. An asset needs T2 at or above `TargetCoverage` (default 0.1) and T1 below it. Each sample gives one bucket that ends at the next sample, and a bucket that starts at a camera cut has the cut flag. Because the bake uses the real evaluator, the result includes the animated poses, the clip starts and offsets, and the spawned objects. The bake restores every recorded value at the end and destroys the spawned instances.
+
+- **Inputs:** `CutsceneBakeOptions` takes the binding resolver, the runtime slots, the scene roots (so that objects that no track binds are also seen), the collector (default `CutsceneRenderableAssetCollector`, which reads the sub-meshes and the 2D textures of `ModelComponent` LOD materials), and the audio decoder factory.
+- **T0 budget:** the T0 size of a texture is a 64 px uncompressed preview with mips (about 21 KB). The T0 size of a sub-mesh is 74 bytes for each vertex of its lowest LOD. The bake returns a `CutsceneT0Report`. If the total is above `T0BudgetBytes` (default 64 MiB), the bake throws `CutsceneBakeException`, whose message lists the largest assets. The bake does not remove assets to fit.
+- **Store:** the bake does not change the asset. Set `asset.Manifest` to the result and `asset.ManifestContentHash` to `CutsceneManifestHash.Compute(asset)`. The panel **Bake Manifest** button does this.
+- **Stale manifest:** `CutsceneManifestHash` hashes the duration, the restore setting, and the cooked binary form of the bindings and the tracks. It does not include the manifest, the hash, or the name. Any later change to the asset makes the manifest stale (`ECutsceneManifestState.Stale`), and playback then uses the approximate manifest for the whole timeline.
+- **Approximate manifest:** `CutsceneApproximateManifest.Build` splits the timeline at each clip edge. A bucket holds the assets of the bound nodes, and their descendants, whose tracks have an active clip there. It uses the open poses and the camera of the active cut at its open pose. An asset at or above the target coverage, or with no camera, needs T2, and any other asset needs T1. It never drops an asset for its coverage, because the open pose can be wrong. It does not see objects that no track binds.
+- **Cook:** `CutsceneCookCheck.GetRejection(asset, shippingCook: true)` gives the reason to reject an asset whose manifest is missing or stale. A development cook accepts it. The project builder does not call this check yet; the call belongs in the cooked-content step of `ProjectBuilder` (`CookContent`) for each `CutsceneAsset`.
 
 ## Author A Cutscene
 
@@ -159,9 +182,13 @@ Save the scene after you end the preview. The scene stores the director and its 
 | `Space` | Plays or pauses. |
 | Left / Right arrow | Pauses and moves one frame. |
 | **Loop** | Keeps preview playback inside the start and end values. |
+| **Bake Manifest** | Bakes the residency manifest in edit mode, with no preview open, with the **T0 Budget (MiB)** value. The result message gives the T0 total and the largest assets. |
+| **Wait At Cuts** | Sets the playback wait of the open preview or director. |
 | `Ctrl` + mouse wheel | Changes the zoom of the time axis. |
 
 Move, trim, key, track, and duration edits use `Undo.RecordStructuralChange`, so Ctrl+Z reverts them. The asset is read-only in play mode.
+
+The residency strip is under the ruler. Each bucket of the manifest is a bar, and a white tick marks a camera cut. While a preview or a director is open, the color shows how many entries of the bucket have their target level: green for all, yellow for some, and red for none. Without an open cutscene, the color shows the highest level of the bucket. A missing or stale manifest draws an orange marker over the timeline, because playback uses the approximate manifest. A yellow line shows the cut at which the playback wait holds. The line above the strip shows the manifest state, the asset count, the pending T0 loads, the generation, the timed-out waits, and the rejected texture requests. A bake does not record an undo step.
 
 ## Edit-Mode Preview
 
@@ -231,3 +258,7 @@ cutscene_open { "close": true }
 - `AudioData` imports WAV, Ogg Vorbis, and MP3. A FLAC import returns false, because no decoder supports FLAC.
 - Bindings created by the panel use the object ID and a node path. Root node names must stay the same for the path fallback.
 - The default resolver is registered by the editor only.
+- The default residency backend factory is registered by the editor only. Only textures have a residency backend. The bake records mesh assets for the T0 report, but no backend loads them.
+- The texture backend finds a texture by its asset ID in the asset manager. A texture that the manager does not track by ID, for example a texture embedded in a model, is rejected with a warning.
+- A stale manifest makes the whole timeline approximate. The hash does not find which range changed.
+- The `Cutscene` budget profile limits and the T0 budget default are not measured yet.

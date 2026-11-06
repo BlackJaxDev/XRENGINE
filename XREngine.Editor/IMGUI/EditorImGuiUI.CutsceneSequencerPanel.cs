@@ -79,6 +79,7 @@ public static partial class EditorImGuiUI
 
         DrawCutsceneTransportBar(asset);
         DrawCutsceneAuthoringBar(asset);
+        DrawCutsceneResidencyBar(asset);
         DrawCutsceneTimeline(asset);
         DrawCutsceneDiagnostics();
         HandleCutsceneShortcuts();
@@ -450,7 +451,7 @@ public static partial class EditorImGuiUI
 
     private static void DrawCutsceneTimeline(CutsceneAsset asset)
     {
-        float laneAreaHeight = CutsceneRulerHeight + (Math.Max(1, asset.Tracks.Count) * CutsceneLaneHeight) + 8.0f;
+        float laneAreaHeight = CutsceneLanesTop + (Math.Max(1, asset.Tracks.Count) * CutsceneLaneHeight) + 8.0f;
         ImGui.BeginChild("CutsceneTimeline", new Vector2(0.0f, Math.Min(laneAreaHeight + 24.0f, 280.0f)), ImGuiChildFlags.Borders, ImGuiWindowFlags.HorizontalScrollbar);
 
         Vector2 origin = ImGui.GetCursorScreenPos();
@@ -461,6 +462,7 @@ public static partial class EditorImGuiUI
 
         DrawCutsceneRuler(drawList, origin, timelineLeft, timelineWidth, durationSeconds);
         HandleCutsceneRulerInput(asset, origin, timelineLeft, timelineWidth);
+        DrawCutsceneResidencyStrip(asset, drawList, origin, timelineLeft, timelineWidth, laneAreaHeight);
 
         for (int trackIndex = 0; trackIndex < asset.Tracks.Count; trackIndex++)
             DrawCutsceneLane(asset, drawList, trackIndex, origin, timelineLeft);
@@ -542,7 +544,7 @@ public static partial class EditorImGuiUI
             return;
 
         CutsceneTrack track = asset.Tracks[trackIndex];
-        float laneTop = origin.Y + CutsceneRulerHeight + (trackIndex * CutsceneLaneHeight);
+        float laneTop = origin.Y + CutsceneLanesTop + (trackIndex * CutsceneLaneHeight);
         Vector2 headerMin = new(origin.X, laneTop);
 
         ImGui.SetCursorScreenPos(headerMin);

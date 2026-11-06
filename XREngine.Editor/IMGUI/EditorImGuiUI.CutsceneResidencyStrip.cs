@@ -1,0 +1,244 @@
+using System.Numerics;
+using ImGuiNET;
+using XREngine.Cutscenes;
+using XREngine.Editor.Cutscenes;
+
+namespace XREngine.Editor;
+
+public static partial class EditorImGuiUI
+{
+    private const float CutsceneResidencyStripHeight = 12.0f;
+    private const float CutsceneLanesTop = CutsceneRulerHeight + CutsceneResidencyStripHeight;
+
+    /// <summary>The time between two hash checks of a closed asset in the panel, in seconds. A hash serializes the asset.</summary>
+    private const double CutsceneManifestStateRefreshSeconds = 1.0;
+
+    private static float _cutsceneT0BudgetMiB = CutsceneBakeOptions.DefaultT0BudgetBytes / (1024.0f * 1024.0f);
+    private static string? _cutsceneResidencyMessage;
+    private static CutsceneAsset? _cutsceneManifestStateAsset;
+    private static ECutsceneManifestState _cutsceneManifestState;
+    private static double _cutsceneManifestStateTime = double.NegativeInfinity;
+
+    /// <summary>Draws the manifest state, the bake controls, the playback wait option, and the planner state.</summary>
+    private static void DrawCutsceneResidencyBar(CutsceneAsset asset)
+    {
+        CutsceneResidencySession? residency = CutscenePreviewSession.Residency;
+        ECutsceneManifestState state = GetCutsceneManifestState(asset, residency);
+        ImGui.TextUnformatted(state switch
+        {
+            ECutsceneManifestState.Current => "Manifest: baked",
+            ECutsceneManifestState.Stale => "Manifest: stale (approximate)",
+            _ => "Manifest: missing (approximate)",
+        });
+
+        ImGui.SameLine();
+        bool canBake = EditorState.InEditMode && !CutscenePreviewSession.IsOpen && _cutsceneDirector is not null;
+        ImGui.BeginDisabled(!canBake);
+        if (ImGui.Button("Bake Manifest") && _cutsceneDirector is { } director)
+            BakeCutsceneManifest(asset, director);
+        ImGui.EndDisabled();
+        if (!canBake && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("The bake runs in edit mode, with no preview open, on the selected director.");
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(80.0f);
+        if (ImGui.DragFloat("T0 Budget (MiB)", ref _cutsceneT0BudgetMiB, 1.0f, 1.0f, 4096.0f, "%.0f"))
+            _cutsceneT0BudgetMiB = Math.Clamp(_cutsceneT0BudgetMiB, 1.0f, 4096.0f);
+
+        DrawCutscenePlaybackWaitOption();
+
+        if (residency is not null)
+        {
+            CutsceneResidencyPlanner planner = residency.Planner;
+            ImGui.SameLine();
+            ImGui.TextDisabled(
+                $"Assets {residency.Manifest.Assets.Length}  T0 pending {planner.PendingProxyCount}  Gen {planner.Generation}  Waits timed out {planner.PlaybackWaitTimeoutCount}{(planner.IsHoldingPlayback ? "  HOLD" : string.Empty)}");
+            if (residency.Backend is TextureResidencyBackend textures && textures.RejectedRequestCount > 0)
+            {
+                ImGui.SameLine();
+                ImGui.TextDisabled($"Rejected {textures.RejectedRequestCount}");
+            }
+        }
+
+        if (_cutsceneResidencyMessage is { } message)
+            ImGui.TextWrapped(message);
+    }
+
+    private static void DrawCutscenePlaybackWaitOption()
+    {
+        bool hasHost = CutscenePreviewSession.Host is not null;
+        CutsceneDirectorComponent? director = hasHost ? null : CutscenePreviewSession.Director;
+        if (!hasHost && director is null)
+            return;
+
+        bool enabled = hasHost ? CutscenePreviewSession.Host!.PlaybackWaitEnabled : director!.PlaybackWaitEnabled;
+        ImGui.SameLine();
+        if (!ImGui.Checkbox("Wait At Cuts", ref enabled))
+            return;
+
+        bool value = enabled;
+        EnqueueSceneEdit(() =>
+        {
+            if (CutscenePreviewSession.Host is { } host)
+                host.PlaybackWaitEnabled = value;
+            else if (CutscenePreviewSession.Director is { } openDirector)
+                openDirector.PlaybackWaitEnabled = value;
+        });
+    }
+
+    /// <summary>
+    /// Draws the residency strip under the ruler. Each bucket is a bar. With an open session, the color shows how many
+    /// entries have their target level: green for all, yellow for some, red for none. Without a session, the color shows
+    /// the highest level of the bucket. A white tick marks a camera cut. A missing or stale manifest draws an orange
+    /// marker over the timeline, because playback uses the approximate manifest there.
+    /// </summary>
+    private static void DrawCutsceneResidencyStrip(CutsceneAsset asset, ImDrawListPtr drawList, Vector2 origin, float timelineLeft, float timelineWidth, float laneAreaHeight)
+    {
+        CutsceneResidencySession? residency = CutscenePreviewSession.Residency;
+        ECutsceneManifestState state = GetCutsceneManifestState(asset, residency);
+        CutsceneResidencyManifest? manifest = residency?.Manifest ?? asset.Manifest;
+
+        float top = origin.Y + CutsceneRulerHeight + 1.0f;
+        float bottom = origin.Y + CutsceneLanesTop - 1.0f;
+        drawList.AddRectFilled(new Vector2(timelineLeft, top), new Vector2(timelineLeft + timelineWidth, bottom), ImGui.GetColorU32(ImGuiCol.FrameBgHovered));
+
+        if (manifest is not null)
+            DrawCutsceneResidencyBuckets(manifest, residency, drawList, timelineLeft, top, bottom);
+
+        if (state != ECutsceneManifestState.Current)
+        {
+            uint marker = ImGui.ColorConvertFloat4ToU32(new Vector4(0.95f, 0.55f, 0.10f, 0.22f));
+            drawList.AddRectFilled(new Vector2(timelineLeft, top), new Vector2(timelineLeft + timelineWidth, origin.Y + laneAreaHeight), marker);
+            drawList.AddText(new Vector2(timelineLeft + 4.0f, top - 1.0f), ImGui.GetColorU32(ImGuiCol.Text),
+                state == ECutsceneManifestState.Stale ? "stale manifest: approximate residency" : "no manifest: approximate residency");
+        }
+
+        if (residency?.Planner is { IsHoldingPlayback: true } planner)
+        {
+            float x = timelineLeft + ((float)planner.PlaybackHoldTime.ToSeconds() * _cutscenePixelsPerSecond);
+            uint hold = ImGui.ColorConvertFloat4ToU32(new Vector4(1.0f, 0.85f, 0.10f, 1.0f));
+            drawList.AddLine(new Vector2(x, top), new Vector2(x, origin.Y + laneAreaHeight), hold, 2.0f);
+        }
+    }
+
+    private static void DrawCutsceneResidencyBuckets(CutsceneResidencyManifest manifest, CutsceneResidencySession? residency, ImDrawListPtr drawList, float timelineLeft, float top, float bottom)
+    {
+        Vector2 clipMin = drawList.GetClipRectMin();
+        Vector2 clipMax = drawList.GetClipRectMax();
+        uint cutColor = ImGui.GetColorU32(ImGuiCol.Text);
+        ResidencyBucket[] buckets = manifest.Buckets;
+        for (int b = 0; b < buckets.Length; b++)
+        {
+            ResidencyBucket bucket = buckets[b];
+            float left = timelineLeft + ((float)bucket.Start.ToSeconds() * _cutscenePixelsPerSecond);
+            float right = timelineLeft + ((float)bucket.End.ToSeconds() * _cutscenePixelsPerSecond);
+            if (right < clipMin.X || left > clipMax.X)
+                continue;
+
+            drawList.AddRectFilled(new Vector2(left, top), new Vector2(MathF.Max(left + 1.0f, right - 1.0f), bottom), CutsceneBucketColor(manifest, bucket, residency));
+            if (bucket.StartsAtCut)
+                drawList.AddLine(new Vector2(left, top - 3.0f), new Vector2(left, bottom), cutColor, 2.0f);
+        }
+    }
+
+    private static uint CutsceneBucketColor(CutsceneResidencyManifest manifest, ResidencyBucket bucket, CutsceneResidencySession? residency)
+    {
+        ResidencyEntry[] entries = bucket.Entries;
+        if (entries.Length == 0)
+            return ImGui.ColorConvertFloat4ToU32(new Vector4(0.35f, 0.35f, 0.35f, 0.6f));
+
+        if (residency is null)
+        {
+            int highest = 0;
+            for (int e = 0; e < entries.Length; e++)
+                highest = Math.Max(highest, entries[e].TargetLevel);
+            return ImGui.ColorConvertFloat4ToU32(highest >= (int)EResidencyLevel.Target
+                ? new Vector4(0.25f, 0.45f, 0.85f, 0.9f)
+                : new Vector4(0.25f, 0.45f, 0.85f, 0.5f));
+        }
+
+        int resident = 0;
+        for (int e = 0; e < entries.Length; e++)
+        {
+            ResidencyEntry entry = entries[e];
+            if ((int)residency.Backend.GetLevel(manifest.Assets[entry.AssetIndex]) >= entry.TargetLevel)
+                resident++;
+        }
+
+        if (resident == entries.Length)
+            return ImGui.ColorConvertFloat4ToU32(new Vector4(0.25f, 0.75f, 0.35f, 0.9f));
+        return ImGui.ColorConvertFloat4ToU32(resident > 0 ? new Vector4(0.90f, 0.75f, 0.20f, 0.9f) : new Vector4(0.80f, 0.25f, 0.20f, 0.9f));
+    }
+
+    /// <summary>
+    /// Gets the manifest state for the panel. An open session gives the state of its open. Otherwise the panel computes
+    /// the hash at most one time in <see cref="CutsceneManifestStateRefreshSeconds"/>, because a hash serializes the asset.
+    /// </summary>
+    private static ECutsceneManifestState GetCutsceneManifestState(CutsceneAsset asset, CutsceneResidencySession? residency)
+    {
+        if (residency is not null)
+            return residency.ManifestState;
+
+        double now = ImGui.GetTime();
+        if (!ReferenceEquals(asset, _cutsceneManifestStateAsset) || now - _cutsceneManifestStateTime >= CutsceneManifestStateRefreshSeconds)
+        {
+            _cutsceneManifestStateAsset = asset;
+            _cutsceneManifestStateTime = now;
+            try
+            {
+                _cutsceneManifestState = CutsceneManifestHash.GetState(asset);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, "The cutscene manifest state could not be computed.");
+                _cutsceneManifestState = ECutsceneManifestState.Stale;
+            }
+        }
+        return _cutsceneManifestState;
+    }
+
+    private static void BakeCutsceneManifest(CutsceneAsset asset, CutsceneDirectorComponent director)
+    {
+        long budget = (long)(Math.Clamp(_cutsceneT0BudgetMiB, 1.0f, 4096.0f) * 1024.0 * 1024.0);
+        EnqueueSceneEdit(() =>
+        {
+            if (CutscenePreviewSession.IsOpen)
+            {
+                _cutsceneResidencyMessage = "End the preview before the bake. The bake writes to the bound nodes.";
+                return;
+            }
+            if (director.World is not RuntimeWorld world)
+            {
+                _cutsceneResidencyMessage = "The bake cannot run: the director node is not in a runtime world.";
+                return;
+            }
+
+            using Undo.RecordingSuppressionScope suppression = Undo.SuppressRecording();
+            List<CutsceneCompileDiagnostic> diagnostics = [];
+            try
+            {
+                CutsceneBakeOptions options = new(CutscenePreviewSession.CreateResolver(world))
+                {
+                    SceneRoots = world.RootNodes,
+                    T0BudgetBytes = budget,
+                    Diagnostics = diagnostics,
+                };
+                CutsceneResidencyManifest manifest = CutsceneBakeTool.Bake(asset, options, out CutsceneT0Report report);
+                asset.Manifest = manifest;
+                asset.ManifestContentHash = CutsceneManifestHash.Compute(asset);
+                asset.MarkDirty();
+                _cutsceneManifestStateAsset = null;
+                _cutsceneResidencyMessage = $"Baked {manifest.Buckets.Length} buckets. {report.Describe()}{(diagnostics.Count > 0 ? $" {diagnostics.Count} problems: {diagnostics[0].Message}" : string.Empty)}";
+            }
+            catch (CutsceneBakeException ex)
+            {
+                _cutsceneResidencyMessage = ex.Message;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"The residency manifest of the cutscene '{asset.Name}' was not baked.");
+                _cutsceneResidencyMessage = $"The bake failed: {ex.Message}";
+            }
+        });
+    }
+}
