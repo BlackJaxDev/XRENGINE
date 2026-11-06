@@ -2253,7 +2253,12 @@ internal sealed partial class ImportedTextureStreamingManager
                 {
                     float currentStreamingLodBias = Math.Max(0.0f, record.CurrentStreamingLodBias);
                     record.BaseLodBias = textureLodBias - currentStreamingLodBias;
-                    if (completedResidentSize > previousResidentSize)
+
+                    // The fade hides the change of mips on screen. A promotion that only an explicit
+                    // request raised was not visible, so it shows the new mips at once. A caller that
+                    // waits for the request, for example a cutscene that holds at a camera cut, then
+                    // shows the sharp texture in the first frame after the completion.
+                    if (completedResidentSize > previousResidentSize && !requestDriven)
                     {
                         float promotionFadeBias = CalculatePromotionFadeBias(
                             record.SourceWidth,

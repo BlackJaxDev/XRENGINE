@@ -275,6 +275,44 @@ public sealed class TextureResidencyRequestTests
     }
 
     [Test]
+    public void RequestDrivenPromotion_ShowsNewMipsWithoutFade_VisiblePromotionFades()
+    {
+        ImportedTextureStreamingManager manager = _host.Manager;
+        (XRTexture2D requested, ImportedTextureStreamingRecord requestedRecord) = _host.AddTexture("requested");
+        manager.RequestResidency(requested, targetMip: 0, deadlineFrame: long.MaxValue, JobPriority.Normal, generation: 1);
+        manager.Evaluate(102);
+        lock (requestedRecord.Sync)
+            requestedRecord.PendingTransitionRequestDriven.ShouldBeTrue();
+        _host.Backend.CompleteLast().ShouldBeTrue();
+
+        lock (requestedRecord.Sync)
+        {
+            requestedRecord.ResidentMaxDimension.ShouldBe(1024u);
+            Volatile.Read(ref requestedRecord.PromotionFadeEndFrameId).ShouldBe(long.MinValue);
+            requestedRecord.CurrentStreamingLodBias.ShouldBe(0.0f);
+        }
+
+        (_, ImportedTextureStreamingRecord visibleRecord) = _host.AddTexture("visible");
+        lock (visibleRecord.Sync)
+        {
+            visibleRecord.LastVisibleFrameId = 110L;
+            visibleRecord.MaxProjectedPixelSpan = 1024.0f;
+            visibleRecord.MaxScreenCoverage = 0.5f;
+        }
+        manager.Evaluate(110);
+        lock (visibleRecord.Sync)
+            visibleRecord.PendingTransitionRequestDriven.ShouldBeFalse();
+        _host.Backend.CompleteLast().ShouldBeTrue();
+
+        lock (visibleRecord.Sync)
+        {
+            visibleRecord.ResidentMaxDimension.ShouldBe(1024u);
+            Volatile.Read(ref visibleRecord.PromotionFadeEndFrameId).ShouldBeGreaterThan(110L);
+            visibleRecord.CurrentStreamingLodBias.ShouldBeGreaterThan(0.0f);
+        }
+    }
+
+    [Test]
     public void VisibleTextureRaisedByRequest_KeepsPinAndSurvivesCancel()
     {
         ImportedTextureStreamingManager manager = _host.Manager;
