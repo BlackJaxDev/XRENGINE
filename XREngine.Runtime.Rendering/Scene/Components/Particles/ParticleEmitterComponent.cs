@@ -1001,12 +1001,29 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         _totalTime = 0.0f;
         _emitAccumulator = 0.0f;
         _randomSeed = unchecked((uint)seed);
+        // A controller can move the emitter or a parent in the same tick, before the transform flush. The stored world
+        // matrix is then from the last frame, so the ancestors are recalculated first.
+        RefreshWorldMatrix(Transform);
         _prewarmWorldMatrix = Transform.WorldMatrix;
         _prewarmStepsRemaining = float.IsFinite(seconds) && seconds > 0.0f
             ? (int)MathF.Ceiling(seconds / PrewarmStepSeconds)
             : 0;
         _prewarmBudgetMilliseconds = double.IsFinite(budgetMilliseconds) ? Math.Max(0.0, budgetMilliseconds) : 0.0;
         return ContinuePrewarm();
+    }
+
+    /// <summary>The emitter transform that the prewarm steps use. It is set by <see cref="Prewarm"/>.</summary>
+    internal Matrix4x4 PrewarmWorldMatrix => _prewarmWorldMatrix;
+
+    /// <summary>
+    /// Recalculates the world matrix of a transform and its ancestors, from the root down, so a local change of this tick
+    /// is in the matrix. It does not allocate.
+    /// </summary>
+    /// <returns>True if the world matrix changed, so the children must also be recalculated.</returns>
+    private static bool RefreshWorldMatrix(TransformBase transform)
+    {
+        bool parentChanged = transform.Parent is { } parent && RefreshWorldMatrix(parent);
+        return transform.RecalculateMatrices(forceWorldRecalc: parentChanged) || parentChanged;
     }
 
     /// <summary>

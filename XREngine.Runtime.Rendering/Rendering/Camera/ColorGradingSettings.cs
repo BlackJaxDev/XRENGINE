@@ -392,7 +392,11 @@ uniform ColorGradeStruct ColorGrade;";
         private long _autoExposureResetsApplied;
         private long _autoExposureResetMinimumEpoch;
         private long _cpuSnapRequestsInFlight;
-        private bool _snapThisDispatch;
+        private long _cpuSnapStartTimestamp;
+        // The settings whose GPU dispatch on this thread uses a reset, or null. A thread-local value keeps two concurrent
+        // dispatches of the same settings (for example one camera on two viewports with render workers) apart.
+        [ThreadStatic]
+        private static ColorGradingSettings? t_snapDispatchOwner;
         internal const float MaxGpuAutoExposureDeltaSeconds = 1.0f / 15.0f;
 
         /// <summary>
@@ -448,7 +452,8 @@ uniform ColorGradeStruct ColorGrade;";
 
         /// <summary>
         /// Starts one GPU exposure dispatch for a frame. While a reset is due for the frame,
-        /// <see cref="ComputeGpuAutoExposureBlend"/> gives one until <see cref="EndGpuAutoExposureDispatch"/>.
+        /// <see cref="ComputeGpuAutoExposureBlend"/> on the same thread gives one until <see cref="EndGpuAutoExposureDispatch"/>.
+        /// The decision is local to the calling thread, so dispatches on other threads do not see it.
         /// </summary>
         /// <param name="frameCameraEpoch">The camera history epoch that the capture of the frame recorded, or null.</param>
         /// <param name="capturedRequests">The request count to pass to <see cref="EndGpuAutoExposureDispatch"/>.</param>
@@ -456,8 +461,9 @@ uniform ColorGradeStruct ColorGrade;";
         internal bool BeginGpuAutoExposureDispatch(ulong? frameCameraEpoch, out long capturedRequests)
         {
             capturedRequests = Volatile.Read(ref _autoExposureResetRequests);
-            _snapThisDispatch = IsAutoExposureResetDue(capturedRequests, frameCameraEpoch);
-            return _snapThisDispatch;
+            bool snap = IsAutoExposureResetDue(capturedRequests, frameCameraEpoch);
+            t_snapDispatchOwner = snap ? this : null;
+            return snap;
         }
 
         /// <summary>Ends a GPU exposure dispatch. A successful dispatch that used the reset clears it.</summary>
@@ -465,9 +471,11 @@ uniform ColorGradeStruct ColorGrade;";
         /// <param name="capturedRequests">The value from <see cref="BeginGpuAutoExposureDispatch"/>.</param>
         internal void EndGpuAutoExposureDispatch(bool success, long capturedRequests)
         {
-            if (success && _snapThisDispatch)
+            bool snap = ReferenceEquals(t_snapDispatchOwner, this);
+            if (snap)
+                t_snapDispatchOwner = null;
+            if (success && snap)
                 MarkAutoExposureResetApplied(capturedRequests);
-            _snapThisDispatch = false;
         }
 
         /// <summary>
@@ -476,7 +484,7 @@ uniform ColorGradeStruct ColorGrade;";
         /// </summary>
         /// <param name="deltaTime">The render delta in seconds.</param>
         internal float ComputeGpuAutoExposureBlend(float deltaTime)
-            => _snapThisDispatch
+            => ReferenceEquals(t_snapDispatchOwner, this)
                 ? 1.0f
                 : 1.0f - MathF.Exp(-ExposureTransitionSpeed * SanitizeGpuAutoExposureDeltaSeconds(deltaTime));
 
@@ -494,16 +502,36 @@ uniform ColorGradeStruct ColorGrade;";
         }
 
         // The CPU path reads the luminance later, so one snap request at a time is in flight. Later frames use the interval.
+        // A luminance read does not always call back: with no current renderer the call does nothing, and a backend can drop
+        // a readback. So an in-flight snap that has no result after this time lets a new snap request start.
+        internal const double CpuAutoExposureSnapTimeoutSeconds = 1.0;
+
         private bool BeginCpuAutoExposureSnap(ulong? frameCameraEpoch, out long requests)
+            => BeginCpuAutoExposureSnap(frameCameraEpoch, System.Diagnostics.Stopwatch.GetTimestamp(), out requests);
+
+        /// <summary>Starts a CPU snap request, or returns false while one for the same reset waits for its result.</summary>
+        /// <param name="frameCameraEpoch">The camera history epoch that the capture of the frame recorded, or null.</param>
+        /// <param name="timestamp">The current <see cref="System.Diagnostics.Stopwatch"/> timestamp.</param>
+        /// <param name="requests">The request count to pass to <see cref="EndCpuAutoExposureSnap"/>.</param>
+        internal bool BeginCpuAutoExposureSnap(ulong? frameCameraEpoch, long timestamp, out long requests)
         {
             requests = Volatile.Read(ref _autoExposureResetRequests);
-            if (requests == Volatile.Read(ref _cpuSnapRequestsInFlight) || !IsAutoExposureResetDue(requests, frameCameraEpoch))
+            if (!IsAutoExposureResetDue(requests, frameCameraEpoch))
                 return false;
+
+            if (requests == Volatile.Read(ref _cpuSnapRequestsInFlight))
+            {
+                double waited = (timestamp - Volatile.Read(ref _cpuSnapStartTimestamp)) / (double)System.Diagnostics.Stopwatch.Frequency;
+                if (waited < CpuAutoExposureSnapTimeoutSeconds)
+                    return false;
+            }
+
+            Volatile.Write(ref _cpuSnapStartTimestamp, timestamp);
             Volatile.Write(ref _cpuSnapRequestsInFlight, requests);
             return true;
         }
 
-        private void EndCpuAutoExposureSnap(bool applied, long requests)
+        internal void EndCpuAutoExposureSnap(bool applied, long requests)
         {
             if (applied)
                 MarkAutoExposureResetApplied(requests);

@@ -674,6 +674,81 @@ public sealed class SimulationPolicyTests
     }
 
     [Test]
+    public void WarmUp_AfterAParentMoveInTheSameTick_UsesTheNewEmitterPosition()
+    {
+        SceneNode parent = new("Rig", new Transform());
+        SceneNode child = parent.NewChild("Sparks");
+        ParticleEmitterComponent emitter = child.AddComponent<ParticleEmitterComponent>()!;
+        try
+        {
+            ((Transform)child.Transform).Translation = new Vector3(0, 1, 0);
+            parent.Transform.RecalculateMatrices();
+            child.Transform.RecalculateMatrices();
+
+            // The cutscene tick moves the parent and starts the warm-up before the transform flush.
+            ((Transform)parent.Transform).Translation = new Vector3(10, 0, 0);
+            emitter.Prewarm(0.1f, seed: 1, budgetMilliseconds: 10_000.0).ShouldBeTrue();
+
+            Vector3 position = emitter.PrewarmWorldMatrix.Translation;
+            Vector3.Distance(position, new Vector3(10, 1, 0)).ShouldBeLessThan(1e-4f);
+        }
+        finally
+        {
+            parent.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void AutoExposureReset_TheSnapDecisionIsLocalToTheDispatchThread()
+    {
+        ColorGradingSettings settings = new() { ExposureTransitionSpeed = 0.5f };
+        float normal = 1.0f - MathF.Exp(-0.5f * 0.01f);
+        settings.ResetAutoExposureHistory(3UL);
+        settings.BeginGpuAutoExposureDispatch(3UL, out long requests).ShouldBeTrue();
+
+        // A concurrent dispatch of an old frame on another thread does not see the snap of this thread.
+        float otherBlend = 0.0f;
+        bool otherSnap = true;
+        Thread other = new(() =>
+        {
+            otherSnap = settings.BeginGpuAutoExposureDispatch(2UL, out long otherRequests);
+            otherBlend = settings.ComputeGpuAutoExposureBlend(0.01f);
+            settings.EndGpuAutoExposureDispatch(success: true, otherRequests);
+        });
+        other.Start();
+        other.Join();
+
+        otherSnap.ShouldBeFalse();
+        otherBlend.ShouldBe(normal, 1e-6f);
+        settings.IsAutoExposureResetPending.ShouldBeTrue();
+        settings.ComputeGpuAutoExposureBlend(0.01f).ShouldBe(1.0f);
+        settings.EndGpuAutoExposureDispatch(success: true, requests);
+        settings.IsAutoExposureResetPending.ShouldBeFalse();
+    }
+
+    [Test]
+    public void AutoExposureReset_ALostCpuLuminanceResultTimesOut()
+    {
+        ColorGradingSettings settings = new();
+        settings.ResetAutoExposureHistory(1UL);
+        long start = 1_000_000L;
+        long frequency = System.Diagnostics.Stopwatch.Frequency;
+
+        settings.BeginCpuAutoExposureSnap(1UL, start, out long requests).ShouldBeTrue();
+
+        // While the result is in flight, later frames do not start another snap request.
+        settings.BeginCpuAutoExposureSnap(1UL, start + frequency / 2, out _).ShouldBeFalse();
+
+        // The result never comes. After the timeout, a new request starts, and its result applies the reset.
+        long late = start + (long)(frequency * (ColorGradingSettings.CpuAutoExposureSnapTimeoutSeconds + 0.1));
+        settings.BeginCpuAutoExposureSnap(1UL, late, out long retry).ShouldBeTrue();
+        retry.ShouldBe(requests);
+        settings.EndCpuAutoExposureSnap(applied: true, retry);
+        settings.IsAutoExposureResetPending.ShouldBeFalse();
+        settings.BeginCpuAutoExposureSnap(1UL, late + frequency * 5, out _).ShouldBeFalse();
+    }
+
+    [Test]
     public void AutoExposureReset_ARequestDuringADispatchStaysPending()
     {
         ColorGradingSettings settings = new();

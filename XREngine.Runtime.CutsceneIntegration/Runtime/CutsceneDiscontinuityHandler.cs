@@ -26,7 +26,10 @@ namespace XREngine.Cutscenes;
 /// three pipelines. The reset makes the next GPU update use a blend of one (OpenGL, Vulkan, and WebGPU) and makes the CPU
 /// path set the metered value at once. The reset records the new camera epoch, and <c>VPRC_ExposureUpdate</c> passes the
 /// epoch that the view history ledger recorded at the capture of the rendered frame. So a frame from before the reset
-/// that still renders does not use it, and the first new frame uses it once.</description></item>
+/// that still renders does not use it, and the first new frame uses it once. This guard applies only where the desktop
+/// view history ledger authors history for the frame. A frame with no ledger epoch (output sequence 0, view history
+/// authoring off, a stereo pass, or the front-buffer CPU path) counts as a new frame, so on those paths a frame from before
+/// the reset can still use it. The reset never stays blocked.</description></item>
 /// </list>
 /// <para>State with no reset hook, which the handler does not reset:</para>
 /// <list type="bullet">
