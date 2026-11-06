@@ -2043,7 +2043,13 @@ void main() {
 #endif
     mesh.vertexNormal = normalize(FragNorm);
     mesh.vertexColor = FragColor0;
+#if !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+    // Single-pass stereo binds both eyes to one program; CameraPosition then holds only
+    // the last eye. The resolved forward camera follows this fragment's view index.
+    mesh.viewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - FragPos);
+#else
     mesh.viewDir = normalize(u_CameraPosition - FragPos);
+#endif
     mesh.isFrontFace = gl_FrontFacing ? 1.0 : -1.0;
 
     float normalFacing = _SourceBackfaceNormals == 0 || _FlipBackfaceNormals != 0

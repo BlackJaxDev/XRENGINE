@@ -1868,6 +1868,14 @@ namespace XREngine.Rendering
                 program.Uniform(EEngineUniform.InverseProjMatrix.ToStringFast(), inverseProjMtx);
                 program.Uniform(EEngineUniform.ProjMatrix.ToStringFast(), projMtx);
                 program.Uniform(EEngineUniform.ViewProjectionMatrix.ToStringFast(), viewProjMtx);
+
+                // Mono passes also publish the per-eye camera names, as the Vulkan backend does.
+                // Shaders that select a camera by view index (index 0 in mono) then never read
+                // stale stereo values.
+                program.Uniform(EEngineUniform.LeftEyeInverseViewMatrix.ToStringFast(), renderMtx);
+                program.Uniform(EEngineUniform.LeftEyeViewProjectionMatrix.ToStringFast(), viewProjMtx);
+                program.Uniform(EEngineUniform.RightEyeInverseViewMatrix.ToStringFast(), renderMtx);
+                program.Uniform(EEngineUniform.RightEyeViewProjectionMatrix.ToStringFast(), viewProjMtx);
             }
 
             program.Uniform(EEngineUniform.CameraPosition.ToStringFast(), tfm.RenderTranslation);

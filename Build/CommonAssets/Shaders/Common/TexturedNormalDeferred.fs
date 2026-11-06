@@ -29,18 +29,20 @@ uniform float AlphaCutoff = -1.0f;
 // Snippets after uniforms so SurfaceDetailNormalMapping can reference Texture1.
 #pragma snippet "NormalEncoding"
 #pragma snippet "SurfaceDetailNormalMapping"
+#pragma snippet "SurfaceDetailParallax"
 #pragma snippet "DitheredTransparency"
 #pragma snippet "SurfaceEmission"
 
-vec3 getNormalFromMap()
+vec3 getNormalFromMap(vec2 uv)
 {
-    return XRENGINE_GetSurfaceDetailNormal(FragUV0, FragPos, FragTan, FragBinorm, FragNorm);
+    return XRENGINE_GetSurfaceDetailNormal(uv, FragPos, FragTan, FragBinorm, FragNorm);
 }
 
 void main()
 {
-    vec3 normal = getNormalFromMap();
-    vec4 texColor = texture(Texture0, FragUV0);
+    vec2 uv = XRENGINE_BeginSurfaceParallax(FragUV0, FragPos, FragNorm);
+    vec3 normal = getNormalFromMap(uv);
+    vec4 texColor = XRENGINE_SampleSurface(Texture0, uv);
 
     // Alpha cutoff (masked mode) and dithered transparency.
     XRENGINE_AlphaCutoffAndDither(AlphaCutoff, texColor.a, Opacity, gl_FragCoord.xy);
@@ -49,5 +51,6 @@ void main()
     Normal = XRENGINE_EncodeNormal(normal);
     AlbedoOpacity = vec4(texColor.rgb * BaseColor, Opacity);
     RMSI = vec4(Roughness, Metallic, Specular, Emission);
-    EmissionColor = XRENGINE_ResolveSurfaceEmission(FragUV0, FragUV1, BaseColor, Emission);
+    EmissionColor = XRENGINE_ResolveSurfaceEmission(uv, FragUV1, BaseColor, Emission);
+    XRENGINE_EndSurfaceParallax();
 }
