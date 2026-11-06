@@ -296,6 +296,42 @@ public sealed class TextureResidencyBackendTests
     }
 
     [Test]
+    public void Request_FindsANewDuplicate_WhenOneOfTwoKeptTexturesIsMadeAgain()
+    {
+        _host.Settings.TextureStreamingBudgetProfileFadeFrames = 0;
+        AssetManager assets = new() { MonitorGameAssetsForChanges = false };
+        string source = Path.Combine(Path.GetTempPath(), "cutscene-residency-partly-dead", "trim.png");
+        (XRTexture2D survivor, _) = _host.AddTexture("partly-dead-survivor", 1024u);
+        (XRTexture2D replaced, _) = _host.AddTexture("partly-dead-replaced", 1024u);
+        foreach (XRTexture2D texture in new[] { survivor, replaced })
+        {
+            texture.OriginalPath = source;
+            texture.SamplerName = "_MainTex";
+        }
+        Guid key = CutsceneResidencyAssetKeys.ForTexture(survivor);
+        try
+        {
+            using TextureResidencyBackend backend = new(_host.Manager, assets, new TextureResidencyKeyIndex(), useCutsceneBudgetProfile: true);
+            backend.BeginSelection();
+            backend.CanResolve(key).ShouldBeTrue();
+
+            // A reimport makes one of the two textures again. The other one stays alive.
+            replaced.Destroy(now: true);
+            (XRTexture2D replacement, _) = _host.AddTexture("partly-dead-replacement", 1024u);
+            replacement.OriginalPath = source;
+            replacement.SamplerName = "_MainTex";
+
+            backend.Request(new ResidencyRequest(key, (int)EResidencyLevel.Target, CutsceneTime.Zero, 0.5f, 0)).IsValid.ShouldBeTrue();
+            _host.Manager.Evaluate(102);
+            _host.Backend.Loads.Select(load => load.Target).ShouldBe([survivor, replacement], ignoreOrder: true);
+        }
+        finally
+        {
+            assets.Dispose();
+        }
+    }
+
+    [Test]
     public void KeyIndex_AddsANewDuplicateOfAKeyThatHits_AtTheNextSelection()
     {
         TextureResidencyKeyIndex keys = new();

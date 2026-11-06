@@ -42,6 +42,19 @@ internal sealed class TextureResidencyKeyIndex
             _rebuildAllowed = true;
     }
 
+    /// <summary>
+    /// Makes the next <see cref="Find"/> build the index again, also on a hit with no change of the object count. A caller
+    /// that found a dead texture uses it, because a destroy and a new texture leave the count the same.
+    /// </summary>
+    public void RequireRebuild()
+    {
+        lock (_sync)
+        {
+            _rebuildAllowed = true;
+            _builtObjectCount = -1;
+        }
+    }
+
     /// <summary>Adds the live textures of a key to a list, in the order of their runtime IDs.</summary>
     /// <param name="key">The stable key.</param>
     /// <param name="destination">The list that receives the textures. The method does not clear it.</param>

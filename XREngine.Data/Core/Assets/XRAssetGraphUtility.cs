@@ -86,20 +86,20 @@ public static class XRAssetGraphUtility
     /// <param name="root">The root asset.</param>
     /// <param name="isForeignAsset">Returns true for an asset that does not belong to the graph of the root.</param>
     public static void RefreshAssetGraph(XRAsset? root, Predicate<XRAsset>? isForeignAsset)
-    {
-        Predicate<XRAsset>? previous = _isForeignAsset;
-        _isForeignAsset = isForeignAsset;
-        try
-        {
-            RefreshAssetGraph(root);
-        }
-        finally
-        {
-            _isForeignAsset = previous;
-        }
-    }
+        => RefreshAssetGraphCore(root, isForeignAsset);
 
+    /// <summary>
+    /// Refreshes <see cref="XRAsset.SourceAsset"/> and <see cref="XRAsset.EmbeddedAssets"/> of the graph of a root.
+    /// </summary>
+    /// <param name="root">The root asset.</param>
     public static void RefreshAssetGraph(XRAsset? root)
+        => RefreshAssetGraphCore(root, isForeignAsset: null);
+
+    /// <summary>
+    /// Refreshes the asset graph of a root. The foreign-asset filter is a parameter of this call only, so a nested refresh
+    /// of another root on the same thread does not use it.
+    /// </summary>
+    private static void RefreshAssetGraphCore(XRAsset? root, Predicate<XRAsset>? isForeignAsset)
     {
         if (root is null)
             return;
@@ -119,6 +119,7 @@ public static class XRAssetGraphUtility
             root,
             visitedObjects,
             discoveredAssets,
+            isForeignAsset,
             0,
             root.GetType().Name);
 
@@ -140,14 +141,12 @@ public static class XRAssetGraphUtility
     [ThreadStatic]
     private static int _traversalCount;
 
-    [ThreadStatic]
-    private static Predicate<XRAsset>? _isForeignAsset;
-
     private static void TraverseObject(
         object? candidate,
         XRAsset root,
         HashSet<object> visited,
         HashSet<XRAsset> embedded,
+        Predicate<XRAsset>? isForeignAsset,
         int depth,
         string path)
     {
@@ -187,7 +186,7 @@ public static class XRAssetGraphUtility
             {
                 // If this XRAsset is a reference to an external asset file, it should NOT become embedded
                 // in the current root's asset graph.
-                if (IsExternalAssetReference(asset) || (_isForeignAsset?.Invoke(asset) ?? false))
+                if (IsExternalAssetReference(asset) || (isForeignAsset?.Invoke(asset) ?? false))
                     return;
 
                 //Trace.WriteLine($"[XRAssetGraphUtility] Found embedded asset: {asset.GetType().Name}, root='{root.FilePath ?? root.GetType().Name}', asset FilePath='{asset.FilePath}'");
@@ -209,6 +208,7 @@ public static class XRAssetGraphUtility
                     root,
                     visited,
                     embedded,
+                    isForeignAsset,
                     depth,
                     $"{path}[key:{dictCount}]");
                 TraverseObject(
@@ -216,6 +216,7 @@ public static class XRAssetGraphUtility
                     root,
                     visited,
                     embedded,
+                    isForeignAsset,
                     depth,
                     $"{path}[value:{dictCount}]");
                 if (++dictCount > 1000)
@@ -261,6 +262,7 @@ public static class XRAssetGraphUtility
                     root,
                     visited,
                     embedded,
+                    isForeignAsset,
                     depth,
                     $"{path}[{count}]");
                 
@@ -293,6 +295,7 @@ public static class XRAssetGraphUtility
                 root,
                 visited,
                 embedded,
+                isForeignAsset,
                 depth + 1,
                 $"{path}.{accessor.Name}");
         }
