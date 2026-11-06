@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 using XREngine.Rendering;
 
 namespace XREngine.Cutscenes;
@@ -376,7 +377,24 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     private static Func<Guid, XRTexture2D?> CreateAssetResolver(AssetManager assets)
     {
         ArgumentNullException.ThrowIfNull(assets);
-        return assetId => assets.TryGetAssetByID(assetId, out XRAsset? asset) ? asset as XRTexture2D : null;
+        return assetId => ResolveLoadedTexture(assets, assetId);
+    }
+
+    /// <summary>
+    /// Finds a loaded texture by its ID. First it looks in the loaded assets of the asset manager. Then it looks in the
+    /// object cache, because a texture that a model import creates is not an asset of the manager.
+    /// </summary>
+    /// <param name="assets">The asset manager that holds the loaded texture assets.</param>
+    /// <param name="assetId">The ID that the manifest records for the texture.</param>
+    /// <returns>The texture, or null if the ID is not a live texture.</returns>
+    internal static XRTexture2D? ResolveLoadedTexture(AssetManager assets, Guid assetId)
+    {
+        if (assets.TryGetAssetByID(assetId, out XRAsset? asset))
+            return asset as XRTexture2D;
+
+        return XRObjectBase.ObjectsCache.TryGetValue(assetId, out XRObjectBase? cached) && cached is XRTexture2D { IsDestroyed: false } texture
+            ? texture
+            : null;
     }
 
     private readonly record struct TicketLevel(long TicketId, int Level);

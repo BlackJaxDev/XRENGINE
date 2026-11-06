@@ -10,7 +10,7 @@ namespace XREngine.Cutscenes;
 
 /// <summary>
 /// Finds the textures and sub-meshes that the <see cref="ModelComponent"/> instances of a node draw.
-/// Each sub-mesh gives one mesh asset and one texture asset for each 2D texture of its LOD materials.
+/// Each sub-mesh gives one mesh asset and one texture asset for each 2D texture of its LOD materials that comes from a file.
 /// All of them use the world bounding sphere of the sub-mesh.
 /// </summary>
 /// <remarks>
@@ -67,7 +67,7 @@ public sealed class CutsceneRenderableAssetCollector : ICutsceneResidencyAssetCo
 
             var textures = material.Textures;
             for (int t = 0; t < textures.Count; t++)
-                if (textures[t] is XRTexture2D texture)
+                if (textures[t] is XRTexture2D texture && HasFileSource(texture))
                     destination.Add(new CutsceneResidencyAsset(texture.ID, EResidencyAssetKind.Texture, center, radius, TextureProxyBytes));
         }
 
@@ -75,4 +75,12 @@ public sealed class CutsceneRenderableAssetCollector : ICutsceneResidencyAssetCo
         long vertices = lowest?.Mesh?.VertexCount ?? 0;
         destination.Add(new CutsceneResidencyAsset(subMesh.ID, EResidencyAssetKind.Mesh, center, radius, vertices * MeshProxyBytesPerVertex));
     }
+
+    /// <summary>
+    /// True if the texture comes from a file, so that streaming can load its mips. A texture with no file, for example
+    /// a generated default texture of a material, has all of its data in memory. Streaming cannot track it, so a
+    /// residency request for it is always rejected.
+    /// </summary>
+    private static bool HasFileSource(XRTexture2D texture)
+        => !string.IsNullOrWhiteSpace(texture.FilePath) || !string.IsNullOrWhiteSpace(texture.OriginalPath);
 }

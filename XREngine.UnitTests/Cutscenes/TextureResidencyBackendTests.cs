@@ -78,6 +78,24 @@ public sealed class TextureResidencyBackendTests
     }
 
     [Test]
+    public void AssetResolver_FindsModelTexturesThatAreNotAssetsOfTheManager()
+    {
+        // A model import creates its textures at runtime. They are live objects, but not assets of the manager.
+        AssetManager assets = new() { MonitorGameAssetsForChanges = false };
+        XRTexture2D modelTexture = new() { Name = "model texture" };
+        try
+        {
+            TextureResidencyBackend.ResolveLoadedTexture(assets, modelTexture.ID).ShouldBeSameAs(modelTexture);
+            TextureResidencyBackend.ResolveLoadedTexture(assets, Guid.NewGuid()).ShouldBeNull();
+        }
+        finally
+        {
+            modelTexture.Destroy();
+            assets.Dispose();
+        }
+    }
+
+    [Test]
     public void Planner_ReceivesCompletionsAfterLevelIsSet()
     {
         using TextureResidencyBackend backend = CreateBackend();
