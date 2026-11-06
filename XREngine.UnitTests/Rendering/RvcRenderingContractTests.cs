@@ -30,8 +30,7 @@ public sealed class RvcRenderingContractTests
 
     [TestCase(1u, false)]
     [TestCase(2u, true)]
-    [TestCase(4u, true)]
-    public void ResourceLayout_PerViewTextureShapeMatchesProfile(
+    public void ResourceLayout_UsesTheComposedAdvancedFamilyWithoutRvcStageResources(
         uint viewCount,
         bool stereo)
     {
@@ -45,28 +44,17 @@ public sealed class RvcRenderingContractTests
             AntiAliasingMode: EAntiAliasingMode.None,
             MsaaSampleCount: 1u,
             Stereo: stereo,
-            FeatureMask: (ulong)DefaultRenderPipeline.DefaultPipelineResourceFeature.RvcResourcesEnabled,
+            FeatureMask: 0UL,
             ViewCount: viewCount);
 
         RenderPipelineResourceLayout layout =
             pipeline.BuildResourceLayout(profile);
-        TextureSpec depth = layout.ResourcesByName[
-                RvcFrameGraphContract.PerViewDepthArray]
-            .ShouldBeOfType<TextureSpec>();
 
-        depth.Layers.ShouldBe(viewCount);
-        depth.StereoCompatible.ShouldBe(stereo);
-        XRTexture2DArray actual =
-            depth.Factory!().ShouldBeOfType<XRTexture2DArray>();
-        actual.Depth.ShouldBe(viewCount);
-
-        TextureSpec hzb = layout.ResourcesByName[
-                RvcFrameGraphContract.PerViewHzbDepthArray]
-            .ShouldBeOfType<TextureSpec>();
-        XRTexture2DArray actualHzb =
-            hzb.Factory!().ShouldBeOfType<XRTexture2DArray>();
-        actualHzb.Depth.ShouldBe(viewCount);
-        actualHzb.Mipmaps!.Length.ShouldBe(8);
+        pipeline.AdvancedStageFamily.Stereo.ShouldBe(stereo);
+        layout.ResourcesByName.ContainsKey(AdvancedRenderPipeline.HDRSceneTextureName).ShouldBeTrue();
+        // RVC stage resources exist only together with their GPU kernels.
+        layout.ResourcesByName.ContainsKey(RvcFrameGraphContract.PerViewDepthArray).ShouldBeFalse();
+        layout.ResourcesByName.ContainsKey(RvcFrameGraphContract.PerViewHzbDepthArray).ShouldBeFalse();
     }
 
     [Test]
@@ -495,7 +483,8 @@ public sealed class RvcRenderingContractTests
         runtimeContracts.ShouldContain("RvcWideInsetCompositionPolicy.Default");
         runtimeContracts.ShouldContain("RvcMaterialBindingContract.FromResolution");
         runtimeContracts.ShouldContain("RvcSharedLightingPlan.CreateDefault");
-        pipeline.ShouldContain("public sealed class RvcRenderPipeline : DefaultRenderPipeline");
+        pipeline.ShouldContain("public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider, IAdvancedRenderStageFamilyHost");
+        pipeline.ShouldContain("AdvancedStageFamily.CreateHostedCommandChain(this)");
         pipeline.ShouldContain("DeclareRvcResources");
         pipeline.ShouldContain("AppendRvcPassCommands");
         pipeline.ShouldContain("renderer?.SupportsRvcVisibilityTargets");
