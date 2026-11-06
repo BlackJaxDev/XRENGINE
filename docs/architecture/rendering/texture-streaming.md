@@ -57,6 +57,7 @@ The `XRTS` payload stores a preview mip and per-mip offsets. Streamability check
 - Cooldowns prevent churn: a short cooldown after promotion, a longer cooldown before demotion, a pin window that keeps newly promoted visible textures resident, and an increasing cooldown after a failed promotion.
 - Textures bound to visible materials keep a minimum resident size even when projected coverage is small.
 - Budget pressure fits the resident set to the texture budget. Pressure demotions log bytes reclaimed and the reason.
+- `IsUnderBudgetPressure` reports the pressure of the last evaluation: the budget fit gave at least one texture less than its desired size, the streamed textures used more than the available budget so promotions stopped, or the Vulkan allocator budget stopped promotions. The per-frame transition limits do not count. Any thread can read it, and it allocates nothing. The cutscene residency session reads it through `TextureResidencyBackend.IsUnderMemoryPressure` and then releases the request holds outside its window.
 - A dense upload after sparse residency clears the sparse state first (`XRTexture2D.ApplyResidentData`), and OpenGL recreates storage when it leaves sparse storage. `Texture.SparseStateClearedForDenseUpload` marks this boundary in logs.
 - OpenGL sparse residency applies only to eligible textures (page-aligned `Rgba8`). Promotions use a shared context with fence-gated exposure and storage-generation checks. Committed-byte telemetry is an estimate.
 

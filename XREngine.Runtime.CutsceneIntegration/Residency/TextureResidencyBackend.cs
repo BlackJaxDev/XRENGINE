@@ -196,6 +196,15 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
         => !_disposed && _resolveTexture(assetId) is not null;
 
     /// <inheritdoc />
+    /// <remarks>
+    /// True while the last evaluation of the streaming manager fit at least one texture below its target to the VRAM
+    /// budget, held promotions because the streamed textures use more than the budget, or held promotions for Vulkan
+    /// allocator pressure. The per-frame transition limits of a budget profile are not memory pressure.
+    /// </remarks>
+    public bool IsUnderMemoryPressure
+        => !_disposed && _manager.IsUnderBudgetPressure;
+
+    /// <inheritdoc />
     /// <remarks>The level is the highest level of a ticket of this backend whose mip is resident now.</remarks>
     public EResidencyLevel GetLevel(Guid assetId)
     {

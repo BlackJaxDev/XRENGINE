@@ -71,6 +71,7 @@ internal sealed partial class ImportedTextureStreamingManager
     private long _lastCurrentManagedBytes;
     private long _lastAvailableManagedBytes;
     private long _lastAssignedManagedBytes;
+    private int _budgetPressure;
     private long _lastCompactionFrameId = long.MinValue;
 
     /// <summary>
@@ -81,6 +82,15 @@ internal sealed partial class ImportedTextureStreamingManager
     internal ImportedTextureStreamingManager()
     {
     }
+
+    /// <summary>
+    /// True if the last evaluation found VRAM budget pressure: the budget fit gave at least one texture less than its
+    /// desired size, the streamed textures used more than the available budget so promotions stopped, or the Vulkan
+    /// allocator budget stopped promotions. The per-frame transition limits of a budget profile do not count, because
+    /// they limit the work of a frame and not the memory. Any thread can read it. It allocates nothing.
+    /// </summary>
+    internal bool IsUnderBudgetPressure
+        => Volatile.Read(ref _budgetPressure) != 0;
 
     private readonly record struct DeferredPromotionCandidate(
         ImportedTextureStreamingSnapshot Snapshot,
@@ -1167,6 +1177,8 @@ internal sealed partial class ImportedTextureStreamingManager
         CollectSnapshots(snapshots);
         if (snapshots.Count == 0)
         {
+            Volatile.Write(ref _budgetPressure, 0);
+
             // Log once when first called with no snapshots, to confirm Evaluate is running
             if (frameId <= 10 && frameId % 5 == 0)
                 Debug.Textures(
@@ -1249,6 +1261,7 @@ internal sealed partial class ImportedTextureStreamingManager
         }
 
         long assignedManagedBytes = 0L;
+        int budgetFitLimitedCount = 0;
         int queuedTransitions = 0;
         int queuedPromotions = 0;
         int queuedDemotions = 0;
@@ -1509,9 +1522,10 @@ internal sealed partial class ImportedTextureStreamingManager
                 snapshot.Format,
                 snapshot.SparseNumLevels,
                 desiredPageSelection);
-            bool pressureDemotion = assignedResidentSize < desiredResidentSize
-                && targetCommittedBytes < snapshot.CurrentCommittedBytes
+            bool budgetFitLimited = assignedResidentSize < desiredResidentSize
                 && availableManagedBytes != long.MaxValue;
+            bool pressureDemotion = budgetFitLimited
+                && targetCommittedBytes < snapshot.CurrentCommittedBytes;
             if (ShouldPreserveVulkanDenseResidentSizeWithoutPressure(
                     snapshot,
                     assignedResidentSize,
@@ -1523,7 +1537,11 @@ internal sealed partial class ImportedTextureStreamingManager
                 desiredPageSelection = snapshot.CurrentPageSelection.Normalize(PageSelectionFullCoverageThreshold);
                 targetCommittedBytes = snapshot.CurrentCommittedBytes;
                 pressureDemotion = false;
+                budgetFitLimited = false;
             }
+
+            if (budgetFitLimited)
+                budgetFitLimitedCount++;
 
             // Only a promotion that no visibility or binding signal shares is request-driven. A visible
             // texture that a request raises keeps its visible pin, and a cancel of the request does not
@@ -1592,6 +1610,8 @@ internal sealed partial class ImportedTextureStreamingManager
         Volatile.Write(ref _lastCurrentManagedBytes, currentManagedBytes);
         Volatile.Write(ref _lastAvailableManagedBytes, availableManagedBytes);
         Volatile.Write(ref _lastAssignedManagedBytes, assignedManagedBytes);
+        bool budgetPressure = budgetFitLimitedCount > 0 || !allowPromotions || suppressPromotionsForVulkanPressure;
+        Volatile.Write(ref _budgetPressure, budgetPressure ? 1 : 0);
 
         int pendingTextureQueueDepth = XRTexture2D.QueuedProgressiveUploadCount;
         int urgentTextureRepairDepth = 0;

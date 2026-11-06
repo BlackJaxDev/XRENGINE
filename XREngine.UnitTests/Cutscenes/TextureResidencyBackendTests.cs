@@ -141,6 +141,29 @@ public sealed class TextureResidencyBackendTests
     }
 
     [Test]
+    public void MemoryPressure_FollowsTheVramBudgetFitOfTheManager()
+    {
+        _host.Settings.TextureStreamingBudgetProfileFadeFrames = 0;
+        using TextureResidencyBackend backend = CreateBackend();
+        Guid asset = AddTexture("pressure", 1024u);
+        backend.Request(new ResidencyRequest(asset, (int)EResidencyLevel.Target, CutsceneTime.Zero, 0.5f, 0)).IsValid.ShouldBeTrue();
+
+        _host.Manager.Evaluate(102);
+        backend.IsUnderMemoryPressure.ShouldBeFalse();
+
+        // The budget holds a 256 texture, so the fit gives the requested texture less than its target.
+        _host.Host.TrackedVramBytes = FakeTextureStreamingResidencyBackend.BytesFor(64u);
+        _host.Host.TrackedVramBudgetBytes = FakeTextureStreamingResidencyBackend.BytesFor(256u) + 1024L;
+        _host.Manager.Evaluate(103);
+        _host.Manager.IsUnderBudgetPressure.ShouldBeTrue();
+        backend.IsUnderMemoryPressure.ShouldBeTrue();
+
+        _host.Host.TrackedVramBudgetBytes = long.MaxValue;
+        _host.Manager.Evaluate(104);
+        backend.IsUnderMemoryPressure.ShouldBeFalse();
+    }
+
+    [Test]
     public void Planner_ReceivesCompletionsAfterLevelIsSet()
     {
         using TextureResidencyBackend backend = CreateBackend();

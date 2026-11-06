@@ -50,6 +50,14 @@ public interface IResidencyBackend
         => true;
 
     /// <summary>
+    /// True while the memory budget of the backend is under pressure. <see cref="CutsceneResidencySession"/> reads it after
+    /// each planner update and then asks the planner to release the T1 and T2 data outside the request window.
+    /// Read it on the update thread. It must not allocate. The default is false.
+    /// </summary>
+    bool IsUnderMemoryPressure
+        => false;
+
+    /// <summary>
     /// Sets the planner that receives complete work. <see cref="CutsceneResidencySession"/> calls it one time,
     /// before <see cref="CutsceneResidencyPlanner.Open"/>. The default does nothing.
     /// </summary>

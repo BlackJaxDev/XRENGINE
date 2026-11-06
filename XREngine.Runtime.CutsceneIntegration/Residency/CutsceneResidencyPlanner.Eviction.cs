@@ -11,14 +11,29 @@ public sealed partial class CutsceneResidencyPlanner
     /// <param name="maxCount">The maximum number of assets to release.</param>
     /// <returns>The number of assets that released a level.</returns>
     public int Evict(int maxCount)
+        => Evict(maxCount, outsideWindowOnly: false);
+
+    /// <summary>
+    /// Releases T1 and T2 data under memory pressure, in the order of <see cref="Evict(int)"/>. With
+    /// <paramref name="outsideWindowOnly"/>, only assets that the request window of the last plan does not need release
+    /// their data. <see cref="CutsceneResidencySession"/> uses this form when the backend reports memory pressure: the
+    /// assets in the window are the ones that the next shots need, and the next plan would request them again.
+    /// The call allocates nothing.
+    /// </summary>
+    /// <param name="maxCount">The maximum number of assets to release.</param>
+    /// <param name="outsideWindowOnly">True to release only the data of assets outside the request window.</param>
+    /// <returns>The number of assets that released a level.</returns>
+    public int Evict(int maxCount, bool outsideWindowOnly)
     {
         if (!IsOpen || maxCount <= 0)
             return 0;
 
         int count = 0;
         for (int i = 0; i < _assets.Length; i++)
-            if (_heldTickets[i].IsValid)
+            if (_heldTickets[i].IsValid && (!outsideWindowOnly || _desiredLevels[i] <= 0))
                 _order[count++] = i;
+        if (count == 0)
+            return 0;
 
         _order.AsSpan(0, count).Sort(_compareEviction);
 

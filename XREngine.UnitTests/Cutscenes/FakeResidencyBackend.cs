@@ -24,6 +24,9 @@ internal sealed class FakeResidencyBackend : IResidencyBackend
     /// <summary>The assets that <see cref="CanResolve"/> finds, or null to find each asset.</summary>
     public HashSet<Guid>? Resolvable { get; set; }
 
+    /// <summary>The memory pressure that the session reads after each planner update.</summary>
+    public bool IsUnderMemoryPressure { get; set; }
+
     public bool CanResolve(Guid assetId)
         => Resolvable is null || Resolvable.Contains(assetId);
 

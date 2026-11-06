@@ -29,6 +29,12 @@ namespace XREngine.Cutscenes;
 /// of a current baked manifest are not found, the manifest does not match the scene, and the session uses the approximate
 /// manifest as for a stale manifest. Textures that are not found are not sent to the backend, and one diagnostic gives their count.
 /// </para>
+/// <para>
+/// After each planner update, the session reads <see cref="IResidencyBackend.IsUnderMemoryPressure"/>. Under pressure, it
+/// asks the planner to release the T1 and T2 data of at most <see cref="PressureEvictionsPerUpdate"/> assets outside the
+/// request window, farthest from the playhead first. T0 data and the data in the window stay. With no pressure, the check
+/// allocates nothing.
+/// </para>
 /// </remarks>
 public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposable
 {
@@ -37,6 +43,9 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     /// manifest does not match the scene, and the session uses the approximate manifest.
     /// </summary>
     public const double MaxUnresolvedTextureFraction = 0.1;
+
+    /// <summary>The maximum number of assets that release T1 and T2 data in one update under memory pressure.</summary>
+    public const int PressureEvictionsPerUpdate = 4;
 
     private readonly IResidencyBackend _backend;
     private readonly bool _ownsBackend;
@@ -87,6 +96,9 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
 
     /// <summary>The number of times that <see cref="Refresh"/> replaced the planner.</summary>
     public int RefreshCount { get; private set; }
+
+    /// <summary>The number of assets that released T1 or T2 data because the backend reported memory pressure.</summary>
+    public int PressureEvictionCount { get; private set; }
 
     /// <summary>The number of textures of the selected manifest that the backend did not find at the last selection.</summary>
     public int UnresolvedTextureCount { get; private set; }
@@ -370,6 +382,11 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
 
         _backend.SetPlayhead(position, rate);
         Planner.Update(position, rate, seek, deltaSeconds);
+
+        // Only the data outside the window leaves. The streaming budget fit already lowers the textures in the window,
+        // and the next plan would request their levels again.
+        if (_backend.IsUnderMemoryPressure)
+            PressureEvictionCount += Planner.Evict(PressureEvictionsPerUpdate, outsideWindowOnly: true);
     }
 
     private void Report(Selection selection, List<CutsceneCompileDiagnostic> diagnostics)

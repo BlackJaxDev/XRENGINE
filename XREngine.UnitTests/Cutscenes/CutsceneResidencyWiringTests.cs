@@ -231,6 +231,57 @@ public sealed class CutsceneResidencyWiringTests
     }
 
     [Test]
+    public void MemoryPressure_ReleasesHeldLevelsOutsideTheWindow_AndNoPressureAllocatesNothing()
+    {
+        const double frame = 1.0 / 60.0;
+        (SceneNode node, CutsceneAsset asset) = MakeAsset();
+        CompiledCutscene compiled = CutsceneCompiler.Compile(asset, []);
+        CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, new FakeResolver(node));
+        CutscenePlayer player = new(compiled, bindings, new CutsceneStateSnapshot(bindings));
+        FakeResidencyBackend backend = new();
+        List<CutsceneCompileDiagnostic> diagnostics = [];
+        using CutsceneResidencySession session = CutsceneResidencySession.Create(compiled, bindings, backend, new NoAssets(), diagnostics);
+        backend.Planner = session.Planner;
+        session.Open(player);
+
+        // Load both shots to T2. Each update applies the completions and requests the next level.
+        int completed = 0;
+        for (int pass = 0; pass < 4; pass++)
+        {
+            while (completed < backend.Requests.Count)
+                backend.Complete(backend.Requests[completed++].Ticket);
+            session.UpdateIdle(player, frame);
+        }
+        ResidencyTicket heldA = backend.Requests.Single(r => r.Request.AssetId == ShotA && r.Request.TargetLevel == (int)EResidencyLevel.Target).Ticket;
+        ResidencyTicket heldB = backend.Requests.Single(r => r.Request.AssetId == ShotB && r.Request.TargetLevel == (int)EResidencyLevel.Target).Ticket;
+
+        // At 3 s the window starts at 2.5 s, so shot A (0 to 2 s) is outside it. With no pressure, its hold stays.
+        player.Seek(T(3), ESeekIntent.Jump);
+        Step(player, session, 0.0);
+        session.UpdateIdle(player, frame);
+        int cancelled = backend.Cancelled.Count;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 10; i++)
+            session.UpdateIdle(player, frame);
+        long after = GC.GetAllocatedBytesForCurrentThread();
+
+        (after - before).ShouldBe(0);
+        backend.Cancelled.Count.ShouldBe(cancelled);
+        session.PressureEvictionCount.ShouldBe(0);
+
+        // Under pressure, the hold outside the window leaves. The hold in the window and the T0 data stay.
+        backend.IsUnderMemoryPressure = true;
+        session.UpdateIdle(player, frame);
+        session.UpdateIdle(player, frame);
+
+        session.PressureEvictionCount.ShouldBe(1);
+        backend.Cancelled.ShouldContain(heldA);
+        backend.Cancelled.ShouldNotContain(heldB);
+        backend.Cancelled.ShouldNotContain(t => backend.Requests.Any(r => r.Ticket == t && r.Request.TargetLevel == (int)EResidencyLevel.Proxy));
+        backend.GetLevel(ShotA).ShouldBe(EResidencyLevel.Proxy);
+    }
+
+    [Test]
     public void Seek_IsReportedToThePlannerWithItsIntent()
     {
         (CutscenePlayer player, CutsceneResidencySession session, _, _) = MakePlayback();
