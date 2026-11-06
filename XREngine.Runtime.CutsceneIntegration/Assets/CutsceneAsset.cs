@@ -1,4 +1,5 @@
 using XREngine.Core.Files;
+using XREngine.Data;
 
 namespace XREngine.Cutscenes;
 
@@ -9,6 +10,7 @@ public class CutsceneAsset : XRAsset
     private bool _forceRestoreAll;
     private CutsceneResidencyManifest? _manifest;
     private ulong _manifestContentHash;
+    private List<AudioProxyAsset> _audioProxies = [];
 
     /// <summary>The length of the cutscene.</summary>
     public CutsceneTime Duration
@@ -45,5 +47,16 @@ public class CutsceneAsset : XRAsset
     {
         get => _manifestContentHash;
         set => SetField(ref _manifestContentHash, value);
+    }
+    /// <summary>
+    /// The audio proxies that the bake made: one small mono IMA ADPCM copy of each audio clip source file. Each proxy
+    /// refers to its source with <see cref="AudioProxyAsset.SourceReference"/>. The manifest lists each proxy as an
+    /// <see cref="EResidencyAssetKind.Audio"/> asset with the key <see cref="CutsceneResidencyAssetKeys.ForAudioSource"/>.
+    /// The proxies are not part of <see cref="CutsceneManifestHash"/>.
+    /// </summary>
+    public List<AudioProxyAsset> AudioProxies
+    {
+        get => _audioProxies;
+        set => SetField(ref _audioProxies, value ?? []);
     }
 }

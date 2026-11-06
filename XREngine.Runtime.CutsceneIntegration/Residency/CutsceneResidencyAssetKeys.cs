@@ -47,6 +47,7 @@ public static class CutsceneResidencyAssetKeys
 {
     private const string TexturePathPrefix = "xrengine.cutscene.residency/texture-path:";
     private const string SubMeshPrefix = "xrengine.cutscene.residency/sub-mesh:";
+    private const string AudioSourcePrefix = "xrengine.cutscene.residency/audio-source:";
 
     /// <summary>Gets the stable key of a texture.</summary>
     /// <param name="texture">The texture.</param>
@@ -97,6 +98,17 @@ public static class CutsceneResidencyAssetKeys
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         string reference = ToPortableReference(path, out isMachineDependent);
         return Hash(string.Concat(TexturePathPrefix, reference, "|", samplerName ?? string.Empty));
+    }
+
+    /// <summary>
+    /// Gets the stable key of the audio proxy of a source file. The key uses the stable source reference of the proxy
+    /// (<see cref="XREngine.Data.AudioProxyAsset.SourceReference"/>), with <c>/</c> separators and upper case.
+    /// </summary>
+    /// <param name="sourceReference">The portable reference, or the path relative to the folder of the cutscene asset.</param>
+    public static Guid ForAudioSource(string sourceReference)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceReference);
+        return Hash(string.Concat(AudioSourcePrefix, sourceReference.Replace('\\', '/').ToUpperInvariant()));
     }
 
     /// <summary>Gets the stable key of a sub-mesh from its place in the scene.</summary>

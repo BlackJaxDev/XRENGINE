@@ -34,6 +34,7 @@ public static class DataAssetSerializationRegistration
                 new DataSourceYamlTypeConverter(),
                 new OverrideableSettingYamlTypeConverter(),
                 new TextFileYamlTypeConverter(),
+                new Base64ByteArrayYamlTypeConverter(),
             ];
     }
 #endif

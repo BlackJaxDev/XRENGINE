@@ -10,7 +10,7 @@ namespace XREngine.Cutscenes;
 /// <summary>
 /// Computes the content hash that tells if the residency manifest of a cutscene asset is current.
 /// The hash covers the duration, the restore setting, the bindings, and the tracks with their clips. It does not cover
-/// the manifest, the stored hash, the name, or the file path.
+/// the manifest, the stored hash, the audio proxies, the name, or the file path.
 /// </summary>
 /// <remarks>
 /// <para>

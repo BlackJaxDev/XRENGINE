@@ -1,6 +1,7 @@
 using System.Numerics;
 using ImGuiNET;
 using XREngine.Cutscenes;
+using XREngine.Data;
 using XREngine.Editor.Cutscenes;
 
 namespace XREngine.Editor;
@@ -281,8 +282,9 @@ public static partial class EditorImGuiUI
                     T0BudgetBytes = budget,
                     Diagnostics = diagnostics,
                 };
-                CutsceneResidencyManifest manifest = CutsceneBakeTool.Bake(asset, options, out CutsceneT0Report report);
+                CutsceneResidencyManifest manifest = CutsceneBakeTool.Bake(asset, options, out CutsceneT0Report report, out List<AudioProxyAsset> audioProxies);
                 asset.Manifest = manifest;
+                asset.AudioProxies = audioProxies;
                 asset.ManifestContentHash = CutsceneManifestHash.Compute(asset);
                 asset.MarkDirty();
                 _cutsceneEditVersion++;

@@ -5,7 +5,7 @@ namespace XREngine.Editor.Cutscenes;
 /// <summary>
 /// The T0 cost of a baked manifest: the estimated size of the proxy data that stays resident while the cutscene is open.
 /// A bake whose total is above the budget fails. The system does not remove assets from T0 to fit the budget.
-/// The report counts texture previews and mesh proxies. It does not count audio proxies, because no audio proxy exists yet.
+/// The report counts texture previews, mesh proxies, and audio proxies (the encoded IMA ADPCM bytes of each proxy).
 /// </summary>
 public sealed class CutsceneT0Report
 {
@@ -43,8 +43,8 @@ public sealed class CutsceneT0Report
     {
         StringBuilder builder = new();
         builder.Append("T0 total ").Append(FormatBytes(TotalBytes))
-            .Append(" for ").Append(AssetCount).Append(" texture and mesh assets, budget ").Append(FormatBytes(BudgetBytes))
-            .Append(". Audio proxies are not counted, because no audio proxy exists yet.");
+            .Append(" for ").Append(AssetCount).Append(" texture, mesh, and audio proxy assets, budget ").Append(FormatBytes(BudgetBytes))
+            .Append('.');
         if (LargestAssets.Count == 0)
             return builder.ToString();
 

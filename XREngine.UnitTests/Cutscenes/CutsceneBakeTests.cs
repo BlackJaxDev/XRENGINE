@@ -4,6 +4,7 @@ using Shouldly;
 using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Cutscenes;
+using XREngine.Data;
 using XREngine.Editor.Cutscenes;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -788,6 +789,88 @@ public sealed class CutsceneBakeTests
         // The test must see a change of one float bit.
         ((TransformTrackClip)fromYaml.Tracks[^3].Clips[0]).Position.Values[0].X = BitConverter.Int32BitsToSingle(BitConverter.SingleToInt32Bits(awkward[0]) + 1);
         CutsceneManifestHash.Compute(fromYaml).ShouldNotBe(hash);
+    }
+
+    [Test]
+    public void Bake_MakesOneAudioProxyForEachSource_CountsItInT0_AndReusesACurrentProxy()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "xre-audio-proxy-" + Guid.NewGuid().ToString("N"));
+        string outside = Path.Combine(Path.GetTempPath(), "xre-audio-outside-" + Guid.NewGuid().ToString("N"), "Far.wav");
+        Directory.CreateDirectory(Path.Combine(root, "Audio"));
+        try
+        {
+            using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(root));
+            string wavPath = Path.Combine(root, "Audio", "Line.wav");
+            File.WriteAllBytes(wavPath, BuildMonoWav(44100, 44100, 0.25));
+
+            Rig rig = MakeRig();
+            AudioTrack voice = new() { Name = "Voice", BindingSlot = rig.Bind(CreateNode("Speaker", new Vector3(0, 0, -5))) };
+            voice.Clips.Add(new AudioTrackClip { Start = T(0), Duration = T(1), SourcePath = wavPath });
+            voice.Clips.Add(new AudioTrackClip { Start = T(2), Duration = T(1), SourcePath = wavPath });
+            voice.Clips.Add(new AudioTrackClip { Start = T(3), Duration = T(1), SourcePath = outside });
+            rig.Asset.Tracks.Add(voice);
+
+            List<CutsceneCompileDiagnostic> diagnostics = [];
+            CutsceneBakeOptions options = new(rig.Resolver) { Collector = rig.Collector, SceneRoots = rig.Roots, Diagnostics = diagnostics };
+            CutsceneResidencyManifest manifest = CutsceneBakeTool.Bake(rig.Asset, options, out CutsceneT0Report report, out List<AudioProxyAsset> proxies);
+
+            // Two clips share one source, so they share one proxy. The source outside the asset folders gets none.
+            proxies.Count.ShouldBe(1);
+            AudioProxyAsset proxy = proxies[0];
+            proxy.SourceReference.ShouldBe("game://Audio/Line.wav");
+            proxy.SourceReference.ShouldNotContain(root);
+            proxy.SampleRate.ShouldBe(ImaAdpcmDecoder.ProxySampleRate);
+            proxy.FrameCount.ShouldBe(22050);
+            proxy.SourceContentHash.ShouldNotBe(0UL);
+            diagnostics.Count(d => d.Message.Contains("gets no audio proxy")).ShouldBe(1);
+
+            int index = Array.IndexOf(manifest.Assets, CutsceneResidencyAssetKeys.ForAudioSource(proxy.SourceReference));
+            index.ShouldBeGreaterThanOrEqualTo(0);
+            manifest.AssetKinds[index].ShouldBe(EResidencyAssetKind.Audio);
+            report.AssetCount.ShouldBe(1);
+            report.TotalBytes.ShouldBe(proxy.EncodedData.Length);
+            report.LargestAssets[0].Kind.ShouldBe(EResidencyAssetKind.Audio);
+            report.Describe().ShouldNotContain("not counted");
+
+            // A proxy of the same source and content is used again. A changed source gives a new proxy.
+            rig.Asset.AudioProxies = proxies;
+            CutsceneBakeTool.Bake(rig.Asset, options, out _, out List<AudioProxyAsset> again);
+            again.Count.ShouldBe(1);
+            again[0].ShouldBeSameAs(proxy);
+
+            File.WriteAllBytes(wavPath, BuildMonoWav(44100, 88200, 0.5));
+            CutsceneBakeTool.Bake(rig.Asset, options, out CutsceneT0Report changedReport, out List<AudioProxyAsset> changed);
+            changed[0].ShouldNotBeSameAs(proxy);
+            changed[0].FrameCount.ShouldBe(44100);
+            changedReport.TotalBytes.ShouldBe(changed[0].EncodedData.Length);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>A 16-bit mono WAV file of a 440 Hz sine.</summary>
+    private static byte[] BuildMonoWav(int sampleRate, int frames, double amplitude)
+    {
+        using MemoryStream stream = new();
+        using BinaryWriter writer = new(stream, System.Text.Encoding.ASCII, leaveOpen: true);
+        writer.Write("RIFF"u8);
+        writer.Write(36 + frames * 2);
+        writer.Write("WAVEfmt "u8);
+        writer.Write(16);
+        writer.Write((ushort)1);
+        writer.Write((ushort)1);
+        writer.Write(sampleRate);
+        writer.Write(sampleRate * 2);
+        writer.Write((ushort)2);
+        writer.Write((ushort)16);
+        writer.Write("data"u8);
+        writer.Write(frames * 2);
+        for (int f = 0; f < frames; f++)
+            writer.Write((short)Math.Round(amplitude * 32767.0 * Math.Sin(2.0 * Math.PI * 440.0 * f / sampleRate)));
+        writer.Flush();
+        return stream.ToArray();
     }
 
     private static CutsceneResidencySession CreateSession(Rig rig, out List<CutsceneCompileDiagnostic> diagnostics)
