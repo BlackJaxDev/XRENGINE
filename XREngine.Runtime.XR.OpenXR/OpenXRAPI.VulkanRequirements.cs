@@ -995,8 +995,10 @@ public unsafe partial class OpenXRAPI
 
         AddOptionalExtension(extensions, availableExtensions, KhrWin32ConvertPerformanceCounterTime.ExtensionName);
         AddOptionalExtension(extensions, availableExtensions, OxrExtDebugUtils.ExtensionName);
-        // Eye-tracked foveation reads the runtime gaze, so this instance must enable it too.
-        AddOptionalExtension(extensions, availableExtensions, ExtEyeGazeInteractionExtensionName);
+        // This instance becomes the session instance, so it needs the same optional extensions
+        // as the non-bootstrap path (visibility mask, hand tracking, eye gaze, foveation, quad views).
+        foreach (string extensionName in GetOptionalInstanceExtensions())
+            AddOptionalExtension(extensions, availableExtensions, extensionName);
 
         return [.. extensions];
     }

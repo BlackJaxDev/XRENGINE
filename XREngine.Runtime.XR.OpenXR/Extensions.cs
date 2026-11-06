@@ -7,7 +7,7 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
 {
-    private readonly string[] HTC_Extensions =
+    private static readonly string[] HTC_Extensions =
     [
         HtcxViveTrackerInteraction.ExtensionName,
         HtcFacialTracking.ExtensionName,
@@ -26,7 +26,7 @@ public unsafe partial class OpenXRAPI
     private const string ExtHandTrackingExtensionName = "XR_EXT_hand_tracking";
     private const string MsftControllerModelExtensionName = "XR_MSFT_controller_model";
 
-    private readonly string[] Foveation_Extensions =
+    private static readonly string[] Foveation_Extensions =
     [
         FbFoveationExtensionName,
         FbFoveationConfigurationExtensionName,
@@ -54,9 +54,16 @@ public unsafe partial class OpenXRAPI
 
         extensions = [.. extensions, KhrWin32ConvertPerformanceCounterTime.ExtensionName];
 
-        return
+        return [.. extensions, .. GetOptionalInstanceExtensions()];
+    }
+
+    /// <summary>
+    /// Extensions that the engine enables when the runtime offers them. Every instance creation
+    /// path, including the Vulkan enable2 bootstrap, must request this same list.
+    /// </summary>
+    private static string[] GetOptionalInstanceExtensions()
+        =>
         [
-            .. extensions,
             KhrVisibilityMaskExtensionName,
             ExtHandTrackingExtensionName,
             MsftControllerModelExtensionName,
@@ -64,7 +71,6 @@ public unsafe partial class OpenXRAPI
             .. HTC_Extensions,
             .. Foveation_Extensions
         ];
-    }
 
     private string[] GetRequiredRendererExtensionAlternatives(ERenderer renderer)
         => renderer switch
