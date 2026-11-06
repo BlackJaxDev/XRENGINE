@@ -48,6 +48,38 @@ The member must be a `float`, `Vector3`, or `Quaternion`. Each `PropertyTrackCli
 - **Shared member:** tracks with the same slot, `ComponentType`, and `MemberPath` blend by weight and share one original value. The member is restored if any of the tracks has `RestoreState`.
 - **No clip and stop:** a member with no clip with weight gets its original value back. A stop restores or keeps the value by the finish behavior, through `CutsceneStateSnapshot`.
 
+## Audio Tracks
+
+An `AudioTrack` plays `AudioTrackClip` entries through the `AudioSourceComponent` on its bound node. Set these values on a clip:
+
+- `SourcePath`: the Ogg Vorbis (`.ogg`) or WAV (`.wav`) file to stream. A relative path starts at the folder of the cutscene asset file.
+- `Volume`: multiplies the gain of the component and the blend weight of the clip.
+- `ClipOffset`: skips the start of the file. `Speed` must be 1, and `Extrapolation` must not be `Loop`. A clip with another value adds one diagnostic and plays nothing.
+
+The track streams the active clip with an `IStreamingAudioDecoder` (`VorbisStreamingDecoder` or `WavStreamingDecoder`), and it feeds the sources through `AudioSourceComponent.EnqueueStreamingBuffers`. Each buffer holds 2048 frames, and the track keeps 4 buffers in the queue. While a clip plays, the track sets `ExternalBufferManagement` on the component and turns off `AutoPlayOnQueue` on its sources. A stop or the end of the clip puts these values and the source gain back.
+
+| State | Result |
+|---|---|
+| Forward playback at rate 1 | The sources play the clip from the cutscene time. |
+| Jump seek or scrub step to a new time | Every active source stops, the decoder seeks, and the sources play again from the new time. |
+| Pause, scrub, stop, or any rate other than 1 | The sources stop and their gain is zero. Playback at rate 1 starts again from the current time. |
+| A listener comes into range | All sources of the track restart together, so they stay aligned. |
+| No clip, or a time after the clip duration | The sources stop. A `Hold` clip has no sound after its duration. |
+
+An audio track plays one clip at a time. An overlapping clip on the same track adds one diagnostic. A missing component and a file that does not open add one diagnostic each.
+
+### Audio Clock
+
+A cutscene with an audio track that has `DrivesClock` set (the default) starts its clock in `AudioDisciplined` mode. Each frame, the first such track with an active clip reads the playback clock of its first source through `IAudioTransport.TryGetPlaybackClock`. The heard position is the frame count before the queue, plus the source position, minus the output latency. The clock moves toward that position by at most 5 percent of the frame step, and it jumps when the difference is more than 100 ms.
+
+| Transport | Clock |
+|---|---|
+| OpenAL | `AL_SAMPLE_OFFSET_LATENCY_SOFT` from `AL_SOFT_source_latency`. Without the extension, there is no clock. |
+| NAudio | The mixer position. The latency is the `DesiredLatency` of the `WaveOutEvent` output, which is an estimate. |
+| WebAudio | No clock. |
+
+If the transport has no clock, the player changes the clock to `Wall` mode, sets `CutscenePlayer.IsAudioClockFallback`, and adds one diagnostic. The clock goes back to `AudioDisciplined` when the transport reports a clock again, and also at a stop.
+
 ## Event Tracks
 
 An `EventTrack` holds a list of `CutsceneEvent` entries. Each event has a `Time`, a `Key`, and a `Payload`. Events are the only side effect of a cutscene. They never change state that a seek or a scrub needs, so put that state on a sampled track.
@@ -159,7 +191,9 @@ cutscene_open { "close": true }
 ## Limits
 
 - The panel has no split, snap to other clips, or multi-select.
-- The panel has no buttons for event tracks or property tracks. Add them in the asset.
+- The panel has no buttons for event tracks, property tracks, or audio tracks. Add them in the asset.
 - A property track supports only `float`, `Vector3`, and `Quaternion` members.
+- An audio track decodes on the update thread, in the director tick. It has no proxy audio and no scrub sound, so a jump starts the sound after the decoder seek. A backward Ogg Vorbis seek decodes the file again from its start, because the NVorbis seek is not exact. Its cost grows with the target time: about 0.2 s for the end of a 60 s file.
+- `AudioData` imports WAV, Ogg Vorbis, and MP3. A FLAC import returns false, because no decoder supports FLAC.
 - Bindings created by the panel use the object ID and a node path. Root node names must stay the same for the path fallback.
 - The default resolver is registered by the editor only.

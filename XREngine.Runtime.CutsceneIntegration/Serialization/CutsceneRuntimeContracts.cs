@@ -12,3 +12,5 @@
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.EventTrack), "xre.cutscene.event-track", 1)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.PropertyTrack), "xre.cutscene.property-track", 1)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.PropertyTrackClip), "xre.cutscene.property-clip", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.AudioTrack), "xre.cutscene.audio-track", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.AudioTrackClip), "xre.cutscene.audio-clip", 1)]

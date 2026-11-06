@@ -99,6 +99,17 @@ namespace XREngine.Audio
         /// </summary>
         int GetSampleOffset(AudioSourceHandle source);
 
+        /// <summary>
+        /// Reads the playback clock of a source. The sample frame counts from the start of the first buffer
+        /// that is still in the source queue, so processed buffers that are not unqueued yet are included.
+        /// The latency is the time from the mix of that frame until the device plays it.
+        /// </summary>
+        /// <param name="source">The source to read.</param>
+        /// <param name="sampleFrame">The playback position in sample frames.</param>
+        /// <param name="latencyNanoseconds">The output latency in nanoseconds.</param>
+        /// <returns>False if the transport cannot report a clock for the source. The out values are then zero.</returns>
+        bool TryGetPlaybackClock(AudioSourceHandle source, out long sampleFrame, out long latencyNanoseconds);
+
         // --- Capture (optional) ---
 
         /// <summary>

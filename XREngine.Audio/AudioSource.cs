@@ -615,6 +615,15 @@ namespace XREngine.Audio
             get => GetSampleOffset();
             set => SetSampleOffset(value);
         }
+
+        /// <summary>
+        /// Reads the playback clock of this source from the transport. See <see cref="IAudioTransport.TryGetPlaybackClock"/>.
+        /// </summary>
+        /// <param name="sampleFrame">The position in sample frames from the start of the first queued buffer.</param>
+        /// <param name="latencyNanoseconds">The output latency in nanoseconds.</param>
+        /// <returns>False if the transport cannot report a clock.</returns>
+        public bool TryGetPlaybackClock(out long sampleFrame, out long latencyNanoseconds)
+            => ParentListener.ActiveTransport.TryGetPlaybackClock(_transportHandle, out sampleFrame, out latencyNanoseconds);
         #endregion
 
         public enum ESourceState

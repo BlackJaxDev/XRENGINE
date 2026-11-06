@@ -18,6 +18,7 @@ public sealed class CutscenePlayer
     private readonly ICutsceneTrackEvaluator[] _evaluators;
     private readonly CameraCutTrackEvaluator _cameraCut;
     private readonly AnimationClipTrackEvaluator _animation;
+    private readonly AudioTrackEvaluator _audio;
     private readonly CutsceneEventDispatcher _events;
     private readonly List<CutsceneCompileDiagnostic> _diagnostics = [];
 
@@ -47,6 +48,7 @@ public sealed class CutscenePlayer
         _buffer = new CutsceneActiveClip[Math.Max(1, compiled.MaxActiveClips)];
         _cameraCut = new CameraCutTrackEvaluator(_diagnostics);
         _animation = new AnimationClipTrackEvaluator(compiled, bindings, _diagnostics);
+        _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics);
         _evaluators =
         [
             new TransformTrackEvaluator(bindings.SlotCount, _diagnostics),
@@ -55,9 +57,24 @@ public sealed class CutscenePlayer
             _cameraCut,
             new CameraPropertyTrackEvaluator(bindings.SlotCount, _diagnostics),
             new PropertyTrackEvaluator(compiled, snapshot, _diagnostics),
+            _audio,
         ];
         _events = new CutsceneEventDispatcher(compiled.Asset, _diagnostics);
+
+        // Normal playback with audio follows the audio device, so the clock starts in audio mode.
+        if (_audio.HasClockTrack)
+            _clock.Mode = ECutsceneClockMode.AudioDisciplined;
     }
+
+    /// <summary>
+    /// True while the clock uses wall time because an audio track cannot read the playback clock of its transport.
+    /// The player changed the clock to <see cref="ECutsceneClockMode.Wall"/> and added a diagnostic. The clock goes back to
+    /// <see cref="ECutsceneClockMode.AudioDisciplined"/> when the playback clock is available again.
+    /// </summary>
+    public bool IsAudioClockFallback => _audio.IsClockFallbackActive;
+
+    /// <summary>True while the audio tracks are silent: in a pause, a scrub, a stop, and at any rate other than one.</summary>
+    public bool IsAudioMuted => _audio.IsMuted;
 
     /// <summary>
     /// Raised for each event that fires. Forward playback fires each event that it crosses, once. A seek fires
@@ -248,6 +265,9 @@ public sealed class CutscenePlayer
     {
         CutsceneTime duration = _compiled.Asset.Duration;
 
+        // Audio plays only in forward playback at rate one. Other states stop the sources before any evaluation.
+        _audio.SetTransport(State == ECutsceneTransportState.Playing, _clock.Rate);
+
         if (_hasPendingSeek)
         {
             _hasPendingSeek = false;
@@ -255,6 +275,8 @@ public sealed class CutscenePlayer
             CutsceneTime from = _clock.Position;
             CutsceneTime target = _pendingTarget.Clamp(CutsceneTime.Zero, duration);
             _clock.SetPosition(target);
+            if (target != from)
+                _audio.MarkDiscontinuity();
             EvaluateAt(target, 0.0);
 
             // A seek that changes the camera still raises only one discontinuity.

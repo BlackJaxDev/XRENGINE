@@ -534,6 +534,54 @@ namespace XREngine.Audio
             return GetSourcePropertyInt(source.Id, GetSourceInteger.SampleOffset);
         }
 
+        /// <summary>The <c>AL_SAMPLE_OFFSET_LATENCY_SOFT</c> query of the <c>AL_SOFT_source_latency</c> extension.</summary>
+        private const int SampleOffsetLatencySoft = 0x1200;
+
+        // 0 means not resolved yet, 1 means present, and -1 means absent.
+        private int _sourceLatencyState;
+        private delegate* unmanaged[Cdecl]<uint, int, long*, void> _getSourcei64v;
+
+        /// <inheritdoc />
+        /// <remarks>
+        /// This uses <c>AL_SAMPLE_OFFSET_LATENCY_SOFT</c>. If the device does not have <c>AL_SOFT_source_latency</c>,
+        /// the method returns false.
+        /// </remarks>
+        public bool TryGetPlaybackClock(AudioSourceHandle source, out long sampleFrame, out long latencyNanoseconds)
+        {
+            sampleFrame = 0;
+            latencyNanoseconds = 0;
+            if (!source.IsValid)
+                return false;
+
+            using var native = EnterNative();
+            if (!ResolveSourceLatency())
+                return false;
+
+            // The first value is the offset in 32.32 fixed point. The second value is the latency in nanoseconds.
+            long* values = stackalloc long[2];
+            _getSourcei64v(source.Id, SampleOffsetLatencySoft, values);
+            if (Api.GetError() != AudioError.NoError)
+                return false;
+
+            sampleFrame = values[0] >> 32;
+            latencyNanoseconds = Math.Max(0L, values[1]);
+            return true;
+        }
+
+        // The caller holds the native gate, so the context is current.
+        private bool ResolveSourceLatency()
+        {
+            if (_sourceLatencyState == 0)
+            {
+                nint address = Api.IsExtensionPresent("AL_SOFT_source_latency")
+                    ? Api.GetProcAddress("alGetSourcei64vSOFT")
+                    : 0;
+                _getSourcei64v = (delegate* unmanaged[Cdecl]<uint, int, long*, void>)address;
+                _sourceLatencyState = address == 0 ? -1 : 1;
+            }
+            return _sourceLatencyState > 0;
+        }
+
         // --- IAudioTransport: Capture ---
 
         public IAudioCaptureDevice? OpenCaptureDevice(string? device, int sampleRate, SampleFormat format, int bufferSize)

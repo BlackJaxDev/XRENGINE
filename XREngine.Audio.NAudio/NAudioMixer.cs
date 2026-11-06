@@ -279,6 +279,29 @@ namespace XREngine.Audio
                 return _sources.TryGetValue(sourceId, out var source) ? (int)source.PlaybackPosition : 0;
         }
 
+        /// <summary>
+        /// Gets the playback position of a source in sample frames, from the start of the first buffer in its queue.
+        /// Processed buffers that are not unqueued yet count, as the OpenAL sample offset does.
+        /// </summary>
+        /// <param name="sourceId">The source to read.</param>
+        /// <param name="frame">The playback position.</param>
+        /// <returns>False if the source does not exist.</returns>
+        public bool TryGetPlaybackFrame(uint sourceId, out long frame)
+        {
+            lock (_lock)
+            {
+                frame = 0;
+                if (!_sources.TryGetValue(sourceId, out var source))
+                    return false;
+
+                foreach (uint bufferId in source.ProcessedBuffers)
+                    if (_buffers.TryGetValue(bufferId, out var buffer))
+                        frame += buffer.FrameCount;
+                frame += (long)source.PlaybackPosition;
+                return true;
+            }
+        }
+
         #endregion
 
         #region Source properties

@@ -129,6 +129,15 @@ public sealed partial class WebAudioTransport : IAudioSpatialTransport
         => WebAudioImports.IsSourcePlaying(RequireOpen(), checked((int)source.Id));
     public int GetSampleOffset(AudioSourceHandle source)
         => WebAudioImports.SampleOffset(RequireOpen(), checked((int)source.Id));
+
+    /// <summary>The browser bridge has no source latency query, so this transport reports no clock.</summary>
+    public bool TryGetPlaybackClock(AudioSourceHandle source, out long sampleFrame, out long latencyNanoseconds)
+    {
+        sampleFrame = 0;
+        latencyNanoseconds = 0;
+        return false;
+    }
+
     public IAudioCaptureDevice? OpenCaptureDevice(string? device, int sampleRate, SampleFormat format, int bufferSize)
         => null;
 
