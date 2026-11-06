@@ -505,6 +505,7 @@ Each declared resource has one ownership class (`EAdvancedRenderResourceOwnershi
 - OpenGL 4.6 and Vulkan use the same logical contracts. Backend encodings can differ.
 - An unsupported opaque material in a required Advanced mode renders an observable error material or fails selection. It does not enter the classic opaque renderer.
 - A canonical texture whose image is still loading does not fail the frame. Its row keeps the non-resident encoded reference, so each material binding samples its own fallback (for example black, white, or a flat normal) until the image is ready. Every frame builds the scene publication again, so the real image (the streaming preview first, then the full image) replaces the fallback as soon as it is ready. A texture view with the wrong shape still fails the publication.
+- A viewport whose scene is not due skips its swap (for example the desktop view with the VR mirror off, or a desktop held for XR frames). Its last rendering package and its picking leases would then pin one old scene publication. The table journals cannot reclaim past that pin, so the database rejects every later publication and each collect swap stalls. On each skipped swap, `XRViewport` therefore drops the rendering package pin (`RenderCommandCollection.ReleaseLaggingRenderingCanonicalPin`) and the picking leases (`XRRenderPipelineInstance.ReleaseLaggingAdvancedPickingRetention`) when they lag more than 16 publications behind the newest one. The next swap takes a new pin before the viewport renders its scene again.
 
 ## Capability Floor
 

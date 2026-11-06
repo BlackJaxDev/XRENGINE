@@ -1001,6 +1001,39 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        /// <summary>
+        /// Releases the canonical scene pin of the rendering package when that package
+        /// lags more than <see cref="IdleCanonicalPinMaxPublicationLag"/> publications
+        /// behind the newest sealed one. A viewport whose scene is not due skips its swap,
+        /// for example a desktop view with the VR mirror off. Its last rendering package
+        /// then keeps one old publication pinned, the table journals cannot reclaim it,
+        /// and the database rejects every later publication. The next swap prepares a
+        /// new pin before this viewport renders its scene again.
+        /// </summary>
+        internal void ReleaseLaggingRenderingCanonicalPin()
+        {
+            using (_lock.EnterScope())
+            {
+                if (!_renderingBackendReadyPackage.TryGetCanonicalPublication(
+                        out AdvancedSharedGpuSceneDatabase database,
+                        out AdvancedGpuScenePublicationReference publication) ||
+                    database.LastSealedPublicationSequence <=
+                        publication.Sequence + IdleCanonicalPinMaxPublicationLag)
+                {
+                    return;
+                }
+
+                using var renderingBufferScope = EnterRenderingBufferWriteScope();
+                _renderingBackendReadyPackage.ResetCanonical();
+            }
+        }
+
+        /// <summary>
+        /// Publications that an idle rendering package may lag behind the newest one
+        /// before it drops its pin. It stays well inside the table journal capacity.
+        /// </summary>
+        private const ulong IdleCanonicalPinMaxPublicationLag = 16UL;
+
         public int GetRenderingPassCommandCount(int renderPass)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();

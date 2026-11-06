@@ -237,6 +237,58 @@ public sealed partial class XRRenderPipelineInstance
         staleSource.Dispose();
     }
 
+    /// <summary>
+    /// Drops picking leases that lag too far behind the newest sealed publication.
+    /// A viewport whose scene is not due, for example a desktop view with the VR
+    /// mirror off, never reaches <see cref="PublishAdvancedPickingSource"/>. Its source
+    /// and candidate leases would then pin one old publication forever, the table
+    /// journals could not reclaim it, and the database would reject every later
+    /// publication. Picking is unavailable until the pipeline renders and commits again.
+    /// </summary>
+    internal void ReleaseLaggingAdvancedPickingRetention()
+    {
+        AdvancedGpuScenePublicationLease source;
+        AdvancedGpuScenePublicationLease candidate;
+        lock (_advancedPickingSync)
+        {
+            source = _advancedPickingSourceLease;
+            candidate = _advancedPickingCandidateLease;
+        }
+        bool dropSource = IsLaggingPickingLease(in source);
+        bool dropCandidate = IsLaggingPickingLease(in candidate);
+        if (!dropSource && !dropCandidate)
+            return;
+
+        AdvancedGpuScenePublicationLease droppedSource = default;
+        AdvancedGpuScenePublicationLease droppedCandidate = default;
+        lock (_advancedPickingSync)
+        {
+            // Drop only the lease that was checked. A render may have replaced it since.
+            if (dropSource && _advancedPickingSourceLease.IsSameLease(in source))
+            {
+                droppedSource = _advancedPickingSourceLease;
+                _advancedPickingSourceLease = default;
+                _advancedPickingSourceResourceGeneration = -1;
+                _advancedPickingSourcePackageGeneration = -1L;
+            }
+            if (dropCandidate && _advancedPickingCandidateLease.IsSameLease(in candidate))
+            {
+                droppedCandidate = _advancedPickingCandidateLease;
+                _advancedPickingCandidateLease = default;
+                _advancedPickingCandidateResourceGeneration = -1;
+                _advancedPickingCandidatePackageGeneration = -1L;
+            }
+        }
+        droppedSource.Dispose();
+        droppedCandidate.Dispose();
+    }
+
+    private static bool IsLaggingPickingLease(in AdvancedGpuScenePublicationLease lease)
+        => lease.IsValid &&
+           lease.Database is { } database &&
+           database.LastSealedPublicationSequence >
+               lease.Reference.Sequence + MaxPickingSourcePublicationLag;
+
     /// <summary>Ends the source-only picking retention for a settled one-shot
     /// capture. Already queued picks retain their own immutable publication.</summary>
     internal void ReleaseCompletedCapturePickingSource(long packageGeneration)

@@ -25,5 +25,11 @@ public readonly struct AdvancedGpuScenePublicationLease : IDisposable
     public AdvancedGpuScenePublicationReference Reference { get; }
     internal AdvancedSharedGpuSceneDatabase? Database => _database;
     public bool IsValid => _database is not null && _slot != 0u && Reference.IsValid;
+
+    /// <summary>True when both tokens refer to the same database lease slot and generation.</summary>
+    internal bool IsSameLease(in AdvancedGpuScenePublicationLease other)
+        => ReferenceEquals(_database, other._database) &&
+           _slot == other._slot &&
+           _generation == other._generation;
     public void Dispose() => _database?.ReleasePublicationLease(_slot, _generation);
 }

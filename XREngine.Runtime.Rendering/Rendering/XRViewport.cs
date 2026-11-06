@@ -1938,6 +1938,8 @@ namespace XREngine.Rendering
                 // so the editor overlay stays responsive.
                 SwapBuffers_ScreenSpaceUI();
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
+                _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
+                _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -1955,6 +1957,8 @@ namespace XREngine.Rendering
                 long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 SwapBuffers_ScreenSpaceUI();
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
+                _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
+                _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
