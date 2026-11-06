@@ -32,11 +32,18 @@ at most 128 x 128 pixels:
 1. **Normal:** mean blue at least `0.6`, mean red and green within `0.2` of
    `0.5`, and mean chroma at least `0.08`.
    Otherwise **Albedo** when mean chroma is at least `0.08` (a colored map).
-2. Otherwise grayscale. Count samples brighter or darker than the median by more
-   than `0.08`. **Bump** when the smaller side is at least 35 % of the larger
-   side (balanced detail around a flat base) or when less than 2 % of the samples
-   differ from the median.
-3. Otherwise **Height** (detail mostly on one side, as in a height field).
+2. Otherwise grayscale. **Height** when the median luminance is at least `0.68`
+   (a height field whose surface top dominates, with recessed detail such as
+   mortar grooves), or when the file name contains `height`, `disp` or
+   `parallax`.
+3. Otherwise **Bump** (bump and detail maps are authored around a mid-gray
+   base).
+
+On Sponza the brick height field has a median of `0.71`, and the lion, column,
+vase and plant bump maps have `0.47` to `0.65`. POM on those bump maps is
+wrong: the lion texture spans the whole sculpt, so its parallax depth reaches
+several centimeters and pushes the relief behind the wall. The margin is small;
+use the explicit `Height` or `Bump` mode when Auto picks wrong.
 
 An unreadable file follows its slot: a normal slot is `Normal`, a bump or height
 slot is `Bump`. The mode is part of the model-cache import settings.

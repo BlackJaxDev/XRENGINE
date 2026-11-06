@@ -17,13 +17,13 @@ public static class SurfaceDetailMapClassifier
     // Height and bump maps are grayscale. A colored map that is not a normal map is a color texture.
     private const float AlbedoMinMeanChroma = 0.08f;
 
-    // Detail deviation from the base (median) value, and the minimum detail coverage.
-    private const float DetailThreshold = 0.08f;
-    private const float MinDetailFraction = 0.02f;
+    // Minimum median luminance of a height field. Measured on Sponza: the brick height field has a
+    // median of 0.71; its embossed and detail bump maps have 0.47 to 0.65. The margin is small, so the
+    // explicit Height and Bump import modes remain the override.
+    private const float HeightMinMedian = 0.68f;
 
-    // Embossed bump maps have bright and dark detail in similar amounts around a flat base.
-    // Height fields have detail mostly on one side (for example dark mortar between bricks).
-    private const float BumpMinBalance = 0.35f;
+    // File-name words that mark a height (displacement) field regardless of content.
+    private static readonly string[] HeightNameHints = ["height", "disp", "parallax"];
 
     private const int MaxSamplesPerAxis = 128;
 
@@ -31,7 +31,7 @@ public static class SurfaceDetailMapClassifier
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Classifies the image file at <paramref name="filePath"/>. Returns false when the file is
+    /// Classifies the image file at <paramref name="filePath"/>. A grayscale map whose file name contains "height", "disp" or "parallax" is a height map. Returns false when the file is
     /// missing or cannot be decoded.
     /// </summary>
     public static bool TryClassifyFile(string? filePath, out ESurfaceDetailMapMode mode)
@@ -48,7 +48,10 @@ public static class SurfaceDetailMapClassifier
                     return null;
 
                 using RuntimeImage image = codec.Decode(File.ReadAllBytes(path));
-                return Classify(image);
+                ESurfaceDetailMapMode classified = Classify(image);
+                return classified == ESurfaceDetailMapMode.Bump && HasHeightNameHint(path)
+                    ? ESurfaceDetailMapMode.Height
+                    : classified;
             }
             catch (Exception)
             {
@@ -62,6 +65,15 @@ public static class SurfaceDetailMapClassifier
 
         mode = result;
         return true;
+    }
+
+    private static bool HasHeightNameHint(string path)
+    {
+        string name = Path.GetFileNameWithoutExtension(path);
+        foreach (string hint in HeightNameHints)
+            if (name.Contains(hint, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
     }
 
     /// <summary>
@@ -119,25 +131,11 @@ public static class SurfaceDetailMapClassifier
         if (meanChroma >= AlbedoMinMeanChroma)
             return ESurfaceDetailMapMode.Albedo;
 
+        // Bump and detail maps are authored around a mid-gray base. A height field with recessed
+        // detail (for example bricks with mortar grooves) keeps most texels near the top.
         Span<float> values = luminance.AsSpan(0, count);
         values.Sort();
         float median = values[count / 2];
-        int brighter = 0, darker = 0;
-        foreach (float value in values)
-        {
-            if (value > median + DetailThreshold)
-                brighter++;
-            else if (value < median - DetailThreshold)
-                darker++;
-        }
-
-        float brighterFraction = brighter / (float)count;
-        float darkerFraction = darker / (float)count;
-        float largest = Math.Max(brighterFraction, darkerFraction);
-        if (largest < MinDetailFraction)
-            return ESurfaceDetailMapMode.Bump;
-
-        float balance = Math.Min(brighterFraction, darkerFraction) / largest;
-        return balance >= BumpMinBalance ? ESurfaceDetailMapMode.Bump : ESurfaceDetailMapMode.Height;
+        return median >= HeightMinMedian ? ESurfaceDetailMapMode.Height : ESurfaceDetailMapMode.Bump;
     }
 }
