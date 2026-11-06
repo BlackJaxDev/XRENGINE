@@ -12,6 +12,7 @@ using ImGuiNET;
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Core.Files;
+using XREngine.Editor.RenderPipelineWorkbench;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.Pipelines.Commands;
@@ -350,10 +351,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
-            DrawFboInputs(fbo, flipPreview);
+            RenderTexturePreviewPanel.DrawFrameBufferInputs(fbo, flipPreview);
 
             ImGui.TableSetColumnIndex(1);
-            DrawFboOutputs(fbo, flipPreview);
+            RenderTexturePreviewPanel.DrawFrameBufferOutputs(fbo, flipPreview);
 
             ImGui.EndTable();
         }
@@ -399,12 +400,12 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         XRTexture texture = selectedRecord.Value.Instance!;
 
         ImGui.TextDisabled($"Type: {texture.GetType().Name}");
-        if (TryDescribeTextureDimensions(texture, out string sizeLabel))
+        if (RenderTexturePreviewPanel.TryDescribeTextureDimensions(texture, out string sizeLabel))
             ImGui.TextDisabled(sizeLabel);
         if (texture.FrameBufferAttachment is { } attachment)
             ImGui.TextDisabled($"Attachment: {attachment}");
 
-        DrawTexturePreview(texture, flipPreview);
+        RenderTexturePreviewPanel.DrawTexturePreview(texture, flipPreview);
     }
 
     private static void DrawAutoExposureMeteringPreview(XRRenderPipelineInstance instance)
@@ -874,170 +875,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return renderer.TryReadTexturePixelRgbaFloat(texture, mipLevel, layerIndex, out rgba, out failure);
     }
 
-    private static void DrawFboInputs(XRFrameBuffer fbo, bool flipPreview)
-    {
-        var inputs = CollectFboInputs(fbo);
-        if (inputs.Count == 0)
-        {
-            ImGui.TextDisabled("No input textures detected for this framebuffer.");
-            return;
-        }
-
-        for (int i = 0; i < inputs.Count; i++)
-        {
-            XRTexture tex = inputs[i];
-            ImGui.PushID(tex.GetHashCode());
-            string label = tex.Name ?? tex.GetType().Name;
-            ImGui.TextUnformatted(label);
-            DrawTexturePreview(tex, flipPreview);
-            ImGui.PopID();
-            if (i < inputs.Count - 1)
-                ImGui.Separator();
-        }
-    }
-
-    private static void DrawFboOutputs(XRFrameBuffer fbo, bool flipPreview)
-    {
-        var targets = fbo.Targets;
-        if (targets is null || targets.Length == 0)
-        {
-            ImGui.TextDisabled("Framebuffer has no attachments.");
-            return;
-        }
-
-        for (int i = 0; i < targets.Length; i++)
-        {
-            var (target, attachment, mipLevel, layerIndex) = targets[i];
-            ImGui.PushID(i);
-
-            string attachmentLabel = $"[{i + 1}] {attachment}";
-            if (mipLevel > 0)
-                attachmentLabel += $" | Mip {mipLevel}";
-            if (layerIndex >= 0)
-                attachmentLabel += $" | Layer {layerIndex}";
-            ImGui.TextUnformatted(attachmentLabel);
-
-            if (target is XRTexture tex)
-            {
-                string texLabel = tex.Name ?? tex.GetType().Name;
-                ImGui.TextDisabled(texLabel);
-                DrawTexturePreview(tex, flipPreview);
-            }
-            else
-            {
-                ImGui.TextDisabled("Attachment is not a texture.");
-            }
-
-            ImGui.PopID();
-            if (i < targets.Length - 1)
-                ImGui.Separator();
-        }
-    }
-
-    private static void DrawTexturePreview(XRTexture texture, bool flipPreview)
-    {
-        var previewState = GetPreviewState(texture);
-
-        int layerCount = GetLayerCount(texture);
-        int mipCount = GetMipCount(texture);
-
-        DrawPreviewControls(previewState, layerCount, mipCount);
-
-        if (TryGetTexturePreviewHandle(texture, 320f, previewState, previewState.Channel, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
-        {
-            Vector2 uv0 = flipPreview ? new Vector2(0f, 1f) : Vector2.Zero;
-            Vector2 uv1 = flipPreview ? new Vector2(1f, 0f) : Vector2.One;
-            ImGui.Image(handle, displaySize, uv0, uv1);
-
-            var infoParts = new List<string>
-            {
-                $"Size: {pixelSize.X} x {pixelSize.Y}",
-                GetChannelLabel(previewState.Channel)
-            };
-
-            if (layerCount > 1)
-                infoParts.Add($"Layer {previewState.Layer}");
-            if (mipCount > 1)
-                infoParts.Add($"Mip {previewState.Mip}");
-
-            ImGui.TextDisabled(string.Join(" | ", infoParts));
-        }
-        else
-        {
-            ImGui.TextDisabled(failure);
-        }
-
-        ImGui.Spacing();
-        DrawAuxiliaryChannelPreviews(texture, flipPreview, previewState);
-    }
-
-    private static void DrawAuxiliaryChannelPreviews(XRTexture texture, bool flipPreview, TexturePreviewState previewState)
-    {
-        ImGui.TextDisabled("Alpha");
-        DrawChannelPreview(texture, flipPreview, previewState, TextureChannelView.A, "##TexturePreviewAlpha", 112f);
-
-        if (!previewState.ShowSeparateRgbChannels)
-            return;
-
-        if (ImGui.BeginTable("##TexturePreviewRgbChannels", 3, ImGuiTableFlags.SizingStretchSame))
-        {
-            DrawChannelPreviewColumn(texture, flipPreview, previewState, TextureChannelView.R, "##TexturePreviewRed");
-            DrawChannelPreviewColumn(texture, flipPreview, previewState, TextureChannelView.G, "##TexturePreviewGreen");
-            DrawChannelPreviewColumn(texture, flipPreview, previewState, TextureChannelView.B, "##TexturePreviewBlue");
-            ImGui.EndTable();
-        }
-    }
-
-    private static void DrawChannelPreviewColumn(XRTexture texture, bool flipPreview, TexturePreviewState previewState, TextureChannelView channel, string id)
-    {
-        ImGui.TableNextColumn();
-        ImGui.TextDisabled(GetChannelLabel(channel));
-        DrawChannelPreview(texture, flipPreview, previewState, channel, id, 96f);
-    }
-
-    private static void DrawChannelPreview(
-        XRTexture texture,
-        bool flipPreview,
-        TexturePreviewState previewState,
-        TextureChannelView channel,
-        string imageId,
-        float maxEdge)
-    {
-        if (!TryGetTexturePreviewHandle(texture, maxEdge, previewState, channel, out nint handle, out Vector2 displaySize, out _, out string failure))
-        {
-            ImGui.TextDisabled(failure);
-            return;
-        }
-
-        Vector2 uv0 = flipPreview ? new Vector2(0f, 1f) : Vector2.Zero;
-        Vector2 uv1 = flipPreview ? new Vector2(1f, 0f) : Vector2.One;
-        ImGui.PushID(imageId);
-        ImGui.Image(handle, displaySize, uv0, uv1);
-        ImGui.PopID();
-    }
-
-    private static List<XRTexture> CollectFboInputs(XRFrameBuffer fbo)
-    {
-        if (fbo is XRMaterialFrameBuffer materialFbo && materialFbo.Material is { } material)
-        {
-            var unique = new List<XRTexture>();
-            foreach (XRTexture? tex in material.Textures)
-            {
-                if (tex is null)
-                    continue;
-
-                if (unique.Any(existing => ReferenceEquals(existing, tex)))
-                    continue;
-
-                unique.Add(tex);
-            }
-
-            return unique;
-        }
-
-        return new List<XRTexture>();
-    }
-
     private static void DrawPreferredDebugTargets(XRRenderPipelineInstance instance, EditorState state)
     {
         ImGui.TextDisabled("Quick Targets");
@@ -1109,7 +946,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
                 continue;
 
             bool hasOutputs = fbo.Targets is { Length: > 0 };
-            bool hasInputs = CollectFboInputs(fbo).Count > 0;
+            bool hasInputs = RenderTexturePreviewPanel.CollectFrameBufferInputs(fbo).Count > 0;
             if (hasOutputs || hasInputs)
                 return pair.Key;
         }
@@ -1143,25 +980,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
 
         return textureRecords[0].Key;
-    }
-
-    private static bool TryDescribeTextureDimensions(XRTexture texture, out string sizeLabel)
-    {
-        switch (texture)
-        {
-            case XRTexture2D tex2D:
-                sizeLabel = $"Size: {tex2D.Width} x {tex2D.Height}";
-                return true;
-            case XRTexture2DArray tex2DArray:
-                sizeLabel = $"Size: {tex2DArray.Width} x {tex2DArray.Height} x {tex2DArray.Depth}";
-                return true;
-            case XRTextureViewBase view:
-                sizeLabel = $"View Size: {view.WidthHeightDepth.X} x {view.WidthHeightDepth.Y} x {view.WidthHeightDepth.Z}";
-                return true;
-            default:
-                sizeLabel = string.Empty;
-                return false;
-        }
     }
 
     #endregion
@@ -1700,310 +1518,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
     #endregion
 
-    #region Texture Preview
-
-    private static bool TryGetTexturePreviewHandle(
-        XRTexture texture,
-        float maxEdge,
-        TexturePreviewState previewState,
-        TextureChannelView channel,
-        out nint handle,
-        out Vector2 displaySize,
-        out Vector2 pixelSize,
-        out string failure)
-    {
-        handle = nint.Zero;
-        displaySize = new Vector2(64f, 64f);
-        pixelSize = displaySize;
-        failure = string.Empty;
-
-        if (!Engine.IsRenderThread)
-        {
-            failure = "Preview unavailable off render thread";
-            return false;
-        }
-
-        XRTexture? previewTexture = GetPreviewTexture(texture, previewState, out int mipLevel, out int layerIndex, out string previewError);
-        if (previewTexture is null)
-        {
-            failure = previewError;
-            return false;
-        }
-
-        Vector2 fullSize = GetPixelSizeForPreview(texture, mipLevel);
-        pixelSize = fullSize;
-        float largest = MathF.Max(1f, MathF.Max(pixelSize.X, pixelSize.Y));
-        float scale = largest > 0f ? MathF.Min(1f, maxEdge / largest) : 1f;
-        displaySize = new Vector2(pixelSize.X * scale, pixelSize.Y * scale);
-
-        previewTexture = GetIsolatedPreviewTexture(previewTexture, mipLevel, layerIndex, channel);
-        var options = new RenderTexturePreviewOptions(
-            ToPreviewChannel(channel),
-            ForceBaseMipSampling: previewTexture is XRTextureViewBase);
-        // Never modify GL state on raw (non-view) texture handles — swizzle/sampling
-        // changes would leak into the live render pipeline.
-        bool success = EditorTexturePreviewService.TryGetHandle(
-            previewTexture,
-            in options,
-            out handle,
-            out _,
-            out string? previewFailure);
-        failure = previewFailure ?? string.Empty;
-        return success;
-    }
-
-    private static XRTexture GetIsolatedPreviewTexture(XRTexture texture, int mipLevel, int layerIndex, TextureChannelView channel)
-    {
-        switch (texture)
-        {
-            case XRTexture2D tex2D:
-                if (tex2D.Resizable)
-                    return tex2D; // Mutable storage: glTextureView requires immutable storage, fall back to raw texture.
-                return mipLevel > 0 || channel != TextureChannelView.RGBA
-                    ? GetOrCreate2DView(tex2D, mipLevel, channel)
-                    : tex2D;
-
-            case XRTexture2DArray tex2DArray:
-                if (tex2DArray.Resizable)
-                    return texture;
-                return GetOrCreateArrayView(tex2DArray, layerIndex, mipLevel, channel);
-
-            case XRTextureViewBase:
-                return texture;
-
-            default:
-                return texture;
-        }
-    }
-
-    #endregion
-
-    #region Texture Preview Helpers
-
-    private enum TextureChannelView
-    {
-        RGBA,
-        R,
-        G,
-        B,
-        A,
-        Luminance,
-    }
-
-    private sealed class TexturePreviewState
-    {
-        public int Layer;
-        public int Mip;
-        public TextureChannelView Channel = TextureChannelView.RGBA;
-        public bool ShowSeparateRgbChannels;
-    }
-
-    private sealed class TextureViewCacheKeyComparer : IEqualityComparer<XRTexture>
-    {
-        public bool Equals(XRTexture? x, XRTexture? y) => ReferenceEquals(x, y);
-        public int GetHashCode(XRTexture obj) => RuntimeHelpers.GetHashCode(obj);
-    }
-
-    private static readonly Dictionary<XRTexture, TexturePreviewState> PreviewStates = new(new TextureViewCacheKeyComparer());
-    private static readonly Dictionary<XRTexture, Dictionary<(int mip, int layer, TextureChannelView channel), XRTextureViewBase>> PreviewViews = new(new TextureViewCacheKeyComparer());
-
-    private static TexturePreviewState GetPreviewState(XRTexture texture)
-    {
-        if (!PreviewStates.TryGetValue(texture, out var state))
-        {
-            state = new TexturePreviewState();
-            PreviewStates[texture] = state;
-        }
-
-        int maxLayers = GetLayerCount(texture);
-        if (state.Layer >= maxLayers)
-            state.Layer = Math.Max(0, maxLayers - 1);
-
-        int maxMips = GetMipCount(texture);
-        if (state.Mip >= maxMips)
-            state.Mip = Math.Max(0, maxMips - 1);
-
-        return state;
-    }
-
-    private static void DrawPreviewControls(TexturePreviewState state, int layerCount, int mipCount)
-    {
-        if (layerCount > 1)
-        {
-            int layer = state.Layer;
-            if (ImGui.SliderInt("Layer##TexturePreview", ref layer, 0, layerCount - 1))
-                state.Layer = layer;
-        }
-
-        if (mipCount > 1)
-        {
-            int mip = state.Mip;
-            if (ImGui.SliderInt("Mip##TexturePreview", ref mip, 0, mipCount - 1))
-                state.Mip = mip;
-        }
-
-        string channelLabel = GetChannelLabel(state.Channel);
-        if (ImGui.BeginCombo("Channel##TexturePreview", channelLabel))
-        {
-            foreach (TextureChannelView view in Enum.GetValues<TextureChannelView>())
-            {
-                bool selected = view == state.Channel;
-                if (ImGui.Selectable(GetChannelLabel(view), selected))
-                    state.Channel = view;
-                if (selected)
-                    ImGui.SetItemDefaultFocus();
-            }
-            ImGui.EndCombo();
-        }
-
-        ImGui.Checkbox("Show Separate RGB Channels##TexturePreview", ref state.ShowSeparateRgbChannels);
-    }
-
-    private static string GetChannelLabel(TextureChannelView channel)
-        => channel switch
-        {
-            TextureChannelView.R => "Red",
-            TextureChannelView.G => "Green",
-            TextureChannelView.B => "Blue",
-            TextureChannelView.A => "Alpha",
-            TextureChannelView.Luminance => "Luma",
-            _ => "RGBA",
-        };
-
-    private static RenderTexturePreviewChannel ToPreviewChannel(TextureChannelView channel)
-        => channel switch
-        {
-            TextureChannelView.R => RenderTexturePreviewChannel.Red,
-            TextureChannelView.G => RenderTexturePreviewChannel.Green,
-            TextureChannelView.B => RenderTexturePreviewChannel.Blue,
-            TextureChannelView.A => RenderTexturePreviewChannel.Alpha,
-            TextureChannelView.Luminance => RenderTexturePreviewChannel.Luminance,
-            _ => RenderTexturePreviewChannel.Rgba,
-        };
-
-    private static int GetLayerCount(XRTexture texture)
-        => texture switch
-        {
-            XRTexture2DArray array => (int)Math.Max(1u, array.Depth),
-            XRTexture2DArrayView view => (int)Math.Max(1u, view.NumLayers),
-            _ => 1,
-        };
-
-    private static int GetMipCount(XRTexture texture)
-    {
-        switch (texture)
-        {
-            case XRTexture2D tex2D when tex2D.Mipmaps is { Length: > 0 } mips:
-                return mips.Length;
-            case XRTexture2D tex2D:
-                return Math.Max(1, tex2D.SmallestMipmapLevel + 1);
-            case XRTexture2DArray array when array.Mipmaps is { Length: > 0 } arrayMips:
-                return arrayMips.Length;
-            case XRTexture2DArray array:
-                return Math.Max(1, array.SmallestMipmapLevel + 1);
-            case XRTextureViewBase view:
-                return (int)Math.Max(1u, view.NumLevels);
-            default:
-                return 1;
-        }
-    }
-
-    private static XRTexture? GetPreviewTexture(XRTexture texture, TexturePreviewState state, out int mipLevel, out int layerIndex, out string failure)
-    {
-        mipLevel = Math.Max(0, state.Mip);
-        layerIndex = Math.Max(0, state.Layer);
-        failure = string.Empty;
-
-        switch (texture)
-        {
-            case XRTexture2DArray arrayTex:
-                int clampedLayer = Math.Min(layerIndex, Math.Max(0, GetLayerCount(arrayTex) - 1));
-                int clampedMip = Math.Min(mipLevel, Math.Max(0, GetMipCount(arrayTex) - 1));
-                state.Layer = clampedLayer;
-                state.Mip = clampedMip;
-                return GetOrCreateArrayView(arrayTex, clampedLayer, clampedMip, TextureChannelView.RGBA);
-
-            case XRTexture2D tex2D when state.Mip > 0:
-                int clamped2DMip = Math.Min(mipLevel, Math.Max(0, GetMipCount(tex2D) - 1));
-                state.Mip = clamped2DMip;
-                return GetOrCreate2DView(tex2D, clamped2DMip, TextureChannelView.RGBA);
-
-            case XRTexture2D tex2D:
-                state.Mip = 0;
-                state.Layer = 0;
-                return tex2D;
-
-            case XRTextureViewBase view:
-                return view;
-
-            default:
-                failure = "Only 2D and 2D array textures supported";
-                return null;
-        }
-    }
-
-    private static XRTexture2DView GetOrCreate2DView(XRTexture2D texture, int mip, TextureChannelView channel)
-    {
-        if (!PreviewViews.TryGetValue(texture, out var views))
-        {
-            views = new Dictionary<(int mip, int layer, TextureChannelView channel), XRTextureViewBase>();
-            PreviewViews[texture] = views;
-        }
-
-        var key = (mip, 0, channel);
-        if (views.TryGetValue(key, out var existing) && existing is XRTexture2DView cachedView)
-        {
-            cachedView.MinLevel = (uint)mip;
-            cachedView.NumLevels = 1;
-            return cachedView;
-        }
-
-        var view = new XRTexture2DView(texture, (uint)mip, 1u, texture.SizedInternalFormat, false, texture.MultiSample);
-        views[key] = view;
-        return view;
-    }
-
-    private static XRTexture2DArrayView GetOrCreateArrayView(XRTexture2DArray texture, int layer, int mip, TextureChannelView channel)
-    {
-        if (!PreviewViews.TryGetValue(texture, out var views))
-        {
-            views = new Dictionary<(int mip, int layer, TextureChannelView channel), XRTextureViewBase>();
-            PreviewViews[texture] = views;
-        }
-
-        var key = (mip, layer, channel);
-        if (views.TryGetValue(key, out var existing) && existing is XRTexture2DArrayView cachedView)
-        {
-            cachedView.MinLevel = (uint)mip;
-            cachedView.NumLevels = 1;
-            cachedView.MinLayer = (uint)layer;
-            cachedView.NumLayers = 1;
-            return cachedView;
-        }
-
-        var view = new XRTexture2DArrayView(texture, (uint)mip, 1u, (uint)layer, 1u, texture.SizedInternalFormat, false, texture.MultiSample);
-        views[key] = view;
-        return view;
-    }
-
-    private static Vector2 GetPixelSizeForPreview(XRTexture texture, int mipLevel)
-    {
-        static uint Shifted(uint value, int mip)
-            => Math.Max(1u, value >> mip);
-
-        return texture switch
-        {
-            XRTexture2D tex2D => new Vector2(Shifted(tex2D.Width, mipLevel), Shifted(tex2D.Height, mipLevel)),
-            XRTexture2DArray array => new Vector2(Shifted(array.Width, mipLevel), Shifted(array.Height, mipLevel)),
-            // Views report the *source* dimensions; account for the view's base mip.
-            XRTextureViewBase view => new Vector2(
-                Shifted((uint)view.WidthHeightDepth.X, mipLevel + (int)view.MinLevel),
-                Shifted((uint)view.WidthHeightDepth.Y, mipLevel + (int)view.MinLevel)),
-            _ => new Vector2(1f, 1f),
-        };
-    }
-
-    #endregion
 
     #region String Utilities
 
