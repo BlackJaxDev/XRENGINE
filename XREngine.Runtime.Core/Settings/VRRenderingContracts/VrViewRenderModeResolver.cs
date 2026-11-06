@@ -99,10 +99,6 @@ public static class VrViewRenderModeResolver
             (EVrViewRenderMode.SequentialViews, EVrRenderPipeline.Rvc) =>
                 "VR.RenderPipeline=Rvc is not offered for VR.ViewRenderMode=SequentialViews. " +
                 "Select SinglePassStereo or ParallelCommandBufferRecording for RVC, or select the Default or Advanced pipeline.",
-            (EVrViewRenderMode.SinglePassStereo, EVrRenderPipeline.Advanced) =>
-                "VR.RenderPipeline=Advanced is not implemented for VR.ViewRenderMode=SinglePassStereo. " +
-                "The Advanced layered eye resources and swapchain terminal write are not admitted. " +
-                "Select SequentialViews or ParallelCommandBufferRecording for Advanced, or select the Default or Rvc pipeline.",
             _ => string.Empty,
         };
         return diagnostic.Length != 0;

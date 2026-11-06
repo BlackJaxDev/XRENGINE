@@ -288,7 +288,7 @@ mode, pipeline or command chain instead.
 | `VR.ViewRenderMode` | `Default` | `Advanced` | `Rvc` |
 |---|---|---|---|
 | `SequentialViews` | Supported | Supported | Rejected |
-| `SinglePassStereo` | Supported | Rejected (not implemented yet) | Supported |
+| `SinglePassStereo` | Supported | Supported (Vulkan, one layered stereo pipeline) | Supported |
 | `ParallelCommandBufferRecording` (Vulkan only) | Supported | Supported | Supported |
 
 `Default` is a plain `DefaultRenderPipeline`. `Advanced` binds its eye output as

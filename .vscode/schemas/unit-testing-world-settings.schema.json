@@ -960,7 +960,7 @@
         },
         "RenderPipeline": {
           "$ref": "#/definitions/EVrRenderPipeline",
-          "description": "Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (SequentialViews and ParallelCommandBufferRecording), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.",
+          "description": "Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (every view mode), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.",
           "markdownDescription": "Supported values: `Default`, `Advanced`, `Rvc`."
         },
         "RvcPipelineMode": {
