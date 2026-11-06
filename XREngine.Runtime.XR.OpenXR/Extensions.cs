@@ -60,6 +60,7 @@ public unsafe partial class OpenXRAPI
             KhrVisibilityMaskExtensionName,
             ExtHandTrackingExtensionName,
             MsftControllerModelExtensionName,
+            ExtEyeGazeInteractionExtensionName,
             .. HTC_Extensions,
             .. Foveation_Extensions
         ];
