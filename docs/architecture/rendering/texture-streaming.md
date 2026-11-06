@@ -85,7 +85,7 @@ A caller can request a mip of a streamed texture before the texture is visible. 
 | Promotion cooldown | 6 frames | `TextureStreamingCutscenePromotionCooldownFrames` (2) |
 | Mip fade after a promotion | 90 frames | `TextureStreamingCutscenePromotionFadeFrames` (12) |
 
-The settings are on `RuntimeEngine.Rendering.EngineSettings`. The `Cutscene` values are provisional: they are not measured yet, so profile a cutscene before you change them. The short mip fade prevents a texture that loaded for a cutscene jump from looking late. Neither profile changes the VRAM budget fit, the import-era promotion limit, the demotion cooldown, or the visible pin.
+The settings are on `RuntimeEngine.Rendering.EngineSettings`. The `Cutscene` values stay provisional. On OpenGL they were measured with a cold jump in Sponza (37 textures, 1024 and 2048 texels): the targets were resident after 2.28 to 2.38 s with `Cutscene`, 2.38 to 2.45 s with `Default`, and 2.28 s with lower limits (3 transitions, 2 promotions, 16 MB). The frame time was the same with each profile. The OpenGL tiered backend applies at most one resident upload in each render frame, and each upload of a 1024-texel chain adds about 5 to 9 ms to that frame, so the upload path and not these limits sets the refine time and the frame cost on OpenGL. They are not measured on Vulkan yet. Profile a cutscene before you change them. The short mip fade prevents a texture that loaded for a cutscene jump from looking late. Neither profile changes the VRAM budget fit, the import-era promotion limit, the demotion cooldown, or the visible pin.
 
 ## Vulkan Upload And Publication Contract
 

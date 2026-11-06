@@ -263,4 +263,5 @@ cutscene_open { "close": true }
 - Only textures have a residency backend. The bake records mesh assets for the T0 report, but no backend loads them.
 - A model import gives new texture IDs at each import, and a baked manifest stores those IDs. After the next import of the model, for example in a new editor session, the IDs of the manifest no longer match, and the backend rejects those textures. The content hash does not see this. Bake the manifest again after a model import.
 - A stale manifest makes the whole timeline approximate. The hash does not find which range changed.
-- The `Cutscene` budget profile limits and the T0 budget default are not measured yet.
+- The `Cutscene` budget profile limits are measured on OpenGL only, and on OpenGL they do not change the refine time (see [Budget Profiles](../../architecture/rendering/texture-streaming.md#budget-profiles)). On OpenGL, each texture upload of a cold jump adds about 5 to 9 ms to one frame, with either profile.
+- The T0 budget default (64 MiB) is checked against one scene only: Sponza (37 textures, 25 sub-meshes) needs 15.6 MiB, and most of it is mesh data.
