@@ -458,6 +458,22 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    // Resource names for the runtime swapchain images, keyed by label instance. The
+    // labels are cached by the caller, so the per-frame blit formats no strings.
+    private readonly Dictionary<string, string> _openXrSwapchainResourceNames = new(ReferenceEqualityComparer.Instance);
+
+    private string GetOpenXrSwapchainResourceName(string destinationLabel)
+    {
+        if (!_openXrSwapchainResourceNames.TryGetValue(destinationLabel, out string? name))
+        {
+            name = $"OpenXR.SwapchainImage.{destinationLabel}";
+            // A caller that formats a new label each frame must not grow this cache.
+            if (_openXrSwapchainResourceNames.Count < 64)
+                _openXrSwapchainResourceNames.Add(destinationLabel, name);
+        }
+        return name;
+    }
+
     private bool TryPrepareStereoLayerBlit(
         XRTexture2DArray? sourceTexture,
         CommandBuffer recordedSourceCommandBuffer,
@@ -493,12 +509,12 @@ internal sealed partial class VulkanFrameLoop
         _resourceRuntime.RegisterResource(
             ObjectType.Image,
             leftDestinationImage.Handle,
-            $"OpenXR.SwapchainImage.{leftDestinationLabel}",
+            GetOpenXrSwapchainResourceName(leftDestinationLabel),
             externallyOwned: true);
         _resourceRuntime.RegisterResource(
             ObjectType.Image,
             rightDestinationImage.Handle,
-            $"OpenXR.SwapchainImage.{rightDestinationLabel}",
+            GetOpenXrSwapchainResourceName(rightDestinationLabel),
             externallyOwned: true);
 
         if (GetOrCreateAPIRenderObject(sourceTexture, generateNow: true) is not IVkImageDescriptorSource source)

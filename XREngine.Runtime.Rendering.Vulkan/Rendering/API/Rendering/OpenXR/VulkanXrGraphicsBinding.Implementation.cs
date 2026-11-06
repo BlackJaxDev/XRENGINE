@@ -1696,6 +1696,22 @@ Target:                 new RenderFrameViewTargetDescriptor(
         return false;
     }
 
+    private const int CachedTrueStereoSwapchainLabelCount = 8;
+    private static readonly string?[] s_trueStereoSwapchainLabels = new string?[CachedTrueStereoSwapchainLabelCount * 2];
+
+    /// <summary>
+    /// Returns the diagnostic label of a true-stereo swapchain image. The labels are
+    /// cached so that the per-frame eye path formats no strings.
+    /// </summary>
+    private static string GetTrueStereoSwapchainLabel(uint viewIndex, uint imageIndex)
+    {
+        string eye = viewIndex == 0 ? "left" : "right";
+        if (imageIndex >= CachedTrueStereoSwapchainLabelCount)
+            return $"true stereo {eye} eye swapchain image {imageIndex}";
+        int slot = (int)(viewIndex * CachedTrueStereoSwapchainLabelCount + imageIndex);
+        return s_trueStereoSwapchainLabels[slot] ??= $"true stereo {eye} eye swapchain image {imageIndex}";
+    }
+
     private bool TryRenderVulkanTrueSinglePassStereoToSwapchains(
         VulkanRenderer renderer,
         uint leftImageIndex,
@@ -1880,11 +1896,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 target.LeftSwapchainImage,
                 target.LeftSwapchainFormat,
                 target.Extent,
-                $"true stereo left eye swapchain image {leftImageIndex}",
+                GetTrueStereoSwapchainLabel(0, leftImageIndex),
                 target.RightSwapchainImage,
                 target.RightSwapchainFormat,
                 target.Extent,
-                $"true stereo right eye swapchain image {rightImageIndex}",
+                GetTrueStereoSwapchainLabel(1, rightImageIndex),
                 flipY: false,
                 copyPreviews ? GetOpenXrPreviewTexture(0) : null,
                 copyPreviews ? GetOpenXrPreviewTexture(1) : null,
