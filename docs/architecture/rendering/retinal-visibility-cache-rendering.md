@@ -45,7 +45,7 @@ The foundation covers:
   hidden/visible mesh fetch, status reporting, and invalidation state
 - RVC settings, quality controls, pipeline selection, fallback reasons, and
   engine stats hooks
-- `RvcRenderPipeline` as a sibling of `DefaultRenderPipeline`
+- `RvcRenderPipeline` as its own pipeline that executes the Advanced stage family
 - declared RVC texture arrays, shared buffers, framebuffers, and pass graph
   stages for the planned opaque cache renderer
 - renderer capability hooks for descriptor backend, material resource table,
@@ -203,10 +203,15 @@ missing piece.
 
 ## Pipeline Selection And Fallback
 
-`RvcRenderPipeline` is a sibling of `DefaultRenderPipeline`. It starts from the
-same Forward+ infrastructure instead of forking the render path wholesale. This
-keeps mono/stereo/editor behavior stable while RVC adds opaque-cache resources
-and diagnostics.
+`RvcRenderPipeline` derives from `RenderPipeline`, not from the Default or
+Advanced pipelines. It composes the Advanced stage family
+(`AdvancedRenderPipeline.CreateOpenXrEyeStageFamilyDefinition`) and executes it
+over its own view array as its own frame: one layered pipeline for both eyes in
+`SinglePassStereo`, or one mono pipeline per eye. The Advanced definition owns
+the scene feature values, and RVC forwards its feature properties to it. So the
+RVC eye image matches the Advanced pipeline. The RVC sharing stages and their
+resources are not scheduled until their GPU kernels exist; each one must match
+the Advanced image before it is turned on.
 
 `RvcRenderingSettings` controls:
 
@@ -236,7 +241,8 @@ VR uses `RvcRenderPipeline` only when `VrRenderPipeline` is `Rvc`, in
 `SinglePassStereo` or `ParallelCommandBufferRecording`. For that explicit
 selection, a resolution with any fallback reason (including `Off`) is a
 failure: OpenXR submits the frame with no projection layer and reports the
-reason. The pipeline never hosts the Advanced stage family.
+reason. The eye output takes the Advanced output reservation, and the OpenXR
+frame gate requires it to be bound, as for `VrRenderPipeline` = `Advanced`.
 
 ## Renderer Capability Surface
 
