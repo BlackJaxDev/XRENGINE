@@ -60,7 +60,7 @@ internal sealed partial class VulkanPreparedStableBinStream
     // duration of a single TryPrepareVisibilityRasterPipelines call: those are
     // the only header inputs the visibility pipeline depends on besides the
     // call's one target closure.
-    private const int RasterPipelineScratchCapacity = 8;
+    private const int RasterPipelineScratchCapacity = 12;
     private readonly VulkanVisibilityRasterPipeline[] _rasterPipelineScratch =
         new VulkanVisibilityRasterPipeline[RasterPipelineScratchCapacity];
     private readonly bool[] _rasterPipelineScratchValid =
@@ -1770,7 +1770,14 @@ internal sealed partial class VulkanPreparedStableBinStream
                 reason = "a visibility range changed its frozen execution partition";
                 return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
-            int scratchIndex = ResolveRasterPipelineScratchIndex(coverage, meshlet, cullMode);
+            // Parallax ranges draw with the depth-writing masked program once it links.
+            // A range that still holds the masked fallback pipeline looks again.
+            bool fragmentDepth = !meshlet &&
+                AdvancedVisibilityRasterStateBits.WritesFragmentDepth(header.IndirectRange.Key.RasterStateClass);
+            if (fragmentDepth && reusePreparedRaster &&
+                !visibilityPipelines.IsFragmentDepthRasterProgram(header.RasterPipeline.Program))
+                reusePreparedRaster = false;
+            int scratchIndex = ResolveRasterPipelineScratchIndex(coverage, meshlet, cullMode, fragmentDepth);
             VulkanVisibilityRasterPipeline raster;
             if (reusePreparedRaster)
             {
@@ -1784,13 +1791,31 @@ internal sealed partial class VulkanPreparedStableBinStream
             {
                 S13aPublicationTelemetry.StepProbe programProbe =
                     S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                VkRenderProgram program = null!;
                 VulkanAdvancedVisibilityPipelineReadiness rasterReadiness =
-                    visibilityPipelines.TryGetRasterProgram(
+                    VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                if (fragmentDepth)
+                {
+                    rasterReadiness = visibilityPipelines.TryGetFragmentDepthRasterProgram(
+                        multiview,
+                        out program,
+                        out reason);
+                    if (rasterReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    {
+                        // Pending or failed: draw this range flat with the masked program.
+                        fragmentDepth = false;
+                        scratchIndex = ResolveRasterPipelineScratchIndex(coverage, meshlet, cullMode, false);
+                    }
+                }
+                if (!fragmentDepth)
+                {
+                    rasterReadiness = visibilityPipelines.TryGetRasterProgram(
                         coverage,
                         meshlet,
-                        out VkRenderProgram program,
+                        out program,
                         out reason,
                         multiview);
+                }
                 programProbe.End(S13aAdvancedFamilyStep.RasterProgramLookup);
                 bool rasterPrepared = false;
                 raster = default;
@@ -2047,12 +2072,13 @@ internal sealed partial class VulkanPreparedStableBinStream
     private static int ResolveRasterPipelineScratchIndex(
         EAdvancedMaterialCoverageMode coverage,
         bool meshlet,
-        uint cullMode)
+        uint cullMode,
+        bool fragmentDepth)
     {
         int coverageIndex = coverage switch
         {
             EAdvancedMaterialCoverageMode.Opaque => 0,
-            EAdvancedMaterialCoverageMode.Masked => 1,
+            EAdvancedMaterialCoverageMode.Masked => fragmentDepth ? 2 : 1,
             _ => -1,
         };
         if (coverageIndex < 0)

@@ -1,5 +1,31 @@
 #ifndef XR_ADVANCED_SHADE_NATIVE_OPAQUE_EVALUATOR_GLSLINC
 #define XR_ADVANCED_SHADE_NATIVE_OPAQUE_EVALUATOR_GLSLINC
+#include "Advanced/Shading/StandardParallax.glslinc"
+
+// Parallax UV of a standard height-map material. The depth-writing visibility raster stored
+// the height-field hit; the hit lies on the pixel ray behind the triangle point, so their
+// distance gives the parallax offset without a second march. Ranges drawn without the
+// depth-writing program store the triangle depth, which yields no offset.
+vec2 XR_ADV_ResolveShadingParallaxUv(XRAdvancedMaterialRecord material,
+    XRAdvancedSurface surface, XRAdvancedViewRecord view, float depth, vec2 samplePixelPosition)
+{
+    vec3 hitPosition = XR_ADV_ReconstructWorldPositionFromDepth(samplePixelPosition, depth, view);
+    vec4 baseClip = surface.currentUnjitteredClip * view.inverseViewProjectionUnjittered;
+    if (!(abs(baseClip.w) > 1.0e-20))
+        return surface.texCoord0;
+    vec3 basePosition = baseClip.xyz / baseClip.w;
+    vec3 V = normalize(view.cameraPositionAndNear.xyz - basePosition);
+    vec3 N = normalize(surface.geometricNormal);
+    if (dot(N, V) < 0.0)
+        N = -N;
+    XRAdvancedParallaxFrame frame = XR_ADV_StandardParallaxFrame(material,
+        surface.worldPositionDx, surface.worldPositionDy,
+        surface.texCoord0Dx, surface.texCoord0Dy, N, V);
+    float hitDistance = max(dot(basePosition - hitPosition, V), 0.0);
+    if (!XR_ADV_IsFinite(vec3(hitDistance)))
+        return surface.texCoord0;
+    return XR_ADV_StandardParallaxUv(surface.texCoord0, frame, hitDistance);
+}
 
 // Complete result of one covered visibility sample. Drivers decide whether to
 // commit it directly or combine its radiance with other samples.
@@ -381,6 +407,9 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     }
 
     uint materialFlags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
+    if ((materialFlags & (XR_ADV_STANDARD_HEIGHT_MAP_FLAG | XR_ADV_STANDARD_PARALLAX_FLAG)) ==
+        (XR_ADV_STANDARD_HEIGHT_MAP_FLAG | XR_ADV_STANDARD_PARALLAX_FLAG))
+        surface.texCoord0 = XR_ADV_ResolveShadingParallaxUv(material, surface, view, depth, samplePixelPosition);
     vec4 base = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD) * surface.color0;
     vec4 rmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
     if ((materialFlags & 1u) != 0u)

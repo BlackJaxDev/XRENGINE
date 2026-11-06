@@ -205,6 +205,8 @@ namespace XREngine.Rendering.Commands
         PrimaryDisabled = 1u << 24,
         /// <summary>The complete source command can use the shared opaque shadow program.</summary>
         SharedOpaqueShadow = 1u << 25,
+        /// <summary>The material writes fragment depth (parallax occlusion). Advanced visibility routes it to the depth-writing masked raster.</summary>
+        FragmentDepth = 1u << 26,
     }
 
     public enum GPUSortAlgorithm

@@ -71,6 +71,9 @@ void main()
     else
     {
         uint flags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
+        // Opaque parallax materials publish the masked row; they cast flat, unclipped shadows.
+        if ((flags & XR_ADV_STANDARD_PARALLAX_FLAG) != 0u && (flags & 8u) == 0u)
+            return;
         float alpha = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD).a;
         if ((flags & 1u) != 0u)
             alpha *= XR_ADV_StandardTexture(material, 0u, ShadowCoverageUv,

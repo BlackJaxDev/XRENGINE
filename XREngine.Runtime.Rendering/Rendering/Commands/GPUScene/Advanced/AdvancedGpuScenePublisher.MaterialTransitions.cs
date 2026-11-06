@@ -1004,6 +1004,16 @@ public sealed partial class AdvancedGpuScenePublisher
     }
 
     /// <summary>
+    /// True for a standard material with a parallax height map (<c>NormalMapMode</c> 1 and a positive
+    /// <c>ParallaxScale</c>). Its visibility raster writes fragment depth.
+    /// </summary>
+    internal static bool RequiresFragmentDepth(XRMaterial? material)
+        => material is not null &&
+           material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 &&
+           material.Parameter<ShaderFloat>("ParallaxScale") is { Value: > 0.0f } &&
+           material.Parameter<ShaderInt>("NormalMapMode") is { Value: 1 };
+
+    /// <summary>
     /// Selects the canonical layout, coverage, and state class of one command.
     /// Uses the command row and current material state for both publication
     /// and unchanged-row validation.
@@ -1060,6 +1070,14 @@ public sealed partial class AdvancedGpuScenePublisher
             bool masked = command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested ||
                 NativeUberMaterialSourceEncoder.RequiresCoverageDiscard(material!);
             layout = masked ? NativeUberMaterialSchema.Masked : NativeUberMaterialSchema.Opaque;
+        }
+        else if (RequiresFragmentDepth(material) &&
+            (ReferenceEquals(layout, MaterialBindingLayouts.OpaqueDeferred) ||
+             ReferenceEquals(layout, MaterialBindingLayouts.ForwardOpaque)))
+        {
+            // Parallax occlusion discards silhouette fragments and writes depth in the
+            // visibility raster, so the material publishes the masked standard row.
+            layout = MaterialBindingLayouts.MaskedForward;
         }
         if (!AdvancedGpuMaterialPublisher.TryTranslateLayout(
                 layout,

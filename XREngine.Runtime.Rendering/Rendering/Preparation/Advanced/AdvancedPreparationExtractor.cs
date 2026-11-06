@@ -936,7 +936,9 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                     ? canonicalGeometry.IndexCount
                     : 0u,
                 VertexCount: hasCanonicalGeometry ? canonicalGeometry.VertexCount : 0u,
-                RasterStateClass: command.StateClassID,
+                RasterStateClass: WritesFragmentDepth(command)
+                    ? command.StateClassID | AdvancedVisibilityRasterStateBits.FragmentDepth
+                    : command.StateClassID,
                 Coverage: ResolveCoverage(command),
                 CullMode:
                     (command.Flags &
@@ -945,7 +947,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                         : 1u,
                 PrimitiveTopology: checked((uint)canonicalGeometry.PrimitiveTopology),
                 Skinned: skinned,
-                MeshletsResident: meshletsResident,
+                MeshletsResident: meshletsResident && !WritesFragmentDepth(command),
                 ForceCpuDiagnostic:
                     snapshot.ForceCpuRendering ||
                     mesh is null ||
@@ -1683,6 +1685,13 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             MeshletCount: geometry.MeshletCount);
     }
 
+    /// <summary>
+    /// True for a parallax occlusion draw. The traditional depth-writing masked raster draws it;
+    /// the meshlet raster has no depth-writing variant.
+    /// </summary>
+    private static bool WritesFragmentDepth(in DrawMetadata command)
+        => (command.Flags & (uint)GPUIndirectRenderFlags.FragmentDepth) != 0u;
+
     private static EAdvancedMaterialCoverageMode ResolveCoverage(
         in DrawMetadata command)
     {
@@ -1691,6 +1700,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         {
             return EAdvancedMaterialCoverageMode.Transparent;
         }
+        if (WritesFragmentDepth(command))
+            return EAdvancedMaterialCoverageMode.Masked;
         return command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested
             ? EAdvancedMaterialCoverageMode.Masked
             : EAdvancedMaterialCoverageMode.Opaque;

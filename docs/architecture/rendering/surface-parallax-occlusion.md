@@ -119,7 +119,68 @@ When forward lighting is active, the parallax view direction comes from
 `XRENGINE_GetForwardResolvedCameraPosition()`, which follows the fragment's view
 index. The shared `mesh.viewDir` keeps `CameraPosition`. Uber parallax does not write a depth offset.
 
+## Advanced and RVC
+
+The Advanced visibility pipeline, and RVC, which runs the Advanced stage family,
+use the same height-map controls.
+
+### Material row
+
+`MaterialBindingSourceEncoder` publishes an imported height or bump map
+(`NormalMapMode = 1`) in the normal texture slot. Imported height maps have no
+normal surface binding, so the legacy `Texture1` slot supplies it. The standard
+row flags (`GPUMaterialEntry`) mark it:
+
+| Flag | Bit | Meaning |
+| --- | --- | --- |
+| `HeightMapFlag` | 4 | The normal slot holds a grayscale height or bump map. |
+| `ParallaxFlag` | 5 | The material uses parallax occlusion mapping. |
+| `ParallaxSilhouetteFlag` | 6 | Parallax discards where the ray leaves UV `[0, 1]`. |
+| step counts | 8-27 | Maximum (8 bits), minimum (8 bits) and refinement (4 bits) steps. |
+
+`SurfaceDetailHeightScale` and `ParallaxScale` fill the two padding words after
+`AlphaCutoff`, so the 36-word row size does not change. Generated material-table
+draws in Default skip normal mapping for height-map rows.
+
+### Height-derived normals
+
+The native shading kernel builds a tangent normal from three height taps with
+forward differences, scaled to match the Default Sobel path. The tap count comes
+from material data, so the loop stays rolled and the large texture-sampling code
+is emitted once in `ShadeNativeOpaque.comp`.
+
+### Parallax raster
+
+1. `AdvancedGpuScenePublisher` publishes a parallax material
+   (`RequiresFragmentDepth`) with the `MaskedForward` row and sets
+   `GPUIndirectRenderFlags.FragmentDepth` on its draws.
+2. `AdvancedPreparationExtractor` gives those draws masked coverage, adds
+   `AdvancedVisibilityRasterStateBits.FragmentDepth` to the raster state class
+   (which splits them into their own indirect ranges), and keeps them off the
+   meshlet producer.
+3. Only those ranges bind the depth-writing masked raster program
+   (`VisibilityRasterMasked.frag` with `XR_ADV_VISIBILITY_FRAGMENT_DEPTH`). It
+   marches the height field, discards silhouette fragments and writes the hit
+   depth to `gl_FragDepth`. Other masked ranges keep early depth testing.
+4. The depth-writing programs are not part of the visibility family readiness.
+   While one compiles or links, its ranges draw with the ordinary masked program
+   and shade without parallax, so the compile never stalls a frame.
+5. Opaque parallax materials skip the masked alpha test, and the masked
+   directional shadow caster keeps them unclipped.
+
+### Parallax shading
+
+`Advanced/Shading/StandardParallax.glslinc` builds the same frame in both passes
+from triangle derivatives of world position and UV0. Shading reconstructs the
+hit point from depth and the triangle point from the unjittered clip position.
+Both lie on the pixel ray, so their distance gives the parallax UV directly:
+`uv0 - viewUvPerWorld * hitDistance`. There is no second march in the shading
+kernel. Each view has its own depth and camera, so stereo and RVC eyes get their
+own parallax.
+
 ## Limitations
 
-- Shadow casters use the shared depth shaders, so shadows show the flat surface.
-- The Advanced visibility pipeline does not run parallax yet.
+- Shadow casters use flat depth: Default uses the shared depth shaders, and the
+  Advanced masked shadow caster skips the parallax clip.
+- Advanced parallax draws use the traditional raster; the meshlet producer has
+  no depth-writing variant.

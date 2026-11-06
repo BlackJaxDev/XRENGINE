@@ -453,7 +453,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                         PrimitiveIndex = checked((uint)Math.Max(0, plan.PrimitiveIndex)),
                         PassIndex = plan.Command.RenderPass,
                         InstanceCount = Math.Max(1u, plan.Command.InstanceCount),
-                        Flags = plan.Command.Flags,
+                        Flags = RequiresFragmentDepth(plan.MaterialSource)
+                            ? plan.Command.Flags | (uint)GPUIndirectRenderFlags.FragmentDepth
+                            : plan.Command.Flags,
                         StateClass = plan.Command.StateClassID,
                         CompatibilityReason = plan.CompatibilityReason,
                         TemporalEventReason = plan.TemporalEventReason,
