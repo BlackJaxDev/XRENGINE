@@ -54,6 +54,24 @@ public interface ICutsceneVrHost
     bool TryFadeHeadset(float seconds, float opacity);
 
     /// <summary>
+    /// A counter that each <see cref="TryFadeHeadset"/> call increments, also a call that fails, and each
+    /// <see cref="TryFadeHeadsetIfGeneration"/> call that matches. A step that runs later uses it to know that no other fade
+    /// started since it recorded the value.
+    /// </summary>
+    long FadeGeneration { get; }
+
+    /// <summary>
+    /// Fades like <see cref="TryFadeHeadset"/>, but only if <see cref="FadeGeneration"/> still has
+    /// <paramref name="expectedGeneration"/>. The check and the fade are one operation, so a fade from another caller is never
+    /// reversed. A call that does not match does not change the counter. The method does not throw.
+    /// </summary>
+    /// <param name="expectedGeneration">The generation that the caller recorded.</param>
+    /// <param name="seconds">The fade time in seconds.</param>
+    /// <param name="opacity">The black opacity at the end of the fade.</param>
+    /// <returns>False if the generation changed or the runtime did not accept the fade.</returns>
+    bool TryFadeHeadsetIfGeneration(long expectedGeneration, float seconds, float opacity);
+
+    /// <summary>
     /// Publishes a teleport of the local player, so that systems that filter the tracked pose (spectator follow, calibration,
     /// tracker binding) reset instead of seeing a jump as motion.
     /// </summary>
@@ -81,6 +99,10 @@ public interface ICutsceneVrHost
     /// <param name="fadeSeconds">The fade-in time in seconds.</param>
     /// <param name="renderFrames">The minimum number of render frames that the headset stays black.</param>
     /// <param name="maximumSeconds">The maximum time in seconds that the headset stays black.</param>
+    /// <param name="generation">
+    /// The <see cref="FadeGeneration"/> after the fade to black of the close. If another fade call changes it before the step
+    /// runs, the step does nothing, so it cannot reverse the fade to black of the next cutscene or reset its exposure.
+    /// </param>
     /// <returns>False if the host could not schedule the step. The caller then fades in at once.</returns>
-    bool TryScheduleFadeInAfterBlackHold(float fadeSeconds, int renderFrames, double maximumSeconds);
+    bool TryScheduleFadeInAfterBlackHold(float fadeSeconds, int renderFrames, double maximumSeconds, long generation);
 }

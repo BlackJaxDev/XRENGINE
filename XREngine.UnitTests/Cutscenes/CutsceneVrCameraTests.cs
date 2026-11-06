@@ -58,12 +58,17 @@ public sealed class CutsceneVrCameraTests
 
         public readonly List<(float FadeSeconds, int RenderFrames, double MaximumSeconds)> ScheduledFadeIns = [];
 
+        public readonly List<CutsceneVrCloseFadeIn> ScheduledSteps = [];
+
+        public long FadeGeneration { get; private set; }
+
         public bool IsEyeViewport(XRViewport viewport) => EyeViewports.Contains(viewport);
 
         public bool IsEyeCameraTransform(TransformBase transform) => EyeCameraTransforms.Contains(transform);
 
         public bool TryFadeHeadset(float seconds, float opacity)
         {
+            FadeGeneration++;
             if (FadeThrows)
                 throw new InvalidOperationException("The compositor is gone.");
             if (FadeFails)
@@ -86,21 +91,33 @@ public sealed class CutsceneVrCameraTests
 
         public void ResetEyeExposure() => EyeExposureResetCount++;
 
-        public bool TryScheduleFadeInAfterBlackHold(float fadeSeconds, int renderFrames, double maximumSeconds)
+        public bool TryFadeHeadsetIfGeneration(long expectedGeneration, float seconds, float opacity)
+        {
+            if (FadeGeneration != expectedGeneration || FadeFails)
+                return false;
+
+            FadeGeneration++;
+            Fades.Add((seconds, opacity));
+            return true;
+        }
+
+        public bool TryScheduleFadeInAfterBlackHold(float fadeSeconds, int renderFrames, double maximumSeconds, long generation)
         {
             if (ScheduleFails)
                 return false;
 
             ScheduledFadeIns.Add((fadeSeconds, renderFrames, maximumSeconds));
+            ScheduledSteps.Add(new CutsceneVrCloseFadeIn(this, generation, fadeSeconds, renderFrames, maximumSeconds));
             return true;
         }
 
-        /// <summary>Runs the scheduled step as the engine host does after the hold.</summary>
-        public void CompleteScheduledFadeIn()
+        /// <summary>Runs the render step of the last scheduled step after its render frames, as the engine host does.</summary>
+        public CutsceneVrCloseFadeIn CompleteScheduledFadeIn()
         {
-            (float fadeSeconds, _, _) = ScheduledFadeIns[^1];
-            ResetEyeExposure();
-            TryFadeHeadset(fadeSeconds, 0.0f);
+            CutsceneVrCloseFadeIn step = ScheduledSteps[^1];
+            RenderFrameId += (ulong)ScheduledFadeIns[^1].RenderFrames;
+            step.RenderStep().ShouldBeTrue();
+            return step;
         }
     }
 
@@ -519,6 +536,67 @@ public sealed class CutsceneVrCameraTests
 
         rig.Host.CompleteScheduledFadeIn();
         rig.Host.Fades[^1].ShouldBe((HalfFade, 0.0f));
+        rig.Host.EyeExposureResetCount.ShouldBe(exposureBefore + 1);
+    }
+
+    [Test]
+    public void RigAnchor_ReopenBeforeTheCloseStepRuns_TheCloseStepKeepsTheNewFadeOut()
+    {
+        using Rig rig = MakeRigAtFirstShot();
+        rig.Director.Close();
+        rig.Host.ScheduledSteps.Count.ShouldBe(1);
+        int exposureAfterClose = rig.Host.EyeExposureResetCount;
+
+        // The next cutscene opens at once and starts its fade to black.
+        rig.Director.OpenAsync().Wait();
+        rig.Player.Play();
+        rig.Director.AdvanceFrame(0);
+        rig.Host.Fades[^1].ShouldBe((HalfFade, 1.0f));
+
+        // The step of the earlier close runs late. Another fade owns the headset, so it does nothing.
+        CutsceneVrCloseFadeIn step = rig.Host.CompleteScheduledFadeIn();
+        step.IsDone.ShouldBeTrue();
+        step.FadedIn.ShouldBeFalse();
+        rig.Host.Fades[^1].ShouldBe((HalfFade, 1.0f));
+        rig.Host.EyeExposureResetCount.ShouldBe(exposureAfterClose);
+        ShouldBeAtOriginalPose(rig);
+        step.UpdateStep().ShouldBeTrue();
+        rig.Host.Fades[^1].ShouldBe((HalfFade, 1.0f));
+
+        // The rig of the new cutscene moves only at black.
+        rig.Host.TimeSeconds += HalfFade;
+        rig.Frame();
+        rig.RigOrigin.Translation.ShouldBe(CameraAPosition);
+        rig.Router.IsHoldingBlack.ShouldBeTrue();
+        rig.Host.EyeExposureResetCount.ShouldBe(exposureAfterClose);
+    }
+
+    [Test]
+    public void RigAnchor_CloseStep_TheUpdateStepEndsTheHoldAtTheDeadlineOnce()
+    {
+        using Rig rig = MakeRigAtFirstShot();
+        rig.Director.Close();
+        CutsceneVrCloseFadeIn step = rig.Host.ScheduledSteps[^1];
+        int fadesBefore = rig.Host.Fades.Count;
+        int exposureBefore = rig.Host.EyeExposureResetCount;
+
+        // No render frame runs, for example because render jobs are late.
+        step.RenderStep().ShouldBeFalse();
+        step.UpdateStep().ShouldBeFalse();
+        rig.Host.TimeSeconds += CutsceneVrCameraRouter.MaximumBlackHoldSeconds * 0.5;
+        step.UpdateStep().ShouldBeFalse();
+        rig.Host.Fades.Count.ShouldBe(fadesBefore);
+
+        rig.Host.TimeSeconds += CutsceneVrCameraRouter.MaximumBlackHoldSeconds * 0.5;
+        step.UpdateStep().ShouldBeTrue();
+        step.FadedIn.ShouldBeTrue();
+        rig.Host.Fades.Skip(fadesBefore).ShouldBe([(HalfFade, 0.0f)]);
+        rig.Host.EyeExposureResetCount.ShouldBe(exposureBefore + 1);
+
+        // The late render step does not fade in again.
+        rig.Host.RenderFrameId += 10;
+        step.RenderStep().ShouldBeTrue();
+        rig.Host.Fades.Count.ShouldBe(fadesBefore + 1);
         rig.Host.EyeExposureResetCount.ShouldBe(exposureBefore + 1);
     }
 

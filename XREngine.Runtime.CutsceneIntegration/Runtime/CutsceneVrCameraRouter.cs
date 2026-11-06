@@ -327,7 +327,8 @@ public sealed class CutsceneVrCameraRouter
     {
         try
         {
-            return _host.TryScheduleFadeInAfterBlackHold(_halfFadeSeconds, BlackHoldRenderFrames, MaximumBlackHoldSeconds);
+            // The generation after the fade to black of the close. A later fade call makes the scheduled step do nothing.
+            return _host.TryScheduleFadeInAfterBlackHold(_halfFadeSeconds, BlackHoldRenderFrames, MaximumBlackHoldSeconds, _host.FadeGeneration);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using XREngine.Components.Animation;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 
@@ -12,6 +13,9 @@ namespace XREngine.Cutscenes;
 /// </summary>
 public sealed class RuntimeCutsceneVrHost : ICutsceneVrHost
 {
+    private readonly object _fadeSync = new();
+    private long _fadeGeneration;
+
     private RuntimeCutsceneVrHost()
     {
     }
@@ -71,7 +75,34 @@ public sealed class RuntimeCutsceneVrHost : ICutsceneVrHost
     }
 
     /// <inheritdoc/>
+    public long FadeGeneration => Interlocked.Read(ref _fadeGeneration);
+
+    /// <inheritdoc/>
     public bool TryFadeHeadset(float seconds, float opacity)
+    {
+        lock (_fadeSync)
+        {
+            Interlocked.Increment(ref _fadeGeneration);
+            return FadeCore(seconds, opacity);
+        }
+    }
+
+    /// <inheritdoc/>
+    public bool TryFadeHeadsetIfGeneration(long expectedGeneration, float seconds, float opacity)
+    {
+        // The update thread and the render thread can both fade, so the check and the fade share one lock.
+        lock (_fadeSync)
+        {
+            // A call that does not match changes nothing, so it cannot make a later recorded generation stale.
+            if (Interlocked.Read(ref _fadeGeneration) != expectedGeneration)
+                return false;
+
+            Interlocked.Increment(ref _fadeGeneration);
+            return FadeCore(seconds, opacity);
+        }
+    }
+
+    private static bool FadeCore(float seconds, float opacity)
         => RuntimeOpenVrCompositorServices.Current is { } compositor
             && compositor.TryFadeToColor(seconds, 0.0f, 0.0f, 0.0f, opacity);
 
@@ -108,31 +139,30 @@ public sealed class RuntimeCutsceneVrHost : ICutsceneVrHost
     }
 
     /// <inheritdoc/>
-    public bool TryScheduleFadeInAfterBlackHold(float fadeSeconds, int renderFrames, double maximumSeconds)
+    public bool TryScheduleFadeInAfterBlackHold(float fadeSeconds, int renderFrames, double maximumSeconds, long generation)
     {
-        ulong startFrame = RenderFrameId;
-        double deadline = TimeSeconds + maximumSeconds;
+        CutsceneVrCloseFadeIn step = new(this, generation, fadeSeconds, renderFrames, maximumSeconds);
         try
         {
-            // The step runs on the render thread once in each pass, so it sees each new render frame. It allocates once, at the close.
-            RuntimeEngine.AddRenderThreadCoroutine(
-                () =>
-                {
-                    if (RenderFrameId - startFrame < (ulong)renderFrames && TimeSeconds < deadline)
-                        return false;
-
-                    ResetEyeExposure();
-                    TryFadeHeadset(fadeSeconds, 0.0f);
-                    return true;
-                },
-                "Cutscene.VrFadeInAfterBlackHold",
-                RenderThreadJobKind.Unknown);
-            return true;
+            // The render step sees each new render frame. The update step runs at the deadline when render jobs are late.
+            // The two delegates and the step allocate once, at the close.
+            RuntimeEngine.AddRenderThreadCoroutine(step.RenderStep, "Cutscene.VrFadeInAfterBlackHold", RenderThreadJobKind.Unknown);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             return false;
         }
+
+        try
+        {
+            RuntimeAnimationHostServices.Current.AddAppThreadCoroutine(step.UpdateStep);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // The render step still runs. Only the deadline when render jobs are late is lost.
+        }
+
+        return true;
     }
 
     private static void InvalidateIfNotViewportCamera(XRCamera? camera, XRViewport? left, XRViewport? right, XRViewport? stereo)
