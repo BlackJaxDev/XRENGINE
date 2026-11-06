@@ -15,6 +15,7 @@ public static partial class EditorImGuiUI
     private static CutsceneAsset? _cutsceneManifestStateAsset;
     private static ECutsceneManifestState _cutsceneManifestState;
     private static int _cutsceneManifestStateVersion = -1;
+    private static bool _cutsceneManifestStateImportsActive;
     private static int _cutsceneEditVersion;
     private static CutsceneResidencyManifest? _cutsceneStripManifest;
     private static CutsceneResidencyBucketCursor? _cutsceneStripCursor;
@@ -33,6 +34,7 @@ public static partial class EditorImGuiUI
             ECutsceneManifestState.Current => "Manifest: baked",
             ECutsceneManifestState.Stale => "Manifest: stale (approximate)",
             ECutsceneManifestState.Invalid => "Manifest: invalid (approximate)",
+            ECutsceneManifestState.Unmatched => "Manifest: does not match the scene (approximate)",
             _ => "Manifest: missing (approximate)",
         });
 
@@ -140,6 +142,7 @@ public static partial class EditorImGuiUI
                 {
                     ECutsceneManifestState.Stale => "stale manifest: approximate residency",
                     ECutsceneManifestState.Invalid => "invalid manifest: approximate residency",
+                    ECutsceneManifestState.Unmatched => "baked textures not loaded: approximate residency",
                     _ => "no manifest: approximate residency",
                 });
         }
@@ -219,9 +222,11 @@ public static partial class EditorImGuiUI
 
     /// <summary>
     /// Gets the manifest state for the panel. An open session gives the state of its last manifest selection. Otherwise the
-    /// panel computes the hash only when the asset changed, or when the panel edit version changed and no edit came for
-    /// <see cref="CutscenePreviewHost.ResidencyRefreshDelaySeconds"/>, because a hash walks all the track data. A clip drag
-    /// therefore computes it one time, after the drag stops, as the preview does.
+    /// panel computes the state that a session would select (<see cref="TextureResidencyBackend.GetManifestState"/>: the hash,
+    /// and the check that the baked textures are loaded), so the panel shows the same state with and without a preview. It
+    /// computes it only when the asset changed, when a model import ended, or when the panel edit version changed and no
+    /// edit came for <see cref="CutscenePreviewHost.ResidencyRefreshDelaySeconds"/>, because a hash walks all the track data.
+    /// A clip drag therefore computes it one time, after the drag stops, as the preview does.
     /// </summary>
     private static ECutsceneManifestState GetCutsceneManifestState(CutsceneAsset asset, CutsceneResidencySession? residency)
     {
@@ -230,13 +235,16 @@ public static partial class EditorImGuiUI
 
         bool assetChanged = !ReferenceEquals(asset, _cutsceneManifestStateAsset);
         bool editsSettled = Environment.TickCount64 - Volatile.Read(ref _cutsceneEditTicks) >= (long)(CutscenePreviewHost.ResidencyRefreshDelaySeconds * 1000.0);
-        if (assetChanged || (_cutsceneManifestStateVersion != _cutsceneEditVersion && editsSettled))
+        bool importsActive = TextureResidencyBackend.AreModelImportsActive;
+        bool importsEnded = _cutsceneManifestStateImportsActive && !importsActive;
+        _cutsceneManifestStateImportsActive = importsActive;
+        if (assetChanged || importsEnded || (_cutsceneManifestStateVersion != _cutsceneEditVersion && editsSettled))
         {
             _cutsceneManifestStateAsset = asset;
             _cutsceneManifestStateVersion = _cutsceneEditVersion;
             try
             {
-                _cutsceneManifestState = CutsceneManifestHash.GetState(asset);
+                _cutsceneManifestState = TextureResidencyBackend.GetManifestState(asset, Engine.Assets);
             }
             catch (Exception ex)
             {

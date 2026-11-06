@@ -14,4 +14,11 @@ public enum ECutsceneManifestState
 
     /// <summary>The manifest data is not valid, or the content hash could not be computed. Playback uses the approximate manifest.</summary>
     Invalid,
+
+    /// <summary>
+    /// The content hash is current, but too many baked textures are not loaded textures of the scene, and no import is
+    /// active. The asset keys of the scene changed after the bake, for example because the assets moved or are outside the
+    /// game and engine asset folders. Playback uses the approximate manifest.
+    /// </summary>
+    Unmatched,
 }

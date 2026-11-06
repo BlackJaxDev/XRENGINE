@@ -313,6 +313,32 @@ public sealed class TextureResidencyRequestTests
     }
 
     [Test]
+    public void RequestDrivenPromotion_ThatBecomesVisibleInFlight_FadesAndPins()
+    {
+        ImportedTextureStreamingManager manager = _host.Manager;
+        (XRTexture2D texture, ImportedTextureStreamingRecord record) = _host.AddTexture("visible-in-flight");
+        manager.RequestResidency(texture, targetMip: 0, deadlineFrame: long.MaxValue, JobPriority.Normal, generation: 1);
+        manager.Evaluate(102);
+        lock (record.Sync)
+        {
+            record.PendingTransitionRequestDriven.ShouldBeTrue();
+
+            // The camera moves while the promotion is in flight, so the texture is on screen at the completion.
+            record.LastVisibleFrameId = 103L;
+        }
+
+        _host.Backend.CompleteLast().ShouldBeTrue();
+
+        lock (record.Sync)
+        {
+            record.ResidentMaxDimension.ShouldBe(1024u);
+            Volatile.Read(ref record.PromotionFadeEndFrameId).ShouldBeGreaterThan(102L);
+            record.CurrentStreamingLodBias.ShouldBeGreaterThan(0.0f);
+            record.PinUntilFrameId.ShouldBeGreaterThan(102L);
+        }
+    }
+
+    [Test]
     public void VisibleTextureRaisedByRequest_KeepsPinAndSurvivesCancel()
     {
         ImportedTextureStreamingManager manager = _host.Manager;

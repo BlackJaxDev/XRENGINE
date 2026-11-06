@@ -85,12 +85,16 @@ public sealed class TextureResidencyBackendTests
         XRTexture2D modelTexture = new() { Name = "model texture" };
         try
         {
-            TextureResidencyBackend.ResolveLoadedTexture(assets, new TextureResidencyKeyIndex(), modelTexture.ID).ShouldBeSameAs(modelTexture);
-            TextureResidencyBackend.ResolveLoadedTexture(assets, new TextureResidencyKeyIndex(), Guid.NewGuid()).ShouldBeNull();
+            Resolve(assets, new TextureResidencyKeyIndex(), modelTexture.ID).ShouldBe([modelTexture]);
+            Resolve(assets, new TextureResidencyKeyIndex(), Guid.NewGuid()).ShouldBeEmpty();
+
+            // A texture whose destroy is queued is about to go, so it is not found.
+            modelTexture.Destroy();
+            Resolve(assets, new TextureResidencyKeyIndex(), modelTexture.ID).ShouldBeEmpty();
         }
         finally
         {
-            modelTexture.Destroy();
+            modelTexture.Destroy(now: true);
             assets.Dispose();
         }
     }
@@ -102,21 +106,23 @@ public sealed class TextureResidencyBackendTests
         AssetManager assets = new() { MonitorGameAssetsForChanges = false };
         TextureResidencyKeyIndex keys = new();
         string source = Path.Combine(Path.GetTempPath(), "cutscene-residency-key", "floor_diff.png");
-        XRTexture2D first = new() { Name = "floor_diff", OriginalPath = source };
+        XRTexture2D first = new() { Name = "floor_diff", OriginalPath = source, SamplerName = "_MainTex" };
         XRTexture2D? second = null;
         try
         {
             Guid key = CutsceneResidencyAssetKeys.ForTexture(first);
             key.ShouldNotBe(first.ID);
-            TextureResidencyBackend.ResolveLoadedTexture(assets, keys, key).ShouldBeSameAs(first);
+            Resolve(assets, keys, key).ShouldBe([first]);
 
             first.Destroy(now: true);
-            second = new XRTexture2D { Name = "floor_diff", OriginalPath = source };
+            second = new XRTexture2D { Name = "floor_diff", OriginalPath = source, SamplerName = "_MainTex" };
             second.ID.ShouldNotBe(first.ID);
             CutsceneResidencyAssetKeys.ForTexture(second).ShouldBe(key);
 
-            TextureResidencyBackend.ResolveLoadedTexture(assets, keys, key).ShouldBeSameAs(second);
-            TextureResidencyBackend.ResolveLoadedTexture(assets, keys, first.ID).ShouldBeNull();
+            // A new selection lets the index build again.
+            keys.AllowRebuild();
+            Resolve(assets, keys, key).ShouldBe([second]);
+            Resolve(assets, keys, first.ID).ShouldBeEmpty();
         }
         finally
         {
@@ -127,17 +133,133 @@ public sealed class TextureResidencyBackendTests
     }
 
     [Test]
-    public void KeyIndex_ScansOneTimeForAKeyThatDoesNotResolve_UntilTheObjectsChange()
+    public void KeyIndex_BuildsOneTimeForEachSelection_AndFindsALaterTextureAfterTheNextSelection()
     {
         TextureResidencyKeyIndex keys = new();
-        Guid missing = CutsceneResidencyAssetKeys.ForTexturePath(Path.Combine(Path.GetTempPath(), "cutscene-residency-key", "missing.png"));
+        string source = Path.Combine(Path.GetTempPath(), "cutscene-residency-key", "later.png");
+        Guid key = CutsceneResidencyAssetKeys.ForTexturePath(source, "_MainTex");
+        List<XRTexture2D> found = [];
 
-        keys.Find(missing).ShouldBeNull();
-        int builds = keys.BuildCount;
-        keys.Find(missing).ShouldBeNull();
-        keys.Find(missing).ShouldBeNull();
+        keys.Find(key, found).ShouldBe(0);
+        keys.Find(CutsceneResidencyAssetKeys.ForTexturePath(source, "_Other"), found).ShouldBe(0);
+        keys.BuildCount.ShouldBe(1);
 
-        keys.BuildCount.ShouldBe(builds);
+        XRTexture2D later = new() { Name = "later", OriginalPath = source, SamplerName = "_MainTex" };
+        try
+        {
+            // The texture came after the build of this selection, so the selection does not scan again.
+            keys.Find(key, found).ShouldBe(0);
+            keys.BuildCount.ShouldBe(1);
+
+            keys.AllowRebuild();
+            keys.Find(key, found).ShouldBe(1);
+            found.ShouldBe([later]);
+            keys.BuildCount.ShouldBe(2);
+        }
+        finally
+        {
+            later.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void TextureKeys_AreEqualForTwoAssetRoots_AndForTheCookedPortableReference()
+    {
+        string firstRoot = Path.Combine(Path.GetTempPath(), "cutscene-key-roots", "machine-a", "Assets");
+        string secondRoot = Path.Combine(Path.GetTempPath(), "cutscene-key-roots", "other-folder", "Game", "Assets");
+        string relative = Path.Combine("Models", "Sponza", "textures", "Floor_Diff.png");
+        XRTexture2D bakedTexture = new() { Name = "floor", OriginalPath = Path.Combine(firstRoot, relative), SamplerName = "_MainTex" };
+        XRTexture2D playedTexture = new() { Name = "floor", OriginalPath = Path.Combine(secondRoot, relative.ToLowerInvariant()), SamplerName = "_MainTex" };
+        XRTexture2D cookedTexture = new() { Name = "floor", OriginalPath = "game://Models/Sponza/textures/Floor_Diff.png", SamplerName = "_MainTex" };
+        try
+        {
+            Guid baked;
+            bool bakedMachineDependent;
+            using (AssetSerializationServices.Install(new FakeAssetRootServices(firstRoot)))
+                baked = CutsceneResidencyAssetKeys.ForTexture(bakedTexture, out bakedMachineDependent);
+
+            Guid played;
+            Guid cooked;
+            using (AssetSerializationServices.Install(new FakeAssetRootServices(secondRoot)))
+            {
+                played = CutsceneResidencyAssetKeys.ForTexture(playedTexture);
+                cooked = CutsceneResidencyAssetKeys.ForTexture(cookedTexture);
+            }
+
+            bakedMachineDependent.ShouldBeFalse();
+            played.ShouldBe(baked);
+            cooked.ShouldBe(baked);
+
+            // Outside the asset folders the key uses the full path, and the bake can report it.
+            using (AssetSerializationServices.Install(new FakeAssetRootServices(secondRoot)))
+            {
+                CutsceneResidencyAssetKeys.ForTexture(bakedTexture, out bool outside).ShouldNotBe(baked);
+                outside.ShouldBeTrue();
+            }
+        }
+        finally
+        {
+            bakedTexture.Destroy(now: true);
+            playedTexture.Destroy(now: true);
+            cookedTexture.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void StoredTextureAsset_UsesItsPersistedId()
+    {
+        XRTexture2D stored = new() { Name = "stored", FilePath = Path.Combine(Path.GetTempPath(), "cutscene-key", $"stored.{AssetSerializationServices.Current.AssetExtension}"), OriginalPath = Path.Combine(Path.GetTempPath(), "cutscene-key", "stored.png") };
+        try
+        {
+            CutsceneResidencyAssetKeys.ForTexture(stored).ShouldBe(stored.ID);
+        }
+        finally
+        {
+            stored.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void Request_GoesToEachLiveTextureOfAKey_AndIsResidentOnlyWhenEachIsResident()
+    {
+        _host.Settings.TextureStreamingBudgetProfileFadeFrames = 0;
+        AssetManager assets = new() { MonitorGameAssetsForChanges = false };
+        string source = Path.Combine(Path.GetTempPath(), "cutscene-residency-fanout", "detail.png");
+        (XRTexture2D eager, _) = _host.AddTexture("fanout-eager", 1024u);
+        (XRTexture2D deferred, _) = _host.AddTexture("fanout-deferred", 1024u);
+        eager.OriginalPath = source;
+        eager.SamplerName = "_DetailTex";
+        deferred.OriginalPath = source;
+        deferred.SamplerName = "_DetailTex";
+        Guid key = CutsceneResidencyAssetKeys.ForTexture(eager);
+        CutsceneResidencyAssetKeys.ForTexture(deferred).ShouldBe(key);
+
+        try
+        {
+            using TextureResidencyBackend backend = new(_host.Manager, assets, new TextureResidencyKeyIndex(), useCutsceneBudgetProfile: true);
+            backend.CanResolve(key).ShouldBeTrue();
+            ResidencyTicket ticket = backend.Request(new ResidencyRequest(key, (int)EResidencyLevel.Target, CutsceneTime.Zero, 0.5f, 0));
+            ticket.IsValid.ShouldBeTrue();
+
+            _host.Manager.Evaluate(102);
+            _host.Backend.Loads.Select(load => load.Target).ShouldBe([eager, deferred], ignoreOrder: true);
+
+            FakeTextureStreamingResidencyBackend.ScheduledLoad first = _host.Backend.Loads[0];
+            first.OnFinished?.Invoke(first.Target);
+            _host.Manager.Evaluate(103);
+            backend.GetLevel(key).ShouldBe(EResidencyLevel.None);
+
+            _host.Backend.CompleteLast().ShouldBeTrue();
+            _host.Manager.Evaluate(104);
+            backend.GetLevel(key).ShouldBe(EResidencyLevel.Target);
+
+            backend.Cancel(ticket);
+            _host.Manager.ActiveResidencyRequestCount.ShouldBe(0);
+        }
+        finally
+        {
+            assets.Dispose();
+        }
     }
 
     [Test]
@@ -150,6 +272,7 @@ public sealed class TextureResidencyBackendTests
 
         _host.Manager.Evaluate(102);
         backend.IsUnderMemoryPressure.ShouldBeFalse();
+        backend.MemoryPressureFrameId.ShouldBe(102L);
 
         // The budget holds a 256 texture, so the fit gives the requested texture less than its target.
         _host.Host.TrackedVramBytes = FakeTextureStreamingResidencyBackend.BytesFor(64u);
@@ -157,10 +280,32 @@ public sealed class TextureResidencyBackendTests
         _host.Manager.Evaluate(103);
         _host.Manager.IsUnderBudgetPressure.ShouldBeTrue();
         backend.IsUnderMemoryPressure.ShouldBeTrue();
+        backend.MemoryPressureFrameId.ShouldBe(103L);
 
         _host.Host.TrackedVramBudgetBytes = long.MaxValue;
         _host.Manager.Evaluate(104);
         backend.IsUnderMemoryPressure.ShouldBeFalse();
+    }
+
+    [Test]
+    public void MemoryPressure_IsSetWhenTheStreamedTexturesUseMoreThanTheBudget()
+    {
+        using TextureResidencyBackend backend = CreateBackend();
+        AddTexture("over-budget", 1024u);
+
+        // The preview alone uses more than the budget, so the manager stops all promotions.
+        _host.Host.TrackedVramBytes = FakeTextureStreamingResidencyBackend.BytesFor(64u);
+        _host.Host.TrackedVramBudgetBytes = FakeTextureStreamingResidencyBackend.BytesFor(64u) - 1L;
+        _host.Manager.Evaluate(102);
+
+        backend.IsUnderMemoryPressure.ShouldBeTrue();
+    }
+
+    private static List<XRTexture2D> Resolve(AssetManager assets, TextureResidencyKeyIndex keys, Guid assetId)
+    {
+        List<XRTexture2D> found = [];
+        TextureResidencyBackend.ResolveLoadedTextures(assets, keys, assetId, found);
+        return found;
     }
 
     [Test]

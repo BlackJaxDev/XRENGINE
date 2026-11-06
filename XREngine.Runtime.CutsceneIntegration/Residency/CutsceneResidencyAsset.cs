@@ -11,9 +11,14 @@ namespace XREngine.Cutscenes;
 /// <param name="WorldCenter">The center of the bounding sphere in world space.</param>
 /// <param name="WorldRadius">The radius of the bounding sphere in world space. It must not be negative.</param>
 /// <param name="ProxyBytes">The estimated size of the T0 data of the asset, in bytes.</param>
+/// <param name="IsMachineDependent">
+/// True if the key uses a full file path, because the file is outside the game and engine asset folders. A manifest with
+/// such a key matches only on the machine and in the folder of the bake.
+/// </param>
 public readonly record struct CutsceneResidencyAsset(
     Guid AssetId,
     EResidencyAssetKind Kind,
     Vector3 WorldCenter,
     float WorldRadius,
-    long ProxyBytes);
+    long ProxyBytes,
+    bool IsMachineDependent = false);

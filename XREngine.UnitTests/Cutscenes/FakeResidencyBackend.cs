@@ -27,8 +27,26 @@ internal sealed class FakeResidencyBackend : IResidencyBackend
     /// <summary>The memory pressure that the session reads after each planner update.</summary>
     public bool IsUnderMemoryPressure { get; set; }
 
+    /// <summary>The evaluation frame of <see cref="IsUnderMemoryPressure"/>. The session releases data one time for each value.</summary>
+    public long MemoryPressureFrameId { get; set; }
+
+    /// <summary>True while the assets still load. The session then keeps a baked manifest and selects again later.</summary>
+    public bool AreAssetsLoading { get; set; }
+
+    /// <summary>The number of calls to <see cref="CanResolve"/>.</summary>
+    public int CanResolveCalls { get; private set; }
+
+    /// <summary>The number of calls to <see cref="BeginSelection"/>.</summary>
+    public int SelectionCount { get; private set; }
+
+    public void BeginSelection()
+        => SelectionCount++;
+
     public bool CanResolve(Guid assetId)
-        => Resolvable is null || Resolvable.Contains(assetId);
+    {
+        CanResolveCalls++;
+        return Resolvable is null || Resolvable.Contains(assetId);
+    }
 
     /// <summary>The requests above T0, in call order.</summary>
     public IEnumerable<(ResidencyTicket Ticket, ResidencyRequest Request)> UpperRequests

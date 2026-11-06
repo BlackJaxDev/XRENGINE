@@ -1169,6 +1169,10 @@ internal static partial class ProjectBuilder
         object asset = DeserializeAssetFromYaml(yaml, assetType)
             ?? throw new InvalidOperationException($"Failed to deserialize asset '{sourcePath}' as '{assetType.FullName}'.");
 
+        // The cooked build runs from another folder, so the source paths are written as portable references.
+        if (asset is XRAsset xrAsset)
+            Publishing.CookedSourcePathPolicy.MakeSourcePathsPortable(xrAsset);
+
         return CreateCookedBlob(asset);
     }
 

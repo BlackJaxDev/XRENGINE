@@ -21,29 +21,27 @@ namespace XREngine.Cutscenes;
 /// <para>
 /// The session sends only texture assets to the backend. Other kinds have no backend yet, so the session reports their
 /// count in one diagnostic, and they stay at the residency that visibility selects. A manifest diagnostic is reported one
-/// time for each manifest state: a refresh that gives the same state adds nothing.
+/// time for each reason: a refresh that gives the same reason adds nothing.
 /// </para>
 /// <para>
-/// A manifest selection asks the backend if it can find each texture of the manifest
-/// (<see cref="IResidencyBackend.CanResolve"/>). If more than <see cref="MaxUnresolvedTextureFraction"/> of the textures
-/// of a current baked manifest are not found, the manifest does not match the scene, and the session uses the approximate
-/// manifest as for a stale manifest. Textures that are not found are not sent to the backend, and one diagnostic gives their count.
+/// A manifest selection calls <see cref="IResidencyBackend.BeginSelection"/> and then resolves each texture of the manifest
+/// one time (<see cref="IResidencyBackend.CanResolve"/>). If more than
+/// <see cref="CutsceneManifestMatch.MaxUnresolvedTextureFraction"/> of the textures of a current baked manifest are not
+/// found, the manifest does not match the scene: the state is <see cref="ECutsceneManifestState.Unmatched"/>, and the session
+/// uses the approximate manifest. While the backend reports <see cref="IResidencyBackend.AreAssetsLoading"/>, a missing
+/// texture can still load, so the session keeps the baked manifest and selects again one time when the loading ends.
+/// Textures that are not found are not sent to the backend, and one diagnostic gives their count.
 /// </para>
 /// <para>
 /// After each planner update, the session reads <see cref="IResidencyBackend.IsUnderMemoryPressure"/>. Under pressure, it
 /// asks the planner to release the T1 and T2 data of at most <see cref="PressureEvictionsPerUpdate"/> assets outside the
-/// request window, farthest from the playhead first. T0 data and the data in the window stay. With no pressure, the check
-/// allocates nothing.
+/// request window, farthest from the playhead first, at most one time for each new budget evaluation
+/// (<see cref="IResidencyBackend.MemoryPressureFrameId"/>). A flag whose evaluation does not advance releases nothing more.
+/// T0 data and the data in the window stay. With no pressure, the check allocates nothing.
 /// </para>
 /// </remarks>
 public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposable
 {
-    /// <summary>
-    /// The largest fraction of the textures of a current baked manifest that the backend can fail to find. Above it, the
-    /// manifest does not match the scene, and the session uses the approximate manifest.
-    /// </summary>
-    public const double MaxUnresolvedTextureFraction = 0.1;
-
     /// <summary>The maximum number of assets that release T1 and T2 data in one update under memory pressure.</summary>
     public const int PressureEvictionsPerUpdate = 4;
 
@@ -55,9 +53,15 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     private bool _closed;
     private bool _playbackWaitEnabled;
     private double _playbackWaitMaximumSeconds = CutsceneResidencyPlanner.DefaultPlaybackWaitMaximumSeconds;
-    private ECutsceneManifestState? _reportedState;
+    private string? _reportedReason;
     private int _reportedOtherKinds;
     private int _reportedUnresolved;
+    private bool _selectWhenLoaded;
+    private CompiledCutscene? _selectedCompiled;
+    private CutsceneBindingTable? _selectedBindings;
+    private ICutsceneResidencyAssetCollector? _selectedCollector;
+    private List<CutsceneCompileDiagnostic>? _selectedDiagnostics;
+    private long _lastPressureFrameId = long.MinValue;
 
     /// <summary>Creates a session for a manifest of texture assets. The constructor attaches the planner to the backend.</summary>
     /// <param name="textureManifest">The manifest of the assets that the backend loads.</param>
@@ -88,8 +92,17 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     /// <summary>The state of the baked manifest of the asset at the last selection.</summary>
     public ECutsceneManifestState ManifestState { get; private set; }
 
-    /// <summary>True if the planner uses the approximate manifest, because the baked manifest is missing, stale, or invalid.</summary>
+    /// <summary>
+    /// True if the planner uses the approximate manifest, because the baked manifest is missing, stale, invalid, or does not
+    /// match the scene.
+    /// </summary>
     public bool IsApproximate => ManifestState != ECutsceneManifestState.Current;
+
+    /// <summary>
+    /// True while the session keeps a baked manifest with textures that are not loaded yet, and waits for the backend to end
+    /// its loading. The session then selects the manifest again one time.
+    /// </summary>
+    public bool IsWaitingForAssets => _selectWhenLoaded;
 
     /// <summary>True after <see cref="Close"/>.</summary>
     public bool IsClosed => _closed;
@@ -149,6 +162,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
 
         Selection selection = Select(compiled, bindings, collector, textureBackend);
         CutsceneResidencySession session = new(selection.TextureManifest, textureBackend, selection.State);
+        session.KeepSelectionInputs(compiled, bindings, collector, diagnostics, selection);
         session.Report(selection, diagnostics);
         return session;
     }
@@ -222,7 +236,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     /// <summary>
     /// Selects the manifest again after the timeline changed, and replaces the planner. The backend, its budget profile,
     /// the player gate, and the playback wait settings stay. The old planner closes first, so its tickets release. An open
-    /// session opens the new planner. A diagnostic is added only if the manifest state changed.
+    /// session opens the new planner. A diagnostic is added only if the reason of the manifest selection changed.
     /// </summary>
     /// <param name="compiled">The new compiled cutscene.</param>
     /// <param name="bindings">The resolved bindings of the new compile.</param>
@@ -252,6 +266,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         ManifestState = selection.State;
         RefreshCount++;
         _backend.AttachPlanner(planner);
+        KeepSelectionInputs(compiled, bindings, collector, diagnostics, selection);
         if (_opened)
             planner.Open();
         Report(selection, diagnostics);
@@ -380,22 +395,68 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         if (!double.IsFinite(deltaSeconds) || deltaSeconds < 0.0)
             deltaSeconds = 0.0;
 
+        if (_selectWhenLoaded && !_backend.AreAssetsLoading)
+            SelectAgainAfterLoading();
+
         _backend.SetPlayhead(position, rate);
         Planner.Update(position, rate, seek, deltaSeconds);
 
         // Only the data outside the window leaves. The streaming budget fit already lowers the textures in the window,
-        // and the next plan would request their levels again.
+        // and the next plan would request their levels again. A release demotes only after the demotion cooldown, so the
+        // flag stays set for some evaluations: release at most one batch for each new evaluation. A flag whose evaluation
+        // did not advance, for example when no viewport collects, releases nothing more.
         if (_backend.IsUnderMemoryPressure)
-            PressureEvictionCount += Planner.Evict(PressureEvictionsPerUpdate, outsideWindowOnly: true);
+        {
+            long frameId = _backend.MemoryPressureFrameId;
+            if (frameId != _lastPressureFrameId)
+            {
+                _lastPressureFrameId = frameId;
+                PressureEvictionCount += Planner.Evict(PressureEvictionsPerUpdate, outsideWindowOnly: true);
+            }
+        }
+    }
+
+    private void KeepSelectionInputs(
+        CompiledCutscene compiled,
+        CutsceneBindingTable bindings,
+        ICutsceneResidencyAssetCollector collector,
+        List<CutsceneCompileDiagnostic> diagnostics,
+        Selection selection)
+    {
+        _selectedCompiled = compiled;
+        _selectedBindings = bindings;
+        _selectedCollector = collector;
+        _selectedDiagnostics = diagnostics;
+        _selectWhenLoaded = selection.SelectWhenLoaded;
+    }
+
+    /// <summary>Selects the manifest one more time after the backend ended its loading. A failure gives one diagnostic.</summary>
+    private void SelectAgainAfterLoading()
+    {
+        _selectWhenLoaded = false;
+        if (_selectedCompiled is null || _selectedBindings is null || _selectedCollector is null || _selectedDiagnostics is null)
+            return;
+
+        try
+        {
+            Refresh(_selectedCompiled, _selectedBindings, _selectedCollector, _selectedDiagnostics);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _selectWhenLoaded = false;
+            Add(_selectedDiagnostics, $"The residency manifest was not selected again after the asset loading ended. The current manifest stays: {ex.Message}");
+        }
     }
 
     private void Report(Selection selection, List<CutsceneCompileDiagnostic> diagnostics)
     {
-        if (selection.State == ECutsceneManifestState.Current)
-            _reportedState = ECutsceneManifestState.Current;
-        else if (_reportedState != selection.State)
+        // The reason has no counts, so a refresh with the same reason adds nothing, and a new reason with the same state
+        // (for example a key mismatch and then an edit) adds one diagnostic.
+        if (selection.ReasonKey is null)
+            _reportedReason = null;
+        else if (!string.Equals(_reportedReason, selection.ReasonKey, StringComparison.Ordinal))
         {
-            _reportedState = selection.State;
+            _reportedReason = selection.ReasonKey;
             Add(diagnostics, selection.Message!);
         }
 
@@ -415,10 +476,12 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         ArgumentNullException.ThrowIfNull(bindings);
         ArgumentNullException.ThrowIfNull(collector);
 
+        backend.BeginSelection();
         CutsceneAsset asset = compiled.Asset;
         CutsceneResidencyManifest? manifest = null;
         ECutsceneManifestState state;
         string? reason = null;
+        string? reasonKey = null;
         try
         {
             state = CutsceneManifestHash.GetState(asset);
@@ -427,6 +490,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         {
             state = ECutsceneManifestState.Invalid;
             reason = $"The content hash of the cutscene could not be computed: {ex.Message}";
+            reasonKey = "invalid-hash";
         }
 
         if (state == ECutsceneManifestState.Current)
@@ -440,19 +504,28 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
             {
                 state = ECutsceneManifestState.Invalid;
                 reason = $"The residency manifest is not valid: {ex.Message}";
+                reasonKey = "invalid-data";
             }
         }
 
-        // The content hash does not see the scene. A new import or a moved project folder can change the asset keys, so
-        // a current manifest whose textures the backend does not find is stale.
+        // The content hash does not see the scene. A move of the assets, or assets outside the asset folders, can change the
+        // asset keys, so the session checks that the baked textures are loaded. During a load they can still come.
+        bool[]? resolved = null;
+        int textures = 0;
+        int unresolved = 0;
+        bool selectWhenLoaded = false;
+        bool loading = backend.AreAssetsLoading;
         if (manifest is not null)
         {
-            CountTextures(manifest, backend, out int bakedTextures, out int bakedUnresolved);
-            if (bakedUnresolved > bakedTextures * MaxUnresolvedTextureFraction)
+            resolved = ResolveTextures(manifest, backend, out textures, out unresolved);
+            selectWhenLoaded = unresolved > 0 && loading;
+            if (!loading && CutsceneManifestMatch.IsUnmatched(textures, unresolved))
             {
+                state = ECutsceneManifestState.Unmatched;
+                reasonKey = "unmatched";
+                reason = $"{unresolved} of {textures} baked textures of the residency manifest are not loaded textures of the scene, so the baked manifest does not match the scene. Residency uses the approximate manifest from the track ranges and the root bounds. If the scene assets moved, or are outside the game and engine asset folders, bake the manifest again.";
                 manifest = null;
-                state = ECutsceneManifestState.Stale;
-                reason = $"{bakedUnresolved} of {bakedTextures} texture assets of the baked residency manifest are not loaded textures, so the manifest does not match the scene. A new import of the scene assets or a moved project folder can cause this";
+                resolved = null;
             }
         }
 
@@ -460,33 +533,48 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         if (manifest is null)
         {
             manifest = CutsceneApproximateManifest.Build(compiled, bindings, collector);
-            reason ??= state == ECutsceneManifestState.Missing
-                ? "The cutscene has no residency manifest"
-                : "The residency manifest is stale, because the cutscene changed after the bake";
-            message = $"{reason.TrimEnd('.')}. Residency uses the approximate manifest from the track ranges and the root bounds. Bake the manifest to fix this.";
+            if (state == ECutsceneManifestState.Unmatched)
+                message = reason;
+            else
+            {
+                reasonKey ??= state == ECutsceneManifestState.Missing ? "missing" : "stale";
+                reason ??= state == ECutsceneManifestState.Missing
+                    ? "The cutscene has no residency manifest"
+                    : "The residency manifest is stale, because the cutscene changed after the bake";
+                message = $"{reason.TrimEnd('.')}. Residency uses the approximate manifest from the track ranges and the root bounds. Bake the manifest to fix this.";
+            }
+
+            resolved = ResolveTextures(manifest, backend, out textures, out unresolved);
         }
 
         int otherKinds = manifest.Assets.Length - manifest.CountKind(EResidencyAssetKind.Texture);
-        CountTextures(manifest, backend, out int textures, out int unresolved);
-        Predicate<Guid>? include = unresolved > 0 ? backend.CanResolve : null;
-        return new Selection(manifest.SelectKind(EResidencyAssetKind.Texture, include), state, message, otherKinds, textures, unresolved);
+        Predicate<Guid>? include = null;
+        if (unresolved > 0)
+        {
+            HashSet<Guid> missing = new(unresolved);
+            for (int i = 0; i < resolved!.Length; i++)
+                if (!resolved[i])
+                    missing.Add(manifest.Assets[i]);
+            include = assetId => !missing.Contains(assetId);
+        }
+
+        return new Selection(
+            manifest.SelectKind(EResidencyAssetKind.Texture, include),
+            state,
+            message,
+            reasonKey,
+            otherKinds,
+            textures,
+            unresolved,
+            selectWhenLoaded);
     }
 
-    private static void CountTextures(CutsceneResidencyManifest manifest, IResidencyBackend backend, out int textures, out int unresolved)
+    /// <summary>Resolves each texture of a manifest one time.</summary>
+    private static bool[] ResolveTextures(CutsceneResidencyManifest manifest, IResidencyBackend backend, out int textures, out int unresolved)
     {
-        textures = 0;
-        unresolved = 0;
-        Guid[] assets = manifest.Assets;
-        EResidencyAssetKind[] kinds = manifest.AssetKinds;
-        for (int i = 0; i < assets.Length; i++)
-        {
-            if (kinds[i] != EResidencyAssetKind.Texture)
-                continue;
-
-            textures++;
-            if (!backend.CanResolve(assets[i]))
-                unresolved++;
-        }
+        bool[] resolved = new bool[manifest.Assets.Length];
+        CutsceneManifestMatch.Resolve(manifest, backend.CanResolve, resolved, out textures, out unresolved);
+        return resolved;
     }
 
     private static void Add(List<CutsceneCompileDiagnostic> diagnostics, string message)
@@ -499,7 +587,9 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         CutsceneResidencyManifest TextureManifest,
         ECutsceneManifestState State,
         string? Message,
+        string? ReasonKey,
         int OtherKinds,
         int Textures,
-        int Unresolved);
+        int Unresolved,
+        bool SelectWhenLoaded);
 }

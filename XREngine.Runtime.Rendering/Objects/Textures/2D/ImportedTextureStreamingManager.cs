@@ -72,6 +72,7 @@ internal sealed partial class ImportedTextureStreamingManager
     private long _lastAvailableManagedBytes;
     private long _lastAssignedManagedBytes;
     private int _budgetPressure;
+    private long _budgetPressureFrameId = long.MinValue;
     private long _lastCompactionFrameId = long.MinValue;
 
     /// <summary>
@@ -91,6 +92,13 @@ internal sealed partial class ImportedTextureStreamingManager
     /// </summary>
     internal bool IsUnderBudgetPressure
         => Volatile.Read(ref _budgetPressure) != 0;
+
+    /// <summary>
+    /// The frame of the evaluation that wrote <see cref="IsUnderBudgetPressure"/>. A value that does not advance means that
+    /// no evaluation ran, for example because no viewport collects, so the flag is stale. Any thread can read it.
+    /// </summary>
+    internal long BudgetPressureFrameId
+        => Volatile.Read(ref _budgetPressureFrameId);
 
     private readonly record struct DeferredPromotionCandidate(
         ImportedTextureStreamingSnapshot Snapshot,
@@ -1178,6 +1186,7 @@ internal sealed partial class ImportedTextureStreamingManager
         if (snapshots.Count == 0)
         {
             Volatile.Write(ref _budgetPressure, 0);
+            Volatile.Write(ref _budgetPressureFrameId, frameId);
 
             // Log once when first called with no snapshots, to confirm Evaluate is running
             if (frameId <= 10 && frameId % 5 == 0)
@@ -1612,6 +1621,7 @@ internal sealed partial class ImportedTextureStreamingManager
         Volatile.Write(ref _lastAssignedManagedBytes, assignedManagedBytes);
         bool budgetPressure = budgetFitLimitedCount > 0 || !allowPromotions || suppressPromotionsForVulkanPressure;
         Volatile.Write(ref _budgetPressure, budgetPressure ? 1 : 0);
+        Volatile.Write(ref _budgetPressureFrameId, frameId);
 
         int pendingTextureQueueDepth = XRTexture2D.QueuedProgressiveUploadCount;
         int urgentTextureRepairDepth = 0;
@@ -2224,6 +2234,15 @@ internal sealed partial class ImportedTextureStreamingManager
             pendingTargetBytes = record.PendingTransitionTargetCommittedBytes;
             pressureDemotion = record.PendingTransitionWasPressureDemotion;
             requestDriven = record.PendingTransitionRequestDriven;
+
+            // The queue decided "request-driven" when it queued the promotion. A texture that became visible or bound while
+            // the promotion was in flight is on screen now, so it gets the fade and the pin, as a visible promotion does.
+            if (requestDriven)
+            {
+                long now = Math.Max(frameId, Volatile.Read(ref _collectFrameId));
+                if (record.LastVisibleFrameId >= now - 1 || record.LastBoundFrameId >= now - 1)
+                    requestDriven = false;
+            }
             backendName = string.IsNullOrWhiteSpace(record.PendingTransitionBackendName)
                 ? record.Backend?.Name ?? "Unknown"
                 : record.PendingTransitionBackendName;

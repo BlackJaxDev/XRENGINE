@@ -129,6 +129,7 @@ public static class CutsceneBakeTool
         long[] times = GetSampleTimes(asset, cuts);
         List<SceneNode> roots = CollectRoots(bindings, options.SceneRoots);
         List<CutsceneResidencyAsset> assets = [];
+        HashSet<Guid> machineDependent = [];
         int samplesWithoutView = 0;
 
         for (int i = 0; i < times.Length; i++)
@@ -158,6 +159,8 @@ public static class CutsceneBakeTool
             for (int a = 0; a < assets.Count; a++)
             {
                 CutsceneResidencyAsset item = assets[a];
+                if (item.IsMachineDependent)
+                    machineDependent.Add(item.AssetId);
                 float coverage = view.ScreenCoverage(item.WorldCenter, item.WorldRadius);
                 int level = CutsceneResidencyManifestBuilder.SelectLevel(coverage, options.TargetCoverage);
                 if (level >= 0)
@@ -165,6 +168,10 @@ public static class CutsceneBakeTool
             }
             builder.EndBucket();
         }
+
+        if (machineDependent.Count > 0)
+            diagnostics.Add(new CutsceneCompileDiagnostic(-1, -1,
+                $"{machineDependent.Count} texture keys of the manifest use full file paths, because the textures are outside the game and engine asset folders. The manifest matches only on this machine and in this folder. Move the textures into an asset folder to make the keys portable."));
 
         if (samplesWithoutView > 0)
             diagnostics.Add(new CutsceneCompileDiagnostic(-1, -1,

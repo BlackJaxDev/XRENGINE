@@ -42,12 +42,28 @@ public interface IResidencyBackend
     }
 
     /// <summary>
-    /// True if the backend can find the asset now. <see cref="CutsceneResidencySession"/> calls it when it selects a
-    /// manifest, to find manifest references that no longer match the scene. The default is true.
+    /// Starts a manifest selection. <see cref="CutsceneResidencySession"/> calls it before it calls <see cref="CanResolve"/>
+    /// for the assets of a selection. A backend can refresh its lookup tables one time here. The default does nothing.
+    /// </summary>
+    void BeginSelection()
+    {
+    }
+
+    /// <summary>
+    /// True if the backend can find the asset now. <see cref="CutsceneResidencySession"/> calls it one time for each asset
+    /// when it selects a manifest, to find manifest references that do not match the scene. The default is true.
     /// </summary>
     /// <param name="assetId">The asset.</param>
     bool CanResolve(Guid assetId)
         => true;
+
+    /// <summary>
+    /// True while the assets that the backend finds are still loading, for example during a model import.
+    /// <see cref="CutsceneResidencySession"/> then keeps a baked manifest whose assets it cannot find yet, and selects the
+    /// manifest again when the loading ends. Read it on the update thread. It must not allocate. The default is false.
+    /// </summary>
+    bool AreAssetsLoading
+        => false;
 
     /// <summary>
     /// True while the memory budget of the backend is under pressure. <see cref="CutsceneResidencySession"/> reads it after
@@ -56,6 +72,13 @@ public interface IResidencyBackend
     /// </summary>
     bool IsUnderMemoryPressure
         => false;
+
+    /// <summary>
+    /// The frame of the budget evaluation that set <see cref="IsUnderMemoryPressure"/>. The session releases data at most
+    /// one time for each new value, so a value that does not change (a stale flag) releases nothing more. The default is 0.
+    /// </summary>
+    long MemoryPressureFrameId
+        => 0L;
 
     /// <summary>
     /// Sets the planner that receives complete work. <see cref="CutsceneResidencySession"/> calls it one time,

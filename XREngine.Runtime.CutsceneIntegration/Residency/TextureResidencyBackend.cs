@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using XREngine.Core.Files;
-using XREngine.Data.Core;
 using XREngine.Rendering;
 
 namespace XREngine.Cutscenes;
@@ -22,13 +21,18 @@ namespace XREngine.Cutscenes;
 /// An asset ID can be a runtime ID or a stable key of <see cref="CutsceneResidencyAssetKeys"/>.
 /// </para>
 /// <para>
+/// One asset can have more than one live texture, for example the eager and the deferred texture of one source file.
+/// A request then goes to each of them, in the order of their runtime IDs, and its level is resident only when it is
+/// resident for each of them. A texture that streaming does not accept is left out of the request.
+/// </para>
+/// <para>
 /// By default, the backend holds the <see cref="ETextureStreamingBudgetProfile.Cutscene"/> budget profile while it
 /// exists. The profile is global to the streaming manager, so the backends of one manager share it with a reference count:
 /// the first backend selects the cutscene profile, and the last <see cref="Dispose"/> selects
 /// <see cref="ETextureStreamingBudgetProfile.Default"/> again.
 /// </para>
 /// </remarks>
-public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
+public sealed partial class TextureResidencyBackend : IResidencyBackend, IDisposable
 {
     /// <summary>The default largest side of T1, in texels.</summary>
     public const uint DefaultCoarseMaxDimension = 512u;
@@ -46,12 +50,12 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     private static readonly ConditionalWeakTable<ImportedTextureStreamingManager, StrongBox<int>> ProfileOwners = new();
 
     private readonly ImportedTextureStreamingManager _manager;
-    private readonly Func<Guid, XRTexture2D?> _resolveTexture;
     private readonly Action<TextureResidencyTicket> _onRequestCompleted;
     private readonly bool _ownsBudgetProfile;
     private readonly Lock _sync = new();
-    private readonly Dictionary<long, Guid> _ticketAssets = [];
-    private readonly Dictionary<Guid, List<TicketLevel>> _assetTickets = [];
+    private readonly Dictionary<long, BackendTicket> _tickets = [];
+    private readonly Dictionary<long, long> _managerTickets = [];
+    private readonly Dictionary<Guid, List<long>> _assetTickets = [];
 
     private CutsceneResidencyPlanner? _planner;
     private bool _disposed;
@@ -59,6 +63,7 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     private long _playheadFlicks;
     private double _rate = 1.0;
     private int _rejectedRequestCount;
+    private long _nextTicketId;
 
     /// <summary>
     /// Creates a backend that finds textures in the loaded assets of an asset manager and in the object cache, by runtime ID
@@ -67,7 +72,7 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     /// <param name="assets">The asset manager that holds the loaded textures.</param>
     /// <param name="useCutsceneBudgetProfile">True to hold the cutscene budget profile until <see cref="Dispose"/>.</param>
     public TextureResidencyBackend(AssetManager assets, bool useCutsceneBudgetProfile = true)
-        : this(ImportedTextureStreamingManager.Instance, CreateAssetResolver(assets), useCutsceneBudgetProfile)
+        : this(ImportedTextureStreamingManager.Instance, assets ?? throw new ArgumentNullException(nameof(assets)), new TextureResidencyKeyIndex(), useCutsceneBudgetProfile)
     {
     }
 
@@ -83,12 +88,31 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
         ImportedTextureStreamingManager manager,
         Func<Guid, XRTexture2D?> resolveTexture,
         bool useCutsceneBudgetProfile)
+        : this(manager, AdaptResolver(resolveTexture), keys: null, useCutsceneBudgetProfile)
+    {
+    }
+
+    internal TextureResidencyBackend(
+        ImportedTextureStreamingManager manager,
+        AssetManager assets,
+        TextureResidencyKeyIndex keys,
+        bool useCutsceneBudgetProfile)
+        : this(manager, (assetId, destination) => ResolveLoadedTextures(assets, keys, assetId, destination), keys, useCutsceneBudgetProfile)
+    {
+    }
+
+    private TextureResidencyBackend(
+        ImportedTextureStreamingManager manager,
+        Action<Guid, List<XRTexture2D>> resolveTextures,
+        TextureResidencyKeyIndex? keys,
+        bool useCutsceneBudgetProfile)
     {
         ArgumentNullException.ThrowIfNull(manager);
-        ArgumentNullException.ThrowIfNull(resolveTexture);
+        ArgumentNullException.ThrowIfNull(resolveTextures);
 
         _manager = manager;
-        _resolveTexture = resolveTexture;
+        _resolveTextures = resolveTextures;
+        _keys = keys;
         _onRequestCompleted = OnRequestCompleted;
         _manager.ResidencyRequestCompleted += _onRequestCompleted;
         _ownsBudgetProfile = useCutsceneBudgetProfile;
@@ -107,6 +131,25 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     /// streaming does not track the texture, or the source size of T1 is not known yet.
     /// </summary>
     public int RejectedRequestCount => Volatile.Read(ref _rejectedRequestCount);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// True while the last evaluation of the streaming manager fit at least one texture below its target to the VRAM
+    /// budget, held promotions because the streamed textures use more than the budget, or held promotions for Vulkan
+    /// allocator pressure. The per-frame transition limits of a budget profile are not memory pressure.
+    /// </remarks>
+    public bool IsUnderMemoryPressure
+        => !_disposed && _manager.IsUnderBudgetPressure;
+
+    /// <inheritdoc />
+    /// <remarks>The frame of the last streaming evaluation.</remarks>
+    public long MemoryPressureFrameId
+        => _manager.BudgetPressureFrameId;
+
+    /// <inheritdoc />
+    /// <remarks>True while model imports that register textures with streaming are active.</remarks>
+    public bool AreAssetsLoading
+        => _manager.HasActiveImportedModelImports;
 
     /// <summary>
     /// Sets the planner that receives complete work. Call it one time, before <see cref="CutsceneResidencyPlanner.Open"/>.
@@ -138,18 +181,15 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
         if (_disposed)
             return ResidencyTicket.None;
 
-        XRTexture2D? texture = _resolveTexture(request.AssetId);
-        if (texture is null)
+        XRTexture2D[] textures = ResolveCached(request.AssetId);
+        if (textures.Length == 0)
             return Reject(request, "the asset is not a loaded texture");
-
-        if (!TryResolveTargetMip(texture, request.TargetLevel, out int targetMip))
-            return Reject(request, "the source size of the texture is not known yet");
 
         long deadlineFrame = ResolveDeadlineFrame(request.Deadline);
         JobPriority priority = ResolvePriority(request);
 
-        // Hold the lock across the manager call, so that a completion that the manager reports
-        // at once on another thread waits until the ticket is in the map.
+        // Hold the lock across the manager calls, so that a completion that the manager reports
+        // at once on another thread waits until the ticket is in the maps.
         lock (_sync)
         {
             // Dispose can run between the first check and this lock. A request after it must not
@@ -157,18 +197,43 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
             if (_disposed)
                 return ResidencyTicket.None;
 
-            TextureResidencyTicket ticket = _manager.RequestResidency(texture, targetMip, deadlineFrame, priority, request.Generation);
-            if (!ticket.IsValid)
-                return Reject(request, "texture streaming does not track the texture");
-
-            _ticketAssets.Add(ticket.Id, request.AssetId);
-            if (!_assetTickets.TryGetValue(request.AssetId, out List<TicketLevel>? tickets))
+            long id = ++_nextTicketId;
+            BackendTicket entry = new(request.AssetId, request.TargetLevel, textures.Length);
+            bool sizeUnknown = false;
+            for (int i = 0; i < textures.Length; i++)
             {
-                tickets = new List<TicketLevel>(3);
-                _assetTickets.Add(request.AssetId, tickets);
+                XRTexture2D texture = textures[i];
+                if (!TextureResidencyKeyIndex.IsLive(texture))
+                    continue;
+                if (!TryResolveTargetMip(texture, request.TargetLevel, out int targetMip))
+                {
+                    sizeUnknown = true;
+                    continue;
+                }
+
+                TextureResidencyTicket ticket = _manager.RequestResidency(texture, targetMip, deadlineFrame, priority, request.Generation);
+                if (!ticket.IsValid)
+                    continue;
+
+                entry.ManagerTickets.Add(ticket);
+                _managerTickets.Add(ticket.Id, id);
             }
-            tickets.Add(new TicketLevel(ticket.Id, request.TargetLevel));
-            return new ResidencyTicket(ticket.Id);
+
+            if (entry.ManagerTickets.Count == 0)
+            {
+                return Reject(request, sizeUnknown
+                    ? "the source size of the texture is not known yet"
+                    : "texture streaming does not track the texture");
+            }
+
+            _tickets.Add(id, entry);
+            if (!_assetTickets.TryGetValue(request.AssetId, out List<long>? assetTickets))
+            {
+                assetTickets = new List<long>(3);
+                _assetTickets.Add(request.AssetId, assetTickets);
+            }
+            assetTickets.Add(id);
+            return new ResidencyTicket(id);
         }
     }
 
@@ -179,33 +244,25 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
         if (!ticket.IsValid)
             return;
 
+        BackendTicket? entry;
         lock (_sync)
         {
-            if (!_ticketAssets.Remove(ticket.Id, out Guid assetId))
+            if (!_tickets.Remove(ticket.Id, out entry))
                 return;
 
-            RemoveAssetTicket(assetId, ticket.Id);
+            for (int i = 0; i < entry.ManagerTickets.Count; i++)
+                _managerTickets.Remove(entry.ManagerTickets[i].Id);
+            RemoveAssetTicket(entry.AssetId, ticket.Id);
         }
 
-        _manager.CancelResidency(new TextureResidencyTicket(ticket.Id));
+        for (int i = 0; i < entry.ManagerTickets.Count; i++)
+            _manager.CancelResidency(entry.ManagerTickets[i]);
     }
 
     /// <inheritdoc />
-    /// <remarks>True if the asset is a live texture now. It does not check that streaming tracks the texture.</remarks>
-    public bool CanResolve(Guid assetId)
-        => !_disposed && _resolveTexture(assetId) is not null;
-
-    /// <inheritdoc />
     /// <remarks>
-    /// True while the last evaluation of the streaming manager fit at least one texture below its target to the VRAM
-    /// budget, held promotions because the streamed textures use more than the budget, or held promotions for Vulkan
-    /// allocator pressure. The per-frame transition limits of a budget profile are not memory pressure.
+    /// The level is the highest level of a ticket of this backend whose mip is resident now for each texture of the ticket.
     /// </remarks>
-    public bool IsUnderMemoryPressure
-        => !_disposed && _manager.IsUnderBudgetPressure;
-
-    /// <inheritdoc />
-    /// <remarks>The level is the highest level of a ticket of this backend whose mip is resident now.</remarks>
     public EResidencyLevel GetLevel(Guid assetId)
     {
         lock (_sync)
@@ -226,21 +283,26 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
 
     private EResidencyLevel GetLevelLocked(Guid assetId)
     {
-        if (!_assetTickets.TryGetValue(assetId, out List<TicketLevel>? tickets))
+        if (!_assetTickets.TryGetValue(assetId, out List<long>? assetTickets))
             return EResidencyLevel.None;
 
         int level = (int)EResidencyLevel.None;
-        for (int i = 0; i < tickets.Count; i++)
+        for (int i = 0; i < assetTickets.Count; i++)
         {
-            TicketLevel entry = tickets[i];
-            if (entry.Level > level
-                && _manager.GetResidencyRequestState(new TextureResidencyTicket(entry.TicketId)) == ETextureResidencyRequestState.Resident)
-            {
+            BackendTicket entry = _tickets[assetTickets[i]];
+            if (entry.Level > level && IsResidentLocked(entry))
                 level = entry.Level;
-            }
         }
 
         return (EResidencyLevel)level;
+    }
+
+    private bool IsResidentLocked(BackendTicket entry)
+    {
+        for (int i = 0; i < entry.ManagerTickets.Count; i++)
+            if (_manager.GetResidencyRequestState(entry.ManagerTickets[i]) != ETextureResidencyRequestState.Resident)
+                return false;
+        return true;
     }
 
     /// <summary>
@@ -259,12 +321,15 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
             _manager.ResidencyRequestCompleted -= _onRequestCompleted;
 
             // The manager raises completions outside its own locks, so a cancel here cannot deadlock with them.
-            foreach (long ticketId in _ticketAssets.Keys)
-                _manager.CancelResidency(new TextureResidencyTicket(ticketId));
-            _ticketAssets.Clear();
+            foreach (BackendTicket entry in _tickets.Values)
+                for (int i = 0; i < entry.ManagerTickets.Count; i++)
+                    _manager.CancelResidency(entry.ManagerTickets[i]);
+            _tickets.Clear();
+            _managerTickets.Clear();
             _assetTickets.Clear();
         }
 
+        ClearResolved();
         if (_ownsBudgetProfile)
             ReleaseBudgetProfile(_manager);
     }
@@ -302,16 +367,22 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     private void OnRequestCompleted(TextureResidencyTicket ticket)
     {
         CutsceneResidencyPlanner? planner;
+        long id;
         lock (_sync)
         {
-            if (_disposed || !_ticketAssets.ContainsKey(ticket.Id))
+            if (_disposed || !_managerTickets.TryGetValue(ticket.Id, out id) || !_tickets.TryGetValue(id, out BackendTicket? entry))
                 return;
 
+            // The planner gets one completion, when the mip is resident for each texture of the asset.
+            if (entry.Notified || !IsResidentLocked(entry))
+                return;
+
+            entry.Notified = true;
             planner = _planner;
         }
 
         // The manager sets the request state before it raises the event, so GetLevel already reports the level.
-        planner?.NotifyCompleted(new ResidencyTicket(ticket.Id));
+        planner?.NotifyCompleted(new ResidencyTicket(id));
     }
 
     private bool TryResolveTargetMip(XRTexture2D texture, int level, out int targetMip)
@@ -376,49 +447,20 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
 
     private void RemoveAssetTicket(Guid assetId, long ticketId)
     {
-        if (!_assetTickets.TryGetValue(assetId, out List<TicketLevel>? tickets))
+        if (!_assetTickets.TryGetValue(assetId, out List<long>? assetTickets))
             return;
 
-        for (int i = 0; i < tickets.Count; i++)
-        {
-            if (tickets[i].TicketId != ticketId)
-                continue;
-
-            tickets.RemoveAt(i);
-            break;
-        }
-
-        if (tickets.Count == 0)
+        assetTickets.Remove(ticketId);
+        if (assetTickets.Count == 0)
             _assetTickets.Remove(assetId);
     }
 
-    private static Func<Guid, XRTexture2D?> CreateAssetResolver(AssetManager assets)
+    /// <summary>One request of the planner, with the streaming tickets of each live texture of its asset.</summary>
+    private sealed class BackendTicket(Guid assetId, int level, int textureCount)
     {
-        ArgumentNullException.ThrowIfNull(assets);
-        TextureResidencyKeyIndex keys = new();
-        return assetId => ResolveLoadedTexture(assets, keys, assetId);
+        public Guid AssetId { get; } = assetId;
+        public int Level { get; } = level;
+        public List<TextureResidencyTicket> ManagerTickets { get; } = new(textureCount);
+        public bool Notified { get; set; }
     }
-
-    /// <summary>
-    /// Finds a loaded texture by the ID that a manifest records for it. First it looks for a runtime ID in the loaded assets
-    /// of the asset manager and then in the object cache, because a texture that a model import creates is not an asset of
-    /// the manager. Then it looks for a stable key of <see cref="CutsceneResidencyAssetKeys"/>, because a model import makes
-    /// new runtime IDs at each import.
-    /// </summary>
-    /// <param name="assets">The asset manager that holds the loaded texture assets.</param>
-    /// <param name="keys">The index of the stable texture keys.</param>
-    /// <param name="assetId">The ID that the manifest records for the texture.</param>
-    /// <returns>The texture, or null if the ID is not a live texture.</returns>
-    internal static XRTexture2D? ResolveLoadedTexture(AssetManager assets, TextureResidencyKeyIndex keys, Guid assetId)
-    {
-        if (assets.TryGetAssetByID(assetId, out XRAsset? asset))
-            return asset as XRTexture2D;
-
-        if (XRObjectBase.ObjectsCache.TryGetValue(assetId, out XRObjectBase? cached) && cached is XRTexture2D { IsDestroyed: false } texture)
-            return texture;
-
-        return keys.Find(assetId);
-    }
-
-    private readonly record struct TicketLevel(long TicketId, int Level);
 }

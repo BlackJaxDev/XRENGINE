@@ -72,6 +72,60 @@ public sealed class CutsceneRenderableAssetCollectorTests
         }
     }
 
+    [Test]
+    public void Collect_GivesTwoKeys_ForOneFileInTwoSamplerSlots()
+    {
+        // The importer makes one texture for each source file and sampler name, so one file in two slots is two textures.
+        string source = Path.Combine(Path.GetTempPath(), "cutscene-collector", "shared.png");
+        XRTexture2D mainTexture = new() { Name = "shared", OriginalPath = source, SamplerName = "_MainTex" };
+        XRTexture2D emissionTexture = new() { Name = "shared", OriginalPath = source, SamplerName = "_EmissionMap" };
+        XRMaterial material = new() { Name = "shared" };
+        material.Textures.Add(mainTexture);
+        material.Textures.Add(emissionTexture);
+        SceneNode node = new("Model");
+        node.AddComponent<ModelComponent>()!.Model = new Model(new SubMesh(new SubMeshLOD(material, mesh: null, maxVisibleDistance: 0.0f)));
+        List<CutsceneResidencyAsset> assets = [];
+
+        try
+        {
+            CutsceneRenderableAssetCollector.Instance.Collect(node, assets);
+
+            Guid[] textureKeys = [.. assets.Where(asset => asset.Kind == EResidencyAssetKind.Texture).Select(asset => asset.AssetId)];
+            textureKeys.Length.ShouldBe(2);
+            textureKeys.ShouldBeUnique();
+            textureKeys.ShouldContain(CutsceneResidencyAssetKeys.ForTexture(mainTexture));
+            textureKeys.ShouldContain(CutsceneResidencyAssetKeys.ForTexture(emissionTexture));
+        }
+        finally
+        {
+            node.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void SubMeshKeys_DifferForRootsWithTheSameName_AndForScenes()
+    {
+        SceneNode first = new("sponza");
+        SceneNode second = new("sponza");
+        XRScene scene = new("Level", first, second);
+        XRScene otherScene = new("Other", first);
+
+        try
+        {
+            Guid firstKey = CutsceneResidencyAssetKeys.ForSubMesh(first, 0, 0, scene);
+            Guid secondKey = CutsceneResidencyAssetKeys.ForSubMesh(second, 0, 0, scene);
+
+            secondKey.ShouldNotBe(firstKey);
+            CutsceneResidencyAssetKeys.ForSubMesh(first, 0, 0, scene).ShouldBe(firstKey);
+            CutsceneResidencyAssetKeys.ForSubMesh(first, 0, 0, otherScene).ShouldNotBe(firstKey);
+        }
+        finally
+        {
+            first.Destroy(now: true);
+            second.Destroy(now: true);
+        }
+    }
+
     private static (SceneNode Root, XRTexture2D Texture, SubMesh Mesh) Import()
     {
         XRTexture2D texture = new() { Name = "floor_diff", OriginalPath = Path.Combine(Path.GetTempPath(), "cutscene-collector", "floor_diff.png") };

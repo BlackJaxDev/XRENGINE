@@ -231,7 +231,7 @@ public sealed class CutsceneResidencyWiringTests
     }
 
     [Test]
-    public void MemoryPressure_ReleasesHeldLevelsOutsideTheWindow_AndNoPressureAllocatesNothing()
+    public void MemoryPressure_ReleasesHeldLevelsOutsideTheWindow_OneTimeForEachEvaluation_WithNoAllocation()
     {
         const double frame = 1.0 / 60.0;
         (SceneNode node, CutsceneAsset asset) = MakeAsset();
@@ -255,12 +255,22 @@ public sealed class CutsceneResidencyWiringTests
         ResidencyTicket heldA = backend.Requests.Single(r => r.Request.AssetId == ShotA && r.Request.TargetLevel == (int)EResidencyLevel.Target).Ticket;
         ResidencyTicket heldB = backend.Requests.Single(r => r.Request.AssetId == ShotB && r.Request.TargetLevel == (int)EResidencyLevel.Target).Ticket;
 
-        // At 3 s the window starts at 2.5 s, so shot A (0 to 2 s) is outside it. With no pressure, its hold stays.
+        // Pressure at 0 s: both shots are in the window, so nothing leaves. The session records the evaluation.
+        backend.IsUnderMemoryPressure = true;
+        backend.MemoryPressureFrameId = 5;
+        session.UpdateIdle(player, frame);
+        session.PressureEvictionCount.ShouldBe(0);
+
+        // At 3 s the window starts at 2.5 s, so shot A (0 to 2 s) is outside it. The flag is from the same evaluation
+        // (no viewport collected since then), so it is stale and releases nothing. No pressure releases nothing too.
         player.Seek(T(3), ESeekIntent.Jump);
         Step(player, session, 0.0);
         session.UpdateIdle(player, frame);
         int cancelled = backend.Cancelled.Count;
         long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 10; i++)
+            session.UpdateIdle(player, frame);
+        backend.IsUnderMemoryPressure = false;
         for (int i = 0; i < 10; i++)
             session.UpdateIdle(player, frame);
         long after = GC.GetAllocatedBytesForCurrentThread();
@@ -269,16 +279,24 @@ public sealed class CutsceneResidencyWiringTests
         backend.Cancelled.Count.ShouldBe(cancelled);
         session.PressureEvictionCount.ShouldBe(0);
 
-        // Under pressure, the hold outside the window leaves. The hold in the window and the T0 data stay.
+        // A new evaluation under pressure releases the hold outside the window, one time, with no allocation.
+        // The hold in the window and the T0 data stay.
         backend.IsUnderMemoryPressure = true;
+        backend.MemoryPressureFrameId = 6;
+
+        // The fake records each cancel in a list. Room in the list keeps that record from allocating in the measure.
+        backend.Cancelled.Capacity = backend.Cancelled.Count + 16;
+        before = GC.GetAllocatedBytesForCurrentThread();
         session.UpdateIdle(player, frame);
         session.UpdateIdle(player, frame);
+        after = GC.GetAllocatedBytesForCurrentThread();
 
         session.PressureEvictionCount.ShouldBe(1);
         backend.Cancelled.ShouldContain(heldA);
         backend.Cancelled.ShouldNotContain(heldB);
         backend.Cancelled.ShouldNotContain(t => backend.Requests.Any(r => r.Ticket == t && r.Request.TargetLevel == (int)EResidencyLevel.Proxy));
         backend.GetLevel(ShotA).ShouldBe(EResidencyLevel.Proxy);
+        (after - before).ShouldBe(0);
     }
 
     [Test]

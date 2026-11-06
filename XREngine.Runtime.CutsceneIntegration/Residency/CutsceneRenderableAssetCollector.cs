@@ -72,9 +72,9 @@ public sealed class CutsceneRenderableAssetCollector : ICutsceneResidencyAssetCo
                 if (textures[t] is not XRTexture2D texture || !HasFileSource(texture))
                     continue;
 
-                Guid key = CutsceneResidencyAssetKeys.ForTexture(texture);
+                Guid key = CutsceneResidencyAssetKeys.ForTexture(texture, out bool machineDependent);
                 if (key != Guid.Empty)
-                    destination.Add(new CutsceneResidencyAsset(key, EResidencyAssetKind.Texture, center, radius, TextureProxyBytes));
+                    destination.Add(new CutsceneResidencyAsset(key, EResidencyAssetKind.Texture, center, radius, TextureProxyBytes, machineDependent));
             }
         }
 
