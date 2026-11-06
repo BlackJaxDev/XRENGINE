@@ -321,20 +321,31 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         bool keepAudio = string.Equals(audioSignature, _audioSignature, StringComparison.Ordinal);
         AudioParts audio = keepAudio ? default : PrepareAudio(compiled, selection, audioSignature);
 
-        CutsceneResidencyPlanner previous = Planner;
-        planner.LookAhead = previous.LookAhead;
-        planner.LookBehind = previous.LookBehind;
-        planner.DwellSeconds = previous.DwellSeconds;
-        planner.DwellMoveThreshold = previous.DwellMoveThreshold;
-        previous.Close();
+        try
+        {
+            CutsceneResidencyPlanner previous = Planner;
+            planner.LookAhead = previous.LookAhead;
+            planner.LookBehind = previous.LookBehind;
+            planner.DwellSeconds = previous.DwellSeconds;
+            planner.DwellMoveThreshold = previous.DwellMoveThreshold;
+            previous.Close();
 
-        Planner = planner;
-        ManifestState = selection.State;
-        RefreshCount++;
-        _backend.AttachPlanner(planner);
-        KeepSelectionInputs(compiled, bindings, collector, diagnostics, selection);
-        if (_opened)
-            planner.Open();
+            Planner = planner;
+            ManifestState = selection.State;
+            RefreshCount++;
+            _backend.AttachPlanner(planner);
+            KeepSelectionInputs(compiled, bindings, collector, diagnostics, selection);
+            if (_opened)
+                planner.Open();
+        }
+        catch
+        {
+            // The prepared audio part was not installed, so nothing else releases it.
+            if (!keepAudio)
+                (audio.Backend as IDisposable)?.Dispose();
+            throw;
+        }
+
         if (!keepAudio)
             InstallAudio(audio);
         Report(selection, diagnostics);

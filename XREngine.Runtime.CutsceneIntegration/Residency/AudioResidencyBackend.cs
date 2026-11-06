@@ -300,7 +300,9 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
 
     /// <summary>
     /// Gets the inputs of the backend of an asset as one string: the folder of the asset file, the duration, each audio clip
-    /// (source path, start, duration, offset), and each proxy (reference, source hash, data length).
+    /// (source path, start, duration, offset, and the length and last write time of its source file), and each proxy
+    /// (reference, source hash, data length). The file state makes an edit of a source file on disk change the string,
+    /// because it can change whether a proxy is current.
     /// Two compiles with the same string give the same backend.
     /// </summary>
     /// <param name="asset">The cutscene asset.</param>
@@ -308,7 +310,8 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
     {
         ArgumentNullException.ThrowIfNull(asset);
         StringBuilder text = new();
-        text.Append(Path.GetDirectoryName(asset.FilePath)).Append('|').Append(asset.Duration.Flicks);
+        string? assetDirectory = Path.GetDirectoryName(asset.FilePath);
+        text.Append(assetDirectory).Append('|').Append(asset.Duration.Flicks);
         for (int t = 0; t < asset.Tracks.Count; t++)
         {
             if (asset.Tracks[t] is not AudioTrack track)
@@ -319,6 +322,7 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
                     continue;
                 text.Append("|c:").Append(t).Append(',').Append(clip.SourcePath).Append(',').Append(clip.Start.Flicks)
                     .Append(',').Append(clip.Duration.Flicks).Append(',').Append(clip.ClipOffset.Flicks);
+                AppendFileState(text, clip.SourcePath, assetDirectory);
             }
         }
 
@@ -328,6 +332,26 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
                 if (proxies[i] is { } proxy)
                     text.Append("|p:").Append(proxy.SourceReference).Append(',').Append(proxy.SourceContentHash).Append(',').Append(proxy.EncodedData.Length);
         return text.ToString();
+    }
+
+    // Appends the length and the last write time of a source file, or a marker for a file that does not exist or has no path.
+    private static void AppendFileState(StringBuilder text, string? sourcePath, string? assetDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath))
+            return;
+
+        try
+        {
+            FileInfo info = new(AudioTrackEvaluator.ResolveSourcePath(sourcePath, assetDirectory));
+            if (info.Exists)
+                text.Append(',').Append(info.Length).Append(',').Append(info.LastWriteTimeUtc.Ticks);
+            else
+                text.Append(",missing");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            text.Append(",unreadable");
+        }
     }
 
     private void CollectSources(CutsceneAsset asset)

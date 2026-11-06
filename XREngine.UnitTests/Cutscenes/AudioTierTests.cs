@@ -930,12 +930,12 @@ public sealed class AudioTierTests
     public void Worker_GatedSeekOnARealThread_ClosesTheDecoderAtTheEndOfTheSeek()
     {
         (string directory, _) = MakeAsset(proxy: false, staleProxy: false);
+        using ManualResetEventSlim entered = new();
+        using ManualResetEventSlim gate = new();
+        RecordingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(Path.Combine(directory, "tone.wav")));
+        AudioDecoderSeekWorker worker = new(decoder, TaskScheduler.Default);
         try
         {
-            using ManualResetEventSlim entered = new();
-            using ManualResetEventSlim gate = new();
-            RecordingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(Path.Combine(directory, "tone.wav")));
-            AudioDecoderSeekWorker worker = new(decoder, TaskScheduler.Default);
             decoder.BeforeSeek = _ =>
             {
                 entered.Set();
@@ -951,6 +951,67 @@ public sealed class AudioTierTests
             decoder.Disposed.ShouldBeFalse();
             gate.Set();
             SpinWait.SpinUntil(() => decoder.Disposed, TimeSpan.FromSeconds(10)).ShouldBeTrue();
+        }
+        finally
+        {
+            // A failed assert must not leave the seek blocked with the file open, or the delete hides the failure.
+            gate.Set();
+            worker.Close();
+            SpinWait.SpinUntil(() => decoder.Disposed, TimeSpan.FromSeconds(10));
+            System.IO.Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Worker_UncaughtSeekError_ReportsIdleWithAFailure_AndAClosedWorkerDisposesInTheTask()
+    {
+        (string directory, _) = MakeAsset(proxy: false, staleProxy: false);
+        try
+        {
+            // An error that the seek loop does not catch ends the task. The worker is then idle with a failure, so the
+            // channel keeps the proxy, and a later close disposes the decoder at once.
+            ManualScheduler scheduler = new();
+            RecordingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(Path.Combine(directory, "tone.wav")));
+            AudioDecoderSeekWorker worker = new(decoder, scheduler);
+            decoder.BeforeSeek = _ => throw new OutOfMemoryException("The test seek ran out of memory.");
+            worker.Request(100);
+            scheduler.RunAll();
+            worker.TryGetIdle(out _, out Exception? failure).ShouldBeTrue();
+            failure.ShouldNotBeNull();
+            decoder.Disposed.ShouldBeFalse();
+            worker.Close();
+            decoder.Disposed.ShouldBeTrue();
+
+            // A close during the seek, before the error: the task disposes the decoder at its end.
+            RecordingDecoder closing = new(AudioTrackEvaluator.OpenDefaultDecoder(Path.Combine(directory, "tone.wav")));
+            AudioDecoderSeekWorker closedWorker = new(closing, scheduler);
+            closing.BeforeSeek = _ =>
+            {
+                closedWorker.Close();
+                closing.Disposed.ShouldBeFalse();
+                throw new OutOfMemoryException("The test seek ran out of memory.");
+            };
+            closedWorker.Request(100);
+            scheduler.RunAll();
+            closing.Disposed.ShouldBeTrue();
+        }
+        finally
+        {
+            System.IO.Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void AudioInputSignature_ChangesWhenASourceFileChangesOnDisk()
+    {
+        (string directory, CutsceneAsset asset) = MakeAsset(proxy: true, staleProxy: false);
+        try
+        {
+            string before = AudioResidencyBackend.GetInputSignature(asset);
+            AudioResidencyBackend.GetInputSignature(asset).ShouldBe(before);
+
+            WriteToneWav(Path.Combine(directory, "tone.wav"), Rate * 5);
+            AudioResidencyBackend.GetInputSignature(asset).ShouldNotBe(before);
         }
         finally
         {
