@@ -37,9 +37,12 @@ While no engine window has focus and `UnfocusedTargetFramesPerSecond` is null,
 the desktop limit is 30 Hz. A window that opens behind another app starts in
 this state. `XRE_DESKTOP_RENDER_UNCAPPED=1` also removes this limit.
 
-The editor sets its Windows GPU scheduling class to BelowNormal at startup, so
-games, VR compositors, and the desktop get the GPU first. Set
-`XRE_EDITOR_NORMAL_GPU_PRIORITY=1` to keep the Normal class.
+In desktop mode, the editor sets its Windows GPU scheduling class to
+BelowNormal, so games and the desktop get the GPU first. When the VR launch
+mode is not `Desktop`, or while a VR runtime is active, the editor uses the
+Normal class. At BelowNormal, a VR compositor at Normal gets the GPU ahead of
+the editor, and the editor then submits no XR frames. Set
+`XRE_EDITOR_NORMAL_GPU_PRIORITY=1` to always keep the Normal class.
 
 The VR runtime always paces frames to the headset refresh rate through
 `xrWaitFrame` (OpenXR) or `WaitGetPoses` (OpenVR). Thus the presented VR rate
