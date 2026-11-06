@@ -125,6 +125,18 @@ When the unit-testing bootstrap starts `monado-service.exe`, it sets `U_PACING_A
 
 The visible simulated-HMD preview is the `monado-service.exe` windowed compositor target, not `monado-gui.exe`. When an OpenXR session is active, the staged Windows build titles that window with the requested headset preset, internal per-eye resolution, current window size, and preview-eye scale. Leave `XRT_WINDOW_PEEK` unset for the default editor path. It enables Monado separate experimental peek target.
 
+The Monado fork simulates eye gaze from the mouse on that window. Move the mouse over the left or right eye image, and the simulated HMD reports a gaze through `XR_EXT_eye_gaze_interaction`. The gaze starts at the eye under the mouse and goes through the point under the mouse. The gaze keeps its last point when the mouse leaves the eye image. Right-click the window to select one of these modes:
+
+| Mode | Behavior |
+| --- | --- |
+| Hover | The gaze follows the mouse over an eye image. This is the default. |
+| Left click / drag | The gaze moves only while you hold the left mouse button. |
+| Fixed straight ahead | The gaze does not move. |
+
+The `SIMULATED_EYE_GAZE` environment variable (`hover`, `click`, or `off`) sets the startup mode. With `off`, the simulated HMD does not report eye gaze support, and the right-click menu cannot turn it on.
+
+When the runtime reports eye gaze support, XRENGINE enables `XR_EXT_eye_gaze_interaction` and samples the gaze pose at the predicted display time. With `VR.Foveation.Mode=EyeTracked`, each view projects the point 1 m along the gaze ray and uses it as `ViewFoveationContext.RenderTargetUvCenter`. On Vulkan, eye-tracked mode can use the fragment shading rate or fragment density map path when the runtime has eye gaze but no runtime foveation. When no current gaze sample exists, the view uses `VrFoveationCenterUv`.
+
 ### No-HMD test lanes
 
 | Lane | Selection | Use |

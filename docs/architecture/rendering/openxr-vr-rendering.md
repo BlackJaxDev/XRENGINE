@@ -35,7 +35,7 @@ Mutable render state belongs to a view, not to the renderer. On Vulkan, each eye
 - `VR.AllowDesktopEditing=true`: the desktop editor view has its own camera, visible set, and history. VR eyes use a separate combined visibility pass.
 - `VR.AllowDesktopEditing=false`: one collect-visible pass covers the left eye, the right eye, and the smoothed cyclopean desktop view. `ViewRenderGroupContext.BuildCombinedRuntimeVisibilityFrustum(...)` builds the conservative frustum. Each view keeps its own matrices, targets, and command state.
 
-`ViewFoveationContext` carries requested and effective `EVrFoveationMode`, quality preset, foveal center, and fallback reason for each view. Foveation never shrinks the visibility frustum. An explicit request that the backend cannot honor reports a diagnostic.
+`ViewFoveationContext` carries requested and effective `EVrFoveationMode`, quality preset, foveal center, and fallback reason for each view. Foveation never shrinks the visibility frustum. An explicit request that the backend cannot honor reports a diagnostic. In eye-tracked mode, the foveal center comes from the `XR_EXT_eye_gaze_interaction` pose when the runtime supports it. The gaze-driven center stays out of the foveation resource key, so a moving gaze changes only shader data and does not recreate per-view resources.
 
 `OpenXrRenderPacingMode` selects the thread that owns `xrWaitFrame`, `xrBeginFrame`, and `xrLocateViews`: `InRenderCallback`, `PostRenderCallback`, `DedicatedThread` (default), or `CollectVisibleThread`. `xrEndFrame` and layer submission stay on the OpenXR render path in all modes.
 

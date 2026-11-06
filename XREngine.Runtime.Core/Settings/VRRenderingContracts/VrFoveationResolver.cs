@@ -81,6 +81,13 @@ public static class VrFoveationResolver
             if (capabilities.OpenXrRuntimeFoveation)
                 return EVrFoveationCapabilityPath.OpenXrRuntimeFoveation;
 
+            // With a runtime gaze source, the engine shading-rate paths can move their center to the gaze.
+            if (capabilities.OpenXrEyeGaze && capabilities.VulkanFragmentShadingRate)
+                return EVrFoveationCapabilityPath.VulkanFragmentShadingRate;
+
+            if (capabilities.OpenXrEyeGaze && capabilities.VulkanFragmentDensityMap)
+                return EVrFoveationCapabilityPath.VulkanFragmentDensityMap;
+
             // If no specific Vulkan/OpenXR paths are available for eye-tracked foveation, return None.
             return EVrFoveationCapabilityPath.None;
         }
