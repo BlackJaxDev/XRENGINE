@@ -92,6 +92,8 @@ public sealed class CutsceneCameraRouter
         }
     }
 
+    // A scrub raises a discontinuity in each frame. A change event would allocate its arguments when another
+    // object listens to the camera. The history consumers read the epoch, so they do not need the event.
     private void OnDiscontinuity(CutsceneDiscontinuity discontinuity)
-        => _viewport?.InvalidateTemporalHistory();
+        => _viewport?.InvalidateTemporalHistory(publishNotifications: false);
 }

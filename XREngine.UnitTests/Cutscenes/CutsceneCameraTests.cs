@@ -150,6 +150,31 @@ public sealed class CutsceneCameraTests
     }
 
     [Test]
+    public void ScrubInsideOneShot_WithRouter_AllocatesNothing()
+    {
+        // Each scrub step is a discontinuity, so the router invalidates the temporal history at each step.
+        // In the editor, other objects listen to the camera, so a change event would allocate its arguments.
+        using Rig rig = MakeRig();
+        XRViewport viewport = CreateViewport();
+        new CutsceneCameraRouter(rig.Player).Attach(viewport);
+        rig.Cameras[0].Camera.PropertyChanged += static (_, _) => { };
+        for (int i = 0; i < 50; i++)
+            SeekAndTick(rig.Player, 0.1 + (i % 18) * 0.1);
+
+        ulong epochBefore = rig.Cameras[0].Camera.TemporalHistoryEpoch;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 500; i++)
+        {
+            rig.Player.Seek(T(0.1 + (i % 18) * 0.1), ESeekIntent.Scrub);
+            rig.Player.Tick(0);
+        }
+        long after = GC.GetAllocatedBytesForCurrentThread();
+
+        (after - before).ShouldBe(0);
+        rig.Cameras[0].Camera.TemporalHistoryEpoch.ShouldBe(epochBefore + 500UL);
+    }
+
+    [Test]
     public void PlaybackInsideOneShot_RaisesNoDiscontinuity()
     {
         using Rig rig = MakeRig();
