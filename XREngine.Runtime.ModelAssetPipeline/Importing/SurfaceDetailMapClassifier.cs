@@ -4,7 +4,7 @@ using XREngine.Imaging;
 namespace XREngine.Rendering.Models;
 
 /// <summary>
-/// Classifies a surface-detail texture as a normal, bump or height map from its pixels.
+/// Classifies a surface-detail texture as a normal, albedo, bump or height map from its pixels.
 /// Results are cached by file path for the process lifetime.
 /// </summary>
 public static class SurfaceDetailMapClassifier
@@ -13,6 +13,9 @@ public static class SurfaceDetailMapClassifier
     private const float NormalMinMeanBlue = 0.6f;
     private const float NormalMaxRedGreenOffset = 0.2f;
     private const float NormalMinMeanChroma = 0.08f;
+
+    // Height and bump maps are grayscale. A colored map that is not a normal map is a color texture.
+    private const float AlbedoMinMeanChroma = 0.08f;
 
     // Detail deviation from the base (median) value, and the minimum detail coverage.
     private const float DetailThreshold = 0.08f;
@@ -111,6 +114,10 @@ public static class SurfaceDetailMapClassifier
             Math.Abs(meanRed - 0.5f) <= NormalMaxRedGreenOffset &&
             Math.Abs(meanGreen - 0.5f) <= NormalMaxRedGreenOffset)
             return ESurfaceDetailMapMode.Normal;
+
+        // Strong color that is not a normal map is a color texture filed in a detail slot.
+        if (meanChroma >= AlbedoMinMeanChroma)
+            return ESurfaceDetailMapMode.Albedo;
 
         Span<float> values = luminance.AsSpan(0, count);
         values.Sort();

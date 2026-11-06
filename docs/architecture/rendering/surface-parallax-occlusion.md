@@ -17,6 +17,7 @@ selects how the texture is used:
 | `Height` | POM plus height-derived lighting normals. |
 | `Bump` | Height-derived lighting normals only. |
 | `Normal` | Tangent-space RGB normal map. |
+| `Albedo` | Color texture in a detail slot: no surface detail; it becomes the base color when the material has none. |
 
 The source slot does not settle this. OBJ `map_bump` files can be height fields
 (Sponza bricks: white bricks, dark mortar) or embossed bump maps (Sponza lion,
@@ -30,6 +31,7 @@ at most 128 x 128 pixels:
 
 1. **Normal:** mean blue at least `0.6`, mean red and green within `0.2` of
    `0.5`, and mean chroma at least `0.08`.
+   Otherwise **Albedo** when mean chroma is at least `0.08` (a colored map).
 2. Otherwise grayscale. Count samples brighter or darker than the median by more
    than `0.08`. **Bump** when the smaller side is at least 35 % of the larger
    side (balanced detail around a flat base) or when less than 2 % of the samples

@@ -42,6 +42,14 @@ public sealed class SurfaceDetailMapClassifierTests
     }
 
     [Test]
+    public void ColoredTexture_ClassifiesAsAlbedo()
+    {
+        byte[] pixels = Fill((x, y) => x % 2 == 0 ? ((byte)200, (byte)60, (byte)40) : ((byte)50, (byte)160, (byte)70));
+
+        SurfaceDetailMapClassifier.Classify(pixels, Size, Size).ShouldBe(ESurfaceDetailMapMode.Albedo);
+    }
+
+    [Test]
     public void UniformGray_ClassifiesAsBump()
     {
         byte[] pixels = Fill((x, y) => Gray(128));

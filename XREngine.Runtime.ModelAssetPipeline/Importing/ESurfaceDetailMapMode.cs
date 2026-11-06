@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Models;
 public enum ESurfaceDetailMapMode
 {
     /// <summary>
-    /// Classifies the texture content. Blue-dominant RGB is a normal map. A grayscale map whose
+    /// Classifies the texture content. Blue-dominant RGB is a normal map. Other colored maps are albedo (diffuse) textures. A grayscale map whose
     /// bright and dark details are balanced around its base value is a bump map. Other grayscale
     /// maps are height maps. An unreadable texture follows its source slot: a normal slot is a
     /// normal map and a bump or height slot is a bump map.
@@ -30,4 +30,10 @@ public enum ESurfaceDetailMapMode
     /// Tangent-space RGB normal map.
     /// </summary>
     Normal,
+
+    /// <summary>
+    /// Color (albedo, diffuse) texture filed in a detail slot. It is not used as surface detail. When the
+    /// material has no base-color texture, it becomes the base color.
+    /// </summary>
+    Albedo,
 }

@@ -1109,14 +1109,17 @@ namespace XREngine
         /// </summary>
         /// <param name="usesHeightMap">True for a bump or height map (height-derived lighting normals).</param>
         /// <param name="usesParallax">True for a height map (parallax occlusion mapping).</param>
+        /// <param name="albedoIndex">The slot index when the texture is a color (albedo) texture; otherwise -1. The method then returns -1.</param>
         private static int ResolveSurfaceDetailTexture(
             List<TextureSlot> textures,
             XRTexture[] textureList,
             out bool usesHeightMap,
-            out bool usesParallax)
+            out bool usesParallax,
+            out int albedoIndex)
         {
             usesHeightMap = false;
             usesParallax = false;
+            albedoIndex = -1;
             int index = ResolveTextureIndex(textures, TextureType.Normals, TextureType.NormalCamera);
             bool normalSlot = index >= 0;
             if (!normalSlot)
@@ -1128,6 +1131,13 @@ namespace XREngine
             if (mode == ESurfaceDetailMapMode.Auto &&
                 !SurfaceDetailMapClassifier.TryClassifyFile((ResolveTexture(textureList, index) as XRTexture2D)?.FilePath, out mode))
                 mode = normalSlot ? ESurfaceDetailMapMode.Normal : ESurfaceDetailMapMode.Bump;
+
+            // A color texture filed in a detail slot is not surface detail. It can still supply the base color.
+            if (mode == ESurfaceDetailMapMode.Albedo)
+            {
+                albedoIndex = index;
+                return -1;
+            }
 
             usesHeightMap = mode is ESurfaceDetailMapMode.Height or ESurfaceDetailMapMode.Bump;
             usesParallax = mode == ESurfaceDetailMapMode.Height;
@@ -1244,7 +1254,9 @@ namespace XREngine
 
             int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
 
-            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out bool usesParallax);
+            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out bool usesParallax, out int albedoDetailIndex);
+            if (diffuseIndex < 0 && albedoDetailIndex >= 0)
+                diffuseIndex = albedoDetailIndex;
             int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
             int metallicIndex = ResolveTextureIndex(textures, TextureType.Metalness);
@@ -1498,7 +1510,7 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out _);
+            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out _, out _);
 
             int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
@@ -1912,7 +1924,7 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out bool usesParallax);
+            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out bool usesParallax, out _);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
 
             XRTexture? diffuseSrc = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
