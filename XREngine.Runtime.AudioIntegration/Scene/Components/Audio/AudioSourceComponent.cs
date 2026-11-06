@@ -878,11 +878,17 @@ namespace XREngine.Components
         public int ListenerVersion => Volatile.Read(ref _listenerVersion);
 
         public void AddSourceToListener(ListenerContext listener)
-            => ActiveListeners.GetOrAdd(listener, AddSource);
+        {
+            if (ActiveListeners.ContainsKey(listener))
+                return;
+
+            // The version changes after the source is in the table, so a reader that sees the new version also sees the source.
+            ActiveListeners.GetOrAdd(listener, AddSource);
+            Interlocked.Increment(ref _listenerVersion);
+        }
 
         private AudioSource AddSource(ListenerContext x)
         {
-            Interlocked.Increment(ref _listenerVersion);
             var s = x.TakeSource();
             //s.SourceType = Type;
             s.RolloffFactor = RolloffFactor;
@@ -904,9 +910,12 @@ namespace XREngine.Components
             return s;
         }
 
-        /// <summary>Removes the source of this component from a listener and gives the source back to the listener.</summary>
+        /// <summary>
+        /// Removes the source of this component from a listener and gives the source back to the listener's pool.
+        /// A caller that keeps its own list of the sources must refresh it when <see cref="ListenerVersion"/> changes.
+        /// </summary>
         /// <param name="listener">The listener.</param>
-        public void RemoveSourceFromListener(ListenerContext listener)
+        internal void RemoveSourceFromListener(ListenerContext listener)
         {
             if (!ActiveListeners.TryRemove(listener, out var source))
                 return;

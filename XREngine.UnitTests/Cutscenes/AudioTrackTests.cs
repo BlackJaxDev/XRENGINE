@@ -56,9 +56,18 @@ public sealed class AudioTrackTests
 
         public Dictionary<uint, FakeSource> Sources { get; } = [];
 
-        // A destroyed source answers with a detached state, as a native transport ignores a stale handle.
+        /// <summary>The number of calls on a source handle after the source was destroyed. A correct owner makes none.</summary>
+        public int UseAfterDestroy { get; private set; }
+
+        // A call on a destroyed source is a defect of the caller. The fake counts it, so a test can assert zero,
+        // and answers with a detached state, so the teardown of a failed test can still run.
         private FakeSource Get(AudioSourceHandle source)
-            => Sources.TryGetValue(source.Id, out FakeSource? state) ? state : new FakeSource();
+        {
+            if (Sources.TryGetValue(source.Id, out FakeSource? state))
+                return state;
+            UseAfterDestroy++;
+            return new FakeSource();
+        }
         public bool ClockAvailable { get; set; } = true;
         public bool Recording { get; set; } = true;
         public long LatencyNanoseconds { get; set; }
@@ -251,6 +260,8 @@ public sealed class AudioTrackTests
         {
             Player.Stop();
             Table.Dispose();
+            foreach (FakeTransport transport in Transports)
+                transport.UseAfterDestroy.ShouldBe(0);
             foreach (ListenerContext listener in Listeners)
                 listener.Dispose();
             File.Delete(Path);
@@ -828,5 +839,49 @@ public sealed class AudioTrackTests
         source.Queue.Count.ShouldBe(4);
         FirstQueuedSample(source).ShouldBe((int)rig.Player.Position.ToSamples(SampleRate));
         rig.Player.Stop();
+
+        // The removed source went back to its listener pool. The channel wrote nothing to it after the removal.
+        replacement.UseAfterDestroy.ShouldBe(0);
+        foreach (FakeTransport transport in rig.Transports)
+            transport.UseAfterDestroy.ShouldBe(0);
+        source.Playing.ShouldBeFalse();
+    }
+
+    [Test]
+    public void WarmUpThatNeverEnds_FallsBackAfterTheBound()
+    {
+        // The transport answers, but the device never reaches the queue: frame 0 with a 50 ms latency is always before the restart frame.
+        // The bound is max(50 ms + 250 ms, 500 ms) = 500 ms of play steps after the restart.
+        using Rig rig = MakeRig();
+        foreach (FakeTransport transport in rig.Transports)
+        {
+            transport.SetSampleFrame(0);
+            transport.LatencyNanoseconds = 50_000_000;
+        }
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        for (int i = 0; i < 24; i++)
+            rig.Player.Tick(0.02);
+        rig.Player.IsAudioClockFallback.ShouldBeFalse();
+        rig.Player.Clock.Mode.ShouldBe(ECutsceneClockMode.AudioDisciplined);
+        rig.Player.Diagnostics.ShouldBeEmpty();
+
+        for (int i = 0; i < 3; i++)
+            rig.Player.Tick(0.02);
+        rig.Player.IsAudioClockFallback.ShouldBeTrue();
+        rig.Player.Clock.Mode.ShouldBe(ECutsceneClockMode.Wall);
+        rig.Player.Diagnostics.Count.ShouldBe(1);
+        rig.Player.Diagnostics[0].Message.ShouldContain("cannot report a playback clock");
+
+        // More steps add no diagnostic. The clock comes back when the device reaches the queue.
+        for (int i = 0; i < 10; i++)
+            rig.Player.Tick(0.02);
+        rig.Player.Diagnostics.Count.ShouldBe(1);
+        foreach (FakeTransport transport in rig.Transports)
+            transport.SetSampleFrame(4000);
+        rig.Player.Tick(0.02);
+        rig.Player.IsAudioClockFallback.ShouldBeFalse();
+        rig.Player.Clock.Mode.ShouldBe(ECutsceneClockMode.AudioDisciplined);
     }
 }

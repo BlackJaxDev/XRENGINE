@@ -48,6 +48,10 @@ internal sealed class CutsceneAudioChannel
     private bool _needsRestart;
     private float _appliedGain = float.NaN;
 
+    // The wall time of the play steps in the current warm-up, and the output latency of the last clock reading.
+    private double _warmUpSeconds;
+    private long _lastLatencyNanoseconds;
+
     public CutsceneAudioChannel(int trackIndex, AudioTrack track)
     {
         TrackIndex = trackIndex;
@@ -139,14 +143,16 @@ internal sealed class CutsceneAudioChannel
     /// Reads the frame of the clip file that the listener hears now, from the clock of the first source.
     /// The value is the number of frames before the queue, plus the source position, minus the output latency.
     /// </summary>
+    /// <param name="deltaSeconds">The wall time of this play step. It counts toward the warm-up bound.</param>
     /// <param name="frame">The heard frame in the file.</param>
     /// <param name="warmingUp">
     /// True if the position has no valid value yet, but this is expected: the listener does not hear the queue of the last
     /// restart yet (the value is below the restart frame), or the sources wait for a restart because their queues differ.
-    /// False if the transport cannot report a clock.
+    /// A warm-up that lasts longer than <see cref="WarmUpBoundSeconds"/> is a lost clock, so the value is then false.
+    /// False also if the transport cannot report a clock.
     /// </param>
     /// <returns>True if the frame is valid.</returns>
-    public bool TryReadHeardFrame(out long frame, out bool warmingUp)
+    public bool TryReadHeardFrame(double deltaSeconds, out long frame, out bool warmingUp)
     {
         frame = 0;
         warmingUp = false;
@@ -155,14 +161,12 @@ internal sealed class CutsceneAudioChannel
 
         // Queues that differ give a wrong queue start until the restart of the next service.
         if (_needsRestart)
-        {
-            warmingUp = true;
-            return false;
-        }
+            return WarmUp(deltaSeconds, out warmingUp);
 
         AudioSource primary = _sources[0];
         if (!primary.TryGetPlaybackClock(out long sampleFrame, out long latencyNanoseconds))
             return false;
+        _lastLatencyNanoseconds = latencyNanoseconds;
 
         long queueStart = _nextFrame - (long)primary.BuffersQueued * ChunkFrames;
         long latencyFrames = (long)((Int128)latencyNanoseconds * _decoder.SampleRate / 1_000_000_000L);
@@ -170,13 +174,25 @@ internal sealed class CutsceneAudioChannel
 
         // No frame before the restart frame was queued, so the device still plays older output. The clock must not follow it.
         if (heard < _restartFrame)
-        {
-            warmingUp = true;
-            return false;
-        }
+            return WarmUp(deltaSeconds, out warmingUp);
 
+        _warmUpSeconds = 0.0;
         frame = heard;
         return true;
+    }
+
+    /// <summary>
+    /// The longest expected warm-up after a restart, in seconds of wall time: the output latency plus 250 ms, and at least 500 ms.
+    /// </summary>
+    public double WarmUpBoundSeconds
+        => Math.Max(_lastLatencyNanoseconds / 1e9 + 0.25, 0.5);
+
+    // Counts the step toward the warm-up. Past the bound, the device does not move or the queues never agree, so the clock is lost.
+    private bool WarmUp(double deltaSeconds, out bool warmingUp)
+    {
+        _warmUpSeconds += Math.Max(0.0, deltaSeconds);
+        warmingUp = _warmUpSeconds <= WarmUpBoundSeconds;
+        return false;
     }
 
     /// <summary>
@@ -188,6 +204,9 @@ internal sealed class CutsceneAudioChannel
         if (_component is null)
             return;
 
+        // A listener change since the last service must not leave a removed source in the list.
+        if (RefreshSources())
+            _appliedGain = float.NaN;
         if (_streaming)
             StopSources();
         _streaming = false;
@@ -206,6 +225,7 @@ internal sealed class CutsceneAudioChannel
         if (component is null)
             return;
 
+        RefreshSources();
         if (streaming)
             StopSources();
         RestoreSources();
@@ -266,21 +286,34 @@ internal sealed class CutsceneAudioChannel
     }
 
     // Puts back the play-on-queue flag and the gain of each source in the list, then clears the list.
+    // A source that left the listener table went back to the listener pool, and another owner can use it now,
+    // so the method writes nothing to it.
     private void RestoreSources()
     {
-        float gain = _component?.Gain ?? 1.0f;
+        AudioSourceComponent? component = _component;
+        float gain = component?.Gain ?? 1.0f;
         for (int i = 0; i < _sourceCount; i++)
         {
-            _sources[i].AutoPlayOnQueue = _savedAutoPlay[i];
-            _sources[i].Gain = gain;
+            AudioSource source = _sources[i];
+            if (component is null || !IsInTable(component, source))
+                continue;
+            source.AutoPlayOnQueue = _savedAutoPlay[i];
+            source.Gain = gain;
         }
         Array.Clear(_sources);
         _sourceCount = 0;
     }
 
+    private static bool IsInTable(AudioSourceComponent component, AudioSource source)
+        => component.ActiveListeners.TryGetValue(source.ParentListener, out AudioSource? current) && ReferenceEquals(current, source);
+
     private void Restart(long targetFrame)
     {
         IStreamingAudioDecoder decoder = _decoder!;
+
+        // A restart because the queues differ keeps the warm-up time, so a mismatch that comes back each time reaches the bound.
+        if (!_needsRestart)
+            _warmUpSeconds = 0.0;
         StopSources();
 
         long frame = Math.Clamp(targetFrame, 0L, _endFrame);

@@ -237,9 +237,13 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     /// If the transport cannot report a clock, this changes the clock to <see cref="ECutsceneClockMode.Wall"/> and adds one diagnostic.
     /// When the clock is available again, the mode goes back to <see cref="ECutsceneClockMode.AudioDisciplined"/>.
     /// </summary>
+    /// <param name="deltaSeconds">
+    /// The wall time of this play step. A warm-up after a restart that lasts longer than the output latency plus 250 ms
+    /// (at least 500 ms) of play steps counts as a lost clock.
+    /// </param>
     /// <param name="position">The heard cutscene time.</param>
     /// <returns>False if no track can give a position now, or if the clock is not in audio mode.</returns>
-    public bool TryReadHeardPosition(out CutsceneTime position)
+    public bool TryReadHeardPosition(double deltaSeconds, out CutsceneTime position)
     {
         position = default;
         if (!_playing || _clockChannel is not { } channel || _clockClip is not { } clip)
@@ -251,7 +255,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         if (!channel.IsStreaming || channel.ClipIndex != _clockClipIndex)
             return false;
 
-        if (!channel.TryReadHeardFrame(out long frame, out bool warmingUp))
+        if (!channel.TryReadHeardFrame(deltaSeconds, out long frame, out bool warmingUp))
         {
             // A new queue that the listener does not hear yet is expected after each restart. The clock stays on wall time
             // for this step, and this is not a loss of the clock.
@@ -259,7 +263,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
                 return false;
             IsClockFallbackActive = true;
             _clock.Mode = ECutsceneClockMode.Wall;
-            string message = $"The audio transport of track '{channel.Track.Name}' cannot report a playback clock. The cutscene clock uses wall time until the clock is available.";
+            string message = $"The audio transport of track '{channel.Track.Name}' cannot report a playback clock, or its clock does not reach the queued audio in time. The cutscene clock uses wall time until the clock is available.";
             if (MarkReported(channel.TrackIndex, -1, CodeClock))
                 Report(channel.TrackIndex, -1, message);
             else

@@ -317,7 +317,7 @@ public sealed class CutscenePlayer
         _clock.Advance(deltaSeconds);
 
         // The audio correction comes before the evaluation and the event dispatch, so both use the final position of the step.
-        if (_audio.TryReadHeardPosition(out CutsceneTime heard))
+        if (_audio.TryReadHeardPosition(deltaSeconds, out CutsceneTime heard))
             _clock.Discipline(heard);
         bool hardResync = _clock.ConsumeHardResync();
 
