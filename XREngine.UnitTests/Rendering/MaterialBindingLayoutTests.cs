@@ -44,8 +44,9 @@ public sealed class MaterialBindingLayoutTests
             supportsGeneratedMaterialTableDispatch: baseline.SupportsGeneratedMaterialTableDispatch);
 
         changed.LayoutHash.ShouldNotBe(baseline.LayoutHash);
-        WordOffset(changed, "Clearcoat").ShouldBe(34);
-        changed.RowWordCount.ShouldBe(baseline.RowWordCount);
+        // The height-map and parallax words fill the last row padding, so a new field starts a row.
+        WordOffset(changed, "Clearcoat").ShouldBe(36);
+        changed.RowWordCount.ShouldBe(baseline.RowWordCount + 4);
     }
 
     [Test]
