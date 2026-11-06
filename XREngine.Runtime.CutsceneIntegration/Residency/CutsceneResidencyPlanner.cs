@@ -139,7 +139,8 @@ public sealed partial class CutsceneResidencyPlanner
     }
 
     /// <summary>
-    /// Occurs in <see cref="Update"/> for each load of the current generation that completed.
+    /// Occurs in <see cref="Update"/> for each completed load that the planner still tracks: a T0 load, or T1 and T2 work
+    /// of the current generation. Work that a jump, the window, or the dwell gate cancelled does not raise it.
     /// The arguments are the asset and the level that is resident now. It does not occur after <see cref="Close"/>.
     /// </summary>
     public event Action<Guid, int>? LoadCompleted;

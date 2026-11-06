@@ -104,22 +104,23 @@ public sealed partial class CutsceneResidencyPlanner
             if (!upperAllowed)
                 desired = 0;
 
+            // Work for an asset outside the window, or behind a closed dwell gate, stops. A cancel of complete work
+            // releases data that this plan does not need.
             if (desired <= 0)
             {
-                CancelPendingUnlessComplete(i);
+                CancelPending(i);
                 continue;
             }
 
             // Keep running work of this generation that the window still needs. Its completion becomes the hold,
-            // and the next plan requests the level after it. This also keeps work that completed after the drain.
+            // and the next plan requests the level after it. The plan does not read the level here, so work that
+            // completed after the drain of this update is not cancelled and released.
             if (_pendingTickets[i].IsValid)
             {
                 if (_pendingLevels[i] <= desired && _pendingGenerations[i] == _generation)
                     continue;
 
-                CancelPendingUnlessComplete(i);
-                if (_pendingTickets[i].IsValid)
-                    continue;
+                CancelPending(i);
             }
 
             int resident = Math.Max((int)_backend.GetLevel(_assets[i]), _heldLevels[i]);
@@ -151,25 +152,18 @@ public sealed partial class CutsceneResidencyPlanner
     {
         for (int i = 0; i < _assets.Length; i++)
             if (_pendingTickets[i].IsValid && _pendingGenerations[i] < _generation)
-                CancelPendingUnlessComplete(i);
+                CancelPending(i);
     }
 
     /// <summary>
-    /// Cancels the running work of an asset. If the backend already reports the level of that work, the work
-    /// can be complete with its completion not yet applied. A cancel then releases the data, so the planner keeps
-    /// the ticket in the current generation, and its completion becomes the hold.
+    /// Cancels the running work of an asset and removes its ticket. The completion of that ticket then does nothing.
+    /// If the work is already complete, the cancel releases its data.
     /// </summary>
-    private void CancelPendingUnlessComplete(int asset)
+    private void CancelPending(int asset)
     {
         ResidencyTicket ticket = _pendingTickets[asset];
         if (!ticket.IsValid)
             return;
-
-        if ((int)_backend.GetLevel(_assets[asset]) >= _pendingLevels[asset])
-        {
-            _pendingGenerations[asset] = _generation;
-            return;
-        }
 
         _pendingTickets[asset] = ResidencyTicket.None;
         _ticketAssets.Remove(ticket.Id);

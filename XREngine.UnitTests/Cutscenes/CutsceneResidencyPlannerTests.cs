@@ -97,6 +97,76 @@ public sealed class CutsceneResidencyPlannerTests
     }
 
     [Test]
+    public void Update_Jump_CancelsStaleTicketEvenWhenLevelIsResident()
+    {
+        CutsceneResidencyManifest manifest = new(
+            [A],
+            [
+                Bucket(0.0, 0.25, new ResidencyEntry(0, 2, 0.5f)),
+                Bucket(10.0, 10.25, new ResidencyEntry(0, 2, 0.5f)),
+            ]);
+        CutsceneResidencyPlanner planner = Create(manifest, out FakeResidencyBackend backend);
+        planner.Update(CutsceneTime.Zero, 1.0, null, Frame);
+        ResidencyTicket stale = backend.UpperRequests.Single().Ticket;
+
+        // Another source, for example visibility streaming, supplies the level. The ticket did not complete.
+        backend.SetLevel(A, EResidencyLevel.Coarse);
+        planner.Update(S(10.0), 1.0, ESeekIntent.Jump, Frame);
+
+        backend.Cancelled.ShouldBe([stale]);
+        ResidencyRequest next = backend.UpperRequests.Last().Request;
+        next.TargetLevel.ShouldBe(2);
+        next.Generation.ShouldBe(1);
+    }
+
+    [Test]
+    public void Update_AssetThatLeavesWindow_IsCancelledAndRequestedAgainOnReturn()
+    {
+        CutsceneResidencyManifest manifest = new([A], [Bucket(13.0, 13.25, new ResidencyEntry(0, 1, 0.5f))]);
+        CutsceneResidencyPlanner planner = Create(manifest, out FakeResidencyBackend backend);
+
+        planner.Update(S(10.0), 1.0, null, Frame);
+        ResidencyTicket first = backend.UpperRequests.Single().Ticket;
+
+        // The cache reports the level, but the asset is outside the window, so its ticket is cancelled.
+        backend.SetLevel(A, EResidencyLevel.Coarse);
+        planner.Update(S(14.0), 1.0, null, Frame);
+        backend.Cancelled.ShouldBe([first]);
+
+        backend.SetLevel(A, EResidencyLevel.Proxy);
+        planner.Update(S(10.0), 1.0, null, Frame);
+
+        (ResidencyTicket second, ResidencyRequest request) = backend.UpperRequests.Last();
+        second.ShouldNotBe(first);
+        request.AssetId.ShouldBe(A);
+        request.TargetLevel.ShouldBe(1);
+    }
+
+    [Test]
+    public void Evict_DuringScrubWithClosedGate_TakesAssetsOutsideWindowFirst()
+    {
+        CutsceneResidencyManifest manifest = new(
+            [A, B],
+            [
+                Bucket(2.0, 2.25, new ResidencyEntry(0, 1, 0.5f)),
+                Bucket(8.5, 8.75, new ResidencyEntry(1, 1, 0.5f)),
+            ]);
+        CutsceneResidencyPlanner planner = Create(manifest, out FakeResidencyBackend backend);
+        planner.Update(S(2.0), 2.0, null, Frame);
+        Dictionary<Guid, ResidencyTicket> upper = backend.UpperRequests.ToDictionary(r => r.Request.AssetId, r => r.Ticket);
+        foreach (ResidencyTicket ticket in upper.Values)
+            backend.Complete(ticket);
+        planner.Update(S(2.0), 2.0, null, Frame);
+
+        // A drag to 4 s closes the gate. At rate 0 the window is 3.5 s to 9 s: B (4.5 s away) is inside, A (2 s away) is outside.
+        planner.Update(S(4.0), 0.0, ESeekIntent.Scrub, Frame);
+        backend.Cancelled.ShouldBeEmpty();
+
+        planner.Evict(1).ShouldBe(1);
+        backend.Cancelled.ShouldBe([upper[A]]);
+    }
+
+    [Test]
     public void Update_Scrub_SendsNothingAboveProxyUntilDwell()
     {
         CutsceneResidencyManifest manifest = new([A], [Bucket(5.0, 5.25, new ResidencyEntry(0, 2, 0.5f))]);
@@ -188,6 +258,8 @@ public sealed class CutsceneResidencyPlannerTests
         ResidencyTicket upperB = backend.UpperRequests.Single(r => r.Request.AssetId == B).Ticket;
 
         // The handler of A runs after the drain and before the plan. B completes there, as on a worker thread.
+        // This depends on the order in Update: drain the completions, raise LoadCompleted, then plan.
+        // The completion of B goes into the next queue, so the plan of this update sees B resident with no completion.
         List<(Guid Asset, int Level)> completed = [];
         planner.LoadCompleted += (asset, level) =>
         {
@@ -313,12 +385,17 @@ public sealed class CutsceneResidencyPlannerTests
     [Test]
     public void Update_WithNoChange_AllocatesNothingAndSendsNothing()
     {
-        Guid[] assets = [A, B, C, D];
+        Guid[] assets = [A, B, C, D, E];
         ResidencyBucket[] buckets = new ResidencyBucket[80];
         for (int b = 0; b < buckets.Length; b++)
-            buckets[b] = Bucket(b * 0.25, (b + 1) * 0.25, new ResidencyEntry(b % assets.Length, 2, 0.5f));
+            buckets[b] = Bucket(b * 0.25, (b + 1) * 0.25, new ResidencyEntry(b % 4, 2, 0.5f));
+
+        // E is in the current bucket, and only the cache supplies its target level. It has no ticket,
+        // so each plan reads its level, and the GetLevel count detects a plan.
+        buckets[0] = Bucket(0.0, 0.25, new ResidencyEntry(0, 2, 0.5f), new ResidencyEntry(4, 2, 0.5f));
         CutsceneResidencyManifest manifest = new(assets, buckets);
         CutsceneResidencyPlanner planner = Create(manifest, out FakeResidencyBackend backend);
+        backend.SetLevel(E, EResidencyLevel.Target);
 
         RunPlayFrames(planner);
         planner.Update(CutsceneTime.FromSeconds(0.1), 0.0, ESeekIntent.Scrub, Frame);
