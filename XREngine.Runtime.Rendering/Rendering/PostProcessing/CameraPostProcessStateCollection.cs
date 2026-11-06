@@ -63,21 +63,22 @@ public sealed class CameraPostProcessStateCollection
     /// Resets the automatic exposure history of the color grading stage in every existing pipeline state.
     /// It creates no state and does not allocate.
     /// </summary>
+    /// <param name="minimumFrameCameraEpoch">The camera history epoch of the first frame that can use the reset.</param>
     /// <returns>The number of color grading stages that got the reset.</returns>
-    internal int ResetAutoExposureHistory()
+    internal int ResetAutoExposureHistory(ulong minimumFrameCameraEpoch)
     {
-        int count = ResetAutoExposureHistory(DefaultState);
+        int count = ResetAutoExposureHistory(DefaultState, minimumFrameCameraEpoch);
         foreach (PipelinePostProcessState state in Volatile.Read(ref _publishedPipelines).Values)
-            count += ResetAutoExposureHistory(state);
+            count += ResetAutoExposureHistory(state, minimumFrameCameraEpoch);
         return count;
     }
 
-    private static int ResetAutoExposureHistory(PipelinePostProcessState? state)
+    private static int ResetAutoExposureHistory(PipelinePostProcessState? state, ulong minimumFrameCameraEpoch)
     {
         if (state?.GetStage<ColorGradingSettings>()?.TryGetBacking(out ColorGradingSettings? grading) != true || grading is null)
             return 0;
 
-        grading.ResetAutoExposureHistory();
+        grading.ResetAutoExposureHistory(minimumFrameCameraEpoch);
         return 1;
     }
 

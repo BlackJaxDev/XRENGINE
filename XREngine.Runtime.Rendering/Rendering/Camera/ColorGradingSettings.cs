@@ -390,29 +390,93 @@ uniform ColorGradeStruct ColorGrade;";
         private bool _gpuAutoExposureReadyThisFrame;
         private long _autoExposureResetRequests;
         private long _autoExposureResetsApplied;
+        private long _autoExposureResetMinimumEpoch;
+        private long _cpuSnapRequestsInFlight;
+        private bool _snapThisDispatch;
         internal const float MaxGpuAutoExposureDeltaSeconds = 1.0f / 15.0f;
 
         /// <summary>
-        /// Makes the next automatic exposure update go to the metered exposure in one step, with no adaptation from the
-        /// earlier exposure. Use it after a camera cut or a jump in time, where the old exposure belongs to another view.
-        /// The GPU path applies the step at its next successful dispatch. The CPU path also ignores its update interval once.
-        /// Any thread can call it. It does not allocate.
+        /// Makes the next automatic exposure update go to the metered exposure in one step, for any frame.
+        /// See <see cref="ResetAutoExposureHistory(ulong)"/>.
         /// </summary>
         public void ResetAutoExposureHistory()
-            => Interlocked.Increment(ref _autoExposureResetRequests);
+            => ResetAutoExposureHistory(0UL);
 
-        /// <summary>True while a reset from <see cref="ResetAutoExposureHistory"/> waits for an exposure update.</summary>
+        /// <summary>
+        /// Makes the next automatic exposure update of a frame captured at or after <paramref name="minimumFrameCameraEpoch"/>
+        /// go to the metered exposure in one step, with no adaptation from the earlier exposure. Use it after a camera cut or a
+        /// jump in time, where the old exposure belongs to another view. Render work is pipelined, so a frame captured before
+        /// the jump can still render after this call. That frame has an older camera history epoch, so it does not use the
+        /// reset. Each reset is used once: the first successful update of a frame with a new enough epoch clears it.
+        /// The CPU path also ignores its update interval once. Any thread can call it. It does not allocate.
+        /// </summary>
+        /// <param name="minimumFrameCameraEpoch">
+        /// The <see cref="XRCamera.TemporalHistoryEpoch"/> after the discontinuity. Zero lets any frame use the reset.
+        /// </param>
+        public void ResetAutoExposureHistory(ulong minimumFrameCameraEpoch)
+        {
+            // The minimum is written before the request count, so an update that reads the count also sees the minimum.
+            long minimum = unchecked((long)minimumFrameCameraEpoch);
+            long current = Volatile.Read(ref _autoExposureResetMinimumEpoch);
+            while ((ulong)minimum > (ulong)current)
+            {
+                long previous = Interlocked.CompareExchange(ref _autoExposureResetMinimumEpoch, minimum, current);
+                if (previous == current)
+                    break;
+                current = previous;
+            }
+            Interlocked.Increment(ref _autoExposureResetRequests);
+        }
+
+        /// <summary>True while a reset from <see cref="ResetAutoExposureHistory(ulong)"/> waits for an exposure update.</summary>
         [Browsable(false)]
         public bool IsAutoExposureResetPending
             => Volatile.Read(ref _autoExposureResetRequests) != Volatile.Read(ref _autoExposureResetsApplied);
 
         /// <summary>
+        /// Checks if a pending reset applies to a frame. A frame with no captured epoch counts as a current frame.
+        /// </summary>
+        /// <param name="requests">The request count that the caller read first.</param>
+        /// <param name="frameCameraEpoch">The camera history epoch that the capture of the frame recorded, or null.</param>
+        private bool IsAutoExposureResetDue(long requests, ulong? frameCameraEpoch)
+        {
+            if (requests == Volatile.Read(ref _autoExposureResetsApplied))
+                return false;
+            return frameCameraEpoch is not ulong epoch
+                || epoch >= unchecked((ulong)Volatile.Read(ref _autoExposureResetMinimumEpoch));
+        }
+
+        /// <summary>
+        /// Starts one GPU exposure dispatch for a frame. While a reset is due for the frame,
+        /// <see cref="ComputeGpuAutoExposureBlend"/> gives one until <see cref="EndGpuAutoExposureDispatch"/>.
+        /// </summary>
+        /// <param name="frameCameraEpoch">The camera history epoch that the capture of the frame recorded, or null.</param>
+        /// <param name="capturedRequests">The request count to pass to <see cref="EndGpuAutoExposureDispatch"/>.</param>
+        /// <returns>True if the dispatch uses the reset.</returns>
+        internal bool BeginGpuAutoExposureDispatch(ulong? frameCameraEpoch, out long capturedRequests)
+        {
+            capturedRequests = Volatile.Read(ref _autoExposureResetRequests);
+            _snapThisDispatch = IsAutoExposureResetDue(capturedRequests, frameCameraEpoch);
+            return _snapThisDispatch;
+        }
+
+        /// <summary>Ends a GPU exposure dispatch. A successful dispatch that used the reset clears it.</summary>
+        /// <param name="success">True if the backend wrote the exposure.</param>
+        /// <param name="capturedRequests">The value from <see cref="BeginGpuAutoExposureDispatch"/>.</param>
+        internal void EndGpuAutoExposureDispatch(bool success, long capturedRequests)
+        {
+            if (success && _snapThisDispatch)
+                MarkAutoExposureResetApplied(capturedRequests);
+            _snapThisDispatch = false;
+        }
+
+        /// <summary>
         /// The blend factor of a GPU exposure update from the current exposure toward the metered exposure.
-        /// It is one while a reset is pending, so the update replaces the old exposure.
+        /// It is one inside a dispatch that uses a reset, so the update replaces the old exposure.
         /// </summary>
         /// <param name="deltaTime">The render delta in seconds.</param>
         internal float ComputeGpuAutoExposureBlend(float deltaTime)
-            => IsAutoExposureResetPending
+            => _snapThisDispatch
                 ? 1.0f
                 : 1.0f - MathF.Exp(-ExposureTransitionSpeed * SanitizeGpuAutoExposureDeltaSeconds(deltaTime));
 
@@ -427,6 +491,24 @@ uniform ColorGradeStruct ColorGrade;";
                     return;
                 applied = previous;
             }
+        }
+
+        // The CPU path reads the luminance later, so one snap request at a time is in flight. Later frames use the interval.
+        private bool BeginCpuAutoExposureSnap(ulong? frameCameraEpoch, out long requests)
+        {
+            requests = Volatile.Read(ref _autoExposureResetRequests);
+            if (requests == Volatile.Read(ref _cpuSnapRequestsInFlight) || !IsAutoExposureResetDue(requests, frameCameraEpoch))
+                return false;
+            Volatile.Write(ref _cpuSnapRequestsInFlight, requests);
+            return true;
+        }
+
+        private void EndCpuAutoExposureSnap(bool applied, long requests)
+        {
+            if (applied)
+                MarkAutoExposureResetApplied(requests);
+            else
+                Interlocked.CompareExchange(ref _cpuSnapRequestsInFlight, 0L, requests);
         }
 
         [Browsable(false)]
@@ -450,8 +532,7 @@ uniform ColorGradeStruct ColorGrade;";
             if (!RequiresAutoExposure || RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
 
-            long resetRequests = Volatile.Read(ref _autoExposureResetRequests);
-            bool snap = resetRequests != Volatile.Read(ref _autoExposureResetsApplied);
+            bool snap = BeginCpuAutoExposureSnap(null, out long resetRequests);
             float time = RuntimeEngine.ElapsedTime;
             if (!snap && time - _lastUpdateTime < _secBetweenExposureUpdates)
                 return;
@@ -461,22 +542,29 @@ uniform ColorGradeStruct ColorGrade;";
             void OnResult(bool success, float dot)
             {
                 _lastLumDot = dot;
-                if (LerpExposure(success, dot, snap) && snap)
-                    MarkAutoExposureResetApplied(resetRequests);
+                bool applied = LerpExposure(success, dot, snap);
+                if (snap)
+                    EndCpuAutoExposureSnap(applied, resetRequests);
             }
 
             RuntimeEngine.Rendering.State.CalculateFrontBufferDotLuminanceAsync(rect, false, AutoExposureLuminanceWeights, OnResult);
         }
 
-        public void UpdateExposure(XRTexture tex, bool generateMipmapsNow)
+        /// <summary>Updates the exposure on the CPU from a luminance read of a texture.</summary>
+        /// <param name="tex">The HDR scene texture.</param>
+        /// <param name="generateMipmapsNow">True to generate the mipmaps before the read.</param>
+        /// <param name="frameCameraEpoch">
+        /// The camera history epoch that the capture of the rendered frame recorded, or null if the frame has none.
+        /// It decides if a reset from <see cref="ResetAutoExposureHistory(ulong)"/> applies to this frame.
+        /// </param>
+        public void UpdateExposure(XRTexture tex, bool generateMipmapsNow, ulong? frameCameraEpoch = null)
         {
             _gpuAutoExposureReadyThisFrame = false;
 
             if (!RequiresAutoExposure || RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
 
-            long resetRequests = Volatile.Read(ref _autoExposureResetRequests);
-            bool snap = resetRequests != Volatile.Read(ref _autoExposureResetsApplied);
+            bool snap = BeginCpuAutoExposureSnap(frameCameraEpoch, out long resetRequests);
             float time = RuntimeEngine.ElapsedTime;
             if (!snap && time - _lastUpdateTime < _secBetweenExposureUpdates)
                 return;
@@ -486,8 +574,9 @@ uniform ColorGradeStruct ColorGrade;";
             void OnResult(bool success, float dot)
             {
                 _lastLumDot = dot;
-                if (LerpExposure(success, dot, snap) && snap)
-                    MarkAutoExposureResetApplied(resetRequests);
+                bool applied = LerpExposure(success, dot, snap);
+                if (snap)
+                    EndCpuAutoExposureSnap(applied, resetRequests);
             }
 
             switch (tex)
@@ -498,6 +587,10 @@ uniform ColorGradeStruct ColorGrade;";
                 case XRTexture2DArray t2da:
                     RuntimeEngine.Rendering.State.CalculateDotLuminanceAsync(t2da, generateMipmapsNow, AutoExposureLuminanceWeights, OnResult);
                     break;
+                default:
+                    if (snap)
+                        EndCpuAutoExposureSnap(false, resetRequests);
+                    break;
             }
         }
 
@@ -505,7 +598,15 @@ uniform ColorGradeStruct ColorGrade;";
             => UpdateExposureGpu(sourceTex, exposureTex, generateMipmapsNow, null);
 
         /// <summary>Updates exposure using an explicitly selected cooked program on backends that require one.</summary>
-        public void UpdateExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, bool generateMipmapsNow, string? gpuProgramBinding)
+        /// <param name="sourceTex">The HDR scene texture.</param>
+        /// <param name="exposureTex">The one-texel exposure texture that keeps the adapted exposure.</param>
+        /// <param name="generateMipmapsNow">True to generate the mipmaps before the read.</param>
+        /// <param name="gpuProgramBinding">The cooked program for backends that require one, or null.</param>
+        /// <param name="frameCameraEpoch">
+        /// The camera history epoch that the capture of the rendered frame recorded, or null if the frame has none.
+        /// It decides if a reset from <see cref="ResetAutoExposureHistory(ulong)"/> applies to this frame.
+        /// </param>
+        public void UpdateExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, bool generateMipmapsNow, string? gpuProgramBinding, ulong? frameCameraEpoch = null)
         {
             _gpuAutoExposureReadyThisFrame = false;
 
@@ -527,12 +628,18 @@ uniform ColorGradeStruct ColorGrade;";
             double rawRenderDeltaSeconds = RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds;
             float deltaTime = _lastUpdateTime == float.MinValue ? 0.0f : SanitizeGpuAutoExposureDeltaSeconds(rawRenderDeltaSeconds);
 
-            // The backend reads ComputeGpuAutoExposureBlend, so a pending reset gives a blend of one in this dispatch.
-            long resetRequests = Volatile.Read(ref _autoExposureResetRequests);
-            bool success = renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow, gpuProgramBinding);
+            // The backend reads ComputeGpuAutoExposureBlend, so a reset that is due for this frame gives a blend of one.
+            BeginGpuAutoExposureDispatch(frameCameraEpoch, out long resetRequests);
+            bool success = false;
+            try
+            {
+                success = renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow, gpuProgramBinding);
+            }
+            finally
+            {
+                EndGpuAutoExposureDispatch(success, resetRequests);
+            }
             _gpuAutoExposureReadyThisFrame = success;
-            if (success)
-                MarkAutoExposureResetApplied(resetRequests);
 
             // Only consume the timestamp budget when the GPU dispatch actually succeeded.
             // If GPU fails, leaving _lastUpdateTime untouched lets the CPU fallback path

@@ -7,7 +7,8 @@ namespace XREngine.Cutscenes;
 /// <see cref="CutsceneCameraRouter"/> owns one handler and calls it from its discontinuity listener, after the router
 /// claimed the camera of the new shot. The player raises one discontinuity in a tick, also when a cut and a jump occur in
 /// the same tick, so each reset below occurs once for each discontinuity. A scrub raises a discontinuity in each step, so
-/// <see cref="Handle"/> does not allocate.
+/// <see cref="Handle"/> does not allocate. A <see cref="ECutsceneDiscontinuityKind.ClockResync"/> (a hard resync to the
+/// audio inside one shot) does only the temporal history reset.
 /// </summary>
 /// <remarks>
 /// <para>The resets that the handler does, with the state that each one clears in the Default, Advanced, and RVC pipelines
@@ -17,11 +18,15 @@ namespace XREngine.Cutscenes;
 /// <see cref="XRCamera.TemporalHistoryEpoch"/> of the active camera. The epoch clears the previous unjittered view-projection
 /// of the camera (camera motion vectors), and the frame view history ledger marks the view as having no valid history.
 /// <c>VPRC_TemporalAccumulationPass</c> then resets its TAA and TSR history (all three pipelines). Spatial hash AO, the only
-/// temporal AO pass, resets its history when the temporal data of that pass has no ready history (Default and RVC). The
+/// temporal AO pass, resets its history when the temporal data of that pass has no ready history (Default and RVC, mono
+/// views only; the desktop viewport of the router is mono). The
 /// Advanced preparation extractor does not use the depth pyramid of the previous frame for a view with no valid history.</description></item>
-/// <item><description><see cref="XRCamera.ResetAutoExposureHistory"/> on the active camera. Auto exposure does not read the
-/// epoch: <c>VPRC_ExposureUpdate</c> blends from the exposure of the previous frame in all three pipelines. The reset makes the
-/// next GPU update use a blend of one (OpenGL, Vulkan, and WebGPU) and makes the CPU path set the metered value at once.</description></item>
+/// <item><description><see cref="XRCamera.ResetAutoExposureHistory"/> on the active camera, for a full discontinuity only.
+/// Auto exposure does not read the epoch: <c>VPRC_ExposureUpdate</c> blends from the exposure of the previous frame in all
+/// three pipelines. The reset makes the next GPU update use a blend of one (OpenGL, Vulkan, and WebGPU) and makes the CPU
+/// path set the metered value at once. The reset records the new camera epoch, and <c>VPRC_ExposureUpdate</c> passes the
+/// epoch that the view history ledger recorded at the capture of the rendered frame. So a frame from before the reset
+/// that still renders does not use it, and the first new frame uses it once.</description></item>
 /// </list>
 /// <para>State with no reset hook, which the handler does not reset:</para>
 /// <list type="bullet">
@@ -44,7 +49,8 @@ public sealed class CutsceneDiscontinuityHandler
 
     /// <summary>Resets the temporal render state of a viewport for one discontinuity. A null viewport does nothing.</summary>
     /// <param name="viewport">The viewport that shows the cutscene camera.</param>
-    public void Handle(XRViewport? viewport)
+    /// <param name="kind">The kind of the discontinuity. A clock resync resets only the temporal history.</param>
+    public void Handle(XRViewport? viewport, ECutsceneDiscontinuityKind kind = ECutsceneDiscontinuityKind.Full)
     {
         if (viewport is null)
             return;
@@ -54,6 +60,7 @@ public sealed class CutsceneDiscontinuityHandler
         // A scrub raises a discontinuity in each frame. A change event would allocate its arguments when another object
         // listens to the camera. The history consumers read the epoch, so they do not need the event.
         viewport.InvalidateTemporalHistory(publishNotifications: false);
-        viewport.ActiveCamera?.ResetAutoExposureHistory();
+        if (kind == ECutsceneDiscontinuityKind.Full)
+            viewport.ActiveCamera?.ResetAutoExposureHistory();
     }
 }

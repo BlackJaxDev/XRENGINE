@@ -177,6 +177,7 @@ public sealed class CutscenePlayer
     /// <summary>
     /// Raised once in a frame in which the picture jumps: a seek changed the position, the selected camera changed,
     /// or <see cref="Stop"/> moved the position or the camera. A seek to the same position with the same camera raises nothing.
+    /// A hard resync to the audio with no camera change also raises it, with <see cref="ECutsceneDiscontinuityKind.ClockResync"/>.
     /// </summary>
     public event Action<CutsceneDiscontinuity>? Discontinuity;
 
@@ -470,10 +471,15 @@ public sealed class CutscenePlayer
         EvaluateAt(position, deltaSeconds);
 
         // A cut during playback and a hard resync to the audio are jumps of the picture, so each raises one discontinuity.
-        if (PublishActiveCamera() || hardResync)
+        // A resync with no cut is a small correction inside one shot: it resets only the temporal render history, and the
+        // simulations and auto exposure continue. A cut in the same tick makes it a full discontinuity.
+        bool playCameraChanged = PublishActiveCamera();
+        if (playCameraChanged || hardResync)
         {
-            _simulationDiscontinuity = ESeekIntent.Jump;
-            Discontinuity?.Invoke(new CutsceneDiscontinuity(before, position, ESeekIntent.Jump));
+            if (playCameraChanged)
+                _simulationDiscontinuity = ESeekIntent.Jump;
+            ECutsceneDiscontinuityKind kind = playCameraChanged ? ECutsceneDiscontinuityKind.Full : ECutsceneDiscontinuityKind.ClockResync;
+            Discontinuity?.Invoke(new CutsceneDiscontinuity(before, position, ESeekIntent.Jump, kind));
         }
 
         bool completed;

@@ -3,7 +3,7 @@ namespace XREngine.Cutscenes;
 /// <summary>
 /// A track that controls the simulations on its bound node: the physics chains and the particle emitters.
 /// It has no clips. Its policy applies for the full cutscene at each discontinuity: a jump, a scrub step, a camera cut,
-/// a hard resync to the audio, or a stop. During a scrub, the simulations hold the reset pose. They start again when
+/// or a stop. A hard resync to the audio inside a shot does not reset the simulations. During a scrub, the simulations hold the reset pose. They start again when
 /// the transport plays at a rate near one or when the scrub ends.
 /// </summary>
 public class SimulationControlTrack : CutsceneTrack

@@ -98,5 +98,5 @@ public sealed class CutsceneCameraRouter
 
     // The player raised ActiveCameraChanged before this event, so the viewport shows the camera of the new shot here.
     private void OnDiscontinuity(CutsceneDiscontinuity discontinuity)
-        => _discontinuityHandler.Handle(_viewport);
+        => _discontinuityHandler.Handle(_viewport, discontinuity.Kind);
 }

@@ -401,12 +401,12 @@ public sealed class SimulationPolicyTests
     public void PlayAndScrub_WithSimulationTrack_AllocateNothing()
     {
         FakeTarget target = new();
-        using Rig rig = MakeFakeRig(target);
+        using Rig rig = MakeRig([new SimulationControlTrack { Name = "Hair" }], withShots: true);
+        rig.Player.Simulation.TargetResolver = (_, targets) => targets.Add(target);
+
         rig.Player.Play();
         for (int i = 0; i < 20; i++)
             rig.Player.Tick(0.05);
-        for (int i = 0; i < 20; i++)
-            SeekAndTick(rig.Player, 0.1 + (i % 10) * 0.2, ESeekIntent.Scrub);
         rig.Player.Seek(T(0), ESeekIntent.Jump);
         rig.Player.Play();
         rig.Player.Tick(0);
@@ -421,11 +421,184 @@ public sealed class SimulationPolicyTests
             }
             rig.Player.Tick(0.05);
         }
-        for (int i = 0; i < 500; i++)
-            SeekAndTick(rig.Player, 0.1 + (i % 10) * 0.2, ESeekIntent.Scrub);
         long after = GC.GetAllocatedBytesForCurrentThread();
+        (after - before).ShouldBe(0);
+
+        // The router runs the discontinuity handler at each scrub step, so the scrub measurement includes it. The scrub
+        // stays inside the first shot: a camera claim at a cut allocates inside the viewport, outside the cutscene code.
+        XRViewport viewport = CreateViewport();
+        CutsceneCameraRouter router = new(rig.Player);
+        router.Attach(viewport);
+        for (int i = 0; i < 20; i++)
+            SeekAndTick(rig.Player, 0.1 + (i % 9) * 0.2, ESeekIntent.Scrub);
+
+        before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 500; i++)
+            SeekAndTick(rig.Player, 0.1 + (i % 9) * 0.2, ESeekIntent.Scrub);
+        after = GC.GetAllocatedBytesForCurrentThread();
 
         (after - before).ShouldBe(0);
+        router.DiscontinuityHandler.HandledCount.ShouldBeGreaterThan(500);
+        router.Detach();
+    }
+
+    [Test]
+    public void Jump_DuringBeginScrub_ReleasesTheHold()
+    {
+        FakeTarget target = new();
+        using Rig rig = MakeFakeRig(target);
+        rig.Player.BeginScrub();
+        rig.Player.UpdateScrub(T(2.0));
+        rig.Player.Tick(0);
+        target.Held.ShouldBeTrue();
+
+        SeekAndTick(rig.Player, 4.0);
+
+        target.Held.ShouldBeFalse();
+        target.HoldEnds.ShouldBe(1);
+        target.Resets.ShouldBe(2);
+        rig.Player.Simulation.IsHeld.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ChainReset_OnAGpuChain_DispatchesTheResetStateWithAZeroTimeStep()
+    {
+        RecordingGpuBridge bridge = new();
+        using IDisposable lease = RuntimePhysicsChainRendering.Install(bridge);
+        (SceneNode root, PhysicsChainComponent chain, object last) = MakeChain(useGpu: true);
+        try
+        {
+            chain.ResetSimulationToCurrentPose();
+            chain.BeginWorldLateTick().ShouldBeFalse();
+
+            bridge.Dispatches.ShouldBe(1);
+            bridge.LastLoopCount.ShouldBe(1);
+            bridge.LastTimeVar.ShouldBe(0.0f);
+            int firstVersion = bridge.LastParticleStateVersion;
+
+            // A second reset, as in a scrub hold, dispatches again with a new particle state version and the reset positions.
+            SetParticlePosition(last, new Vector3(5, 5, 5));
+            chain.ResetSimulationToCurrentPose();
+            chain.BeginWorldLateTick().ShouldBeFalse();
+
+            bridge.Dispatches.ShouldBe(2);
+            bridge.LastParticleStateVersion.ShouldNotBe(firstVersion);
+            Vector3 expected = ParticleTransformPosition(last);
+            Vector3.Distance(bridge.LastParticlePositions[^1], expected).ShouldBeLessThan(1e-4f);
+        }
+        finally
+        {
+            root.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void ChainReset_WithWeightZero_DropsTheRequestAndKeepsTheBones()
+    {
+        (SceneNode root, PhysicsChainComponent chain, object last) = MakeChain(useGpu: false);
+        try
+        {
+            chain.BlendWeight = 0.0f;
+            SetParticlePosition(last, new Vector3(5, 5, 5));
+            chain.ResetSimulationToCurrentPose();
+
+            chain.BeginWorldLateTick().ShouldBeFalse();
+
+            chain.IsSimulationResetPending.ShouldBeFalse();
+            GetParticlePosition(last).ShouldBe(new Vector3(5, 5, 5));
+        }
+        finally
+        {
+            root.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void EmitterHold_DoesNotChangeIsSimulating_AndKeepsPauseDuringTheHold()
+    {
+        SceneNode node = new("Sparks", new Transform());
+        ParticleEmitterComponent emitter = node.AddComponent<ParticleEmitterComponent>()!;
+        ParticleEmitterSimulationTarget target = new(emitter);
+        try
+        {
+            target.SetHeld(true);
+            emitter.IsSimulationHeld.ShouldBeTrue();
+            emitter.IsSimulating.ShouldBeTrue();
+
+            emitter.Pause();
+            target.SetHeld(false);
+
+            emitter.IsSimulationHeld.ShouldBeFalse();
+            emitter.IsSimulating.ShouldBeFalse();
+        }
+        finally
+        {
+            node.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void EmitterHold_ResumeDuringTheHold_RegistersNoSecondTick()
+    {
+        SceneNode node = new("Sparks", new Transform());
+        ParticleEmitterComponent emitter = node.AddComponent<ParticleEmitterComponent>()!;
+        ParticleEmitterSimulationTarget target = new(emitter);
+        try
+        {
+            emitter.Pause();
+            int ticksBefore = TickCount(emitter);
+            target.SetHeld(true);
+
+            emitter.Resume();
+            int ticksAfterResume = TickCount(emitter);
+            emitter.Resume();
+
+            TickCount(emitter).ShouldBe(ticksAfterResume);
+            ticksAfterResume.ShouldBe(ticksBefore + 1);
+            emitter.IsSimulating.ShouldBeTrue();
+            emitter.IsSimulationHeld.ShouldBeTrue();
+
+            target.SetHeld(false);
+            emitter.IsSimulating.ShouldBeTrue();
+            emitter.IsSimulationHeld.ShouldBeFalse();
+            TickCount(emitter).ShouldBe(ticksAfterResume);
+        }
+        finally
+        {
+            node.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void EmitterHold_ActivationDuringTheHold_RegistersTheTickAndKeepsTheHold()
+    {
+        SceneNode node = new("Sparks", new Transform());
+        ParticleEmitterComponent emitter = node.AddComponent<ParticleEmitterComponent>()!;
+        ParticleEmitterSimulationTarget target = new(emitter);
+        try
+        {
+            target.SetHeld(true);
+            int ticksBefore = TickCount(emitter);
+
+            // A node outside a world has no renderer, so the GPU set-up of the activation cannot run here. The test runs the
+            // deactivation and the tick decision of the activation.
+            InvokeLifecycle(emitter, "OnComponentDeactivated");
+            TickCount(emitter).ShouldBe(ticksBefore);
+            InvokeLifecycle(emitter, "RegisterUpdateTickIfSimulating");
+
+            // The hold does not change IsSimulating, so the activation registers the update tick as normal.
+            TickCount(emitter).ShouldBe(ticksBefore + 1);
+            emitter.IsSimulating.ShouldBeTrue();
+            emitter.IsSimulationHeld.ShouldBeTrue();
+
+            target.SetHeld(false);
+            emitter.IsSimulationHeld.ShouldBeFalse();
+            emitter.IsSimulating.ShouldBeTrue();
+        }
+        finally
+        {
+            node.Destroy(true);
+        }
     }
 
     [Test]
@@ -468,19 +641,125 @@ public sealed class SimulationPolicyTests
     }
 
     [Test]
-    public void AutoExposureReset_GivesABlendOfOneUntilAnUpdateAppliesIt()
+    public void AutoExposureReset_AppliesOnceToTheFirstFrameWithTheNewEpoch()
     {
         ColorGradingSettings settings = new() { ExposureTransitionSpeed = 0.5f };
-        float normal = settings.ComputeGpuAutoExposureBlend(0.01f);
-        normal.ShouldBe(1.0f - MathF.Exp(-0.5f * 0.01f), 1e-6f);
-        settings.IsAutoExposureResetPending.ShouldBeFalse();
+        float normal = 1.0f - MathF.Exp(-0.5f * 0.01f);
+        settings.ComputeGpuAutoExposureBlend(0.01f).ShouldBe(normal, 1e-6f);
 
-        settings.ResetAutoExposureHistory();
+        settings.ResetAutoExposureHistory(minimumFrameCameraEpoch: 5UL);
+        settings.IsAutoExposureResetPending.ShouldBeTrue();
+
+        // A frame captured before the discontinuity renders after the reset. It does not use the reset.
+        settings.BeginGpuAutoExposureDispatch(4UL, out long requests).ShouldBeFalse();
+        settings.ComputeGpuAutoExposureBlend(0.01f).ShouldBe(normal, 1e-6f);
+        settings.EndGpuAutoExposureDispatch(success: true, requests);
+        settings.IsAutoExposureResetPending.ShouldBeTrue();
+
+        // A failed dispatch of a new frame keeps the reset for the next frame.
+        settings.BeginGpuAutoExposureDispatch(5UL, out requests).ShouldBeTrue();
+        settings.ComputeGpuAutoExposureBlend(0.01f).ShouldBe(1.0f);
+        settings.EndGpuAutoExposureDispatch(success: false, requests);
+        settings.IsAutoExposureResetPending.ShouldBeTrue();
+
+        // The first successful dispatch of a new frame uses the reset, and it is used only once.
+        settings.BeginGpuAutoExposureDispatch(6UL, out requests).ShouldBeTrue();
+        settings.ComputeGpuAutoExposureBlend(0.01f).ShouldBe(1.0f);
+        settings.EndGpuAutoExposureDispatch(success: true, requests);
+        settings.IsAutoExposureResetPending.ShouldBeFalse();
+        settings.ComputeGpuAutoExposureBlend(0.01f).ShouldBe(normal, 1e-6f);
+
+        settings.BeginGpuAutoExposureDispatch(6UL, out requests).ShouldBeFalse();
+        settings.EndGpuAutoExposureDispatch(success: true, requests);
+    }
+
+    [Test]
+    public void AutoExposureReset_ARequestDuringADispatchStaysPending()
+    {
+        ColorGradingSettings settings = new();
+        settings.ResetAutoExposureHistory(1UL);
+        settings.BeginGpuAutoExposureDispatch(1UL, out long requests).ShouldBeTrue();
+
+        settings.ResetAutoExposureHistory(2UL);
+        settings.EndGpuAutoExposureDispatch(success: true, requests);
 
         settings.IsAutoExposureResetPending.ShouldBeTrue();
-        settings.ComputeGpuAutoExposureBlend(0.01f).ShouldBe(1.0f);
-        settings.ComputeGpuAutoExposureBlend(0.0f).ShouldBe(1.0f);
+        settings.BeginGpuAutoExposureDispatch(1UL, out requests).ShouldBeFalse();
+        settings.EndGpuAutoExposureDispatch(success: true, requests);
+        settings.BeginGpuAutoExposureDispatch(2UL, out requests).ShouldBeTrue();
+        settings.EndGpuAutoExposureDispatch(success: true, requests);
+        settings.IsAutoExposureResetPending.ShouldBeFalse();
     }
+
+    private sealed class RecordingGpuBridge : IRuntimePhysicsChainRenderingBridge
+    {
+        public int Dispatches;
+        public int LastLoopCount;
+        public float LastTimeVar;
+        public int LastParticleStateVersion;
+        public Vector3[] LastParticlePositions = [];
+
+        public PhysicsChainGpuBackendState BackendState => PhysicsChainGpuBackendState.Ready;
+        public void Register(PhysicsChainComponent chain) { }
+        public void Unregister(PhysicsChainComponent chain) { }
+
+        public void Execute(PhysicsChainComponent chain, in PhysicsChainGpuDispatchSnapshot snapshot)
+        {
+            Dispatches++;
+            LastLoopCount = snapshot.LoopCount;
+            LastTimeVar = snapshot.TimeVar;
+            LastParticleStateVersion = snapshot.ParticleStateVersion;
+            LastParticlePositions = new Vector3[snapshot.Particles.Length];
+            for (int i = 0; i < snapshot.Particles.Length; i++)
+                LastParticlePositions[i] = snapshot.Particles[i].Position;
+        }
+
+        public void NotifyReadbackUnavailable(PhysicsChainComponent chain, string reason) { }
+        public void InvalidateGpuDrivenRenderers(PhysicsChainComponent chain) { }
+        public void RenderDebug(PhysicsChainComponent chain) { }
+        public void RecordHierarchyRecalculationTicks(long ticks) { }
+    }
+
+    private static (SceneNode Root, PhysicsChainComponent Chain, object Last) MakeChain(bool useGpu)
+    {
+        SceneNode root = new("ChainRoot", new Transform());
+        Transform rootBone = (Transform)root.Transform;
+        Transform parent = rootBone;
+        for (int i = 0; i < 3; i++)
+        {
+            Transform bone = new() { Parent = parent, Translation = new Vector3(0, -0.1f, 0) };
+            parent = bone;
+        }
+
+        PhysicsChainComponent chain = root.AddComponent<PhysicsChainComponent>()!;
+        chain.Root = rootBone;
+        chain.UseGPU = useGpu;
+        chain.SetupParticles();
+        IList particles = ParticlesOf(chain);
+        return (root, chain, particles[particles.Count - 1]!);
+    }
+
+    private static Vector3 ParticleTransformPosition(object particle)
+    {
+        object? transform = particle.GetType().GetProperty("Transform", InstanceFlags)!.GetValue(particle);
+        if (transform is Transform t)
+            return t.WorldTranslation;
+
+        // An end particle has no transform. Its reset position is the end offset from its parent.
+        return GetParticlePosition(particle);
+    }
+
+    private static int TickCount(XRComponent component)
+    {
+        FieldInfo field = typeof(XRWorldObjectBase).GetField("_tickCache", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        int count = 0;
+        foreach (object _ in (IEnumerable)field.GetValue(component)!)
+            count++;
+        return count;
+    }
+
+    private static void InvokeLifecycle(XRComponent component, string methodName)
+        => component.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(component, null);
 
     private const BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 

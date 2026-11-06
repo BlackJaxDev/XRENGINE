@@ -11,11 +11,14 @@ namespace XREngine.Cutscenes;
 /// jump occur in the same tick.
 /// </summary>
 /// <remarks>
-/// <para>After a jump, a cut, or a hard resync, each simulation resets to the current pose. A
-/// <see cref="ECutsceneSimulationPolicy.WarmUp"/> track then starts its warm-up.</para>
+/// <para>After a jump, a camera cut, or a stop, each simulation resets to the current pose. A
+/// <see cref="ECutsceneSimulationPolicy.WarmUp"/> track then starts its warm-up. A hard resync to the audio inside a shot
+/// is a small time correction, so it does not reset the simulations.</para>
 /// <para>After a scrub step, the simulations reset and hold. A held simulation stays at the reset pose until the player
 /// plays at a rate within <see cref="ResumeRateTolerance"/> of one, <see cref="CutscenePlayer.EndScrub"/> ends the scrub,
-/// or a jump occurs. A warm-up of a held track waits for the release.</para>
+/// or a jump occurs (also during <see cref="CutscenePlayer.BeginScrub"/>). A warm-up of a held track waits for the release.</para>
+/// <para>The targets are found again only when the bound node of a track changes. A component that is added to or removed
+/// from the same node is not seen until then.</para>
 /// <para>A tick with no discontinuity and no hold does no work and does not allocate.</para>
 /// </remarks>
 public sealed class SimulationControlEvaluator
@@ -101,7 +104,8 @@ public sealed class SimulationControlEvaluator
 
         if (discontinuity is ESeekIntent intent)
         {
-            if (intent == ESeekIntent.Scrub || scrubbing)
+            // A jump ends a hold also inside BeginScrub, for example the jump of a preview recompile.
+            if (intent == ESeekIntent.Scrub)
                 ResetAndHold();
             else
                 ResetAndRun();
@@ -290,7 +294,8 @@ public sealed class SimulationControlEvaluator
     {
         foreach (PhysicsChainComponent chain in node.GetComponents<PhysicsChainComponent>())
             targets.Add(new PhysicsChainSimulationTarget(chain));
+        int emitterIndex = 0;
         foreach (ParticleEmitterComponent emitter in node.GetComponents<ParticleEmitterComponent>())
-            targets.Add(new ParticleEmitterSimulationTarget(emitter));
+            targets.Add(new ParticleEmitterSimulationTarget(emitter, emitterIndex++));
     }
 }

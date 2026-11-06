@@ -205,6 +205,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             ReportVrAutoExposurePolicy(exposurePolicy, sourceTexture, exposurePolicyReason);
 
+            // The epoch that the capture of this frame recorded. A reset from a later discontinuity does not apply to it.
+            ulong? frameCameraEpoch = ResolveFrameCameraEpoch(viewport);
+
             var renderer = AbstractRenderer.Current;
             if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             {
@@ -212,7 +215,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     ?? throw new InvalidOperationException("WebGPU.AutoExposure.OutputMissing: automatic exposure requires its declared GPU history target.");
                 if (renderer?.SupportsGpuAutoExposure != true)
                     throw new NotSupportedException("WebGPU.AutoExposure.Unavailable: the selected renderer has no GPU exposure producer.");
-                grading.UpdateExposureGpu(sourceTexture, exposure, false, GpuProgramBinding ?? "auto-exposure");
+                grading.UpdateExposureGpu(sourceTexture, exposure, false, GpuProgramBinding ?? "auto-exposure", frameCameraEpoch);
                 // A warming producer marks the entire renderer frame pending.
                 // Let that frame retry through its normal GPU lifecycle.
                 return;
@@ -222,7 +225,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 var exposureTexture = ActivePipelineInstance.GetTexture<XRTexture2D>(AutoExposureTextureName);
                 if (exposureTexture is not null)
                 {
-                    grading.UpdateExposureGpu(sourceTexture, exposureTexture, GenerateMipmapsHere);
+                    grading.UpdateExposureGpu(sourceTexture, exposureTexture, GenerateMipmapsHere, null, frameCameraEpoch);
                     if (grading.UseGpuAutoExposureThisFrame)
                         return;
 
@@ -238,7 +241,19 @@ namespace XREngine.Rendering.Pipelines.Commands
                 //Debug.Out($"[ExposureUpdate] GPU auto exposure not supported, using CPU path");
             }
 
-            grading.UpdateExposure(sourceTexture, GenerateMipmapsHere);
+            grading.UpdateExposure(sourceTexture, GenerateMipmapsHere, frameCameraEpoch);
+        }
+
+        /// <summary>
+        /// Gets the camera history epoch that the desktop view history ledger recorded at the capture of this frame,
+        /// or null if the frame has no desktop view history (for example a stereo or capture pass).
+        /// </summary>
+        private ulong? ResolveFrameCameraEpoch(XRViewport? viewport)
+        {
+            ulong sequence = ActivePipelineInstance.RenderState.ViewHistorySequenceId;
+            return viewport is not null && sequence != 0UL && viewport.TryGetCapturedCameraEpoch(sequence, out ulong epoch)
+                ? epoch
+                : null;
         }
 
         public void SetOptions(string hdrSceneTextureName, bool generateMipmapsHere)

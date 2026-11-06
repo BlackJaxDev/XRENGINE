@@ -97,14 +97,16 @@ public partial class XRCamera
 
     /// <summary>
     /// Resets the automatic exposure adaptation of this camera in every pipeline state that it has, so the next exposure
-    /// update uses the metered value with no blend from the old exposure. Call it after an instantaneous cut or a jump in time.
-    /// <see cref="InvalidateTemporalHistory()"/> does not do this, because smooth exposure adaptation is not view history.
-    /// It does not allocate.
+    /// update uses the metered value with no blend from the old exposure. Call it after an instantaneous cut or a jump in time,
+    /// after <see cref="InvalidateTemporalHistory()"/>. The reset applies only to frames captured with the current
+    /// <see cref="TemporalHistoryEpoch"/> or a later one, so a frame from before the invalidation that still renders does not
+    /// use it. <see cref="InvalidateTemporalHistory()"/> does not reset exposure, because smooth exposure adaptation is not
+    /// view history. It does not allocate.
     /// </summary>
     public void ResetAutoExposureHistory()
     {
         Interlocked.Increment(ref _autoExposureResetCount);
-        PostProcessStates.ResetAutoExposureHistory();
+        PostProcessStates.ResetAutoExposureHistory(TemporalHistoryEpoch);
     }
 
     /// <summary>The number of <see cref="ResetAutoExposureHistory"/> calls on this camera.</summary>

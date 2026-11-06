@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Extensions;
@@ -79,6 +78,8 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     private uint _randomSeed;
     private int _prewarmStepsRemaining;
     private double _prewarmBudgetMilliseconds;
+    private int _simulationHoldCount;
+    private Matrix4x4 _prewarmWorldMatrix = Matrix4x4.Identity;
     private string _currentShaderHash = "";
 
     // Shader assembler
@@ -207,6 +208,32 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     [Browsable(false)]
     public int PrewarmStepsRemaining => _prewarmStepsRemaining;
 
+    /// <summary>
+    /// True while a controller, for example a cutscene, holds the simulation with <see cref="BeginSimulationHold"/>.
+    /// A held emitter does not step, and a prewarm does not continue. The hold is separate from <see cref="IsSimulating"/>,
+    /// <see cref="Pause"/>, and <see cref="Resume"/>, and it does not change the tick registration.
+    /// </summary>
+    [YamlIgnore]
+    [Browsable(false)]
+    public bool IsSimulationHeld => Volatile.Read(ref _simulationHoldCount) > 0;
+
+    /// <summary>Starts a controller hold. Each call needs one <see cref="EndSimulationHold"/>.</summary>
+    public void BeginSimulationHold()
+        => Interlocked.Increment(ref _simulationHoldCount);
+
+    /// <summary>Ends a controller hold that <see cref="BeginSimulationHold"/> started. An extra call does nothing.</summary>
+    public void EndSimulationHold()
+    {
+        int count = Volatile.Read(ref _simulationHoldCount);
+        while (count > 0)
+        {
+            int previous = Interlocked.CompareExchange(ref _simulationHoldCount, count - 1, count);
+            if (previous == count)
+                return;
+            count = previous;
+        }
+    }
+
     [YamlIgnore]
     [Browsable(false)]
     public RenderInfo[] RenderedObjects { get; private set; } = [];
@@ -321,7 +348,15 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         // Initialize rendering
         InitializeRendering();
 
-        // Register update tick
+        RegisterUpdateTickIfSimulating();
+    }
+
+    /// <summary>
+    /// Registers the update tick if <see cref="IsSimulating"/> is true. A controller hold does not change this decision,
+    /// so an activation during a hold registers the tick as normal.
+    /// </summary>
+    private void RegisterUpdateTickIfSimulating()
+    {
         if (IsSimulating)
             RegisterTick(ETickGroup.DuringPhysics, ETickOrder.Scene, Update);
     }
@@ -710,7 +745,7 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
 
     private void Update()
     {
-        if (!IsSimulating || !_buffersInitialized)
+        if (!IsSimulating || !_buffersInitialized || IsSimulationHeld)
             return;
 
         // A prewarm that did not complete in its budget continues here, in place of the normal step.
@@ -720,16 +755,18 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
             return;
         }
 
-        StepSimulation(Delta);
+        StepSimulation(Delta, Transform.WorldMatrix);
     }
 
     /// <summary>Advances the emitter by one step: spawn, update, and the render bounds.</summary>
-    private void StepSimulation(float deltaTime)
+    /// <param name="deltaTime">The step length in seconds.</param>
+    /// <param name="worldMatrix">The emitter transform for the spawn of this step.</param>
+    private void StepSimulation(float deltaTime, in Matrix4x4 worldMatrix)
     {
         _totalTime += deltaTime;
 
         // Update emitter parameters
-        UpdateEmitterParams(deltaTime);
+        UpdateEmitterParams(deltaTime, worldMatrix);
 
         // Calculate spawn count for this frame
         uint spawnCount = 0;
@@ -759,12 +796,13 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     }
 
     private void UpdateEmitterParams(float deltaTime)
-    {
-        var worldMatrix = Transform.WorldMatrix;
+        => UpdateEmitterParams(deltaTime, Transform.WorldMatrix);
 
+    private void UpdateEmitterParams(float deltaTime, in Matrix4x4 worldMatrix)
+    {
         _emitterParams = new GPUEmitterParams
         {
-            EmitterPosition = Transform.WorldTranslation,
+            EmitterPosition = worldMatrix.Translation,
             DeltaTime = deltaTime,
             EmitterForward = Vector3.TransformNormal(Vector3.UnitZ, worldMatrix),
             TotalTime = _totalTime,
@@ -948,7 +986,10 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     /// <paramref name="seconds"/> of simulation time. The steps run now until <paramref name="budgetMilliseconds"/>
     /// of wall time is used. The emitter runs at least one step in each call, so a prewarm always advances.
     /// The steps that remain continue in the next updates of the emitter, with the same budget in each update,
-    /// in place of the normal step. The same seed and duration give the same particles.
+    /// in place of the normal step. All prewarm steps use the emitter transform of this call, so the result does not depend
+    /// on how the budget splits the steps across frames: the same seed, duration, and transform give the same particles.
+    /// The budget measures the CPU time that records the steps. The GPU runs the compute work later, so the GPU cost of a
+    /// prewarm is not limited by the budget.
     /// </summary>
     /// <param name="seconds">The simulation time to run. Zero only clears the particles and sets the seed.</param>
     /// <param name="seed">The random seed of the spawn shader.</param>
@@ -960,6 +1001,7 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         _totalTime = 0.0f;
         _emitAccumulator = 0.0f;
         _randomSeed = unchecked((uint)seed);
+        _prewarmWorldMatrix = Transform.WorldMatrix;
         _prewarmStepsRemaining = float.IsFinite(seconds) && seconds > 0.0f
             ? (int)MathF.Ceiling(seconds / PrewarmStepSeconds)
             : 0;
@@ -980,7 +1022,7 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         long start = System.Diagnostics.Stopwatch.GetTimestamp();
         do
         {
-            StepSimulation(PrewarmStepSeconds);
+            StepSimulation(PrewarmStepSeconds, _prewarmWorldMatrix);
             _prewarmStepsRemaining--;
         }
         while (_prewarmStepsRemaining > 0 && System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds < _prewarmBudgetMilliseconds);

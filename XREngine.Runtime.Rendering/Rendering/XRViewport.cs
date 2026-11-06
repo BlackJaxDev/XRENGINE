@@ -395,6 +395,10 @@ namespace XREngine.Rendering
         internal void DiscardUnresolvedDesktopFrameViewHistory(ulong sequence)
             => _frameViewHistoryLedger.DiscardUnresolved(sequence);
 
+        /// <summary>Gets the camera history epoch that the capture of a desktop output sequence recorded.</summary>
+        internal bool TryGetCapturedCameraEpoch(ulong sequence, out ulong epoch)
+            => _frameViewHistoryLedger.TryGetCapturedCameraEpoch(sequence, out epoch);
+
         /// <summary>
         /// Gets a bounded, allocation-free snapshot of this viewport's desktop
         /// temporal-history ownership state.

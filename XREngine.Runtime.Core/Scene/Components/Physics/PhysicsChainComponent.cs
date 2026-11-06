@@ -262,8 +262,13 @@ public partial class PhysicsChainComponent : XRComponent
     internal bool BeginWorldLateTick()
     {
         // A requested reset replaces the simulation step of this frame, so the frame shows the reset pose.
+        // The GPU path still dispatches once with a zero time step: it uploads the reset particles, keeps the GPU
+        // bone palette on the reset pose, and consumes the world rest input of this frame (with its capture fault).
         if (TryApplyRequestedPoseReset())
         {
+            _isSimulating = true;
+            if (UseGPU)
+                ExecuteGpuLateUpdate(resetFrame: true);
             CompleteWorldLateTick();
             return false;
         }
@@ -1533,17 +1538,24 @@ public partial class PhysicsChainComponent : XRComponent
 
     /// <summary>True while a reset from <see cref="ResetSimulationToCurrentPose"/> waits for the next simulation step.</summary>
     [YamlIgnore]
+    [System.ComponentModel.Browsable(false)]
     public bool IsSimulationResetPending
         => Volatile.Read(ref _poseResetRequested) != 0;
 
     /// <summary>
     /// Applies a reset that <see cref="ResetSimulationToCurrentPose"/> requested. The bones go back to their rest
     /// rotations under the current parent pose, as in a normal step, and the particles move to those bones.
+    /// A chain that does not update (weight zero or disabled by distance) drops the request: it does not touch its bones in
+    /// that state, and it resets its particles itself when it updates again.
     /// </summary>
     /// <returns>True if a reset was applied.</returns>
     private bool TryApplyRequestedPoseReset()
     {
         if (Interlocked.Exchange(ref _poseResetRequested, 0) == 0)
+            return false;
+
+        SetWeight(BlendWeight);
+        if (!IsNeedUpdate())
             return false;
 
         for (int i = 0; i < _particleTrees.Count; ++i)

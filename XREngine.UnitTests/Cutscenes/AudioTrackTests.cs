@@ -7,6 +7,7 @@ using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Cutscenes;
 using XREngine.Data;
+using XREngine.Rendering;
 using XREngine.Scene;
 
 namespace XREngine.UnitTests.Cutscenes;
@@ -359,6 +360,15 @@ public sealed class AudioTrackTests
     /// The evaluator services the tracks in their order. The dialog track comes first unless <paramref name="musicFirst"/> is true.
     /// </summary>
     private static Rig MakeRig((double Start, double Duration, double Offset)? music, bool musicFirst, ECutsceneEventSeekPolicy policy, double[] eventTimes)
+        => MakeRig(music, musicFirst, policy, eventTimes, extend: null);
+
+    /// <summary>Makes the rig. <paramref name="extend"/> can add tracks and bindings to the asset and returns the nodes it binds.</summary>
+    private static Rig MakeRig(
+        (double Start, double Duration, double Offset)? music,
+        bool musicFirst,
+        ECutsceneEventSeekPolicy policy,
+        double[] eventTimes,
+        Func<CutsceneAsset, SceneNode[]>? extend)
     {
         string path = WriteRampWav(SampleRate * 3);
         SceneNode node = new("Speaker");
@@ -394,10 +404,12 @@ public sealed class AudioTrackTests
             asset.Tracks.Add(events);
         }
 
+        SceneNode[] extraNodes = extend?.Invoke(asset) ?? [];
+
         List<CutsceneCompileDiagnostic> diagnostics = [];
         CompiledCutscene compiled = CutsceneCompiler.Compile(asset, diagnostics);
         diagnostics.ShouldBeEmpty();
-        CutsceneBindingTable table = CutsceneBindingTable.Resolve(compiled, new FakeResolver(node, musicNode));
+        CutsceneBindingTable table = CutsceneBindingTable.Resolve(compiled, new FakeResolver([node, musicNode, .. extraNodes]));
         table.Diagnostics.ShouldBeEmpty();
         List<CountingDecoder> decoders = [];
         FakeWallClock wallClock = new();
@@ -787,6 +799,114 @@ public sealed class AudioTrackTests
         rig.SetHeardTime(0.52, 160);
         rig.Player.Tick(0.02);
         rig.Fired.ShouldBeEmpty();
+    }
+
+    /// <summary>Counts simulation resets. The fields do not allocate.</summary>
+    private sealed class CountingSimulationTarget : ICutsceneSimulationTarget
+    {
+        public readonly object Identity = new();
+        public int Resets;
+
+        public object Source => Identity;
+        public string Name => "counting simulation";
+        public bool SupportsWarmUp => false;
+        public void ResetToCurrentPose(int seed) => Resets++;
+        public void SetHeld(bool held) { }
+        public void KeepHeld() { }
+        public void WarmUp(float seconds, int seed, double budgetMilliseconds) => Resets++;
+    }
+
+    private static CameraComponent CreateShotCamera(string name)
+    {
+        CameraComponent component = new SceneNode(name).AddComponent<CameraComponent>()!;
+        XRCamera camera = new(component.Transform, new XRPerspectiveCameraParameters(60f, 1, 0.1f, 100));
+        typeof(CameraComponent).GetField("_camera", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(component, new Lazy<XRCamera>(() => camera));
+        return component;
+    }
+
+    /// <summary>
+    /// Adds a simulation track on the speaker node and camera cut shots. Each shot is (start, duration, camera index).
+    /// </summary>
+    private static Rig MakeResyncRig(CameraComponent[] cameras, params (double Start, double Duration, int Camera)[] shots)
+        => MakeRig(null, musicFirst: false, ECutsceneEventSeekPolicy.Skip, [], asset =>
+        {
+            int firstCameraSlot = asset.Bindings.Count;
+            foreach (CameraComponent camera in cameras)
+                asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.SceneObject, ObjectId = camera.SceneNode!.ID });
+
+            CameraCutTrack cut = new() { Name = "Cuts", BindingSlot = firstCameraSlot };
+            foreach ((double start, double duration, int camera) in shots)
+                cut.Clips.Add(new CameraCutClip { Start = T(start), Duration = T(duration), CameraBindingSlot = firstCameraSlot + camera });
+            asset.Tracks.Add(cut);
+            asset.Tracks.Add(new SimulationControlTrack { Name = "Hair", BindingSlot = 0 });
+
+            SceneNode[] nodes = new SceneNode[cameras.Length];
+            for (int i = 0; i < cameras.Length; i++)
+                nodes[i] = cameras[i].SceneNode!;
+            return nodes;
+        });
+
+    [Test]
+    public void HardResync_InsideAShot_ResetsOnlyTheTemporalHistory()
+    {
+        CameraComponent[] cameras = [CreateShotCamera("Shot")];
+        using Rig rig = MakeResyncRig(cameras, (0, 3, 0));
+        CountingSimulationTarget target = new();
+        rig.Player.Simulation.TargetResolver = (_, targets) => targets.Add(target);
+        XRViewport viewport = new(null) { AutomaticallyCollectVisible = false, AutomaticallySwapBuffers = false, SetRenderPipelineFromCamera = false };
+        CutsceneCameraRouter router = new(rig.Player);
+        router.Attach(viewport);
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        XRCamera camera = cameras[0].Camera;
+        ulong epochBefore = camera.TemporalHistoryEpoch;
+        long exposureBefore = camera.AutoExposureResetCount;
+        int resetsBefore = target.Resets;
+        int discontinuitiesBefore = rig.Discontinuities.Count;
+
+        rig.SetHeardTime(0.5, 160);
+        rig.Player.Tick(0.02);
+
+        rig.Player.AudioHardResyncCount.ShouldBe(1);
+        rig.Discontinuities.Count.ShouldBe(discontinuitiesBefore + 1);
+        rig.Discontinuities[^1].Kind.ShouldBe(ECutsceneDiscontinuityKind.ClockResync);
+        camera.TemporalHistoryEpoch.ShouldBe(epochBefore + 1UL);
+        camera.AutoExposureResetCount.ShouldBe(exposureBefore);
+        target.Resets.ShouldBe(resetsBefore);
+        router.Detach();
+    }
+
+    [Test]
+    public void HardResync_WithACutInTheSameTick_DoesEachResetOnce()
+    {
+        CameraComponent[] cameras = [CreateShotCamera("Shot A"), CreateShotCamera("Shot B")];
+        using Rig rig = MakeResyncRig(cameras, (0, 0.3, 0), (0.3, 2.7, 1));
+        CountingSimulationTarget target = new();
+        rig.Player.Simulation.TargetResolver = (_, targets) => targets.Add(target);
+        XRViewport viewport = new(null) { AutomaticallyCollectVisible = false, AutomaticallySwapBuffers = false, SetRenderPipelineFromCamera = false };
+        CutsceneCameraRouter router = new(rig.Player);
+        router.Attach(viewport);
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+
+        XRCamera next = cameras[1].Camera;
+        ulong epochBefore = next.TemporalHistoryEpoch;
+        long exposureBefore = next.AutoExposureResetCount;
+        int resetsBefore = target.Resets;
+        int discontinuitiesBefore = rig.Discontinuities.Count;
+
+        rig.SetHeardTime(0.5, 160);
+        rig.Player.Tick(0.02);
+
+        viewport.ActiveCamera.ShouldBeSameAs(next);
+        rig.Discontinuities.Count.ShouldBe(discontinuitiesBefore + 1);
+        rig.Discontinuities[^1].Kind.ShouldBe(ECutsceneDiscontinuityKind.Full);
+        next.TemporalHistoryEpoch.ShouldBe(epochBefore + 1UL);
+        next.AutoExposureResetCount.ShouldBe(exposureBefore + 1);
+        target.Resets.ShouldBe(resetsBefore + 1);
+        router.Detach();
     }
 
     [Test]
