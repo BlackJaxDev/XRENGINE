@@ -78,7 +78,11 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
     /// both eyes as one layered target when this pipeline is stereo.
     /// </summary>
     internal AdvancedRenderPipeline AdvancedStageFamily
-        => _advancedStageFamily ??= CreateAdvancedStageFamily();
+        => _advancedStageFamily is { } family && family.Stereo == Stereo
+            ? family
+            // The base constructor can query passes before Stereo is assigned, so
+            // a family made for the other topology is replaced, never reused.
+            : _advancedStageFamily = CreateAdvancedStageFamily();
 
     private AdvancedRenderPipeline CreateAdvancedStageFamily()
     {
