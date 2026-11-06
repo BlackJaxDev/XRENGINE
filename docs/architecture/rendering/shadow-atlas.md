@@ -110,7 +110,8 @@ The render thread never mutates planner-owned collections.
 ### Cadence, stale age, and forced refresh
 
 - `MaxDirectionalCascadeAtlasStaleFrames` (default 4) limits stale reuse. A dirty cascade at this age gets `ShadowDirtyReason.StaleContentAgeLimitReached` and renders fresh. Local spot and point tiles use a fixed cap of 4 frames.
-- While the source camera moves, a content-changed cascade with a rendered sample keeps its coherent stale group (`SkipReason.StaleTileReused`). It refreshes after the source camera is stable for `Math.Clamp(cascadeCount, 2, 8)` frames.
+- By default a content-changed cascade refreshes in the same frame, so it keeps full resolution and coverage while the camera moves.
+- With `HoldDirectionalCascadesWhileCameraMoves` on, a content-changed cascade with a rendered sample keeps its coherent stale group while the source camera moves (`SkipReason.StaleTileReused`), and shading reprojects the held tile with the matrix it was rendered with. It refreshes after the source camera is stable for `Math.Clamp(cascadeCount, 2, 8)` frames, or at the stale limit. The hold avoids republishing shadow records, which today invalidates the persistent mesh binding artifacts, but a held tile fitted for an older camera has lower resolution or less coverage, so shadows can look scaled while the camera moves.
 - A cascade without a rendered sample, or at the stale-age limit, renders fresh and increments `DirectionalCascadeForcedFreshRender`.
 - A cascade jump larger than the linear or translation threshold (`ResolveDirectionalCascadeLinearJumpThreshold`, `ResolveDirectionalCascadeTranslationJumpThreshold`) cannot use stale reprojection.
 - Cadence-skipped and hash-stable cascades skip caster collection.

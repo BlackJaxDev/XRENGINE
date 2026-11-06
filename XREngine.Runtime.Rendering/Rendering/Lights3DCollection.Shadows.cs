@@ -1110,6 +1110,15 @@ namespace XREngine.Scene
                 return false;
             }
 
+            // The moving-camera hold is opt-in. Without it, a cascade whose content changed
+            // refreshes in this frame, so it keeps full resolution and coverage while the
+            // camera moves.
+            if (!RuntimeEngine.Rendering.Settings.HoldDirectionalCascadesWhileCameraMoves)
+            {
+                forcedFresh = true;
+                return false;
+            }
+
             // Shadow publication participates in persistent mesh binding-artifact
             // generations. Publishing even one moving cascade invalidates those
             // artifacts for every visible mesh. Hold the last internally coherent

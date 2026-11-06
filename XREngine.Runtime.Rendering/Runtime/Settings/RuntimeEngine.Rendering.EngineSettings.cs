@@ -737,6 +737,7 @@ public static partial class RuntimeEngine
                 private float _maxShadowRenderMilliseconds = 2.0f;
                 private int _maxDirectionalCascadeAtlasStaleFrames = 4;
                 private uint _minShadowAtlasTileResolution = 128u;
+                private bool _holdDirectionalCascadesWhileCameraMoves;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
                 /// <summary>
@@ -943,6 +944,14 @@ public static partial class RuntimeEngine
                 }
 
                 [Category("Shadows")]
+                [Category("Shadows")]
+                [Description("Keeps directional cascade tiles while the source camera moves and refreshes them after the camera settles or the stale limit. Shading reprojects held tiles with the matrix they were rendered with. Off by default: cascades refresh every frame, so shadows keep their full resolution and coverage while the camera moves.")]
+                public bool HoldDirectionalCascadesWhileCameraMoves
+                {
+                    get => _holdDirectionalCascadesWhileCameraMoves;
+                    set => SetField(ref _holdDirectionalCascadesWhileCameraMoves, value);
+                }
+
                 [Description("Minimum dynamic shadow atlas tile resolution in texels.")]
                 public uint MinShadowAtlasTileResolution
                 {
