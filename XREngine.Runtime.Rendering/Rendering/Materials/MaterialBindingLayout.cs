@@ -480,7 +480,9 @@ namespace XREngine.Rendering.Materials
                 !TryWriteVector4(layout, destination, "EmissionTextureMetadata", emissionTextureMetadata, out error) ||
                 !TryWriteVector4(layout, destination, "EmissionUvScaleOffset", emissionUvScaleOffset, out error) ||
                 !TryWriteFloat(layout, destination, "EmissionUvRotation", emissionUvRotation, out error) ||
-                !TryWriteFloat(layout, destination, "AlphaCutoff", entry.AlphaCutoff, out error))
+                !TryWriteFloat(layout, destination, "AlphaCutoff", entry.AlphaCutoff, out error) ||
+                !TryWriteOptionalFloat(layout, destination, "SurfaceDetailHeightScale", entry.SurfaceDetailHeightScale, out error) ||
+                !TryWriteOptionalFloat(layout, destination, "ParallaxScale", entry.ParallaxScale, out error))
             {
                 return false;
             }
@@ -511,6 +513,20 @@ namespace XREngine.Rendering.Materials
 
             destination[(int)member.WordOffset] = BitConverter.SingleToUInt32Bits(value);
             return true;
+        }
+
+        /// <summary>
+        /// Writes a float member when the layout declares it. Layouts without the member skip it.
+        /// </summary>
+        private static bool TryWriteOptionalFloat(MaterialBindingLayout layout, Span<uint> destination, string memberName, float value, out string error)
+        {
+            if (!layout.TryGetPackedMember(memberName, out _))
+            {
+                error = string.Empty;
+                return true;
+            }
+
+            return TryWriteFloat(layout, destination, memberName, value, out error);
         }
 
         private static bool TryWriteVector4(MaterialBindingLayout layout, Span<uint> destination, string memberName, Vector4 value, out string error)
@@ -657,6 +673,8 @@ namespace XREngine.Rendering.Materials
                 new("EmissionUvScaleOffset", "vec4", "emissionUvScaleOffset", "vec4(1.0, 1.0, 0.0, 0.0)"),
                 new("EmissionUvRotation", "float", "emissionUvRotation", "0.0"),
                 new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
+                new("SurfaceDetailHeightScale", "float", "surfaceDetailHeightScale", "0.0"),
+                new("ParallaxScale", "float", "parallaxScale", "0.0"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
@@ -681,6 +699,8 @@ namespace XREngine.Rendering.Materials
                 new("EmissionUvScaleOffset", "vec4", "emissionUvScaleOffset", "vec4(1.0, 1.0, 0.0, 0.0)"),
                 new("EmissionUvRotation", "float", "emissionUvRotation", "0.0"),
                 new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
+                new("SurfaceDetailHeightScale", "float", "surfaceDetailHeightScale", "0.0"),
+                new("ParallaxScale", "float", "parallaxScale", "0.0"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
@@ -705,6 +725,8 @@ namespace XREngine.Rendering.Materials
                 new("EmissionUvScaleOffset", "vec4", "emissionUvScaleOffset", "vec4(1.0, 1.0, 0.0, 0.0)"),
                 new("EmissionUvRotation", "float", "emissionUvRotation", "0.0"),
                 new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
+                new("SurfaceDetailHeightScale", "float", "surfaceDetailHeightScale", "0.0"),
+                new("ParallaxScale", "float", "parallaxScale", "0.0"),
             ],
             [
                 new("Albedo", "albedo", "2D"),

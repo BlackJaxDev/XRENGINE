@@ -52,6 +52,11 @@ namespace XREngine.Rendering.Materials
             if (material.GetEffectiveTransparencyMode() is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
                 flags |= GPUMaterialEntry.MaskedCoverageFlag;
 
+            SurfaceDetailControls surfaceDetail = ResolveSurfaceDetail(material, ref normal, uberSource);
+            if (normal is not null)
+                flags |= 1u << 1;
+            flags |= surfaceDetail.Flags;
+
             return new MaterialBindingSourceSnapshot(
                 new GPUMaterialEntry
                 {
@@ -59,6 +64,8 @@ namespace XREngine.Rendering.Materials
                     BaseColorOpacity = ResolveBaseColorOpacity(material),
                     RMSE = ResolveRmse(material),
                     AlphaCutoff = material.AlphaCutoff,
+                    SurfaceDetailHeightScale = surfaceDetail.HeightScale,
+                    ParallaxScale = surfaceDetail.ParallaxScale,
                 },
                 albedo,
                 normal,
@@ -69,6 +76,43 @@ namespace XREngine.Rendering.Materials
                 ResolveEmissionTextureMetadata(emissiveBinding),
                 emissiveBinding?.UvScaleOffset ?? new Vector4(1.0f, 1.0f, 0.0f, 0.0f),
                 emissiveBinding?.UvRotation ?? 0.0f);
+        }
+
+        private readonly record struct SurfaceDetailControls(uint Flags, float HeightScale, float ParallaxScale);
+
+        /// <summary>
+        /// Resolves the height-map controls of the surface-detail (normal) slot. Imported height and
+        /// bump maps (<c>NormalMapMode</c> 1) have no normal surface binding, so their legacy slot
+        /// (Texture1) supplies the texture. <c>ParallaxScale</c> marks parallax occlusion mapping.
+        /// </summary>
+        private static SurfaceDetailControls ResolveSurfaceDetail(XRMaterial material, ref XRTexture? normal, bool uberSource)
+        {
+            if ((material.Parameter<ShaderInt>("NormalMapMode")?.Value ?? 0) != 1)
+                return default;
+
+            if (normal is null && !uberSource && material.Textures.Count > 1)
+                normal = material.Textures[1];
+            if (normal is null)
+                return default;
+
+            uint flags = GPUMaterialEntry.HeightMapFlag;
+            float heightScale = material.Parameter<ShaderFloat>("HeightMapScale")?.Value ?? 1.0f;
+            float parallaxScale = 0.0f;
+            if (!uberSource && material.Parameter<ShaderFloat>("ParallaxScale") is { Value: > 0.0f } parallax)
+            {
+                parallaxScale = parallax.Value;
+                uint maxSteps = (uint)Math.Clamp(material.Parameter<ShaderInt>("ParallaxMaxSteps")?.Value ?? 32, 1, 255);
+                uint minSteps = (uint)Math.Clamp(material.Parameter<ShaderInt>("ParallaxMinSteps")?.Value ?? 8, 1, 255);
+                uint refineSteps = (uint)Math.Clamp(material.Parameter<ShaderInt>("ParallaxRefineSteps")?.Value ?? 5, 0, 15);
+                flags |= GPUMaterialEntry.ParallaxFlag |
+                    (maxSteps << GPUMaterialEntry.ParallaxMaxStepsShift) |
+                    (minSteps << GPUMaterialEntry.ParallaxMinStepsShift) |
+                    (refineSteps << GPUMaterialEntry.ParallaxRefineStepsShift);
+                if ((material.Parameter<ShaderInt>("ParallaxSilhouette")?.Value ?? 0) != 0)
+                    flags |= GPUMaterialEntry.ParallaxSilhouetteFlag;
+            }
+
+            return new SurfaceDetailControls(flags, heightScale, parallaxScale);
         }
 
         /// <summary>True for a converted uber material, which carries the uber lighting-mode parameter.</summary>

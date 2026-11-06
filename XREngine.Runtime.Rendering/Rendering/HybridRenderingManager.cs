@@ -3832,7 +3832,7 @@ namespace XREngine.Rendering
                 sb.AppendLine("    vec3 worldNormal = normalize(FragNorm);");
                 if (samplesMaterialTextures)
                 {
-                    sb.AppendLine("    if ((flags & 2u) != 0u)");
+                    sb.AppendLine($"    if ((flags & 2u) != 0u && (flags & {GPUMaterialEntry.HeightMapFlag}u) == 0u)");
                     sb.AppendLine("    {");
                     sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
                     sb.AppendLine("        mat3 tangentToWorld = mat3(normalize(FragTan), normalize(FragBinorm), worldNormal);");
@@ -3890,7 +3890,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    float materialAmbientOcclusion = 1.0;");
             if (samplesMaterialTextures)
             {
-                sb.AppendLine("    if ((flags & 2u) != 0u)");
+                sb.AppendLine($"    if ((flags & 2u) != 0u && (flags & {GPUMaterialEntry.HeightMapFlag}u) == 0u)");
                 sb.AppendLine("    {");
                 sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
                 sb.AppendLine("        mat3 tangentToWorld = mat3(normalize(FragTan), normalize(FragBinorm), worldNormal);");
@@ -4039,7 +4039,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    vec3 worldNormal = normalize(FragNorm);");
             if (samplesMaterialTextures)
             {
-                sb.AppendLine("    if ((flags & 2u) != 0u)");
+                sb.AppendLine($"    if ((flags & 2u) != 0u && (flags & {GPUMaterialEntry.HeightMapFlag}u) == 0u)");
                 sb.AppendLine("    {");
                 sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
                 sb.AppendLine("        mat3 tangentToWorld = mat3(normalize(FragTan), normalize(FragBinorm), worldNormal);");

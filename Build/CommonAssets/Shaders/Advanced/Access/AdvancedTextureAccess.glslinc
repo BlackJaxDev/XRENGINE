@@ -250,6 +250,22 @@ vec4 XR_ADV_SampleTexture2DArray(
 #endif
 }
 
+// Base-level size of a 2D texture reference. Fallback and unsupported modes return 1 x 1.
+ivec2 XR_ADV_Texture2DSize(XRAdvancedEncodedTextureReference reference)
+{
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return ivec2(1);
+#if defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
+    return textureSize(sampler2D(uvec2(reference.payload0, reference.payload1)), 0);
+#elif defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    return textureSize(sampler2D(XR_ADV_TextureDescriptors[nonuniformEXT(reference.payload0)], XR_ADV_SamplerDescriptors[nonuniformEXT(reference.payload1)]), 0);
+#elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
+    return textureSize(XR_ADV_TextureArray, 0).xy;
+#else
+    return ivec2(1);
+#endif
+}
+
 ivec3 XR_ADV_Texture2DArraySize(XRAdvancedEncodedTextureReference reference)
 {
     if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)

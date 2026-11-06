@@ -397,9 +397,22 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     if ((materialFlags & 2u) != 0u &&
         XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT))
     {
-        vec3 normalTex = XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
-            surface.texCoord0Dx, surface.texCoord0Dy,
-            vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;
+        vec3 normalTex;
+        if ((materialFlags & XR_ADV_STANDARD_HEIGHT_MAP_FLAG) != 0u)
+        {
+            // Flag bit 28 is reserved and always zero. Reading the tap count from
+            // material data keeps the height-tap loop rolled in this kernel.
+            uint heightTaps = 3u + ((materialFlags >> 28u) & 1u);
+            normalTex = XR_ADV_StandardHeightTangentNormal(material, surface.texCoord0,
+                surface.texCoord0Dx, surface.texCoord0Dy,
+                uintBitsToFloat(XR_ADV_LoadMaterialConstant(material,
+                    XR_ADV_STANDARD_SURFACE_DETAIL_HEIGHT_SCALE_WORD)),
+                heightTaps);
+        }
+        else
+            normalTex = XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
+                surface.texCoord0Dx, surface.texCoord0Dy,
+                vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;
         N = normalize(surface.tangent * normalTex.x +
             surface.bitangent * normalTex.y + N * normalTex.z);
     }

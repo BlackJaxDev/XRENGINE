@@ -186,7 +186,9 @@ namespace XREngine.Rendering.Materials
                left.Flags == right.Flags &&
                left.BaseColorOpacity == right.BaseColorOpacity &&
                left.RMSE == right.RMSE &&
-               left.AlphaCutoff == right.AlphaCutoff;
+               left.AlphaCutoff == right.AlphaCutoff &&
+               left.SurfaceDetailHeightScale == right.SurfaceDetailHeightScale &&
+               left.ParallaxScale == right.ParallaxScale;
 
         private uint ResolveTextureReference(GPUMaterialTextureReference reference, out uint openGlHandleIndex)
         {

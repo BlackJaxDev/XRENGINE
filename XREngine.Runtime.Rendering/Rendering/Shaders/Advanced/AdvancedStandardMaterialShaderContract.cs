@@ -22,6 +22,14 @@ internal static class AdvancedStandardMaterialShaderContract
         AppendMember(source, layout, "EmissionUvRotation", "XR_ADV_STANDARD_EMISSION_UV_ROTATION_WORD");
         AppendMember(source, layout, "AlphaCutoff", "XR_ADV_STANDARD_ALPHA_CUTOFF_WORD");
         AppendMember(source, layout, "Flags", "XR_ADV_STANDARD_FLAGS_WORD");
+        AppendMember(source, layout, "SurfaceDetailHeightScale", "XR_ADV_STANDARD_SURFACE_DETAIL_HEIGHT_SCALE_WORD");
+        AppendMember(source, layout, "ParallaxScale", "XR_ADV_STANDARD_PARALLAX_SCALE_WORD");
+        Append(source, "XR_ADV_STANDARD_HEIGHT_MAP_FLAG", GPUMaterialEntry.HeightMapFlag);
+        Append(source, "XR_ADV_STANDARD_PARALLAX_FLAG", GPUMaterialEntry.ParallaxFlag);
+        Append(source, "XR_ADV_STANDARD_PARALLAX_SILHOUETTE_FLAG", GPUMaterialEntry.ParallaxSilhouetteFlag);
+        Append(source, "XR_ADV_STANDARD_PARALLAX_MAX_STEPS_SHIFT", (uint)GPUMaterialEntry.ParallaxMaxStepsShift);
+        Append(source, "XR_ADV_STANDARD_PARALLAX_MIN_STEPS_SHIFT", (uint)GPUMaterialEntry.ParallaxMinStepsShift);
+        Append(source, "XR_ADV_STANDARD_PARALLAX_REFINE_STEPS_SHIFT", (uint)GPUMaterialEntry.ParallaxRefineStepsShift);
         Append(source, "XR_ADV_STANDARD_WORD_COUNT", layout.RowWordCount);
         AppendLayout(source, "XR_ADV_STANDARD_DEFERRED_LAYOUT", layout);
         AppendLayout(source, "XR_ADV_STANDARD_FORWARD_LAYOUT", MaterialBindingLayouts.ForwardOpaque);

@@ -47,8 +47,8 @@ public partial class GPUMaterialTable
             public uint EmissionUvOffsetY;
             public uint EmissionUvRotation;
             public uint AlphaCutoff;
-            public uint Padding3;
-            public uint Padding4;
+            public uint SurfaceDetailHeightScale;
+            public uint ParallaxScale;
         }
     }
 }

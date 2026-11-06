@@ -13,6 +13,20 @@ namespace XREngine.Rendering.Materials
         /// </summary>
         public const uint MaskedCoverageFlag = 1u << 3;
 
+        /// <summary>The normal slot holds a grayscale height or bump map, not an RGB normal map.</summary>
+        public const uint HeightMapFlag = 1u << 4;
+
+        /// <summary>The height map drives parallax occlusion mapping.</summary>
+        public const uint ParallaxFlag = 1u << 5;
+
+        /// <summary>Parallax discards fragments whose ray leaves UV [0, 1].</summary>
+        public const uint ParallaxSilhouetteFlag = 1u << 6;
+
+        /// <summary>Bit offsets of the packed parallax step counts (8 bits max, 8 bits min, 4 bits refine).</summary>
+        public const int ParallaxMaxStepsShift = 8;
+        public const int ParallaxMinStepsShift = 16;
+        public const int ParallaxRefineStepsShift = 24;
+
         public uint AlbedoHandleIndex;
         public uint NormalHandleIndex;
         public uint RMHandleIndex;
@@ -20,5 +34,11 @@ namespace XREngine.Rendering.Materials
         public Vector4 BaseColorOpacity;
         public Vector4 RMSE;
         public float AlphaCutoff;
+
+        /// <summary>Height-to-normal slope scale for a height or bump map.</summary>
+        public float SurfaceDetailHeightScale;
+
+        /// <summary>Parallax depth at full height range, in UV units.</summary>
+        public float ParallaxScale;
     }
 }
