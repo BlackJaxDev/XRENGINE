@@ -872,7 +872,8 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
     {
         Attach(host);
         DestroyVulkanEyeMirrorTargets();
-        DestroyVulkanStereoRenderTarget();
+        DestroyVulkanStereoRenderTarget(_vulkanStereoTargets[0]);
+        DestroyVulkanStereoRenderTarget(_vulkanStereoTargets[1]);
         DestroyOpenXrPreviewTargets();
         DestroyViewportMirrorTargets();
     }

@@ -976,15 +976,25 @@ public unsafe partial class OpenXRAPI
             if (useTrueSinglePassStereo)
             {
                 _openXrStereoUpdatingBufferFree = false;
-                if (!CollectOpenXrStereoVisible(
+                bool collectedWidePair;
+                int collectedAdded;
+                long collectedBuildTicks;
+                // With quad view, the wide pair sees only views 0 and 1.
+                using (IsOpenXrInsetPairActive
+                    ? RenderFrameViewSetPublication.EnterViewPairScope(0)
+                    : default)
+                {
+                    collectedWidePair = CollectOpenXrStereoVisible(
                         resolvedWorld,
                         _openXrLeftEyeCamera,
                         _openXrRightEyeCamera,
                         collectViewport,
                         leftMeshCommands,
                         cullProjectionScale: 1.0f,
-                        out int collectedAdded,
-                        out long collectedBuildTicks))
+                        out collectedAdded,
+                        out collectedBuildTicks);
+                }
+                if (!collectedWidePair)
                 {
                     return;
                 }
@@ -993,6 +1003,17 @@ public unsafe partial class OpenXRAPI
                 rightAdded = collectedAdded;
                 leftBuildTicks = collectedBuildTicks;
                 rightBuildTicks = collectedBuildTicks;
+
+                // Quad view renders the inset pair as a second layered stereo batch.
+                if (IsOpenXrInsetPairActive &&
+                    !TryCollectOpenXrInsetPair(resolvedWorld, baseCamera, sourcePipeline, leftEyePipeline, out _))
+                {
+                    Debug.RenderingWarningEvery(
+                        "OpenXR.CollectVisible.InsetPairFailed",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] CollectVisible skipped: the quad-view inset pair could not be prepared.");
+                    return;
+                }
             }
             else
             {
@@ -1646,8 +1667,14 @@ public unsafe partial class OpenXRAPI
             }
             else
             {
-                stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
+                using (IsOpenXrInsetPairActive
+                    ? RenderFrameViewSetPublication.EnterViewPairScope(0)
+                    : default)
+                {
+                    stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
+                }
                 _openXrStereoUpdatingBufferFree = true;
+                SwapOpenXrInsetPairCommands();
                 Debug.RenderingEvery(
                     $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),

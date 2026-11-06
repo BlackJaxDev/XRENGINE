@@ -18,11 +18,12 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
 {
     // An eye frame can make more than one tracked submission: the stereo render and
-    // publish, then a copy for each eye preview texture. The budget must hold several
+    // publish, the quad-view inset render and publish, then a copy for each eye preview
+    // texture. The budget must hold several
     // frames of these, or each frame waits for the previous frame's GPU work and the
     // CPU and GPU never overlap.
     private const int MaxInFlightEyeFrames = 3;
-    private const int MaxSubmissionsPerEyeFrame = 3;
+    private const int MaxSubmissionsPerEyeFrame = 4;
     internal const int DefaultMaxInFlightSubmissions = MaxInFlightEyeFrames * MaxSubmissionsPerEyeFrame;
     private const int MaxTrackedCommandBuffers = 3;
     internal const int MaxTrackedUploads = 64;
