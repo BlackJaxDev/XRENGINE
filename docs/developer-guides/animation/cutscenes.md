@@ -115,6 +115,19 @@ An event track does not use its binding slot. The binding table does not check i
 
 Put completion logic on `CutscenePlayer.Finished` or `CutsceneDirectorComponent.Finished`, not on an event at the end of a clip. The player raises `Finished` from its state: once when forward playback or a jump seek, for example a skip, reaches the end. A skip that jumps over the last events with `Skip` still raises it. A scrub and a stop do not raise it. A later move away from the end lets it be raised again.
 
+## Residency
+
+`CutsceneResidencyPlanner` decides which level of each asset must be resident, and by which time, around the playhead. The levels are T0 (proxy), T1 (coarse), and T2 (target). The planner sends requests to an `IResidencyBackend` and does no IO itself. It is not connected to `CutscenePlayer` or the director yet, and no texture or mesh backend exists yet.
+
+- **Input:** a `CutsceneResidencyManifest` holds a shared asset table and `ResidencyBucket` entries in time order, with no overlap. Each `ResidencyEntry` gives an asset index, a target level, and a screen coverage. A bucket can mark a camera cut at its start.
+- **Calls:** call `Open` one time. It requests T0 for each asset. Then call `Update(position, rate, seek, deltaSeconds)` one time in each frame on the update thread. `seek` is null when no seek occurred. A backend reports complete work with `NotifyCompleted`, from any thread. The next update applies it and raises `LoadCompleted`.
+- **Plan:** an update plans again only when the playhead goes into another bucket, the window covers other buckets, the rate changes, a seek occurs, the dwell gate changes, or a load completes. Otherwise it allocates nothing and sends nothing. The window is 5 seconds ahead at rate 1, scaled by the absolute rate, in the direction of travel, plus 0.5 seconds behind. The planner requests one level above the resident level at a time. Requests sort by level, then by the time until the playhead needs them, then by screen coverage in descending order.
+- **Jump:** a `Jump` increments `Generation` and cancels the work of older generations. A late result of an older generation runs no callback.
+- **Scrub:** a `Scrub` sends nothing above T0 until the playhead stays within 50 ms of timeline time for 120 ms of wall time. A new drag cancels the T1 and T2 work that did not complete. A `Jump` does not use this gate.
+- **Eviction:** `Evict(maxCount)` releases T1 and T2 data, starting with the data farthest from the playhead in time. It never releases T0.
+- **Playback wait:** `PlaybackWaitEnabled` is off by default. When it is on, forward play that crosses a camera cut sets `IsHoldingPlayback` until the next shot has its target levels or `PlaybackWaitMaximumSeconds` (default 1 second) passes. The caller holds the clock at `PlaybackHoldTime`. A jump, a scrub, and reverse play never hold. `PlaybackWaitTimeoutCount` counts the waits that reached the maximum.
+- **Close:** `Close` cancels all work and releases all levels, T0 included. After it, a completion runs no callback and `Update` does nothing.
+
 ## Author A Cutscene
 
 1. Open **Cutscene Sequencer** from the panel menu, next to **Animation Clip Editor**.
