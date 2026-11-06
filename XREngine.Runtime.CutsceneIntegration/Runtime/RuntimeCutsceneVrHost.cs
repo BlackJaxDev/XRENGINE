@@ -80,19 +80,69 @@ public sealed class RuntimeCutsceneVrHost : ICutsceneVrHost
         => RuntimeEngine.VRState.TryPublishLocalPlayerTeleport();
 
     /// <inheritdoc/>
-    public void ResetEyeViewHistory()
+    public void InvalidateEyeViewHistory()
     {
         RuntimeVrState state = RuntimeEngine.VRState;
+        XRViewport? left = state.LeftEyeViewport;
+        XRViewport? right = state.RightEyeViewport;
+        XRViewport? stereo = state.StereoViewport;
 
-        // The history goes first, so the exposure reset records the new epoch of each camera.
-        state.LeftEyeViewport?.InvalidateTemporalHistory(false);
-        state.RightEyeViewport?.InvalidateTemporalHistory(false);
-        state.StereoViewport?.InvalidateTemporalHistory(false);
+        // A viewport invalidation also invalidates its active camera. An eye camera with no eye viewport is invalidated alone,
+        // so each camera advances its epoch once. No call publishes property change events.
+        left?.InvalidateTemporalHistory(false);
+        right?.InvalidateTemporalHistory(false);
+        stereo?.InvalidateTemporalHistory(false);
         var view = state.ViewInformation;
-        view.LeftEyeCamera?.InvalidateTemporalHistory();
-        view.RightEyeCamera?.InvalidateTemporalHistory();
+        InvalidateIfNotViewportCamera(view.LeftEyeCamera, left, right, stereo);
+        if (!ReferenceEquals(view.RightEyeCamera, view.LeftEyeCamera))
+            InvalidateIfNotViewportCamera(view.RightEyeCamera, left, right, stereo);
+    }
+
+    /// <inheritdoc/>
+    public void ResetEyeExposure()
+    {
+        var view = RuntimeEngine.VRState.ViewInformation;
         view.LeftEyeCamera?.ResetAutoExposureHistory();
         if (!ReferenceEquals(view.RightEyeCamera, view.LeftEyeCamera))
             view.RightEyeCamera?.ResetAutoExposureHistory();
+    }
+
+    /// <inheritdoc/>
+    public bool TryScheduleFadeInAfterBlackHold(float fadeSeconds, int renderFrames, double maximumSeconds)
+    {
+        ulong startFrame = RenderFrameId;
+        double deadline = TimeSeconds + maximumSeconds;
+        try
+        {
+            // The step runs on the render thread once in each pass, so it sees each new render frame. It allocates once, at the close.
+            RuntimeEngine.AddRenderThreadCoroutine(
+                () =>
+                {
+                    if (RenderFrameId - startFrame < (ulong)renderFrames && TimeSeconds < deadline)
+                        return false;
+
+                    ResetEyeExposure();
+                    TryFadeHeadset(fadeSeconds, 0.0f);
+                    return true;
+                },
+                "Cutscene.VrFadeInAfterBlackHold",
+                RenderThreadJobKind.Unknown);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return false;
+        }
+    }
+
+    private static void InvalidateIfNotViewportCamera(XRCamera? camera, XRViewport? left, XRViewport? right, XRViewport? stereo)
+    {
+        if (camera is null
+            || ReferenceEquals(camera, left?.ActiveCamera)
+            || ReferenceEquals(camera, right?.ActiveCamera)
+            || ReferenceEquals(camera, stereo?.ActiveCamera))
+            return;
+
+        camera.InvalidateTemporalHistory(false);
     }
 }

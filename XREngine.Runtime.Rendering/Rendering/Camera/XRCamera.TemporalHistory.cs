@@ -112,8 +112,12 @@ public partial class XRCamera
     /// <summary>The number of <see cref="ResetAutoExposureHistory"/> calls on this camera.</summary>
     internal long AutoExposureResetCount => Interlocked.Read(ref _autoExposureResetCount);
 
-    /// <summary>Allows repeatedly slow frames to discard history without allocating property events.</summary>
-    internal void InvalidateTemporalHistory(bool publishNotifications)
+    /// <summary>
+    /// Invalidates prior camera transforms, like <see cref="InvalidateTemporalHistory()"/>. With
+    /// <paramref name="publishNotifications"/> false, no property change event runs, so a caller on another thread or a caller
+    /// in each slow frame does not run listeners or allocate event arguments.
+    /// </summary>
+    public void InvalidateTemporalHistory(bool publishNotifications)
     {
         lock (_temporalHistorySync)
         {

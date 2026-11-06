@@ -6,7 +6,7 @@ namespace XREngine.Cutscenes;
 /// <summary>
 /// The VR state, the headset fade, and the rig-move notifications that the cutscene VR camera modes use.
 /// The interface gives no write path to the eye cameras or to the head pose. <see cref="HeadTransform"/> is read only to check
-/// the rig origin. <see cref="ResetEyeViewHistory"/> changes only render history, not a pose.
+/// the rig origin. <see cref="InvalidateEyeViewHistory"/> and <see cref="ResetEyeExposure"/> change only render history, not a pose.
 /// <see cref="RuntimeCutsceneVrHost"/> reads the engine state. Tests supply their own host.
 /// No member throws for a lost VR session: a failed fade returns false.
 /// </summary>
@@ -61,8 +61,26 @@ public interface ICutsceneVrHost
     bool TryPublishTeleport();
 
     /// <summary>
-    /// Discards the temporal render history and the auto exposure adaptation of the headset eye views after a rig move.
-    /// It changes no pose. The exposure reset follows the epoch rule of <see cref="XRCamera.ResetAutoExposureHistory"/>.
+    /// Discards the temporal render history of the headset eye views after a rig move, with no property change events.
+    /// It changes no pose.
     /// </summary>
-    void ResetEyeViewHistory();
+    void InvalidateEyeViewHistory();
+
+    /// <summary>
+    /// Resets the auto exposure adaptation of the headset eye cameras, so the next exposure update uses the metered value.
+    /// An eye pass has no view history epoch, so any eye frame that renders after the call can use the reset. Call it only when
+    /// the frames from before a rig move are done, at the end of the black hold. It changes no pose.
+    /// </summary>
+    void ResetEyeExposure();
+
+    /// <summary>
+    /// Keeps the headset black until <paramref name="renderFrames"/> render frames pass or <paramref name="maximumSeconds"/> pass,
+    /// then calls <see cref="ResetEyeExposure"/> and fades the headset back in over <paramref name="fadeSeconds"/>. The host runs
+    /// this step on its own, so a closed cutscene does not need to tick. The router uses it at the close.
+    /// </summary>
+    /// <param name="fadeSeconds">The fade-in time in seconds.</param>
+    /// <param name="renderFrames">The minimum number of render frames that the headset stays black.</param>
+    /// <param name="maximumSeconds">The maximum time in seconds that the headset stays black.</param>
+    /// <returns>False if the host could not schedule the step. The caller then fades in at once.</returns>
+    bool TryScheduleFadeInAfterBlackHold(float fadeSeconds, int renderFrames, double maximumSeconds);
 }

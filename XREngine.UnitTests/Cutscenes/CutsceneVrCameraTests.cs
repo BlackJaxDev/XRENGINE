@@ -49,7 +49,14 @@ public sealed class CutsceneVrCameraTests
 
         public int TeleportCount { get; private set; }
 
-        public int EyeHistoryResetCount { get; private set; }
+        public int EyeHistoryInvalidateCount { get; private set; }
+
+        public int EyeExposureResetCount { get; private set; }
+
+        /// <summary>True to make the scheduled fade-in after a close fail.</summary>
+        public bool ScheduleFails { get; set; }
+
+        public readonly List<(float FadeSeconds, int RenderFrames, double MaximumSeconds)> ScheduledFadeIns = [];
 
         public bool IsEyeViewport(XRViewport viewport) => EyeViewports.Contains(viewport);
 
@@ -75,7 +82,26 @@ public sealed class CutsceneVrCameraTests
             return true;
         }
 
-        public void ResetEyeViewHistory() => EyeHistoryResetCount++;
+        public void InvalidateEyeViewHistory() => EyeHistoryInvalidateCount++;
+
+        public void ResetEyeExposure() => EyeExposureResetCount++;
+
+        public bool TryScheduleFadeInAfterBlackHold(float fadeSeconds, int renderFrames, double maximumSeconds)
+        {
+            if (ScheduleFails)
+                return false;
+
+            ScheduledFadeIns.Add((fadeSeconds, renderFrames, maximumSeconds));
+            return true;
+        }
+
+        /// <summary>Runs the scheduled step as the engine host does after the hold.</summary>
+        public void CompleteScheduledFadeIn()
+        {
+            (float fadeSeconds, _, _) = ScheduledFadeIns[^1];
+            ResetEyeExposure();
+            TryFadeHeadset(fadeSeconds, 0.0f);
+        }
     }
 
     private sealed class FakeResolver : ICutsceneBindingResolver
@@ -343,7 +369,8 @@ public sealed class CutsceneVrCameraTests
         ShouldBeAtOriginalPose(rig);
         rig.Host.Fades.ShouldBeEmpty();
         rig.Host.TeleportCount.ShouldBe(0);
-        rig.Host.EyeHistoryResetCount.ShouldBe(0);
+        rig.Host.EyeHistoryInvalidateCount.ShouldBe(0);
+        rig.Host.EyeExposureResetCount.ShouldBe(0);
         rig.Director.Diagnostics.ShouldBeEmpty();
     }
 
@@ -392,15 +419,21 @@ public sealed class CutsceneVrCameraTests
         router.IsHoldingBlack.ShouldBeTrue();
         router.RigMoveCount.ShouldBe(1);
         rig.Host.TeleportCount.ShouldBe(1);
-        rig.Host.EyeHistoryResetCount.ShouldBe(1);
+        rig.Host.EyeHistoryInvalidateCount.ShouldBe(1);
         rig.Host.Fades.Count.ShouldBe(1);
+
+        // A stereo eye frame from before the move has no epoch guard, so the exposure reset waits for the end of the hold.
+        rig.Host.EyeExposureResetCount.ShouldBe(0);
         for (int i = 1; i < CutsceneVrCameraRouter.BlackHoldRenderFrames; i++)
         {
             rig.Frame();
             rig.Host.Fades.Count.ShouldBe(1);
+            rig.Host.EyeExposureResetCount.ShouldBe(0);
         }
         rig.Frame();
         rig.Host.Fades.ShouldBe([(HalfFade, 1.0f), (HalfFade, 0.0f)]);
+        rig.Host.EyeExposureResetCount.ShouldBe(1);
+        rig.Host.EyeHistoryInvalidateCount.ShouldBe(1);
         router.IsRigMoved.ShouldBeTrue();
 
         // The camera of the shot moves, and the rig follows with no fade.
@@ -469,15 +502,38 @@ public sealed class CutsceneVrCameraTests
         using Rig rig = MakeRigAtFirstShot();
         int fadesBefore = rig.Host.Fades.Count;
         int teleportsBefore = rig.Host.TeleportCount;
-        int resetsBefore = rig.Host.EyeHistoryResetCount;
+        int invalidatesBefore = rig.Host.EyeHistoryInvalidateCount;
+        int exposureBefore = rig.Host.EyeExposureResetCount;
+
+        rig.Director.Close();
+
+        // The cleanup ends in the close. The host holds black, then resets the exposure and fades in.
+        ShouldBeAtOriginalPose(rig);
+        rig.Director.VrRouter.ShouldBeNull();
+        rig.DesktopViewport.HasCameraClaim.ShouldBeFalse();
+        rig.Host.Fades.Skip(fadesBefore).ShouldBe([(0.0f, 1.0f)]);
+        rig.Host.TeleportCount.ShouldBe(teleportsBefore + 1);
+        rig.Host.EyeHistoryInvalidateCount.ShouldBe(invalidatesBefore + 1);
+        rig.Host.EyeExposureResetCount.ShouldBe(exposureBefore);
+        rig.Host.ScheduledFadeIns.ShouldBe([(HalfFade, CutsceneVrCameraRouter.BlackHoldRenderFrames, CutsceneVrCameraRouter.MaximumBlackHoldSeconds)]);
+
+        rig.Host.CompleteScheduledFadeIn();
+        rig.Host.Fades[^1].ShouldBe((HalfFade, 0.0f));
+        rig.Host.EyeExposureResetCount.ShouldBe(exposureBefore + 1);
+    }
+
+    [Test]
+    public void RigAnchor_CloseWhenTheHostCannotHoldBlack_FadesInAtOnceWithADiagnostic()
+    {
+        using Rig rig = MakeRigAtFirstShot();
+        rig.Host.ScheduleFails = true;
+        int fadesBefore = rig.Host.Fades.Count;
 
         rig.Director.Close();
 
         ShouldBeAtOriginalPose(rig);
         rig.Host.Fades.Skip(fadesBefore).ShouldBe([(0.0f, 1.0f), (HalfFade, 0.0f)]);
-        rig.Host.TeleportCount.ShouldBe(teleportsBefore + 1);
-        rig.Host.EyeHistoryResetCount.ShouldBe(resetsBefore + 1);
-        rig.Director.VrRouter.ShouldBeNull();
+        rig.Director.Diagnostics.ShouldContain(d => d.Message.Contains("could not hold the headset black", StringComparison.Ordinal));
     }
 
     [Test]
@@ -512,7 +568,80 @@ public sealed class CutsceneVrCameraTests
         rig.Director.Close();
 
         ShouldBeAtOriginalPose(rig);
-        rig.Host.Fades.Skip(fadesBefore).ShouldBe([(0.0f, 1.0f), (HalfFade, 0.0f)]);
+        rig.Host.Fades.Skip(fadesBefore).ShouldBe([(0.0f, 1.0f)]);
+        rig.Host.ScheduledFadeIns.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public void RigAnchor_CloseDuringTheBlackHold_PutsTheRigBackAndSchedulesTheHoldAndFadeIn()
+    {
+        using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
+        rig.Director.OpenAsync().Wait();
+        rig.Player.Play();
+        rig.Frame();
+        rig.Host.TimeSeconds += HalfFade;
+        rig.Frame();
+        rig.Router.IsHoldingBlack.ShouldBeTrue();
+        int fadesBefore = rig.Host.Fades.Count;
+
+        rig.Director.Close();
+
+        ShouldBeAtOriginalPose(rig);
+        rig.Host.Fades.Skip(fadesBefore).ShouldBe([(0.0f, 1.0f)]);
+        rig.Host.ScheduledFadeIns.Count.ShouldBe(1);
+        rig.Host.TeleportCount.ShouldBe(2);
+        rig.Host.EyeExposureResetCount.ShouldBe(0);
+        rig.Host.CompleteScheduledFadeIn();
+        rig.Host.EyeExposureResetCount.ShouldBe(1);
+        rig.Host.Fades[^1].Opacity.ShouldBe(0.0f);
+    }
+
+    [Test]
+    public void RigAnchor_ACutDuringTheBlackHold_MovesTheRigAgainAtBlackWithNoSecondFadeOut()
+    {
+        using Rig rig = MakeRig(ECutsceneVrCameraMode.RigAnchor);
+        rig.Director.OpenAsync().Wait();
+        rig.Player.Play();
+        rig.Frame(1.9);
+        rig.Host.TimeSeconds += HalfFade;
+        rig.Frame();
+        rig.Router.IsHoldingBlack.ShouldBeTrue();
+        rig.RigOrigin.Translation.ShouldBe(CameraAPosition);
+
+        // The cut to camera B comes while the headset is black.
+        rig.Frame(0.2);
+        rig.DesktopViewport.CameraComponent.ShouldBeSameAs(rig.CameraB);
+        rig.Frame();
+
+        rig.RigOrigin.Translation.ShouldBe(CameraBPosition);
+        rig.Router.IsHoldingBlack.ShouldBeTrue();
+        rig.Router.CutFadeCount.ShouldBe(1);
+        rig.Router.RigMoveCount.ShouldBe(2);
+        rig.Host.TeleportCount.ShouldBe(2);
+        rig.Host.EyeHistoryInvalidateCount.ShouldBe(2);
+        rig.Host.Fades.ShouldBe([(HalfFade, 1.0f)]);
+        rig.Host.EyeExposureResetCount.ShouldBe(0);
+
+        for (int i = 0; i < CutsceneVrCameraRouter.BlackHoldRenderFrames; i++)
+            rig.Frame();
+        rig.Host.Fades.ShouldBe([(HalfFade, 1.0f), (HalfFade, 0.0f)]);
+        rig.Host.EyeExposureResetCount.ShouldBe(1);
+    }
+
+    [Test]
+    public void RigAnchor_HeadMovesToAnotherParent_TheNextCutStopsTheRouter()
+    {
+        using Rig rig = MakeRigAtFirstShot();
+        SceneNode otherRig = rig.Root.NewChild("Other Rig");
+        rig.Headset.SceneNode!.Parent = otherRig;
+
+        rig.Frame(2.5);
+
+        rig.Router.HasFailed.ShouldBeTrue();
+        ShouldBeAtOriginalPose(rig);
+        rig.Director.Diagnostics.ShouldContain(d => d.Message.Contains("rig origin check failed at a camera cut", StringComparison.Ordinal));
+        rig.Frame(0.5);
+        ShouldBeAtOriginalPose(rig);
     }
 
     [Test]

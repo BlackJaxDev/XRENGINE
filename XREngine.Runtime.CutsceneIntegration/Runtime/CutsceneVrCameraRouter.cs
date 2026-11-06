@@ -16,9 +16,11 @@ namespace XREngine.Cutscenes;
 /// An instance runs <see cref="ECutsceneVrCameraMode.RigAnchor"/>: the rig origin follows the position and the heading of the
 /// shot camera. The rig stays upright, because a pitch or a roll of the horizon causes discomfort. Each camera cut and each
 /// full discontinuity fades the headset to black over half of the fade time. At black, the rig moves, the router publishes a
-/// teleport and resets the eye view history, and the headset stays black for at least <see cref="BlackHoldRenderFrames"/>
-/// render frames, so the frames in flight with the old pose are not visible. Then the headset fades back in over the other half.
-/// <see cref="Detach"/> puts back the local position and rotation that the rig origin had at <see cref="Attach"/>.
+/// teleport and invalidates the eye view history, and the headset stays black for at least <see cref="BlackHoldRenderFrames"/>
+/// render frames (engine render frames, not VR submits), so the frames in flight with the old pose are not visible. At the end of
+/// the hold, the router resets the eye exposure, and the headset fades back in over the other half. Each cut checks the rig origin
+/// again. <see cref="Detach"/> puts back the local position and rotation that the rig origin had at <see cref="Attach"/>, and the
+/// host holds black for the same frames before the fade-in.
 /// </para>
 /// <para>
 /// No mode writes an eye camera pose or the head pose. The head pose stays local to the rig origin, so the user keeps head tracking.
@@ -63,6 +65,7 @@ public sealed class CutsceneVrCameraRouter
     private bool _faded;
     private bool _failed;
     private bool _teleportPublisherMissingReported;
+    private bool _eyeExposureResetPending;
 
     /// <summary>Creates a router for the <see cref="ECutsceneVrCameraMode.RigAnchor"/> mode. Call <see cref="Validate"/> first.</summary>
     /// <param name="player">The player that selects the shot camera.</param>
@@ -260,8 +263,9 @@ public sealed class CutsceneVrCameraRouter
 
     /// <summary>
     /// Stops the routing and puts back the local pose of the rig origin from <see cref="Attach"/>. If the rig moved, the headset
-    /// goes black at once, the rig moves back, and the headset fades back in. A fade that runs ends with the scene visible.
-    /// The rig goes back also when a fade fails. A call on a detached router does nothing.
+    /// goes black at once, the rig moves back, and the host keeps the headset black for the black hold, resets the eye exposure,
+    /// and fades in (<see cref="ICutsceneVrHost.TryScheduleFadeInAfterBlackHold"/>). The cleanup of the router ends in this call.
+    /// A fade that runs ends with the scene visible. The rig goes back also when a fade fails. A call on a detached router does nothing.
     /// </summary>
     public void Detach()
     {
@@ -286,16 +290,49 @@ public sealed class CutsceneVrCameraRouter
             _followedCamera = null;
         }
 
-        if (wasMoved && !_failed && _host.IsInVR)
+        bool inVr = !_failed && _host.IsInVR;
+        if (wasMoved && inVr)
         {
             NotifyTeleport();
-            _host.ResetEyeViewHistory();
+            _host.InvalidateEyeViewHistory();
         }
 
-        // Each fade that this router started ends with the scene visible.
-        if (_faded)
-            TryFade(_halfFadeSeconds, 0.0f);
+        bool faded = _faded;
         _faded = false;
+        _eyeExposureResetPending = false;
+        if (wasMoved && faded)
+        {
+            // The router does not tick after the close, so the host holds black for the frames in flight with the cutscene pose,
+            // resets the eye exposure, and fades in.
+            if (ScheduleFadeInAfterBlackHold())
+                return;
+
+            _diagnostics?.Add(new CutsceneCompileDiagnostic(-1, -1,
+                "The VR host could not hold the headset black after the rig moved back at the close, so the headset fades in at once."));
+            if (inVr)
+                _host.ResetEyeExposure();
+            TryFade(_halfFadeSeconds, 0.0f);
+            return;
+        }
+
+        if (wasMoved && inVr)
+            _host.ResetEyeExposure();
+
+        // Each fade that this router started ends with the scene visible.
+        if (faded)
+            TryFade(_halfFadeSeconds, 0.0f);
+    }
+
+    private bool ScheduleFadeInAfterBlackHold()
+    {
+        try
+        {
+            return _host.TryScheduleFadeInAfterBlackHold(_halfFadeSeconds, BlackHoldRenderFrames, MaximumBlackHoldSeconds);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -353,6 +390,13 @@ public sealed class CutsceneVrCameraRouter
         if (!_attached || _failed || _phase is EFadePhase.FadingOut)
             return;
 
+        // The head can move to another parent during playback, for example at a pawn switch. Then the rig does not carry the user.
+        if (ValidateRigOrigin(_host, _rigOrigin) is { } problem)
+        {
+            Fail("The rig origin check failed at a camera cut (" + problem.TrimEnd('.') + ")");
+            return;
+        }
+
         if (_phase == EFadePhase.HoldingBlack)
         {
             _followedCamera = null;
@@ -375,6 +419,14 @@ public sealed class CutsceneVrCameraRouter
 
     private void StartFadeIn(double now)
     {
+        // The frames from before the move are done now. An eye pass has no view history epoch, so an earlier reset could be
+        // used by a frame that still showed the old place.
+        if (_eyeExposureResetPending)
+        {
+            _eyeExposureResetPending = false;
+            _host.ResetEyeExposure();
+        }
+
         if (!TryFade(_halfFadeSeconds, 0.0f))
         {
             Fail("The headset fade failed after a rig move");
@@ -390,8 +442,10 @@ public sealed class CutsceneVrCameraRouter
         RigMoveCount++;
         NotifyTeleport();
 
-        // The eye views keep their poses. Only their temporal history and exposure adaptation restart at the new place.
-        _host.ResetEyeViewHistory();
+        // The eye views keep their poses. Their temporal history restarts now. Their exposure adaptation restarts at the end of
+        // the black hold, when no frame from the old place renders.
+        _host.InvalidateEyeViewHistory();
+        _eyeExposureResetPending = true;
     }
 
     private void NotifyTeleport()
@@ -422,6 +476,7 @@ public sealed class CutsceneVrCameraRouter
         // Without a fade, a move of the rig would be visible. The rig goes back to the pose of the user and stays there.
         _failed = true;
         _phase = EFadePhase.None;
+        _eyeExposureResetPending = false;
         _followedCamera = null;
         try
         {
