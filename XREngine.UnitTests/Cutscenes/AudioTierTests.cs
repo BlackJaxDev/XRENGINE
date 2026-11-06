@@ -142,8 +142,12 @@ public sealed class AudioTierTests
         public void UploadBufferData(AudioBufferHandle buffer, ReadOnlySpan<byte> pcm, int frequency, int channels, SampleFormat format) { }
         public void Play(AudioSourceHandle source) => Sources[source.Id].Playing = true;
 
+        /// <summary>Runs at the start of each stop of a source.</summary>
+        public Action? BeforeStop { get; set; }
+
         public void Stop(AudioSourceHandle source)
         {
+            BeforeStop?.Invoke();
             FakeSource s = Sources[source.Id];
             s.Playing = false;
             s.Processed = s.Queue.Count;
@@ -1159,5 +1163,83 @@ public sealed class AudioTierTests
         {
             System.IO.Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Test]
+    public void TierLead_CoversTheEstimatedSeekTime()
+    {
+        CutsceneAudioChannel.GetTierLeadChunks(0.0, Rate).ShouldBe(4);
+        CutsceneAudioChannel.GetTierLeadChunks(0.0001, Rate).ShouldBe(4);
+
+        // A cold Vorbis seek to 120 s is estimated at 0.24 s. Twice that is 23040 frames, 11 buffers after the first.
+        CutsceneAudioChannel.GetTierLeadChunks(120.0 * CutsceneAudioChannel.VorbisSeekSecondsPerSecond, Rate).ShouldBe(15);
+        CutsceneAudioChannel.GetTierLeadChunks(1000.0, Rate).ShouldBe(256);
+    }
+
+    [Test]
+    public void SlowDecoder_FirstAttemptAfterAMeasuredSeek_MakesTheTierChange()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.0);
+        rig.Full.BeforeSeek = _ => Thread.Sleep(150);
+
+        // The first seek of the decoder has no measure, so it gets the queue lead. It takes 150 ms and misses that lead.
+        const long first = Rate * 3;
+        rig.Player.Seek(CutsceneTime.FromSamples(first, Rate), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+        rig.Scheduler.RunAll();
+        rig.Full.Seeks.ShouldBe([first + 4L * Chunk]);
+
+        // The next jump uses the measured time: twice 150 ms is 14400 frames, so the lead is at least 4 + 7 buffers.
+        const long second = Rate * 1 + 77;
+        rig.Player.Seek(CutsceneTime.FromSamples(second, Rate), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+        rig.Scheduler.RunAll();
+        rig.Full.Seeks.Count.ShouldBe(2);
+        long lead = (rig.Full.Seeks[1] - second) / Chunk;
+        (rig.Full.Seeks[1] - second).ShouldBe(lead * Chunk);
+        lead.ShouldBeGreaterThanOrEqualTo(11L);
+        lead.ShouldBeLessThanOrEqualTo(256L);
+
+        // The seek was ready before its buffer, so the change happens at the first attempt, with no second request.
+        int reads = rig.Full.Reads;
+        rig.Buffers.Clear();
+        for (int i = 0; i < lead - 4 + 2; i++)
+            rig.PlayOneBuffer();
+        rig.Full.Seeks.Count.ShouldBe(2);
+        rig.Full.Reads.ShouldBeGreaterThan(reads);
+        rig.Player.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Restart_SeeksAndDecodesTheQueueBeforeItStopsTheSources()
+    {
+        using Rig rig = MakeRig(proxy: false);
+        rig.Player.Play();
+        rig.Player.Tick(0.0);
+        int readsBefore = rig.Full.Reads;
+        int stops = 0;
+        int seeksAtStop = -1;
+        int readsAtStop = -1;
+        rig.Transport.BeforeStop = () =>
+        {
+            stops++;
+            seeksAtStop = rig.Full.Seeks.Count;
+            readsAtStop = rig.Full.Reads;
+        };
+
+        const long jump = Rate * 3 + 123;
+        rig.Player.Seek(CutsceneTime.FromSamples(jump, Rate), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+
+        // The stop comes after the seek and the decode of the 4 buffers, so the sources are stopped only to queue and play.
+        stops.ShouldBe(1);
+        seeksAtStop.ShouldBe(1);
+        readsAtStop.ShouldBeGreaterThanOrEqualTo(readsBefore + 4);
+        rig.Full.Reads.ShouldBe(readsAtStop);
+        short[] samples = Concatenate(rig.Buffers.GetRange(rig.Buffers.Count - 4, 4));
+        for (int n = 0; n < samples.Length; n++)
+            samples[n].ShouldBe(ToneSample(jump + n));
     }
 }

@@ -43,6 +43,15 @@ internal sealed class CutsceneAudioChannel
     /// <summary>The largest lead after seeks that came too late, in buffers.</summary>
     private const int MaxTierLeadChunks = 256;
 
+    /// <summary>
+    /// The estimated wall time of an Ogg Vorbis seek for each second of the target time. A backward seek decodes the file
+    /// from its start, and the measured cost is about 1.1 to 1.6 ms for each second of 48 kHz stereo audio.
+    /// </summary>
+    internal const double VorbisSeekSecondsPerSecond = 0.002;
+
+    /// <summary>The lead of the first request is this many times the estimated seek time, so a usual seek makes it.</summary>
+    internal const double TierLeadSafetyFactor = 2.0;
+
     /// <summary>The ring holds the queue and two more buffers, so a restart near the heard frame is inside it.</summary>
     private const int HistoryFrames = (QueueTarget + 2) * ChunkFrames;
 
@@ -575,12 +584,12 @@ internal sealed class CutsceneAudioChannel
     private static bool IsInTable(AudioSourceComponent component, AudioSource source)
         => component.ActiveListeners.TryGetValue(source.ParentListener, out AudioSource? current) && ReferenceEquals(current, source);
 
+    // The seek and the decode of the new queue run before the stop, so the sources are stopped only while the queue is copied
+    // from the ring and played. A mixer update in that short window gives less silence than one between a stop and a long decode.
     private void Restart(long targetFrame, bool keepWarmUp)
     {
         if (!keepWarmUp)
             _warmUpSeconds = 0.0;
-        StopSources();
-        _grainActive = false;
 
         long frame = Math.Clamp(targetFrame, 0L, _endFrame);
         long historyStart = _producedFrame - _historyCount;
@@ -595,12 +604,18 @@ internal sealed class CutsceneAudioChannel
         }
 
         _readFrame = frame;
+        PrefetchQueue(frame);
+        StopSources();
+        _grainActive = false;
+
+        _readFrame = frame;
         _nextFrame = frame;
         _restartFrame = frame;
         _endOfData = frame >= _endFrame;
         _needsRestart = false;
 
         // A full restart gives every source the stream again, also a source that the channel gave up.
+        // The frames of the queue are in the ring now, so this fill only copies, converts, and queues.
         _feedCount = _sourceCount;
         Array.Clear(_sourceRestarted, 0, _sourceCount);
         Fill();
@@ -609,6 +624,20 @@ internal sealed class CutsceneAudioChannel
         _stepPending = true;
         if (_sources[0].BuffersQueued > 0)
             PlaySources();
+    }
+
+    // Decodes the frames of the queue of a restart into the ring, while the sources still play. The ring holds the queue and
+    // two more buffers, so the later fill reads all of these frames from the ring.
+    private void PrefetchQueue(long frame)
+    {
+        int target = Math.Min(QueueTarget, Math.Max(1, _component!.MaxStreamingBuffers));
+        for (int i = 0; i < target; i++)
+        {
+            int wanted = (int)Math.Min(ChunkFrames, _endFrame - _readFrame);
+            if (wanted <= 0 || ReadFrames(wanted) < wanted)
+                break;
+        }
+        _readFrame = frame;
     }
 
     // True if the first source stopped before the end of the data, so its queue ran out. The clock reads the first source,
@@ -830,8 +859,34 @@ internal sealed class CutsceneAudioChannel
         _waitingForFull = true;
         _fadeFromSilence = !_crossfader.HasProxy;
         _crossfadeDone = 0;
-        _tierLeadChunks = InitialTierLeadChunks;
+        _tierLeadChunks = GetInitialTierLeadChunks(frame);
         _seeker!.Request(frame + (long)_tierLeadChunks * ChunkFrames);
+    }
+
+    /// <summary>
+    /// The lead of the first seek request after a restart, in buffers. It is at least the queue that the restart fills, and
+    /// it covers twice the estimated seek time beyond the first buffer. The estimate is the larger of the time of the last
+    /// seek of this decoder and, for an Ogg Vorbis decoder, the cost of a seek from the start of the file to the frame.
+    /// A seek that still comes too late asks again with twice the lead.
+    /// </summary>
+    private int GetInitialTierLeadChunks(long frame)
+    {
+        double seconds = _seeker!.LastSeekSeconds;
+        if (_decoder is VorbisStreamingDecoder)
+            seconds = Math.Max(seconds, frame / (double)_sampleRate * VorbisSeekSecondsPerSecond);
+        return GetTierLeadChunks(seconds, _sampleRate);
+    }
+
+    /// <summary>Converts an estimated seek time to a lead in buffers, from the queue of a restart to the largest lead.</summary>
+    /// <param name="seekSeconds">The estimated wall time of the seek.</param>
+    /// <param name="sampleRate">The sample rate of the decoder.</param>
+    internal static int GetTierLeadChunks(double seekSeconds, int sampleRate)
+    {
+        // The first refill after a restart comes about one buffer later, so the queue lead already covers a seek that is
+        // shorter than one buffer. A longer seek adds the buffers that it covers.
+        double frames = Math.Max(0.0, seekSeconds) * TierLeadSafetyFactor * sampleRate;
+        long extra = (long)Math.Ceiling(Math.Max(0.0, frames - ChunkFrames) / ChunkFrames);
+        return (int)Math.Min(InitialTierLeadChunks + extra, MaxTierLeadChunks);
     }
 
     // Changes to the full decoder if its seek is complete at the produced frame, which is the start of a buffer.

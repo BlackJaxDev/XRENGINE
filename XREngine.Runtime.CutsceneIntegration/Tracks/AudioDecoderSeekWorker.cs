@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using XREngine.Data;
 
 namespace XREngine.Cutscenes;
@@ -32,6 +33,7 @@ internal sealed class AudioDecoderSeekWorker
     private Exception? _failure;
     private bool _running;
     private int _seekCount;
+    private double _lastSeekSeconds;
 
     /// <summary>Creates a worker that owns a decoder.</summary>
     /// <param name="decoder">The decoder. The worker closes it.</param>
@@ -51,6 +53,16 @@ internal sealed class AudioDecoderSeekWorker
         {
             lock (_sync)
                 return _seekCount;
+        }
+    }
+
+    /// <summary>The wall time in seconds of the last complete seek, or zero before the first one.</summary>
+    public double LastSeekSeconds
+    {
+        get
+        {
+            lock (_sync)
+                return _lastSeekSeconds;
         }
     }
 
@@ -136,6 +148,7 @@ internal sealed class AudioDecoderSeekWorker
                 }
 
                 Exception? failure = null;
+                long start = Stopwatch.GetTimestamp();
                 try
                 {
                     _decoder.SeekToFrame(frame);
@@ -145,11 +158,13 @@ internal sealed class AudioDecoderSeekWorker
                     failure = ex;
                 }
 
+                double seconds = Stopwatch.GetElapsedTime(start).TotalSeconds;
                 lock (_sync)
                 {
                     _completed = generation;
                     _completedFrame = frame;
                     _failure = failure;
+                    _lastSeekSeconds = seconds;
                 }
             }
         }

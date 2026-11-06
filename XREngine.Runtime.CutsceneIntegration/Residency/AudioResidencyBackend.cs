@@ -151,8 +151,12 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
             return Reject(request, "the asset is not an audio source with a proxy");
         if (request.TargetLevel is < (int)EResidencyLevel.Proxy or > (int)EResidencyLevel.Target)
             return Reject(request, "the level must be T0, T1, or T2");
+        // The track evaluator already gives the one diagnostic for a stale proxy, so this rejection logs nothing.
         if (request.TargetLevel == (int)EResidencyLevel.Proxy && !source.ProxyIsCurrent)
-            return Reject(request, "the proxy does not match its source file, so it does not play");
+        {
+            Interlocked.Increment(ref _rejectedRequestCount);
+            return ResidencyTicket.None;
+        }
 
         BackendTicket ticket;
         CutsceneResidencyPlanner? planner;
