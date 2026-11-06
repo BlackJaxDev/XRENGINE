@@ -128,7 +128,7 @@ The preview does not mark a scene as changed, and it stops the undo system from 
 
 Assign `CutsceneDirectorComponent.Asset`, then call `OpenAsync`. The director registers its tick after input and before animation. Use `director.Player` for the transport, and call `Close` to restore the targets that have the `RestoreState` setting.
 
-A director needs a binding resolver. It uses `BindingResolver` if the property has a value. If not, it uses the static `CutsceneDirectorComponent.DefaultBindingResolverFactory`. The editor registers this factory at startup in `CutscenePreviewSession.Initialize`, and the factory searches the root nodes of the world of the director. Another application must register its own factory. Without a resolver, the open fails and the reason is in `director.Diagnostics`.
+A director needs a binding resolver. It uses `BindingResolver` if the property has a value. If not, it uses the static `CutsceneDirectorComponent.DefaultBindingResolverFactory`. The editor registers this factory at startup in `CutscenePreviewSession.Initialize`, and the factory searches the root nodes of the world of the director. `CutsceneSceneBindingResolver` finds a scene object only under those root nodes. The world copy of play mode keeps the object identifiers of the edit world, and the object cache can hold the edit node, so the resolver does not use a cached node from another world. Another application must register its own factory. Without a resolver, the open fails and the reason is in `director.Diagnostics`.
 
 Set `TargetViewport` to show the camera that the cut tracks select. The director claims the camera of that viewport until it closes.
 
