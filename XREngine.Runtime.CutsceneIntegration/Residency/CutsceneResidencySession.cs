@@ -23,9 +23,21 @@ namespace XREngine.Cutscenes;
 /// count in one diagnostic, and they stay at the residency that visibility selects. A manifest diagnostic is reported one
 /// time for each manifest state: a refresh that gives the same state adds nothing.
 /// </para>
+/// <para>
+/// A manifest selection asks the backend if it can find each texture of the manifest
+/// (<see cref="IResidencyBackend.CanResolve"/>). If more than <see cref="MaxUnresolvedTextureFraction"/> of the textures
+/// of a current baked manifest are not found, the manifest does not match the scene, and the session uses the approximate
+/// manifest as for a stale manifest. Textures that are not found are not sent to the backend, and one diagnostic gives their count.
+/// </para>
 /// </remarks>
 public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposable
 {
+    /// <summary>
+    /// The largest fraction of the textures of a current baked manifest that the backend can fail to find. Above it, the
+    /// manifest does not match the scene, and the session uses the approximate manifest.
+    /// </summary>
+    public const double MaxUnresolvedTextureFraction = 0.1;
+
     private readonly IResidencyBackend _backend;
     private readonly bool _ownsBackend;
     private CutscenePlayer? _player;
@@ -36,6 +48,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     private double _playbackWaitMaximumSeconds = CutsceneResidencyPlanner.DefaultPlaybackWaitMaximumSeconds;
     private ECutsceneManifestState? _reportedState;
     private int _reportedOtherKinds;
+    private int _reportedUnresolved;
 
     /// <summary>Creates a session for a manifest of texture assets. The constructor attaches the planner to the backend.</summary>
     /// <param name="textureManifest">The manifest of the assets that the backend loads.</param>
@@ -75,6 +88,9 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     /// <summary>The number of times that <see cref="Refresh"/> replaced the planner.</summary>
     public int RefreshCount { get; private set; }
 
+    /// <summary>The number of textures of the selected manifest that the backend did not find at the last selection.</summary>
+    public int UnresolvedTextureCount { get; private set; }
+
     /// <summary>The playback wait setting. It applies to the current planner and to each planner of a later refresh.</summary>
     public bool PlaybackWaitEnabled
     {
@@ -99,8 +115,9 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     }
 
     /// <summary>
-    /// Selects the manifest of an asset and creates a session. A current, valid baked manifest is used as it is.
-    /// A missing, stale, or invalid manifest gives the approximate manifest and one diagnostic.
+    /// Selects the manifest of an asset and creates a session. A current, valid baked manifest whose textures the backend
+    /// finds is used as it is. A missing, stale, or invalid manifest, or a baked manifest with too many textures that the
+    /// backend does not find, gives the approximate manifest and one diagnostic.
     /// Assets of a kind that has no backend give one more diagnostic.
     /// </summary>
     /// <param name="compiled">The compiled cutscene.</param>
@@ -118,7 +135,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         ArgumentNullException.ThrowIfNull(textureBackend);
         ArgumentNullException.ThrowIfNull(diagnostics);
 
-        Selection selection = Select(compiled, bindings, collector);
+        Selection selection = Select(compiled, bindings, collector, textureBackend);
         CutsceneResidencySession session = new(selection.TextureManifest, textureBackend, selection.State);
         session.Report(selection, diagnostics);
         return session;
@@ -205,7 +222,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         if (_closed)
             throw new InvalidOperationException("A closed residency session cannot refresh.");
 
-        Selection selection = Select(compiled, bindings, collector);
+        Selection selection = Select(compiled, bindings, collector, _backend);
         CutsceneResidencyPlanner planner = new(selection.TextureManifest, _backend)
         {
             PlaybackWaitEnabled = _playbackWaitEnabled,
@@ -368,9 +385,14 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         if (selection.OtherKinds > 0 && selection.OtherKinds != _reportedOtherKinds)
             Add(diagnostics, $"{selection.OtherKinds} mesh or audio assets of the residency manifest have no residency backend. They stay at the residency that visibility selects.");
         _reportedOtherKinds = selection.OtherKinds;
+
+        UnresolvedTextureCount = selection.Unresolved;
+        if (selection.Unresolved > 0 && selection.Unresolved != _reportedUnresolved)
+            Add(diagnostics, $"{selection.Unresolved} of {selection.Textures} texture assets of the residency manifest are not loaded textures now. Residency skips them, and they stay at the residency that visibility selects.");
+        _reportedUnresolved = selection.Unresolved;
     }
 
-    private static Selection Select(CompiledCutscene compiled, CutsceneBindingTable bindings, ICutsceneResidencyAssetCollector collector)
+    private static Selection Select(CompiledCutscene compiled, CutsceneBindingTable bindings, ICutsceneResidencyAssetCollector collector, IResidencyBackend backend)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(bindings);
@@ -404,6 +426,19 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
             }
         }
 
+        // The content hash does not see the scene. A new import or a moved project folder can change the asset keys, so
+        // a current manifest whose textures the backend does not find is stale.
+        if (manifest is not null)
+        {
+            CountTextures(manifest, backend, out int bakedTextures, out int bakedUnresolved);
+            if (bakedUnresolved > bakedTextures * MaxUnresolvedTextureFraction)
+            {
+                manifest = null;
+                state = ECutsceneManifestState.Stale;
+                reason = $"{bakedUnresolved} of {bakedTextures} texture assets of the baked residency manifest are not loaded textures, so the manifest does not match the scene. A new import of the scene assets or a moved project folder can cause this";
+            }
+        }
+
         string? message = null;
         if (manifest is null)
         {
@@ -415,7 +450,26 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         }
 
         int otherKinds = manifest.Assets.Length - manifest.CountKind(EResidencyAssetKind.Texture);
-        return new Selection(manifest.SelectKind(EResidencyAssetKind.Texture), state, message, otherKinds);
+        CountTextures(manifest, backend, out int textures, out int unresolved);
+        Predicate<Guid>? include = unresolved > 0 ? backend.CanResolve : null;
+        return new Selection(manifest.SelectKind(EResidencyAssetKind.Texture, include), state, message, otherKinds, textures, unresolved);
+    }
+
+    private static void CountTextures(CutsceneResidencyManifest manifest, IResidencyBackend backend, out int textures, out int unresolved)
+    {
+        textures = 0;
+        unresolved = 0;
+        Guid[] assets = manifest.Assets;
+        EResidencyAssetKind[] kinds = manifest.AssetKinds;
+        for (int i = 0; i < assets.Length; i++)
+        {
+            if (kinds[i] != EResidencyAssetKind.Texture)
+                continue;
+
+            textures++;
+            if (!backend.CanResolve(assets[i]))
+                unresolved++;
+        }
     }
 
     private static void Add(List<CutsceneCompileDiagnostic> diagnostics, string message)
@@ -424,5 +478,11 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         Debug.LogWarning(ELogCategory.Animation, "Cutscene residency: {0}", message);
     }
 
-    private readonly record struct Selection(CutsceneResidencyManifest TextureManifest, ECutsceneManifestState State, string? Message, int OtherKinds);
+    private readonly record struct Selection(
+        CutsceneResidencyManifest TextureManifest,
+        ECutsceneManifestState State,
+        string? Message,
+        int OtherKinds,
+        int Textures,
+        int Unresolved);
 }

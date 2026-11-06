@@ -335,6 +335,63 @@ public sealed class CutsceneBakeTests
     }
 
     [Test]
+    public void CurrentManifest_WhoseTexturesDoNotResolve_UsesTheApproximatePath_WithOneDiagnostic()
+    {
+        Rig rig = MakeRig();
+        SceneNode actor = CreateNode("Actor", new Vector3(0, 0, -10));
+        Guid bakedAsset = rig.Collector.Register("Actor");
+        int slot = rig.Bind(actor);
+        TransformTrack move = new() { Name = "Move", BindingSlot = slot };
+        move.Clips.Add(StepClip(0, 4, 0, [(0, new Vector3(0, 0, -10))]));
+        rig.Asset.Tracks.Add(move);
+        rig.Asset.Manifest = CutsceneBakeTool.Bake(rig.Asset, rig.Options());
+        rig.Asset.ManifestContentHash = CutsceneManifestHash.Compute(rig.Asset);
+
+        // A new import gives the scene other asset keys. The content hash does not change, but no baked texture resolves.
+        Guid liveAsset = rig.Collector.Register("Actor");
+        CutsceneManifestHash.GetState(rig.Asset).ShouldBe(ECutsceneManifestState.Current);
+        FakeResidencyBackend backend = new() { Resolvable = [liveAsset] };
+
+        using CutsceneResidencySession session = CreateSession(rig, backend, out List<CutsceneCompileDiagnostic> diagnostics);
+
+        session.IsApproximate.ShouldBeTrue();
+        session.ManifestState.ShouldBe(ECutsceneManifestState.Stale);
+        diagnostics.ShouldHaveSingleItem().Message.ShouldContain("1 of 1 texture assets of the baked residency manifest are not loaded textures");
+        session.UnresolvedTextureCount.ShouldBe(0);
+        session.Manifest.Assets.ShouldBe([liveAsset]);
+        session.Manifest.Assets.ShouldNotContain(bakedAsset);
+    }
+
+    [Test]
+    public void CurrentManifest_WithFewUnresolvedTextures_StaysAndSkipsThem_WithOneDiagnostic()
+    {
+        Rig rig = MakeRig();
+        List<Guid> assets = [];
+        for (int i = 0; i < 20; i++)
+        {
+            string name = $"Prop{i}";
+            SceneNode prop = CreateNode(name, new Vector3((i - 10) * 0.5f, 0, -10));
+            assets.Add(rig.Collector.Register(name));
+            rig.Roots.Add(prop);
+        }
+
+        rig.Asset.Manifest = CutsceneBakeTool.Bake(rig.Asset, rig.Options());
+        rig.Asset.ManifestContentHash = CutsceneManifestHash.Compute(rig.Asset);
+        rig.Asset.Manifest.Assets.Length.ShouldBe(20);
+
+        // One texture in twenty is below the stale fraction, so the baked manifest stays.
+        FakeResidencyBackend backend = new() { Resolvable = [.. assets.Skip(1)] };
+
+        using CutsceneResidencySession session = CreateSession(rig, backend, out List<CutsceneCompileDiagnostic> diagnostics);
+
+        session.IsApproximate.ShouldBeFalse();
+        session.UnresolvedTextureCount.ShouldBe(1);
+        diagnostics.ShouldHaveSingleItem().Message.ShouldContain("1 of 20 texture assets");
+        session.Manifest.Assets.Length.ShouldBe(19);
+        session.Manifest.Assets.ShouldNotContain(assets[0]);
+    }
+
+    [Test]
     public void ShippingCook_RejectsAMissingOrStaleManifest()
     {
         Rig rig = MakeRig();
@@ -654,10 +711,13 @@ public sealed class CutsceneBakeTests
     }
 
     private static CutsceneResidencySession CreateSession(Rig rig, out List<CutsceneCompileDiagnostic> diagnostics)
+        => CreateSession(rig, new FakeResidencyBackend(), out diagnostics);
+
+    private static CutsceneResidencySession CreateSession(Rig rig, FakeResidencyBackend backend, out List<CutsceneCompileDiagnostic> diagnostics)
     {
         diagnostics = [];
         CompiledCutscene compiled = CutsceneCompiler.Compile(rig.Asset, []);
         using CutsceneBindingTable bindings = CutsceneBindingTable.Resolve(compiled, rig.Resolver);
-        return CutsceneResidencySession.Create(compiled, bindings, new FakeResidencyBackend(), rig.Collector, diagnostics);
+        return CutsceneResidencySession.Create(compiled, bindings, backend, rig.Collector, diagnostics);
     }
 }

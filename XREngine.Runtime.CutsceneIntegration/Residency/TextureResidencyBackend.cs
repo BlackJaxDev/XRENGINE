@@ -19,6 +19,7 @@ namespace XREngine.Cutscenes;
 /// Call <see cref="AttachPlanner"/> before <see cref="CutsceneResidencyPlanner.Open"/>, so that the backend can
 /// report complete work. Call <see cref="SetPlayhead"/> before each planner update, so that request deadlines
 /// become frame deadlines. The backend works on textures that are already loaded. It does not load assets.
+/// An asset ID can be a runtime ID or a stable key of <see cref="CutsceneResidencyAssetKeys"/>.
 /// </para>
 /// <para>
 /// By default, the backend holds the <see cref="ETextureStreamingBudgetProfile.Cutscene"/> budget profile while it
@@ -59,7 +60,10 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     private double _rate = 1.0;
     private int _rejectedRequestCount;
 
-    /// <summary>Creates a backend that finds textures in the loaded assets of an asset manager.</summary>
+    /// <summary>
+    /// Creates a backend that finds textures in the loaded assets of an asset manager and in the object cache, by runtime ID
+    /// or by stable key.
+    /// </summary>
     /// <param name="assets">The asset manager that holds the loaded textures.</param>
     /// <param name="useCutsceneBudgetProfile">True to hold the cutscene budget profile until <see cref="Dispose"/>.</param>
     public TextureResidencyBackend(AssetManager assets, bool useCutsceneBudgetProfile = true)
@@ -185,6 +189,11 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
 
         _manager.CancelResidency(new TextureResidencyTicket(ticket.Id));
     }
+
+    /// <inheritdoc />
+    /// <remarks>True if the asset is a live texture now. It does not check that streaming tracks the texture.</remarks>
+    public bool CanResolve(Guid assetId)
+        => !_disposed && _resolveTexture(assetId) is not null;
 
     /// <inheritdoc />
     /// <remarks>The level is the highest level of a ticket of this backend whose mip is resident now.</remarks>
@@ -377,24 +386,29 @@ public sealed class TextureResidencyBackend : IResidencyBackend, IDisposable
     private static Func<Guid, XRTexture2D?> CreateAssetResolver(AssetManager assets)
     {
         ArgumentNullException.ThrowIfNull(assets);
-        return assetId => ResolveLoadedTexture(assets, assetId);
+        TextureResidencyKeyIndex keys = new();
+        return assetId => ResolveLoadedTexture(assets, keys, assetId);
     }
 
     /// <summary>
-    /// Finds a loaded texture by its ID. First it looks in the loaded assets of the asset manager. Then it looks in the
-    /// object cache, because a texture that a model import creates is not an asset of the manager.
+    /// Finds a loaded texture by the ID that a manifest records for it. First it looks for a runtime ID in the loaded assets
+    /// of the asset manager and then in the object cache, because a texture that a model import creates is not an asset of
+    /// the manager. Then it looks for a stable key of <see cref="CutsceneResidencyAssetKeys"/>, because a model import makes
+    /// new runtime IDs at each import.
     /// </summary>
     /// <param name="assets">The asset manager that holds the loaded texture assets.</param>
+    /// <param name="keys">The index of the stable texture keys.</param>
     /// <param name="assetId">The ID that the manifest records for the texture.</param>
     /// <returns>The texture, or null if the ID is not a live texture.</returns>
-    internal static XRTexture2D? ResolveLoadedTexture(AssetManager assets, Guid assetId)
+    internal static XRTexture2D? ResolveLoadedTexture(AssetManager assets, TextureResidencyKeyIndex keys, Guid assetId)
     {
         if (assets.TryGetAssetByID(assetId, out XRAsset? asset))
             return asset as XRTexture2D;
 
-        return XRObjectBase.ObjectsCache.TryGetValue(assetId, out XRObjectBase? cached) && cached is XRTexture2D { IsDestroyed: false } texture
-            ? texture
-            : null;
+        if (XRObjectBase.ObjectsCache.TryGetValue(assetId, out XRObjectBase? cached) && cached is XRTexture2D { IsDestroyed: false } texture)
+            return texture;
+
+        return keys.Find(assetId);
     }
 
     private readonly record struct TicketLevel(long TicketId, int Level);

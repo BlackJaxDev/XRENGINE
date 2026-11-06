@@ -85,14 +85,59 @@ public sealed class TextureResidencyBackendTests
         XRTexture2D modelTexture = new() { Name = "model texture" };
         try
         {
-            TextureResidencyBackend.ResolveLoadedTexture(assets, modelTexture.ID).ShouldBeSameAs(modelTexture);
-            TextureResidencyBackend.ResolveLoadedTexture(assets, Guid.NewGuid()).ShouldBeNull();
+            TextureResidencyBackend.ResolveLoadedTexture(assets, new TextureResidencyKeyIndex(), modelTexture.ID).ShouldBeSameAs(modelTexture);
+            TextureResidencyBackend.ResolveLoadedTexture(assets, new TextureResidencyKeyIndex(), Guid.NewGuid()).ShouldBeNull();
         }
         finally
         {
             modelTexture.Destroy();
             assets.Dispose();
         }
+    }
+
+    [Test]
+    public void AssetResolver_FindsAModelTextureByItsSourceKey_AfterANewImportChangesItsId()
+    {
+        // Each model import makes a new texture object with a new runtime ID for the same source file.
+        AssetManager assets = new() { MonitorGameAssetsForChanges = false };
+        TextureResidencyKeyIndex keys = new();
+        string source = Path.Combine(Path.GetTempPath(), "cutscene-residency-key", "floor_diff.png");
+        XRTexture2D first = new() { Name = "floor_diff", OriginalPath = source };
+        XRTexture2D? second = null;
+        try
+        {
+            Guid key = CutsceneResidencyAssetKeys.ForTexture(first);
+            key.ShouldNotBe(first.ID);
+            TextureResidencyBackend.ResolveLoadedTexture(assets, keys, key).ShouldBeSameAs(first);
+
+            first.Destroy(now: true);
+            second = new XRTexture2D { Name = "floor_diff", OriginalPath = source };
+            second.ID.ShouldNotBe(first.ID);
+            CutsceneResidencyAssetKeys.ForTexture(second).ShouldBe(key);
+
+            TextureResidencyBackend.ResolveLoadedTexture(assets, keys, key).ShouldBeSameAs(second);
+            TextureResidencyBackend.ResolveLoadedTexture(assets, keys, first.ID).ShouldBeNull();
+        }
+        finally
+        {
+            first.Destroy(now: true);
+            second?.Destroy(now: true);
+            assets.Dispose();
+        }
+    }
+
+    [Test]
+    public void KeyIndex_ScansOneTimeForAKeyThatDoesNotResolve_UntilTheObjectsChange()
+    {
+        TextureResidencyKeyIndex keys = new();
+        Guid missing = CutsceneResidencyAssetKeys.ForTexturePath(Path.Combine(Path.GetTempPath(), "cutscene-residency-key", "missing.png"));
+
+        keys.Find(missing).ShouldBeNull();
+        int builds = keys.BuildCount;
+        keys.Find(missing).ShouldBeNull();
+        keys.Find(missing).ShouldBeNull();
+
+        keys.BuildCount.ShouldBe(builds);
     }
 
     [Test]

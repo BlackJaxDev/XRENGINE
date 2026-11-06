@@ -141,13 +141,22 @@ public sealed class CutsceneResidencyManifest
     /// </summary>
     /// <param name="kind">The kind to keep.</param>
     public CutsceneResidencyManifest SelectKind(EResidencyAssetKind kind)
+        => SelectKind(kind, null);
+
+    /// <summary>
+    /// Creates a compressed manifest that holds only the assets of one kind that a filter accepts, with the entries of
+    /// those assets. The time ranges and the cut flags stay; buckets that become equal are merged. The result is a new object.
+    /// </summary>
+    /// <param name="kind">The kind to keep.</param>
+    /// <param name="include">Returns true for each asset to keep, or null to keep each asset of the kind.</param>
+    public CutsceneResidencyManifest SelectKind(EResidencyAssetKind kind, Predicate<Guid>? include)
     {
         Validate();
 
         CutsceneResidencyManifestBuilder builder = new();
         int[] remap = new int[Assets.Length];
         for (int i = 0; i < Assets.Length; i++)
-            remap[i] = AssetKinds[i] == kind ? builder.AddAsset(Assets[i], kind, 0L) : -1;
+            remap[i] = AssetKinds[i] == kind && (include is null || include(Assets[i])) ? builder.AddAsset(Assets[i], kind, 0L) : -1;
 
         CutsceneResidencyBucketCursor cursor = new(this);
         for (int b = 0; b < Buckets.Length; b++)

@@ -11,7 +11,8 @@ namespace XREngine.Cutscenes;
 /// <summary>
 /// Finds the textures and sub-meshes that the <see cref="ModelComponent"/> instances of a node draw.
 /// Each sub-mesh gives one mesh asset and one texture asset for each 2D texture of its LOD materials that comes from a file.
-/// All of them use the world bounding sphere of the sub-mesh.
+/// All of them use the world bounding sphere of the sub-mesh. The asset IDs are the stable keys of
+/// <see cref="CutsceneResidencyAssetKeys"/>, not the runtime IDs, because a model import makes new runtime IDs.
 /// </summary>
 /// <remarks>
 /// The T0 size of a texture is a 64 px preview with 4 bytes for each texel and a full mip chain:
@@ -48,11 +49,11 @@ public sealed class CutsceneRenderableAssetCollector : ICutsceneResidencyAssetCo
             var meshes = model.Meshes;
             for (int m = 0; m < meshes.Count; m++)
                 if (meshes[m] is { } subMesh)
-                    CollectSubMesh(subMesh, world, maxScale, destination);
+                    CollectSubMesh(subMesh, CutsceneResidencyAssetKeys.ForSubMesh(node, c, m), world, maxScale, destination);
         }
     }
 
-    private static void CollectSubMesh(SubMesh subMesh, Matrix4x4 world, float maxScale, List<CutsceneResidencyAsset> destination)
+    private static void CollectSubMesh(SubMesh subMesh, Guid subMeshKey, Matrix4x4 world, float maxScale, List<CutsceneResidencyAsset> destination)
     {
         AABB bounds = subMesh.Bounds;
         Vector3 center = Vector3.Transform(bounds.Center, world);
@@ -67,13 +68,19 @@ public sealed class CutsceneRenderableAssetCollector : ICutsceneResidencyAssetCo
 
             var textures = material.Textures;
             for (int t = 0; t < textures.Count; t++)
-                if (textures[t] is XRTexture2D texture && HasFileSource(texture))
-                    destination.Add(new CutsceneResidencyAsset(texture.ID, EResidencyAssetKind.Texture, center, radius, TextureProxyBytes));
+            {
+                if (textures[t] is not XRTexture2D texture || !HasFileSource(texture))
+                    continue;
+
+                Guid key = CutsceneResidencyAssetKeys.ForTexture(texture);
+                if (key != Guid.Empty)
+                    destination.Add(new CutsceneResidencyAsset(key, EResidencyAssetKind.Texture, center, radius, TextureProxyBytes));
+            }
         }
 
         // The LODs sort by visible distance, so the last LOD is the lowest one. It is the T0 data of the sub-mesh.
         long vertices = lowest?.Mesh?.VertexCount ?? 0;
-        destination.Add(new CutsceneResidencyAsset(subMesh.ID, EResidencyAssetKind.Mesh, center, radius, vertices * MeshProxyBytesPerVertex));
+        destination.Add(new CutsceneResidencyAsset(subMeshKey, EResidencyAssetKind.Mesh, center, radius, vertices * MeshProxyBytesPerVertex));
     }
 
     /// <summary>

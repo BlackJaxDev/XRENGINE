@@ -42,6 +42,14 @@ public interface IResidencyBackend
     }
 
     /// <summary>
+    /// True if the backend can find the asset now. <see cref="CutsceneResidencySession"/> calls it when it selects a
+    /// manifest, to find manifest references that no longer match the scene. The default is true.
+    /// </summary>
+    /// <param name="assetId">The asset.</param>
+    bool CanResolve(Guid assetId)
+        => true;
+
+    /// <summary>
     /// Sets the planner that receives complete work. <see cref="CutsceneResidencySession"/> calls it one time,
     /// before <see cref="CutsceneResidencyPlanner.Open"/>. The default does nothing.
     /// </summary>

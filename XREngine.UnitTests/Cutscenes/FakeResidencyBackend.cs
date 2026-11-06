@@ -21,6 +21,12 @@ internal sealed class FakeResidencyBackend : IResidencyBackend
     /// <summary>Each cancelled ticket, in call order.</summary>
     public List<ResidencyTicket> Cancelled { get; } = [];
 
+    /// <summary>The assets that <see cref="CanResolve"/> finds, or null to find each asset.</summary>
+    public HashSet<Guid>? Resolvable { get; set; }
+
+    public bool CanResolve(Guid assetId)
+        => Resolvable is null || Resolvable.Contains(assetId);
+
     /// <summary>The requests above T0, in call order.</summary>
     public IEnumerable<(ResidencyTicket Ticket, ResidencyRequest Request)> UpperRequests
         => Requests.Where(r => r.Request.TargetLevel > 0);
