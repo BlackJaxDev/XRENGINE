@@ -37,6 +37,15 @@ internal sealed class CutsceneAudioChannel
     private int _sourceCount;
     private int _listenerVersion;
 
+    // The sources at index 0 to _feedCount - 1 get the stream. A source after the first that stopped again after its own
+    // restart moves to the end of the list, after _feedCount, and gets no buffers until the next full restart.
+    private int _feedCount;
+
+    // For each source after the first: true after the restart of that source alone, until a valid clock reading while it plays.
+    private bool[] _sourceRestarted = [];
+    private bool _readSinceSourceRestart;
+    private readonly Action<CutsceneAudioChannel, ListenerContext> _sourceLost;
+
     private IStreamingAudioDecoder? _decoder;
     private long _endFrame;
     private long _decoderFrame;
@@ -64,11 +73,15 @@ internal sealed class CutsceneAudioChannel
     /// <param name="trackIndex">The index of the track in the cutscene asset.</param>
     /// <param name="track">The track.</param>
     /// <param name="time">The wall clock that measures the time of each restart.</param>
-    public CutsceneAudioChannel(int trackIndex, AudioTrack track, TimeProvider time)
+    /// <param name="sourceLost">
+    /// Called once when a source after the first stops again after its own restart. The channel then gives that source no buffers.
+    /// </param>
+    public CutsceneAudioChannel(int trackIndex, AudioTrack track, TimeProvider time, Action<CutsceneAudioChannel, ListenerContext> sourceLost)
     {
         TrackIndex = trackIndex;
         Track = track;
         _time = time;
+        _sourceLost = sourceLost;
     }
 
     /// <summary>The index of the track in the cutscene asset.</summary>
@@ -160,9 +173,9 @@ internal sealed class CutsceneAudioChannel
             return false;
         }
 
-        // A source that ran out of buffers, for example after a long frame, stops. OpenAL then counts each buffer that is
+        // A first source that ran out of buffers, for example after a long frame, stops. OpenAL then counts each buffer that is
         // queued on it as played at once, so a refill cannot fill the queue. A restart at the cutscene time rewinds the
-        // sources and keeps the sound aligned with the picture.
+        // sources and keeps the sound aligned with the picture. The clock reads the first source, so only its state starts a full restart.
         bool starved = _streaming && !restart && !_needsRestart && IsStarved();
         bool restarted = !_streaming || restart || _needsRestart || starved;
         if (restarted)
@@ -170,15 +183,22 @@ internal sealed class CutsceneAudioChannel
             // A restart because the queues differ keeps the warm-up time, so a mismatch that comes back each time reaches the bound.
             // A second starved restart with no valid reading between them keeps it too, so a source that never plays reaches the bound.
             // The first starved restart, for example after one long frame, starts a new warm-up.
-            bool keepWarmUp = _needsRestart || (starved && _starvedSinceLastRead);
+            bool repeatedStarve = starved && _starvedSinceLastRead;
+            bool keepWarmUp = _needsRestart || repeatedStarve;
             if (starved)
                 _starvedSinceLastRead = true;
             long start = _time.GetTimestamp();
             Restart(targetFrame, keepWarmUp);
-            restartSeconds = _time.GetElapsedTime(start).TotalSeconds;
+
+            // A repeated starved restart plays no sound that the clock follows, so its time is not removed from the clock.
+            if (!repeatedStarve)
+                restartSeconds = _time.GetElapsedTime(start).TotalSeconds;
         }
         else
+        {
             Pump();
+            ServiceOtherSources();
+        }
         ApplyGain(gain);
         return restarted;
     }
@@ -212,10 +232,20 @@ internal sealed class CutsceneAudioChannel
         if (component.ActiveListenerCount != _sourceCount || component.ListenerVersion != _listenerVersion)
             return WarmUp(deltaSeconds, out warmingUp);
 
-        // Queues that differ give a wrong queue start until the restart of the next service. A source that ran out of
-        // buffers stopped at the end of its queue, so its position is old too. The next service restarts both.
-        if (_needsRestart || IsStarved())
+        // Queues that differ give a wrong queue start until the restart of the next service.
+        if (_needsRestart)
             return WarmUp(deltaSeconds, out warmingUp);
+
+        // A first source that ran out of buffers stopped at the end of its queue, so its position is old. The next service restarts it.
+        // The first starve after a valid reading, for example after one long frame, is an expected warm-up, so its step does not
+        // count toward the bound. A starve that comes back with no valid reading between counts.
+        if (IsStarved())
+        {
+            if (_starvedSinceLastRead)
+                return WarmUp(deltaSeconds, out warmingUp);
+            warmingUp = true;
+            return false;
+        }
 
         // After the last buffer of the clip, the stopped source does not move, but the listener still hears the output latency.
         // The heard position then stays behind the clock, so the clock does not read it.
@@ -240,6 +270,7 @@ internal sealed class CutsceneAudioChannel
 
         _warmUpSeconds = 0.0;
         _starvedSinceLastRead = false;
+        _readSinceSourceRestart = true;
         frame = heard;
         firstAfterRestart = _stepPending;
         _stepPending = false;
@@ -334,7 +365,9 @@ internal sealed class CutsceneAudioChannel
         {
             _sources = new AudioSource[count];
             _savedAutoPlay = new bool[count];
+            _sourceRestarted = new bool[count];
         }
+        Array.Clear(_sourceRestarted);
         int index = 0;
         foreach (KeyValuePair<ListenerContext, AudioSource> pair in component.ActiveListeners)
         {
@@ -346,6 +379,7 @@ internal sealed class CutsceneAudioChannel
             _sources[index++] = source;
         }
         _sourceCount = index;
+        _feedCount = index;
         _appliedGain = float.NaN;
         return true;
     }
@@ -367,6 +401,7 @@ internal sealed class CutsceneAudioChannel
         }
         Array.Clear(_sources);
         _sourceCount = 0;
+        _feedCount = 0;
     }
 
     private static bool IsInTable(AudioSourceComponent component, AudioSource source)
@@ -393,6 +428,10 @@ internal sealed class CutsceneAudioChannel
         _restartFrame = frame;
         _endOfData = frame >= _endFrame;
         _needsRestart = false;
+
+        // A full restart gives every source the stream again, also a source that the channel gave up.
+        _feedCount = _sourceCount;
+        Array.Clear(_sourceRestarted, 0, _sourceCount);
         Fill();
 
         _streaming = true;
@@ -401,20 +440,99 @@ internal sealed class CutsceneAudioChannel
             PlaySources();
     }
 
-    // True if a source stopped before the end of the data, so its queue ran out. The loop is over the cached list, so it does not allocate.
+    // True if the first source stopped before the end of the data, so its queue ran out. The clock reads the first source,
+    // so only its state starts a full restart. ServiceOtherSources handles the other sources.
     private bool IsStarved()
+        => !_endOfData && !_sources[0].IsPlaying;
+
+    // A source after the first that stopped before the end of the data restarts alone, once. It gets another restart only after a
+    // valid clock reading while it plays, or after a full restart. If it stops again, the channel reports it once and gives it no
+    // more buffers, so it cannot make the first source restart. The loop is over the cached list, so it does not allocate.
+    private void ServiceOtherSources()
     {
         if (_endOfData)
-            return false;
-        for (int i = 0; i < _sourceCount; i++)
-            if (!_sources[i].IsPlaying)
-                return true;
-        return false;
+            return;
+
+        for (int i = 1; i < _feedCount; i++)
+        {
+            AudioSource source = _sources[i];
+            if (source.IsPlaying)
+            {
+                if (_readSinceSourceRestart)
+                    _sourceRestarted[i] = false;
+                continue;
+            }
+
+            if (_sourceRestarted[i])
+            {
+                StopSource(source);
+                _sourceLost(this, source.ParentListener);
+                RemoveFromFeed(i);
+                i--;
+                continue;
+            }
+
+            _sourceRestarted[i] = true;
+            _readSinceSourceRestart = false;
+            RestartOneSource(i);
+        }
+    }
+
+    // Queues the frames of the queue of the first source again on one source and plays it. The source starts at the buffer that the
+    // first source plays now, so it can be up to one buffer behind the first source.
+    private void RestartOneSource(int index)
+    {
+        AudioSource source = _sources[index];
+        StopSource(source);
+
+        AudioSource primary = _sources[0];
+        long queueStart = _nextFrame - (long)primary.BuffersQueued * ChunkFrames;
+        long frame = queueStart + (long)Math.Min(primary.BuffersProcessed, primary.BuffersQueued) * ChunkFrames;
+        long historyStart = _decoderFrame - _historyCount;
+        if (frame < historyStart || _nextFrame > _decoderFrame)
+            return;
+
+        IStreamingAudioDecoder decoder = _decoder!;
+        int channels = decoder.Channels;
+        bool stereo = channels == 2;
+        short[] pcm = stereo ? _stereo : _mono;
+        for (; frame < _nextFrame; frame += ChunkFrames)
+        {
+            CopyHistory(frame, ChunkFrames, channels);
+            int samples = ChunkFrames * channels;
+            for (int i = 0; i < samples; i++)
+                pcm[i] = ToShort(_decoded[i]);
+            if (_component!.EnqueueStreamingBuffer(_sources.AsSpan(index, 1), decoder.SampleRate, stereo, pcm, _batch) < 1)
+                break;
+        }
+        if (source.BuffersQueued > 0)
+            source.Play();
+    }
+
+    // Moves a source to the end of the list, after the sources that get the stream. Its saved settings move with it.
+    private void RemoveFromFeed(int index)
+    {
+        int last = --_feedCount;
+        (_sources[index], _sources[last]) = (_sources[last], _sources[index]);
+        (_savedAutoPlay[index], _savedAutoPlay[last]) = (_savedAutoPlay[last], _savedAutoPlay[index]);
+        (_sourceRestarted[index], _sourceRestarted[last]) = (_sourceRestarted[last], _sourceRestarted[index]);
+    }
+
+    private void CopyHistory(long frame, int frames, int channels)
+    {
+        int done = 0;
+        while (done < frames)
+        {
+            int ring = (int)((frame + done) % HistoryFrames);
+            int count = Math.Min(frames - done, HistoryFrames - ring);
+            _history.AsSpan(ring * channels, count * channels).CopyTo(_decoded.AsSpan(done * channels));
+            done += count;
+        }
     }
 
     private void Pump()
     {
-        for (int i = 0; i < _sourceCount; i++)
+        for (int i = 0; i < _feedCount; i++)
         {
             AudioSource source = _sources[i];
             if (source.BuffersProcessed > 0)
@@ -424,7 +542,9 @@ internal sealed class CutsceneAudioChannel
         Fill();
 
         // After the last buffer of the data, a source that played its queue stops. Start it again if new buffers are in its queue.
-        for (int i = 0; i < _sourceCount; i++)
+        if (!_endOfData)
+            return;
+        for (int i = 0; i < _feedCount; i++)
         {
             AudioSource source = _sources[i];
             if (!source.IsPlaying && source.BuffersQueued > 0)
@@ -459,8 +579,8 @@ internal sealed class CutsceneAudioChannel
             // The padding keeps every buffer at the same length, so the clock can count buffers.
             Array.Clear(pcm, samples, pcm.Length - samples);
 
-            int accepted = component.EnqueueStreamingBuffer(_sources.AsSpan(0, _sourceCount), decoder.SampleRate, stereo, pcm, _batch);
-            if (accepted < _sourceCount)
+            int accepted = component.EnqueueStreamingBuffer(_sources.AsSpan(0, _feedCount), decoder.SampleRate, stereo, pcm, _batch);
+            if (accepted < _feedCount)
             {
                 // The frames stay in the ring, so the read position goes back and a later fill offers them again.
                 _readFrame -= frames;
@@ -533,12 +653,14 @@ internal sealed class CutsceneAudioChannel
     private void StopSources()
     {
         for (int i = 0; i < _sourceCount; i++)
-        {
-            AudioSource source = _sources[i];
-            source.Stop();
-            source.UnqueueConsumedBuffers();
-            source.Rewind();
-        }
+            StopSource(_sources[i]);
+    }
+
+    private static void StopSource(AudioSource source)
+    {
+        source.Stop();
+        source.UnqueueConsumedBuffers();
+        source.Rewind();
     }
 
     private void PlaySources()

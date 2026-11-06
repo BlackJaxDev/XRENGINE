@@ -1,3 +1,4 @@
+using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Scene;
@@ -37,6 +38,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     private readonly CutsceneAudioChannel[] _channels;
     private readonly bool[] _touched;
     private readonly HashSet<(int Track, int Clip, int Code)> _reported = [];
+    private readonly HashSet<(int Track, ListenerContext Listener)> _reportedLostSources = [];
 
     private bool _playing;
     private bool _discontinuity;
@@ -87,6 +89,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         _openDecoder = openDecoder ?? OpenDefaultDecoder;
         _assetDirectory = Path.GetDirectoryName(compiled.Asset.FilePath);
 
+        Action<CutsceneAudioChannel, ListenerContext> sourceLost = ReportLostSource;
         List<CutsceneTrack> tracks = compiled.Asset.Tracks;
         _channelOfTrack = new CutsceneAudioChannel?[tracks.Count];
         List<CutsceneAudioChannel> channels = [];
@@ -94,7 +97,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         {
             if (tracks[i] is not AudioTrack track)
                 continue;
-            CutsceneAudioChannel channel = new(i, track, time);
+            CutsceneAudioChannel channel = new(i, track, time, sourceLost);
             _channelOfTrack[i] = channel;
             channels.Add(channel);
         }
@@ -425,6 +428,14 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     // A clip whose file failed to open is not opened again in each frame. A new player tries again.
     private bool HasOpenFailure(int trackIndex, int clipIndex)
         => _reported.Contains((trackIndex, clipIndex, CodeOpenFailed)) || _reported.Contains((trackIndex, clipIndex, CodeChannels));
+
+    // A source of a listener that stops again after its own restart is left silent. The other sources and the clock continue.
+    private void ReportLostSource(CutsceneAudioChannel channel, ListenerContext listener)
+    {
+        if (!_reportedLostSources.Add((channel.TrackIndex, listener)))
+            return;
+        Report(channel.TrackIndex, -1, $"The audio source of listener '{listener.Name}' on track '{channel.Track.Name}' stopped again after a restart. The track gives that source no sound until the next restart of all sources. The other sources and the clock continue.");
+    }
 
     private bool MarkReported(int trackIndex, int clipIndex, int code)
         => _reported.Add((trackIndex, clipIndex, code));

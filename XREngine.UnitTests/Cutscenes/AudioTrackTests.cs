@@ -247,6 +247,7 @@ public sealed class AudioTrackTests
         public int BackwardSeeks { get; private set; }
         public int Seeks { get; private set; }
         public TimeSpan SeekTime { get; set; }
+        public TimeSpan ReadTime { get; set; }
         public int SampleRate => inner.SampleRate;
         public int Channels => inner.Channels;
         public long TotalFrames => inner.TotalFrames;
@@ -263,6 +264,7 @@ public sealed class AudioTrackTests
 
         public int Read(Span<float> destination)
         {
+            wallClock.Advance(ReadTime);
             int read = inner.Read(destination);
             _position += read;
             return read;
@@ -348,11 +350,14 @@ public sealed class AudioTrackTests
     private static Rig MakeRig(ECutsceneEventSeekPolicy policy = ECutsceneEventSeekPolicy.Skip, params double[] eventTimes)
         => MakeRig(null, policy, eventTimes);
 
+    private static Rig MakeRig((double Start, double Duration, double Offset)? music, ECutsceneEventSeekPolicy policy, double[] eventTimes)
+        => MakeRig(music, musicFirst: false, policy, eventTimes);
+
     /// <summary>
     /// Makes the rig. A music clip adds a second audio track on its own node, with <see cref="AudioTrack.DrivesClock"/> false.
-    /// The dialog track comes first, so the evaluator services it first.
+    /// The evaluator services the tracks in their order. The dialog track comes first unless <paramref name="musicFirst"/> is true.
     /// </summary>
-    private static Rig MakeRig((double Start, double Duration, double Offset)? music, ECutsceneEventSeekPolicy policy, double[] eventTimes)
+    private static Rig MakeRig((double Start, double Duration, double Offset)? music, bool musicFirst, ECutsceneEventSeekPolicy policy, double[] eventTimes)
     {
         string path = WriteRampWav(SampleRate * 3);
         SceneNode node = new("Speaker");
@@ -378,7 +383,7 @@ public sealed class AudioTrackTests
             asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.SceneObject, ObjectId = musicNode.ID });
             AudioTrack musicTrack = new() { Name = "Music", BindingSlot = 1, DrivesClock = false };
             musicTrack.Clips.Add(new AudioTrackClip { Start = T(m.Start), Duration = T(m.Duration), ClipOffset = T(m.Offset), SourcePath = path });
-            asset.Tracks.Add(musicTrack);
+            asset.Tracks.Insert(musicFirst ? 0 : asset.Tracks.Count, musicTrack);
         }
         if (eventTimes.Length > 0)
         {
@@ -1214,28 +1219,35 @@ public sealed class AudioTrackTests
         rig.Player.Diagnostics.Count.ShouldBe(1);
     }
 
-    // The order of the listener table depends on the hash codes, so each listener has a case. One case stops a source that is not first in the list.
-    [TestCase(0)]
-    [TestCase(1)]
-    public void OneSourceThatStops_RestartsBothSources(int stoppedListener)
+    // The channel lists the sources in the order of the listener table. The first source drives the clock, so a stop of it
+    // restarts every source. A stop of another source restarts that source alone.
+    [TestCase(true)]
+    [TestCase(false)]
+    public void SourceThatStops_RestartsAllSourcesOnlyIfItIsTheFirst(bool stopFirst)
     {
         using Rig rig = MakeRig();
         rig.Player.Play();
         rig.Player.Tick(0.02);
 
-        // Only one source of the two listeners stops.
-        FakeSource stopped = rig.Transports[stoppedListener].Sources.Values.Single();
+        ListenerContext first = rig.Component.ActiveListeners.First().Key;
+        int firstIndex = ReferenceEquals(first, rig.Listeners[0]) ? 0 : 1;
+        FakeSource stopped = rig.Transports[stopFirst ? firstIndex : 1 - firstIndex].Sources.Values.Single();
+        FakeSource other = rig.Transports[stopFirst ? 1 - firstIndex : firstIndex].Sources.Values.Single();
         stopped.Playing = false;
         foreach (FakeTransport transport in rig.Transports)
             transport.ClearLogs();
         rig.Player.Tick(0.02);
 
-        foreach (FakeSource source in rig.AllSources)
-        {
-            source.Playing.ShouldBeTrue();
-            source.Log[0].ShouldBe("stop");
-            source.Log[^1].ShouldBe("play");
-        }
+        stopped.Playing.ShouldBeTrue();
+        stopped.Log[0].ShouldBe("stop");
+        stopped.Log[^1].ShouldBe("play");
+        FirstQueuedSample(stopped).ShouldBe(stopFirst ? (int)rig.Player.Position.ToSamples(SampleRate) : 160);
+        other.Playing.ShouldBeTrue();
+        if (stopFirst)
+            other.Log[0].ShouldBe("stop");
+        else
+            other.Log.ShouldNotContain("stop");
+        rig.Player.Diagnostics.ShouldBeEmpty();
     }
 
     [Test]
@@ -1255,5 +1267,104 @@ public sealed class AudioTrackTests
         rig.Player.Tick(0.02);
         foreach (FakeSource source in rig.AllSources)
             source.Log.Count(entry => entry.StartsWith("queue ", StringComparison.Ordinal)).ShouldBeLessThanOrEqualTo(4);
+    }
+
+    [Test]
+    public void SecondSourceThatNeverPlays_IsRestartedOnce_AndTheFirstSourceDrivesTheClock()
+    {
+        using Rig rig = MakeRig();
+
+        // The channel lists the sources in the order of the listener table. The source of the other listener never plays.
+        ListenerContext first = rig.Component.ActiveListeners.First().Key;
+        FakeTransport dead = ReferenceEquals(first, rig.Listeners[0]) ? rig.Transports[1] : rig.Transports[0];
+        FakeTransport live = ReferenceEquals(dead, rig.Transports[0]) ? rig.Transports[1] : rig.Transports[0];
+        dead.IgnorePlay = true;
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        foreach (FakeTransport transport in rig.Transports)
+            transport.ClearLogs();
+
+        for (int i = 0; i < 10; i++)
+        {
+            rig.SetHeardTime(rig.Player.Position.ToSeconds() + 0.02, 160);
+            rig.Player.Tick(0.02);
+        }
+
+        FakeSource liveSource = live.Sources.Values.Single();
+        liveSource.Playing.ShouldBeTrue();
+        liveSource.Log.ShouldNotContain("stop");
+        dead.Sources.Values.Single().Log.Count(entry => entry == "play").ShouldBe(1);
+        rig.Player.Clock.Mode.ShouldBe(ECutsceneClockMode.AudioDisciplined);
+        rig.Player.IsAudioClockFallback.ShouldBeFalse();
+        rig.Player.AudioClockReadCount.ShouldBe(10);
+        rig.Player.Diagnostics.Count.ShouldBe(1);
+        rig.Player.Diagnostics[0].Message.ShouldContain("stopped again after a restart");
+    }
+
+    [Test]
+    public void OneLongFrameThatStarvesTheSource_DoesNotFallBack()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.SetHeardTime(0.04, 160);
+        rig.Player.Tick(0.02);
+        rig.Player.AudioClockReadCount.ShouldBe(1);
+
+        // One 600 ms frame is longer than the 500 ms warm-up bound, and the queue runs out during it.
+        foreach (FakeTransport transport in rig.Transports)
+            transport.StarveAll();
+        rig.Player.Tick(0.6);
+
+        rig.Player.IsAudioClockFallback.ShouldBeFalse();
+        rig.Player.Clock.Mode.ShouldBe(ECutsceneClockMode.AudioDisciplined);
+        rig.Player.Diagnostics.ShouldBeEmpty();
+        rig.AllSources.ShouldAllBe(source => source.Playing);
+    }
+
+    [Test]
+    public void RepeatedStarvedRestarts_DoNotSlowTheFallbackClock()
+    {
+        // Each restart reads from the decoder, and each read takes 5 ms of wall time.
+        using Rig rig = MakeRig();
+        foreach (FakeTransport transport in rig.Transports)
+        {
+            transport.IgnorePlay = true;
+            transport.Recording = false;
+        }
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.Decoders.Single().ReadTime = TimeSpan.FromMilliseconds(5);
+        for (int i = 0; i < 30; i++)
+            rig.Player.Tick(0.02);
+        rig.Player.IsAudioClockFallback.ShouldBeTrue();
+
+        CutsceneTime before = rig.Player.Position;
+        rig.Player.Tick(0.02);
+        rig.Player.Tick(0.02);
+        Math.Abs((rig.Player.Position - before).ToSeconds() - 0.04).ShouldBeLessThan(1e-6);
+    }
+
+    [Test]
+    public void JumpThatSeeksAnEarlierTrackFirst_RemovesBothRestartTimes()
+    {
+        // The music track is first in the asset, so the evaluator restarts it before the dialog track that drives the clock.
+        using Rig rig = MakeRig((0.0, 3.0, 0.0), musicFirst: true, ECutsceneEventSeekPolicy.Skip, []);
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.Player.Tick(0.02);
+        foreach (CountingDecoder decoder in rig.Decoders)
+            decoder.SeekTime = TimeSpan.FromMilliseconds(300);
+
+        rig.Player.Seek(T(2.0), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+
+        // Both seeks (600 ms) delayed the dialog sound, which started 20 ms before the next tick.
+        rig.SetHeardTime(2.02, 2 * SampleRate);
+        rig.Player.Tick(0.62);
+
+        rig.Player.AudioHardResyncCount.ShouldBe(0);
+        rig.Discontinuities.Count.ShouldBe(1);
+        rig.Player.Position.ShouldBe(CutsceneTime.FromSamples(2 * SampleRate + 160, SampleRate));
     }
 }
