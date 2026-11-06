@@ -656,6 +656,14 @@ internal sealed partial class VulkanFrameLoop
         uint recordImageIndex = ResolveOpenXrRecordImageIndex(
             request.ResourcePlannerStateIndex,
             OutputRuntime.Desktop.Images?.Length ?? 0);
+        uint alternateRecordImageIndex = strictSpsTemporalHistory
+            ? ResolveOpenXrRecordImageIndex(1 - request.ResourcePlannerStateIndex, OutputRuntime.Desktop.Images?.Length ?? 0)
+            : recordImageIndex;
+        // Single-pass stereo records both eyes as one frame, so the second eye
+        // frame-data slot is otherwise idle. Alternate between the two slots so the
+        // next stereo frame can record while the previous one is still on the GPU.
+        if (strictSpsTemporalHistory && _openXrStereoUsesAlternateFrameDataSlot)
+            (recordImageIndex, alternateRecordImageIndex) = (alternateRecordImageIndex, recordImageIndex);
 
         VulkanOpenXrFrameContext openXrFrameContext =
             CreateOpenXrMirrorFrameContext(in request);
@@ -674,13 +682,29 @@ internal sealed partial class VulkanFrameLoop
             EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
             _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(
                 openXrFrameDataSlotCount);
+            bool frameDataSlotCompletionProven;
             if (!TryPrepareOpenXrFrameDataSlot(
                     recordImageIndex,
                     "eye mirror render",
-                    out bool frameDataSlotCompletionProven))
+                    out frameDataSlotCompletionProven))
             {
-                RecordOpenXrRenderFailure(in request, "frame-data-slot");
-                return false;
+                if (alternateRecordImageIndex == recordImageIndex ||
+                    !TryPrepareOpenXrFrameDataSlot(
+                        alternateRecordImageIndex,
+                        "eye mirror render",
+                        out frameDataSlotCompletionProven))
+                {
+                    RecordOpenXrRenderFailure(in request, "frame-data-slot");
+                    return false;
+                }
+                recordImageIndex = alternateRecordImageIndex;
+            }
+            if (strictSpsTemporalHistory)
+            {
+                _openXrStereoUsesAlternateFrameDataSlot =
+                    recordImageIndex == ResolveOpenXrRecordImageIndex(
+                        request.ResourcePlannerStateIndex,
+                        OutputRuntime.Desktop.Images?.Length ?? 0);
             }
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
@@ -1116,6 +1140,12 @@ internal sealed partial class VulkanFrameLoop
 
     private static int ResolveOpenXrDesktopFrameDataSlotCount(int desktopSwapchainImageCount)
         => Math.Max(Math.Max(desktopSwapchainImageCount, DesktopFrameSlotCount), 1);
+
+    /// <summary>
+    /// True when the next single-pass stereo record starts with the second eye
+    /// frame-data slot. Render-thread state; only the strict stereo record reads it.
+    /// </summary>
+    private bool _openXrStereoUsesAlternateFrameDataSlot;
 
     private static uint ResolveOpenXrRecordImageIndex(
         int resourcePlannerStateIndex,
