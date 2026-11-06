@@ -325,8 +325,13 @@ internal sealed partial class VulkanFrameLoop
     private static void ReleasePreparedOpenXrEyeInput(
         in OpenXrPreparedEyeCommandBufferInput prepared)
     {
-        if (prepared.Ops is { } operations)
-            VulkanAdvancedVisibilityInputLease.ReleaseOperations(operations);
+        if (prepared.Ops is not { } operations)
+            return;
+
+        // A prepared eye that was not submitted must not leave its markers pending:
+        // producers such as the Advanced deformation slots wait on them.
+        VulkanCommandSynchronizationState.FailAbandonedSubmissionMarkers(operations);
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(operations);
     }
 
     internal bool TryRenderOpenXrEyeSwapchainsSinglePassStereo(
@@ -627,7 +632,10 @@ internal sealed partial class VulkanFrameLoop
         finally
         {
             if (!transferredRetainedOps && retainedOps is not null)
+            {
+                VulkanCommandSynchronizationState.FailAbandonedSubmissionMarkers(retainedOps);
                 VulkanAdvancedVisibilityInputLease.ReleaseOperations(retainedOps);
+            }
         }
     }
 

@@ -586,6 +586,21 @@ internal sealed unsafe class VulkanCommandSynchronizationState
         }
     }
 
+    /// <summary>
+    /// Fails the submission markers of abandoned frame operations that no queue
+    /// submission bound. Markers that a submission already bound are left unchanged.
+    /// </summary>
+    internal static void FailAbandonedSubmissionMarkers(
+        ReadOnlySpan<FrameOp> frameOperations)
+    {
+        for (int index = 0; index < frameOperations.Length; index++)
+        {
+            if (frameOperations[index] is SubmissionMarkerOp { Fence: { } fence })
+                fence.FailIfAwaitingSubmission(EGpuFenceFailureSite.UnsubmittedMarker,
+                    EGpuFenceNativeSubmission.NotCalled);
+        }
+    }
+
     internal Result QueryTimelineCompletion(
         Vk api,
         VulkanDeviceContext deviceContext,

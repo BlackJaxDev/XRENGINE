@@ -115,6 +115,35 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
             Volatile.Write(ref _state, 2);
         }
     }
+    /// <summary>
+    /// Fails this fence only while it still waits for a queue submission. A fence that a
+    /// submission already bound keeps its timeline value.
+    /// </summary>
+    internal void FailIfAwaitingSubmission(EGpuFenceFailureSite site,
+        EGpuFenceNativeSubmission nativeSubmission)
+    {
+        VulkanCommandRuntime? runtime = _runtime;
+        if (runtime is null)
+        {
+            Interlocked.CompareExchange(ref _state, 2, 0);
+            return;
+        }
+
+        lock (runtime.Synchronization._submissionMarkerLock)
+        {
+            if (Volatile.Read(ref _state) != 0)
+                return;
+            RecordFirstFailureNoLock(runtime, site, nativeSubmission, 0);
+            if (Volatile.Read(ref _disposePendingBackendResolution) != 0)
+            {
+                ReturnToPoolNoLock(runtime);
+                return;
+            }
+
+            Volatile.Write(ref _state, 2);
+        }
+    }
+
     private void RecordFirstFailureNoLock(VulkanCommandRuntime runtime,
         EGpuFenceFailureSite site, EGpuFenceNativeSubmission nativeSubmission, int nativeResult)
     {
