@@ -639,6 +639,25 @@ public static partial class EditorUnitTests
             return true;
         }
 
+        /// <summary>
+        /// Sets the camera node of local player one to a world position and a yaw/pitch in
+        /// degrees, for an external camera-motion probe such as MCP <c>invoke_method</c>.
+        /// Returns false when the player has no pawn with a plain transform.
+        /// </summary>
+        public static bool SetLocalPlayerCameraPose(float x, float y, float z, float yawDegrees, float pitchDegrees)
+        {
+            if (Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent is not { } pawn ||
+                pawn.SceneNode.Transform is not Transform transform)
+                return false;
+
+            transform.Translation = new Vector3(x, y, z);
+            transform.Rotation = Quaternion.CreateFromYawPitchRoll(
+                float.DegreesToRadians(yawDegrees),
+                float.DegreesToRadians(pitchDegrees),
+                0.0f);
+            return true;
+        }
+
         private static bool SetSettingValue(object settings, string propertyName, string value)
         {
             System.Reflection.PropertyInfo? property = settings.GetType().GetProperty(propertyName);
