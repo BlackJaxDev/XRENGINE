@@ -81,6 +81,9 @@ public sealed class CutscenePreviewHost
     /// <summary>The playback rate. A negative value plays backward.</summary>
     public double Rate => _player?.Rate ?? 1.0;
 
+    /// <summary>The player of the preview, or null before <see cref="Begin"/>. A recompile replaces it.</summary>
+    public CutscenePlayer? Player => _player;
+
     /// <summary>True when a loop range is set.</summary>
     public bool HasLoopRange => _hasLoopRange;
 

@@ -429,6 +429,35 @@ public sealed class AudioTrackTests
     }
 
     [Test]
+    public void ClockReadings_ReportTheDifferenceTheLatencyAndTheResyncs()
+    {
+        using Rig rig = MakeRig();
+        rig.Player.Play();
+        rig.Player.Tick(0.02);
+        rig.Player.AudioClockReadCount.ShouldBe(0);
+
+        // The heard frame is 160 + 4000 - 400 = 3760. The clock is at 0.04 s before the correction, so the clock jumps.
+        foreach (FakeTransport transport in rig.Transports)
+        {
+            transport.SetSampleFrame(4000);
+            transport.LatencyNanoseconds = 50_000_000;
+        }
+        rig.Player.Tick(0.02);
+        rig.Player.AudioClockDifference.ShouldBe(CutsceneTime.FromSamples(3760, SampleRate) - T(0.04));
+        rig.Player.AudioClockReadCount.ShouldBe(1);
+        rig.Player.AudioHardResyncCount.ShouldBe(1);
+        rig.Player.AudioClockLatencyNanoseconds.ShouldBe(50_000_000);
+
+        // The next step advances the clock to 0.49 s. The heard frame 3960 is 0.495 s, so the difference is 5 ms and the clock does not jump.
+        foreach (FakeTransport transport in rig.Transports)
+            transport.SetSampleFrame(4200);
+        rig.Player.Tick(0.02);
+        rig.Player.AudioClockDifference.ShouldBe(CutsceneTime.FromSamples(3960, SampleRate) - CutsceneTime.FromSamples(3760, SampleRate) - T(0.02));
+        rig.Player.AudioClockReadCount.ShouldBe(2);
+        rig.Player.AudioHardResyncCount.ShouldBe(1);
+    }
+
+    [Test]
     public void Clock_WithoutATransportClock_UsesWallTimeAndReportsIt()
     {
         using Rig rig = MakeRig();

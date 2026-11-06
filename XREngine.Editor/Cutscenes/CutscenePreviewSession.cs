@@ -45,6 +45,9 @@ public static class CutscenePreviewSession
     /// <summary>The playback rate.</summary>
     public static double Rate => _host?.Rate ?? DirectorPlayer?.Rate ?? 1.0;
 
+    /// <summary>The player of the preview or of the director, or null if nothing is open.</summary>
+    public static CutscenePlayer? Player => _host?.Player ?? DirectorPlayer;
+
     private static CutscenePlayer? DirectorPlayer => _director is { IsOpen: true } director ? director.Player : null;
 
     /// <summary>

@@ -88,6 +88,21 @@ public sealed class CutscenePlayer
     public bool IsAudioMuted => _audio.IsMuted;
 
     /// <summary>
+    /// The heard audio position minus the clock position before the correction, from the last play step that read the audio clock.
+    /// A positive value means that the audio is ahead of the clock. Use it to measure the drift between the picture and the sound.
+    /// </summary>
+    public CutsceneTime AudioClockDifference { get; private set; }
+
+    /// <summary>The number of play steps that read a heard audio position, since the player was created.</summary>
+    public long AudioClockReadCount { get; private set; }
+
+    /// <summary>The number of hard resyncs to the audio position, since the player was created.</summary>
+    public int AudioHardResyncCount { get; private set; }
+
+    /// <summary>The output latency in nanoseconds that the transport reported at the last clock reading, or zero.</summary>
+    public long AudioClockLatencyNanoseconds => _audio.ClockLatencyNanoseconds;
+
+    /// <summary>
     /// Raised for each event that fires. Forward playback fires each event that it crosses, once. A seek fires
     /// events only by <see cref="EventTrack.SeekPolicy"/>. A scrub and reverse playback fire no event.
     /// The events of a tick fire after the evaluation, so a handler sees the state of the new position.
@@ -318,8 +333,14 @@ public sealed class CutscenePlayer
 
         // The audio correction comes before the evaluation and the event dispatch, so both use the final position of the step.
         if (_audio.TryReadHeardPosition(deltaSeconds, out CutsceneTime heard))
+        {
+            AudioClockDifference = heard - _clock.Position;
+            AudioClockReadCount++;
             _clock.Discipline(heard);
+        }
         bool hardResync = _clock.ConsumeHardResync();
+        if (hardResync)
+            AudioHardResyncCount++;
 
         CutsceneTime position = _clock.Position.Clamp(CutsceneTime.Zero, duration);
         _clock.SetPosition(position);

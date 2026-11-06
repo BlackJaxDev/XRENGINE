@@ -79,6 +79,9 @@ internal sealed class CutsceneAudioChannel
     /// <summary>The number of sources that the channel feeds.</summary>
     public int SourceCount => _sourceCount;
 
+    /// <summary>The output latency in nanoseconds that the transport reported at the last clock reading.</summary>
+    public long LastLatencyNanoseconds => _lastLatencyNanoseconds;
+
     /// <summary>
     /// Takes control of the buffers of a component. A different component releases the earlier one first.
     /// While the channel holds a component, the component does not unqueue buffers itself and its sources do not play on a queue.

@@ -116,7 +116,7 @@ public sealed partial class EditorMcpActions
     /// <summary>Reads the state of the open cutscene.</summary>
     [XRMcp(Name = "cutscene_status", Permission = McpPermissionLevel.ReadOnly)]
     [McpThreadAffinity(McpThreadAffinity.Update)]
-    [Description("Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), and diagnostics.")]
+    [Description("Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), diagnostics, and the audio clock (clock mode, fallback, mute, last heard-minus-clock difference in ms, read count, hard resync count, and output latency in ms).")]
     public static Task<McpToolResponse> CutsceneStatusAsync(McpToolContext context)
         => Task.FromResult(CutsceneStatusResponse("Read the cutscene status."));
 
@@ -135,6 +135,7 @@ public sealed partial class EditorMcpActions
         CutsceneAsset? asset = CutscenePreviewSession.Asset;
         bool open = CutscenePreviewSession.IsOpen;
         string mode = !open ? "closed" : CutscenePreviewSession.Host is not null ? "preview" : "director";
+        CutscenePlayer? player = open ? CutscenePreviewSession.Player : null;
         return new McpToolResponse(message, new
         {
             open,
@@ -146,6 +147,16 @@ public sealed partial class EditorMcpActions
             rate = CutscenePreviewSession.Rate,
             compileCount = CutscenePreviewSession.Host?.CompileCount ?? 0,
             diagnostics = diagnosticItems,
+            audioClock = player is null ? null : new
+            {
+                mode = player.Clock.Mode.ToString(),
+                fallback = player.IsAudioClockFallback,
+                muted = player.IsAudioMuted,
+                differenceMs = player.AudioClockDifference.ToSeconds() * 1000.0,
+                reads = player.AudioClockReadCount,
+                hardResyncs = player.AudioHardResyncCount,
+                latencyMs = player.AudioClockLatencyNanoseconds / 1e6,
+            },
         }, isError);
     }
 

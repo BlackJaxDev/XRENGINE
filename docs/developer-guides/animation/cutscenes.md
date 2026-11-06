@@ -179,6 +179,8 @@ A claim changes only the camera that shows the scene. The screen-space UI of the
 
 Each tool returns `open`, `mode` (`preview`, `director`, or `closed`), `asset`, `position`, `state`, `duration`, `rate`, `compileCount`, and `diagnostics`. Times are in seconds.
 
+While a cutscene is open, each tool also returns `audioClock`: the clock `mode`, `fallback`, `muted`, `differenceMs` (the heard position minus the clock position before the correction, from the last play step that read the clock), `reads` (the number of play steps that read the clock), `hardResyncs`, and `latencyMs` (the output latency of the last reading). The same values are on `CutscenePlayer`: `AudioClockDifference`, `AudioClockReadCount`, `AudioHardResyncCount`, and `AudioClockLatencyNanoseconds`. The counts start at zero when the player is created, so a recompile of a preview resets them.
+
 In edit mode, `cutscene_open` starts a preview. In play mode, it opens a director, and `asset_path` is not available. Without `node_id` or `asset_path`, the tool uses the selected node, and then the only director in the world.
 
 The tools run on the update thread. A capture after `cutscene_seek` shows the new time, because the transform flush runs later in the same frame.

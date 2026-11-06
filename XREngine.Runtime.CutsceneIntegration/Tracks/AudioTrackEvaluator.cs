@@ -106,6 +106,9 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     /// <summary>True while the sources are silent because the transport is not in forward playback at rate one.</summary>
     public bool IsMuted => !_playing;
 
+    /// <summary>The output latency in nanoseconds of the last clock reading of the track that corrects the clock, or zero.</summary>
+    public long ClockLatencyNanoseconds => _clockChannel?.LastLatencyNanoseconds ?? 0L;
+
     /// <summary>
     /// Tells the evaluator the transport state before an evaluation. Sources play only when <paramref name="playing"/>
     /// is true and the rate is one. A change to any other state stops the sources at once, also with no evaluation.
