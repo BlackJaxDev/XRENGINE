@@ -317,21 +317,37 @@ assets on disk do not use it; play-mode snapshots do.
 The YAML cook (`ProjectBuilder.CreateCookedBlobFromYaml`) calls
 `CookedSourcePathPolicy.MakeSourcePathsPortable` on the asset that it
 deserialized, before it serializes the cooked payload. The policy writes
-`XRAsset.OriginalPath` of the asset, and of each asset embedded in it, as a
-`game://` or `engine://` reference when the path is in an asset folder of the
-cook process. A path outside the asset folders stays absolute. Thus a cooked
-asset carries no source path of the cook machine, and a system that identifies
-an asset by its source file (for example the cutscene residency texture keys)
-gets the same value in the editor and in a cooked build.
+`XRAsset.OriginalPath` of the asset, and of each asset that the cook writes
+with it, as a `game://` or `engine://` reference when the path is in an asset
+folder of the cook process. A path outside the asset folders stays absolute.
+Thus a cooked `OriginalPath` holds no source path of the cook machine, and a
+system that identifies an asset by its source file (for example the cutscene
+residency texture keys) gets the same value in the editor and in a cooked
+build.
 
-- The policy finds embedded assets with
-  `XRAssetGraphUtility.RefreshAssetGraph(root, isForeignAsset)`. A live asset
-  that the copy references (the asset services return the same instance for
-  its ID) is foreign: the traversal does not claim it, and the policy does not
-  change it.
+- The policy finds the assets with
+  `XRAssetGraphUtility.VisitReachableAssets(root, isForeignAsset, visitor)`.
+  The walk follows the same serialized members as the graph refresh, and it
+  also reaches assets that the refresh does not claim as embedded: the items of
+  a collection in a `System` namespace (for example the
+  `EventList<XRTexture?>` texture list of a material), and a self-rooted asset
+  whose file exists (for example a texture that a source image backs). The walk
+  does not change `SourceAsset` or `EmbeddedAssets`.
+- The policy first calls
+  `XRAssetGraphUtility.RefreshAssetGraph(root, isForeignAsset)`, so live assets
+  that the deserialization claimed are released. A live asset that the copy
+  references (the asset services return the same instance for its ID) is
+  foreign: the refresh does not claim it, and the policy does not change it or
+  the assets in it.
 - The policy never fails a cook. If the graph refresh throws (for example the
-  1,000-entry collection limit), it logs one warning and makes only the root
-  path portable.
+  1,000-entry collection limit) or the walk stops at its depth or count limit,
+  it logs one warning and still changes the paths that it reached.
+- The policy changes only `OriginalPath`. A texture that a source image backs
+  keeps the `FilePath` of the cook machine in its cooked bytes.
+- Code that reads a cooked `OriginalPath` for a file system call resolves it
+  first with `AssetReferencePath.TryResolveFileSystemPath`: the texture
+  streaming restore, the texture cache fallback, the texture streaming cache
+  codec, and the font layout recovery (`FontGlyphSet`).
 - Cooks of live objects (`WriteCookedAsset`) and browser dependency cooks do
   not use the policy.
 
