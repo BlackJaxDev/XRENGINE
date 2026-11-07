@@ -387,6 +387,7 @@ namespace XREngine.Rendering.Models
                     sink.Write(cached.EntryName, entry);
                     sink.SetDescribed(mesh, separate: true, cached);
                 }
+                sink.RecordReference(cached.EntryName);
                 described = cached;
             }
             return described with { Flags = described.Flags | lodFlags };

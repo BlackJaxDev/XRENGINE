@@ -358,9 +358,12 @@ SHA-256 over the mesh codec version (32-bit little endian) and the entry bytes. 
 payloads have one entry. A sub-mesh with one LOD writes it inline and has no separate entry.
 
 The writer puts the separate entries in the `SubMeshLodPayloadCookSink` of the thread. `ProjectBuilder` opens a sink on
-the cooked content root, and on each staging folder of an incremental repack. An incremental repack keeps the `lod/`
-entries of the archive, because they have no source file of their own; an entry that no sub-mesh uses any more stays
-until a full cook. With no sink open, the registered codec declines a sub-mesh with more than one LOD
+the cooked content root, and on each staging folder of an incremental repack. The sink records the `lod/` entries that
+each cooked file refers to (`RecordReference`, `TakeReferencedEntries`). A staged full pack of an archive writes these
+records to a ledger next to the delta folder (`SubMeshLodEntryLedger`, `<intermediate>/Build/<delta folder>.lod-entries.txt`).
+An incremental repack updates the ledger for the files that it cooks again or removes, and removes each `lod/` entry
+that no file in the ledger refers to. The ledger holds the write time of its archive. If the ledger is missing or
+describes another version of the archive, the repack keeps all `lod/` entries until the next full pack. With no sink open, the registered codec declines a sub-mesh with more than one LOD
 (`SubMeshCookedCodec.Accepts`, through the accept predicate of `PublishedCookedAssetRegistry.Register`), so the cook
 writes it with the generic cooked serializer with every LOD inline, the same fallback as a sub-mesh inside a model. A
 browser cook, which opens no sink, takes this path; `PublishedCookedAssetRegistry.Accepts` tells such cookers that the

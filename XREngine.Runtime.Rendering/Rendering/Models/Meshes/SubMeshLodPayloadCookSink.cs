@@ -20,6 +20,7 @@ namespace XREngine.Rendering.Models
         // Weak keys: a sink lives for a whole cook and must not keep the meshes of each cooked file alive.
         private readonly System.Runtime.CompilerServices.ConditionalWeakTable<XRMesh, SubMeshLodDescriptor> _separate = new();
         private readonly System.Runtime.CompilerServices.ConditionalWeakTable<XRMesh, SubMeshLodDescriptor> _inline = new();
+        private readonly HashSet<string> _referencedEntries = new(StringComparer.Ordinal);
         private bool _disposed;
 
         private SubMeshLodPayloadCookSink(string rootDirectory, SubMeshLodPayloadCookSink? previous)
@@ -55,6 +56,7 @@ namespace XREngine.Rendering.Models
             ArgumentException.ThrowIfNullOrWhiteSpace(entryName);
             ObjectDisposedException.ThrowIf(_disposed, this);
 
+            _referencedEntries.Add(entryName);
             string path = Path.Combine(RootDirectory, entryName.Replace('/', Path.DirectorySeparatorChar));
             if (File.Exists(path))
                 return;
@@ -63,6 +65,32 @@ namespace XREngine.Rendering.Models
             using (FileStream stream = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 stream.Write(payload);
             WrittenEntryCount++;
+        }
+
+        /// <summary>
+        /// Records that the cooked content refers to a separate entry. The writer calls it for each separate LOD,
+        /// also when the entry exists or the description is kept, so each cooked file records all of its entries.
+        /// </summary>
+        /// <param name="entryName">The entry name, <c>lod/&lt;key&gt;</c>.</param>
+        public void RecordReference(string entryName)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(entryName);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _referencedEntries.Add(entryName);
+        }
+
+        /// <summary>
+        /// Gets the entries that the cooked content referred to since the last call, and clears the record.
+        /// A build calls it after each cooked file to know which entries that file needs.
+        /// </summary>
+        public string[] TakeReferencedEntries()
+        {
+            if (_referencedEntries.Count == 0)
+                return [];
+
+            string[] entries = [.. _referencedEntries];
+            _referencedEntries.Clear();
+            return entries;
         }
 
         /// <summary>Gets the kept description of a mesh that this sink met before, or null.</summary>

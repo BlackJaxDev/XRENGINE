@@ -15,6 +15,7 @@ using XREngine.Components.Scripting;
 using XREngine.Core.Attributes;
 using XREngine.Core.Files;
 using XREngine.Diagnostics;
+using XREngine.Editor.Publishing;
 using XREngine.Networking;
 using XREngine.Scene.Transforms;
 using XREngine.Serialization;
@@ -855,18 +856,19 @@ internal static partial class ProjectBuilder
         Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
 
         Dictionary<string, AssetTimestampEntry> currentSnapshot = CaptureDirectorySnapshot(sourceDirectory, includeRelativePath);
+        string ledgerPath = SubMeshLodEntryLedger.GetPath(intermediateDirectory, deltaFolderName);
 
         if (!File.Exists(archivePath))
         {
             if (packFullSourceDirectly)
             {
+                SubMeshLodEntryLedger.Delete(ledgerPath);
                 AssetPacker.Pack(sourceDirectory, archivePath);
                 return;
             }
 
             string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_Full");
-            StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
-            AssetPacker.Pack(fullStagingDir, archivePath);
+            PackFullAndWriteLedger(sourceDirectory, fullStagingDir, archivePath, ledgerPath, currentSnapshot.Keys, transformFile);
             return;
         }
 
@@ -881,6 +883,7 @@ internal static partial class ProjectBuilder
             // Corrupt or unreadable archive — do a full repack
             if (packFullSourceDirectly)
             {
+                SubMeshLodEntryLedger.Delete(ledgerPath);
                 if (File.Exists(archivePath))
                     File.Delete(archivePath);
 
@@ -889,10 +892,9 @@ internal static partial class ProjectBuilder
             }
 
             string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_FallbackFull");
-            StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
             if (File.Exists(archivePath))
                 File.Delete(archivePath);
-            AssetPacker.Pack(fullStagingDir, archivePath);
+            PackFullAndWriteLedger(sourceDirectory, fullStagingDir, archivePath, ledgerPath, currentSnapshot.Keys, transformFile);
             return;
         }
 
@@ -924,21 +926,52 @@ internal static partial class ProjectBuilder
         if (changedPaths.Count == 0 && removedPaths.Count == 0)
             return;
 
+        // The ledger knows the LOD entries of the files that this build does not cook again.
+        // With no valid ledger, the build keeps all LOD entries, because it cannot know which entries are live.
+        SubMeshLodEntryLedger? ledger = packFullSourceDirectly ? null : SubMeshLodEntryLedger.TryLoad(ledgerPath, archivePath);
+
         string deltaDirectory = Path.Combine(intermediateDirectory, "Build", deltaFolderName);
         if (changedPaths.Count > 0)
-            StageFiles(sourceDirectory, deltaDirectory, changedPaths, transformFile);
+            StageFiles(sourceDirectory, deltaDirectory, changedPaths, transformFile, ledger);
+
+        if (ledger is not null)
+        {
+            for (int i = 0; i < removedPaths.Count; i++)
+                ledger.Remove(removedPaths[i]);
+
+            HashSet<string> liveEntries = ledger.CollectLiveEntries();
+            foreach (string existingPath in embeddedTimestamps.Keys)
+                if (IsSubMeshLodPayloadEntry(existingPath) && !liveEntries.Contains(NormalizePath(existingPath)))
+                    removedPaths.Add(existingPath);
+        }
 
         AssetPacker.Repack(
             archivePath,
             changedPaths.Count > 0 ? deltaDirectory : string.Empty,
             [.. removedPaths]);
+        ledger?.Save(ledgerPath, archivePath);
+    }
+
+    private static void PackFullAndWriteLedger(
+        string sourceDirectory,
+        string stagingDirectory,
+        string archivePath,
+        string ledgerPath,
+        IEnumerable<string> relativePaths,
+        Action<string, string> transformFile)
+    {
+        SubMeshLodEntryLedger ledger = new();
+        StageFiles(sourceDirectory, stagingDirectory, relativePaths, transformFile, ledger);
+        AssetPacker.Pack(stagingDirectory, archivePath);
+        ledger.Save(ledgerPath, archivePath);
     }
 
     private static void StageFiles(
         string sourceDirectory,
         string destinationDirectory,
         IEnumerable<string> relativePaths,
-        Action<string, string> transformFile)
+        Action<string, string> transformFile,
+        SubMeshLodEntryLedger? ledger = null)
     {
         if (Directory.Exists(destinationDirectory))
             Directory.Delete(destinationDirectory, true);
@@ -950,11 +983,18 @@ internal static partial class ProjectBuilder
         {
             string sourcePath = Path.Combine(sourceDirectory, ToSystemPath(relativePath));
             if (!File.Exists(sourcePath))
+            {
+                ledger?.Remove(relativePath);
                 continue;
+            }
 
             string destinationPath = Path.Combine(destinationDirectory, ToSystemPath(relativePath));
             Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
             transformFile(sourcePath, destinationPath);
+
+            // Take the entries after each file, so the ledger knows the LOD entries of each cooked file.
+            string[] referencedEntries = lodPayloads.TakeReferencedEntries();
+            ledger?.Set(relativePath, referencedEntries);
         }
     }
 
@@ -1182,6 +1222,19 @@ internal static partial class ProjectBuilder
 
         return cookedRoot;
     }
+
+    /// <summary>Runs the incremental archive repack with a test transform. The delta folder name is fixed.</summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    internal static void RepackArchiveIncrementalForTests(
+        string sourceDirectory,
+        string archivePath,
+        string intermediateDirectory,
+        Action<string, string> transformFile)
+        => RepackArchiveFromSourceIncremental(sourceDirectory, archivePath, intermediateDirectory, "TestDelta", transformFile);
+
+    /// <summary>Gets the LOD entry ledger file that <see cref="RepackArchiveIncrementalForTests"/> uses.</summary>
+    internal static string GetRepackLedgerPathForTests(string intermediateDirectory)
+        => SubMeshLodEntryLedger.GetPath(intermediateDirectory, "TestDelta");
 
     internal static string PrepareCookedContentDirectoryForTests(
         string assetsDirectory,
