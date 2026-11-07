@@ -13,4 +13,7 @@ public enum EResidencyAssetKind
 
     /// <summary>An audio clip source with a proxy. <see cref="AudioResidencyBackend"/> loads its levels.</summary>
     Audio = 2,
+
+    /// <summary>A video clip source file. <see cref="VideoResidencyBackend"/> loads its levels.</summary>
+    Video = 3,
 }

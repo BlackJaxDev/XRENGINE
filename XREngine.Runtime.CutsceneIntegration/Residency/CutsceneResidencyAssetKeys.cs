@@ -48,6 +48,7 @@ public static class CutsceneResidencyAssetKeys
     private const string TexturePathPrefix = "xrengine.cutscene.residency/texture-path:";
     private const string SubMeshPrefix = "xrengine.cutscene.residency/sub-mesh:";
     private const string AudioSourcePrefix = "xrengine.cutscene.residency/audio-source:";
+    private const string VideoSourcePrefix = "xrengine.cutscene.residency/video-source:";
 
     /// <summary>Gets the stable key of a texture.</summary>
     /// <param name="texture">The texture.</param>
@@ -109,6 +110,17 @@ public static class CutsceneResidencyAssetKeys
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceReference);
         return Hash(string.Concat(AudioSourcePrefix, sourceReference.Replace('\\', '/').ToUpperInvariant()));
+    }
+
+    /// <summary>
+    /// Gets the stable key of a video source file: the portable reference of the file (<c>game://</c> or <c>engine://</c>),
+    /// or the full path for a file outside the asset folders.
+    /// </summary>
+    /// <param name="fullPath">The full path of the video file.</param>
+    public static Guid ForVideoSource(string fullPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fullPath);
+        return Hash(string.Concat(VideoSourcePrefix, ToPortableReference(fullPath, out _)));
     }
 
     /// <summary>Gets the stable key of a sub-mesh from its place in the scene.</summary>

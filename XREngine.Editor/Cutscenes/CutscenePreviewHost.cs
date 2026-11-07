@@ -244,10 +244,12 @@ public sealed class CutscenePreviewHost
 
         // A paused preview writes nothing. It also keeps the undo system active for the edits of the author.
         // The planner still updates, so that the dwell gate of a scrub opens when the playhead stays in place.
+        // The video tracks still show the frames that background seeks decode, and decode the exact frame after a drag.
         if (!_recompileRequested && !_hasPendingSeek && _player.State != ECutsceneTransportState.Playing)
         {
             AdvanceResidencyRefresh(deltaSeconds, recompiled: false);
             _residency?.UpdateIdle(_player, deltaSeconds);
+            _player.UpdateVideo();
             return;
         }
 

@@ -38,6 +38,20 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     /// <summary>Maximum consecutive packet-read failures before the decode loop aborts.</summary>
     private const int MaxReadRetries = 12;
 
+    /// <summary>The number of demuxer seeks that one seek request can make before it fails.</summary>
+    private const int MaxSeekAttempts = 4;
+
+    /// <summary>The time in milliseconds that the clock-driven loop waits for a seek or a stop while it has no work.</summary>
+    private const int IdleWaitMilliseconds = 50;
+
+    // Results of ReceiveVideoFrame.
+    private const int ReceiveFrame = 0;
+    private const int ReceiveEndOfStream = 1;
+    private const int ReceiveError = 2;
+    private const int ReceiveInterrupted = 3;
+
+    private static readonly AVRational TicksTimeBase = new() { num = 1, den = (int)TimeSpan.TicksPerSecond };
+
     // ═══════════════════════════════════════════════════════════════
     // Fields — Thread Safety & Lifecycle
     // ═══════════════════════════════════════════════════════════════
@@ -131,6 +145,49 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     private int _videoMissingPtsStreak;
 
     // ═══════════════════════════════════════════════════════════════
+    // Fields — Clock-Driven Mode And Seeking
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>True when the caller paces every frame. The loop then stays alive at the end of the file for a later seek.</summary>
+    private bool _clockDriven;
+
+    /// <summary>True to open and decode the audio stream.</summary>
+    private bool _decodeAudio = true;
+
+    /// <summary>True when the opened source is a local file that supports a seek. Set once at open.</summary>
+    private volatile bool _isSeekable;
+
+    /// <summary>The reusable RGB frame that receives the scaler output. It changes only when the frame size changes.</summary>
+    private unsafe AVFrame* _rgbFrame;
+
+    /// <summary>Holds the last decoded frame before the target during an exact seek, so the end of the file can still show it.</summary>
+    private unsafe AVFrame* _heldFrame;
+
+    /// <summary>True after the decoder got the flush packet at the end of the file. A seek clears it.</summary>
+    private bool _drainSent;
+
+    /// <summary>True after a keyframe seek or a cancelled seek. The clock-driven loop waits for the next seek.</summary>
+    private bool _paused;
+
+    /// <summary>True after the clock-driven loop reached the end of the file. A seek clears it.</summary>
+    private bool _endOfStream;
+
+    /// <summary>Wakes the clock-driven loop for a seek or a stop.</summary>
+    private readonly AutoResetEvent _wake = new(false);
+
+    /// <summary>Guards <see cref="_pendingSeek"/> and <see cref="_activeSeek"/>.</summary>
+    private readonly Lock _seekLock = new();
+
+    /// <summary>The newest seek that the loop has not started, or null.</summary>
+    private SeekRequest? _pendingSeek;
+
+    /// <summary>The seek that the loop runs now, or null.</summary>
+    private SeekRequest? _activeSeek;
+
+    private volatile bool _hasPendingSeek;
+    private volatile int _executingGeneration;
+
+    // ═══════════════════════════════════════════════════════════════
     // Callbacks — Wired by HlsMediaStreamSession
     // ═══════════════════════════════════════════════════════════════
 
@@ -148,6 +205,24 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
     /// <summary>Invoked for non-fatal errors and warnings.</summary>
     public Action<string>? OnError { get; set; }
+
+    /// <summary>
+    /// Gives the managed buffer of a decoded video frame, with exactly the requested length. Null allocates a new array for
+    /// each frame. The clock-driven session gives pooled buffers, so steady playback allocates no frame data.
+    /// </summary>
+    public Func<int, byte[]>? RentVideoBuffer { get; set; }
+
+    /// <summary>True when the opened source is a local file with a known duration and a video stream that supports a seek.</summary>
+    public bool IsSeekable => _isSeekable;
+
+    /// <summary>True while a seek waits for the decoder thread. A frame callback can use it to stop a wait for queue space.</summary>
+    public bool HasPendingSeek => _hasPendingSeek;
+
+    /// <summary>
+    /// The generation of the last seek that the decoder thread started. Frames that the decoder delivers come from this
+    /// position. It is zero before the first seek. Read it in a frame callback to drop frames of an old position.
+    /// </summary>
+    public int ExecutingGeneration => _executingGeneration;
 
     // ═══════════════════════════════════════════════════════════════
     // Public API — Open / Stop / Dispose
@@ -170,6 +245,11 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             lock (_lock)
             {
                 _stopRequested = false;
+                _clockDriven = options?.ClockDrivenPresentation == true;
+                _decodeAudio = options?.DecodeAudio ?? true;
+                _paused = false;
+                _endOfStream = false;
+                _drainSent = false;
 
                 bool opened = false;
                 try
@@ -229,7 +309,9 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             decodeThread = _decodeThread;
         }
 
+        _wake.Set();
         decodeThread?.Join(TimeSpan.FromSeconds(3));
+        CancelSeeks();
 
         lock (_lock)
         {
@@ -248,6 +330,380 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             return;
         _disposed = true;
         Stop();
+        _wake.Dispose();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Seeking
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Asks the decoder thread to move the video stream. The call returns at once. A newer request supersedes this one:
+    /// a request that did not start ends as cancelled, and a running request stops at its next frame.
+    /// </summary>
+    /// <param name="targetTicks">The target time in 100 ns ticks, in the time line of the frame timestamps.</param>
+    /// <param name="mode">The accuracy of the seek.</param>
+    /// <param name="generation">The generation that the delivered frames carry in <see cref="ExecutingGeneration"/>.</param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    public Task SeekAsync(long targetTicks, EVideoSeekMode mode, int generation, CancellationToken cancellationToken)
+    {
+        if (!_isSeekable || !_running || _disposed)
+            return Task.FromException(new NotSupportedException("The stream is not open, or it does not support a seek."));
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled(cancellationToken);
+
+        SeekRequest request = new(this, Math.Max(0L, targetTicks), mode, generation);
+        lock (_seekLock)
+        {
+            _pendingSeek?.Completion.TrySetCanceled();
+            _pendingSeek = request;
+            _hasPendingSeek = true;
+        }
+
+        if (cancellationToken.CanBeCanceled)
+            request.Registration = cancellationToken.Register(static state => ((SeekRequest)state!).Owner.CancelRequest((SeekRequest)state!), request);
+        _wake.Set();
+        return request.Completion.Task;
+    }
+
+    private void CancelRequest(SeekRequest request)
+    {
+        lock (_seekLock)
+        {
+            if (ReferenceEquals(_pendingSeek, request))
+            {
+                _pendingSeek = null;
+                _hasPendingSeek = false;
+            }
+            request.CancelRequested = true;
+        }
+        request.Completion.TrySetCanceled();
+    }
+
+    private SeekRequest? TakePendingSeek()
+    {
+        lock (_seekLock)
+        {
+            SeekRequest? request = _pendingSeek;
+            _pendingSeek = null;
+            _hasPendingSeek = false;
+            _activeSeek = request;
+            return request;
+        }
+    }
+
+    private void EndActiveSeek(SeekRequest request)
+    {
+        request.Registration.Dispose();
+        lock (_seekLock)
+        {
+            if (ReferenceEquals(_activeSeek, request))
+                _activeSeek = null;
+        }
+    }
+
+    // Ends every waiting and running seek as cancelled. The loop is not running after a stop.
+    private void CancelSeeks()
+    {
+        SeekRequest? pending;
+        SeekRequest? active;
+        lock (_seekLock)
+        {
+            pending = _pendingSeek;
+            active = _activeSeek;
+            _pendingSeek = null;
+            _activeSeek = null;
+            _hasPendingSeek = false;
+        }
+        pending?.Completion.TrySetCanceled();
+        active?.Completion.TrySetCanceled();
+    }
+
+    private bool IsSuperseded(SeekRequest request)
+        => _hasPendingSeek || request.CancelRequested || !_running || _disposed;
+
+    /// <summary>
+    /// Runs one seek on the decoder thread. The demuxer seeks to the keyframe at or before the target. If the first frame is
+    /// still after the target, the seek starts again further back, and the last attempt starts at the stream start.
+    /// A keyframe seek delivers that frame and pauses the loop. An exact seek drops the frames before the frame that shows
+    /// at the target, delivers that frame, and lets the loop decode forward.
+    /// </summary>
+    private unsafe void ExecuteSeek(SeekRequest request)
+    {
+        _executingGeneration = request.Generation;
+        _paused = false;
+        _endOfStream = false;
+        try
+        {
+            AVStream* stream = _formatContext->streams[_videoStreamIndex];
+            AVRational timeBase = stream->time_base;
+            long startTs = stream->start_time != ffmpeg.AV_NOPTS_VALUE ? stream->start_time : 0L;
+            long seekTicks = request.TargetTicks;
+            bool positioned = false;
+            string? failure = null;
+            for (int attempt = 0; attempt < MaxSeekAttempts && !positioned; attempt++)
+            {
+                if (IsSuperseded(request))
+                {
+                    StopSuperseded(request);
+                    return;
+                }
+
+                bool fromStart = attempt == MaxSeekAttempts - 1;
+                long seekTs = fromStart ? startTs : Math.Max(startTs, ffmpeg.av_rescale_q(seekTicks, TicksTimeBase, timeBase));
+                int result = ffmpeg.av_seek_frame(_formatContext, _videoStreamIndex, seekTs, ffmpeg.AVSEEK_FLAG_BACKWARD);
+                if (result < 0)
+                {
+                    failure = $"av_seek_frame failed: {GetFFmpegError(result)}";
+                    seekTicks = request.TargetTicks - BackoffTicks(attempt);
+                    continue;
+                }
+
+                ResetDecoderAfterSeek();
+                int received = ReceiveVideoFrame(request);
+                if (received == ReceiveInterrupted)
+                {
+                    StopSuperseded(request);
+                    return;
+                }
+                if (received != ReceiveFrame)
+                {
+                    failure = received == ReceiveEndOfStream ? "the seek found no frame before the end of the file" : "the decoder failed after the seek";
+                    seekTicks = request.TargetTicks - BackoffTicks(attempt);
+                    continue;
+                }
+
+                long pts = GetFramePtsTicks(_frame);
+                if (pts == long.MinValue || pts <= request.TargetTicks || fromStart || seekTs <= startTs)
+                {
+                    positioned = true;
+                    break;
+                }
+
+                // The demuxer landed after the target. Seek again further back.
+                ffmpeg.av_frame_unref(_frame);
+                seekTicks = request.TargetTicks - BackoffTicks(attempt);
+            }
+
+            if (!positioned)
+            {
+                _paused = true;
+                request.Completion.TrySetException(new InvalidOperationException($"The seek to {request.TargetTicks} ticks failed: {failure ?? "no frame"}."));
+                return;
+            }
+
+            if (request.Mode == EVideoSeekMode.NearestKeyframe)
+            {
+                DeliverAndRelease(_frame);
+                _paused = true;
+                request.Completion.TrySetResult();
+                return;
+            }
+
+            // Exact: drop the frames that end at or before the target. The last one stays, in case the file ends first.
+            while (true)
+            {
+                long pts = GetFramePtsTicks(_frame);
+                if (pts == long.MinValue || pts + GetFrameDurationTicks(_frame) > request.TargetTicks)
+                    break;
+
+                ffmpeg.av_frame_unref(_heldFrame);
+                ffmpeg.av_frame_move_ref(_heldFrame, _frame);
+                int received = ReceiveVideoFrame(request);
+                if (received == ReceiveInterrupted)
+                {
+                    ffmpeg.av_frame_unref(_heldFrame);
+                    StopSuperseded(request);
+                    return;
+                }
+                if (received == ReceiveFrame)
+                    continue;
+
+                // The file ends before the target, so its last frame shows there.
+                _endOfStream = received == ReceiveEndOfStream;
+                if (received == ReceiveError)
+                {
+                    _paused = true;
+                    ffmpeg.av_frame_unref(_heldFrame);
+                    request.Completion.TrySetException(new InvalidOperationException("The decoder failed during an exact seek."));
+                    return;
+                }
+                DeliverAndRelease(_heldFrame);
+                request.Completion.TrySetResult();
+                return;
+            }
+
+            ffmpeg.av_frame_unref(_heldFrame);
+            DeliverAndRelease(_frame);
+            request.Completion.TrySetResult();
+        }
+        finally
+        {
+            EndActiveSeek(request);
+        }
+    }
+
+    // A seek that a newer seek, a cancel, or a stop replaced. A cancel with no newer seek pauses the loop, so the frames
+    // of the cancelled position do not reach the queue.
+    private unsafe void StopSuperseded(SeekRequest request)
+    {
+        ffmpeg.av_frame_unref(_frame);
+        if (!_hasPendingSeek)
+            _paused = true;
+        request.Completion.TrySetCanceled();
+    }
+
+    private static long BackoffTicks(int attempt)
+        => TimeSpan.TicksPerSecond << (2 * attempt);
+
+    private unsafe void ResetDecoderAfterSeek()
+    {
+        ffmpeg.avcodec_flush_buffers(_videoCodecContext);
+        _drainSent = false;
+        _readRetryCount = 0;
+        _lastVideoPtsTicks = long.MinValue;
+        _syntheticVideoPtsTicks = long.MinValue;
+        _videoMissingPtsStreak = 0;
+        ffmpeg.av_frame_unref(_frame);
+    }
+
+    /// <summary>
+    /// Receives the next video frame into <see cref="_frame"/>. It reads packets as the decoder needs them, ignores the
+    /// packets of other streams, and drains the decoder at the end of the file.
+    /// </summary>
+    /// <param name="request">The running seek, or null. A newer seek or a stop interrupts the read.</param>
+    private unsafe int ReceiveVideoFrame(SeekRequest? request)
+    {
+        while (true)
+        {
+            int received = ffmpeg.avcodec_receive_frame(_videoCodecContext, _frame);
+            if (received >= 0)
+                return ReceiveFrame;
+            if (received == ffmpeg.AVERROR_EOF)
+                return ReceiveEndOfStream;
+            if (received != ffmpeg.AVERROR(ffmpeg.EAGAIN) || _drainSent)
+                return ReceiveError;
+
+            if (!_running || _disposed || (request is not null ? IsSuperseded(request) : _hasPendingSeek))
+                return ReceiveInterrupted;
+
+            int read = ffmpeg.av_read_frame(_formatContext, _packet);
+            if (read == ffmpeg.AVERROR_EOF)
+            {
+                ffmpeg.avcodec_send_packet(_videoCodecContext, null);
+                _drainSent = true;
+                continue;
+            }
+            if (read < 0)
+            {
+                if (++_readRetryCount > MaxReadRetries)
+                {
+                    OnError?.Invoke($"FFmpeg read failed after {MaxReadRetries} retries.");
+                    return ReceiveError;
+                }
+                continue;
+            }
+
+            _readRetryCount = 0;
+            try
+            {
+                if (_packet->stream_index == _videoStreamIndex)
+                    ffmpeg.avcodec_send_packet(_videoCodecContext, _packet);
+            }
+            finally
+            {
+                ffmpeg.av_packet_unref(_packet);
+            }
+        }
+    }
+
+    /// <summary>The raw presentation time of a frame in ticks, or <see cref="long.MinValue"/> if the frame has none.</summary>
+    private unsafe long GetFramePtsTicks(AVFrame* frame)
+    {
+        long sourcePts = frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
+        if (sourcePts == ffmpeg.AV_NOPTS_VALUE)
+            return long.MinValue;
+        return ffmpeg.av_rescale_q(sourcePts, _formatContext->streams[_videoStreamIndex]->time_base, TicksTimeBase);
+    }
+
+    /// <summary>The duration of a frame in ticks: the frame duration of the stream, or the estimate from the frame rate.</summary>
+    private unsafe long GetFrameDurationTicks(AVFrame* frame)
+    {
+        if (frame->duration > 0)
+        {
+            long ticks = ffmpeg.av_rescale_q(frame->duration, _formatContext->streams[_videoStreamIndex]->time_base, TicksTimeBase);
+            if (ticks > 0)
+                return ticks;
+        }
+        return _videoFrameDurationTicks;
+    }
+
+    /// <summary>
+    /// The decode loop of the clock-driven mode. It runs seeks, decodes video frames forward, and waits at the end of the
+    /// file or after a keyframe seek until the next seek or a stop.
+    /// </summary>
+    private unsafe void ClockDrivenLoop()
+    {
+        try
+        {
+            while (_running && !_disposed)
+            {
+                if (TakePendingSeek() is { } request)
+                {
+                    ExecuteSeek(request);
+                    continue;
+                }
+
+                if (_paused || _endOfStream)
+                {
+                    _wake.WaitOne(IdleWaitMilliseconds);
+                    continue;
+                }
+
+                int received = ReceiveVideoFrame(null);
+                if (received == ReceiveFrame)
+                    DeliverAndRelease(_frame);
+                else if (received == ReceiveEndOfStream)
+                    _endOfStream = true;
+                else if (received == ReceiveError)
+                    _paused = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            LogException(ex, "FFmpeg clock-driven decode loop");
+            if (_running && !_disposed)
+                OnError?.Invoke($"Decode loop exception: {ex.Message}");
+        }
+        finally
+        {
+            CancelSeeks();
+        }
+    }
+
+    /// <summary>Delivers a frame and then releases its reference.</summary>
+    private unsafe void DeliverAndRelease(AVFrame* frame)
+    {
+        try
+        {
+            DeliverVideoFrame(frame);
+        }
+        finally
+        {
+            ffmpeg.av_frame_unref(frame);
+        }
+    }
+
+    /// <summary>One seek request. The decoder thread completes its task.</summary>
+    private sealed class SeekRequest(FFmpegStreamDecoder owner, long targetTicks, EVideoSeekMode mode, int generation)
+    {
+        public FFmpegStreamDecoder Owner { get; } = owner;
+        public long TargetTicks { get; } = targetTicks;
+        public EVideoSeekMode Mode { get; } = mode;
+        public int Generation { get; } = generation;
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public CancellationTokenRegistration Registration { get; set; }
+        public volatile bool CancelRequested;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -261,6 +717,12 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     /// </summary>
     private void DecodeLoop()
     {
+        if (_clockDriven && _isSeekable)
+        {
+            ClockDrivenLoop();
+            return;
+        }
+
         try
         {
             while (_running && !_disposed)
@@ -341,15 +803,19 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             ProcessVideoFrame();
     }
 
-    /// <summary>
-    /// Converts a decoded video frame to RGB24, copies the pixel data to a
-    /// managed byte array, computes the presentation timestamp, and delivers
-    /// the result via <see cref="OnVideoFrame"/>.
-    /// </summary>
+    /// <summary>Delivers the frame in <see cref="_frame"/> and then releases it.</summary>
     private unsafe void ProcessVideoFrame()
+        => DeliverAndRelease(_frame);
+
+    /// <summary>
+    /// Converts a decoded video frame to RGB24, copies the pixel data to a managed byte array, computes the presentation
+    /// timestamp, and delivers the result via <see cref="OnVideoFrame"/>. The caller keeps the reference of
+    /// <paramref name="source"/> and releases it.
+    /// </summary>
+    private unsafe void DeliverVideoFrame(AVFrame* source)
     {
         // If the frame came from HW accel, transfer it to a software frame.
-        AVFrame* decodedFrame = GetHwFrame(_frame);
+        AVFrame* decodedFrame = GetHwFrame(source);
         try
         {
             int width = decodedFrame->width;
@@ -368,8 +834,6 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
             // ── Convert to RGB24 if the decoded format differs ──
             AVFrame* rgbFrame = decodedFrame;
-            bool freeRgb = false;
-
             if (decodedFrame->format != (int)TargetPixelFormat)
             {
                 var srcFmt = (AVPixelFormat)decodedFrame->format;
@@ -396,13 +860,13 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                     }
                 }
 
-                // Allocate a temporary RGB frame for the scaled output.
-                rgbFrame = ffmpeg.av_frame_alloc();
-                rgbFrame->format = (int)TargetPixelFormat;
-                rgbFrame->width = width;
-                rgbFrame->height = height;
-                ffmpeg.av_frame_get_buffer(rgbFrame, 0);
-                freeRgb = true;
+                // The RGB frame is reused. It gets a new buffer only when the frame size changes.
+                rgbFrame = EnsureRgbFrame(width, height);
+                if (rgbFrame == null)
+                {
+                    OnError?.Invoke($"Could not allocate an RGB frame of {width}x{height}.");
+                    return;
+                }
 
                 ffmpeg.sws_scale(
                     _swsContext,
@@ -413,7 +877,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
             // ── Copy pixel data to a managed byte array (row by row for stride safety) ──
             int dataSize = width * height * 3; // RGB24 = 3 bytes per pixel
-            byte[] data = new byte[dataSize];
+            byte[] data = RentVideoBuffer?.Invoke(dataSize) ?? new byte[dataSize];
             fixed (byte* dest = data)
             {
                 byte* src = (byte*)rgbFrame->data[0];
@@ -425,26 +889,45 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
             // ── Compute presentation timestamp (PTS) in 100ns ticks ──
             long pts = ResolveVideoPtsTicks(decodedFrame);
+            long duration = GetFrameDurationTicks(decodedFrame);
 
             // ── Deliver the decoded frame ──
-            var frame = new DecodedVideoFrame(width, height, pts, VideoPixelFormat.Rgb24, data);
+            var frame = new DecodedVideoFrame(width, height, pts, duration, VideoPixelFormat.Rgb24, new ReadOnlyMemory<byte>(data, 0, dataSize));
             OnVideoFrame?.Invoke(frame);
-
-            if (freeRgb)
-                ffmpeg.av_frame_free(&rgbFrame);
         }
         finally
         {
-            // Clean up: free the HW-transferred frame, or unref the reusable frame.
-            if (decodedFrame != _frame)
-            {
+            // Free the HW-transferred frame. The caller releases the source frame.
+            if (decodedFrame != source)
                 ffmpeg.av_frame_free(&decodedFrame);
-            }
-            else
-            {
-                ffmpeg.av_frame_unref(_frame);
-            }
         }
+    }
+
+    /// <summary>Gets the reusable RGB frame with a buffer of the given size, or null if the allocation fails.</summary>
+    private unsafe AVFrame* EnsureRgbFrame(int width, int height)
+    {
+        if (_rgbFrame != null && _rgbFrame->width == width && _rgbFrame->height == height)
+            return _rgbFrame;
+
+        if (_rgbFrame != null)
+        {
+            fixed (AVFrame** p = &_rgbFrame)
+                ffmpeg.av_frame_free(p);
+        }
+
+        _rgbFrame = ffmpeg.av_frame_alloc();
+        if (_rgbFrame == null)
+            return null;
+        _rgbFrame->format = (int)TargetPixelFormat;
+        _rgbFrame->width = width;
+        _rgbFrame->height = height;
+        if (ffmpeg.av_frame_get_buffer(_rgbFrame, 0) < 0)
+        {
+            fixed (AVFrame** p = &_rgbFrame)
+                ffmpeg.av_frame_free(p);
+            return null;
+        }
+        return _rgbFrame;
     }
 
     /// <summary>
@@ -740,13 +1223,18 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         if (_videoStreamIndex >= 0)
             OpenVideoCodec();
 
-        if (_audioStreamIndex >= 0)
+        if (_audioStreamIndex >= 0 && _decodeAudio)
             OpenAudioCodec();
+        else
+            _audioStreamIndex = -1;
 
         // Allocate reusable frame and packet buffers for the decode loop.
         _frame = ffmpeg.av_frame_alloc();
+        _heldFrame = ffmpeg.av_frame_alloc();
         _packet = ffmpeg.av_packet_alloc();
 
+        _isSeekable = IsSeekableSource(url, fmtName, durationUs);
+        LogInfo($"Streaming FFmpeg: seekable={_isSeekable}");
         return true;
     }
 
@@ -894,12 +1382,26 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             _swsContext = null;
         }
 
-        // Free the reusable frame buffer.
+        // Free the reusable frame buffers.
         if (_frame != null)
         {
             fixed (AVFrame** p = &_frame)
                 ffmpeg.av_frame_free(p);
         }
+
+        if (_heldFrame != null)
+        {
+            fixed (AVFrame** p = &_heldFrame)
+                ffmpeg.av_frame_free(p);
+        }
+
+        if (_rgbFrame != null)
+        {
+            fixed (AVFrame** p = &_rgbFrame)
+                ffmpeg.av_frame_free(p);
+        }
+
+        _isSeekable = false;
 
         // Free the reusable packet buffer.
         if (_packet != null)
@@ -1000,6 +1502,26 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     // ═══════════════════════════════════════════════════════════════
     // Utilities
     // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// True if a seek can move the opened source: a local file (no network scheme) that is not an HLS playlist, with a
+    /// known duration, a seekable IO context, and a video stream. A live stream has no duration, so it gives false.
+    /// </summary>
+    private unsafe bool IsSeekableSource(string url, string? formatName, long durationUs)
+    {
+        if (_videoStreamIndex < 0 || _videoCodecContext == null)
+            return false;
+        if (durationUs <= 0 || durationUs == ffmpeg.AV_NOPTS_VALUE)
+            return false;
+        if (formatName is not null && formatName.Contains("hls", StringComparison.OrdinalIgnoreCase))
+            return false;
+        int scheme = url.IndexOf("://", StringComparison.Ordinal);
+        if (scheme >= 0 && !url.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            return false;
+        // A file IO context reports its size. A stream with no seek reports an error code.
+        AVIOContext* io = _formatContext->pb;
+        return io != null && ffmpeg.avio_size(io) > 0;
+    }
 
     /// <summary>
     /// Validates an <see cref="AVRational"/> frame rate and returns it as

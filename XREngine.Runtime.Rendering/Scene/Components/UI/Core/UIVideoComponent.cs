@@ -49,6 +49,7 @@ namespace XREngine.Rendering.UI
     ///   <item><b>UIVideoComponent.Pipeline.cs</b> — Stream start/stop, URL changes, session open &amp; retry.</item>
     ///   <item><b>UIVideoComponent.FrameDrain.cs</b> — Per-frame drain loop, video GPU upload, telemetry.</item>
     ///   <item><b>UIVideoComponent.Audio.cs</b> — Audio submission, PCM conversion, hardware clock.</item>
+    ///   <item><b>UIVideoComponent.ExternalFrames.cs</b> — Frames that another owner supplies (<see cref="IVideoFrameTarget"/>).</item>
     /// </list>
     /// </para>
     /// </summary>
@@ -555,6 +556,10 @@ namespace XREngine.Rendering.UI
         protected override void OnMaterialSettingUniforms(XRMaterialBase material, XRRenderProgram program)
         {
             base.OnMaterialSettingUniforms(material, program);
+
+            // Frames from another owner, for example a cutscene video track, replace the stream while they are active.
+            if (UploadExternalFrame())
+                return;
 
             if (_streamingSession is not null)
                 DrainStreamingFramesOnMainThread(_streamingSession);

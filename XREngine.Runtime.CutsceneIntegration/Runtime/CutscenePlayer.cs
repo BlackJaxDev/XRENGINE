@@ -1,4 +1,5 @@
 using XREngine.Components;
+using XREngine.Rendering.VideoStreaming.Interfaces;
 
 namespace XREngine.Cutscenes;
 
@@ -19,6 +20,7 @@ public sealed class CutscenePlayer
     private readonly CameraCutTrackEvaluator _cameraCut;
     private readonly AnimationClipTrackEvaluator _animation;
     private readonly AudioTrackEvaluator _audio;
+    private readonly VideoTrackEvaluator _video;
     private readonly SimulationControlEvaluator _simulation;
     private readonly CutsceneEventDispatcher _events;
     private readonly List<CutsceneCompileDiagnostic> _diagnostics = [];
@@ -50,12 +52,17 @@ public sealed class CutscenePlayer
     /// <param name="openAudioDecoder">
     /// Opens the streaming decoder of an audio clip file. If it is null, <see cref="AudioTrackEvaluator.OpenDefaultDecoder"/> is used.
     /// </param>
+    /// <param name="createVideoSession">
+    /// Creates the media session of a video clip. It runs on a background task. If it is null,
+    /// <see cref="VideoTrackEvaluator.CreateDefaultSession"/> is used.
+    /// </param>
     public CutscenePlayer(
         CompiledCutscene compiled,
         CutsceneBindingTable bindings,
         CutsceneStateSnapshot snapshot,
-        Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder = null)
-        : this(compiled, bindings, snapshot, openAudioDecoder, TimeProvider.System)
+        Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder = null,
+        Func<IMediaStreamSession>? createVideoSession = null)
+        : this(compiled, bindings, snapshot, openAudioDecoder, TimeProvider.System, null, createVideoSession)
     {
     }
 
@@ -71,7 +78,7 @@ public sealed class CutscenePlayer
         CutsceneStateSnapshot snapshot,
         Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder,
         TimeProvider time)
-        : this(compiled, bindings, snapshot, openAudioDecoder, time, null)
+        : this(compiled, bindings, snapshot, openAudioDecoder, time, null, null)
     {
     }
 
@@ -82,13 +89,15 @@ public sealed class CutscenePlayer
     /// <param name="openAudioDecoder">Opens the streaming decoder of an audio clip file, or null for the default decoders.</param>
     /// <param name="time">The wall clock that measures the time of the audio restarts.</param>
     /// <param name="audioSeekScheduler">The scheduler of the background seeks of the full audio decoders, or null for the default.</param>
+    /// <param name="createVideoSession">Creates the media session of a video clip, or null for the default.</param>
     internal CutscenePlayer(
         CompiledCutscene compiled,
         CutsceneBindingTable bindings,
         CutsceneStateSnapshot snapshot,
         Func<string, Data.IStreamingAudioDecoder>? openAudioDecoder,
         TimeProvider time,
-        TaskScheduler? audioSeekScheduler)
+        TaskScheduler? audioSeekScheduler,
+        Func<IMediaStreamSession>? createVideoSession = null)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(bindings);
@@ -101,6 +110,7 @@ public sealed class CutscenePlayer
         _cameraCut = new CameraCutTrackEvaluator(_diagnostics);
         _animation = new AnimationClipTrackEvaluator(compiled, bindings, _diagnostics);
         _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics, openAudioDecoder, time, audioSeekScheduler);
+        _video = new VideoTrackEvaluator(compiled, _diagnostics, createVideoSession);
         _evaluators =
         [
             new TransformTrackEvaluator(bindings.SlotCount, _diagnostics),
@@ -110,6 +120,7 @@ public sealed class CutscenePlayer
             new CameraPropertyTrackEvaluator(bindings.SlotCount, _diagnostics),
             new PropertyTrackEvaluator(compiled, snapshot, _diagnostics),
             _audio,
+            _video,
         ];
         _simulation = new SimulationControlEvaluator(compiled, bindings, _diagnostics);
         _events = new CutsceneEventDispatcher(compiled.Asset, _diagnostics);
@@ -220,6 +231,9 @@ public sealed class CutscenePlayer
 
     /// <summary>The evaluator that applies the policies of the simulation control tracks.</summary>
     internal SimulationControlEvaluator Simulation => _simulation;
+
+    /// <summary>The evaluator of the video tracks. The residency session gives it the video residency backend.</summary>
+    internal VideoTrackEvaluator Video => _video;
 
     /// <summary>The problems that the evaluators found. Each problem is added once.</summary>
     public IReadOnlyList<CutsceneCompileDiagnostic> Diagnostics => _diagnostics;
@@ -386,7 +400,16 @@ public sealed class CutscenePlayer
         ESeekIntent? discontinuity = _simulationDiscontinuity;
         _simulationDiscontinuity = null;
         _simulation.ApplyTick(discontinuity, State, _clock.Rate);
+        _video.Update();
     }
+
+    /// <summary>
+    /// Services the video tracks with no evaluation: shows the frames that background seeks decoded, and starts the exact
+    /// decode after a drag stops. <see cref="Tick"/> calls it. A host that does not tick a paused player calls it in each frame,
+    /// so that a seek result shows. It never waits for a decode.
+    /// </summary>
+    public void UpdateVideo()
+        => _video.Update();
 
     private void TickTransport(double deltaSeconds)
     {
@@ -414,6 +437,10 @@ public sealed class CutscenePlayer
         bool jumpSeek = _hasPendingSeek && _pendingIntent == ESeekIntent.Jump;
         _audio.SetScrubGrains(!jumpSeek && !_heldByGate && !(playing && _clock.Rate <= -AudioTrackEvaluator.SilentReverseRate));
 
+        // Video decodes forward in forward playback, shows keyframes while the playhead is dragged or plays backward, and
+        // decodes the exact frame otherwise.
+        _video.SetTransport(playing && !_heldByGate && _clock.Rate > 0.0, scrubSeek || (playing && _clock.Rate < 0.0));
+
         if (_hasPendingSeek)
         {
             _hasPendingSeek = false;
@@ -424,7 +451,10 @@ public sealed class CutscenePlayer
             _clock.SetPosition(target);
             _playHighWater = target;
             if (target != from)
+            {
                 _audio.MarkDiscontinuity();
+                _video.MarkDiscontinuity();
+            }
             EvaluateAt(target, 0.0);
 
             // A seek that changes the camera still raises only one discontinuity.
@@ -462,7 +492,10 @@ public sealed class CutscenePlayer
         }
         bool hardResync = _clock.ConsumeHardResync();
         if (hardResync)
+        {
             AudioHardResyncCount++;
+            _video.MarkDiscontinuity();
+        }
 
         CutsceneTime position = _clock.Position.Clamp(CutsceneTime.Zero, duration);
         if (PlaybackGate is { } gate)
@@ -534,6 +567,7 @@ public sealed class CutscenePlayer
         {
             _audio.SetTransport(playing: !held, rate);
             _audio.SetScrubGrains(!held);
+            _video.SetTransport(!held && rate > 0.0, !held && rate < 0.0);
         }
         _heldByGate = held;
         return allowed;

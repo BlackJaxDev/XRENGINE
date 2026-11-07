@@ -15,3 +15,5 @@
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.AudioTrack), "xre.cutscene.audio-track", 1)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.AudioTrackClip), "xre.cutscene.audio-clip", 1)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.SimulationControlTrack), "xre.cutscene.simulation-control-track", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.VideoTrack), "xre.cutscene.video-track", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Cutscenes.VideoTrackClip), "xre.cutscene.video-clip", 1)]
