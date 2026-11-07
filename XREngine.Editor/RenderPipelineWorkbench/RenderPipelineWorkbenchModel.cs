@@ -3,6 +3,7 @@ using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.RenderGraph.Diagnostics;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Resources.Diagnostics;
 
 namespace XREngine.Editor.RenderPipelineWorkbench;
 
@@ -23,6 +24,7 @@ public sealed class RenderPipelineWorkbenchModel
     private IReadOnlyCollection<RenderPassMetadata>? _passes;
     private int _passRevision;
     private RenderResourceGeneration? _generation;
+    private RenderResourceGenerationStatus _generationStatus;
 
     /// <summary>Gets the pipeline of the last refresh.</summary>
     public RenderPipeline? Pipeline { get; private set; }
@@ -58,6 +60,12 @@ public sealed class RenderPipelineWorkbenchModel
 
     /// <summary>Gets the Passes view layout.</summary>
     public RenderPipelinePassGraphLayout PassGraph { get; } = new();
+
+    /// <summary>Gets the resource table of the selected generation, or an empty snapshot when no instance is selected.</summary>
+    public RenderPipelineResourceSnapshot Resources { get; private set; } = RenderPipelineResourceSnapshot.Empty;
+
+    /// <summary>Gets how many times the resource table was rebuilt.</summary>
+    public int ResourceBuildCount { get; private set; }
 
     /// <summary>Gets how many times the structure map was rebuilt.</summary>
     public int StructureBuildCount { get; private set; }
@@ -98,8 +106,10 @@ public sealed class RenderPipelineWorkbenchModel
         bool commandsChanged = targetChanged || _commandGeneration != inputs.CommandGeneration;
         bool passesChanged = targetChanged || !ReferenceEquals(_passes, inputs.Passes) || _passRevision != inputs.PassRevision;
         bool generationChanged = targetChanged || !ReferenceEquals(_generation, inputs.Generation);
+        RenderResourceGenerationStatus generationStatus = inputs.Generation?.Status ?? RenderResourceGenerationStatus.Created;
+        bool resourcesChanged = passesChanged || generationChanged || generationStatus != _generationStatus;
 
-        if (!commandsChanged && !passesChanged && !generationChanged)
+        if (!commandsChanged && !resourcesChanged)
             return false;
 
         Pipeline = inputs.Pipeline;
@@ -109,6 +119,7 @@ public sealed class RenderPipelineWorkbenchModel
         _passes = inputs.Passes;
         _passRevision = inputs.PassRevision;
         _generation = inputs.Generation;
+        _generationStatus = generationStatus;
         _hasInputs = true;
 
         if (commandsChanged || passesChanged)
@@ -140,6 +151,15 @@ public sealed class RenderPipelineWorkbenchModel
 
         if (generationChanged)
             GenerationChangeCount++;
+
+        if (resourcesChanged)
+        {
+            // Materialization changes the physical state of the same generation, so the status is part of the key.
+            Resources = inputs.Generation is { } generation
+                ? RenderPipelineResourceSnapshot.Build(generation.Layout, inputs.Passes ?? generation.PassMetadata, generation)
+                : RenderPipelineResourceSnapshot.Empty;
+            ResourceBuildCount++;
+        }
 
         Rebuilt?.Invoke(this);
         return true;

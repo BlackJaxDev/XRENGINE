@@ -37,7 +37,13 @@ public static partial class EditorImGuiUI
         ImGui.TextUnformatted(resource);
         if (!RenderPipelineWorkbenchResourceNames.TryParse(resource, out RenderPipelineWorkbenchResourceName name))
         {
-            ImGui.TextDisabled("The resource is not a texture or a framebuffer attachment.");
+            // A logical name from the Resources view has no prefix. Look it up as a texture, then as a framebuffer.
+            if (instance.Resources.TryGetTexture(resource, out XRTexture? namedTexture))
+                RenderTexturePreviewPanel.DrawTexturePreview(namedTexture, flip);
+            else if (instance.Resources.TryGetFrameBuffer(resource, out XRFrameBuffer? namedFrameBuffer))
+                RenderTexturePreviewPanel.DrawFrameBufferOutputs(namedFrameBuffer, flip);
+            else
+                ImGui.TextDisabled("The resource is not a texture or a framebuffer.");
             return;
         }
 

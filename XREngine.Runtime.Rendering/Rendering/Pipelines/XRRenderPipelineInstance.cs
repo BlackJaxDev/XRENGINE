@@ -1807,7 +1807,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="oldKey">The previous resource generation key, or null if there was no previous key.</param>
     /// <param name="newKey">The new resource generation key to compare against the old key.</param>
     /// <returns>A string describing the differences between the old and new keys, or "initial" if there was no old key.</returns>
-    private static string DescribeResourceGenerationKeyDelta(ResourceGenerationKey? oldKey, ResourceGenerationKey newKey)
+    public static string DescribeResourceGenerationKeyDelta(ResourceGenerationKey? oldKey, ResourceGenerationKey newKey)
     {
         if (!oldKey.HasValue)
             return "initial";

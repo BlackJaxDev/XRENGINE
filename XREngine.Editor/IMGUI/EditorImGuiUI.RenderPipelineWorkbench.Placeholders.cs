@@ -5,9 +5,6 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
-    private static void DrawWorkbenchResourcesView()
-        => ImGui.TextDisabled("Resources view.");
-
     private static void DrawWorkbenchExecutionView()
         => ImGui.TextDisabled("Execution view.");
 

@@ -22,9 +22,35 @@ public static partial class EditorImGuiUI
 
         ImGui.TextUnformatted(content.Title);
         ImGui.Separator();
-        for (int i = 0; i < content.Items.Count; i++)
+        DrawWorkbenchItems(content.Items);
+
+        object? editable = (object?)content.Command ?? content.Container;
+        if (editable is null)
+            return;
+
+        ImGui.Spacing();
+        ImGui.SeparatorText("Properties");
+        if (_workbench.Model.Pipeline is { } pipeline && !IsWorkbenchPipelineEditable(pipeline))
+            ImGui.TextDisabled("Code pipelines rebuild their commands from code. Changes here last until the next rebuild.");
+
+        if (!ReferenceEquals(_workbenchInspectorTargetObject, editable))
         {
-            RenderPipelineWorkbenchInspectorItem item = content.Items[i];
+            _workbenchInspectorTargetObject = editable;
+            _workbenchInspectorTargets = new InspectorTargetSet([editable], editable.GetType());
+        }
+
+        _workbenchInspectorVisited.Clear();
+        DrawInspectableObject(_workbenchInspectorTargets!, content.PropertyEditorId, _workbenchInspectorVisited);
+    }
+
+    /// <summary>
+    /// Draws cached Inspector lines: headers as separators, linked lines as selectables, and other lines as wrapped text.
+    /// </summary>
+    private static void DrawWorkbenchItems(List<RenderPipelineWorkbenchInspectorItem> items)
+    {
+        for (int i = 0; i < items.Count; i++)
+        {
+            RenderPipelineWorkbenchInspectorItem item = items[i];
             if (item.IsHeader)
             {
                 ImGui.Spacing();
@@ -50,23 +76,5 @@ public static partial class EditorImGuiUI
             if (item.Indent > 0)
                 ImGui.Unindent(item.Indent * 12f);
         }
-
-        object? editable = (object?)content.Command ?? content.Container;
-        if (editable is null)
-            return;
-
-        ImGui.Spacing();
-        ImGui.SeparatorText("Properties");
-        if (_workbench.Model.Pipeline is { } pipeline && !IsWorkbenchPipelineEditable(pipeline))
-            ImGui.TextDisabled("Code pipelines rebuild their commands from code. Changes here last until the next rebuild.");
-
-        if (!ReferenceEquals(_workbenchInspectorTargetObject, editable))
-        {
-            _workbenchInspectorTargetObject = editable;
-            _workbenchInspectorTargets = new InspectorTargetSet([editable], editable.GetType());
-        }
-
-        _workbenchInspectorVisited.Clear();
-        DrawInspectableObject(_workbenchInspectorTargets!, content.PropertyEditorId, _workbenchInspectorVisited);
     }
 }

@@ -2,7 +2,11 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Data.Rendering;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.RenderGraph.Diagnostics;
+using XREngine.Rendering.Resources;
+using XREngine.Rendering.Resources.Diagnostics;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -95,4 +99,39 @@ public sealed class RenderPipelineStructureDiagnosticsTests
         trace.Version.ShouldNotBe(version);
         trace.TryGet(branch, out _).ShouldBeFalse();
     }
+
+    [Test]
+    public void ResourceSnapshot_MapsAttachmentsToTextures_AndFindsProblems()
+    {
+        RenderPipelineResourceProfile profile = RenderPipelineResourceProfile.Empty with { InternalWidth = 100u, InternalHeight = 50u };
+        RenderPipelineResourceLayout layout = new RenderPipelineResourceLayoutBuilder(profile)
+            .Texture("HDRColor").Size(RenderResourceSizePolicy.Internal()).SizedFormat(ESizedInternalFormat.Rgba16f).Add()
+            .Texture("Unused").Size(RenderResourceSizePolicy.Absolute(4u, 4u)).SizedFormat(ESizedInternalFormat.Rgba8).Add()
+            .FrameBuffer("HDRFBO").Color(0, "HDRColor").Add()
+            .Build(profile);
+
+        RenderPassMetadataCollection passes = new();
+        passes.ForPass(0, "Scene").UseColorAttachment(RenderGraphResourceNames.MakeFboColor("HDRFBO"), ERenderGraphAccess.Write);
+        passes.ForPass(1, "Tonemap")
+            .SampleTexture(RenderGraphResourceNames.MakeTexture("HDRColor"))
+            .SampleTexture(RenderGraphResourceNames.MakeTexture("Missing"));
+
+        RenderPipelineResourceSnapshot snapshot = RenderPipelineResourceSnapshot.Build(layout, passes.Build(), null);
+
+        snapshot.TryGet("HDRColor", out RenderPipelineResourceEntry? color).ShouldBeTrue();
+        color!.Producers.ShouldBe([0]);
+        color.Consumers.ShouldBe([1]);
+        color.EstimatedBytes.ShouldBe(8ul * 100ul * 50ul);
+        color.FirstUseOrder.ShouldBe(0);
+        color.LastUseOrder.ShouldBe(1);
+
+        snapshot.TryGet("Unused", out RenderPipelineResourceEntry? unused).ShouldBeTrue();
+        unused!.IsDeclaredButUnused.ShouldBeTrue();
+        snapshot.TryGet("Missing", out RenderPipelineResourceEntry? missing).ShouldBeTrue();
+        missing!.IsUsedButUndeclared.ShouldBeTrue();
+        snapshot.DeclaredUnusedCount.ShouldBe(1);
+        snapshot.UsedUndeclaredCount.ShouldBe(1);
+        snapshot.TotalBytes.ShouldBe((8ul * 100ul * 50ul) + (4ul * 4ul * 4ul));
+    }
 }
+

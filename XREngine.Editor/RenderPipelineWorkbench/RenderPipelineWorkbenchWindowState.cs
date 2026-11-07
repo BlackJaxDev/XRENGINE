@@ -23,6 +23,24 @@ public sealed class RenderPipelineWorkbenchWindowState
     /// <summary>Gets which outline rows executed in the newest traced frame of the instance.</summary>
     public RenderPipelineWorkbenchExecutionState Execution { get; } = new();
 
+    /// <summary>Gets the rows and visible list of the Resources view.</summary>
+    public RenderPipelineWorkbenchResourceTable ResourceTable { get; } = new();
+
+    /// <summary>Gets the cached detail tab lines of the selected resource.</summary>
+    public RenderPipelineWorkbenchResourceDetail ResourceDetail { get; } = new();
+
+    /// <summary>Gets or sets the Resources view search text.</summary>
+    public string ResourceSearch { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the Resources view row filters.</summary>
+    public ERenderPipelineResourceFilter ResourceFilter { get; set; }
+
+    /// <summary>Gets or sets the Resources view grouping.</summary>
+    public ERenderPipelineResourceGrouping ResourceGrouping { get; set; }
+
+    /// <summary>Gets or sets the visible Resources view detail tab.</summary>
+    public ERenderPipelineResourceDetailTab ResourceDetailTab { get; set; }
+
     /// <summary>Gets the cached Inspector text for the selection.</summary>
     public RenderPipelineWorkbenchInspectorContent Inspector { get; } = new();
 

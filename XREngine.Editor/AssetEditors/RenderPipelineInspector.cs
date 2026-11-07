@@ -229,9 +229,13 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
     #region Section Drawing - Debug Views
 
+    /// <summary>
+    /// Draws the auto exposure metering preview for one live instance. The resource browser moved to the Resources
+    /// view of the Render Pipeline Workbench.
+    /// </summary>
     private static void DrawDebugViews(RenderPipeline pipeline, EditorState state)
     {
-        if (!ImGui.CollapsingHeader("Debug Views (Framebuffers)", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Auto Exposure (Metering Preview)"))
             return;
 
         if (!Engine.IsRenderThread)
@@ -251,7 +255,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         string currentInstanceLabel = instances[state.SelectedInstanceIndex].DebugDescriptor;
 
         ImGui.SetNextItemWidth(360f);
-        if (ImGui.BeginCombo("Instance##RenderPipelineFbo", currentInstanceLabel))
+        if (ImGui.BeginCombo("Instance##RenderPipelineAutoExposure", currentInstanceLabel))
         {
             for (int i = 0; i < instances.Count; i++)
             {
@@ -265,143 +269,11 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.EndCombo();
         }
 
-        var selectedInstance = instances[state.SelectedInstanceIndex];
+        XRRenderPipelineInstance selectedInstance = instances[state.SelectedInstanceIndex];
+        if (ImGui.SmallButton("Browse resources in Workbench##RenderPipelineAutoExposure"))
+            EditorImGuiUI.OpenRenderPipelineWorkbench(pipeline, selectedInstance);
 
-        bool flipPreview = state.FlipPreview;
-
-        DrawPreferredDebugTargets(selectedInstance, state);
-        ImGui.Separator();
-
-        if (ImGui.CollapsingHeader("Auto Exposure (Metering Preview)"))
-        {
-            DrawAutoExposureMeteringPreview(selectedInstance);
-            ImGui.Separator();
-        }
-
-        if (ImGui.BeginTable("##RenderPipelineDebugResources", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchSame))
-        {
-            ImGui.TableSetupColumn("Framebuffers");
-            ImGui.TableSetupColumn("Textures");
-            ImGui.TableHeadersRow();
-
-            ImGui.TableNextRow();
-            ImGui.TableSetColumnIndex(0);
-            DrawFrameBufferBrowser(selectedInstance, state, flipPreview);
-
-            ImGui.TableSetColumnIndex(1);
-            DrawTextureBrowser(selectedInstance, state, flipPreview);
-
-            ImGui.EndTable();
-        }
-    }
-
-    private static void DrawFrameBufferBrowser(XRRenderPipelineInstance selectedInstance, EditorState state, bool flipPreview)
-    {
-        var fboRecords = selectedInstance.Resources.FrameBufferRecords
-            .Where(pair => pair.Value.Instance is not null)
-            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (fboRecords.Count == 0)
-        {
-            ImGui.TextDisabled("Instance has no framebuffers to preview.");
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(state.SelectedFboName)
-            || !fboRecords.Any(pair => pair.Key.Equals(state.SelectedFboName, StringComparison.OrdinalIgnoreCase)))
-        {
-            state.SelectedFboName = SelectDefaultFboName(selectedInstance, fboRecords);
-        }
-
-        string currentFboLabel = state.SelectedFboName ?? fboRecords[0].Key;
-        ImGui.SetNextItemWidth(260f);
-        if (ImGui.BeginCombo("Framebuffer##RenderPipelineFbo", currentFboLabel))
-        {
-            foreach (var pair in fboRecords)
-            {
-                bool selected = pair.Key.Equals(state.SelectedFboName, StringComparison.OrdinalIgnoreCase);
-                if (ImGui.Selectable(pair.Key, selected))
-                    state.SelectedFboName = pair.Key;
-                if (selected)
-                    ImGui.SetItemDefaultFocus();
-            }
-            ImGui.EndCombo();
-        }
-
-        ImGui.Checkbox("Flip Preview Vertically", ref state.FlipPreview);
-
-        var selectedRecord = fboRecords.First(pair => pair.Key.Equals(state.SelectedFboName, StringComparison.OrdinalIgnoreCase));
-        XRFrameBuffer fbo = selectedRecord.Value.Instance!;
-
-        ImGui.TextDisabled($"Dimensions: {fbo.Width} x {fbo.Height}");
-        ImGui.TextDisabled($"Targets: {fbo.Targets?.Length ?? 0}");
-        ImGui.TextDisabled($"Texture Types: {fbo.TextureTypes}");
-
-        const ImGuiTableFlags tableFlags = ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchSame;
-        if (ImGui.BeginTable("RenderPipelineFboIO", 2, tableFlags))
-        {
-            ImGui.TableSetupColumn("Inputs");
-            ImGui.TableSetupColumn("Outputs");
-            ImGui.TableHeadersRow();
-
-            ImGui.TableNextRow();
-            ImGui.TableSetColumnIndex(0);
-            RenderTexturePreviewPanel.DrawFrameBufferInputs(fbo, flipPreview);
-
-            ImGui.TableSetColumnIndex(1);
-            RenderTexturePreviewPanel.DrawFrameBufferOutputs(fbo, flipPreview);
-
-            ImGui.EndTable();
-        }
-    }
-
-    private static void DrawTextureBrowser(XRRenderPipelineInstance selectedInstance, EditorState state, bool flipPreview)
-    {
-        var textureRecords = selectedInstance.Resources.TextureRecords
-            .Where(pair => pair.Value.Instance is not null)
-            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (textureRecords.Count == 0)
-        {
-            ImGui.TextDisabled("Instance has no textures to preview.");
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(state.SelectedTextureName)
-            || !textureRecords.Any(pair => pair.Key.Equals(state.SelectedTextureName, StringComparison.OrdinalIgnoreCase)))
-        {
-            state.SelectedTextureName = SelectDefaultTextureName(selectedInstance, textureRecords);
-        }
-
-        string currentTextureLabel = state.SelectedTextureName ?? textureRecords[0].Key;
-        ImGui.SetNextItemWidth(260f);
-        if (ImGui.BeginCombo("Texture##RenderPipelineTexture", currentTextureLabel))
-        {
-            foreach (var pair in textureRecords)
-            {
-                bool selected = pair.Key.Equals(state.SelectedTextureName, StringComparison.OrdinalIgnoreCase);
-                if (ImGui.Selectable(pair.Key, selected))
-                    state.SelectedTextureName = pair.Key;
-                if (selected)
-                    ImGui.SetItemDefaultFocus();
-            }
-            ImGui.EndCombo();
-        }
-
-        ImGui.Checkbox("Flip Preview Vertically##Texture", ref state.FlipPreview);
-
-        var selectedRecord = textureRecords.First(pair => pair.Key.Equals(state.SelectedTextureName, StringComparison.OrdinalIgnoreCase));
-        XRTexture texture = selectedRecord.Value.Instance!;
-
-        ImGui.TextDisabled($"Type: {texture.GetType().Name}");
-        if (RenderTexturePreviewPanel.TryDescribeTextureDimensions(texture, out string sizeLabel))
-            ImGui.TextDisabled(sizeLabel);
-        if (texture.FrameBufferAttachment is { } attachment)
-            ImGui.TextDisabled($"Attachment: {attachment}");
-
-        RenderTexturePreviewPanel.DrawTexturePreview(texture, flipPreview);
+        DrawAutoExposureMeteringPreview(selectedInstance);
     }
 
     private static void DrawAutoExposureMeteringPreview(XRRenderPipelineInstance instance)
@@ -871,113 +743,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return renderer.TryReadTexturePixelRgbaFloat(texture, mipLevel, layerIndex, out rgba, out failure);
     }
 
-    private static void DrawPreferredDebugTargets(XRRenderPipelineInstance instance, EditorState state)
-    {
-        ImGui.TextDisabled("Quick Targets");
-
-        void DrawFboButton(string label, string fboName)
-        {
-            bool hasFbo = instance.Resources.FrameBufferRecords.TryGetValue(fboName, out var record)
-                && record.Instance is not null;
-            if (!hasFbo)
-                return;
-
-            if (ImGui.SmallButton($"{label}##FboQuick"))
-                state.SelectedFboName = fboName;
-            ImGui.SameLine();
-        }
-
-        void DrawTextureButton(string label, string textureName)
-        {
-            bool hasTexture = instance.Resources.TextureRecords.TryGetValue(textureName, out var record)
-                && record.Instance is not null;
-            if (!hasTexture)
-                return;
-
-            if (ImGui.SmallButton($"{label}##TexQuick"))
-                state.SelectedTextureName = textureName;
-            ImGui.SameLine();
-        }
-
-        if (instance.Pipeline is ISceneRenderPipelineFeatureProvider)
-        {
-            DrawFboButton("Velocity FBO", DefaultRenderPipeline.VelocityFBOName);
-            DrawTextureButton("Velocity", DefaultRenderPipeline.VelocityTextureName);
-            DrawTextureButton("Depth", DefaultRenderPipeline.DepthViewTextureName);
-            DrawTextureButton("HDR Scene", DefaultRenderPipeline.HDRSceneTextureName);
-            DrawTextureButton("History", DefaultRenderPipeline.HistoryColorTextureName);
-        }
-
-        ImGui.NewLine();
-    }
-
-    private static string SelectDefaultFboName(
-        XRRenderPipelineInstance instance,
-        IReadOnlyList<KeyValuePair<string, RenderFrameBufferResource>> fboRecords)
-    {
-        static bool ContainsName(IReadOnlyList<KeyValuePair<string, RenderFrameBufferResource>> records, string name)
-            => records.Any(pair => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
-
-        if (instance.Pipeline is ISceneRenderPipelineFeatureProvider)
-        {
-            string[] preferredNames =
-            [
-                DefaultRenderPipeline.VelocityFBOName,
-                DefaultRenderPipeline.ForwardPassFBOName,
-                DefaultRenderPipeline.PostProcessFBOName,
-                DefaultRenderPipeline.MotionBlurFBOName,
-            ];
-
-            foreach (string preferredName in preferredNames)
-            {
-                if (ContainsName(fboRecords, preferredName))
-                    return preferredName;
-            }
-        }
-
-        foreach (var pair in fboRecords)
-        {
-            XRFrameBuffer? fbo = pair.Value.Instance;
-            if (fbo is null)
-                continue;
-
-            bool hasOutputs = fbo.Targets is { Length: > 0 };
-            bool hasInputs = RenderTexturePreviewPanel.CollectFrameBufferInputs(fbo).Count > 0;
-            if (hasOutputs || hasInputs)
-                return pair.Key;
-        }
-
-        return fboRecords[0].Key;
-    }
-
-    private static string SelectDefaultTextureName(
-        XRRenderPipelineInstance instance,
-        IReadOnlyList<KeyValuePair<string, RenderTextureResource>> textureRecords)
-    {
-        static bool ContainsName(IReadOnlyList<KeyValuePair<string, RenderTextureResource>> records, string name)
-            => records.Any(pair => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
-
-        if (instance.Pipeline is ISceneRenderPipelineFeatureProvider)
-        {
-            string[] preferredNames =
-            [
-                DefaultRenderPipeline.VelocityTextureName,
-                DefaultRenderPipeline.DepthViewTextureName,
-                DefaultRenderPipeline.HDRSceneTextureName,
-                DefaultRenderPipeline.HistoryColorTextureName,
-                DefaultRenderPipeline.PostProcessOutputTextureName,
-            ];
-
-            foreach (string preferredName in preferredNames)
-            {
-                if (ContainsName(textureRecords, preferredName))
-                    return preferredName;
-            }
-        }
-
-        return textureRecords[0].Key;
-    }
-
     #endregion
 
     #region Section Drawing - Workbench Summary
@@ -1033,9 +798,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
     private sealed class EditorState
     {
         public int SelectedInstanceIndex;
-        public string? SelectedFboName;
-        public string? SelectedTextureName;
-        public bool FlipPreview = true;
     }
 
     private sealed class AutoExposurePreviewState

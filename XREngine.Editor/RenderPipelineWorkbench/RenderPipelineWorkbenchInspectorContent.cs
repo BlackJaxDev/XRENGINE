@@ -2,6 +2,7 @@ using System.Globalization;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.RenderGraph.Diagnostics;
+using XREngine.Rendering.Resources.Diagnostics;
 
 namespace XREngine.Editor.RenderPipelineWorkbench;
 
@@ -16,6 +17,7 @@ public sealed class RenderPipelineWorkbenchInspectorContent
     private RenderPipelineWorkbenchModel? _model;
     private int _structureBuild = -1;
     private int _passBuild = -1;
+    private int _resourceBuild = -1;
 
     /// <summary>Gets the title line.</summary>
     public string Title { get; private set; } = string.Empty;
@@ -44,7 +46,8 @@ public sealed class RenderPipelineWorkbenchInspectorContent
         if (ReferenceEquals(_model, model) &&
             _selection == selection &&
             _structureBuild == model.StructureBuildCount &&
-            _passBuild == model.PassGraphBuildCount)
+            _passBuild == model.PassGraphBuildCount &&
+            _resourceBuild == model.ResourceBuildCount)
         {
             return;
         }
@@ -53,6 +56,7 @@ public sealed class RenderPipelineWorkbenchInspectorContent
         _selection = selection;
         _structureBuild = model.StructureBuildCount;
         _passBuild = model.PassGraphBuildCount;
+        _resourceBuild = model.ResourceBuildCount;
         BuildCount++;
 
         Items.Clear();
@@ -193,10 +197,23 @@ public sealed class RenderPipelineWorkbenchInspectorContent
     private void BuildResource(RenderPipelineWorkbenchModel model, string resourceName)
     {
         Title = resourceName;
+        if (model.Resources.TryGet(resourceName, out RenderPipelineResourceEntry? entry) && entry is not null)
+        {
+            Header("Resource");
+            Add(string.Concat("Kind: ", entry.Kind?.ToString() ?? "undeclared"));
+            if (entry.Width > 0)
+                Add(string.Concat("Size: ", entry.Width.ToString(CultureInfo.InvariantCulture), "x", entry.Height.ToString(CultureInfo.InvariantCulture)));
+            if (entry.FormatText.Length > 0)
+                Add(string.Concat("Format: ", entry.FormatText));
+            if (entry.EstimatedBytes > 0)
+                Add(string.Concat("Memory: ", RenderPipelineWorkbenchText.FormatBytes((long)entry.EstimatedBytes)));
+            Add(string.Concat("Flags: ", entry.Flags.ToString()));
+        }
+
         Header("Used by passes");
         foreach (RenderPassMetadata pass in model.Passes)
         {
-            ERenderPipelineResourceAccess access = RenderPipelineWorkbenchLinks.GetResourceAccess(pass, resourceName);
+            ERenderPipelineResourceAccess access = RenderPipelineWorkbenchLinks.GetResourceAccess(pass, resourceName, model.Resources);
             if (access == ERenderPipelineResourceAccess.None)
                 continue;
 
