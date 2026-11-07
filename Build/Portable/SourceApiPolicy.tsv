@@ -147,6 +147,7 @@ allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScr
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.Steps.cs	GetProperty	Named script command property assignment
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.Exporter.cs	Activator.CreateInstance	Default command instances for script export comparison
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.Exporter.cs	GetProperties	Authored script command property enumeration
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.Exporter.cs	GetCustomAttribute	Hidden alias properties are skipped in script export
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.ValueConverter.cs	Activator.CreateInstance	Closed List construction for script command values
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.ValueConverter.cs	MakeGenericType	Closed List type construction for script command values
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.ValueConverter.cs	GetProperty	Named property assignment for script object constructors and declarations

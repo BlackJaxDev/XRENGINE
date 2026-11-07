@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using XREngine.Core.Attributes;
 using XREngine.Data.Rendering;
@@ -35,8 +36,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? DestinationFBOName { get; set; } = null;
         /// <summary>
-        /// The name of the source FBO that contains the quad to render.
+        /// Alias of <see cref="SourceQuadFBOName"/>. Hidden from editors and script export to keep one authored value.
         /// </summary>
+        [Browsable(false)]
         [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? FrameBufferName
         {
@@ -44,8 +46,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             set => SourceQuadFBOName = value;
         }
         /// <summary>
-        /// The name of the destination FBO to render into.
+        /// Alias of <see cref="DestinationFBOName"/>. Hidden from editors and script export to keep one authored value.
         /// </summary>
+        [Browsable(false)]
         [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? TargetFrameBufferName
         {

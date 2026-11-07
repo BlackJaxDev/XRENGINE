@@ -1,3 +1,4 @@
+using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources.Diagnostics;
 
 namespace XREngine.Rendering.Pipelines.Validation.Rules;
@@ -17,6 +18,10 @@ public sealed class UndeclaredResourceReadRule : IRenderPipelineValidationRule
         foreach (RenderPipelineResourceEntry entry in context.Resources.Entries)
         {
             if (!entry.IsUsedButUndeclared || entry.Consumers.Count == 0 || entry.Has(ERenderPipelineResourceFlags.External))
+                continue;
+
+            // The output target belongs to the viewport, so no layout declares it.
+            if (string.Equals(entry.Name, RenderGraphResourceNames.OutputRenderTarget, StringComparison.Ordinal))
                 continue;
 
             problems.Add(RenderPipelineProblem.ForResource(

@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Resources.Diagnostics;
@@ -182,9 +183,27 @@ public sealed class RenderPipelineResourceSnapshot
                         mapped[t].Flags |= ERenderPipelineResourceFlags.External;
                 }
             }
+
+            AddQuadSourceUses(pass, order, byName);
         }
 
         return new RenderPipelineResourceSnapshot(layout, generation, passMetadata, passOrder, [.. ordered], byName, byUsageName);
+    }
+
+    /// <summary>
+    /// Records the source quad of each fullscreen quad command as read by <paramref name="pass"/>. A quad material
+    /// has no attachment, so no render graph usage names it.
+    /// </summary>
+    private static void AddQuadSourceUses(RenderPassMetadata pass, int order, Dictionary<string, RenderPipelineResourceEntry> byName)
+    {
+        IReadOnlyList<ViewportRenderCommand> commands = pass.ContributingCommands;
+        for (int i = 0; i < commands.Count; i++)
+        {
+            if (commands[i] is not VPRC_RenderQuadToFBO { SourceQuadFBOName: { } source })
+                continue;
+            if (byName.TryGetValue(source, out RenderPipelineResourceEntry? entry))
+                entry.AddUse(pass.PassIndex, order, ERenderGraphAccess.Read, source);
+        }
     }
 
     private static IReadOnlyList<RenderPassMetadata> OrderPasses(IReadOnlyCollection<RenderPassMetadata>? passMetadata)

@@ -264,6 +264,9 @@ public sealed partial class RenderPipelineScript
             {
                 if (!property.CanRead || !property.CanWrite || property.GetIndexParameters().Length > 0 || s_ignoredProperties.Contains(property.Name))
                     continue;
+                // Hidden properties are aliases or editor-only state. Another property already writes their value.
+                if (property.GetCustomAttribute<BrowsableAttribute>() is { Browsable: false })
+                    continue;
 
                 object? value = property.GetValue(command);
                 object? defaultValue = defaultCommand is null ? null : property.GetValue(defaultCommand);

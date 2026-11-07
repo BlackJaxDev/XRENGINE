@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
     [RenderCommandInfo(ERenderCommandCategory.Flow)]
-    public class VPRC_Switch : ViewportStateRenderCommand<VPRC_PopRenderArea>
+    public class VPRC_Switch : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
         {
