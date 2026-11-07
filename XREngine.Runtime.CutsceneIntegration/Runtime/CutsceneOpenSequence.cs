@@ -356,12 +356,15 @@ public sealed class CutsceneOpenSequence
 
         _waitWarningReported[drawIndex] = true;
         string message =
-            $"The T0 draw of proxy material '{draw.Material.Name ?? "<unnamed>"}' on renderer '{draw.ResolveRenderer()?.Name ?? "<none>"}' " +
+            $"The T0 draw of proxy material '{draw.Material.Name ?? "<unnamed>"}' on renderer '{DescribeRenderer(draw.ResolveRenderer())}' " +
             $"is still {state} after {_notReadyFrames[drawIndex]} frames (mesh submission strategy {RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy()}): " +
             $"{reason ?? "no reason was given"}. ReadyForInstantSeek stays false while the open waits.";
         _host.AddOpenDiagnostic(message);
         Debug.LogWarning(ELogCategory.Animation, "Cutscene open: {0}", message);
     }
+
+    private static string DescribeRenderer(XRMeshRenderer? renderer)
+        => renderer is null ? "<none>" : renderer.Name ?? renderer.Mesh?.Name ?? "<unnamed>";
 
     private void ReportDrawDiagnostic(int drawIndex, XRMaterial material, string problem, string? reason)
     {
