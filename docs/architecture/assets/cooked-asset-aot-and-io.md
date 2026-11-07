@@ -350,7 +350,10 @@ source paths of cooked assets at write time, without changing any object:
   drive-letter paths, and for UNC paths, as UTF-8 and UTF-16 text. A hit fails
   the cook with `CookedSourcePathException`, which names the asset and the
   path. The drive-letter and UNC patterns need at least three path parts, so
-  random binary data does not match. The incremental archive build checks each
+  random binary data does not match. A path part can hold non-ASCII characters
+  (for example a non-ASCII user profile name): in UTF-8 each must be a complete
+  UTF-8 sequence, and in UTF-16 any character except a control character, a
+  reserved path character, or a lone surrogate counts. The incremental archive build checks each
   cooked asset file that it writes. Files that the cook copies as they are
   (not asset files) are not checked.
 - The guard reads each file in 4 MiB chunks that overlap by 4 KiB, so a file of

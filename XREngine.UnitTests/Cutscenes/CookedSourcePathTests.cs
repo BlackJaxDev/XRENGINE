@@ -457,6 +457,25 @@ public sealed class CookedSourcePathTests
         CookedOutputPathGuard.TryFindMachinePath(random, [], out _).ShouldBeFalse();
     }
 
+    [Test]
+    public void OutputGuard_FindsPathsWithNonAsciiParts_InUtf8AndUtf16()
+    {
+        string[] paths =
+        [
+            Path.Combine("C:\\", "Users", "\u0418\u0432\u0430\u043D", "Downloads", "tex.png"),
+            Path.Combine("D:\\", "\u30E6\u30FC\u30B6\u30FC", "\u7D20\u6750", "floor.png"),
+            Path.Combine("E:\\", "Users", "Jos\u00E9 \U0001F600", "Assets", "wall.png"),
+            "\\\\server\\\u5171\u6709\\\u30C6\u30AF\u30B9\u30C1\u30E3\\floor.png",
+        ];
+        foreach (string path in paths)
+        {
+            CookedOutputPathGuard.TryFindMachinePath([0, 9, .. Encoding.UTF8.GetBytes(path), 0], [], out string? utf8).ShouldBeTrue(path);
+            utf8.ShouldBe(path);
+            CookedOutputPathGuard.TryFindMachinePath([5, .. Encoding.Unicode.GetBytes(path), 0, 0], [], out string? utf16).ShouldBeTrue(path);
+            utf16.ShouldBe(path);
+        }
+    }
+
     private string Cook()
         => ProjectBuilder.PrepareCookedContentDirectoryForTests(_assets, Path.Combine(_tempRoot, "Intermediate", Guid.NewGuid().ToString("N")));
 

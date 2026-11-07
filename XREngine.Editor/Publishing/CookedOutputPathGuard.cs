@@ -11,24 +11,31 @@ namespace XREngine.Editor.Publishing;
 /// (<see cref="XREngine.Core.Files.CookedSourcePathProjection"/>).
 /// </summary>
 /// <remarks>
+/// <para>
 /// Cooked files hold binary data, so a short random byte run can look like <c>C:\</c>. The drive-letter and UNC patterns
 /// therefore need at least three path parts, which random data almost never gives. A real machine path, for example a
 /// path in a user profile, always has them. The asset roots are matched exactly, without case.
+/// </para>
+/// <para>
+/// A path part can hold non-ASCII characters, for example a Cyrillic or a CJK user profile name. In the UTF-8 view, a
+/// non-ASCII character must be one complete UTF-8 sequence, so random high bytes do not extend a match. In the UTF-16 view,
+/// any character that is not a control character, a reserved path character, a lone surrogate, or the replacement
+/// character is a path character; a complete surrogate pair is one path character.
+/// </para>
 /// </remarks>
 public static class CookedOutputPathGuard
 {
-    private const string PathChar = @"[\x20-\x7E-[\\/:*?""<>|]]";
+    private const string Utf8PathChar =
+        @"(?:[\x20-\x7E-[\\/:*?""<>|]]|[\xC2-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}|[\xF0-\xF4][\x80-\xBF]{3})";
+    private const string Utf16PathChar = @"(?:[^\x00-\x1F\x7F\\/:*?""<>|\uD800-\uDFFF\uFFFD\uFFFE\uFFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])";
     private const int MaxReportedLength = 260;
     private const int ChunkSize = 4 * 1024 * 1024;
     private const int ChunkOverlap = 4096;
 
-    private static readonly Regex DrivePath = new(
-        @"[A-Za-z]:[\\/](?:" + PathChar + @"+[\\/]){2,}" + PathChar + "*",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex UncPath = new(
-        @"\\\\[A-Za-z0-9._$-]{2,}\\[A-Za-z0-9._$ -]{2,}\\" + PathChar + "{2,}",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex Utf8DrivePath = CreateDrivePattern(Utf8PathChar);
+    private static readonly Regex Utf16DrivePath = CreateDrivePattern(Utf16PathChar);
+    private static readonly Regex Utf8UncPath = CreateUncPattern(Utf8PathChar);
+    private static readonly Regex Utf16UncPath = CreateUncPattern(Utf16PathChar);
 
     /// <summary>
     /// Fails the cook if a cooked file holds a machine path.
@@ -81,14 +88,14 @@ public static class CookedOutputPathGuard
         // UTF-8 text keeps its ASCII bytes, and Latin-1 maps each byte to one char. UTF-16 text can start at an even or an
         // odd offset.
         string utf8View = Encoding.Latin1.GetString(bytes);
-        if (TryFind(utf8View, assetRoots, encodeRootsAsUtf8: true, out path))
+        if (TryFind(utf8View, assetRoots, isUtf8View: true, out path))
             return true;
 
         for (int offset = 0; offset < 2 && offset < bytes.Length; offset++)
         {
             int length = (bytes.Length - offset) & ~1;
             string utf16View = Encoding.Unicode.GetString(bytes.Slice(offset, length));
-            if (TryFind(utf16View, assetRoots, encodeRootsAsUtf8: false, out path))
+            if (TryFind(utf16View, assetRoots, isUtf8View: false, out path))
                 return true;
         }
 
@@ -96,30 +103,48 @@ public static class CookedOutputPathGuard
         return false;
     }
 
-    private static bool TryFind(string text, IReadOnlyList<string> assetRoots, bool encodeRootsAsUtf8, out string? path)
+    private static Regex CreateDrivePattern(string pathChar)
+        => new(@"[A-Za-z]:[\\/](?:" + pathChar + @"+[\\/]){2,}" + pathChar + "*",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static Regex CreateUncPattern(string pathChar)
+        => new(@"\\\\[A-Za-z0-9._$-]{2,}\\" + pathChar + @"{2,}\\" + pathChar + @"{2,}(?:[\\/]" + pathChar + "+)*",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static bool TryFind(string text, IReadOnlyList<string> assetRoots, bool isUtf8View, out string? path)
     {
         foreach (string root in assetRoots)
         {
-            string needle = encodeRootsAsUtf8 ? Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(root)) : root;
+            string needle = isUtf8View ? Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(root)) : root;
             int index = text.IndexOf(needle, StringComparison.OrdinalIgnoreCase);
             if (index >= 0)
             {
-                path = Trim(text.Substring(index, Math.Min(MaxReportedLength, text.Length - index)));
+                path = Report(text.Substring(index, Math.Min(MaxReportedLength, text.Length - index)), isUtf8View);
                 return true;
             }
         }
 
-        Match match = DrivePath.Match(text);
+        Match match = (isUtf8View ? Utf8DrivePath : Utf16DrivePath).Match(text);
         if (!match.Success)
-            match = UncPath.Match(text);
+            match = (isUtf8View ? Utf8UncPath : Utf16UncPath).Match(text);
         if (match.Success)
         {
-            path = Trim(match.Value);
+            path = Report(match.Value, isUtf8View);
             return true;
         }
 
         path = null;
         return false;
+    }
+
+    /// <summary>Gets the text to report for a match. The UTF-8 view is decoded again, and the text stops at a control character.</summary>
+    private static string Report(string value, bool isUtf8View)
+    {
+        string text = isUtf8View ? Encoding.UTF8.GetString(Encoding.Latin1.GetBytes(value)) : value;
+        int end = 0;
+        while (end < text.Length && !char.IsControl(text[end]) && text[end] != '\uFFFD')
+            end++;
+        return text[..Math.Max(end, Math.Min(text.Length, 3))];
     }
 
     /// <summary>Gets the game and engine asset roots of the cook process, with both separator forms.</summary>
@@ -142,13 +167,5 @@ public static class CookedOutputPathGuard
         string alternate = full.Replace('\\', '/');
         if (!string.Equals(alternate, full, StringComparison.Ordinal))
             roots.Add(alternate);
-    }
-
-    private static string Trim(string value)
-    {
-        int end = 0;
-        while (end < value.Length && value[end] >= ' ' && value[end] <= '~')
-            end++;
-        return value[..Math.Max(end, Math.Min(value.Length, 3))];
     }
 }
