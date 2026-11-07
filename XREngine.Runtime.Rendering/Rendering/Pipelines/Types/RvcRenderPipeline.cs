@@ -14,6 +14,7 @@ namespace XREngine.Rendering;
 /// It runs only the RVC command chain. VR selects it only through
 /// <see cref="EVrRenderPipeline.Rvc"/>.
 /// </summary>
+[RenderPipelineScriptBase("Rvc")]
 public sealed class RvcRenderPipeline : DefaultRenderPipeline, IRenderPipelineViewSetupSource
 {
     private const RenderPipelineResourceUsage RvcSampledColorAttachment =

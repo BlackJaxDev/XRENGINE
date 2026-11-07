@@ -23,7 +23,7 @@ public sealed partial class RenderPipelineScript
             => container.Add(_factory());
     }
 
-    private sealed class CommandTypeStep(string commandTypeName, IReadOnlyList<PropertyAssignment> propertyAssignments) : IScriptStep
+    private sealed class CommandTypeStep(string commandTypeName, IReadOnlyList<PropertyAssignment> propertyAssignments, int line = 0, int column = 0) : IScriptStep
     {
         private readonly string _commandTypeName = commandTypeName;
         private readonly IReadOnlyList<PropertyAssignment> _propertyAssignments = propertyAssignments;
@@ -31,9 +31,10 @@ public sealed partial class RenderPipelineScript
         public void CompileInto(RenderPipeline pipeline, ViewportRenderCommandContainer container)
         {
             if (!CommandTypes.TryGetValue(_commandTypeName, out Type? commandType))
-                throw new InvalidOperationException($"Unknown render command type '{_commandTypeName}'.");
+                throw new ScriptSyntaxException($"Unknown render command type '{_commandTypeName}'.", line, column);
 
-            if (!ViewportRenderCommandContainer.TryCreateRegisteredCommand(commandType, out ViewportRenderCommand? command) || command is null)
+            ViewportRenderCommand? command = FindUnattachedPairedPop(container, commandType);
+            if (command is null && (!ViewportRenderCommandContainer.TryCreateRegisteredCommand(commandType, out command) || command is null))
             {
                 if (XRRuntimeEnvironment.IsPublishedBuild)
                     throw new InvalidOperationException($"No registered render command factory for '{commandType.Name}'.");
@@ -46,6 +47,28 @@ public sealed partial class RenderPipelineScript
                 _propertyAssignments[i].Apply(command);
 
             container.Add(command);
+        }
+
+        /// <summary>
+        /// Returns the pop command of the innermost open push of the same pop type in <paramref name="container"/>. A push
+        /// owns its pop instance, so the script must reuse that instance to keep the pair intact.
+        /// </summary>
+        private static ViewportRenderCommand? FindUnattachedPairedPop(ViewportRenderCommandContainer container, Type commandType)
+        {
+            if (!typeof(ViewportPopStateRenderCommand).IsAssignableFrom(commandType))
+                return null;
+
+            for (int i = container.Count - 1; i >= 0; i--)
+            {
+                if (container[i] is not ViewportStateRenderCommandBase push)
+                    continue;
+
+                ViewportPopStateRenderCommand pop = push.PairedPopCommand;
+                if (pop.GetType() == commandType && pop.CommandContainer is null)
+                    return pop;
+            }
+
+            return null;
         }
     }
 
@@ -82,57 +105,55 @@ public sealed partial class RenderPipelineScript
     }
 
     internal sealed class IfStep(
-        Func<bool> condition,
+        Func<bool>? evaluator,
+        RenderBranchCondition? condition,
+        string? label,
         BranchDefinition? trueBranch,
         BranchDefinition? falseBranch,
         Action<VPRC_IfElse>? configure) : IScriptStep
     {
-        private readonly Func<bool> _condition = condition;
-        private readonly BranchDefinition? _trueBranch = trueBranch;
-        private readonly BranchDefinition? _falseBranch = falseBranch;
-        private readonly Action<VPRC_IfElse>? _configure = configure;
-
         public void CompileInto(RenderPipeline pipeline, ViewportRenderCommandContainer container)
         {
             VPRC_IfElse command = new()
             {
-                ConditionEvaluator = _condition,
-                TrueCommands = _trueBranch?.Compile(pipeline),
-                FalseCommands = _falseBranch?.Compile(pipeline)
+                ConditionEvaluator = evaluator,
+                Condition = condition?.Clone(),
+                Label = label,
+                TrueCommands = trueBranch?.Compile(pipeline),
+                FalseCommands = falseBranch?.Compile(pipeline)
             };
-            _configure?.Invoke(command);
+            configure?.Invoke(command);
             container.Add(command);
         }
     }
 
     internal sealed class SwitchStep(
-        Func<int> selector,
+        Func<int>? selector,
+        RenderBranchCondition? condition,
+        string? label,
         IReadOnlyDictionary<int, BranchDefinition> cases,
         BranchDefinition? defaultCase,
         Action<VPRC_Switch>? configure) : IScriptStep
     {
-        private readonly Func<int> _selector = selector;
-        private readonly IReadOnlyDictionary<int, BranchDefinition> _cases = cases;
-        private readonly BranchDefinition? _defaultCase = defaultCase;
-        private readonly Action<VPRC_Switch>? _configure = configure;
-
         public void CompileInto(RenderPipeline pipeline, ViewportRenderCommandContainer container)
         {
             Dictionary<int, ViewportRenderCommandContainer>? compiledCases = null;
-            if (_cases.Count > 0)
+            if (cases.Count > 0)
             {
-                compiledCases = new Dictionary<int, ViewportRenderCommandContainer>(_cases.Count);
-                foreach ((int key, BranchDefinition value) in _cases)
+                compiledCases = new Dictionary<int, ViewportRenderCommandContainer>(cases.Count);
+                foreach ((int key, BranchDefinition value) in cases)
                     compiledCases[key] = value.Compile(pipeline);
             }
 
             VPRC_Switch command = new()
             {
-                SwitchEvaluator = _selector,
+                SwitchEvaluator = selector,
+                Condition = condition?.Clone(),
+                Label = label,
                 Cases = compiledCases,
-                DefaultCase = _defaultCase?.Compile(pipeline)
+                DefaultCase = defaultCase?.Compile(pipeline)
             };
-            _configure?.Invoke(command);
+            configure?.Invoke(command);
             container.Add(command);
         }
     }
@@ -221,18 +242,23 @@ public sealed partial class RenderPipelineScript
             => CompileContainer(pipeline, _steps, _branchResources);
     }
 
-    private sealed class PropertyAssignment(string propertyName, IValueNode value)
+    private sealed class PropertyAssignment(string propertyName, IValueNode value, int line = 0, int column = 0)
     {
-        private readonly string _propertyName = propertyName;
-        private readonly IValueNode _value = value;
+        public string PropertyName { get; } = propertyName;
+
+        public IValueNode Value { get; } = value;
+
+        public int Line { get; } = line;
+
+        public int Column { get; } = column;
 
         public void Apply(ViewportRenderCommand command)
         {
-            PropertyInfo? property = command.GetType().GetProperty(_propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+            PropertyInfo? property = command.GetType().GetProperty(PropertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
             if (property is null || !property.CanWrite)
-                throw new InvalidOperationException($"Property '{_propertyName}' was not found on render command '{command.GetType().Name}'.");
+                throw new ScriptSyntaxException($"Property '{PropertyName}' was not found on render command '{command.GetType().Name}'.", Line, Column);
 
-            object? converted = ScriptValueConverter.ConvertTo(_value, property.PropertyType);
+            object? converted = ConvertAssignedValue(Value, property.PropertyType, PropertyName, Line, Column);
             property.SetValue(command, converted);
         }
     }

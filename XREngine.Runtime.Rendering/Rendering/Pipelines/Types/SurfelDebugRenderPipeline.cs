@@ -47,6 +47,7 @@ public enum ESurfelDebugVisualization
 /// A minimal render pipeline for debugging and visualizing SurfelGI information.
 /// Supports visualization of transform IDs and surfel positions without post-processing overhead.
 /// </summary>
+[RenderPipelineScriptBase("SurfelDebug")]
 public sealed class SurfelDebugRenderPipeline : RenderPipeline
 {
     public const string SceneShaderPath = "Scene3D";

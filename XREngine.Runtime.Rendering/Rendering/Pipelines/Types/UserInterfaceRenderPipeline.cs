@@ -7,6 +7,7 @@ using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering;
 
+[RenderPipelineScriptBase("UserInterface")]
 public class UserInterfaceRenderPipeline : RenderPipeline
 {
     public const string SceneShaderPath = "Scene3D";

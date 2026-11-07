@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Resources.Authoring;
 
 namespace XREngine.Rendering;
 
@@ -12,6 +13,71 @@ public sealed partial class RenderPipelineScript
 {
     private static class ScriptValueConverter
     {
+        /// <summary>
+        /// The object constructors that scripts can write, by name. Each entry has an explicit factory, so an object
+        /// value does not need <see cref="Activator"/> for these types.
+        /// </summary>
+        private static readonly Dictionary<string, (Type Type, Func<object> Factory)> s_objectConstructors = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["size"] = (typeof(AuthoredSizePolicy), static () => new AuthoredSizePolicy()),
+            ["attachment"] = (typeof(AuthoredAttachment), static () => new AuthoredAttachment()),
+        };
+
+        /// <summary>Returns the script constructor name for <paramref name="type"/>, or null when scripts cannot write it.</summary>
+        public static string? GetObjectConstructorName(Type type)
+        {
+            foreach (KeyValuePair<string, (Type Type, Func<object> Factory)> pair in s_objectConstructors)
+            {
+                if (pair.Value.Type == type)
+                    return pair.Key;
+            }
+
+            return null;
+        }
+
+        /// <summary>Creates an object with default values for the object constructor <paramref name="name"/>.</summary>
+        public static object CreateDefaultObject(string name)
+            => s_objectConstructors[name].Factory();
+
+        /// <summary>Returns true when <paramref name="name"/> is an object constructor such as <c>size</c>.</summary>
+        public static bool IsObjectConstructor(string name)
+            => s_objectConstructors.ContainsKey(name);
+
+        /// <summary>
+        /// Creates an object for a constructor with named arguments, for example
+        /// <c>size(SizeClass=WindowResolution, ScaleX=0.5)</c>. Each argument sets the property with the same name.
+        /// </summary>
+        public static object CreateObject(string name, IReadOnlyList<KeyValuePair<string, IValueNode>> namedArguments, Type? targetType)
+        {
+            object instance;
+            if (s_objectConstructors.TryGetValue(name, out (Type Type, Func<object> Factory) entry))
+            {
+                if (targetType is not null && targetType != typeof(object) && !targetType.IsAssignableFrom(entry.Type))
+                    throw new InvalidOperationException($"Constructor '{name}' makes a {entry.Type.Name}, not a {targetType.Name}.");
+
+                instance = entry.Factory();
+            }
+            else
+            {
+                throw new InvalidOperationException($"Unknown script constructor '{name}'.");
+            }
+
+            for (int i = 0; i < namedArguments.Count; i++)
+                SetObjectProperty(instance, namedArguments[i].Key, namedArguments[i].Value);
+
+            return instance;
+        }
+
+        /// <summary>Sets the public property <paramref name="propertyName"/> of <paramref name="target"/> from a script value.</summary>
+        public static void SetObjectProperty(object target, string propertyName, IValueNode value)
+        {
+            PropertyInfo? property = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+            if (property is null || !property.CanWrite || property.SetMethod?.IsPublic != true)
+                throw new InvalidOperationException($"'{target.GetType().Name}' has no settable property '{propertyName}'.");
+
+            property.SetValue(target, ConvertTo(value, property.PropertyType));
+        }
+
         public static object? ConvertTo(IValueNode value, Type targetType)
         {
             Type destinationType = Nullable.GetUnderlyingType(targetType) ?? targetType;

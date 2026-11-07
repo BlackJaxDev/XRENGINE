@@ -10,7 +10,7 @@ namespace XREngine.Rendering;
 // Value and expression nodes, and the runtime context that evaluates them.
 public sealed partial class RenderPipelineScript
 {
-    private interface IValueNode
+    internal interface IValueNode
     {
         object? GetConstantValue(Type? targetType = null);
     }
@@ -58,13 +58,22 @@ public sealed partial class RenderPipelineScript
         public IReadOnlyList<IValueNode> Items => _items;
     }
 
-    private sealed class ConstructorNode(string name, IReadOnlyList<IValueNode> args) : IValueNode
+    private sealed class ConstructorNode(string name, IReadOnlyList<IValueNode> args, IReadOnlyList<KeyValuePair<string, IValueNode>>? namedArgs = null) : IValueNode
     {
         private readonly string _name = name;
         private readonly IReadOnlyList<IValueNode> _args = args;
 
+        /// <summary>Gets the constructor name as written, for example <c>size</c>.</summary>
+        public string Name => _name;
+
+        /// <summary>Gets the named arguments. Each one sets the property with the same name on the new object.</summary>
+        public IReadOnlyList<KeyValuePair<string, IValueNode>> NamedArguments { get; } = namedArgs ?? [];
+
         public object? GetConstantValue(Type? targetType = null)
         {
+            if (NamedArguments.Count > 0 || ScriptValueConverter.IsObjectConstructor(_name))
+                return ScriptValueConverter.CreateObject(_name, NamedArguments, targetType);
+
             float GetFloat(int index) => Convert.ToSingle(ScriptValueConverter.ConvertTo(_args[index], typeof(float)), CultureInfo.InvariantCulture);
 
             return _name.ToLowerInvariant() switch

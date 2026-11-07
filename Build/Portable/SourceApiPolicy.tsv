@@ -149,6 +149,9 @@ allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScr
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.Exporter.cs	GetProperties	Authored script command property enumeration
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.ValueConverter.cs	Activator.CreateInstance	Closed List construction for script command values
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.ValueConverter.cs	MakeGenericType	Closed List type construction for script command values
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.ValueConverter.cs	GetProperty	Named property assignment for script object constructors and declarations
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScriptSettings.cs	GetProperties	Cached pipeline setting discovery for the script settings block
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScriptSettings.cs	GetCustomAttribute	Browsable metadata that hides a pipeline property from the script settings block
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs	GetProperty	Optional owning component property on engine physics object
 allow	XREngine.Runtime.Rendering/Objects/Materials/UberMaterialState.cs	GetProperty	Engine authored material lookup method, not System.Type reflection
 allow	XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs	Activator.CreateInstance	Managed mesh generator type construction with authored mesh input

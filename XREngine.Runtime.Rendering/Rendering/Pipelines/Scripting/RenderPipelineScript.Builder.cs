@@ -83,7 +83,18 @@ public sealed partial class RenderPipelineScript
             ArgumentNullException.ThrowIfNull(build);
             IfBuilder builder = new();
             build(builder);
-            _steps.Add(builder.Build(condition));
+            _steps.Add(builder.Build(condition, null));
+            return this;
+        }
+
+        /// <summary>Adds an if command with a data condition, which scripts and tools can save and show.</summary>
+        public Builder If(RenderBranchCondition condition, Action<IfBuilder> build)
+        {
+            ArgumentNullException.ThrowIfNull(condition);
+            ArgumentNullException.ThrowIfNull(build);
+            IfBuilder builder = new();
+            build(builder);
+            _steps.Add(builder.Build(null, condition));
             return this;
         }
 
@@ -93,7 +104,18 @@ public sealed partial class RenderPipelineScript
             ArgumentNullException.ThrowIfNull(build);
             SwitchBuilder builder = new();
             build(builder);
-            _steps.Add(builder.Build(selector));
+            _steps.Add(builder.Build(selector, null));
+            return this;
+        }
+
+        /// <summary>Adds a switch command whose selector is the integer value of a data condition source.</summary>
+        public Builder Switch(RenderBranchCondition condition, Action<SwitchBuilder> build)
+        {
+            ArgumentNullException.ThrowIfNull(condition);
+            ArgumentNullException.ThrowIfNull(build);
+            SwitchBuilder builder = new();
+            build(builder);
+            _steps.Add(builder.Build(null, condition));
             return this;
         }
 
@@ -142,8 +164,8 @@ public sealed partial class RenderPipelineScript
             return this;
         }
 
-        internal IfStep Build(Func<bool> condition)
-            => new(condition, _trueBranch, _falseBranch, _configure);
+        internal IfStep Build(Func<bool>? evaluator, RenderBranchCondition? condition)
+            => new(evaluator, condition, null, _trueBranch, _falseBranch, _configure);
     }
 
     public sealed class SwitchBuilder
@@ -175,7 +197,7 @@ public sealed partial class RenderPipelineScript
             return this;
         }
 
-        internal SwitchStep Build(Func<int> selector)
-            => new(selector, new Dictionary<int, BranchDefinition>(_cases), _defaultCase, _configure);
+        internal SwitchStep Build(Func<int>? selector, RenderBranchCondition? condition)
+            => new(selector, condition, null, new Dictionary<int, BranchDefinition>(_cases), _defaultCase, _configure);
     }
 }

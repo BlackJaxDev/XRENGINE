@@ -10,13 +10,17 @@ namespace XREngine.Rendering;
 // Tokenizer and parser for the script text.
 public sealed partial class RenderPipelineScript
 {
-    private sealed class Parser
+    private sealed partial class Parser
     {
         private readonly List<Token> _tokens;
+        private readonly List<ScriptComment> _markerComments = [];
         private int _index;
 
         public Parser(string script)
-            => _tokens = Tokenize(script);
+            => _tokens = Tokenize(script, _markerComments);
+
+        /// <summary>Gets each marker comment, such as <c>// unconverted:</c> or <c>// base-hash:</c>, in source order.</summary>
+        public IReadOnlyList<ScriptComment> MarkerComments => _markerComments;
 
         public IReadOnlyList<IScriptStep> ParseScript()
         {
@@ -111,25 +115,35 @@ public sealed partial class RenderPipelineScript
         private IScriptStep ParseIfStatement()
         {
             Consume(TokenKind.OpenParen, "Expected '(' after 'if'.");
-            IExpressionNode condition = ParseExpression();
+            Func<bool>? evaluator = null;
+            if (!TryParseDataCondition(forSwitch: false, out RenderBranchCondition? dataCondition))
+            {
+                IExpressionNode condition = ParseExpression();
+                evaluator = () => ScriptRuntimeContext.ToBoolean(condition.Evaluate(ScriptRuntimeContext.CreateActive()));
+            }
+
             Consume(TokenKind.CloseParen, "Expected ')' after if condition.");
+            string? label = ParseBranchLabel();
             BranchDefinition trueBranch = ParseBranchDefinition();
             BranchDefinition? falseBranch = null;
             if (MatchKeyword("else"))
                 falseBranch = ParseBranchDefinition();
 
-            return new IfStep(
-                () => ScriptRuntimeContext.ToBoolean(condition.Evaluate(ScriptRuntimeContext.CreateActive())),
-                trueBranch,
-                falseBranch,
-                null);
+            return new IfStep(evaluator, dataCondition, label, trueBranch, falseBranch, null);
         }
 
         private IScriptStep ParseSwitchStatement()
         {
             Consume(TokenKind.OpenParen, "Expected '(' after 'switch'.");
-            IExpressionNode selectorExpression = ParseExpression();
+            Func<int>? selector = null;
+            if (!TryParseDataCondition(forSwitch: true, out RenderBranchCondition? dataCondition))
+            {
+                IExpressionNode selectorExpression = ParseExpression();
+                selector = () => Convert.ToInt32(selectorExpression.Evaluate(ScriptRuntimeContext.CreateActive()), CultureInfo.InvariantCulture);
+            }
+
             Consume(TokenKind.CloseParen, "Expected ')' after switch selector.");
+            string? label = ParseBranchLabel();
             Consume(TokenKind.OpenBrace, "Expected '{' to begin switch body.");
 
             Dictionary<int, BranchDefinition> cases = [];
@@ -153,19 +167,15 @@ public sealed partial class RenderPipelineScript
                 }
             }
 
-            return new SwitchStep(
-                () => Convert.ToInt32(selectorExpression.Evaluate(ScriptRuntimeContext.CreateActive()), CultureInfo.InvariantCulture),
-                cases,
-                defaultCase,
-                null);
+            return new SwitchStep(selector, dataCondition, label, cases, defaultCase, null);
         }
 
         private IScriptStep ParseCommandStatement()
         {
-            string commandTypeName = ConsumeCommandName("Expected render command method name.").Text;
+            Token nameToken = ConsumeCommandName("Expected render command method name.");
             List<PropertyAssignment> properties = ParsePropertyAssignments();
             Consume(TokenKind.Semicolon, "Expected ';' after command statement.");
-            return new CommandTypeStep(commandTypeName, properties);
+            return new CommandTypeStep(nameToken.Text, properties, nameToken.Line, nameToken.Column);
         }
 
         private IScriptStep ParseRepeatStatement()
@@ -221,13 +231,26 @@ public sealed partial class RenderPipelineScript
                 string constructorName = Advance().Text;
                 Consume(TokenKind.OpenParen, "Expected '(' after constructor name.");
                 List<IValueNode> args = [];
+                List<KeyValuePair<string, IValueNode>>? namedArgs = null;
                 if (!Match(TokenKind.CloseParen))
                 {
-                    do args.Add(ParseValue());
+                    do
+                    {
+                        if (Peek().Kind == TokenKind.Identifier && Peek(1).Kind == TokenKind.Equals)
+                        {
+                            string argumentName = Advance().Text;
+                            Advance();
+                            (namedArgs ??= []).Add(new KeyValuePair<string, IValueNode>(argumentName, ParseValue()));
+                        }
+                        else
+                        {
+                            args.Add(ParseValue());
+                        }
+                    }
                     while (Match(TokenKind.Comma));
                     Consume(TokenKind.CloseParen, "Expected ')' after constructor arguments.");
                 }
-                return new ConstructorNode(constructorName, args);
+                return new ConstructorNode(constructorName, args, namedArgs);
             }
 
             return ParseExpression();
@@ -243,10 +266,10 @@ public sealed partial class RenderPipelineScript
             {
                 do
                 {
-                    string propertyName = Consume(TokenKind.Identifier, "Expected command property name.").Text;
+                    Token propertyToken = Consume(TokenKind.Identifier, "Expected command property name.");
                     Consume(TokenKind.Equals, "Expected '=' after command property name.");
                     IValueNode value = ParseValue();
-                    properties.Add(new PropertyAssignment(propertyName, value));
+                    properties.Add(new PropertyAssignment(propertyToken.Text, value, propertyToken.Line, propertyToken.Column));
                 }
                 while (Match(TokenKind.Comma));
 
@@ -391,7 +414,11 @@ public sealed partial class RenderPipelineScript
                 return uint.Parse(text[..^1], NumberStyles.Integer, CultureInfo.InvariantCulture);
             if (text.Contains('.') || text.Contains('e', StringComparison.OrdinalIgnoreCase))
                 return float.Parse(text.TrimEnd('f', 'F'), NumberStyles.Float, CultureInfo.InvariantCulture);
-            return int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
+            if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intValue))
+                return intValue;
+            if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long longValue))
+                return longValue;
+            return ulong.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
         }
 
         private bool MatchKeyword(string keyword)
@@ -442,10 +469,10 @@ public sealed partial class RenderPipelineScript
             return _tokens[index];
         }
 
-        private InvalidOperationException Error(Token token, string message)
-            => new($"{message} (line {token.Line}, column {token.Column})");
+        private static ScriptSyntaxException Error(Token token, string message)
+            => new(message, token.Line, token.Column);
 
-        private static List<Token> Tokenize(string script)
+        private static List<Token> Tokenize(string script, List<ScriptComment> markerComments)
         {
             List<Token> tokens = [];
             int index = 0;
@@ -477,8 +504,18 @@ public sealed partial class RenderPipelineScript
 
                 if (ch == '/' && index + 1 < script.Length && script[index + 1] == '/')
                 {
+                    int commentStart = index;
+                    int commentLine = line;
+                    int commentColumn = column;
                     while (index < script.Length && script[index] != '\n')
                         AdvancePosition(script[index]);
+
+                    ReadOnlySpan<char> comment = script.AsSpan(commentStart + 2, index - commentStart - 2).Trim();
+                    if (comment.StartsWith(UnconvertedCommentPrefix, StringComparison.OrdinalIgnoreCase))
+                        markerComments.Add(new ScriptComment(UnconvertedCommentPrefix, comment[UnconvertedCommentPrefix.Length..].Trim().ToString(), commentLine, commentColumn));
+                    else if (comment.StartsWith(BaseHashCommentPrefix, StringComparison.OrdinalIgnoreCase))
+                        markerComments.Add(new ScriptComment(BaseHashCommentPrefix, comment[BaseHashCommentPrefix.Length..].Trim().ToString(), commentLine, commentColumn));
+
                     continue;
                 }
 
@@ -491,11 +528,7 @@ public sealed partial class RenderPipelineScript
                     while (index < script.Length && (char.IsLetterOrDigit(script[index]) || script[index] == '_'))
                         AdvancePosition(script[index]);
                     string text = script[start..index];
-                    TokenKind kind = text switch
-                    {
-                        "set" or "clear" or "if" or "else" or "switch" or "case" or "default" or "repeat" or "when" or "foreach_cascade" or "true" or "false" or "null" => TokenKind.Keyword,
-                        _ => TokenKind.Identifier
-                    };
+                    TokenKind kind = IsKeywordText(text) ? TokenKind.Keyword : TokenKind.Identifier;
                     tokens.Add(new Token(kind, text, tokenLine, tokenColumn));
                     continue;
                 }
@@ -610,7 +643,7 @@ public sealed partial class RenderPipelineScript
                     '/' => TokenKind.Slash,
                     '<' => TokenKind.Less,
                     '>' => TokenKind.Greater,
-                    _ => throw new InvalidOperationException($"Unexpected character '{ch}' in render pipeline script at line {line}, column {column}.")
+                    _ => throw new ScriptSyntaxException($"Unexpected character '{ch}' in render pipeline script.", line, column)
                 };
                 tokens.Add(new Token(singleCharKind, ch.ToString(), tokenLine, tokenColumn));
                 AdvancePosition(ch);
@@ -622,6 +655,19 @@ public sealed partial class RenderPipelineScript
     }
 
     private readonly record struct Token(TokenKind Kind, string Text, int Line, int Column);
+
+    /// <summary>Returns true when <paramref name="text"/> is a reserved word of the script language.</summary>
+    private static bool IsKeywordText(string text)
+        => text is "set" or "clear" or "if" or "else" or "switch" or "case" or "default" or "repeat" or "when" or "foreach_cascade" or "true" or "false" or "null";
+
+    /// <summary>A comment that the parser keeps, such as an <c>// unconverted:</c> note.</summary>
+    internal readonly record struct ScriptComment(string Prefix, string Text, int Line, int Column);
+
+    /// <summary>The comment prefix that marks an item an export could not convert. A load reports each one.</summary>
+    internal const string UnconvertedCommentPrefix = "unconverted:";
+
+    /// <summary>The comment prefix of the structure hash of the base of a derived script.</summary>
+    internal const string BaseHashCommentPrefix = "base-hash:";
 
     private enum TokenKind
     {
