@@ -122,16 +122,16 @@ public interface IRenderPreparationState
         => TryPrepareForRendering(out reason);
 
     /// <summary>
-    /// Starts the non-blocking preparation of a draw with <paramref name="material"/>, if it is not started, and gives the
-    /// state of the backend objects that the draw needs: the program link and, on backends that use them, the graphics
-    /// pipelines of the passes that draw the renderer. Call it on the render thread, inside a window renderer scope. It must
-    /// not wait for a link or a compile and must not allocate when nothing changed. The default gives
+    /// Starts the non-blocking preparation of a draw, if it is not started, and gives the state of the backend objects that
+    /// the draw needs: the program link and, on backends that use them, the graphics pipelines of the passes of the view in
+    /// <paramref name="query"/>. Call it on the render thread, inside a window renderer scope. It must not wait for a link
+    /// or a compile and must not allocate when nothing changed. The default gives
     /// <see cref="ERenderDrawReadiness.NotSupported"/>, so a backend that does not report the state is never ready by
     /// accident.
     /// </summary>
-    /// <param name="material">The material of the draw, or null for the material of the renderer.</param>
+    /// <param name="query">The material and the view of the draw.</param>
     /// <param name="reason">The reason of the state, for diagnostics.</param>
-    ERenderDrawReadiness QueryDrawReadiness(XRMaterial? material, out string reason)
+    ERenderDrawReadiness QueryDrawReadiness(in RenderDrawReadinessQuery query, out string reason)
     {
         reason = "the render backend does not report draw readiness";
         return ERenderDrawReadiness.NotSupported;

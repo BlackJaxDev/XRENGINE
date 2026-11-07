@@ -6,43 +6,31 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLMeshRenderer
         {
+            private const string PrepareResultGenerateFailed = "GenerateFailed";
+            private const string PrepareResultMaterialMissing = "MaterialMissing";
+            private const string PrepareResultNoData = "NoData";
+
             /// <summary>
-            /// Gives the draw readiness of this renderer with its own material. It runs the same preparation as
-            /// <see cref="TryPrepareForRendering()"/>, which never waits for a link: the program link goes through the
+            /// Gives the draw readiness of this renderer with a material. With the material of the renderer, it runs the
+            /// same preparation as <see cref="TryPrepareForRendering()"/>. With another material (a material override), it
+            /// runs the program step of the draw path for that material (<see cref="GetPrograms"/>), which links the
+            /// programs of the override as the draw would. Neither step waits for a link: the program link goes through the
             /// compile and link queue, and with GL_KHR_parallel_shader_compile or GL_ARB_parallel_shader_compile the queue
-            /// polls GL_COMPLETION_STATUS. A draw that would use a temporary fallback program while the real program links
-            /// is not ready. A program whose backend build failed gives <see cref="ERenderDrawReadiness.Failed"/>.
+            /// polls GL_COMPLETION_STATUS.
             /// </summary>
             /// <remarks>
-            /// OpenGL links one program set for the material of the renderer. A draw with another material (a material
-            /// override) links its programs at the first draw, so this check gives
-            /// <see cref="ERenderDrawReadiness.NotSupported"/> for it and does not report a state it cannot see.
+            /// A draw that would use a temporary fallback program while the real program links is not ready. A program
+            /// whose backend build failed gives <see cref="ERenderDrawReadiness.Failed"/>. OpenGL programs do not depend on
+            /// the render pass, so the view of the query does not change the result.
             /// </remarks>
-            public ERenderDrawReadiness QueryDrawReadiness(XRMaterial? material, out string reason)
+            public ERenderDrawReadiness QueryDrawReadiness(in RenderDrawReadinessQuery query, out string reason)
             {
+                XRMaterial? material = query.Material;
                 if (material is not null && !ReferenceEquals(material, MeshRenderer.Material))
-                {
-                    reason = "the OpenGL check covers the material of the renderer only, not a material override";
-                    return ERenderDrawReadiness.NotSupported;
-                }
+                    return QueryOverrideDrawReadiness(material, out reason);
 
                 if (TryPrepareForRendering(0.0))
-                {
-                    if (_combinedProgram is { IsAsyncBuildPending: true })
-                    {
-                        reason = "the combined program links; a temporary program draws in its place";
-                        return ERenderDrawReadiness.Compiling;
-                    }
-
-                    if (_combinedProgramMaterialKey is { } programMaterial && IsPendingUberFallbackMaterial(programMaterial))
-                    {
-                        reason = "the uber variant builds; a fallback material draws in its place";
-                        return ERenderDrawReadiness.Compiling;
-                    }
-
-                    reason = _lastPrepareResult;
-                    return ERenderDrawReadiness.Ready;
-                }
+                    return ReadProgramFallbackState(out reason);
 
                 if (TryGetFailedProgramReason(out string failureReason))
                 {
@@ -51,11 +39,75 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 reason = _lastPrepareResult;
-                return _lastPrepareResult switch
+                return ClassifyPrepareResult(_lastPrepareResult);
+            }
+
+            /// <summary>Maps a not-ready preparation result to a draw readiness state.</summary>
+            internal static ERenderDrawReadiness ClassifyPrepareResult(string prepareResult)
+                => prepareResult switch
                 {
-                    "GenerateFailed" or "MaterialMissing" or "NoData" => ERenderDrawReadiness.Failed,
+                    PrepareResultGenerateFailed or PrepareResultMaterialMissing or PrepareResultNoData => ERenderDrawReadiness.Failed,
                     _ => ERenderDrawReadiness.Compiling,
                 };
+
+            private ERenderDrawReadiness QueryOverrideDrawReadiness(XRMaterial material, out string reason)
+            {
+                if (Data is null)
+                {
+                    reason = PrepareResultNoData;
+                    return ERenderDrawReadiness.Failed;
+                }
+
+                if (!IsGenerated)
+                {
+                    Generate();
+                    if (!IsGenerated)
+                    {
+                        reason = PrepareResultGenerateFailed;
+                        return ERenderDrawReadiness.Failed;
+                    }
+                }
+
+                EnsureProgramsMatchRenderSettings();
+                EnsureProgramsMatchMaterialShaderState();
+                GLMaterial glMaterial = GetRenderMaterial(material);
+                if (!GetPrograms(glMaterial, out _, out _))
+                {
+                    if (TryGetFailedProgramReason(out string failureReason))
+                    {
+                        reason = failureReason;
+                        return ERenderDrawReadiness.Failed;
+                    }
+
+                    reason = "the programs of the material override link";
+                    return ERenderDrawReadiness.Compiling;
+                }
+
+                if (!AreBuffersReadyForRendering())
+                {
+                    reason = "BuffersNotReady";
+                    return ERenderDrawReadiness.Compiling;
+                }
+
+                return ReadProgramFallbackState(out reason);
+            }
+
+            private ERenderDrawReadiness ReadProgramFallbackState(out string reason)
+            {
+                if (_combinedProgram is { IsAsyncBuildPending: true })
+                {
+                    reason = "the combined program links; a temporary program draws in its place";
+                    return ERenderDrawReadiness.Compiling;
+                }
+
+                if (_combinedProgramMaterialKey is { } programMaterial && IsPendingUberFallbackMaterial(programMaterial))
+                {
+                    reason = "the uber variant builds; a fallback material draws in its place";
+                    return ERenderDrawReadiness.Compiling;
+                }
+
+                reason = "Ready";
+                return ERenderDrawReadiness.Ready;
             }
 
             /// <summary>Gets the reason when a program of this renderer has a failed backend build.</summary>

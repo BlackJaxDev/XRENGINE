@@ -24,6 +24,12 @@ public interface ICutsceneOpenHost
     /// <summary>The binding table of the open cutscene, or null.</summary>
     CutsceneBindingTable? OpenBindings { get; }
 
+    /// <summary>
+    /// The desktop viewport that shows the cutscene camera, or null when no viewport shows it. The open measures the T0 draw
+    /// readiness against the render passes of this viewport, so another view or a shadow pass does not decide it.
+    /// </summary>
+    XREngine.Rendering.XRViewport? OpenViewport => null;
+
     /// <summary>Connects a sequence, so that it advances at the end of each frame.</summary>
     /// <param name="sequence">The sequence.</param>
     void AttachOpenSequence(CutsceneOpenSequence sequence);

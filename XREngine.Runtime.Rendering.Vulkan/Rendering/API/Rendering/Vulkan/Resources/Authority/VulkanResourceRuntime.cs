@@ -231,6 +231,9 @@ internal sealed partial class VulkanResourceRuntime
         }
     }
     internal VulkanPipelineManager PipelineManager { get; } = new();
+
+    /// <summary>The active draw readiness requests, which the pre-recording pipeline admission prewarms.</summary>
+    internal VulkanDrawReadinessRegistry DrawReadiness { get; } = new();
     internal VulkanBackendObjectContext? BackendObjectContext;
     internal bool AllowSynchronousResourceUploads { get; private set; }
 

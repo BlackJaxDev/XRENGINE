@@ -385,6 +385,8 @@ public sealed class CutscenePreviewHost : ICutsceneOpenHost
     /// <inheritdoc/>
     CutsceneResidencySession? ICutsceneOpenHost.OpenResidency => _residency;
 
+    XREngine.Rendering.XRViewport? ICutsceneOpenHost.OpenViewport => _router?.Viewport;
+
     /// <inheritdoc/>
     CutsceneBindingTable? ICutsceneOpenHost.OpenBindings => _bindings;
 

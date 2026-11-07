@@ -335,18 +335,25 @@ payload split). The GPU routes follow these rules:
   resident LOD draws. With no active backend, the check runs at once.
   On Vulkan, the first draw of the new renderer is still a cold mesh admission
   in the frame loop, so PresentNow can still reject frames for it.
-- `XRMeshRenderer.QueryDrawReadiness(material)` (the backend
-  `IRenderPreparationState.QueryDrawReadiness`) gives `ERenderDrawReadiness`
-  for one renderer and material: `NotStarted`, `Compiling`, `Ready`, `Failed`,
-  or `NotSupported`, the default for a backend that does not implement it. It
-  runs on the render thread and never waits for a link or a compile. OpenGL
-  reports the non-blocking program preparation and treats a temporary fallback
-  program as compiling. Vulkan reports the program and buffers, and then the
-  results that `VkMeshRenderer.EnsurePipelineCore` recorded for the renderer in
-  each pass context (pre-recording admission and draw recording) with that
-  material and the current program link generation. A renderer that no frame
-  drew with them is `NotStarted`. The cutscene open uses it for
-  `ReadyForInstantSeek`.
+- `XRMeshRenderer.QueryDrawReadiness(material, view)` (the backend
+  `IRenderPreparationState.QueryDrawReadiness` with a
+  `RenderDrawReadinessQuery`) gives `ERenderDrawReadiness` for one renderer and
+  material in the passes of one view: `NotStarted`, `Compiling`, `Ready`,
+  `Failed`, or `NotSupported`, the default for a backend that does not
+  implement it. It runs on the render thread and never waits for a link or a
+  compile. With a headset or emulated VR output it also checks the stereo
+  version. OpenGL reports the non-blocking program preparation (also for a
+  material override) and treats a temporary fallback program as compiling.
+  Vulkan reports the program and buffers, and then the last frame result of
+  `VulkanDrawReadinessRegistry`: while a query is active, the pre-recording
+  pipeline admission prewarms the pipelines of the renderer and material for
+  each non-shadow pass context of the view that draws the pass of the material
+  (a CPU mesh draw of that pass is the template; the draw state comes from
+  `VulkanMeshDrawFixedState`, the same rules as the draw enqueue), checks the
+  indirect batch of the material on GPU-driven routes, and checks the mesh-task
+  requirement on meshlet routes. It is ready only when every required context
+  is ready. A frame with no active query pays one volatile read; draws pay
+  nothing. The cutscene open uses it for `ReadyForInstantSeek`.
 
 The render-command path takes the LOD levels from the render info owner. A model
 component owns the render info of its renderable meshes, so those commands

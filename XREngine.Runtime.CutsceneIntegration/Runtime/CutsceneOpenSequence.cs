@@ -53,6 +53,9 @@ public sealed class CutsceneOpenSequence
     private CancellationToken _cancellationToken;
     private IProgress<float>? _progress;
     private bool[] _diagnosticReported = [];
+    private bool[] _waitWarningReported = [];
+    private int[] _notReadyFrames = [];
+    private CutsceneBindingTable? _collectedBindings;
     private int _initialPendingProxies;
     private int _cancelRequested;
     private float _reportedProgress = -1.0f;
@@ -103,6 +106,12 @@ public sealed class CutsceneOpenSequence
 
     /// <summary>The number of T0 draws whose backend did not report the state at the last frame.</summary>
     public int UnsupportedProgramCount { get; private set; }
+
+    /// <summary>
+    /// The number of host frames that a T0 draw can stay not started or compiling before the open adds one diagnostic for it.
+    /// The open keeps waiting after the diagnostic.
+    /// </summary>
+    public int ProgramWaitWarningFrames { get; set; } = 1800;
 
     /// <summary>The number of T0 loads that did not complete at the last frame.</summary>
     public int PendingProxyCount { get; private set; }
@@ -156,14 +165,8 @@ public sealed class CutsceneOpenSequence
         _cancellationToken = cancellationToken;
         _completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        if (_host.OpenBindings is { } bindings)
-            CollectMaterials(bindings);
-        _diagnosticReported = new bool[_proxyDraws.Count];
-        for (int i = 0; i < _proxyDraws.Count; i++)
-        {
-            CutsceneProxyDraw draw = _proxyDraws[i];
-            _prewarmer.Request(draw.Material, draw.ResolveRenderer());
-        }
+        UpdatePrewarmerView();
+        CollectAndRequestDraws();
 
         if (_host.OpenResidency is { } residency)
             _initialPendingProxies = residency.PendingProxyCount;
@@ -230,6 +233,16 @@ public sealed class CutsceneOpenSequence
             return;
         }
 
+        UpdatePrewarmerView();
+
+        // A preview recompile spawns the instances again and makes a new binding table, so the old draws point to
+        // destroyed renderables. Collect the draws again from the new bindings.
+        if (!ReferenceEquals(_host.OpenBindings, _collectedBindings))
+        {
+            _prewarmer.Reset();
+            CollectAndRequestDraws();
+        }
+
         CutsceneResidencySession? residency = _host.OpenResidency;
         int pendingProxies = residency is { IsClosed: false } ? residency.PendingProxyCount : 0;
         PendingProxyCount = pendingProxies;
@@ -242,7 +255,9 @@ public sealed class CutsceneOpenSequence
         for (int i = 0; i < _proxyDraws.Count; i++)
         {
             CutsceneProxyDraw draw = _proxyDraws[i];
-            switch (_prewarmer.GetState(draw.Material, draw.ResolveRenderer(), out string? reason))
+            ECutsceneProgramState state = _prewarmer.GetState(draw.Material, draw.ResolveRenderer(), out string? reason);
+            TrackWait(i, draw, state, reason);
+            switch (state)
             {
                 case ECutsceneProgramState.NotStarted:
                     notStarted++;
@@ -298,6 +313,54 @@ public sealed class CutsceneOpenSequence
         _cancelRegistration.Dispose();
         _host.DetachOpenSequence(this);
         _completion?.TrySetResult(result);
+    }
+
+    private void UpdatePrewarmerView()
+        => _prewarmer.View = _host.OpenViewport?.RenderPipelineInstance;
+
+    // Open-time work, and again after a preview recompile: the lists and arrays are made one time for each collection.
+    private void CollectAndRequestDraws()
+    {
+        _proxyDraws.Clear();
+        _proxyMaterials.Clear();
+        _detailMaterials.Clear();
+        _collectedBindings = _host.OpenBindings;
+        if (_collectedBindings is { } bindings)
+            CollectMaterials(bindings);
+
+        _diagnosticReported = new bool[_proxyDraws.Count];
+        _waitWarningReported = new bool[_proxyDraws.Count];
+        _notReadyFrames = new int[_proxyDraws.Count];
+        for (int i = 0; i < _proxyDraws.Count; i++)
+        {
+            CutsceneProxyDraw draw = _proxyDraws[i];
+            _prewarmer.Request(draw.Material, draw.ResolveRenderer());
+        }
+    }
+
+    /// <summary>
+    /// Counts the frames that a draw stays not started or compiling. After <see cref="ProgramWaitWarningFrames"/> frames it
+    /// adds one diagnostic for the draw that names the material, the renderer, the mesh submission strategy, the state, and
+    /// the reason. The open keeps waiting: a wait that does not end is shown, never hidden and never completed in silence.
+    /// </summary>
+    private void TrackWait(int drawIndex, CutsceneProxyDraw draw, ECutsceneProgramState state, string? reason)
+    {
+        if (state is not (ECutsceneProgramState.NotStarted or ECutsceneProgramState.Compiling))
+        {
+            _notReadyFrames[drawIndex] = 0;
+            return;
+        }
+
+        if (++_notReadyFrames[drawIndex] < ProgramWaitWarningFrames || _waitWarningReported[drawIndex])
+            return;
+
+        _waitWarningReported[drawIndex] = true;
+        string message =
+            $"The T0 draw of proxy material '{draw.Material.Name ?? "<unnamed>"}' on renderer '{draw.ResolveRenderer()?.Name ?? "<none>"}' " +
+            $"is still {state} after {_notReadyFrames[drawIndex]} frames (mesh submission strategy {RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy()}): " +
+            $"{reason ?? "no reason was given"}. ReadyForInstantSeek stays false while the open waits.";
+        _host.AddOpenDiagnostic(message);
+        Debug.LogWarning(ELogCategory.Animation, "Cutscene open: {0}", message);
     }
 
     private void ReportDrawDiagnostic(int drawIndex, XRMaterial material, string problem, string? reason)

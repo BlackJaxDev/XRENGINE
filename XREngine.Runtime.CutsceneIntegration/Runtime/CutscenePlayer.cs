@@ -234,16 +234,21 @@ public sealed class CutscenePlayer
     /// <remarks>
     /// <para>
     /// With the default <see cref="CutsceneBackendProgramPrewarmer"/>, a T0 draw is ready when the uber variant build of its
-    /// material is ready and the backend reports the draw as ready (<see cref="XREngine.Rendering.XRMeshRenderer.QueryDrawReadiness"/>): on
-    /// OpenGL, the program link; on Vulkan, the program and the graphics pipelines that the frame loop resolved for the draws
-    /// of the renderer with that material. A failed draw, or a backend that does not report the state, adds a diagnostic and
-    /// keeps the flag false.
+    /// material is ready and the backend reports the draw as ready (<see cref="XREngine.Rendering.XRMeshRenderer.QueryDrawReadiness"/>)
+    /// in the passes of the viewport that shows the cutscene camera: on OpenGL, the program link of the material (also a
+    /// material override); on Vulkan, the program and the graphics pipelines of every non-shadow pass context of that view
+    /// that draws the pass of the material. The Vulkan pre-recording admission prewarms those pipelines, also for a T0
+    /// renderer that no view draws yet, and checks the batch or mesh-task pipelines on GPU-driven routes. With a headset or
+    /// emulated VR output, the stereo version of the renderer must also be ready. A failed draw, or a backend that does not
+    /// report the state, adds a diagnostic and keeps the flag false. A draw that stays not ready for many frames adds one
+    /// diagnostic, and the open keeps waiting.
     /// </para>
     /// <para>
-    /// On Vulkan, the pipeline variant of a draw is known only after a frame drew the renderer, so a T0 renderer that no frame
-    /// drew (for example, one that is outside the view at the open) keeps the flag false until a frame draws it. The flag is
-    /// also false for a player that no open sequence opened, for a host with no residency session (T0 residency is then not
-    /// known), and for the new player of a preview recompile.
+    /// The readiness follows each frame until the open finishes, so a program or pipeline change before then makes a draw not
+    /// ready again. The flag is not checked again after it is true. On Vulkan, a view that draws no pass of the material in a
+    /// frame gives no pipeline variant, so the draw stays not started until the view draws that pass. The flag is also false
+    /// for a player that no open sequence opened and for a host with no residency session (T0 residency is then not known). A
+    /// preview recompile during the open collects the draws again from the new instances.
     /// </para>
     /// </remarks>
     public bool ReadyForInstantSeek { get; internal set; }

@@ -65,6 +65,10 @@ public sealed class CutsceneOpenSequenceTests
 
         public int StopCount { get; private set; }
 
+        public int ResetCount { get; private set; }
+
+        public XRRenderPipelineInstance? View { get; set; }
+
         public void Request(XRMaterial material, XRMeshRenderer? renderer)
         {
             Requested.Add(material);
@@ -85,6 +89,9 @@ public sealed class CutsceneOpenSequenceTests
 
         public void Stop()
             => StopCount++;
+
+        public void Reset()
+            => ResetCount++;
     }
 
     private sealed class RecordingProgress : IProgress<float>
@@ -519,6 +526,104 @@ public sealed class CutsceneOpenSequenceTests
 
         task.Result.ShouldBeFalse();
         rig.Director.Player.ShouldNotBeNull().ReadyForInstantSeek.ShouldBeFalse();
+        rig.Director.Close();
+    }
+
+    [Test]
+    public void ADrawThatNeverBecomesReady_AddsOneTimeoutDiagnostic_AndTheOpenKeepsWaiting()
+    {
+        Rig rig = MakeRig(withSecondMesh: true);
+        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.NotStarted, "no frame drew the renderer");
+        rig.Prewarmer.States[SecondProxyMaterial] = (ECutsceneProgramState.Ready, null);
+        CutsceneOpenSequence sequence = new(rig.Director, rig.Prewarmer) { ProgramWaitWarningFrames = 3 };
+        Task<bool> task = Start(rig, sequence, null, CancellationToken.None);
+        CompleteProxies(rig.Backend);
+
+        for (int i = 0; i < 6; i++)
+            rig.Director.AdvanceFrame(0);
+
+        task.IsCompleted.ShouldBeFalse();
+        rig.Director.Player.ShouldNotBeNull().ReadyForInstantSeek.ShouldBeFalse();
+        rig.Director.Diagnostics.Count(d =>
+            d.Message.Contains("ProxyMaterial", StringComparison.Ordinal) &&
+            d.Message.Contains("still NotStarted", StringComparison.Ordinal) &&
+            d.Message.Contains("no frame drew the renderer", StringComparison.Ordinal) &&
+            d.Message.Contains("mesh submission strategy", StringComparison.Ordinal)).ShouldBe(1);
+        rig.Director.Diagnostics.ShouldNotContain(d => d.Message.Contains("SecondProxyMaterial", StringComparison.Ordinal));
+
+        // The wait still ends when the draw becomes ready.
+        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Ready, null);
+        rig.Director.AdvanceFrame(0);
+        task.Result.ShouldBeTrue();
+        rig.Director.Close();
+    }
+
+    [Test]
+    public void ACompilingDraw_AlsoGetsTheTimeoutDiagnostic()
+    {
+        Rig rig = MakeRig();
+        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Compiling, "graphics pipeline compile is queued");
+        CutsceneOpenSequence sequence = new(rig.Director, rig.Prewarmer) { ProgramWaitWarningFrames = 2 };
+        Task<bool> task = Start(rig, sequence, null, CancellationToken.None);
+        CompleteProxies(rig.Backend);
+
+        for (int i = 0; i < 4; i++)
+            rig.Director.AdvanceFrame(0);
+
+        task.IsCompleted.ShouldBeFalse();
+        rig.Director.Diagnostics.Count(d => d.Message.Contains("still Compiling", StringComparison.Ordinal)).ShouldBe(1);
+        rig.Director.Close();
+    }
+
+    [Test]
+    public void PreviewRecompile_DuringTheOpen_CollectsTheDrawsAgain_FromTheNewInstances()
+    {
+        Rig rig = MakeRig();
+        CutscenePreviewHost host = new(new FakeResolver(rig.Node), residencyBackendFactory: () => rig.Backend);
+        Task<bool> task = host.BeginWithOpenSequence(rig.Asset, out CutsceneOpenSequence sequence, rig.Prewarmer);
+        try
+        {
+            rig.Backend.Planner = host.Residency.ShouldNotBeNull().Planner;
+            host.Tick(0);
+            int requestsBefore = rig.Prewarmer.Requested.Count;
+            rig.Prewarmer.ResetCount.ShouldBe(0);
+
+            host.NotifyAssetEdited();
+            host.Tick(0);
+
+            rig.Prewarmer.ResetCount.ShouldBe(1);
+            rig.Prewarmer.Requested.Count.ShouldBeGreaterThan(requestsBefore);
+            sequence.ProxyDrawCount.ShouldBe(1);
+            sequence.ProxyMaterials.ShouldBe([rig.ProxyMaterial]);
+            task.IsCompleted.ShouldBeFalse();
+
+            if (host.Residency is { } residency)
+                rig.Backend.Planner = residency.Planner;
+            rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Ready, null);
+            CompleteProxies(rig.Backend);
+            host.Tick(0);
+            host.Tick(0);
+
+            task.Result.ShouldBeTrue();
+            host.Player.ShouldNotBeNull().ReadyForInstantSeek.ShouldBeTrue();
+        }
+        finally
+        {
+            host.End();
+        }
+    }
+
+    [Test]
+    public void TheOpen_SetsTheViewOfThePrewarmer_FromTheHostViewport()
+    {
+        Rig rig = MakeRig();
+        CutsceneOpenSequence sequence = new(rig.Director, rig.Prewarmer);
+
+        Start(rig, sequence, null, CancellationToken.None);
+        rig.Director.AdvanceFrame(0);
+
+        // The test director has no target viewport, so no view filter is set.
+        rig.Prewarmer.View.ShouldBeNull();
         rig.Director.Close();
     }
 }

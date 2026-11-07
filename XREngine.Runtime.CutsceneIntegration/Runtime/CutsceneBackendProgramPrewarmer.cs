@@ -4,7 +4,7 @@ namespace XREngine.Cutscenes;
 
 /// <summary>
 /// The default program prewarmer. It sees the material variant build and the backend state of each T0 draw: the program
-/// link and, on Vulkan, the graphics pipelines of the passes that draw the renderer.
+/// link and, on Vulkan, the graphics pipelines of the passes of the cutscene view.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -13,11 +13,15 @@ namespace XREngine.Cutscenes;
 /// A material without uber state needs no variant build.
 /// </para>
 /// <para>
-/// The backend step runs on the render thread. One render-thread coroutine for each open calls
-/// <see cref="XRMeshRenderer.QueryDrawReadiness"/> once in each frame for each draw whose state is not final, and stores the
-/// result. The update thread only reads the stored results, so it never waits for the render thread or for a compile.
-/// Ready, failed, and not-supported states are final. The coroutine ends when every draw has a final state or when
-/// <see cref="Stop"/> is called. One closure and one entry for each draw are made at the open; a frame allocates nothing.
+/// The backend step runs on the render thread. One render-thread coroutine for each open checks each draw once in each
+/// frame and stores the result. While the uber variant of a material builds, the draw is
+/// <see cref="ECutsceneProgramState.Compiling"/> and the backend is not asked, because the variant changes the program and
+/// the pipelines. Otherwise it calls <see cref="XRMeshRenderer.QueryDrawReadiness"/> with <see cref="View"/>. Only
+/// failed and not-supported states are final. A ready draw is checked again in each frame, so a later program or pipeline
+/// change makes it not ready again. The coroutine ends at <see cref="Stop"/>. A query that throws makes that draw failed,
+/// with the exception message, and the coroutine continues. The update thread only reads the stored results, so it never
+/// waits for the render thread or for a compile. One closure and one entry for each draw are made at the open; a frame
+/// allocates nothing.
 /// </para>
 /// <para>
 /// The draw is ready only when both steps are ready. A failed variant build or a failed backend build gives
@@ -28,6 +32,7 @@ namespace XREngine.Cutscenes;
 public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
 {
     private const string ReadinessCoroutineName = "CutsceneOpen.ProgramReadiness";
+    private const string VariantBuildsReason = "the uber shader variant builds";
 
     /// <summary>One T0 draw: the update thread writes the key, and the render thread writes the state and the reason.</summary>
     private sealed class DrawEntry(XRMaterial material, XRMeshRenderer renderer)
@@ -40,31 +45,45 @@ public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
 
     private readonly CutsceneDrawReadinessProbe _probe;
     private readonly Action<Func<bool>>? _scheduler;
+    private readonly Func<XRMaterial, bool> _isVariantReady;
     private readonly Func<bool> _step;
     private readonly Dictionary<(XRMaterial Material, XRMeshRenderer Renderer), DrawEntry> _entriesByKey = [];
     private readonly List<DrawEntry> _entries = [];
     private readonly Lock _entriesLock = new();
+    private XRRenderPipelineInstance? _view;
     private int _running;
     private int _stopped;
 
     /// <summary>Creates a prewarmer that checks the active render backend. Create one for each open.</summary>
     public CutsceneBackendProgramPrewarmer()
-        : this(DefaultProbe, null)
+        : this(DefaultProbe, null, null)
     {
     }
 
-    /// <summary>Creates a prewarmer with another backend probe and scheduler. Tests use it.</summary>
+    /// <summary>Creates a prewarmer with another backend probe, scheduler, and variant check. Tests use it.</summary>
     /// <param name="probe">Gives the backend state of a draw. It runs where the scheduler runs the step.</param>
     /// <param name="scheduler">
     /// Schedules the readiness step, or null for the render-thread coroutine of the host. The step follows the coroutine
     /// contract: it returns true when it is complete and false to run again in the next frame.
     /// </param>
-    internal CutsceneBackendProgramPrewarmer(CutsceneDrawReadinessProbe probe, Action<Func<bool>>? scheduler)
+    /// <param name="isVariantReady">Tells if the uber variant of a material is ready, or null for the material state.</param>
+    internal CutsceneBackendProgramPrewarmer(
+        CutsceneDrawReadinessProbe probe,
+        Action<Func<bool>>? scheduler,
+        Func<XRMaterial, bool>? isVariantReady)
     {
         ArgumentNullException.ThrowIfNull(probe);
         _probe = probe;
         _scheduler = scheduler;
+        _isVariantReady = isVariantReady ?? DefaultIsVariantReady;
         _step = Step;
+    }
+
+    /// <inheritdoc/>
+    public XRRenderPipelineInstance? View
+    {
+        get => Volatile.Read(ref _view);
+        set => Volatile.Write(ref _view, value);
     }
 
     /// <inheritdoc/>
@@ -94,15 +113,23 @@ public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
         }
 
         DrawEntry entry = GetOrAddEntry(material, renderer);
-        if (!material.IsUberVariantReadyForRendering())
+        if (!_isVariantReady(material))
         {
-            reason = "the uber shader variant builds";
+            reason = VariantBuildsReason;
             return ECutsceneProgramState.Compiling;
         }
 
         ERenderDrawReadiness backendState = (ERenderDrawReadiness)Volatile.Read(ref entry.State);
         reason = Volatile.Read(ref entry.Reason);
         return ToProgramState(backendState);
+    }
+
+    /// <inheritdoc/>
+    public void Reset()
+    {
+        _entriesByKey.Clear();
+        lock (_entriesLock)
+            _entries.Clear();
     }
 
     /// <inheritdoc/>
@@ -120,11 +147,19 @@ public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
             _ => ECutsceneProgramState.NotSupported,
         };
 
-    private static ERenderDrawReadiness DefaultProbe(XRMeshRenderer renderer, XRMaterial material, out string reason)
-        => renderer.QueryDrawReadiness(material, out reason);
+    private static ERenderDrawReadiness DefaultProbe(
+        XRMeshRenderer renderer,
+        XRMaterial material,
+        XRRenderPipelineInstance? view,
+        out string reason)
+        => renderer.QueryDrawReadiness(material, view, out reason);
 
+    private static bool DefaultIsVariantReady(XRMaterial material)
+        => material.IsUberVariantReadyForRendering();
+
+    /// <summary>True for a state that a later check cannot change: failed or not supported. Ready is not final.</summary>
     private static bool IsFinal(ERenderDrawReadiness state)
-        => state is ERenderDrawReadiness.Ready or ERenderDrawReadiness.Failed or ERenderDrawReadiness.NotSupported;
+        => state is ERenderDrawReadiness.Failed or ERenderDrawReadiness.NotSupported;
 
     // Open-time work: one entry for each new draw. A known draw allocates nothing.
     private DrawEntry GetOrAddEntry(XRMaterial material, XRMeshRenderer renderer)
@@ -155,6 +190,7 @@ public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
         if (!RuntimeRenderingHostServices.HasConcreteHost)
         {
             _ = _step();
+            Volatile.Write(ref _running, 0);
             return;
         }
 
@@ -162,8 +198,8 @@ public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
     }
 
     /// <summary>
-    /// Checks each draw whose state is not final one time. It follows the coroutine contract: true when the work is complete
-    /// (every draw has a final state, or the open stopped), false to check again in the next frame.
+    /// Checks each draw whose state is not final one time. It follows the coroutine contract: true when the open stopped,
+    /// false to check again in the next frame.
     /// </summary>
     private bool Step()
     {
@@ -173,37 +209,55 @@ public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
             return true;
         }
 
-        int count;
-        lock (_entriesLock)
-            count = _entries.Count;
-
-        bool allFinal = true;
-        for (int i = 0; i < count; i++)
+        XRRenderPipelineInstance? view = Volatile.Read(ref _view);
+        for (int i = 0; ; i++)
         {
             DrawEntry entry;
             lock (_entriesLock)
+            {
+                if (i >= _entries.Count)
+                    break;
                 entry = _entries[i];
+            }
 
             if (IsFinal((ERenderDrawReadiness)Volatile.Read(ref entry.State)))
                 continue;
 
-            ERenderDrawReadiness state = _probe(entry.Renderer, entry.Material, out string reason);
-            Volatile.Write(ref entry.Reason, reason);
-            Volatile.Write(ref entry.State, (int)state);
-            if (!IsFinal(state))
-                allFinal = false;
+            CheckEntry(entry, view);
         }
 
-        if (!allFinal)
-            return false;
+        return false;
+    }
 
-        // An entry added after the count was read needs another step. Keep the coroutine if one was added.
-        Volatile.Write(ref _running, 0);
-        int countAfter;
-        lock (_entriesLock)
-            countAfter = _entries.Count;
-        if (countAfter != count && Volatile.Read(ref _stopped) == 0 && Interlocked.CompareExchange(ref _running, 1, 0) == 0)
-            return false;
-        return true;
+    private void CheckEntry(DrawEntry entry, XRRenderPipelineInstance? view)
+    {
+        ERenderDrawReadiness state;
+        string reason;
+        try
+        {
+            if (!_isVariantReady(entry.Material))
+            {
+                // The variant replaces the program and the pipelines, so a backend result now would be stale.
+                state = ERenderDrawReadiness.Compiling;
+                reason = VariantBuildsReason;
+            }
+            else
+            {
+                state = _probe(entry.Renderer, entry.Material, view, out reason);
+            }
+        }
+        catch (Exception ex)
+        {
+            state = ERenderDrawReadiness.Failed;
+            reason = $"the readiness check threw {ex.GetType().Name}: {ex.Message}";
+            Debug.LogWarning(
+                ELogCategory.Animation,
+                "Cutscene open: the readiness check of material '{0}' threw. The draw is marked failed. {1}",
+                entry.Material.Name ?? "<unnamed>",
+                ex);
+        }
+
+        Volatile.Write(ref entry.Reason, reason);
+        Volatile.Write(ref entry.State, (int)state);
     }
 }

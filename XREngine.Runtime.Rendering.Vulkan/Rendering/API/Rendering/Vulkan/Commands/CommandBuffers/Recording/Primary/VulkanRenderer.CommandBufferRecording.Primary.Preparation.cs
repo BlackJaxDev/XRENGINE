@@ -2421,9 +2421,16 @@ namespace XREngine.Rendering.Vulkan
                 scratch, pipelineRetirementGeneration);
             if (pipelineVariantManifest.IsWarmForPipelineGeneration(
                     pipelineRetirementGeneration))
+            {
+                PrewarmDrawReadinessRequests(
+                    ref recordingState,
+                    pipelineVariantManifest,
+                    pendingRequirements: null,
+                    admissionComplete: true);
                 return TryAssociatePrimaryMeshTaskPipelines(
                     ref recordingState,
                     pipelineVariantManifest);
+            }
 
             HashSet<int> pendingRequirements =
                 scratch.PipelineDeferredRequirementIndices;
@@ -2535,6 +2542,12 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.PipelineDeferredOperationIndices,
                 optionalRequirements,
                 pipelineVariantManifest);
+
+            PrewarmDrawReadinessRequests(
+                ref recordingState,
+                pipelineVariantManifest,
+                pendingRequirements,
+                initialScanComplete);
 
             if (!initialScanComplete || pendingRequirements.Count > 0)
             {
