@@ -110,7 +110,7 @@ public sealed class CutscenePlayer
         _cameraCut = new CameraCutTrackEvaluator(_diagnostics);
         _animation = new AnimationClipTrackEvaluator(compiled, bindings, _diagnostics);
         _audio = new AudioTrackEvaluator(compiled, _clock, _diagnostics, openAudioDecoder, time, audioSeekScheduler);
-        _video = new VideoTrackEvaluator(compiled, _diagnostics, createVideoSession);
+        _video = new VideoTrackEvaluator(compiled, _diagnostics, createVideoSession, time);
         _evaluators =
         [
             new TransformTrackEvaluator(bindings.SlotCount, _diagnostics),

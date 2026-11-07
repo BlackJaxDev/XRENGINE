@@ -14,7 +14,8 @@ namespace XREngine.Cutscenes;
 /// <para>
 /// The video follows the cutscene time. In forward playback, the decoder runs forward and the cutscene time releases each
 /// frame. During a drag of the playhead (a scrub seek, or reverse playback), the track shows the nearest keyframe at or
-/// before the time. When the playhead stops (a tick with no scrub move), a pause, or a jump, the track decodes the exact
+/// before the time. When the wanted time of a drag stays the same for <see cref="CutsceneVideoChannel.DragDwellSeconds"/>
+/// (the editor sends a scrub seek in each frame while the ruler is held), a pause, or a jump, the track decodes the exact
 /// frame. A frame in the cache shows with no decode. All decoding runs on the decoder thread of the session; the update
 /// thread never waits for it, so a result shows in a later tick.
 /// </para>
@@ -42,7 +43,6 @@ public sealed class VideoTrackEvaluator : ICutsceneTrackEvaluator
     private bool _playingForward;
     private bool _moving;
     private bool _discontinuity;
-    private bool _evaluatedSinceUpdate;
 
     private const int CodeNoTarget = 100;
     private const int CodeOverlap = 101;
@@ -54,9 +54,20 @@ public sealed class VideoTrackEvaluator : ICutsceneTrackEvaluator
     /// Creates a media session. It runs on a background task. Null uses <see cref="CreateDefaultSession"/>.
     /// </param>
     public VideoTrackEvaluator(CompiledCutscene compiled, List<CutsceneCompileDiagnostic> diagnostics, Func<IMediaStreamSession>? createSession = null)
+        : this(compiled, diagnostics, createSession, TimeProvider.System)
+    {
+    }
+
+    /// <summary>Creates an evaluator with a wall clock for the drag dwell. A test gives a fake clock.</summary>
+    /// <param name="compiled">The compiled cutscene.</param>
+    /// <param name="diagnostics">The list that receives the problems that the evaluator finds.</param>
+    /// <param name="createSession">Creates a media session, or null for <see cref="CreateDefaultSession"/>.</param>
+    /// <param name="time">The wall clock that measures how long the wanted time of a drag stays the same.</param>
+    internal VideoTrackEvaluator(CompiledCutscene compiled, List<CutsceneCompileDiagnostic> diagnostics, Func<IMediaStreamSession>? createSession, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(diagnostics);
+        ArgumentNullException.ThrowIfNull(time);
         _diagnostics = diagnostics;
         _clipTypes = new CutsceneClipTypeReporter(diagnostics);
         _assetDirectory = Path.GetDirectoryName(compiled.Asset.FilePath);
@@ -70,7 +81,7 @@ public sealed class VideoTrackEvaluator : ICutsceneTrackEvaluator
         {
             if (tracks[i] is not VideoTrack track)
                 continue;
-            CutsceneVideoChannel channel = new(i, track, create, fail);
+            CutsceneVideoChannel channel = new(i, track, create, fail, time);
             _channelOfTrack[i] = channel;
             channels.Add(channel);
         }
@@ -123,7 +134,6 @@ public sealed class VideoTrackEvaluator : ICutsceneTrackEvaluator
 
         bool discontinuity = _discontinuity;
         _discontinuity = false;
-        _evaluatedSinceUpdate = true;
         Array.Clear(_touched);
         ECutsceneVideoMode mode = _playingForward ? ECutsceneVideoMode.Sequential : _moving ? ECutsceneVideoMode.Keyframe : ECutsceneVideoMode.Exact;
         List<CutsceneTrack> tracks = context.Compiled.Asset.Tracks;
@@ -167,22 +177,18 @@ public sealed class VideoTrackEvaluator : ICutsceneTrackEvaluator
 
     /// <summary>
     /// Services the tracks: collects completed opens and seeks, moves decoded frames to the caches, shows the frame of each
-    /// wanted time, and asks for seeks. If the last evaluation was a drag and no evaluation came since the last update, the
-    /// playhead stopped, so the track decodes the exact frame. It never waits for a decode.
+    /// wanted time, and asks for seeks. A drag whose wanted time stays the same for
+    /// <see cref="CutsceneVideoChannel.DragDwellSeconds"/> stopped, so the track decodes the exact frame. It never waits for
+    /// a decode, and it allocates nothing.
     /// </summary>
     public void Update()
     {
-        bool moved = _evaluatedSinceUpdate;
-        _evaluatedSinceUpdate = false;
         VideoResidencyBackend? residency = Residency;
         for (int i = 0; i < _channels.Length; i++)
         {
             CutsceneVideoChannel channel = _channels[i];
-            if (channel.ClipIndex < 0)
-                continue;
-            if (!moved)
-                channel.StopDrag();
-            channel.Update(residency);
+            if (channel.ClipIndex >= 0)
+                channel.Update(residency);
         }
     }
 
@@ -193,7 +199,6 @@ public sealed class VideoTrackEvaluator : ICutsceneTrackEvaluator
             _channels[i].Release();
         Array.Clear(_touched);
         _discontinuity = false;
-        _evaluatedSinceUpdate = false;
         _playingForward = false;
         _moving = false;
     }

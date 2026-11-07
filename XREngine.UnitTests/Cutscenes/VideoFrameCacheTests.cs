@@ -124,16 +124,36 @@ public sealed class VideoFrameCacheTests
     }
 
     [Test]
-    public void Preallocate_AllocatesEverySlotBufferAtOnce()
+    public void ByteBudget_BoundsTheMemory_AndSlotBuffersAreMadeOnlyWhenFramesCome()
     {
-        VideoFrameCache cache = new(3);
-        cache.Preallocate(FrameBytes);
-        cache.BufferAllocationCount.ShouldBe(3);
-
+        // Room for three frames by bytes, ten by count.
+        VideoFrameCache cache = new(10, 3 * FrameBytes);
+        cache.AllocatedBytes.ShouldBe(0);
         byte[] buffer = new byte[FrameBytes];
-        for (int i = 0; i < 10; i++)
+        cache.Insert(MakeFrame(0, buffer));
+        cache.AllocatedBytes.ShouldBe(FrameBytes);
+
+        for (int i = 1; i < 20; i++)
+        {
             cache.Insert(MakeFrame(i, buffer));
+            cache.AllocatedBytes.ShouldBeLessThanOrEqualTo(cache.BudgetBytes);
+        }
+        cache.Count.ShouldBe(3);
         cache.BufferAllocationCount.ShouldBe(3);
+        cache.Contains(19 * FrameTicks).ShouldBeTrue();
+        cache.Contains(16 * FrameTicks).ShouldBeFalse();
+    }
+
+    [Test]
+    public void ByteBudget_SmallerThanOneFrame_StillKeepsOneFrame()
+    {
+        VideoFrameCache cache = new(4, 1);
+        byte[] buffer = new byte[FrameBytes];
+        cache.Insert(MakeFrame(0, buffer)).ShouldBeTrue();
+        cache.Insert(MakeFrame(1, buffer)).ShouldBeTrue();
+        cache.Count.ShouldBe(1);
+        cache.BufferAllocationCount.ShouldBe(1);
+        cache.TryGetFrameAt(FrameTicks, out _).ShouldBeTrue();
     }
 
     [Test]

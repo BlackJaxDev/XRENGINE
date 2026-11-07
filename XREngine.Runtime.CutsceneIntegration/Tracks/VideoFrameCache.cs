@@ -8,9 +8,10 @@ namespace XREngine.Cutscenes;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The cache holds at most <see cref="Capacity"/> frames. Each slot keeps its pixel buffer after an eviction and uses it
-/// again for the next frame of the same size, so a full cache in steady playback allocates nothing. A slot allocates a new
-/// buffer only when the frame size grows. When the cache is full, an insert replaces the frame that was used least recently.
+/// The cache holds at most <see cref="Capacity"/> frames and at most <see cref="BudgetBytes"/> bytes of pixel buffers, and
+/// always one frame. Slot buffers are made only when frames come. When the frame count or the byte budget is full, an
+/// insert replaces the frame that was used least recently and uses its buffer again, so a full cache in steady playback
+/// allocates nothing. A slot allocates a new buffer only when the frame size grows.
 /// </para>
 /// <para>
 /// A frame that a lookup returns points into the buffer of its slot. It stays valid until the next <see cref="Insert"/>,
@@ -23,6 +24,9 @@ public sealed class VideoFrameCache
     /// <summary>The default number of frames: one second at 24 frames per second.</summary>
     public const int DefaultCapacity = 24;
 
+    /// <summary>The default byte budget of the pixel buffers: 64 MiB, about ten 1080p frames or two 4K frames.</summary>
+    public const long DefaultBudgetBytes = 64L * 1024 * 1024;
+
     private readonly Lock _sync = new();
     private readonly Slot[] _slots;
     private int _count;
@@ -32,12 +36,16 @@ public sealed class VideoFrameCache
     private long _insertCount;
     private long _evictionCount;
     private long _bufferAllocationCount;
+    private long _allocatedBytes;
 
     /// <summary>Creates a cache.</summary>
     /// <param name="capacity">The maximum number of frames. It must be at least one.</param>
-    public VideoFrameCache(int capacity = DefaultCapacity)
+    /// <param name="budgetBytes">The maximum number of bytes of pixel buffers. It must be at least one. One frame is always kept.</param>
+    public VideoFrameCache(int capacity = DefaultCapacity, long budgetBytes = DefaultBudgetBytes)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(budgetBytes, 1L);
+        BudgetBytes = budgetBytes;
         _slots = new Slot[capacity];
         for (int i = 0; i < capacity; i++)
             _slots[i] = new Slot();
@@ -45,6 +53,12 @@ public sealed class VideoFrameCache
 
     /// <summary>The maximum number of frames.</summary>
     public int Capacity => _slots.Length;
+
+    /// <summary>The maximum number of bytes of pixel buffers. One frame is always kept, also when it is larger.</summary>
+    public long BudgetBytes { get; }
+
+    /// <summary>The number of bytes of the pixel buffers that the slots hold now.</summary>
+    public long AllocatedBytes => Interlocked.Read(ref _allocatedBytes);
 
     /// <summary>The number of frames in the cache now.</summary>
     public int Count
@@ -72,20 +86,6 @@ public sealed class VideoFrameCache
     public long BufferAllocationCount => Interlocked.Read(ref _bufferAllocationCount);
 
     /// <summary>
-    /// Allocates the pixel buffer of each slot for frames of the given size now, so that the first frames do not allocate.
-    /// </summary>
-    /// <param name="frameBytes">The number of bytes of one frame.</param>
-    public void Preallocate(int frameBytes)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(frameBytes);
-        lock (_sync)
-        {
-            for (int i = 0; i < _slots.Length; i++)
-                EnsureBuffer(_slots[i], frameBytes);
-        }
-    }
-
-    /// <summary>
     /// Copies a frame into the cache. A frame with the same time replaces the frame that is there. A full cache replaces
     /// the frame that was used least recently. Frames of another pixel format or with no data are not stored.
     /// </summary>
@@ -98,8 +98,8 @@ public sealed class VideoFrameCache
 
         lock (_sync)
         {
-            Slot slot = FindSlotFor(frame.PresentationTimestampTicks);
             int length = frame.PackedData.Length;
+            Slot slot = FindSlotFor(frame.PresentationTimestampTicks, length);
             EnsureBuffer(slot, length);
             frame.PackedData.Span.CopyTo(slot.Buffer.AsSpan(0, length));
             slot.Used = true;
@@ -253,8 +253,8 @@ public sealed class VideoFrameCache
         return false;
     }
 
-    // The slot of the same time, a free slot, or the slot that was used least recently.
-    private Slot FindSlotFor(long ptsTicks)
+    // The slot of the same time, a free slot that fits in the byte budget, or the slot that was used least recently.
+    private Slot FindSlotFor(long ptsTicks, int length)
     {
         Slot? free = null;
         Slot? oldest = null;
@@ -272,7 +272,8 @@ public sealed class VideoFrameCache
                 oldest = slot;
         }
 
-        if (free is not null)
+        // A free slot needs a new buffer unless it has one. It takes one only inside the budget, or when the cache is empty.
+        if (free is not null && (free.Buffer.Length >= length || oldest is null || _allocatedBytes - free.Buffer.Length + length <= BudgetBytes))
         {
             _count++;
             return free;
@@ -285,7 +286,9 @@ public sealed class VideoFrameCache
     {
         if (slot.Buffer.Length >= length)
             return;
+        _allocatedBytes -= slot.Buffer.Length;
         slot.Buffer = new byte[length];
+        _allocatedBytes += length;
         _bufferAllocationCount++;
     }
 

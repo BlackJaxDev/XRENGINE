@@ -179,31 +179,147 @@ public sealed class VideoSeekTests
         await Should.ThrowAsync<NotSupportedException>(() => session.SeekAsync(0, EVideoSeekMode.Exact, CancellationToken.None));
     }
 
+    [Test]
+    public async Task NormalSession_OnALocalFile_CannotSeek()
+    {
+        string path = WriteClip(".mkv", "matroska");
+        using IMediaStreamSession session = HlsReferenceRuntime.CreateSession();
+        await session.OpenAsync(path, new StreamOpenOptions { VideoQueueCapacity = 4, EnableReconnect = false, DecodeAudio = false }, CancellationToken.None).WaitAsync(Timeout);
+
+        // The normal streaming loop runs no seeks, so the session must not claim one.
+        session.CanSeek.ShouldBeFalse();
+        await Should.ThrowAsync<NotSupportedException>(() => session.SeekAsync(0, EVideoSeekMode.Exact, CancellationToken.None));
+        session.RequestSeek(0, EVideoSeekMode.Exact).ShouldBe(-1);
+        session.Close();
+    }
+
+    [Test]
+    public async Task PolledSeek_CompletesTheNewest_AndCancelsTheSuperseded()
+    {
+        using IMediaStreamSession session = await OpenClip(".mkv", "matroska");
+        int first = session.RequestSeek(VideoTestClips.TicksOf(40), EVideoSeekMode.Exact);
+        int second = session.RequestSeek(VideoTestClips.TicksOf(6), EVideoSeekMode.NearestKeyframe);
+        session.GetSeekState(first).ShouldBe(EVideoSeekState.Cancelled);
+
+        Stopwatch watch = Stopwatch.StartNew();
+        while (session.GetSeekState(second) == EVideoSeekState.Pending && watch.Elapsed < Timeout)
+            Thread.Sleep(1);
+        session.GetSeekState(second).ShouldBe(EVideoSeekState.Completed);
+        VideoTestClips.FrameOf(Dequeue(session, VideoTestClips.TicksOf(6))).ShouldBe(6);
+    }
+
+    [Test]
+    public async Task NonZeroStartTime_IsTheZeroOfTheFrameTimes()
+    {
+        string folder = Path.Combine(_directory, $"start-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        string path = VideoTestClips.Write(folder, ".mkv", "matroska", startFrame: 10);
+        using IMediaStreamSession session = HlsReferenceRuntime.CreateSession();
+        await session.OpenAsync(path, ClockDrivenOptions(), CancellationToken.None).WaitAsync(Timeout);
+
+        await session.SeekAsync(0, EVideoSeekMode.Exact, CancellationToken.None).WaitAsync(Timeout);
+        DecodedVideoFrame first = Dequeue(session, 0);
+        VideoTestClips.FrameOf(first).ShouldBe(0);
+        first.PresentationTimestampTicks.ShouldBe(0);
+
+        await session.SeekAsync(VideoTestClips.TicksOf(7), EVideoSeekMode.Exact, CancellationToken.None).WaitAsync(Timeout);
+        DecodedVideoFrame seventh = Dequeue(session, VideoTestClips.TicksOf(7));
+        VideoTestClips.FrameOf(seventh).ShouldBe(7);
+        seventh.PresentationTimestampTicks.ShouldBe(VideoTestClips.TicksOf(7));
+    }
+
+    [Test]
+    public async Task CloseAfterDispose_DoesNothing()
+    {
+        IMediaStreamSession session = await OpenClip(".mkv", "matroska");
+        session.Dispose();
+        Should.NotThrow(session.Close);
+        Should.NotThrow(session.Dispose);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Video track
     // ═══════════════════════════════════════════════════════════════
 
     [Test]
-    public void Track_DragShowsTheKeyframe_AndAStopDecodesTheExactFrame()
+    public void Track_HeldScrub_ShowsTheKeyframe_ThenTheExactFrameAfterTheDwell()
     {
-        using Rig rig = MakeRig(WriteClip(".mov", "mov", interCoded: true));
+        FakeTime time = new();
+        using Rig rig = MakeRig(WriteClip(".mov", "mov", interCoded: true), time: time);
         long target = VideoTestClips.TicksOf(27) + 200_000;
-        CutsceneTime time = FromTicks(target);
+        CutsceneTime position = FromTicks(target);
 
+        // The editor sends a scrub seek in each frame while the ruler is held, also when the mouse does not move.
         rig.Player.BeginScrub();
-        RunUntil(() => rig.Target.SubmitCount > 0, () =>
-        {
-            rig.Player.UpdateScrub(time);
-            rig.Player.Tick(0.0);
-        });
+        ScrubUntil(rig, position, () => rig.Target.SubmitCount > 0);
         rig.Target.LastFrame.ShouldBe(20, "a drag shows the keyframe at or before the time");
         rig.Target.MaxPts.ShouldBeLessThanOrEqualTo(target, "a drag never shows a frame after the time");
 
-        // No scrub move: the playhead stopped, so the track decodes the exact frame.
-        RunUntil(() => rig.Target.LastFrame == 27, rig.Player.UpdateVideo);
+        // Shorter than the dwell: still the keyframe.
+        time.Advance(TimeSpan.FromSeconds(CutsceneVideoChannel.DragDwellSeconds / 2));
+        for (int i = 0; i < 5; i++)
+            ScrubOnce(rig, position);
+        rig.Target.LastFrame.ShouldBe(20);
+
+        // The same time for the dwell: the playhead stopped, so the track decodes the exact frame.
+        time.Advance(TimeSpan.FromSeconds(CutsceneVideoChannel.DragDwellSeconds));
+        ScrubUntil(rig, position, () => rig.Target.LastFrame == 27);
         rig.Target.LastPts.ShouldBe(VideoTestClips.TicksOf(27));
         rig.Player.EndScrub();
         rig.Player.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Track_PausedPlayheadWithNoScrub_DecodesTheExactFrameAfterTheDwell()
+    {
+        FakeTime time = new();
+        using Rig rig = MakeRig(WriteClip(".mov", "mov", interCoded: true), time: time);
+        rig.Player.BeginScrub();
+        ScrubUntil(rig, FromTicks(VideoTestClips.TicksOf(15)), () => rig.Target.SubmitCount > 0);
+        rig.Target.LastFrame.ShouldBe(10);
+
+        time.Advance(TimeSpan.FromSeconds(CutsceneVideoChannel.DragDwellSeconds * 2));
+        RunUntil(() => rig.Target.LastFrame == 15, rig.Player.UpdateVideo);
+    }
+
+    [Test]
+    public void Track_MovingDrag_AllocatesNothingPerTick()
+    {
+        FakeTime time = new();
+        using Rig rig = MakeRig(WriteClip(".mkv", "matroska"), time: time, cacheFrames: 4);
+        CutsceneVideoChannel channel = rig.Player.Video.GetChannel(0)!;
+        rig.Player.BeginScrub();
+        ScrubUntil(rig, FromTicks(VideoTestClips.TicksOf(1)), () => channel.IsSessionOpen);
+
+        // Warm the drag path: every moving tick asks for a keyframe seek, and its result shows.
+        for (int frame = 2; frame < 14; frame++)
+            DragStep(rig, channel, frame);
+
+        int seeks = rig.Player.Video.SeekRequestCount;
+        int shown = rig.Target.SubmitCount;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int frame = 14; frame < 40; frame++)
+            DragStep(rig, channel, frame);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        allocated.ShouldBe(0, "a moving drag must not allocate on the update thread");
+        rig.Player.Video.SeekRequestCount.ShouldBe(seeks + 26, "each moving tick asks for one keyframe seek");
+        rig.Target.SubmitCount.ShouldBeGreaterThan(shown);
+        rig.Target.MaxPts.ShouldBeLessThanOrEqualTo(VideoTestClips.TicksOf(39));
+    }
+
+    // One drag tick to a new frame, then the updates until its seek ends and the result shows. The waits allocate nothing.
+    private static void DragStep(Rig rig, CutsceneVideoChannel channel, int frame)
+    {
+        rig.Player.UpdateScrub(new CutsceneTime(VideoTestClips.TicksOf(frame) * CutsceneTime.FlicksPerSecond / TimeSpan.TicksPerSecond));
+        rig.Player.Tick(0.0);
+        long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 10;
+        while (channel.IsSeekInFlight && Stopwatch.GetTimestamp() < deadline)
+        {
+            Thread.Sleep(1);
+            rig.Player.UpdateVideo();
+        }
+        rig.Player.UpdateVideo();
     }
 
     [Test]
@@ -225,42 +341,45 @@ public sealed class VideoSeekTests
     [Test]
     public void Track_Playback_FollowsTheCutsceneTime_AndAllocatesNothingPerFrame()
     {
-        using Rig rig = MakeRig(WriteClip(".mkv", "matroska"));
+        using Rig rig = MakeRig(WriteClip(".mkv", "matroska"), cacheFrames: 8);
         rig.Player.Play();
 
-        // The ticks follow wall time, as in a real frame loop, so the decoder thread keeps up with the cutscene time.
+        // Each tick waits until the decoder has queued the next frame, so the result does not depend on the speed of the
+        // machine. The waits allocate nothing.
         const double step = 1.0 / 60.0;
-        RunUntil(() => rig.Target.SubmitCount >= 3, () => TickPaced(rig, step));
+        rig.Player.Tick(0.0);
+        RunUntil(() => rig.Target.SubmitCount >= 1, () => rig.Player.Tick(0.0));
+        for (int i = 0; i < 20; i++)
+            TickWhenDecoded(rig, step);
 
-        // Warm the steady path, then measure the update thread. The decoder thread fills pooled buffers.
-        for (int i = 0; i < 15; i++)
-            TickPaced(rig, step);
         int submitted = rig.Target.SubmitCount;
         int seeks = rig.Player.Video.SeekRequestCount;
         long before = GC.GetAllocatedBytesForCurrentThread();
         for (int i = 0; i < 30; i++)
-            TickPaced(rig, step);
+            TickWhenDecoded(rig, step);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
         allocated.ShouldBe(0, "steady video playback must not allocate on the update thread");
         rig.Target.SubmitCount.ShouldBeGreaterThan(submitted);
         rig.Player.Video.SeekRequestCount.ShouldBe(seeks, "forward playback decodes forward with no seek");
 
-        // The shown frame is the frame of the cutscene time, or one frame behind while the decoder catches up.
         long position = rig.Player.Position.ToSamples((int)TimeSpan.TicksPerSecond);
-        int expected = (int)(position / VideoTestClips.FrameTicks);
-        rig.Target.LastFrame.ShouldBeInRange(expected - 1, expected);
+        rig.Target.LastFrame.ShouldBe((int)(position / VideoTestClips.FrameTicks));
         rig.Target.MaxPts.ShouldBeLessThanOrEqualTo(position);
     }
 
-    private static void TickPaced(Rig rig, double seconds)
+    // Waits until the session queue holds the next frame, then ticks.
+    private static void TickWhenDecoded(Rig rig, double seconds)
     {
+        CutsceneVideoChannel channel = rig.Player.Video.GetChannel(0)!;
+        long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 10;
+        while (channel.QueuedFrameCount == 0 && Stopwatch.GetTimestamp() < deadline)
+            Thread.Sleep(1);
         rig.Player.Tick(seconds);
-        Thread.Sleep(TimeSpan.FromSeconds(seconds));
     }
 
     [Test]
-    public void Track_SeeksOffTheUpdateThread_AndDropsAStaleSeek()
+    public void Track_KeepsOneSeekInFlight_AndAsksForTheNewestTimeWhenItEnds()
     {
         FakeSeekSession session = new();
         using Rig rig = MakeRig("unused-file.mp4", () => session);
@@ -268,32 +387,35 @@ public sealed class VideoSeekTests
         CutsceneTime second = FromTicks(VideoTestClips.TicksOf(33));
 
         rig.Player.BeginScrub();
-        RunUntil(() => session.Seeks.Count > 0, () =>
-        {
-            rig.Player.UpdateScrub(first);
-            rig.Player.Tick(0.0);
-        });
+        ScrubUntil(rig, first, () => session.Seeks.Count > 0);
 
-        // The tick returns while the seek runs, and nothing shows yet.
-        rig.Player.UpdateScrub(second);
-        rig.Player.Tick(0.0);
-        session.Seeks.Count.ShouldBe(2);
-        session.Seeks[0].Completion.Task.IsCanceled.ShouldBeTrue("the newer seek supersedes the older one");
-        session.Seeks[1].Completion.Task.IsCompleted.ShouldBeFalse();
+        // The tick returns while the seek runs. A newer time waits: one seek at a time.
+        for (int i = 0; i < 3; i++)
+            ScrubOnce(rig, second);
+        session.Seeks.Count.ShouldBe(1);
+        session.Seeks[0].State.ShouldBe(EVideoSeekState.Pending);
         rig.Target.SubmitCount.ShouldBe(0);
+
+        // The seek ends. Its keyframe (10) is not at or before the new time's range, so the track asks for the newest time.
+        session.Complete(0, VideoTestClips.TicksOf(10));
+        ScrubUntil(rig, second, () => session.Seeks.Count > 1);
+        session.Seeks[1].TargetTicks.ShouldBe(VideoTestClips.TicksOf(33));
         session.Seeks[1].Mode.ShouldBe(EVideoSeekMode.NearestKeyframe);
 
-        // A late result of the stale seek is dropped; the result of the newer seek shows.
-        session.Complete(0, VideoTestClips.TicksOf(10));
         session.Complete(1, VideoTestClips.TicksOf(30));
-        RunUntil(() => rig.Target.SubmitCount > 0, () =>
-        {
-            rig.Player.UpdateScrub(second);
-            rig.Player.Tick(0.0);
-        });
+        ScrubUntil(rig, second, () => rig.Target.SubmitCount > 0);
         rig.Target.LastPts.ShouldBe(VideoTestClips.TicksOf(30));
         rig.Target.SubmitCount.ShouldBe(1);
     }
+
+    private static void ScrubOnce(Rig rig, CutsceneTime position)
+    {
+        rig.Player.UpdateScrub(position);
+        rig.Player.Tick(0.0);
+    }
+
+    private static void ScrubUntil(Rig rig, CutsceneTime position, Func<bool> done)
+        => RunUntil(done, () => ScrubOnce(rig, position));
 
     [Test]
     public void Track_LiveSource_ReportsOneDiagnostic_AndDoesNotFakeASeek()
@@ -478,13 +600,13 @@ public sealed class VideoSeekTests
         }
     }
 
-    private static Rig MakeRig(string sourcePath, Func<IMediaStreamSession>? createSession = null, bool addTarget = true)
+    private static Rig MakeRig(string sourcePath, Func<IMediaStreamSession>? createSession = null, bool addTarget = true, TimeProvider? time = null, int cacheFrames = VideoFrameCache.DefaultCapacity)
     {
         SceneNode node = new("Screen");
         FakeVideoTarget? target = addTarget ? node.AddComponent<FakeVideoTarget>() : null;
         CutsceneAsset asset = new() { Duration = CutsceneTime.FromSeconds(2.0) };
         asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.SceneObject, ObjectId = node.ID });
-        VideoTrack track = new() { Name = "Screen", BindingSlot = 0 };
+        VideoTrack track = new() { Name = "Screen", BindingSlot = 0, FrameCacheCapacity = cacheFrames };
         track.Clips.Add(new VideoTrackClip { Start = CutsceneTime.Zero, Duration = CutsceneTime.FromSeconds(2.0), SourcePath = sourcePath });
         asset.Tracks.Add(track);
 
@@ -493,7 +615,7 @@ public sealed class VideoSeekTests
         diagnostics.ShouldBeEmpty();
         CutsceneBindingTable table = CutsceneBindingTable.Resolve(compiled, new FakeResolver(node));
         table.Diagnostics.ShouldBeEmpty();
-        CutscenePlayer player = new(compiled, table, new CutsceneStateSnapshot(table), null, createSession);
+        CutscenePlayer player = new(compiled, table, new CutsceneStateSnapshot(table), null, time ?? TimeProvider.System, null, createSession);
         return new Rig(player, table, target ?? new FakeVideoTarget());
     }
 
@@ -539,6 +661,20 @@ public sealed class VideoSeekTests
             => ClearCount++;
     }
 
+    /// <summary>A wall clock that moves only when the test advances it.</summary>
+    private sealed class FakeTime : TimeProvider
+    {
+        private long _timestamp = 1;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp()
+            => Interlocked.Read(ref _timestamp);
+
+        public void Advance(TimeSpan time)
+            => Interlocked.Add(ref _timestamp, time.Ticks);
+    }
+
     /// <summary>
     /// A media session whose seeks the test completes by hand. A newer seek cancels an older one that did not complete,
     /// and a late completion of a cancelled seek delivers nothing, as in the real session.
@@ -563,6 +699,7 @@ public sealed class VideoSeekTests
         public int QueuedAudioFrameCount => 0;
         public long EstimatedQueuedVideoDurationTicks => 0;
         public bool CanSeek => IsOpen && Seekable;
+        public string? LastSeekError => null;
 
         public Task OpenAsync(string url, StreamOpenOptions? options, CancellationToken cancellationToken)
         {
@@ -571,18 +708,26 @@ public sealed class VideoSeekTests
             return Task.CompletedTask;
         }
 
-        public Task SeekAsync(long targetTicks, EVideoSeekMode mode, CancellationToken cancellationToken)
+        public int RequestSeek(long targetTicks, EVideoSeekMode mode)
         {
             lock (_sync)
             {
-                if (Seeks.Count > 0)
-                    Seeks[^1].Completion.TrySetCanceled();
+                if (Seeks.Count > 0 && Seeks[^1].State == EVideoSeekState.Pending)
+                    Seeks[^1].State = EVideoSeekState.Cancelled;
                 _frames.Clear();
-                FakeSeek seek = new(targetTicks, mode);
-                Seeks.Add(seek);
-                return seek.Completion.Task;
+                Seeks.Add(new FakeSeek(targetTicks, mode));
+                return Seeks.Count - 1;
             }
         }
+
+        public EVideoSeekState GetSeekState(int requestId)
+        {
+            lock (_sync)
+                return (uint)requestId < (uint)Seeks.Count ? Seeks[requestId].State : EVideoSeekState.Cancelled;
+        }
+
+        public Task SeekAsync(long targetTicks, EVideoSeekMode mode, CancellationToken cancellationToken)
+            => throw new NotSupportedException("The track uses the polled seek.");
 
         /// <summary>Completes a seek with one frame. A cancelled seek delivers nothing.</summary>
         public void Complete(int index, long framePts)
@@ -590,12 +735,12 @@ public sealed class VideoSeekTests
             lock (_sync)
             {
                 FakeSeek seek = Seeks[index];
-                if (seek.Completion.Task.IsCanceled)
+                if (seek.State != EVideoSeekState.Pending)
                     return;
                 byte[] data = new byte[VideoTestClips.Width * VideoTestClips.Height * 3];
                 Array.Fill(data, VideoTestClips.GrayOf((int)(framePts / VideoTestClips.FrameTicks)));
                 _frames.Enqueue(new DecodedVideoFrame(VideoTestClips.Width, VideoTestClips.Height, framePts, VideoTestClips.FrameTicks, VideoPixelFormat.Rgb24, data));
-                seek.Completion.TrySetResult();
+                seek.State = EVideoSeekState.Completed;
             }
         }
 
@@ -638,7 +783,7 @@ public sealed class VideoSeekTests
     {
         public long TargetTicks { get; } = targetTicks;
         public EVideoSeekMode Mode { get; } = mode;
-        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public EVideoSeekState State { get; set; } = EVideoSeekState.Pending;
     }
 
     internal static StreamOpenOptions ClockDrivenOptions()

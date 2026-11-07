@@ -22,7 +22,11 @@ internal static unsafe class VideoTestClips
     /// <summary>The time of one frame in 100 ns ticks.</summary>
     public const long FrameTicks = TimeSpan.TicksPerSecond / FramesPerSecond;
 
-    /// <summary>The containers that the tests write: the file extension and the FFmpeg muxer name.</summary>
+    /// <summary>
+    /// The containers that the tests write: the file extension and the FFmpeg muxer name. The MP4 muxer rejects raw and
+    /// qtrle video (EINVAL at the header, also in the experimental compliance mode), so MP4 has no clip; MP4 files use the
+    /// QuickTime demuxer, which the <c>.mov</c> clips test.
+    /// </summary>
     public static readonly (string Extension, string Muxer)[] Containers =
     [
         (".mkv", "matroska"),
@@ -79,7 +83,8 @@ internal static unsafe class VideoTestClips
     /// the packets, so a keyframe seek lands on every <see cref="KeyframeInterval"/>-th frame. False stores raw frames. Raw
     /// video is an intra-only codec, so FFmpeg marks every raw frame as a keyframe.
     /// </param>
-    public static unsafe string Write(string directory, string extension, string muxer, bool interCoded = false)
+    /// <param name="startFrame">The time of the first frame, in frames. A value above zero gives the file a non-zero start time.</param>
+    public static unsafe string Write(string directory, string extension, string muxer, bool interCoded = false, int startFrame = 0)
     {
         string path = Path.Combine(directory, $"clip{extension}");
         AVFormatContext* format = null;
@@ -130,7 +135,7 @@ internal static unsafe class VideoTestClips
                     WriteQtrleFrame(data, GrayOf(i));
                 else
                     data.Fill(GrayOf(i));
-                packet->pts = ffmpeg.av_rescale_q(i, frameBase, stream->time_base);
+                packet->pts = ffmpeg.av_rescale_q(i + startFrame, frameBase, stream->time_base);
                 packet->dts = packet->pts;
                 packet->duration = ffmpeg.av_rescale_q(1, frameBase, stream->time_base);
                 packet->stream_index = stream->index;

@@ -156,7 +156,10 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     public bool IsOpen => _isOpen;
 
     /// <inheritdoc />
-    public bool CanSeek => _isOpen && _decoder.IsSeekable;
+    public bool CanSeek => _isOpen && _clockDriven && _decoder.IsSeekable;
+
+    /// <inheritdoc />
+    public string? LastSeekError => _decoder.LastSeekError;
 
     /// <inheritdoc />
     public int QueuedVideoFrameCount { get { lock (_sync) return _videoFrames.Count; } }
@@ -207,7 +210,11 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
         _closing = false;
 
         await _decoder.OpenAsync(url, options, cancellationToken).ConfigureAwait(false);
-        _isOpen = true;
+        lock (_sync)
+        {
+            _isOpen = true;
+            Monitor.PulseAll(_sync);
+        }
     }
 
     /// <summary>
@@ -229,6 +236,8 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     {
         // Signal closing early to unblock any backpressure waits in decode callbacks.
         _closing = true;
+        lock (_sync)
+            Monitor.PulseAll(_sync);
         _decoder.Stop();
 
         lock (_sync)
@@ -253,6 +262,8 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     public void Dispose()
     {
         _closing = true;
+        lock (_sync)
+            Monitor.PulseAll(_sync);
         _decoder.Dispose();
         _isOpen = false;
     }
@@ -461,6 +472,9 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
         frame = _videoFrames.Dequeue();
         if (MemoryMarshal.TryGetArray(frame.PackedData, out ArraySegment<byte> segment))
             _lentBuffer = segment.Array;
+
+        // The decoder thread waits for queue space.
+        Monitor.PulseAll(_sync);
         return true;
     }
 
@@ -468,17 +482,50 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     public Task SeekAsync(long targetTicks, EVideoSeekMode mode, CancellationToken cancellationToken)
     {
         if (!CanSeek)
-            return Task.FromException(new NotSupportedException("The media session cannot seek: it is not open, or the source is not a local file with a known duration."));
+            return Task.FromException(new NotSupportedException(CannotSeekMessage));
 
-        int generation;
         lock (_sync)
         {
-            // Frames of the old position must not reach the caller. A frame that the decoder delivers before it starts
-            // this seek carries the old generation, so the enqueue drops it.
-            generation = ++_seekGeneration;
-            DropQueuedVideoFrames();
+            // The generation and the post happen under one lock, so two callers cannot post in the opposite order.
+            int generation = BeginSeek();
+            Task task = _decoder.SeekAsync(Math.Max(0L, targetTicks), mode, generation, cancellationToken);
+            Monitor.PulseAll(_sync);
+            return task;
         }
-        return _decoder.SeekAsync(targetTicks, mode, generation, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public int RequestSeek(long targetTicks, EVideoSeekMode mode)
+    {
+        if (!CanSeek)
+            return -1;
+
+        lock (_sync)
+        {
+            int generation = BeginSeek();
+            bool posted = _decoder.RequestSeek(Math.Max(0L, targetTicks), mode, generation, null);
+            Monitor.PulseAll(_sync);
+            return posted ? generation : -1;
+        }
+    }
+
+    /// <inheritdoc />
+    public EVideoSeekState GetSeekState(int requestId)
+    {
+        if (requestId < 0 || requestId != Volatile.Read(ref _seekGeneration))
+            return EVideoSeekState.Cancelled;
+        return _decoder.GetSeekState(requestId);
+    }
+
+    private const string CannotSeekMessage = "The media session cannot seek: it is not open in the clock-driven mode, or the source is not a local file with a known duration.";
+
+    // Frames of the old position must not reach the caller. A frame that the decoder delivers before it starts this seek
+    // carries the old generation, so the enqueue drops it. Call with _sync held.
+    private int BeginSeek()
+    {
+        int generation = ++_seekGeneration;
+        DropQueuedVideoFrames();
+        return generation;
     }
 
     // Call with _sync held.
@@ -626,15 +673,16 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
                     _latestQueuedVideoPts = frame.PresentationTimestampTicks;
                     return;
                 }
-            }
 
-            if (_decoder.HasPendingSeek)
-            {
-                lock (_sync)
+                if (_decoder.HasPendingSeek)
+                {
                     ReturnBuffer(frame.PackedData);
-                return;
+                    return;
+                }
+
+                // A dequeue, a seek, an open, and a close pulse the lock. The timeout is a guard only.
+                Monitor.Wait(_sync, 100);
             }
-            Thread.Sleep(1);
         }
     }
 

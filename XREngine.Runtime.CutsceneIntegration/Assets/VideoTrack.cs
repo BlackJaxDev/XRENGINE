@@ -9,14 +9,27 @@ namespace XREngine.Cutscenes;
 public class VideoTrack : CutsceneTrack
 {
     private int _frameCacheCapacity = VideoFrameCache.DefaultCapacity;
+    private long _frameCacheBudgetBytes = VideoFrameCache.DefaultBudgetBytes;
 
     /// <summary>
     /// The number of decoded frames that the track keeps for each clip. A return to a frame in the cache shows it with no
-    /// decode. A value below one uses one. Each frame uses <c>width * height * 3</c> bytes.
+    /// decode. A value below one uses one. Each frame uses <c>width * height * 3</c> bytes; <see cref="FrameCacheBudgetBytes"/>
+    /// also limits the cache.
     /// </summary>
     public int FrameCacheCapacity
     {
         get => _frameCacheCapacity;
         set => SetField(ref _frameCacheCapacity, value);
+    }
+
+    /// <summary>
+    /// The largest number of bytes of decoded frames that the track keeps for each clip (default 64 MiB). The cache holds
+    /// at most <see cref="FrameCacheCapacity"/> frames and at most this many bytes, and always one frame. A 1080p RGB frame
+    /// uses 5.9 MiB, and a 4K RGB frame uses 23.7 MiB. Slot buffers are made only when frames come.
+    /// </summary>
+    public long FrameCacheBudgetBytes
+    {
+        get => _frameCacheBudgetBytes;
+        set => SetField(ref _frameCacheBudgetBytes, value);
     }
 }

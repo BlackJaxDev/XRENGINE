@@ -11,6 +11,10 @@ namespace XREngine.Cutscenes;
 /// </summary>
 /// <remarks>
 /// <para>
+/// The backend keeps only a small warm set for each source (<see cref="SourceCacheCapacity"/> frames and at most
+/// <see cref="SourceCacheBudgetBytes"/> bytes), so a source is not cached two times.
+/// </para>
+/// <para>
 /// T0 opens the media session of the source and decodes the keyframe at or before the file time of the deadline. It stays
 /// resident while the cutscene is open. T1 decodes the keyframe at or before its deadline. T2 decodes the exact frame of its
 /// deadline and the <see cref="WarmFrameCount"/> frames after it, so the cache holds the frames around the playhead. The
@@ -31,10 +35,19 @@ namespace XREngine.Cutscenes;
 public sealed class VideoResidencyBackend : IResidencyBackend, IDisposable
 {
     /// <summary>The number of frames after the exact frame that a T2 load decodes.</summary>
-    public const int WarmFrameCount = 6;
+    public const int WarmFrameCount = 2;
 
-    /// <summary>The number of frames that the cache of each source holds.</summary>
-    public const int SourceCacheCapacity = 16;
+    /// <summary>
+    /// The number of frames that the warm set of each source holds. The set is small, because the track keeps its own
+    /// cache: the backend holds only the frames that a jump needs first.
+    /// </summary>
+    public const int SourceCacheCapacity = 4;
+
+    /// <summary>The byte budget of the warm set of each source: 16 MiB (two 1080p frames, or one 4K frame).</summary>
+    public const long SourceCacheBudgetBytes = 16L * 1024 * 1024;
+
+    /// <summary>The number of frames that the media session of a source queues. A load takes each frame at once.</summary>
+    public const int SourceSessionQueueCapacity = 1;
 
     /// <summary>The longest time that one load waits for the session, in seconds.</summary>
     public const double LoadTimeoutSeconds = 10.0;
@@ -394,7 +407,7 @@ public sealed class VideoResidencyBackend : IResidencyBackend, IDisposable
             {
                 ClockDrivenPresentation = true,
                 DecodeAudio = false,
-                VideoQueueCapacity = CutsceneVideoChannel.SessionQueueCapacity,
+                VideoQueueCapacity = SourceSessionQueueCapacity,
                 EnableReconnect = false,
             };
             await session.OpenAsync(source.FullPath, options, CancellationToken.None).ConfigureAwait(false);
@@ -545,7 +558,7 @@ public sealed class VideoResidencyBackend : IResidencyBackend, IDisposable
         public Guid AssetId { get; } = assetId;
         public string FullPath { get; } = fullPath;
         public List<VideoClipRange> Clips { get; } = [];
-        public VideoFrameCache Cache { get; } = new(SourceCacheCapacity);
+        public VideoFrameCache Cache { get; } = new(SourceCacheCapacity, SourceCacheBudgetBytes);
         public SemaphoreSlim Gate { get; } = new(1, 1);
         public IMediaStreamSession? Session { get; set; }
         public int TicketCount { get; set; }
