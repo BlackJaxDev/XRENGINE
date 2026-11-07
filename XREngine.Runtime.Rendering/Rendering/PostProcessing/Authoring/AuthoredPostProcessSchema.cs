@@ -22,6 +22,18 @@ public static class AuthoredPostProcessSchema
         CommonPostProcessStages.StageKeys.GpuBvhDebug,
     ];
 
+    /// <summary>
+    /// Builds a schema that holds only <paramref name="stages"/>. Editor tools use it to check and preview stage
+    /// declarations before they reach a pipeline.
+    /// </summary>
+    /// <exception cref="ArgumentException">Thrown when a stage is not valid.</exception>
+    public static RenderPipelinePostProcessSchema BuildPreview(IReadOnlyList<AuthoredPostProcessStage> stages)
+    {
+        RenderPipelinePostProcessSchemaBuilder builder = new(null);
+        Describe(builder, stages);
+        return builder.Build();
+    }
+
     /// <summary>Adds the stages to the builder in <see cref="AuthoredPostProcessStage.Order"/> order.</summary>
     /// <exception cref="ArgumentException">Thrown when a stage is not valid.</exception>
     public static void Describe(RenderPipelinePostProcessSchemaBuilder builder, IReadOnlyList<AuthoredPostProcessStage> stages)

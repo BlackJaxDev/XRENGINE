@@ -3,7 +3,7 @@ using XREngine.Rendering;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
-    [RenderCommandInfo(ERenderCommandCategory.State)]
+    [RenderCommandInfo(ERenderCommandCategory.State, RequiresCode = true)]
     public class VPRC_PushProgramBindings : ViewportStateRenderCommand<VPRC_PopProgramBindings>
     {
         public Action<XRRenderProgram>? ApplyUniforms { get; set; }

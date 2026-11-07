@@ -16,7 +16,10 @@ public static partial class EditorImGuiUI
     private static void DrawWorkbenchResourcesView()
     {
         RenderPipelineWorkbenchModel model = _workbench.Model;
-        if (model.Instance is null)
+        bool editing = IsWorkbenchEditing(model.Pipeline);
+        if (editing)
+            DrawWorkbenchResourceAuthoring();
+        else if (model.Instance is null)
         {
             ImGui.TextDisabled("Select a pipeline instance. Resources belong to the generation of an instance.");
             return;

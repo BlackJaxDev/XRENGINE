@@ -157,7 +157,9 @@ public sealed class RenderPipelineWorkbenchModel
             // Materialization changes the physical state of the same generation, so the status is part of the key.
             Resources = inputs.Generation is { } generation
                 ? RenderPipelineResourceSnapshot.Build(generation.Layout, inputs.Passes ?? generation.PassMetadata, generation)
-                : RenderPipelineResourceSnapshot.Empty;
+                : inputs.PreviewLayout is { } previewLayout
+                    ? RenderPipelineResourceSnapshot.Build(previewLayout, inputs.Passes ?? [], null)
+                    : RenderPipelineResourceSnapshot.Empty;
             ResourceBuildCount++;
         }
 

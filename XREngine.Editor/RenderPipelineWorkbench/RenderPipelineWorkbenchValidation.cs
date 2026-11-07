@@ -1,6 +1,7 @@
 using XREngine.Rendering;
 using XREngine.Rendering.Pipelines.Validation;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.RenderGraph.Diagnostics;
 
 namespace XREngine.Editor.RenderPipelineWorkbench;
 
@@ -27,6 +28,9 @@ public sealed class RenderPipelineWorkbenchValidation
 
     /// <summary>Gets the newest report.</summary>
     public RenderPipelineValidationReport Report { get; private set; } = RenderPipelineValidationReport.Empty;
+
+    private RenderPipelineDraftValidation.Result? _draftResult;
+    private int _draftStructureBuild = -1;
 
     /// <summary>Gets the rows that pass the severity filter.</summary>
     public IReadOnlyList<RenderPipelineValidationRow> VisibleRows => _visible;
@@ -79,6 +83,7 @@ public sealed class RenderPipelineWorkbenchValidation
 
         if (changed)
         {
+            _draftResult = null;
             _pipeline = pipeline;
             _instance = instance;
             _backend = backend.Value;
@@ -91,6 +96,46 @@ public sealed class RenderPipelineWorkbenchValidation
 
         if (_filterDirty)
             ApplyFilter();
+    }
+
+    /// <summary>
+    /// Shows the newest background result of a draft instead of the live report. Command problems of the result
+    /// point to commands of a private copy, so the method maps them to the draft commands by structure index.
+    /// </summary>
+    public void UpdateDraft(RenderPipelineDraftValidation.Result? result, RenderPipelineWorkbenchModel model)
+    {
+        if (!ReferenceEquals(_draftResult, result) || _draftStructureBuild != model.StructureBuildCount || _structureBuild != -1)
+        {
+            _draftResult = result;
+            _draftStructureBuild = model.StructureBuildCount;
+
+            // The live report must run again when the draft closes.
+            _structureBuild = -1;
+            RunCount++;
+            _rows.Clear();
+            _filterDirty = true;
+            Report = result?.Report ?? RenderPipelineValidationReport.Empty;
+            IReadOnlyList<RenderPipelineProblem> problems = Report.Problems;
+            for (int i = 0; i < problems.Count; i++)
+                _rows.Add(CreateRow(MapDraftProblem(problems[i], result!, model), model));
+            UpdateCounters();
+        }
+
+        if (_filterDirty)
+            ApplyFilter();
+    }
+
+    private static RenderPipelineProblem MapDraftProblem(RenderPipelineProblem problem, RenderPipelineDraftValidation.Result result, RenderPipelineWorkbenchModel model)
+    {
+        if (problem.Command is null ||
+            !result.Preview.Structure.TryGetCommand(problem.Command, out RenderPipelineStructureCommand entry) ||
+            entry.Index >= model.Structure.Commands.Count ||
+            model.Structure.Commands.Count != result.Preview.Structure.Commands.Count)
+        {
+            return problem;
+        }
+
+        return problem with { Command = model.Structure.Commands[entry.Index].Command };
     }
 
     /// <summary>Forgets the cached report so the next update runs the validator again.</summary>

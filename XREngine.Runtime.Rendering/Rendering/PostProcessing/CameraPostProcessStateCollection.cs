@@ -259,6 +259,17 @@ public sealed class PipelinePostProcessState
         }
     }
 
+    /// <summary>
+    /// Creates a detached state bound to <paramref name="schema"/>. Editor tools use it as a scratch state to preview
+    /// stage declarations before they reach a pipeline.
+    /// </summary>
+    public static PipelinePostProcessState CreatePreview(RenderPipelinePostProcessSchema schema)
+    {
+        PipelinePostProcessState state = new();
+        state.BindToSchema(schema);
+        return state;
+    }
+
     internal bool IsBoundTo(RenderPipeline pipeline)
         => PipelineId == pipeline.ID &&
            ReferenceEquals(Schema, pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty);

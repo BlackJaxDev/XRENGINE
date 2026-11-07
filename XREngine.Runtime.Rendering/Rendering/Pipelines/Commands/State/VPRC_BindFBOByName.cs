@@ -18,7 +18,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!Write) requirements.RequireOperation("framebuffer-read");
         }
 
-        [RenderResourceName(ERenderResourceNameKind.Buffer)]
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? FrameBufferName { get; set; }
         [System.ComponentModel.DefaultValue(true)]
         public bool Write { get; set; } = true;

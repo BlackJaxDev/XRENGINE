@@ -24,6 +24,10 @@ public static class RenderPipelineValidator
         new StereoIncompatibleResourceRule(),
         new UnusedResourceRule(),
         new StageWithoutConsumerRule(),
+        new BranchWithoutConditionRule(),
+        new UnresolvedBranchKeyRule(),
+        new CodeBranchWithoutLabelRule(),
+        new CodeCommandInDataPipelineRule(),
     ];
 
     /// <summary>Runs the rules on a context and returns the report.</summary>

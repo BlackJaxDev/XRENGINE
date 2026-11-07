@@ -12,7 +12,19 @@ public static partial class EditorImGuiUI
 
     /// <summary>Runs the validator for the Workbench target when an input changed.</summary>
     private static void UpdateWorkbenchValidation()
-        => _workbench.Validation.Update(_workbench.Model, AbstractRenderer.Current?.BackendId ?? RendererBackendId.OpenGL);
+    {
+        RenderPipelineWorkbenchAuthoring authoring = _workbench.Authoring;
+        if (authoring.Draft is { } draft && authoring.IsEditing(_workbench.Model.Pipeline))
+        {
+            // The views show the draft, so the counter and the Validation view show the draft result. An older result
+            // stays visible until the result of the current revision arrives.
+            RenderPipelineDraftValidation.Result? latest = authoring.Validation.Latest;
+            _workbench.Validation.UpdateDraft(latest is not null && ReferenceEquals(latest.Draft, draft) ? latest : null, _workbench.Model);
+            return;
+        }
+
+        _workbench.Validation.Update(_workbench.Model, AbstractRenderer.Current?.BackendId ?? RendererBackendId.OpenGL);
+    }
 
     /// <summary>Draws the problem counter of the target bar. A click opens the Validation view.</summary>
     private static void DrawWorkbenchTargetBarExtras(RenderPipeline pipeline, XRRenderPipelineInstance? instance)

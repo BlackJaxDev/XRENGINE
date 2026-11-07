@@ -560,6 +560,13 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     /// <summary>
+    /// Builds the resource layout that this pipeline declares for <paramref name="profile"/>. Tools use it to inspect
+    /// or copy the layout without a live generation.
+    /// </summary>
+    public RenderPipelineResourceLayout DescribeResourceLayout(RenderPipelineResourceProfile profile)
+        => BuildResourceLayout(profile);
+
+    /// <summary>
     /// Builds a resource layout for this pipeline based on the provided resource profile.
     /// </summary>
     /// <param name="profile">The resource profile to use for building the layout.</param>

@@ -28,5 +28,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <see cref="IRenderCommandStageConsumer"/> when the stage depends on the configuration of the command.
         /// </summary>
         public string[]? ConsumesStages { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether the command does nothing useful without a code delegate and has no data alternative.
+        /// Authoring tools hide such commands for pipelines that save as data.
+        /// </summary>
+        public bool RequiresCode { get; set; }
     }
 }

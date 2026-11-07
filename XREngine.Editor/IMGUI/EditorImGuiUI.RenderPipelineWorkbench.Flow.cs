@@ -228,6 +228,8 @@ public static partial class EditorImGuiUI
             ImGui.InvisibleButton("##Step", Vector2.Max(max - min, Vector2.One));
             if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
                 _workbench.Selection.Select(RenderPipelineWorkbenchSelectionEntry.ForCommand(step.Id));
+            if (entry is not null)
+                DrawWorkbenchCommandDragDrop(entry.Command, step.Title);
             ImGui.PopID();
         }
     }

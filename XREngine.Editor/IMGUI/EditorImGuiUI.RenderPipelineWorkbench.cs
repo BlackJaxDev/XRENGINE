@@ -69,12 +69,15 @@ public static partial class EditorImGuiUI
         }
 
         XRRenderPipelineInstance? instance = ResolveWorkbenchInstance(pipeline);
-        _workbench.Model.Refresh(pipeline, instance);
+        RefreshWorkbenchModel(pipeline, instance);
         _workbench.Links.Update(_workbench.Model, _workbench.Selection.Current);
         _workbench.Execution.Update(_workbench.Model);
         _workbench.Timing.Update(_workbench.Model);
 
         DrawWorkbenchTargetBar(pipeline, instance);
+        DrawWorkbenchAuthoringBar(pipeline);
+        HandleWorkbenchAuthoringShortcuts(pipeline);
+        DrawWorkbenchPalette(pipeline);
         ImGui.Separator();
 
         Vector2 available = ImGui.GetContentRegionAvail();
@@ -143,6 +146,8 @@ public static partial class EditorImGuiUI
                 _workbench.PassesView.Reset();
             ImGui.EndMenu();
         }
+
+        DrawWorkbenchEditMenu(_workbench.Model.Pipeline);
 
         if (_workbench.PinnedPipeline is not null && ImGui.MenuItem("Unpin"))
             _workbench.Unpin();

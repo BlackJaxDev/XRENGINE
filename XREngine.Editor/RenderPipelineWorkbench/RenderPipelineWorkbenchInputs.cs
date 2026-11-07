@@ -17,6 +17,7 @@ namespace XREngine.Editor.RenderPipelineWorkbench;
 /// <param name="PassRevision">The mutation stamp of <paramref name="Passes"/>.</param>
 /// <param name="Generation">The active resource generation of the instance, or null.</param>
 /// <param name="Structure">A prebuilt structure snapshot for the same inputs, or null to build one.</param>
+/// <param name="PreviewLayout">A layout to show when <paramref name="Generation"/> is null, such as the layout of a draft.</param>
 public readonly record struct RenderPipelineWorkbenchInputs(
     RenderPipeline? Pipeline,
     XRRenderPipelineInstance? Instance,
@@ -25,7 +26,8 @@ public readonly record struct RenderPipelineWorkbenchInputs(
     IReadOnlyCollection<RenderPassMetadata> Passes,
     int PassRevision,
     RenderResourceGeneration? Generation,
-    RenderPipelineStructureSnapshot? Structure = null)
+    RenderPipelineStructureSnapshot? Structure = null,
+    RenderPipelineResourceLayout? PreviewLayout = null)
 {
     /// <summary>
     /// Reads the inputs from a pipeline and an optional instance. The instance's active generation owns
@@ -52,4 +54,20 @@ public readonly record struct RenderPipelineWorkbenchInputs(
             generation,
             structure);
     }
+
+    /// <summary>
+    /// Reads the inputs from a draft and its preview. The views then show the draft commands, passes, and declared
+    /// resources instead of the live pipeline.
+    /// </summary>
+    public static RenderPipelineWorkbenchInputs FromDraft(RenderPipelineDraft draft, RenderPipelineDraftPreview preview, XRRenderPipelineInstance? instance)
+        => new(
+            draft.Pipeline,
+            instance,
+            draft.State.Commands,
+            RenderPipelineDraftPreview.ToCommandGeneration(preview.Revision),
+            preview.Passes,
+            preview.Revision,
+            null,
+            preview.Structure,
+            preview.Layout);
 }

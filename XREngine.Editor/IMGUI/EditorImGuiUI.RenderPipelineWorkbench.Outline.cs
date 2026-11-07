@@ -119,6 +119,8 @@ public static partial class EditorImGuiUI
                         ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetColorU32(ImGuiCol.TextDisabled));
                     if (ImGui.Selectable(row.Label, selected, ImGuiSelectableFlags.AllowOverlap))
                         SelectWorkbenchRow(row);
+                    if (row.Command is not null)
+                        DrawWorkbenchCommandDragDrop(row.Command, row.Label);
                     if (row.Kind == ERenderPipelineOutlineRowKind.Container)
                         ImGui.PopStyleColor();
                     if (ImGui.IsItemHovered())

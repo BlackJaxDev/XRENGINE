@@ -37,7 +37,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// The name of the source FBO that contains the quad to render.
         /// </summary>
-        [RenderResourceName(ERenderResourceNameKind.Buffer)]
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? FrameBufferName
         {
             get => SourceQuadFBOName;
@@ -46,7 +46,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// The name of the destination FBO to render into.
         /// </summary>
-        [RenderResourceName(ERenderResourceNameKind.Buffer)]
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? TargetFrameBufferName
         {
             get => DestinationFBOName;

@@ -65,6 +65,19 @@ public static class AuthoredRenderResourceFactory
     }
 
     /// <summary>
+    /// Builds a layout that holds only <paramref name="resources"/>, for <paramref name="profile"/>. Editor tools use
+    /// it to check declarations before they reach a pipeline. The layout is never materialized, so attachments do not
+    /// resolve.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown when the declarations do not form a valid layout.</exception>
+    public static RenderPipelineResourceLayout BuildPreviewLayout(RenderPipelineResourceProfile profile, IReadOnlyList<AuthoredRenderResource> resources)
+    {
+        RenderPipelineResourceLayoutBuilder builder = new(profile);
+        Declare(builder, resources, static _ => null);
+        return builder.Build(profile);
+    }
+
+    /// <summary>
     /// Computes a stable hash of every layout-affecting field. A pipeline adds it to its generation key, so an edit to
     /// an authored declaration creates a new generation through the normal path.
     /// </summary>

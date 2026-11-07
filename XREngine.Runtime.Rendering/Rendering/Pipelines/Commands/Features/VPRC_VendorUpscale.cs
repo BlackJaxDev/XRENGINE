@@ -29,7 +29,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string? DepthStencilTextureName { get; set; }
         [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? MotionTextureName { get; set; }
-        [RenderResourceName(ERenderResourceNameKind.Buffer)]
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? MotionFrameBufferName { get; set; }
         public bool ForceFallbackBlit { get; set; }
         public bool FlipSourceYOnVulkanFallback { get; set; } = true;

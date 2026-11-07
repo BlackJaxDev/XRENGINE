@@ -20,6 +20,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             Description = Attribute?.Description ?? string.Empty;
             DoesGpuWork = Attribute?.DoesGpuWork ?? false;
             ConsumesStages = Attribute?.ConsumesStages ?? [];
+            RequiresCode = Attribute?.RequiresCode ?? false;
             IsStageConsumer = typeof(IRenderCommandStageConsumer).IsAssignableFrom(type);
         }
 
@@ -46,6 +47,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         /// <summary>Gets the fixed stage keys that the command reads.</summary>
         public IReadOnlyList<string> ConsumesStages { get; }
+
+        /// <summary>Gets whether the command needs a code delegate and has no data alternative.</summary>
+        public bool RequiresCode { get; }
 
         /// <summary>Gets whether the type implements <see cref="IRenderCommandStageConsumer"/>.</summary>
         public bool IsStageConsumer { get; }

@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     /// <typeparam name="T">The element type yielded by the collection.</typeparam>
     [RenderPipelineScriptCommand]
-    [RenderCommandInfo(ERenderCommandCategory.Flow)]
+    [RenderCommandInfo(ERenderCommandCategory.Flow, RequiresCode = true)]
     public class VPRC_ForEach<T> : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

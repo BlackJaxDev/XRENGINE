@@ -29,6 +29,8 @@ public static partial class EditorImGuiUI
         content.Update(model, stageKey, camera);
 
         ImGui.TextDisabled(content.SchemaSummary);
+        if (IsWorkbenchEditing(pipeline))
+            DrawWorkbenchStageAuthoring();
         ImGui.BeginChild("##WorkbenchSchemaTree", new Vector2(WorkbenchSchemaTreeWidth, 0f), ImGuiChildFlags.Borders | ImGuiChildFlags.ResizeX);
         DrawWorkbenchSchemaTree(content);
         ImGui.EndChild();

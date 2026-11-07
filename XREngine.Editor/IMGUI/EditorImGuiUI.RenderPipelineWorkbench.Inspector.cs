@@ -1,5 +1,6 @@
 using ImGuiNET;
 using XREngine.Editor.RenderPipelineWorkbench;
+using XREngine.Rendering;
 
 namespace XREngine.Editor;
 
@@ -23,6 +24,8 @@ public static partial class EditorImGuiUI
         ImGui.TextUnformatted(content.Title);
         ImGui.Separator();
         DrawWorkbenchItems(content.Items);
+        if (content.Pass is { } pass && IsWorkbenchEditing(_workbench.Model.Pipeline))
+            DrawWorkbenchPassAuthoring(pass);
 
         object? editable = (object?)content.Command ?? content.Container;
         if (editable is null)
@@ -30,8 +33,12 @@ public static partial class EditorImGuiUI
 
         ImGui.Spacing();
         ImGui.SeparatorText("Properties");
-        if (_workbench.Model.Pipeline is { } pipeline && !IsWorkbenchPipelineEditable(pipeline))
+        RenderPipeline? pipeline = _workbench.Model.Pipeline;
+        bool editing = IsWorkbenchEditing(pipeline);
+        if (pipeline is not null && !RenderPipelineWorkbenchAuthoring.CanAuthor(pipeline))
             ImGui.TextDisabled("Code pipelines rebuild their commands from code. Changes here last until the next rebuild.");
+        else if (!editing)
+            ImGui.TextDisabled("Changes here change the live pipeline. Use Edit to change a draft with undo and validation.");
 
         if (!ReferenceEquals(_workbenchInspectorTargetObject, editable))
         {
@@ -40,7 +47,10 @@ public static partial class EditorImGuiUI
         }
 
         _workbenchInspectorVisited.Clear();
-        DrawInspectableObject(_workbenchInspectorTargets!, content.PropertyEditorId, _workbenchInspectorVisited);
+        if (editing)
+            DrawWorkbenchDraftObject(_workbenchInspectorTargets!, content.PropertyEditorId, _workbenchInspectorVisited, "Edit command property");
+        else
+            DrawInspectableObject(_workbenchInspectorTargets!, content.PropertyEditorId, _workbenchInspectorVisited);
     }
 
     /// <summary>

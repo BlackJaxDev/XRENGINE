@@ -129,6 +129,29 @@ public class CustomRenderPipeline : RenderPipeline
         AuthoredPostProcessSchema.Describe(builder, _authoredStages);
     }
 
+    private List<AuthoredPassDependency> _passDependencies = [];
+
+    /// <summary>
+    /// Gets or sets explicit pass dependencies that this pipeline stores as data. Set a new list to rebuild the pass
+    /// metadata.
+    /// </summary>
+    public List<AuthoredPassDependency> PassDependencies
+    {
+        get => _passDependencies;
+        set
+        {
+            if (SetField(ref _passDependencies, value ?? []))
+                RefreshAuthoredCommands();
+        }
+    }
+
+    /// <inheritdoc />
+    protected override void DescribeRenderPasses(RenderPassMetadataCollection metadata)
+    {
+        base.DescribeRenderPasses(metadata);
+        AuthoredPassDependency.Apply(metadata, _passDependencies);
+    }
+
     private static IFrameBufferAttachement? ResolveAuthoredAttachment(string name)
         => GetTexture<XRTexture>(name) as IFrameBufferAttachement ?? TryCurrentPipeline?.GetRenderBuffer(name);
 
