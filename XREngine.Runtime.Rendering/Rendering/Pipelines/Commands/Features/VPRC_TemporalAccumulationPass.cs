@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Handles all temporal accumulation stages (begin, accumulate, commit) without relying on manual commands.
 /// </summary>
 [RenderPipelineScriptCommand]
-[RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true)]
+[RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.TemporalAntiAliasing })]
 public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 {
     private const float TaaJitterScaleInTexels = 0.35f;

@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     /// <param name="pipeline"></param>
     [RenderPipelineScriptCommand]
-    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.AmbientOcclusion })]
     public class VPRC_SSAOPass : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         //private static void Log(string message)

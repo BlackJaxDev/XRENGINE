@@ -208,6 +208,9 @@ public static partial class EditorImGuiUI
                 drawList.AddText(min + (new Vector2(8f, 4f) * view.Zoom), textColor & alphaMask, node.Title);
                 drawList.AddText(min + (new Vector2(8f, 30f) * view.Zoom), subTextColor & alphaMask, node.Subtitle);
                 drawList.AddText(min + (new Vector2(8f, 52f) * view.Zoom), subTextColor & alphaMask, node.AttachmentSummary);
+                string timingBadge = _workbench.Timing.GetPassBadge(node.PassIndex);
+                if (timingBadge.Length > 0)
+                    drawList.AddText(new Vector2(max.X - (64f * view.Zoom), min.Y + (4f * view.Zoom)), textColor & alphaMask, timingBadge);
             }
 
             ImGui.SetCursorScreenPos(min);

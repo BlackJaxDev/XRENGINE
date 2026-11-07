@@ -129,6 +129,15 @@ public static partial class EditorImGuiUI
                             ImGui.SetTooltip("This branch did not run in the newest traced frame.");
                     }
 
+                    string timingBadge = _workbench.Timing.GetNodeBadge(row.NodeId);
+                    if (timingBadge.Length > 0)
+                    {
+                        ImGui.SameLine(MathF.Max(rowStartX + 80f, badgeX - 64f));
+                        ImGui.TextDisabled(timingBadge);
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip(_workbench.Timing.GetNodeTooltip(row.NodeId));
+                    }
+
                     if (row.PassBadge.Length > 0 || row.HasProblem)
                     {
                         ImGui.SameLine(badgeX);

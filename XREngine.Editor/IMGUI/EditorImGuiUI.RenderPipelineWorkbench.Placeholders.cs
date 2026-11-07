@@ -5,9 +5,6 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
-    private static void DrawWorkbenchSettingsView()
-        => ImGui.TextDisabled("Settings view.");
-
     private static void DrawWorkbenchValidationView()
         => ImGui.TextDisabled("Validation view.");
 

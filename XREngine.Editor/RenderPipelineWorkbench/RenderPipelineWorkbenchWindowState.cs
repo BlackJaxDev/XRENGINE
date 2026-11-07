@@ -41,6 +41,18 @@ public sealed class RenderPipelineWorkbenchWindowState
     /// <summary>Gets or sets the visible Resources view detail tab.</summary>
     public ERenderPipelineResourceDetailTab ResourceDetailTab { get; set; }
 
+    /// <summary>Gets the GPU timings of the selected instance, mapped to commands and passes.</summary>
+    public RenderPipelineWorkbenchTiming Timing { get; } = new();
+
+    /// <summary>Gets or sets whether the Flow view colors command blocks by GPU time.</summary>
+    public bool ShowTimingHeat { get; set; }
+
+    /// <summary>Gets the schema tree and stage detail of the Settings view.</summary>
+    public RenderPipelineWorkbenchSettingsContent Settings { get; } = new();
+
+    /// <summary>Gets or sets whether the Settings view shows the pipeline asset settings instead of a stage.</summary>
+    public bool SettingsShowPipeline { get; set; } = true;
+
     /// <summary>Gets the plan snapshots and rows of the Execution view.</summary>
     public RenderPipelineWorkbenchPlanView Plan { get; } = new();
 

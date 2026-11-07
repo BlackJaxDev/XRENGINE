@@ -133,5 +133,12 @@ public sealed class RenderPipelineStructureDiagnosticsTests
         snapshot.UsedUndeclaredCount.ShouldBe(1);
         snapshot.TotalBytes.ShouldBe((8ul * 100ul * 50ul) + (4ul * 4ul * 4ul));
     }
-}
 
+    [Test]
+    public void StageConsumers_DeclareTheirSchemaStages()
+    {
+        RenderCommandInfo.Get(typeof(VPRC_BloomPass)).ConsumesStages.ShouldContain(XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.Bloom);
+        RenderCommandInfo.Get(typeof(VPRC_Tonemap)).ConsumesStages.ShouldContain(XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.Tonemapping);
+        RenderCommandInfo.Get(typeof(VPRC_SSAOPass)).ConsumesStages.ShouldContain(XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.AmbientOcclusion);
+    }
+}

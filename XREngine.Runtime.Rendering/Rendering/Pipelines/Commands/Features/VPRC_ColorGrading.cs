@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Applies standalone color grading using either authored settings or the active camera's color grading stage.
     /// </summary>
-    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.ColorGrading })]
     public sealed class VPRC_ColorGrading : ViewportRenderCommand
     {
         private const string ColorGradingShaderCode = """

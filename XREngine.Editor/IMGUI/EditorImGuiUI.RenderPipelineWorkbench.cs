@@ -72,6 +72,7 @@ public static partial class EditorImGuiUI
         _workbench.Model.Refresh(pipeline, instance);
         _workbench.Links.Update(_workbench.Model, _workbench.Selection.Current);
         _workbench.Execution.Update(_workbench.Model);
+        _workbench.Timing.Update(_workbench.Model);
 
         DrawWorkbenchTargetBar(pipeline, instance);
         ImGui.Separator();

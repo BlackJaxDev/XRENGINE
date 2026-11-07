@@ -1,6 +1,7 @@
 using System.Numerics;
 using ImGuiNET;
 using XREngine.Editor.RenderPipelineWorkbench;
+using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph.Diagnostics;
 
 namespace XREngine.Editor;
@@ -20,6 +21,7 @@ public static partial class EditorImGuiUI
         RenderPipelineWorkbenchModel model = _workbench.Model;
         RenderPipelineTimelineLayout layout = model.Timeline;
         ImGui.TextDisabled("Lanes run branches. Pan: right or middle drag. Zoom: wheel.");
+        DrawWorkbenchTimingControls();
         if (layout.Steps.Count == 0)
         {
             ImGui.TextDisabled("The pipeline has no commands.");
@@ -170,6 +172,9 @@ public static partial class EditorImGuiUI
         IReadOnlySet<int> linked = _workbench.Links.LinkedNodes;
         float rounding = 8f * view.Zoom;
         bool showText = view.Zoom >= 0.45f;
+        RenderPipelineWorkbenchTiming timing = _workbench.Timing;
+        bool heat = _workbench.ShowTimingHeat && timing.HasData;
+        double heatScale = Math.Max(timing.MaxCommandMilliseconds, 0.001);
 
         for (int i = 0; i < layout.Steps.Count; i++)
         {
@@ -189,6 +194,8 @@ public static partial class EditorImGuiUI
             bool selected = step.Id == selectedNode;
             bool isLinked = !selected && linked.Contains(step.Id);
             drawList.AddRectFilled(min, max, step.HasBranches ? branchBlockColor : blockColor, rounding);
+            if (heat && timing.TryGetNode(step.Id, out RenderPipelineTimingEntry stepTiming))
+                drawList.AddRectFilled(min, max, GetWorkbenchHeatColor(stepTiming.LastMilliseconds / heatScale), rounding);
             drawList.AddRectFilled(min, new Vector2(min.X + (4f * view.Zoom), max.Y), GetWorkbenchCategoryColor(step.Category), rounding, ImDrawFlags.RoundCornersLeft);
             drawList.AddRect(min, max, selected ? selectedColor : isLinked ? linkedColor : borderColor, rounding, ImDrawFlags.None, selected || isLinked ? 3f : 1.5f);
 
@@ -201,6 +208,9 @@ public static partial class EditorImGuiUI
                     drawList.AddText(min + (new Vector2(40f, 26f) * view.Zoom), subTextColor, step.BranchSummary);
                 if (entry is { IsGpuWorkWithoutPass: true })
                     drawList.AddText(new Vector2(max.X - (14f * view.Zoom), min.Y + (4f * view.Zoom)), problemColor, "!");
+                string timingBadge = timing.GetNodeBadge(step.Id);
+                if (timingBadge.Length > 0)
+                    drawList.AddText(new Vector2(max.X - (64f * view.Zoom), min.Y + (26f * view.Zoom)), subTextColor, timingBadge);
             }
 
             if (entry is not null)

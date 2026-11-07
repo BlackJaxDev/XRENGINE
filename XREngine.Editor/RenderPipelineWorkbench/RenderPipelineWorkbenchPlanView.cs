@@ -19,6 +19,7 @@ public sealed class RenderPipelineWorkbenchPlanView
     private readonly List<RenderPipelineWorkbenchInspectorItem> _reorderItems = new(32);
     private readonly List<RenderPipelinePlanCompareRow> _compareRows = new(64);
     private readonly List<RenderPipelineWorkbenchInspectorItem> _unmappedItems = new(8);
+    private readonly List<RenderPipelineWorkbenchInspectorItem> _syncItems = new(8);
     private IReadOnlyCollection<RenderPassMetadata>? _offlinePasses;
     private int _offlinePassBuild = -1;
     private RenderGraphPlanSnapshot? _rowSnapshot;
@@ -70,6 +71,12 @@ public sealed class RenderPipelineWorkbenchPlanView
 
     /// <summary>Gets the commands that do GPU work but declare no pass, as linked lines.</summary>
     public List<RenderPipelineWorkbenchInspectorItem> UnmappedItems => _unmappedItems;
+
+    /// <summary>
+    /// Gets the explicit synchronization commands of the pipeline, such as memory barriers and fences, as linked lines.
+    /// OpenGL mode lists them because OpenGL has no planned barriers.
+    /// </summary>
+    public List<RenderPipelineWorkbenchInspectorItem> SyncItems => _syncItems;
 
     /// <summary>Gets the warning text for the order violations, or an empty string when there are none.</summary>
     public string ViolationText { get; private set; } = string.Empty;
@@ -432,10 +439,20 @@ public sealed class RenderPipelineWorkbenchPlanView
     private void RebuildUnmapped(RenderPipelineStructureSnapshot structure)
     {
         _unmappedItems.Clear();
+        _syncItems.Clear();
         for (int i = 0; i < structure.Commands.Count; i++)
         {
             RenderPipelineStructureCommand entry = structure.Commands[i];
-            if (entry.PassIndices.Count > 0 || !RenderCommandInfo.Get(entry.Command).DoesGpuWork)
+            RenderCommandInfo info = RenderCommandInfo.Get(entry.Command);
+            if (info.Category == ERenderCommandCategory.Synchronization)
+            {
+                _syncItems.Add(new RenderPipelineWorkbenchInspectorItem(
+                    string.Concat(RenderPipelineWorkbenchText.GetCommandLabel(entry.Command), "  (", entry.ProfilingPath, ")"),
+                    RenderPipelineWorkbenchSelectionEntry.ForCommand(RenderPipelineWorkbenchNodeIds.Get(entry.Command)),
+                    1));
+            }
+
+            if (entry.PassIndices.Count > 0 || !info.DoesGpuWork)
                 continue;
 
             _unmappedItems.Add(new RenderPipelineWorkbenchInspectorItem(

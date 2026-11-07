@@ -100,6 +100,12 @@ public static partial class EditorImGuiUI
         switch (_workbench.ExecutionTab)
         {
             case ERenderPipelineExecutionTab.Plan:
+                if (active.Origin == EPlanSnapshotOrigin.OpenGL && ImGui.CollapsingHeader("Explicit synchronization commands"))
+                {
+                    if (plan.SyncItems.Count == 0)
+                        ImGui.TextDisabled("The pipeline has no memory barrier or fence commands.");
+                    DrawWorkbenchItems(plan.SyncItems);
+                }
                 DrawWorkbenchPlanRows(plan);
                 break;
             case ERenderPipelineExecutionTab.Barriers:
@@ -185,6 +191,12 @@ public static partial class EditorImGuiUI
             ImGui.TextColored(WorkbenchWarningColor, row.Detail);
         else
             ImGui.TextDisabled(row.Detail);
+        string timingBadge = _workbench.Timing.GetPassBadge(row.PassIndex);
+        if (timingBadge.Length > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(WorkbenchBadgeColor, timingBadge);
+        }
 
         if (dim)
             ImGui.PopStyleVar();

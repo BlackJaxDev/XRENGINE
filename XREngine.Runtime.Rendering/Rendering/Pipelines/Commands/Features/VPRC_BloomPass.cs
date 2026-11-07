@@ -22,7 +22,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </para>
     /// </summary>
     [RenderPipelineScriptCommand]
-    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.Bloom })]
     public class VPRC_BloomPass : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

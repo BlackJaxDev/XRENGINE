@@ -226,6 +226,7 @@ public sealed partial class VulkanRenderer : IRenderGraphPlanDiagnosticsSource
             return groups;
         }
 
+        notes.Add(string.Concat("Transient attachments: ", allocator.TransientAttachmentPlan.Describe()));
         try
         {
             foreach (VulkanPhysicalImageGroup group in allocator.EnumeratePhysicalGroups())

@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Applies a standalone tonemapping pass from a named input texture into the current or specified output framebuffer.
     /// </summary>
     [RenderPipelineScriptCommand]
-    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.Tonemapping })]
     public sealed class VPRC_Tonemap : ViewportRenderCommand
     {
         private XRMaterial? _material;
