@@ -23,10 +23,14 @@ namespace XREngine.Cutscenes;
 /// <para>
 /// The session sends only texture assets to the texture backend. Audio assets go to an audio backend
 /// (<see cref="AudioResidencyBackend"/> by default) with its own planner, <see cref="AudioPlanner"/>. The audio planner
-/// gets the same playhead updates. It never holds playback, and memory pressure does not release its data. Mesh assets
-/// have no backend yet, so the session reports their count in one diagnostic, and they stay at the residency that
-/// visibility selects. A manifest diagnostic is reported one time for each reason: a refresh that gives the same reason
-/// adds nothing.
+/// gets the same playhead updates. It never holds playback, and memory pressure does not release its data. A manifest
+/// diagnostic is reported one time for each reason: a refresh that gives the same reason adds nothing.
+/// </para>
+/// <para>
+/// Mesh assets go to a mesh backend (<see cref="MeshResidencyBackend"/> by default) with its own planner,
+/// <see cref="MeshPlanner"/>, in the same way. Its manifest is the mesh assets of the selected manifest that the backend
+/// finds. It never holds playback, and memory pressure does not release its data. Sub-meshes of an older cooked payload
+/// (codec version 1) have all LODs resident; the session reports their count in one diagnostic.
 /// </para>
 /// <para>
 /// A refresh keeps the audio backend and its open decoders when the audio inputs did not change. A refresh makes the new
@@ -78,6 +82,12 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     private int _reportedUnroutedVideo;
     private string? _videoSignature;
     private string? _videoUnroutedReason;
+    private Func<CompiledCutscene, CutsceneBindingTable, IResidencyBackend?> _createMeshBackend = MeshResidencyBackend.CreateDefault;
+    private IResidencyBackend? _meshBackend;
+    private int _reportedUnroutedMesh;
+    private int _reportedLegacyMesh;
+    private string? _meshSignature;
+    private string? _meshUnroutedReason;
     private CutscenePlayer? _player;
     private bool _updatedThisTick;
     private bool _opened;
@@ -85,7 +95,6 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     private bool _playbackWaitEnabled;
     private double _playbackWaitMaximumSeconds = CutsceneResidencyPlanner.DefaultPlaybackWaitMaximumSeconds;
     private string? _reportedReason;
-    private int _reportedOtherKinds;
     private int _reportedUnresolved;
     private bool _selectWhenLoaded;
     private CompiledCutscene? _selectedCompiled;
@@ -135,6 +144,15 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
 
     /// <summary>The backend of <see cref="VideoPlanner"/>, or null. The session owns it.</summary>
     public IResidencyBackend? VideoBackend => _videoBackend;
+
+    /// <summary>
+    /// The planner of the mesh assets, or null if no mesh backend was made or the manifest has no found sub-mesh.
+    /// <see cref="Refresh"/> replaces it only when the mesh assets of the manifest changed. It never holds playback.
+    /// </summary>
+    public CutsceneResidencyPlanner? MeshPlanner { get; private set; }
+
+    /// <summary>The backend of <see cref="MeshPlanner"/>, or null. The session owns it.</summary>
+    public IResidencyBackend? MeshBackend => _meshBackend;
 
     /// <summary>The manifest that the planner uses: the texture assets of the baked or the approximate manifest.</summary>
     public CutsceneResidencyManifest Manifest => Planner.Manifest;
@@ -208,6 +226,11 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     /// Creates the video backend of a compile, or gives null for no video planner. The session owns the result. Null uses
     /// <see cref="CreateDefaultVideoBackend"/>. The session calls it again at a <see cref="Refresh"/> whose video inputs changed.
     /// </param>
+    /// <param name="createMeshBackend">
+    /// Creates the mesh backend of a compile, or gives null for no mesh planner. The session owns the result. Null uses
+    /// <see cref="MeshResidencyBackend.CreateDefault"/>. The session calls it again at a <see cref="Refresh"/> whose mesh
+    /// assets changed.
+    /// </param>
     public static CutsceneResidencySession Create(
         CompiledCutscene compiled,
         CutsceneBindingTable bindings,
@@ -215,7 +238,8 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         ICutsceneResidencyAssetCollector collector,
         List<CutsceneCompileDiagnostic> diagnostics,
         Func<CompiledCutscene, IResidencyBackend?>? createAudioBackend = null,
-        Func<CompiledCutscene, IResidencyBackend?>? createVideoBackend = null)
+        Func<CompiledCutscene, IResidencyBackend?>? createVideoBackend = null,
+        Func<CompiledCutscene, CutsceneBindingTable, IResidencyBackend?>? createMeshBackend = null)
     {
         ArgumentNullException.ThrowIfNull(textureBackend);
         ArgumentNullException.ThrowIfNull(diagnostics);
@@ -228,14 +252,18 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
                 session._createAudioBackend = createAudioBackend;
             if (createVideoBackend is not null)
                 session._createVideoBackend = createVideoBackend;
+            if (createMeshBackend is not null)
+                session._createMeshBackend = createMeshBackend;
             session.InstallAudio(session.PrepareAudio(compiled, selection, GetAudioSignature(compiled, selection)));
             session.InstallVideo(session.PrepareVideo(compiled, selection, GetVideoSignature(compiled, selection)));
+            session.InstallMesh(session.PrepareMesh(compiled, bindings, selection, GetMeshSignature(selection)));
         }
         catch
         {
             // The caller still owns the texture backend after a failed create, as after a failed selection.
             session.CloseAudio();
             session.CloseVideo();
+            session.CloseMesh();
             throw;
         }
         session.KeepSelectionInputs(compiled, bindings, collector, diagnostics, selection);
@@ -283,6 +311,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     /// <param name="diagnostics">The list that receives the diagnostics.</param>
     /// <param name="createAudioBackend">Creates the audio backend, or null for <see cref="CreateDefaultAudioBackend"/>.</param>
     /// <param name="createVideoBackend">Creates the video backend, or null for <see cref="CreateDefaultVideoBackend"/>.</param>
+    /// <param name="createMeshBackend">Creates the mesh backend, or null for <see cref="MeshResidencyBackend.CreateDefault"/>.</param>
     /// <returns>The open session, or null if residency is off for this open.</returns>
     public static CutsceneResidencySession? TryOpen(
         CompiledCutscene compiled,
@@ -294,7 +323,8 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         double playbackWaitMaximumSeconds,
         List<CutsceneCompileDiagnostic> diagnostics,
         Func<CompiledCutscene, IResidencyBackend?>? createAudioBackend = null,
-        Func<CompiledCutscene, IResidencyBackend?>? createVideoBackend = null)
+        Func<CompiledCutscene, IResidencyBackend?>? createVideoBackend = null,
+        Func<CompiledCutscene, CutsceneBindingTable, IResidencyBackend?>? createMeshBackend = null)
     {
         ArgumentNullException.ThrowIfNull(createBackend);
         ArgumentNullException.ThrowIfNull(player);
@@ -311,7 +341,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
                 return null;
             }
 
-            session = Create(compiled, bindings, backend, collector, diagnostics, createAudioBackend, createVideoBackend);
+            session = Create(compiled, bindings, backend, collector, diagnostics, createAudioBackend, createVideoBackend, createMeshBackend);
             session.PlaybackWaitEnabled = playbackWaitEnabled;
             session.PlaybackWaitMaximumSeconds = playbackWaitMaximumSeconds;
             session.Open(player);
@@ -367,10 +397,23 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         PlannerParts audio = keepAudio ? default : PrepareAudio(compiled, selection, audioSignature);
         string videoSignature = GetVideoSignature(compiled, selection);
         bool keepVideo = string.Equals(videoSignature, _videoSignature, StringComparison.Ordinal);
+        string meshSignature = GetMeshSignature(selection);
+        bool keepMesh = string.Equals(meshSignature, _meshSignature, StringComparison.Ordinal);
         PlannerParts video;
+        PlannerParts mesh = default;
         try
         {
             video = keepVideo ? default : PrepareVideo(compiled, selection, videoSignature);
+            try
+            {
+                mesh = keepMesh ? default : PrepareMesh(compiled, bindings, selection, meshSignature);
+            }
+            catch
+            {
+                if (!keepVideo)
+                    (video.Backend as IDisposable)?.Dispose();
+                throw;
+            }
         }
         catch
         {
@@ -403,6 +446,8 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
                 (audio.Backend as IDisposable)?.Dispose();
             if (!keepVideo)
                 (video.Backend as IDisposable)?.Dispose();
+            if (!keepMesh)
+                (mesh.Backend as IDisposable)?.Dispose();
             throw;
         }
 
@@ -410,6 +455,8 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
             InstallAudio(audio);
         if (!keepVideo)
             InstallVideo(video);
+        if (!keepMesh)
+            InstallMesh(mesh);
         Report(selection, diagnostics);
     }
 
@@ -431,6 +478,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         Planner.Open();
         AudioPlanner?.Open();
         VideoPlanner?.Open();
+        MeshPlanner?.Open();
     }
 
     /// <summary>
@@ -537,6 +585,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
             {
                 CloseAudio();
                 CloseVideo();
+                CloseMesh();
             }
             finally
             {
@@ -646,6 +695,87 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     }
 
     /// <summary>
+    /// Makes the mesh backend and the mesh planner of a compile. It changes no field of the session, so a throw leaves the
+    /// session as it was. The manifest is the mesh assets of the selected manifest that the backend finds.
+    /// </summary>
+    private PlannerParts PrepareMesh(CompiledCutscene compiled, CutsceneBindingTable bindings, Selection selection, string signature)
+    {
+        if (selection.MeshAssets == 0)
+            return new PlannerParts(null, null, signature, null);
+
+        IResidencyBackend? backend = _createMeshBackend(compiled, bindings);
+        if (backend is null)
+            return new PlannerParts(null, null, signature, "the mesh backend factory gave no backend");
+
+        try
+        {
+            backend.BeginSelection();
+            CutsceneResidencyManifest manifest = selection.FullManifest.SelectKind(EResidencyAssetKind.Mesh, backend.CanResolve);
+            if (manifest.Assets.Length == 0)
+            {
+                (backend as IDisposable)?.Dispose();
+                return new PlannerParts(null, null, signature, "no mesh asset of the manifest is a sub-mesh of the scene now");
+            }
+            return new PlannerParts(backend, new CutsceneResidencyPlanner(manifest, backend), signature, null);
+        }
+        catch
+        {
+            (backend as IDisposable)?.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Replaces the mesh backend and the mesh planner. The old planner closes first, so its tickets release, and then the
+    /// old backend is disposed. An open session opens the new planner.
+    /// </summary>
+    private void InstallMesh(PlannerParts parts)
+    {
+        CloseMesh();
+        _meshSignature = parts.Signature;
+        _meshUnroutedReason = parts.UnroutedReason;
+        if (parts.Planner is not { } planner)
+            return;
+
+        _meshBackend = parts.Backend;
+        MeshPlanner = planner;
+        parts.Backend!.AttachPlanner(planner);
+        if (_opened)
+            planner.Open();
+    }
+
+    /// <summary>
+    /// Gets the inputs of the mesh part as one string: the mesh assets of the selected manifest. A refresh with the same
+    /// string keeps the mesh backend and the LODs that it loaded.
+    /// </summary>
+    private static string GetMeshSignature(Selection selection)
+    {
+        StringBuilder text = new();
+        CutsceneResidencyManifest manifest = selection.FullManifest;
+        for (int i = 0; i < manifest.Assets.Length; i++)
+            if (manifest.AssetKinds[i] == EResidencyAssetKind.Mesh)
+                text.Append("|m:").Append(manifest.Assets[i].ToString("N"));
+        return text.ToString();
+    }
+
+    private void CloseMesh()
+    {
+        _meshSignature = null;
+        CutsceneResidencyPlanner? planner = MeshPlanner;
+        IResidencyBackend? backend = _meshBackend;
+        MeshPlanner = null;
+        _meshBackend = null;
+        try
+        {
+            planner?.Close();
+        }
+        finally
+        {
+            (backend as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
     /// Gets the inputs of the video part of a compile as one string: the video clips of the asset, and the video assets of
     /// the selected manifest. A refresh with the same string keeps the video backend and its decoded frames.
     /// </summary>
@@ -735,6 +865,12 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
             _videoBackend!.SetPlayhead(position, rate);
             videoPlanner.Update(position, rate, seek, deltaSeconds);
         }
+        if (MeshPlanner is { } meshPlanner)
+        {
+            // The mesh backend publishes the LODs that finished loading here, at the frame boundary.
+            _meshBackend!.SetPlayhead(position, rate);
+            meshPlanner.Update(position, rate, seek, deltaSeconds);
+        }
 
         // Only the data outside the window leaves. The streaming budget fit already lowers the textures in the window,
         // and the next plan would request their levels again. A release demotes only after the demotion cooldown, so the
@@ -803,9 +939,20 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
             Add(diagnostics, selection.Message!);
         }
 
-        if (selection.MeshAssets > 0 && selection.MeshAssets != _reportedOtherKinds)
-            Add(diagnostics, $"{selection.MeshAssets} mesh assets of the residency manifest have no residency backend. They stay at the residency that visibility selects.");
-        _reportedOtherKinds = selection.MeshAssets;
+        int unroutedMesh = MeshPlanner is null ? selection.MeshAssets : selection.MeshAssets - MeshPlanner.Manifest.Assets.Length;
+        if (unroutedMesh > 0 && unroutedMesh != _reportedUnroutedMesh)
+        {
+            string reason = MeshPlanner is null
+                ? _meshUnroutedReason ?? "the mesh part was not made"
+                : "the mesh backend does not find them in the scene now";
+            Add(diagnostics, $"{unroutedMesh} mesh assets of the residency manifest have no mesh residency, because {reason}. They keep the LODs that are resident now.");
+        }
+        _reportedUnroutedMesh = unroutedMesh;
+
+        int legacyMesh = _meshBackend is MeshResidencyBackend meshBackend ? meshBackend.LegacySubMeshCount : 0;
+        if (legacyMesh > 0 && legacyMesh != _reportedLegacyMesh)
+            Add(diagnostics, $"{legacyMesh} sub-meshes of the scene use an older cooked payload (version 1) with all LODs inline, so the open reads all of their LOD data and eviction cannot release it. Cook again for progressive mesh loading.");
+        _reportedLegacyMesh = legacyMesh;
 
         // The audio assets of the manifest go to the audio planner. With no audio planner, nothing loads their full decoders
         // ahead of the playhead; the track still opens them at playback.

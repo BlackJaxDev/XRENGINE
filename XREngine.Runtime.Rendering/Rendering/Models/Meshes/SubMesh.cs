@@ -5,6 +5,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Meshlets;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Models
 {
@@ -13,14 +14,47 @@ namespace XREngine.Rendering.Models
     /// </summary>
     [XRAssetInspector("XREngine.Editor.AssetEditors.SubMeshInspector")]
     [MemoryPackable(GenerateType.NoGenerate)]
-    public partial class SubMesh : XRAsset
+    public partial class SubMesh : XRAsset, IPostCookedBinaryDeserialize
     {
         private SortedSet<SubMeshLOD> _lods = new(new LODSorter());
         private MeshOptimizerSubMeshSettings _meshOptimizer = new();
         private string _importedEntityIdentity = string.Empty;
         private bool _importedEntityIdentityIsStable;
+        private int _cookedCodecVersion;
         public string ImportedEntityIdentity { get => _importedEntityIdentity; set => SetField(ref _importedEntityIdentity, value ?? string.Empty); }
         public bool ImportedEntityIdentityIsStable { get => _importedEntityIdentityIsStable; set => SetField(ref _importedEntityIdentityIsStable, value); }
+
+        /// <summary>
+        /// The version of the cooked sub-mesh payload that gave this sub-mesh: 0 for an editor sub-mesh, 1 for an older generic
+        /// cooked payload with all LODs inline, and <see cref="SubMeshCookedCodec.CodecVersion"/> for a payload with a LOD
+        /// table and separate LOD entries. Only a version 2 sub-mesh can have LODs that are not resident.
+        /// </summary>
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public int CookedCodecVersion
+        {
+            get => _cookedCodecVersion;
+            internal set => SetField(ref _cookedCodecVersion, value);
+        }
+
+        /// <summary>True if at least one LOD has a separate cooked payload that is not resident now.</summary>
+        public bool HasNonResidentLods
+        {
+            get
+            {
+                foreach (SubMeshLOD lod in _lods)
+                    if (lod.IsPayloadDeferred && lod.Mesh is null)
+                        return true;
+                return false;
+            }
+        }
+
+        /// <summary>A generic cooked payload holds every LOD inline. It is the version 1 form of the cooked sub-mesh.</summary>
+        void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
+        {
+            if (_cookedCodecVersion == 0)
+                _cookedCodecVersion = 1;
+        }
 
         [MemoryPackIgnore]
         public SortedSet<SubMeshLOD> LODs

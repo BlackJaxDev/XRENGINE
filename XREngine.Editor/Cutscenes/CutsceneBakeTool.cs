@@ -19,6 +19,10 @@ namespace XREngine.Editor.Cutscenes;
 /// An asset on screen needs T2 at or above <see cref="CutsceneBakeOptions.TargetCoverage"/> and T1 below it.
 /// </para>
 /// <para>
+/// The T0 size of a sub-mesh is the payload size of its coarsest LOD. The bake reports the sub-meshes with one LOD and the
+/// sub-meshes whose coarsest LOD did not reduce (see <see cref="CutsceneMeshLodBakeCheck"/>).
+/// </para>
+/// <para>
 /// The bake also makes an <see cref="AudioProxyAsset"/> for each audio clip source file (see <see cref="BakeAudioProxies"/>)
 /// and lists each proxy in the manifest as an <see cref="EResidencyAssetKind.Audio"/> asset with no bucket entries, so
 /// that its size counts in the T0 report.
@@ -277,6 +281,9 @@ public static class CutsceneBakeTool
         if (samplesWithoutView > 0)
             diagnostics.Add(new CutsceneCompileDiagnostic(-1, -1,
                 $"{samplesWithoutView} of {times.Length} bake samples have no active perspective or orthographic camera. Those buckets need only T0. Add a camera cut track to cover them."));
+
+        // T0 of a sub-mesh is its coarsest LOD. Report the sub-meshes whose proxy is the full mesh or close to it.
+        CutsceneMeshLodBakeCheck.Check(roots, diagnostics);
     }
 
     private static List<SceneNode> CollectRoots(CutsceneBindingTable bindings, IReadOnlyList<SceneNode>? sceneRoots)

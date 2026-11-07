@@ -911,7 +911,8 @@ internal static partial class ProjectBuilder
         List<string> removedPaths = [];
         foreach (string existingPath in embeddedTimestamps.Keys)
         {
-            if (!currentSnapshot.ContainsKey(existingPath))
+            // LOD payload entries have no source file of their own; the cooked sub-mesh that refers to one writes it.
+            if (!currentSnapshot.ContainsKey(existingPath) && !IsSubMeshLodPayloadEntry(existingPath))
                 removedPaths.Add(existingPath);
         }
 
@@ -938,6 +939,8 @@ internal static partial class ProjectBuilder
             Directory.Delete(destinationDirectory, true);
         Directory.CreateDirectory(destinationDirectory);
 
+        // A cooked sub-mesh writes its separate LOD payloads next to the staged files.
+        using XREngine.Rendering.Models.SubMeshLodPayloadCookSink lodPayloads = XREngine.Rendering.Models.SubMeshLodPayloadCookSink.Begin(destinationDirectory);
         foreach (string relativePath in relativePaths)
         {
             string sourcePath = Path.Combine(sourceDirectory, ToSystemPath(relativePath));
@@ -971,6 +974,10 @@ internal static partial class ProjectBuilder
     #endregion
 
     #region Content Cooking
+
+    /// <summary>True for a separate LOD payload entry of a cooked sub-mesh (<c>lod/&lt;key&gt;</c>).</summary>
+    private static bool IsSubMeshLodPayloadEntry(string relativePath)
+        => NormalizePath(relativePath).StartsWith(XREngine.Rendering.Models.SubMeshLodDescriptor.EntryPrefix, StringComparison.Ordinal);
 
     private static readonly HashSet<string> ExcludedCookedContentExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1080,6 +1087,8 @@ internal static partial class ProjectBuilder
                 NormalizePath(Path.GetRelativePath(context.AssetsDirectory, sourceFile))))];
         int totalFiles = sourceFiles.Length;
 
+        // A cooked sub-mesh writes each LOD other than its coarsest one as a separate lod/<key> entry in the cooked root.
+        using XREngine.Rendering.Models.SubMeshLodPayloadCookSink lodPayloads = XREngine.Rendering.Models.SubMeshLodPayloadCookSink.Begin(cookedRoot);
         for (int i = 0; i < sourceFiles.Length; i++)
         {
             string sourceFile = sourceFiles[i];

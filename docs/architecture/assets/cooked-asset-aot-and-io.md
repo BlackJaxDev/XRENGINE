@@ -112,7 +112,7 @@ strings.
 
 Runtime-cooked published assets are now distinguished by `CookedAssetFormat.RuntimeBinaryV1`.
 The build pipeline selects that format only for types registered in `PublishedCookedAssetRegistry`
-(currently explicit runtime-rendering assets such as `XRMesh` and `XRTexture2D`, plus bounded animation assets such as
+(currently explicit runtime-rendering assets such as `XRMesh`, `XRTexture2D`, and `SubMesh`, plus bounded animation assets such as
 `AnimationClip`, `BlendTree1D`, `BlendTree2D`, `BlendTreeDirect`, and `AnimStateMachine`).
 Published AOT runtime validates those types against `AotRuntimeMetadata.PublishedRuntimeAssetTypeNames`
 before dispatching to the registered runtime serializer.
@@ -334,6 +334,49 @@ gets the same value in the editor and in a cooked build.
   path portable.
 - Cooks of live objects (`WriteCookedAsset`) and browser dependency cooks do
   not use the policy.
+
+## Mesh LOD Payloads
+
+`SubMesh` has a registered `RuntimeBinaryV1` codec, `SubMeshCookedCodec`, with its own codec version.
+Version 2 holds three parts:
+
+1. The sub-mesh fields that do not depend on a LOD: the asset ID, name, and original path, the imported entity
+   identity, the bounds and culling bounds, the root bone and root transform (as serialized reference IDs and names,
+   the same form that a cooked mesh uses for its bones), and the GPU BVH flags. The mesh optimizer settings and the
+   LOD materials keep the generic cooked encoding of the older payload, in one block, so a material that more than one
+   LOD uses stays one object.
+2. A LOD table with one descriptor for each LOD (`SubMeshLodDescriptor`): the distance and projected-radius values,
+   the flags (auto generated, inline, skinning, blendshapes, blendshapes stripped), the generation values, the bounds,
+   the vertex, index, bone, and blendshape counts, the bone set hash and the blendshape name hash (xxHash3-64), the
+   content key, the payload length, the payload checksum (xxHash3-64), the mesh codec version, a reserved zero, the
+   stable sort key, and the material index.
+3. The payload of the coarsest LOD, inline.
+
+Each other LOD is a separate archive entry `lod/<32 lowercase hex digits of the content key>` with a normal cooked
+`XRMesh` envelope (`RuntimeBinaryV1`), so its meshlet payload moves with it. The content key is the first 128 bits of
+SHA-256 over the mesh codec version (32-bit little endian) and the entry bytes. Only the cook computes it. Equal
+payloads have one entry. A sub-mesh with one LOD writes it inline and has no separate entry.
+
+The writer puts the separate entries in the `SubMeshLodPayloadCookSink` of the thread. `ProjectBuilder` opens a sink on
+the cooked content root, and on each staging folder of an incremental repack. An incremental repack keeps the `lod/`
+entries of the archive, because they have no source file of their own; an entry that no sub-mesh uses any more stays
+until a full cook. The writer of a sub-mesh with more than one LOD fails when no sink is open.
+
+The reader follows `SubMeshLodPayloads.LoadPolicy`. The default, `ELodPayloadLoadPolicy.All`, reads each separate entry
+during the load, so a normal world load gives every LOD as before. `ProxyFirst` reads only the inline LOD; a host sets it
+for its loads with `SubMeshLodPayloads.UseLoadPolicy`. A LOD that is not read keeps its descriptor and has no mesh
+(`SubMeshLOD.IsPayloadDeferred`). `SubMeshLodPayloads.TryLoadLod` reads one entry later, through the registered
+`ISubMeshLodPayloadSource` instances (the published game content and common assets archives by default, and
+`DirectoryLodPayloadSource` for a loose cooked folder). It checks the length and the checksum before it parses, and the
+bone set hash and the blendshape name hash after. A missing entry, a bad length or checksum, an unknown mesh codec
+version, or a hash that does not agree rejects that LOD only: it stays not resident, the other LODs stay, and one warning
+names the sub-mesh, the LOD, and the reason. The runtime never cooks again.
+
+Version rule: the writer writes only version 2. The reader accepts version 2 in a `RuntimeBinaryV1` envelope and rejects
+a higher version. An envelope in `BinaryV1` or `BinaryV2` is version 1 by definition: the generic reader loads it with
+all LODs inline, and `SubMesh.CookedCodecVersion` is 1. No tool rewrites archives in place; a new cook writes version 2.
+The version 1 reader stays until engine v1. A `Model` cook embeds its sub-meshes through the generic serializer, so those
+sub-meshes are version 1.
 
 ## Open Items
 

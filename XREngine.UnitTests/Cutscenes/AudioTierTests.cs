@@ -834,7 +834,7 @@ public sealed class AudioTierTests
             session.AudioPlanner!.Manifest.Assets.ShouldBe([audioId]);
             session.Manifest.Assets.ShouldBeEmpty();
             diagnostics.Count.ShouldBe(1);
-            diagnostics[0].Message.ShouldBe("1 mesh assets of the residency manifest have no residency backend. They stay at the residency that visibility selects.");
+            diagnostics[0].Message.ShouldBe("1 mesh assets of the residency manifest have no mesh residency, because no mesh asset of the manifest is a sub-mesh of the scene now. They keep the LODs that are resident now.");
 
             CutscenePlayer player = new(compiled, bindings, new CutsceneStateSnapshot(bindings));
             session.Open(player);

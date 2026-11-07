@@ -24,6 +24,7 @@ public static class RenderingSerializationRegistration
             leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory<GaussianCache>(static () => new GaussianCache()));
             leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory<GaussianCacheChunk>(static () => new GaussianCacheChunk()));
             leases.Add(GaussianCachePublishedRegistration.Install());
+            leases.Add(SubMeshCookedCodec.Install());
             leases.Add(ThirdPartyCacheCodecRegistry.Install(new TextureStreamingCacheCodec()));
             leases.Add(ThirdPartyAssetTypeRegistry.Install("XREngine.Runtime.Rendering", typeof(XRTexture2D)));
             // .cs also names C# scripts; only an explicitly typed shader load may claim it.

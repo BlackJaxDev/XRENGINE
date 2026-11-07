@@ -1,4 +1,5 @@
 ﻿using XREngine.Data.Core;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Models
 {
@@ -13,6 +14,7 @@ namespace XREngine.Rendering.Models
         private float _generatedObjectSpaceError;
         private float _minProjectedScreenRadiusPixels = float.NaN;
         private string _stableSortKey = string.Empty;
+        private SubMeshLodDescriptor? _cookedDescriptor;
 
         public SubMeshLOD() 
             : this(null, null, 0) { }
@@ -105,6 +107,24 @@ namespace XREngine.Rendering.Models
             get => _stableSortKey;
             set => SetField(ref _stableSortKey, value ?? string.Empty);
         }
+
+        /// <summary>
+        /// The cooked descriptor of this LOD, or null for an editor LOD and a LOD of an older cooked sub-mesh. Only a load of a
+        /// cooked sub-mesh payload of codec version 2 sets it.
+        /// </summary>
+        [YamlIgnore]
+        public SubMeshLodDescriptor? CookedDescriptor
+        {
+            get => _cookedDescriptor;
+            internal set => SetField(ref _cookedDescriptor, value);
+        }
+
+        /// <summary>
+        /// True if the payload of this LOD is a separate cooked entry. Such a LOD can have no <see cref="Mesh"/>: it is then
+        /// not resident, and a <see cref="Components.Scene.Mesh.RenderableMesh"/> makes no renderer for it until the mesh comes.
+        /// </summary>
+        public bool IsPayloadDeferred
+            => _cookedDescriptor is { IsInline: false };
 
         public XRMeshRenderer NewRenderer()
             => new(mesh, material) { GenerateAsync = GenerateAsync };

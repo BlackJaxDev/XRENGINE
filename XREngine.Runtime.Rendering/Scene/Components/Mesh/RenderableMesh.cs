@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Threading;
 using SimpleScene.Util.ssBVH;
+using XREngine.Cutscenes;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -175,10 +176,25 @@ namespace XREngine.Components.Scene.Mesh
         public bool IsSkinned
             => !_retiring && (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
 
+        /// <summary>One resident LOD: its renderer and the selection values of its source LOD.</summary>
+        /// <param name="Renderer">The renderer of the LOD.</param>
+        /// <param name="MaxVisibleDistance">The largest camera distance at which the LOD shows.</param>
+        /// <param name="MinProjectedScreenRadiusPixels">The smallest projected radius for the GPU-driven path, or NaN.</param>
         public record RenderableLOD(
             XRMeshRenderer Renderer,
             float MaxVisibleDistance,
-            float MinProjectedScreenRadiusPixels);
+            float MinProjectedScreenRadiusPixels)
+        {
+            /// <summary>The index of the LOD in the LOD table of the source sub-mesh. 0 is the finest LOD.</summary>
+            public int Index { get; init; }
+
+            /// <summary>
+            /// The residency tier that this LOD gives while it is resident (see <see cref="SubMeshLodTiers"/>). Only resident
+            /// LODs are in <see cref="LODs"/>; <see cref="GetLodResidency"/> gives <see cref="EResidencyLevel.None"/> for a
+            /// LOD that is not resident.
+            /// </summary>
+            public EResidencyLevel Residency { get; init; } = EResidencyLevel.Target;
+        }
 
         #endregion
 
@@ -195,7 +211,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             lock (_lifetimeGate)
             {
-                List<(SubMeshLOD Source, XRMeshRenderer Renderer, XRMesh? Mesh, XRMaterial? Material)> initialReferences = [];
+                List<(LodSlot Slot, XRMesh? Mesh, XRMaterial? Material)> initialReferences = [];
                 try
                 {
                     Component = component;
@@ -203,25 +219,37 @@ namespace XREngine.Components.Scene.Mesh
                     TransformBase? serializedRootBone = ResolveTransformReference(mesh.RootBone, referenceSearchRoot);
                     _skinnedBoundsRootTransform = ResolveTransformReference(mesh.RootTransform, referenceSearchRoot);
 
+                    _sourceSubMesh = mesh;
+                    SubMeshLOD[] sourceLods = [.. mesh.LODs];
+                    _lodSlots = new LodSlot[sourceLods.Length];
                     lock (_lodsLock)
                     {
-                        foreach (var lod in mesh.LODs)
+                        for (int index = 0; index < sourceLods.Length; index++)
                         {
+                            SubMeshLOD lod = sourceLods[index];
                             XRMesh? initialMesh = lod.Mesh;
                             XRMaterial? initialMaterial = lod.Material;
+                            LodSlot slot = new(lod, index, SubMeshLodTiers.GetTier(index, sourceLods.Length));
+                            _lodSlots[index] = slot;
+                            void UpdateReferences(object? s, IXRPropertyChangedEventArgs e)
+                            {
+                                OnSourceLodChanged(slot, e.PropertyName);
+                            }
+                            XRPropertyChangedEventHandler handler = UpdateReferences;
+                            _sourceLodSubscriptions.Add((lod, handler));
+                            initialReferences.Add((slot, initialMesh, initialMaterial));
+
+                            // A cooked LOD with a separate payload that is not loaded has no renderer. It becomes
+                            // selectable when its mesh comes (see PublishLod).
+                            if (lod.IsPayloadDeferred && initialMesh is null)
+                                continue;
+
                             var renderer = lod.NewRenderer();
                             _pendingRendererRetirements.Add(renderer);
                             renderer.Mesh = CreateRuntimeMesh(initialMesh, referenceSearchRoot);
                             renderer.Material = initialMaterial;
                             renderer.SourceSubMeshAsset = mesh;
-                            void UpdateReferences(object? s, IXRPropertyChangedEventArgs e)
-                            {
-                                UpdateLodReferences(lod, renderer, e.PropertyName);
-                            }
-                            XRPropertyChangedEventHandler handler = UpdateReferences;
-                            _sourceLodSubscriptions.Add((lod, handler));
-                            initialReferences.Add((lod, renderer, initialMesh, initialMaterial));
-                            LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance, lod.MinProjectedScreenRadiusPixels));
+                            slot.Node = LODs.AddLast(slot.CreateRenderableLod(renderer));
                             TrackBones(renderer.Mesh, true);
                             RegisterCommittedBoundsRenderer(renderer);
                         }
@@ -254,8 +282,11 @@ namespace XREngine.Components.Scene.Mesh
 
                     lock (_lodsLock)
                     {
-                        if (LODs.Count > 0)
-                            CurrentLOD = LODs.First;
+                        if (LODs.First is { } first)
+                        {
+                            CurrentLOD = first;
+                            _requestedLodIndex = first.Value.Index;
+                        }
                     }
 
                     // Set initial mesh renderer for GPU scene (will be updated in BeforeAdd if needed)
@@ -295,10 +326,10 @@ namespace XREngine.Components.Scene.Mesh
                     // no change can fall between the snapshot and live observation.
                     foreach (var initial in initialReferences)
                     {
-                        if (!ReferenceEquals(initial.Source.Mesh, initial.Mesh))
-                            UpdateLodReferences(initial.Source, initial.Renderer, nameof(SubMeshLOD.Mesh));
-                        if (!ReferenceEquals(initial.Source.Material, initial.Material))
-                            UpdateLodReferences(initial.Source, initial.Renderer, nameof(SubMeshLOD.Material));
+                        if (!ReferenceEquals(initial.Slot.Source.Mesh, initial.Mesh))
+                            OnSourceLodChanged(initial.Slot, nameof(SubMeshLOD.Mesh));
+                        if (!ReferenceEquals(initial.Slot.Source.Material, initial.Material))
+                            OnSourceLodChanged(initial.Slot, nameof(SubMeshLOD.Material));
                     }
                     RuntimeEngine.Rendering.SettingsChanged += Rendering_SettingsChanged;
                     ReconcileCommittedWorldBounds();
@@ -399,6 +430,10 @@ namespace XREngine.Components.Scene.Mesh
                 skinned = (rend?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
                 XRMaterial? materialOverride = Volatile.Read(ref _materialOverride);
                 XRMaterial? mat = materialOverride ?? rend?.Material;
+
+                // A LOD that a residency backend published after construction needs its own palette seed and
+                // pose settle at its first draw, so its first selection resets the per-mesh seed state.
+                ResetSeedStateForLateLod(rend);
 
                 // One-shot: construction-time palette/draw-matrix seeds can capture stale RenderMatrix
                 // values. The toggle path fixes that by re-reading current transform state; do the same
@@ -503,11 +538,9 @@ namespace XREngine.Components.Scene.Mesh
                         return;
                     }
 
-                    while (!_retiring && _currentLOD.Next is not null && distanceToCamera > _currentLOD.Value.MaxVisibleDistance)
-                        CurrentLOD = _currentLOD.Next;
-
-                    if (!_retiring && _currentLOD.Previous is not null && distanceToCamera < _currentLOD.Previous.Value.MaxVisibleDistance)
-                        CurrentLOD = _currentLOD.Previous;
+                    LinkedListNode<RenderableLOD>? selected = SelectResidentLod(distanceToCamera);
+                    if (!_retiring && selected is not null && !ReferenceEquals(selected, _currentLOD))
+                        CurrentLOD = selected;
                 }
             }
             finally { EndLifetimeMutation(); }
@@ -863,6 +896,9 @@ namespace XREngine.Components.Scene.Mesh
                         SetField(ref _currentLOD, null, publishNotifications: false, nameof(CurrentLOD));
                         Volatile.Write(ref _currentLODRenderer, null);
                         LODs.Clear();
+                        foreach (LodSlot slot in _lodSlots)
+                            slot.Node = null;
+                        _lateLodRenderersAwaitingSeed.Clear();
                         AdvanceLodRegistrationVersion();
                     }
                     for (int index = _pendingRendererRetirements.Count - 1; index >= 0; index--)

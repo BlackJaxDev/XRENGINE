@@ -4,6 +4,10 @@ namespace XREngine.Cutscenes;
 /// The level of detail of an asset that is resident in memory.
 /// The value of each tier is its level index: 0 is T0, 1 is T1, and 2 is T2.
 /// </summary>
+/// <remarks>
+/// The rendering project owns the type, so that a mesh LOD can report its tier. The cutscene residency planner and its
+/// backends use the same values.
+/// </remarks>
 public enum EResidencyLevel
 {
     /// <summary>No data of the asset is resident.</summary>
