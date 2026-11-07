@@ -375,6 +375,10 @@ source paths of cooked assets at write time, without changing any object:
   settings asset with no `FilePath` and a projected `OriginalPath`. The live
   settings do not change. An absolute `GameStartupSettings.TexturesFolder`
   fails the publish with the member named.
+- The published copy of the editor preferences holds no secret.
+  `EditorPreferences.ClearSecretsForPublishing` clears the MCP token, the
+  assistant API keys, and the names of their environment variables before the
+  write, because the MemoryPack codec writes the public plaintext members.
 
 ## Mesh LOD Payloads
 

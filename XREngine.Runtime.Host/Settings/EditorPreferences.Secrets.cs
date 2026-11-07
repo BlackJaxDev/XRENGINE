@@ -150,6 +150,25 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Clears every secret and the name of the environment variable of each secret. A publish calls it on the copy of the
+        /// preferences that it writes into the config archive, so that a published archive never holds a secret, in plaintext,
+        /// protected, or as an environment variable reference. Do not call it on the live preferences.
+        /// </summary>
+        public void ClearSecretsForPublishing()
+        {
+            McpServerAuthTokenEnvVar = string.Empty;
+            McpAssistantOpenAiApiKeyEnvVar = string.Empty;
+            McpAssistantAnthropicApiKeyEnvVar = string.Empty;
+            McpAssistantGeminiApiKeyEnvVar = string.Empty;
+            McpAssistantGitHubModelsTokenEnvVar = string.Empty;
+            McpServerAuthToken = string.Empty;
+            McpAssistantOpenAiApiKey = string.Empty;
+            McpAssistantAnthropicApiKey = string.Empty;
+            McpAssistantGeminiApiKey = string.Empty;
+            McpAssistantGitHubModelsToken = string.Empty;
+        }
+
+        /// <summary>
         /// Shared deserializer for the shadow secret-serialized properties. Routes <c>env:NAME</c>
         /// into the env-var-name slot (and clears the in-memory plaintext), or resolves
         /// <c>dpapi:</c> ciphertext to plaintext. Legacy plaintext is accepted as-is and a

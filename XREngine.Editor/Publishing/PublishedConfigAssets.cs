@@ -38,13 +38,18 @@ public static class PublishedConfigAssets
         return Copy(live);
     }
 
-    /// <summary>Makes the published copy of an editor preferences snapshot.</summary>
+    /// <summary>
+    /// Makes the published copy of an editor preferences snapshot. The copy holds no secret: the MCP token, the assistant
+    /// API keys, and the names of their environment variables are cleared (<see cref="EditorPreferences.ClearSecretsForPublishing"/>).
+    /// </summary>
     /// <param name="snapshot">A persistable snapshot of the editor preferences.</param>
     /// <returns>The copy to write.</returns>
     public static EditorPreferences CreateEditorPreferences(EditorPreferences snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        return Copy(snapshot);
+        EditorPreferences copy = Copy(snapshot);
+        copy.ClearSecretsForPublishing();
+        return copy;
     }
 
     /// <summary>Copies a settings asset through its MemoryPack contract, then clears its file path and projects its source path.</summary>
