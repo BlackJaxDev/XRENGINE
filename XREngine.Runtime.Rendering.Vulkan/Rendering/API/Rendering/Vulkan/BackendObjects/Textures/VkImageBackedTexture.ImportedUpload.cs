@@ -164,7 +164,18 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         Extent3D extent = new(
             Math.Max(residentData.Mipmaps[0].Width, 1u),
             Math.Max(residentData.Mipmaps[0].Height, 1u), 1u);
-        uint mipLevels = includeMipChain ? (uint)residentData.Mipmaps.Length : 1u;
+        if (residentData.GenerateMipChainOnGpu
+            && (residentData.Mipmaps.Length != 1 || !SupportsImportedUploadMipBlit(format)))
+        {
+            failureReason = residentData.Mipmaps.Length != 1
+                ? "GPU mip generation requires a resident payload with only the base mip"
+                : $"format {format} does not support linear blits for GPU mip generation";
+            return false;
+        }
+
+        uint mipLevels = residentData.GenerateMipChainOnGpu
+            ? (uint)residentData.ResidentMipLevelCount
+            : includeMipChain ? (uint)residentData.Mipmaps.Length : 1u;
         uint arrayLayers = 1u;
         bool createSampler = CreateSampler;
         SamplerCreateInfo samplerInfo = createSampler
@@ -605,6 +616,21 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         committedBytes = (long)memRequirements.Size;
         RuntimeEngine.Rendering.Stats.Vram.AddTextureAllocation(committedBytes);
         return true;
+    }
+
+    /// <summary>
+    /// Returns true when the device can blit between levels of an optimally
+    /// tiled image in <paramref name="format"/> with linear filtering. GPU mip
+    /// generation in the upload batch depends on this.
+    /// </summary>
+    private bool SupportsImportedUploadMipBlit(Format format)
+    {
+        Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, format, out FormatProperties properties);
+        const FormatFeatureFlags required =
+            FormatFeatureFlags.BlitSrcBit |
+            FormatFeatureFlags.BlitDstBit |
+            FormatFeatureFlags.SampledImageFilterLinearBit;
+        return (properties.OptimalTilingFeatures & required) == required;
     }
 
     private ImageUsageFlags ResolveImportedUploadUsage(Format format, bool requiresStorageUsage)

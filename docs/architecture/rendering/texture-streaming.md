@@ -114,6 +114,15 @@ destroy the new image. Retire old resources through their descriptor and frame
 owners after the commit. Keep canonical source validation active: a frame package
 captured before a completed publication is stale and must still retry.
 
+### Large Runtime Textures
+
+Runtime textures that are not imported, such as an HDR skybox loaded from an EXR file, also use the synchronized upload service on Vulkan when the base level is 8 MiB or larger. `XRTexture2D.ScheduleGpuUpload` makes the choice on the render thread, because the service binds to the renderer during renderer startup, which can be after an early asset load finishes.
+
+- The texture enters `ImportedTextureStreamingManager.TryScheduleRawResidentDataForVulkan` without a streaming source. The manager does not release its CPU pixels and does not stream it again from the source file.
+- When the texture requests `AutoGenerateMipmaps` and has only a base level, the resident data sets `GenerateMipChainOnGpu`. The service allocates the full mip chain, copies the base level in bounded staging chunks, and fills the other levels with linear blits in the final upload batch. The format must support linear blits; otherwise the upload fails.
+- If the service reports a failure, the texture uses the single render-thread upload and logs an `[UploadMipmaps]` warning.
+- Textures under the size limit, and textures with `PreferSynchronousGpuUpload`, keep the single render-thread upload.
+
 `VulkanTextureUploadFaultInjection` is a development-only diagnostic. When an editor MCP tool arms it, it fails or cancels a bounded number of upcoming upload schedules through the normal rejection and cancel paths. It is inert when not armed.
 
 ## Flags And Environment Variables
@@ -134,6 +143,7 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 - Telemetry: `ImportedTextureStreamingTelemetry` and `ImportedTextureStreamingTextureTelemetry`. Vulkan rows add resident, published, upload, and retirement generations.
 - Editor: the ImGui texture streaming panel (`EditorImGuiUI.TextureStreamingPanel`).
 - MCP: `get_texture_streaming_summary` and `list_texture_streaming_textures`.
+- Vulkan upload timing (Debug and editor builds): `[VkTextureUpload.DrainSlow]` splits a transfer drain step of 4 ms or more into submit, poll, batch completion, and child completion. `[VkTextureUpload.Publish]` reports a publication of 4 ms or more, and every publication with GPU-generated mips, with its mip level count. `[UploadMipmaps] ... scheduling ... took` reports a large runtime texture whose scheduling took 4 ms or more.
 
 ## Known Limits
 

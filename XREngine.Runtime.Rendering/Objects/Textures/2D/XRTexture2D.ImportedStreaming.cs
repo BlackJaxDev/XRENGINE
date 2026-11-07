@@ -52,8 +52,19 @@ public partial class XRTexture2D
                 CaptureImportedResidentAuthoredSettings(),
                 ResolveImportedResidentFormat(this, residentData.SizedInternalFormat),
                 lockMipLevel,
-                includeMipChain && mipCount > 0 ? mipCount - 1 : 0);
+                ResolveResidentSmallestAllowedMipLevel(residentData, includeMipChain));
         }
+    }
+
+    private static int ResolveResidentSmallestAllowedMipLevel(
+        in TextureStreamingResidentData residentData,
+        bool includeMipChain)
+    {
+        if (residentData.GenerateMipChainOnGpu)
+            return Math.Max(residentData.ResidentMipLevelCount - 1, 0);
+
+        int mipCount = residentData.Mipmaps.Length;
+        return includeMipChain && mipCount > 0 ? mipCount - 1 : 0;
     }
 
     internal bool IsImportedResidentPublicationPlanCurrent(in ImportedTextureResidentPublicationPlan plan)

@@ -3,12 +3,31 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
+/// <summary>
+/// Immutable decoded mip payload for one resident texture upload.
+/// </summary>
+/// <param name="GenerateMipChainOnGpu">
+/// When true, <paramref name="Mipmaps"/> holds only the base level and the
+/// backend allocates the full mip chain and fills it with GPU blits after the
+/// base level upload. Imported streaming payloads always carry their own mips
+/// and keep this false.
+/// </param>
 internal readonly record struct TextureStreamingResidentData(
     Mipmap2D[] Mipmaps,
     uint SourceWidth,
     uint SourceHeight,
-    uint ResidentMaxDimension)
+    uint ResidentMaxDimension,
+    bool GenerateMipChainOnGpu = false)
 {
+    /// <summary>
+    /// Number of mip levels in the resident image. This is the full chain for
+    /// GPU-generated mips, and the CPU mip count otherwise.
+    /// </summary>
+    public int ResidentMipLevelCount
+        => GenerateMipChainOnGpu && Mipmaps is { Length: > 0 }
+            ? XRTexture.GetSmallestMipmapLevel(Mipmaps[0].Width, Mipmaps[0].Height) + 1
+            : Mipmaps?.Length ?? 0;
+
     public ESizedInternalFormat SizedInternalFormat
         => Mipmaps is { Length: > 0 }
             ? XRTexture2D.DeriveESizedInternalFormat(Mipmaps[0].InternalFormat)
