@@ -22,6 +22,7 @@ public static partial class CookedBinarySerializer
             {
                 writer.Write((byte)CookedBinaryObjectEncoding.Reflection);
                 using var scope = EnterReflectionScope(value, out bool isCycle);
+                using IDisposable? writeScope = isCycle ? null : (value as ICookedBinaryWriteScope)?.BeginCookedBinaryWrite();
                 if (!isCycle)
                     WriteObjectContent(writer, value, runtimeType, allowCustom, callbacks);
                 else
@@ -66,6 +67,7 @@ public static partial class CookedBinarySerializer
                 return true;
             }
 
+            using IDisposable? writeScope = (value as ICookedBinaryWriteScope)?.BeginCookedBinaryWrite();
             calculator.AddObjectContent(value, runtimeType, allowCustom);
             return true;
         }
@@ -94,6 +96,7 @@ public static partial class CookedBinarySerializer
                 return builder.FinalizeNode(node);
             }
 
+            using IDisposable? writeScope = (value as ICookedBinaryWriteScope)?.BeginCookedBinaryWrite();
             TypeMetadata metadata = TypeMetadataCache.Get(runtimeType);
             builder.AddFixedLeaf(node, "memberCount", "count", sizeof(int), metadata.Members.Length.ToString(CultureInfo.InvariantCulture));
             foreach (var member in metadata.Members)

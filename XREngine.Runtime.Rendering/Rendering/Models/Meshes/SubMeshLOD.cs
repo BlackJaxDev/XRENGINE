@@ -126,6 +126,16 @@ namespace XREngine.Rendering.Models
         public bool IsPayloadDeferred
             => _cookedDescriptor is { IsInline: false };
 
+        /// <summary>
+        /// Carries <see cref="CookedDescriptor"/> through the generic cooked serializer, so that a snapshot or a clone keeps a
+        /// LOD that is not resident as such. Null for an editor LOD.
+        /// </summary>
+        private SubMeshLodDescriptor? CookedBinaryDescriptor
+        {
+            get => _cookedDescriptor;
+            set => SetField(ref _cookedDescriptor, value, nameof(CookedDescriptor));
+        }
+
         public XRMeshRenderer NewRenderer()
             => new(mesh, material) { GenerateAsync = GenerateAsync };
     }

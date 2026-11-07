@@ -19,6 +19,9 @@ using XREngine.Networking;
 using XREngine.Scene.Transforms;
 using XREngine.Serialization;
 using YamlDotNet.Serialization;
+using SubMesh = XREngine.Rendering.Models.SubMesh;
+using SubMeshLodDescriptor = XREngine.Rendering.Models.SubMeshLodDescriptor;
+using SubMeshLodPayloadCookSink = XREngine.Rendering.Models.SubMeshLodPayloadCookSink;
 
 namespace XREngine.Editor;
 
@@ -940,7 +943,7 @@ internal static partial class ProjectBuilder
         Directory.CreateDirectory(destinationDirectory);
 
         // A cooked sub-mesh writes its separate LOD payloads next to the staged files.
-        using XREngine.Rendering.Models.SubMeshLodPayloadCookSink lodPayloads = XREngine.Rendering.Models.SubMeshLodPayloadCookSink.Begin(destinationDirectory);
+        using SubMeshLodPayloadCookSink lodPayloads = SubMeshLodPayloadCookSink.Begin(destinationDirectory);
         foreach (string relativePath in relativePaths)
         {
             string sourcePath = Path.Combine(sourceDirectory, ToSystemPath(relativePath));
@@ -977,7 +980,7 @@ internal static partial class ProjectBuilder
 
     /// <summary>True for a separate LOD payload entry of a cooked sub-mesh (<c>lod/&lt;key&gt;</c>).</summary>
     private static bool IsSubMeshLodPayloadEntry(string relativePath)
-        => NormalizePath(relativePath).StartsWith(XREngine.Rendering.Models.SubMeshLodDescriptor.EntryPrefix, StringComparison.Ordinal);
+        => NormalizePath(relativePath).StartsWith(SubMeshLodDescriptor.EntryPrefix, StringComparison.Ordinal);
 
     private static readonly HashSet<string> ExcludedCookedContentExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1029,6 +1032,15 @@ internal static partial class ProjectBuilder
                 $"register an AOT-safe {nameof(PublishedCookedAssetRegistry)} serializer for its runtime type.");
         }
 
+        // The registered sub-mesh codec still reads its LOD materials with the reflective cooked serializer, which a
+        // published NativeAOT runtime cannot run. Fail here, not at load.
+        if (string.Equals(blob.TypeReference, CookedAssetTypeReference.Encode(typeof(SubMesh)), StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Published NativeAOT asset '{sourceFile}' is a {nameof(SubMesh)}. Its cooked codec reads the LOD materials with " +
+                "the reflective cooked serializer, which NativeAOT builds do not support. Publish without NativeAOT.");
+        }
+
         WriteCookedBlob(destination, blob);
     }
 
@@ -1053,16 +1065,19 @@ internal static partial class ProjectBuilder
         if (string.IsNullOrWhiteSpace(typeHint))
             return false;
 
+        CookedAssetBlob blob;
         try
         {
-            var blob = CreateCookedBlobFromYaml(yaml, sourceFile);
-            WriteCookedBlob(destination, blob);
-            return true;
+            blob = CreateCookedBlobFromYaml(yaml, sourceFile);
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidOperationException or YamlDotNet.Core.YamlException)
         {
-            return false;
+            // A cook failure is an error. A silent copy of the YAML source would ship a different format with no message.
+            throw new InvalidOperationException($"Asset '{sourceFile}' could not be cooked: {ex.Message}", ex);
         }
+
+        WriteCookedBlob(destination, blob);
+        return true;
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
@@ -1088,7 +1103,7 @@ internal static partial class ProjectBuilder
         int totalFiles = sourceFiles.Length;
 
         // A cooked sub-mesh writes each LOD other than its coarsest one as a separate lod/<key> entry in the cooked root.
-        using XREngine.Rendering.Models.SubMeshLodPayloadCookSink lodPayloads = XREngine.Rendering.Models.SubMeshLodPayloadCookSink.Begin(cookedRoot);
+        using SubMeshLodPayloadCookSink lodPayloads = SubMeshLodPayloadCookSink.Begin(cookedRoot);
         for (int i = 0; i < sourceFiles.Length; i++)
         {
             string sourceFile = sourceFiles[i];

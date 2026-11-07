@@ -21,5 +21,8 @@ namespace XREngine.Rendering.Models
 
         /// <summary>The cook removed the blendshape data from the payload. The name hash still describes the names.</summary>
         BlendshapesStripped = 1u << 4,
+
+        /// <summary>The renderer of the LOD generates its GPU data asynchronously (<see cref="SubMeshLOD.GenerateAsync"/>).</summary>
+        GenerateAsync = 1u << 5,
     }
 }

@@ -7,7 +7,9 @@ namespace XREngine.Rendering.Models
     /// </summary>
     /// <remarks>
     /// Each entry is the file <c>&lt;root&gt;/lod/&lt;key&gt;</c>. Equal payloads have the same content key, so a second write
-    /// of a key that exists does nothing. This removes the duplicate bytes of a mesh that two sub-meshes share.
+    /// of a key that exists does nothing. This removes the duplicate bytes of a mesh that two sub-meshes share. The sink also
+    /// keeps the description of each mesh that it met, so the size pass and the write of a generic stream, and a mesh that
+    /// two sub-meshes share, serialize the mesh one time. Do not edit a mesh while a sink is open.
     /// </remarks>
     public sealed class SubMeshLodPayloadCookSink : IDisposable
     {
@@ -15,6 +17,9 @@ namespace XREngine.Rendering.Models
         private static SubMeshLodPayloadCookSink? _current;
 
         private readonly SubMeshLodPayloadCookSink? _previous;
+        // Weak keys: a sink lives for a whole cook and must not keep the meshes of each cooked file alive.
+        private readonly System.Runtime.CompilerServices.ConditionalWeakTable<XRMesh, SubMeshLodDescriptor> _separate = new();
+        private readonly System.Runtime.CompilerServices.ConditionalWeakTable<XRMesh, SubMeshLodDescriptor> _inline = new();
         private bool _disposed;
 
         private SubMeshLodPayloadCookSink(string rootDirectory, SubMeshLodPayloadCookSink? previous)
@@ -59,6 +64,14 @@ namespace XREngine.Rendering.Models
                 stream.Write(payload);
             WrittenEntryCount++;
         }
+
+        /// <summary>Gets the kept description of a mesh that this sink met before, or null.</summary>
+        internal SubMeshLodDescriptor? GetDescribed(XRMesh mesh, bool separate)
+            => (separate ? _separate : _inline).TryGetValue(mesh, out SubMeshLodDescriptor? descriptor) ? descriptor : null;
+
+        /// <summary>Keeps the description of a mesh, so that the cook does not serialize the mesh again.</summary>
+        internal void SetDescribed(XRMesh mesh, bool separate, SubMeshLodDescriptor descriptor)
+            => (separate ? _separate : _inline).AddOrUpdate(mesh, descriptor);
 
         /// <summary>Closes the sink and opens the previous sink of the thread again.</summary>
         public void Dispose()

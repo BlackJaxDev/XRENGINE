@@ -360,7 +360,32 @@ payloads have one entry. A sub-mesh with one LOD writes it inline and has no sep
 The writer puts the separate entries in the `SubMeshLodPayloadCookSink` of the thread. `ProjectBuilder` opens a sink on
 the cooked content root, and on each staging folder of an incremental repack. An incremental repack keeps the `lod/`
 entries of the archive, because they have no source file of their own; an entry that no sub-mesh uses any more stays
-until a full cook. The writer of a sub-mesh with more than one LOD fails when no sink is open.
+until a full cook. The writer of a sub-mesh with more than one LOD fails when no sink is open. A sink keeps the
+description of each mesh that it met (weakly), so a mesh is serialized one time even though a generic stream has a size
+pass and a write. `ProjectBuilder.TryWriteCookedAssetFile` reports a cook failure as an error; it does not copy the YAML
+source in place of the cooked file.
+
+### Sub-meshes in a generic stream
+
+A `Model` (and any other generic payload) writes its sub-meshes as nested reflected objects. The generic serializer calls
+the nested-object hook `ICookedBinaryWriteScope.BeginCookedBinaryWrite` before it reads the members of an object for a
+size pass, a write, or a schema. While a `SubMeshLodPayloadCookSink` is open, the `SubMesh` hook gives a split view of its
+LODs: a copy of each LOD with its descriptor (`SubMeshLOD` carries it through the private `CookedBinaryDescriptor`
+member), the coarsest LOD with its mesh inline, and each other LOD with no mesh; those meshes go to the sink as
+`lod/<key>` entries. The copies keep their material references, so a material that more than one LOD or sub-mesh uses is
+one object of the reference table of the enclosing stream, as before. A sub-mesh that two references of the stream use
+is still written one time. With no sink (play-mode snapshots, clones, and the browser cooker), the hook does nothing: the
+stream writes the live LODs inline with any descriptors they have, so a LOD that is not resident stays not resident after
+a round trip, and the browser cooker's meshlet and material walk sees every LOD mesh and material.
+
+Each nested sub-mesh writes its own version marker, the private `CookedBinaryCodecVersion` member: 2 in a sink scope,
+or the current `SubMesh.CookedCodecVersion` in a snapshot (0 for an editor sub-mesh). After the read, a sub-mesh with no
+marker is version 1, the older form with all LODs inline. A version 2 sub-mesh follows the load policy for its separate
+LODs, as the registered codec does.
+
+NativeAOT: the registered codec and the generic stream both write the LOD materials with the reflective cooked serializer.
+A NativeAOT cook therefore rejects a standalone `SubMesh` asset at cook time with an error that names the cause, and it
+rejects a `Model` because the model is a generic payload.
 
 The reader follows `SubMeshLodPayloads.LoadPolicy`. The default, `ELodPayloadLoadPolicy.All`, reads each separate entry
 during the load, so a normal world load gives every LOD as before. `ProxyFirst` reads only the inline LOD; a host sets it
@@ -373,10 +398,9 @@ version, or a hash that does not agree rejects that LOD only: it stays not resid
 names the sub-mesh, the LOD, and the reason. The runtime never cooks again.
 
 Version rule: the writer writes only version 2. The reader accepts version 2 in a `RuntimeBinaryV1` envelope and rejects
-a higher version. An envelope in `BinaryV1` or `BinaryV2` is version 1 by definition: the generic reader loads it with
-all LODs inline, and `SubMesh.CookedCodecVersion` is 1. No tool rewrites archives in place; a new cook writes version 2.
-The version 1 reader stays until engine v1. A `Model` cook embeds its sub-meshes through the generic serializer, so those
-sub-meshes are version 1.
+a higher version. In a generic envelope (`BinaryV1` or `BinaryV2`) each sub-mesh has its own marker, and a sub-mesh with no
+marker is version 1: the generic reader loads it with all LODs inline, and `SubMesh.CookedCodecVersion` is 1. No tool
+rewrites archives in place; a new cook writes version 2. The version 1 reader stays until engine v1.
 
 ## Open Items
 

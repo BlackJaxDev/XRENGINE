@@ -250,8 +250,12 @@ namespace XREngine.Components.Scene.Mesh
             return null;
         }
 
+        /// <summary>True while a LOD renderer that was published after construction waits for its first selection.</summary>
+        internal bool IsAwaitingLateLodSeed(XRMeshRenderer renderer)
+            => _lateLodRenderersAwaitingSeed.Contains(renderer);
+
         /// <summary>Resets the per-mesh palette seed state at the first selection of a LOD that was published after construction.</summary>
-        private void ResetSeedStateForLateLod(XRMeshRenderer? renderer)
+        internal void ResetSeedStateForLateLod(XRMeshRenderer? renderer)
         {
             if (renderer is null || _lateLodRenderersAwaitingSeed.Count == 0 || !_lateLodRenderersAwaitingSeed.Remove(renderer))
                 return;

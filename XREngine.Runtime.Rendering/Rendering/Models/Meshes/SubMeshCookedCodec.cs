@@ -35,8 +35,9 @@ namespace XREngine.Rendering.Models
     /// </para>
     /// <para>
     /// The writer writes only version 2. The reader accepts only version 2 in a <see cref="CookedAssetFormat.RuntimeBinaryV1"/>
-    /// envelope; an older generic envelope (<see cref="CookedAssetFormat.BinaryV1"/> or <see cref="CookedAssetFormat.BinaryV2"/>)
-    /// is version 1 by definition and loads through the generic reader with all LODs inline. A version above 2 is rejected.
+    /// envelope, and rejects a version above 2. A sub-mesh in a generic stream (<see cref="CookedAssetFormat.BinaryV1"/> or
+    /// <see cref="CookedAssetFormat.BinaryV2"/>, for example inside a cooked model) uses the nested-object hook of the generic
+    /// serializer and its own version marker (see <see cref="SubMesh"/>); one with no marker is version 1, with all LODs inline.
     /// </para>
     /// <para>
     /// The writer puts each separate LOD entry in the <see cref="SubMeshLodPayloadCookSink"/> of the thread. The reader
@@ -88,18 +89,13 @@ namespace XREngine.Rendering.Models
             SubMeshCookedReferenceSet references = new() { MeshOptimizer = subMesh.MeshOptimizer };
             Dictionary<XRMaterial, int> materialIndices = new(ReferenceEqualityComparer.Instance);
             int[] lodMaterials = new int[lods.Length];
-            byte[]?[] payloads = new byte[]?[lods.Length];
+            byte[]? inlinePayload = null;
             SubMeshLodDescriptor[] descriptors = new SubMeshLodDescriptor[lods.Length];
             for (int i = 0; i < lods.Length; i++)
             {
-                SubMeshLOD lod = lods[i];
-                lodMaterials[i] = GetMaterialIndex(lod.Material, references, materialIndices);
+                lodMaterials[i] = GetMaterialIndex(lods[i].Material, references, materialIndices);
                 bool inline = i == inlineIndex;
-                byte[]? payload = lod.Mesh is null ? null : inline ? SerializeMesh(lod.Mesh) : SerializeMeshEntry(lod.Mesh);
-                payloads[i] = payload;
-                descriptors[i] = CreateDescriptor(lod, payload, inline);
-                if (payload is not null && !inline)
-                    sink!.Write(descriptors[i].EntryName, payload);
+                descriptors[i] = DescribeLod(lods[i], inline, sink, inline ? (bytes => inlinePayload = bytes) : null);
             }
 
             byte[] referenceBytes;
@@ -132,7 +128,7 @@ namespace XREngine.Rendering.Models
                 for (int i = 0; i < lods.Length; i++)
                     WriteDescriptor(writer, lods[i], descriptors[i], lodMaterials[i]);
 
-                if (lods.Length > 0 && payloads[inlineIndex] is { } inlinePayload)
+                if (inlinePayload is not null)
                     writer.Write(inlinePayload);
             }
 
@@ -196,9 +192,18 @@ namespace XREngine.Rendering.Models
                 if (descriptor.PayloadLength > int.MaxValue)
                     throw new InvalidDataException($"The inline LOD payload of cooked sub-mesh '{subMesh.Name}' is too large.");
                 if (descriptor.PayloadLength > 0)
-                    inlineLod.Mesh = DeserializeMesh(reader.ReadBytes((int)descriptor.PayloadLength))
+                {
+                    if (descriptor.MeshCodecVersion != MeshCodecVersion)
+                        throw new InvalidDataException($"The inline LOD payload of cooked sub-mesh '{subMesh.Name}' has mesh codec version {descriptor.MeshCodecVersion}, not {MeshCodecVersion}.");
+                    ReadOnlySpan<byte> inlineBytes = reader.ReadBytes((int)descriptor.PayloadLength);
+                    if (SubMeshLodHashes.ComputePayloadChecksum(inlineBytes) != descriptor.PayloadChecksum)
+                        throw new InvalidDataException($"The inline LOD payload of cooked sub-mesh '{subMesh.Name}' does not agree with its checksum.");
+                    inlineLod.Mesh = DeserializeMesh(inlineBytes)
                         ?? throw new InvalidDataException($"The inline LOD payload of cooked sub-mesh '{subMesh.Name}' is not a cooked mesh.");
+                }
             }
+            if (reader.Remaining != 0)
+                throw new InvalidDataException($"The cooked sub-mesh payload of '{subMesh.Name}' has {reader.Remaining} bytes after its last part.");
 
             if (SubMeshLodPayloads.LoadPolicy == ELodPayloadLoadPolicy.All)
                 LoadSeparateLods(subMesh.Name, lods);
@@ -233,7 +238,40 @@ namespace XREngine.Rendering.Models
 #pragma warning restore IL2026, IL3050
         }
 
-        private static void LoadSeparateLods(string? subMeshName, SubMeshLOD[] lods)
+        /// <summary>
+        /// Makes the LOD list that a generic cooked stream writes for a sub-mesh while a <see cref="SubMeshLodPayloadCookSink"/>
+        /// is open: a copy of each LOD with its descriptor. Each LOD other than the coarsest goes to the sink as a separate
+        /// entry, and its copy has no mesh. The copies keep the material references, so the stream shares a material that
+        /// more than one LOD or sub-mesh uses through its reference table.
+        /// </summary>
+        internal static List<SubMeshLOD> CreateSplitView(SubMesh subMesh, SubMeshLodPayloadCookSink sink)
+        {
+            SubMeshLOD[] lods = [.. subMesh.LODs];
+            List<SubMeshLOD> view = new(lods.Length);
+            for (int i = 0; i < lods.Length; i++)
+            {
+                SubMeshLOD lod = lods[i];
+                bool inline = i == lods.Length - 1;
+                SubMeshLodDescriptor descriptor = DescribeLod(lod, inline, sink, inlinePayload: null);
+                view.Add(new SubMeshLOD(lod.Material, inline || descriptor.IsInline ? lod.Mesh : null, lod.MaxVisibleDistance, lod.MinProjectedScreenRadiusPixels)
+                {
+                    GenerateAsync = lod.GenerateAsync,
+                    IsAutoGenerated = lod.IsAutoGenerated,
+                    GeneratedTargetIndexRatio = lod.GeneratedTargetIndexRatio,
+                    GeneratedNormalizedError = lod.GeneratedNormalizedError,
+                    GeneratedObjectSpaceError = lod.GeneratedObjectSpaceError,
+                    StableSortKey = lod.StableSortKey,
+                    CookedDescriptor = descriptor,
+                });
+            }
+            return view;
+        }
+
+        /// <summary>
+        /// Loads each separate LOD of a sub-mesh that is not resident, as a load with <see cref="ELodPayloadLoadPolicy.All"/>
+        /// does. A LOD that does not load stays not resident with one warning.
+        /// </summary>
+        internal static void LoadSeparateLods(string? subMeshName, SubMeshLOD[] lods)
         {
             for (int i = 0; i < lods.Length; i++)
             {
@@ -277,34 +315,83 @@ namespace XREngine.Rendering.Models
         private static XRMesh? DeserializeMesh(ReadOnlySpan<byte> payload)
             => PublishedCookedAssetRegistry.TryDeserialize(typeof(XRMesh), payload, out object? asset) ? asset as XRMesh : null;
 
-        private static SubMeshLodDescriptor CreateDescriptor(SubMeshLOD lod, byte[]? payload, bool inline)
+        /// <summary>
+        /// Describes one LOD. A separate LOD writes its entry to the sink. The mesh part of a description is kept in the sink
+        /// for each mesh, so a mesh that the cook meets again (the size pass and the write of a generic stream, or a mesh that
+        /// two sub-meshes share) is not serialized again. A LOD that is already a separate payload with no mesh keeps its
+        /// descriptor.
+        /// </summary>
+        /// <param name="lod">The LOD.</param>
+        /// <param name="inline">True for the coarsest LOD, whose payload is inline.</param>
+        /// <param name="sink">The sink of the separate entries. A separate LOD needs it.</param>
+        /// <param name="inlinePayload">Receives the inline payload bytes, or null if the caller does not need them.</param>
+        internal static SubMeshLodDescriptor DescribeLod(SubMeshLOD lod, bool inline, SubMeshLodPayloadCookSink? sink, Action<byte[]>? inlinePayload)
         {
-            XRMesh? mesh = lod.Mesh;
-            ESubMeshLodFlags flags = ESubMeshLodFlags.None;
+            ESubMeshLodFlags lodFlags = ESubMeshLodFlags.None;
             if (lod.IsAutoGenerated)
-                flags |= ESubMeshLodFlags.IsAutoGenerated;
-            // A LOD with no mesh has no separate entry, so it counts as inline with an empty payload.
-            if (inline || payload is null)
-                flags |= ESubMeshLodFlags.IsInline;
-            if (mesh?.HasSkinning == true)
+                lodFlags |= ESubMeshLodFlags.IsAutoGenerated;
+            if (lod.GenerateAsync)
+                lodFlags |= ESubMeshLodFlags.GenerateAsync;
+
+            if (lod.Mesh is not { } mesh)
+            {
+                if (lod.CookedDescriptor is { IsInline: false } existing)
+                    return existing with { Flags = (existing.Flags & ~(ESubMeshLodFlags.IsAutoGenerated | ESubMeshLodFlags.GenerateAsync)) | lodFlags };
+
+                // A LOD with no mesh has no separate entry, so it counts as inline with an empty payload.
+                return new SubMeshLodDescriptor { Flags = lodFlags | ESubMeshLodFlags.IsInline, MeshCodecVersion = MeshCodecVersion };
+            }
+
+            SubMeshLodDescriptor described;
+            if (inline)
+            {
+                if (inlinePayload is not null)
+                {
+                    byte[] bytes = SerializeMesh(mesh);
+                    inlinePayload(bytes);
+                    described = sink?.GetDescribed(mesh, separate: false) ?? DescribeMesh(mesh, bytes, separate: false);
+                }
+                else
+                    described = sink?.GetDescribed(mesh, separate: false) ?? DescribeMesh(mesh, SerializeMesh(mesh), separate: false);
+                sink?.SetDescribed(mesh, separate: false, described);
+            }
+            else
+            {
+                if (sink is null)
+                    throw new InvalidOperationException($"The LOD mesh '{mesh.Name}' needs a separate entry, but no {nameof(SubMeshLodPayloadCookSink)} is open.");
+                if (sink.GetDescribed(mesh, separate: true) is not { } cached)
+                {
+                    byte[] entry = SerializeMeshEntry(mesh);
+                    cached = DescribeMesh(mesh, entry, separate: true);
+                    sink.Write(cached.EntryName, entry);
+                    sink.SetDescribed(mesh, separate: true, cached);
+                }
+                described = cached;
+            }
+            return described with { Flags = described.Flags | lodFlags };
+        }
+
+        private static SubMeshLodDescriptor DescribeMesh(XRMesh mesh, byte[] payload, bool separate)
+        {
+            ESubMeshLodFlags flags = separate ? ESubMeshLodFlags.None : ESubMeshLodFlags.IsInline;
+            if (mesh.HasSkinning)
                 flags |= ESubMeshLodFlags.HasSkinning;
-            if (mesh?.HasBlendshapes == true)
+            if (mesh.HasBlendshapes)
                 flags |= ESubMeshLodFlags.HasBlendshapes;
 
-            bool separate = payload is not null && !inline;
             return new SubMeshLodDescriptor
             {
                 Flags = flags,
-                Bounds = mesh?.Bounds ?? default,
-                VertexCount = (uint)Math.Max(0, mesh?.VertexCount ?? 0),
-                IndexCount = (uint)Math.Max(0, mesh?.IndexCount ?? 0),
-                BoneCount = (uint)(mesh?.UtilizedBones?.Length ?? 0),
-                BlendshapeCount = mesh?.BlendshapeCount ?? 0u,
-                BoneSetHash = mesh is null ? 0UL : SubMeshLodHashes.ComputeBoneSetHash(mesh),
-                BlendshapeNameHash = mesh is null ? 0UL : SubMeshLodHashes.ComputeBlendshapeNameHash(mesh),
+                Bounds = mesh.Bounds,
+                VertexCount = (uint)Math.Max(0, mesh.VertexCount),
+                IndexCount = (uint)Math.Max(0, mesh.IndexCount),
+                BoneCount = (uint)(mesh.UtilizedBones?.Length ?? 0),
+                BlendshapeCount = mesh.BlendshapeCount,
+                BoneSetHash = SubMeshLodHashes.ComputeBoneSetHash(mesh),
+                BlendshapeNameHash = SubMeshLodHashes.ComputeBlendshapeNameHash(mesh),
                 ContentKey = separate ? SubMeshLodHashes.ComputeContentKey(MeshCodecVersion, payload) : UInt128.Zero,
-                PayloadLength = (ulong)(payload?.Length ?? 0),
-                PayloadChecksum = payload is null ? 0UL : SubMeshLodHashes.ComputePayloadChecksum(payload),
+                PayloadLength = (ulong)payload.Length,
+                PayloadChecksum = SubMeshLodHashes.ComputePayloadChecksum(payload),
                 MeshCodecVersion = MeshCodecVersion,
             };
         }
@@ -368,6 +455,7 @@ namespace XREngine.Rendering.Models
             return new SubMeshLOD(materialIndex < 0 ? null : materials[materialIndex], null, maxVisibleDistance, minProjectedRadius)
             {
                 IsAutoGenerated = (flags & ESubMeshLodFlags.IsAutoGenerated) != 0,
+                GenerateAsync = (flags & ESubMeshLodFlags.GenerateAsync) != 0,
                 GeneratedTargetIndexRatio = targetIndexRatio,
                 GeneratedNormalizedError = normalizedError,
                 GeneratedObjectSpaceError = objectSpaceError,

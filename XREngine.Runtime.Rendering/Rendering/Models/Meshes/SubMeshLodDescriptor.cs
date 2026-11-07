@@ -1,4 +1,5 @@
 using XREngine.Data.Geometry;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Models
 {
@@ -12,8 +13,11 @@ namespace XREngine.Rendering.Models
     /// <see cref="XRMesh"/> in it. The reader checks <see cref="PayloadLength"/> and <see cref="PayloadChecksum"/> before it
     /// parses the entry, and then checks <see cref="BoneSetHash"/> and <see cref="BlendshapeNameHash"/> against the mesh.
     /// </remarks>
-    public sealed class SubMeshLodDescriptor
+    public sealed record SubMeshLodDescriptor
     {
+        private ulong _contentKeyHigh;
+        private ulong _contentKeyLow;
+
         /// <summary>The prefix of the archive entry name of a LOD payload.</summary>
         public const string EntryPrefix = "lod/";
 
@@ -45,7 +49,30 @@ namespace XREngine.Rendering.Models
         public ulong BlendshapeNameHash { get; init; }
 
         /// <summary>The content key of the payload: the first 128 bits of a SHA-256 hash. Zero for the inline LOD.</summary>
-        public UInt128 ContentKey { get; init; }
+        [YamlIgnore]
+        public UInt128 ContentKey
+        {
+            get => new(_contentKeyHigh, _contentKeyLow);
+            init
+            {
+                _contentKeyHigh = (ulong)(value >> 64);
+                _contentKeyLow = (ulong)value;
+            }
+        }
+
+        /// <summary>The high 64 bits of <see cref="ContentKey"/>, for the generic cooked serializer.</summary>
+        private ulong CookedContentKeyHigh
+        {
+            get => _contentKeyHigh;
+            set => _contentKeyHigh = value;
+        }
+
+        /// <summary>The low 64 bits of <see cref="ContentKey"/>, for the generic cooked serializer.</summary>
+        private ulong CookedContentKeyLow
+        {
+            get => _contentKeyLow;
+            set => _contentKeyLow = value;
+        }
 
         /// <summary>The length of the payload bytes.</summary>
         public ulong PayloadLength { get; init; }
