@@ -59,6 +59,7 @@ public static partial class EditorImGuiUI
         }
 
         DrawWorkbenchMenuBar();
+        DrawWorkbenchScriptProblemsPopup();
 
         RenderPipeline? pipeline = ResolveWorkbenchPipeline();
         if (pipeline is null)
@@ -77,6 +78,7 @@ public static partial class EditorImGuiUI
         DrawWorkbenchTargetBar(pipeline, instance);
         DrawWorkbenchAuthoringBar(pipeline);
         HandleWorkbenchAuthoringShortcuts(pipeline);
+        HandleWorkbenchScriptShortcuts(pipeline);
         DrawWorkbenchPalette(pipeline);
         ImGui.Separator();
 
@@ -124,6 +126,8 @@ public static partial class EditorImGuiUI
     {
         if (!ImGui.BeginMenuBar())
             return;
+
+        DrawWorkbenchFileMenu(_workbench.Model.Pipeline);
 
         if (ImGui.BeginMenu("View"))
         {

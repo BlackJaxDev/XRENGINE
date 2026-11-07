@@ -143,6 +143,8 @@ public sealed class RenderPipelineWorkbenchWindowState
     /// <summary>Gets or sets the index of the last selected instance, used when the pinned instance is destroyed.</summary>
     public int LastInstanceIndex { get; set; }
 
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<RenderPipeline, string> _scriptPaths = [];
+
     /// <summary>
     /// Pins a pipeline and an optional instance. The Workbench shows this target until the pipeline is destroyed
     /// or the user unpins it.
@@ -160,6 +162,26 @@ public sealed class RenderPipelineWorkbenchWindowState
     /// <summary>Pins an instance of the pinned pipeline.</summary>
     public void PinInstance(XRRenderPipelineInstance? instance)
         => _pinnedInstance = instance is null ? null : new WeakReference<XRRenderPipelineInstance>(instance);
+
+    /// <summary>
+    /// Records that <paramref name="pipeline"/> came from the script file at <paramref name="path"/>. The state keeps a
+    /// strong reference to the most recent loaded pipeline, because the pin holds only a weak reference and nothing
+    /// else may own a pipeline that a file made.
+    /// </summary>
+    public void SetScriptSource(RenderPipeline pipeline, string path)
+    {
+        ArgumentNullException.ThrowIfNull(pipeline);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        _scriptPaths.AddOrUpdate(pipeline, path);
+        LoadedScriptPipeline = pipeline;
+    }
+
+    /// <summary>Returns the script file of <paramref name="pipeline"/>, or null when it did not come from a file.</summary>
+    public string? GetScriptPath(RenderPipeline pipeline)
+        => _scriptPaths.TryGetValue(pipeline, out string? path) ? path : null;
+
+    /// <summary>Gets the pipeline that the last script load made.</summary>
+    public RenderPipeline? LoadedScriptPipeline { get; private set; }
 
     /// <summary>Removes the pinned target so the Workbench follows the active pipeline.</summary>
     public void Unpin()

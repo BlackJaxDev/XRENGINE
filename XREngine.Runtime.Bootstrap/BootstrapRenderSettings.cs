@@ -205,7 +205,7 @@ public static class BootstrapRenderSettings
         return pipeline;
     }
 
-    private static CustomRenderPipeline CreateCustomRenderPipeline(string? scriptPath)
+    private static RenderPipeline CreateCustomRenderPipeline(string? scriptPath)
     {
         if (string.IsNullOrWhiteSpace(scriptPath))
             throw new InvalidOperationException($"{nameof(UnitTestingRenderSettings.CustomRenderPipelineScriptPath)} is required when {nameof(UnitTestingRenderPipeline)} is {nameof(UnitTestingRenderPipeline.CustomRenderPipeline)}.");
@@ -214,16 +214,17 @@ public static class BootstrapRenderSettings
         if (!File.Exists(resolvedPath))
             throw new FileNotFoundException($"Custom render-pipeline script was not found: '{resolvedPath}'.", resolvedPath);
 
-        try
+        RenderPipelineScriptLoadResult result = RenderPipelineScriptLoader.LoadFile(resolvedPath);
+        if (result.Pipeline is null)
         {
-            CustomRenderPipeline pipeline = new();
-            pipeline.InitializeCompiledCommandsForBootstrap(RenderPipelineScript.Parse(File.ReadAllText(resolvedPath)).Compile(pipeline));
-            return pipeline;
+            throw new InvalidOperationException(
+                $"Failed to load custom render-pipeline script '{resolvedPath}':{Environment.NewLine}{string.Join(Environment.NewLine, result.Problems)}");
         }
-        catch (Exception ex) when (ex is not FileNotFoundException)
-        {
-            throw new InvalidOperationException($"Failed to parse or compile custom render-pipeline script '{resolvedPath}'.", ex);
-        }
+
+        for (int i = 0; i < result.Problems.Count; i++)
+            Debug.RenderingWarning($"[BootstrapRenderSettings] {Path.GetFileName(resolvedPath)}: {result.Problems[i]}");
+
+        return result.Pipeline;
     }
 
     public static void ReapplyEditorRenderStateAfterBootstrap(string reason)

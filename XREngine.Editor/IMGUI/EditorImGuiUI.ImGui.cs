@@ -168,6 +168,7 @@ public static partial class EditorImGuiUI
             [".glsl"] = "Shaders",
             [".compute"] = "Shaders",
             [".fx"] = "Shaders",
+            [".xrs"] = "Render Pipelines",
             [".json"] = "Data",
             [".yaml"] = "Data",
             [".yml"] = "Data",

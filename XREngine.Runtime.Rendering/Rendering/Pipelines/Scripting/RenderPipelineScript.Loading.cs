@@ -1,5 +1,7 @@
 using System.Reflection;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering;
 
@@ -161,7 +163,10 @@ public sealed partial class RenderPipelineScript
 
         try
         {
-            pipeline.Commands = CompileContainer(pipeline, document.Steps, ViewportRenderCommandContainer.BranchResourceBehavior.PreserveResources);
+            ViewportRenderCommandContainer commands = CompileContainer(pipeline, document.Steps, ViewportRenderCommandContainer.BranchResourceBehavior.PreserveResources);
+            if (!document.HasPassesBlock)
+                pipeline.RenderPasses = CollectScenePasses(commands);
+            pipeline.Commands = commands;
         }
         catch (ScriptSyntaxException ex)
         {
@@ -175,6 +180,20 @@ public sealed partial class RenderPipelineScript
         }
 
         return pipeline;
+    }
+
+    /// <summary>
+    /// Returns the scene passes that the commands render, each with no sorter. A script with no <c>passes</c> block
+    /// uses them, so a command-only script renders the same passes as before the block existed.
+    /// </summary>
+    private static Dictionary<int, IComparer<RenderCommand>?> CollectScenePasses(ViewportRenderCommandContainer commands)
+    {
+        RenderPassMetadataCollection metadata = new();
+        commands.BuildRenderPassMetadata(metadata);
+        Dictionary<int, IComparer<RenderCommand>?> passes = [];
+        foreach (RenderPassMetadata pass in metadata.Build())
+            passes.TryAdd(pass.PassIndex, null);
+        return passes;
     }
 
     /// <summary>
