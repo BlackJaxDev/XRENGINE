@@ -247,6 +247,17 @@ struct XRAdvancedShadowRecord
     float4 momentParameters;
     float4 depthRangeAndCascade;
     float4 renderedLightPositionAndFar;
+    float4 softShadowParameters;
+    float4 contactParameters;
+    float4 contactFadeAndTexel;
+    uint softShadowMode;
+    uint filterSamples;
+    uint blockerSamples;
+    uint vogelTapCount;
+    uint contactSamples;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
 
 };
 struct XRAdvancedTextureRecord

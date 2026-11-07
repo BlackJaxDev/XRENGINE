@@ -16,7 +16,7 @@ public sealed class AdvancedGlobalResourceContractTests
         Should.NotThrow(AdvancedShaderRecordLayout.ValidateCpuLayouts);
         Marshal.SizeOf<AdvancedViewRecord>().ShouldBe(944);
         Marshal.SizeOf<AdvancedLightRecord>().ShouldBe(128);
-        Marshal.SizeOf<AdvancedShadowRecord>().ShouldBe(272);
+        Marshal.SizeOf<AdvancedShadowRecord>().ShouldBe(352);
         Marshal.SizeOf<AdvancedProbeRecord>().ShouldBe(176);
         Marshal.SizeOf<AdvancedEnvironmentRecord>().ShouldBe(240);
         Marshal.OffsetOf<AdvancedEnvironmentRecord>(nameof(AdvancedEnvironmentRecord.SourceSHAr)).ToInt32().ShouldBe(128);

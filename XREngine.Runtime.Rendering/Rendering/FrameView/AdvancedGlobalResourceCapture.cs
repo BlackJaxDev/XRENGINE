@@ -227,7 +227,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 DepthRangeAndCascade = new(published.AtlasDepthParams.X, published.AtlasDepthParams.Y, published.RenderedSplitBlendBias.X, published.RenderedSplitBlendBias.Y),
                 TextureLayer = checked((uint)Math.Max(0, allocation.PageIndex)), Encoding = (uint)light.ShadowMapEncoding,
                 CascadeCount = (uint)count, LastRenderedFrameLo = (uint)allocation.LastRenderedFrame, LastRenderedFrameHi = (uint)(allocation.LastRenderedFrame >> 32),
-            }, texture));
+            }.WithDirectionalFilter(light, published, cascade), texture));
         }
 
         if (count == 0 && source == ShadowRequestSource.Desktop &&
@@ -254,7 +254,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 DepthRangeAndCascade = new(published.AtlasDepthParams.X, published.AtlasDepthParams.Y, published.RenderedSplitBlendBias.X, published.RenderedSplitBlendBias.Y),
                 TextureLayer = checked((uint)Math.Max(0, primaryAlloc.PageIndex)), Encoding = (uint)light.ShadowMapEncoding,
                 CascadeCount = 1u, LastRenderedFrameLo = (uint)primaryAlloc.LastRenderedFrame, LastRenderedFrameHi = (uint)(primaryAlloc.LastRenderedFrame >> 32),
-            }, primaryTexture));
+            }.WithDirectionalFilter(light, published, 0), primaryTexture));
         }
     }
 
