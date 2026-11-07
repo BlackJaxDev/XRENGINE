@@ -392,7 +392,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
         {
             ViewportRenderCommandContainer previous = CommandChain;
-            CommandChain = GenerateCommandChain();
+            CommandChain = GenerateChainWithOverlays();
 
             // Snapshot/cooked-data restoration suppresses XRBase property notifications.
             // A pipeline can still be constructed from an activation callback inside that
@@ -430,7 +430,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
         {
             ViewportRenderCommandContainer previous = CommandChain;
-            CommandChain = GenerateCommandChain();
+            CommandChain = GenerateChainWithOverlays();
             if (!ReferenceEquals(CommandChain.ParentPipeline, this))
             {
                 previous.ParentPipeline = null;
@@ -575,6 +575,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     {
         RenderPipelineResourceLayoutBuilder builder = new(profile);
         DescribeResources(builder);
+        ApplyOverlayResources(builder);
         return builder.Build(profile);
     }
 
@@ -758,6 +759,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     {
         RenderPipelinePostProcessSchemaBuilder builder = new(this);
         DescribePostProcessSchema(builder);
+        ApplyOverlaySchema(builder);
         return builder.Build();
     }
 

@@ -1,4 +1,5 @@
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Pipelines.Overlays;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources.Authoring;
 
@@ -7,7 +8,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// A parsed <c>.xrs</c> render pipeline script. A standalone script holds the scene passes, resource declarations,
 /// schema stages, and commands of an authored pipeline. A derived script starts with <c>derive Name(...);</c> or
-/// <c>derive "parent.xrs";</c> and holds setting changes for that base.
+/// <c>derive "parent.xrs";</c> and holds setting changes and patches for that base.
 /// </summary>
 /// <remarks>
 /// <see cref="Parse"/> never throws for script errors. It records each error in <see cref="Problems"/> with its line
@@ -45,6 +46,18 @@ public sealed class RenderPipelineScriptDocument
 
     /// <summary>Gets the stage declarations from the <c>schema</c> block.</summary>
     public List<AuthoredPostProcessStage> Stages { get; } = [];
+
+    /// <summary>Gets the command patches of a derived script, in source order.</summary>
+    public List<RenderCommandPatch> CommandPatches { get; } = [];
+
+    /// <summary>Gets the resource patches from the <c>resources</c> block of a derived script.</summary>
+    public List<RenderResourcePatch> ResourcePatches { get; } = [];
+
+    /// <summary>Gets the schema patches from the <c>schema</c> block of a derived script.</summary>
+    public List<PostProcessSchemaPatch> SchemaPatches { get; } = [];
+
+    /// <summary>Gets true when the script holds patches of any kind.</summary>
+    public bool HasPatches => CommandPatches.Count > 0 || ResourcePatches.Count > 0 || SchemaPatches.Count > 0;
 
     /// <summary>Gets true when the script has a <c>passes</c> block.</summary>
     public bool HasPassesBlock { get; internal set; }
@@ -119,6 +132,15 @@ public sealed class RenderPipelineScriptDocument
     internal List<RenderPipelineScript.ScriptSetting> Settings { get; } = [];
 
     internal List<RenderPipelineScript.IScriptStep> Steps { get; } = [];
+
+    /// <summary>Gets the source location of each command patch, in the order of <see cref="CommandPatches"/>.</summary>
+    internal List<RenderPipelineScript.ScriptPatchLocation> CommandPatchLocations { get; } = [];
+
+    /// <summary>Gets the source location of each resource patch, in the order of <see cref="ResourcePatches"/>.</summary>
+    internal List<RenderPipelineScript.ScriptPatchLocation> ResourcePatchLocations { get; } = [];
+
+    /// <summary>Gets the source location of each schema patch, in the order of <see cref="SchemaPatches"/>.</summary>
+    internal List<RenderPipelineScript.ScriptPatchLocation> SchemaPatchLocations { get; } = [];
 
     /// <summary>Parses <paramref name="text"/>. Script errors go to <see cref="Problems"/>.</summary>
     public static RenderPipelineScriptDocument Parse(string text)

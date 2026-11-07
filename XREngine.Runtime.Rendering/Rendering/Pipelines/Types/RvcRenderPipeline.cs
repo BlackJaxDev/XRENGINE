@@ -377,7 +377,32 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IRenderPipelineVi
     {
         VPRC_RvcPass pass = commands.Add<VPRC_RvcPass>();
         pass.Stage = stage;
+        pass.AnchorId = GetRvcPassAnchorId(stage);
     }
+
+    /// <summary>
+    /// Gets the anchor id of an RVC pass. The ids are written out so that a rename of the enum member does not break
+    /// derived pipelines that patch the pass.
+    /// </summary>
+    private static string? GetRvcPassAnchorId(ERvcGpuPassStage stage)
+        => stage switch
+        {
+            ERvcGpuPassStage.OpenXrVisibilityMaskStencil => "rvc.visibilityMaskStencil",
+            ERvcGpuPassStage.VisibilityTargets => "rvc.visibilityTargets",
+            ERvcGpuPassStage.AttributeReconstruction => "rvc.attributeReconstruction",
+            ERvcGpuPassStage.HzbRejection => "rvc.hzbRejection",
+            ERvcGpuPassStage.PixelToShadeletMap => "rvc.pixelToShadeletMap",
+            ERvcGpuPassStage.MaterialShadeletShading => "rvc.materialShadeletShading",
+            ERvcGpuPassStage.FoveatedShadingRate => "rvc.foveatedShadingRate",
+            ERvcGpuPassStage.HeadSpaceLightClusters => "rvc.headSpaceLightClusters",
+            ERvcGpuPassStage.SharedLighting => "rvc.sharedLighting",
+            ERvcGpuPassStage.ReuseValidation => "rvc.reuseValidation",
+            ERvcGpuPassStage.TemporalCache => "rvc.temporalCache",
+            ERvcGpuPassStage.TransparencyForwardPlus => "rvc.transparencyForwardPlus",
+            ERvcGpuPassStage.FoveatedResolve => "rvc.foveatedResolve",
+            ERvcGpuPassStage.DiagnosticOverlay => "rvc.diagnosticOverlay",
+            _ => null,
+        };
 
     private void DeclareRvcResources(RenderPipelineResourceLayoutBuilder builder)
     {

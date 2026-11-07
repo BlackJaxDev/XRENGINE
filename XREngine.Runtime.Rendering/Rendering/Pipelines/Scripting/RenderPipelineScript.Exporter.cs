@@ -20,7 +20,6 @@ public sealed partial class RenderPipelineScript
             nameof(VPRC_IfElse.FalseCommands),
             nameof(VPRC_IfElse.ConditionEvaluator),
             nameof(VPRC_IfElse.Condition),
-            nameof(VPRC_IfElse.Label),
             nameof(VPRC_Switch.Cases),
             nameof(VPRC_Switch.DefaultCase),
             nameof(VPRC_Switch.SwitchEvaluator),
@@ -59,11 +58,35 @@ public sealed partial class RenderPipelineScript
             builder.Append(indent).Append("// ").Append(UnconvertedCommentPrefix).Append(' ').AppendLine(note);
         }
 
-        private static void AppendCondition(System.Text.StringBuilder builder, RenderBranchCondition? condition, string? label)
+        private static void AppendCondition(System.Text.StringBuilder builder, RenderBranchCondition? condition, string? label, string? anchorId)
         {
             builder.Append('(').Append(condition is null ? CodeConditionText : FormatCondition(condition)).Append(')');
             if (!string.IsNullOrEmpty(label))
                 builder.Append(" as ").Append(Quote(label));
+            if (!string.IsNullOrEmpty(anchorId))
+                builder.Append(" anchor ").Append(FormatAnchor(anchorId));
+        }
+
+        /// <summary>
+        /// Writes an anchor id or a patch target as a dotted name, such as <c>post.bloom</c>, or as a quoted string when
+        /// a part is not a plain name.
+        /// </summary>
+        public static string FormatAnchor(string target)
+        {
+            string[] parts = target.Split('.');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string part = parts[i];
+                if (part.Length == 0 || !(char.IsLetter(part[0]) || part[0] == '_'))
+                    return Quote(target);
+                for (int c = 1; c < part.Length; c++)
+                {
+                    if (!char.IsLetterOrDigit(part[c]) && part[c] != '_')
+                        return Quote(target);
+                }
+            }
+
+            return target;
         }
 
         /// <summary>Writes a data condition in the form that the parser reads.</summary>
@@ -120,7 +143,7 @@ public sealed partial class RenderPipelineScript
                     if (ifElse.Condition is null && ifElse.ConditionEvaluator is not null)
                         AppendUnconverted(builder, indent, unconverted, string.Concat("code condition of if '", ifElse.Label ?? "unlabelled", "'"));
                     builder.Append(indent).Append("if ");
-                    AppendCondition(builder, ifElse.Condition, ifElse.Label);
+                    AppendCondition(builder, ifElse.Condition, ifElse.Label, ifElse.AnchorId);
                     builder.AppendLine(" {");
                     if (ifElse.TrueCommands is not null)
                         AppendContainer(builder, ifElse.TrueCommands, depth + 1, unconverted);
@@ -141,7 +164,7 @@ public sealed partial class RenderPipelineScript
                     if (switchCommand.Condition is null && switchCommand.SwitchEvaluator is not null)
                         AppendUnconverted(builder, indent, unconverted, string.Concat("code selector of switch '", switchCommand.Label ?? "unlabelled", "'"));
                     builder.Append(indent).Append("switch ");
-                    AppendCondition(builder, switchCommand.Condition, switchCommand.Label);
+                    AppendCondition(builder, switchCommand.Condition, switchCommand.Label, switchCommand.AnchorId);
                     builder.AppendLine(" {");
                     if (switchCommand.Cases is not null)
                     {

@@ -149,6 +149,16 @@ public sealed partial class RenderPipelineScript
             return Advance().Text;
         }
 
+        /// <summary>Parses an optional <c>anchor post.bloom</c> or <c>anchor "id"</c> after a branch label.</summary>
+        private string? ParseBranchAnchor()
+        {
+            if (!IsContextual("anchor") || Peek(1).Kind is not (TokenKind.Identifier or TokenKind.Keyword or TokenKind.String))
+                return null;
+
+            Advance();
+            return ParseTarget();
+        }
+
         /// <summary>Returns true when the current token is the identifier <paramref name="word"/>.</summary>
         private bool IsContextual(string word)
             => Peek().Kind == TokenKind.Identifier && string.Equals(Peek().Text, word, StringComparison.Ordinal);

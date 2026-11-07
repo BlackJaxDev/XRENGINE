@@ -12,12 +12,16 @@ public sealed partial class RenderPipelineScript
 {
     private sealed partial class Parser
     {
+        private readonly string _script;
         private readonly List<Token> _tokens;
         private readonly List<ScriptComment> _markerComments = [];
         private int _index;
 
         public Parser(string script)
-            => _tokens = Tokenize(script, _markerComments);
+        {
+            _script = script;
+            _tokens = Tokenize(script, _markerComments);
+        }
 
         /// <summary>Gets each marker comment, such as <c>// unconverted:</c> or <c>// base-hash:</c>, in source order.</summary>
         public IReadOnlyList<ScriptComment> MarkerComments => _markerComments;
@@ -124,12 +128,13 @@ public sealed partial class RenderPipelineScript
 
             Consume(TokenKind.CloseParen, "Expected ')' after if condition.");
             string? label = ParseBranchLabel();
+            string? anchorId = ParseBranchAnchor();
             BranchDefinition trueBranch = ParseBranchDefinition();
             BranchDefinition? falseBranch = null;
             if (MatchKeyword("else"))
                 falseBranch = ParseBranchDefinition();
 
-            return new IfStep(evaluator, dataCondition, label, trueBranch, falseBranch, null);
+            return new IfStep(evaluator, dataCondition, label, trueBranch, falseBranch, anchorId is null ? null : command => command.AnchorId = anchorId);
         }
 
         private IScriptStep ParseSwitchStatement()
@@ -144,6 +149,7 @@ public sealed partial class RenderPipelineScript
 
             Consume(TokenKind.CloseParen, "Expected ')' after switch selector.");
             string? label = ParseBranchLabel();
+            string? anchorId = ParseBranchAnchor();
             Consume(TokenKind.OpenBrace, "Expected '{' to begin switch body.");
 
             Dictionary<int, BranchDefinition> cases = [];
@@ -167,7 +173,7 @@ public sealed partial class RenderPipelineScript
                 }
             }
 
-            return new SwitchStep(selector, dataCondition, label, cases, defaultCase, null);
+            return new SwitchStep(selector, dataCondition, label, cases, defaultCase, anchorId is null ? null : command => command.AnchorId = anchorId);
         }
 
         private IScriptStep ParseCommandStatement()
@@ -643,9 +649,10 @@ public sealed partial class RenderPipelineScript
                     '/' => TokenKind.Slash,
                     '<' => TokenKind.Less,
                     '>' => TokenKind.Greater,
+                    '.' => TokenKind.Dot,
                     _ => throw new ScriptSyntaxException($"Unexpected character '{ch}' in render pipeline script.", line, column)
                 };
-                tokens.Add(new Token(singleCharKind, ch.ToString(), tokenLine, tokenColumn));
+                tokens.Add(new Token(singleCharKind, ch.ToString(), tokenLine, tokenColumn, index));
                 AdvancePosition(ch);
             }
 
@@ -654,7 +661,8 @@ public sealed partial class RenderPipelineScript
         }
     }
 
-    private readonly record struct Token(TokenKind Kind, string Text, int Line, int Column);
+    /// <summary>A script token. <paramref name="Offset"/> is the character index of a one-character token, or -1.</summary>
+    private readonly record struct Token(TokenKind Kind, string Text, int Line, int Column, int Offset = -1);
 
     /// <summary>Returns true when <paramref name="text"/> is a reserved word of the script language.</summary>
     private static bool IsKeywordText(string text)
@@ -692,6 +700,7 @@ public sealed partial class RenderPipelineScript
         Slash,
         Less,
         Greater,
+        Dot,
         LessEqual,
         GreaterEqual,
         EqualEqual,

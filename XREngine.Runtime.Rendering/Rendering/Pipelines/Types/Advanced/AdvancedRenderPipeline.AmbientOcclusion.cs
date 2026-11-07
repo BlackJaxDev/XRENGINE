@@ -113,6 +113,7 @@ public partial class AdvancedRenderPipeline
 
         var active = commands.Add<VPRC_IfElse>();
         active.Label = "AdvancedAmbientOcclusionActive";
+        active.AnchorId = "advanced.ambientOcclusion";
         active.ConditionEvaluator = () => AoModeRunsPasses(EvaluateAmbientOcclusionMode());
 
         var aoCommands = new ViewportRenderCommandContainer(this);

@@ -89,6 +89,8 @@ public sealed partial class RenderPipelineScript
                 seenContent = true;
                 if (TryParseBlock(document))
                     continue;
+                if (TryParseCommandPatch(document))
+                    continue;
 
                 document.Steps.Add(ParseStatement());
             }
@@ -152,11 +154,17 @@ public sealed partial class RenderPipelineScript
                     break;
                 case "resources":
                     document.HasResourcesBlock = true;
-                    ParseResourcesBlock(document);
+                    if (document.IsDerived)
+                        ParseResourcePatchBlock(document);
+                    else
+                        ParseResourcesBlock(document);
                     break;
                 default:
                     document.HasSchemaBlock = true;
-                    ParseSchemaBlock(document);
+                    if (document.IsDerived)
+                        ParseSchemaPatchBlock(document);
+                    else
+                        ParseSchemaBlock(document);
                     break;
             }
 
@@ -220,69 +228,84 @@ public sealed partial class RenderPipelineScript
         {
             while (!Match(TokenKind.CloseBrace))
             {
-                Token kindToken = Consume(TokenKind.Identifier, "Expected a resource kind, such as Texture or FrameBuffer.");
-                Token nameToken = ConsumeName("Expected a resource name.");
-                List<PropertyAssignment> properties = ParsePropertyAssignments();
-                Consume(TokenKind.Semicolon, "Expected ';' after the resource declaration.");
-
-                if (!Enum.TryParse(kindToken.Text, ignoreCase: true, out EAuthoredRenderResourceKind kind))
-                {
-                    document.AddError(kindToken.Line, kindToken.Column, $"Unknown resource kind '{kindToken.Text}'. Known kinds: {string.Join(", ", Enum.GetNames<EAuthoredRenderResourceKind>())}.");
-                    continue;
-                }
-
-                AuthoredRenderResource resource = new() { Name = nameToken.Text, Kind = kind };
-                if (ApplyProperties(document, resource, properties))
+                if (ParseResourceDeclaration(document) is { } resource)
                     document.Resources.Add(resource);
             }
+        }
+
+        /// <summary>Parses <c>Kind Name(Properties);</c>. A declaration with errors adds them and returns null.</summary>
+        private AuthoredRenderResource? ParseResourceDeclaration(RenderPipelineScriptDocument document)
+        {
+            Token kindToken = Consume(TokenKind.Identifier, "Expected a resource kind, such as Texture or FrameBuffer.");
+            Token nameToken = ConsumeName("Expected a resource name.");
+            List<PropertyAssignment> properties = ParsePropertyAssignments();
+            Consume(TokenKind.Semicolon, "Expected ';' after the resource declaration.");
+
+            if (!Enum.TryParse(kindToken.Text, ignoreCase: true, out EAuthoredRenderResourceKind kind))
+            {
+                document.AddError(kindToken.Line, kindToken.Column, $"Unknown resource kind '{kindToken.Text}'. Known kinds: {string.Join(", ", Enum.GetNames<EAuthoredRenderResourceKind>())}.");
+                return null;
+            }
+
+            AuthoredRenderResource resource = new() { Name = nameToken.Text, Kind = kind };
+            return ApplyProperties(document, resource, properties) ? resource : null;
         }
 
         private void ParseSchemaBlock(RenderPipelineScriptDocument document)
         {
             while (!Match(TokenKind.CloseBrace))
             {
-                Token statement = Consume(TokenKind.Identifier, "Expected 'stage' or 'library' in the schema block.");
-                bool isLibrary = statement.Text switch
-                {
-                    "library" => true,
-                    "stage" => false,
-                    _ => throw Error(statement, "Expected 'stage' or 'library' in the schema block."),
-                };
-
-                Token keyToken = ConsumeName("Expected a stage key.");
-                List<PropertyAssignment> properties = ParsePropertyAssignments();
-                AuthoredPostProcessStage stage = new()
-                {
-                    Key = keyToken.Text,
-                    IsLibraryStage = isLibrary,
-                    Order = document.Stages.Count,
-                };
-
-                bool valid = ApplyProperties(document, stage, properties);
-                if (Match(TokenKind.OpenBrace))
-                {
-                    while (!Match(TokenKind.CloseBrace))
-                    {
-                        Token paramToken = Consume(TokenKind.Identifier, "Expected 'param' in the stage body.");
-                        if (paramToken.Text != "param")
-                            throw Error(paramToken, "Expected 'param' in the stage body.");
-
-                        Token paramName = ConsumeName("Expected a parameter name.");
-                        List<PropertyAssignment> paramProperties = ParsePropertyAssignments();
-                        Consume(TokenKind.Semicolon, "Expected ';' after the parameter declaration.");
-                        AuthoredPostProcessParameter parameter = new() { Name = paramName.Text };
-                        if (ApplyProperties(document, parameter, paramProperties))
-                            stage.Parameters.Add(parameter);
-                    }
-                }
-                else
-                {
-                    Consume(TokenKind.Semicolon, "Expected ';' or '{' after the stage declaration.");
-                }
-
-                if (valid)
+                if (ParseStageDeclaration(document, document.Stages.Count) is { } stage)
                     document.Stages.Add(stage);
             }
+        }
+
+        /// <summary>
+        /// Parses <c>stage key(Properties) { param ...; }</c> or <c>library key;</c>. The order defaults to
+        /// <paramref name="defaultOrder"/>. A declaration with errors adds them and returns null.
+        /// </summary>
+        private AuthoredPostProcessStage? ParseStageDeclaration(RenderPipelineScriptDocument document, int defaultOrder)
+        {
+            Token statement = Consume(TokenKind.Identifier, "Expected 'stage' or 'library' in the schema block.");
+            bool isLibrary = statement.Text switch
+            {
+                "library" => true,
+                "stage" => false,
+                _ => throw Error(statement, "Expected 'stage' or 'library' in the schema block."),
+            };
+
+            Token keyToken = ConsumeName("Expected a stage key.");
+            List<PropertyAssignment> properties = ParsePropertyAssignments();
+            AuthoredPostProcessStage stage = new()
+            {
+                Key = keyToken.Text,
+                IsLibraryStage = isLibrary,
+                Order = defaultOrder,
+            };
+
+            bool valid = ApplyProperties(document, stage, properties);
+            if (Match(TokenKind.OpenBrace))
+            {
+                while (!Match(TokenKind.CloseBrace))
+                {
+                    Token paramToken = Consume(TokenKind.Identifier, "Expected 'param' in the stage body.");
+                    if (paramToken.Text != "param")
+                        throw Error(paramToken, "Expected 'param' in the stage body.");
+
+                    Token paramName = ConsumeName("Expected a parameter name.");
+                    List<PropertyAssignment> paramProperties = ParsePropertyAssignments();
+                    Consume(TokenKind.Semicolon, "Expected ';' after the parameter declaration.");
+                    AuthoredPostProcessParameter parameter = new() { Name = paramName.Text };
+                    if (ApplyProperties(document, parameter, paramProperties))
+                        stage.Parameters.Add(parameter);
+                }
+            }
+            else
+            {
+                Consume(TokenKind.Semicolon, "Expected ';' or '{' after the stage declaration.");
+            }
+
+            return valid ? stage : null;
         }
 
         /// <summary>Sets each assignment on <paramref name="target"/>. Each failed assignment adds an error.</summary>

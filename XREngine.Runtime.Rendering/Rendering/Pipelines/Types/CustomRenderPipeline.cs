@@ -191,6 +191,14 @@ public class CustomRenderPipeline : RenderPipeline
     protected override ViewportRenderCommandContainer GenerateCommandChain()
         => _commands ?? [];
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <see cref="GenerateCommandChain"/> returns the stored <see cref="Commands"/>. An overlay changes the chain in
+    /// place, so this method compiles a copy from the script text of the commands.
+    /// </remarks>
+    protected override ViewportRenderCommandContainer GenerateCommandChainForOverlays()
+        => _commands is { Count: > 0 } commands ? CompileScript(RenderPipelineScript.Export(commands)) : [];
+
     public override void DescribeRequirements(RenderPipelineRequirements requirements)
     {
         // Serialized authoring properties can arrive after the base constructor built

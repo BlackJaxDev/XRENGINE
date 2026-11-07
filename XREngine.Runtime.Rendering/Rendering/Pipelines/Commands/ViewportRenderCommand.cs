@@ -12,6 +12,18 @@ namespace XREngine.Rendering.Pipelines.Commands
         public const string SceneShaderPath = "Scene3D";
         private bool _shouldExecute = true;
         private bool _executeInShadowPass = false;
+        private string? _anchorId;
+
+        /// <summary>
+        /// Gets or sets the stable id that derived pipeline patches use to find this command, such as
+        /// <c>post.bloom</c>. Built-in pipelines keep each id, or record a rename in
+        /// <see cref="RenderPipeline.AnchorAliases"/>, when they change their chains.
+        /// </summary>
+        public string? AnchorId
+        {
+            get => _anchorId;
+            set => SetField(ref _anchorId, string.IsNullOrWhiteSpace(value) ? null : value);
+        }
 
         [YamlIgnore]
         public ViewportRenderCommandContainer? CommandContainer { get; internal set; }

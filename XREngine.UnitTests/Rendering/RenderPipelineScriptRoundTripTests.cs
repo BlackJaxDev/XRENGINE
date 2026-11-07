@@ -170,7 +170,12 @@ public sealed class RenderPipelineScriptRoundTripTests
         DefaultRenderPipeline pipeline = loaded.Pipeline.ShouldBeOfType<DefaultRenderPipeline>();
         pipeline.EnableDeferredMsaa.ShouldBeFalse();
         pipeline.UseProbeGridAcceleration.ShouldBeFalse();
-        AssertRoundTrip(pipeline, out _);
+
+        // The child keeps its parent path and writes only its own settings.
+        string written = RenderPipelineScriptWriter.Write(pipeline);
+        written.ShouldContain("derive \"parent.xrs\";");
+        written.ShouldContain("UseProbeGridAcceleration = false;");
+        written.ShouldNotContain("EnableDeferredMsaa");
     }
 
     [Test]

@@ -1932,7 +1932,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             EffectiveMsaaSampleCountThisFrame
                 ?? viewportCamera?.MsaaSampleCountOverride
                 ?? RuntimeRenderingHostServices.FrameTiming.DefaultMsaaSampleCount);
-        ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(this, viewport) ?? 0UL;
+        // The overlay resource hash joins the key here, so a pipeline override that skips the base still sees it.
+        ulong featureMask = pipeline is null ? 0UL : pipeline.BuildResourceFeatureMaskForGenerationKey(this, viewport) ^ pipeline.OverlayResourceHash;
         RenderPipelineExternalTargetKind externalTargetKind = FinalOutput is not null
             ? RenderPipelineExternalTargetKind.PresentationTarget
             : viewport?.RendersToExternalSwapchainTarget == true

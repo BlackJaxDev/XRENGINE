@@ -88,6 +88,23 @@ public sealed partial class RenderPipelineResourceLayoutBuilder(RenderPipelineRe
         return this;
     }
 
+    /// <summary>Returns true when the builder holds a specification named <paramref name="name"/>. Names compare without case.</summary>
+    public bool Contains(string name)
+    {
+        for (int i = 0; i < _specs.Count; i++)
+        {
+            if (string.Equals(_specs[i].Name, name, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Removes each specification named <paramref name="name"/>. Derived pipeline overlays use it.</summary>
+    /// <returns>True when a specification was removed.</returns>
+    public bool Remove(string name)
+        => _specs.RemoveAll(spec => string.Equals(spec.Name, name, StringComparison.OrdinalIgnoreCase)) > 0;
+
     /// <summary>
     /// Builds a <see cref="RenderPipelineResourceLayout"/> from the added resource specifications, validating them against the specified resource profile.
     /// </summary>
