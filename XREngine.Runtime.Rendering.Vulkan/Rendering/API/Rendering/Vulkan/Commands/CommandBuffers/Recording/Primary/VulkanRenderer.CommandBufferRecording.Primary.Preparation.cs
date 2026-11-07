@@ -527,6 +527,12 @@ namespace XREngine.Rendering.Vulkan
                             drawSlot,
                             prewarmReason);
                         frameDataManifest.End();
+                        // The program, buffers, or descriptors of one draw are not ready yet.
+                        // This is the same transient state that a draw-time preparation
+                        // failure reports, so it uses the same frame retry. An unclassified
+                        // failure latches a PresentNow renderer as terminal.
+                        recordingState.FailureKind =
+                            EVulkanCommandRecordingFailureKind.RetryFrame;
                         recordingState.RecordingDeferredReason =
                             $"Mesh frame-data reservation deferred before command recording for " +
                             $"mesh '{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}', slot {drawSlot}: {prewarmReason}";

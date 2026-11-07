@@ -157,6 +157,8 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         lifecycle.ShouldContain("private bool RecordCommandBufferLifecycle(");
         lifecycle.ShouldContain("recordingState.RecordingDeferredReason = ref context.RecordingDeferredReason;");
         primary.ShouldContain("Mesh frame-data reservation deferred before command recording");
+        primary.ShouldContain(
+            "recordingState.FailureKind =\n                            EVulkanCommandRecordingFailureKind.RetryFrame;\n                        recordingState.RecordingDeferredReason =\n                            $\"Mesh frame-data reservation deferred before command recording for \" +");
         primary.ShouldNotContain("$\"Mesh frame-data reservation failed before command recording for \" +");
         primary.ShouldContain("EnterRecordingResourceScope(recordingState.FramePlan, in operationContext)");
         secondary.ShouldContain("PushRenderingPipelineOverride(\n                    drawContext.PipelineInstance)");
