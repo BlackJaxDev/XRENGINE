@@ -29,6 +29,12 @@ public sealed class CookedSourcePathTests
         public string? Note { get; set; }
     }
 
+    /// <summary>An asset whose object array is too large for the graph refresh, so the refresh throws.</summary>
+    public sealed class OversizedGraphAsset : XRAsset
+    {
+        public XRTexture2D?[] Items { get; set; } = [];
+    }
+
     [SetUp]
     public void SetUp()
     {
@@ -300,6 +306,138 @@ public sealed class CookedSourcePathTests
         finally
         {
             holder.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void ContentCook_FailsForAnAssetThatDoesNotCook_AndForAYamlWithNoTypeHint_AndShipsNoYaml()
+    {
+        using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+        string broken = Path.Combine(_assets, "Broken.asset");
+        File.WriteAllText(broken, $"__assetType: XREngine.UnitTests.NoSuchAssetType{Environment.NewLine}OriginalPath: {_imagePath}{Environment.NewLine}");
+        string intermediate = Path.Combine(_tempRoot, "Intermediate", "broken");
+
+        InvalidOperationException error = Should.Throw<InvalidOperationException>(() =>
+            ProjectBuilder.PrepareCookedContentDirectoryForTests(_assets, intermediate));
+        error.Message.ShouldContain("Broken.asset");
+        error.Message.ShouldContain("does not ship YAML sources");
+        Directory.GetFiles(intermediate, "Broken.asset", SearchOption.AllDirectories).ShouldBeEmpty();
+
+        File.WriteAllText(broken, $"Name: untyped{Environment.NewLine}OriginalPath: {_imagePath}{Environment.NewLine}");
+        error = Should.Throw<InvalidOperationException>(() => Cook());
+        error.Message.ShouldContain("Broken.asset");
+        error.Message.ShouldContain("no __assetType");
+    }
+
+    [Test]
+    public void ContentCook_FailsWhenTheLiveAssetRefreshFails()
+    {
+        OversizedGraphAsset asset = new() { Name = "oversized", Items = new XRTexture2D?[1001] };
+        try
+        {
+            using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+            Should.Throw<InvalidDataException>(() => XRAssetGraphUtility.RefreshAssetGraph(asset));
+            WriteAsset(Path.Combine(_assets, "Oversized.asset"), asset);
+            string intermediate = Path.Combine(_tempRoot, "Intermediate", "oversized");
+
+            Should.Throw<InvalidDataException>(() => ProjectBuilder.PrepareCookedContentDirectoryForTests(_assets, intermediate));
+            Directory.GetFiles(intermediate, "Oversized.asset", SearchOption.AllDirectories).ShouldBeEmpty();
+        }
+        finally
+        {
+            asset.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void IncrementalContentCook_FailsWhenTheCookedBytesHoldAMachinePath()
+    {
+        // The startup settings have a registered runtime codec, so the published cook accepts them. A free folder string
+        // holds an absolute path that the source path projection does not see.
+        string machinePath = Path.Combine(_tempRoot, "Textures", "Runtime");
+        GameStartupSettings settings = new() { Name = "Startup", TexturesFolder = machinePath };
+        try
+        {
+            using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+            string source = Path.Combine(_assets, "Data", "Startup.asset");
+            WriteAsset(source, settings);
+            string destination = Path.Combine(_tempRoot, "Delta", "Data", "Startup.asset");
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+
+            CookedSourcePathException error = Should.Throw<CookedSourcePathException>(() =>
+                ProjectBuilder.TransformIncrementalContentFile(source, destination));
+            error.Message.ShouldContain("Startup.asset");
+            error.Message.ShouldContain(_tempRoot);
+        }
+        finally
+        {
+            settings.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void ConfigArchive_WritesSettingsWithNoMachinePath_AndDoesNotChangeTheLiveSettings()
+    {
+        string configDirectory = Path.Combine(_tempRoot, "Config");
+        GameStartupSettings startup = new() { Name = "Startup", FilePath = Path.Combine(configDirectory, "startup.asset") };
+        EditorPreferences preferences = new() { Name = "Preferences", FilePath = Path.Combine(configDirectory, "editor_preferences.asset") };
+        UserSettings user = new() { Name = "User", FilePath = Path.Combine(configDirectory, "user_settings.asset") };
+        string staging = Path.Combine(_tempRoot, "Staging");
+        Directory.CreateDirectory(staging);
+        try
+        {
+            using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+
+            ProjectBuilder.WriteConfigArchiveAssets(staging, startup, preferences, user, aotMetadata: null);
+
+            string[] files = Directory.GetFiles(staging);
+            files.Length.ShouldBe(3);
+            foreach (string file in files)
+                ContainsText(File.ReadAllBytes(file), _tempRoot).ShouldBeFalse(file);
+            UserSettings cookedUser = CookedAssetReader.LoadAsset<UserSettings>(File.ReadAllBytes(Path.Combine(staging, "user_settings.asset"))).ShouldNotBeNull();
+            cookedUser.FilePath.ShouldBeNull();
+            cookedUser.Name.ShouldBe("User");
+            user.FilePath.ShouldBe(Path.Combine(configDirectory, "user_settings.asset"));
+            startup.FilePath.ShouldBe(Path.Combine(configDirectory, "startup.asset"));
+        }
+        finally
+        {
+            startup.Destroy(now: true);
+            preferences.Destroy(now: true);
+            user.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void ConfigArchive_FailsForAnAbsoluteTexturesFolder_AndForASourcePathOutsideTheAssetRoots()
+    {
+        string staging = Path.Combine(_tempRoot, "Staging");
+        Directory.CreateDirectory(staging);
+        string machinePath = Path.Combine(_tempRoot, "Textures");
+        GameStartupSettings startup = new() { Name = "Startup", TexturesFolder = machinePath };
+        EditorPreferences preferences = new() { Name = "Preferences" };
+        UserSettings user = new() { Name = "User" };
+        try
+        {
+            using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+
+            CookedSourcePathException error = Should.Throw<CookedSourcePathException>(() =>
+                ProjectBuilder.WriteConfigArchiveAssets(staging, startup, preferences, user, aotMetadata: null));
+            error.Message.ShouldContain(nameof(GameStartupSettings.TexturesFolder));
+            error.Message.ShouldContain(machinePath);
+
+            startup.TexturesFolder = "Textures";
+            string outside = Path.Combine(_tempRoot, "Elsewhere", "user.yaml");
+            user.OriginalPath = outside;
+            error = Should.Throw<CookedSourcePathException>(() =>
+                ProjectBuilder.WriteConfigArchiveAssets(staging, startup, preferences, user, aotMetadata: null));
+            error.Message.ShouldContain(outside);
+        }
+        finally
+        {
+            startup.Destroy(now: true);
+            preferences.Destroy(now: true);
+            user.Destroy(now: true);
         }
     }
 

@@ -806,7 +806,7 @@ public sealed class MeshLodResidencyTests
     }
 
     [Test]
-    public void ContentCook_FailsForASubMesh_AndFallsBackToYamlForOtherTypes()
+    public void ContentCook_FailsForASubMesh_AndForAnyOtherAssetThatDoesNotCook()
     {
         string assets = Path.Combine(_root, "Assets");
         Directory.CreateDirectory(assets);
@@ -816,13 +816,13 @@ public sealed class MeshLodResidencyTests
             XREngine.Editor.ProjectBuilder.PrepareCookedContentDirectoryForTests(assets, Path.Combine(_root, "Intermediate")));
         error.Message.ShouldContain("Lods.asset");
 
-        // Any other type keeps the older fallback to its YAML source.
+        // Any other type also fails: a cook does not ship YAML sources.
         File.Delete(Path.Combine(assets, "Lods.asset"));
-        string brokenPath = Path.Combine(assets, "Broken.asset");
         string brokenYaml = $"__assetType: XREngine.UnitTests.NoSuchAssetType{Environment.NewLine}Value: 1{Environment.NewLine}";
-        File.WriteAllText(brokenPath, brokenYaml);
-        string cooked = XREngine.Editor.ProjectBuilder.PrepareCookedContentDirectoryForTests(assets, Path.Combine(_root, "Intermediate2"));
-        File.ReadAllText(Path.Combine(cooked, "Broken.asset")).ShouldBe(brokenYaml);
+        File.WriteAllText(Path.Combine(assets, "Broken.asset"), brokenYaml);
+        error = Should.Throw<InvalidOperationException>(() =>
+            XREngine.Editor.ProjectBuilder.PrepareCookedContentDirectoryForTests(assets, Path.Combine(_root, "Intermediate2")));
+        error.Message.ShouldContain("Broken.asset");
     }
 
     [Test]

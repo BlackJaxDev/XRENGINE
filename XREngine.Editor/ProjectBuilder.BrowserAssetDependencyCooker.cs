@@ -191,7 +191,7 @@ internal static partial class ProjectBuilder
             try
             {
                 PrepareMeshletPayloads(asset);
-                WriteCookedAsset(asset, destination, callbacks: CookCallbacks);
+                WriteGuardedCookedAsset(asset, destination, asset.Name ?? Path.GetFileName(destination), callbacks: CookCallbacks);
             }
             finally
             {

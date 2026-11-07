@@ -359,14 +359,12 @@ internal static partial class ProjectBuilder
             ? BuildAotRuntimeMetadata(configuration, platform)
             : null;
 
-        WriteCookedAsset(Engine.PersistentGameSettings, Path.Combine(staging, StartupAssetName), aotMetadata);
-
-        WriteCookedAsset(
+        WriteConfigArchiveAssets(
+            staging,
+            Engine.PersistentGameSettings,
             Engine.CreatePersistableEditorPreferencesSnapshot(),
-            Path.Combine(staging, XRProject.EditorPreferencesFileName),
+            Engine.UserSettings ?? new UserSettings(),
             aotMetadata);
-
-        WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName), aotMetadata);
 
         if (aotMetadata is not null)
             WriteAotRuntimeMetadata(staging, aotMetadata);
@@ -390,6 +388,55 @@ internal static partial class ProjectBuilder
             if (Directory.Exists(staging))
                 Directory.Delete(staging, true);
         }
+    }
+
+    /// <summary>
+    /// Writes the settings assets of the config archive into a staging folder. Each asset is a published copy with no file
+    /// path and a portable source path, written under the cook scope and checked for machine paths.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    internal static void WriteConfigArchiveAssets(
+        string staging,
+        GameStartupSettings startupSettings,
+        EditorPreferences editorPreferences,
+        UserSettings userSettings,
+        AotRuntimeMetadata? aotMetadata)
+    {
+        using CookedSourcePathScope sourcePaths = CookedSourcePathProjection.Begin();
+        WriteGuardedCookedAsset(
+            PublishedConfigAssets.CreateStartupSettings(startupSettings),
+            Path.Combine(staging, StartupAssetName),
+            StartupAssetName,
+            aotMetadata);
+        WriteGuardedCookedAsset(
+            PublishedConfigAssets.CreateEditorPreferences(editorPreferences),
+            Path.Combine(staging, XRProject.EditorPreferencesFileName),
+            XRProject.EditorPreferencesFileName,
+            aotMetadata);
+        WriteGuardedCookedAsset(
+            PublishedConfigAssets.CreateUserSettings(userSettings),
+            Path.Combine(staging, XRProject.UserSettingsFileName),
+            XRProject.UserSettingsFileName,
+            aotMetadata);
+
+        // The published copies project their own source paths in this scope.
+        ThrowIfSourcePathsNotPortable(sourcePaths, "config archive settings");
+    }
+
+    /// <summary>
+    /// Writes one cooked asset under the cook scope, fails if a source path is outside every asset root, and checks the
+    /// written file for machine paths. The config archive and the browser cooks use it.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static void WriteGuardedCookedAsset(object data, string destination, string assetLabel,
+        AotRuntimeMetadata? aotMetadata = null, CookedBinarySerializationCallbacks? callbacks = null)
+    {
+        using (CookedSourcePathScope sourcePaths = CookedSourcePathProjection.Begin())
+        {
+            WriteCookedAsset(data, destination, aotMetadata, callbacks);
+            ThrowIfSourcePathsNotPortable(sourcePaths, assetLabel);
+        }
+        CookedOutputPathGuard.ThrowIfMachinePath(destination, assetLabel);
     }
 
     private static void WriteAotRuntimeMetadata(string stagingDirectory, AotRuntimeMetadata metadata)
@@ -775,13 +822,19 @@ internal static partial class ProjectBuilder
             archivePath: context.ContentArchivePath,
             intermediateDirectory: context.IntermediateDirectory,
             deltaFolderName: "CookedContentDelta",
-            transformFile: static (source, destination) =>
-            {
-                WritePublishedCookedFile(source, destination);
-                if (string.Equals(Path.GetExtension(source), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
-                    CookedOutputPathGuard.ThrowIfMachinePath(destination, source);
-            },
+            transformFile: TransformIncrementalContentFile,
             includeRelativePath: ShouldIncludeInCookedContent);
+    }
+
+    /// <summary>
+    /// Cooks one file of the incremental content archive, then checks a cooked asset file for machine paths.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    internal static void TransformIncrementalContentFile(string source, string destination)
+    {
+        WritePublishedCookedFile(source, destination);
+        if (string.Equals(Path.GetExtension(source), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+            CookedOutputPathGuard.ThrowIfMachinePath(destination, source);
     }
 
     private static void RepackConfigArchiveIncremental(BuildContext context, string stagingDirectory)
@@ -1091,84 +1144,31 @@ internal static partial class ProjectBuilder
         WriteCookedBlob(destination, blob);
     }
 
+    /// <summary>
+    /// Cooks one asset file of the content cook. A cook does not ship a YAML source: the YAML can hold machine paths, also
+    /// inside compressed payloads that the output check cannot read. So an asset file with no type hint, or an asset whose
+    /// cook fails, fails the cook with an error that names the file.
+    /// </summary>
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static void WriteCookedAssetFile(string sourceFile, string destination)
+    private static void WriteCookedContentAssetFile(string sourceFile, string destination)
     {
-        if (TryWriteCookedAssetFile(sourceFile, destination))
-            return;
-
-        File.Copy(sourceFile, destination, true);
-    }
-
-    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static bool TryWriteCookedAssetFile(string sourceFile, string destination)
-    {
-        if (!string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
-            return false;
-
         string yaml = File.ReadAllText(sourceFile, Encoding.UTF8);
-        string? typeHint = ExtractAssetTypeHint(yaml);
-
-        if (string.IsNullOrWhiteSpace(typeHint))
-            return false;
+        if (string.IsNullOrWhiteSpace(ExtractAssetTypeHint(yaml)))
+            throw new InvalidOperationException(
+                $"Asset '{sourceFile}' could not be cooked: it has no __assetType or __type hint. A cook does not ship YAML sources.");
 
         CookedAssetBlob blob;
-        object? asset = null;
         try
         {
-            blob = CreateCookedBlobFromYaml(yaml, sourceFile, out asset);
+            blob = CreateCookedBlobFromYaml(yaml, sourceFile);
         }
         catch (Exception ex) when (ex is InvalidOperationException or YamlDotNet.Core.YamlException)
         {
-            // An asset whose cook needs the split sub-mesh format must not ship as YAML: the cooked build would load a
-            // different format. Any other asset keeps the older fallback to its YAML source, with one warning.
-            if (CookNeedsSubMeshFormat(ResolveAssetType(typeHint), asset))
-                throw new InvalidOperationException($"Asset '{sourceFile}' could not be cooked: {ex.Message}", ex);
-            if (ex is not InvalidOperationException)
-                throw;
-            Debug.LogWarning($"Asset '{sourceFile}' could not be cooked, so the build copies its YAML source: {ex.Message}");
-            return false;
+            throw new InvalidOperationException(
+                $"Asset '{sourceFile}' could not be cooked, and a cook does not ship YAML sources: {ex.Message}", ex);
         }
 
         WriteCookedBlob(destination, blob);
-        return true;
-    }
-
-    /// <summary>
-    /// True if the cook of an asset needs the split sub-mesh format: a sub-mesh, or a model or world that holds sub-meshes.
-    /// A model or world that failed to load counts when it is a model; a world counts only when its loaded graph has a
-    /// sub-mesh.
-    /// </summary>
-    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static bool CookNeedsSubMeshFormat(Type? assetType, object? asset)
-    {
-        if (assetType is null)
-            return false;
-        if (typeof(SubMesh).IsAssignableFrom(assetType))
-            return true;
-        if (typeof(Model).IsAssignableFrom(assetType))
-            return asset is not Model model || model.Meshes.Count > 0;
-        if (!typeof(XRWorld).IsAssignableFrom(assetType) || asset is null)
-            return false;
-
-        bool hasSubMesh = false;
-        CookedBinarySerializationCallbacks callbacks = new()
-        {
-            OnSerializingValue = value =>
-            {
-                hasSubMesh |= value is SubMesh;
-                return value;
-            },
-        };
-        try
-        {
-            _ = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.CalculateSize(asset, callbacks));
-        }
-        catch (Exception walkFailure) when (walkFailure is not OutOfMemoryException)
-        {
-            // The walk can fail for the same reason as the cook. The members seen before the failure still count.
-        }
-        return hasSubMesh;
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
@@ -1212,9 +1212,8 @@ internal static partial class ProjectBuilder
                 }
                 else
                 {
-                    cookedAsBinaryAsset = TryWriteCookedAssetFile(sourceFile, destination);
-                    if (!cookedAsBinaryAsset)
-                        File.Copy(sourceFile, destination, true);
+                    WriteCookedContentAssetFile(sourceFile, destination);
+                    cookedAsBinaryAsset = true;
                 }
 
                 progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));

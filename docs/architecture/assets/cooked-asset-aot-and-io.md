@@ -353,8 +353,13 @@ source paths of cooked assets at write time, without changing any object:
   random binary data does not match. The incremental archive build checks each
   cooked asset file that it writes. Files that the cook copies as they are
   (not asset files) are not checked.
-- `CookedSourcePathException` is not an `InvalidOperationException`, so the
-  cook does not fall back to a copy of the YAML source.
+- The guard reads each file in 4 MiB chunks that overlap by 4 KiB, so a file of
+  any size is checked with a fixed buffer.
+- A cook does not ship YAML sources. An asset file with no `__assetType` or
+  `__type` hint, or an asset whose cook fails, fails the content cook with an
+  error that names the file. A YAML source can hold machine paths inside
+  compressed payloads (for example the `CookedBinary` texture envelopes) that
+  the guard cannot read, so the cook does not copy it.
 - Before the serialization, `CookedCopyGraph.ReleaseLiveAssets` refreshes the
   asset graph of the deserialized copy with live assets as foreign, so the copy
   does not claim a live editor asset. A refresh failure fails the cook.
@@ -362,8 +367,14 @@ source paths of cooked assets at write time, without changing any object:
   first with `AssetReferencePath.TryResolveFileSystemPath`: the texture
   streaming restore, the texture cache fallback, the texture streaming cache
   codec, and the font layout recovery (`FontGlyphSet`).
-- The config archive (`WriteCookedAsset` of the settings assets) and the
-  browser dependency cooks do not use the cook scope or the check.
+- The config archive (`ProjectBuilder.WriteConfigArchiveAssets`) and the
+  browser dependency and font cooks write each asset through
+  `WriteGuardedCookedAsset`: the cook scope, the failure check, and the guard.
+  The settings assets use registered MemoryPack codecs that do not pass through
+  the projection, so `PublishedConfigAssets` writes a MemoryPack copy of each
+  settings asset with no `FilePath` and a projected `OriginalPath`. The live
+  settings do not change. An absolute `GameStartupSettings.TexturesFolder`
+  fails the publish with the member named.
 
 ## Mesh LOD Payloads
 

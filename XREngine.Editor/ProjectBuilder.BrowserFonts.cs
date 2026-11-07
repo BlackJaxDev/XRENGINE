@@ -254,7 +254,7 @@ internal static partial class ProjectBuilder
             }
             cancellationToken.ThrowIfCancellationRequested();
             using IDisposable fontCodec = RenderingPublishedCookedAssetRegistration.InstallBrowserBitmapFontCodec();
-            WriteCookedAsset(font, payloadPath);
+            WriteGuardedCookedAsset(font, payloadPath, Path.GetFileName(payloadPath));
             if (new FileInfo(payloadPath).Length > 4 * 1024 * 1024)
                 throw new InvalidDataException("BrowserCook.UiFontPayloadBudgetExceeded: cooked font exceeds the browser read limit.");
             return payloadPath;
