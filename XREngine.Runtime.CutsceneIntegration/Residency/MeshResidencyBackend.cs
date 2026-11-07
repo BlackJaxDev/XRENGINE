@@ -102,13 +102,18 @@ public sealed class MeshResidencyBackend : IResidencyBackend, IDisposable
 
     /// <summary>
     /// The largest number of LODs that one <see cref="PublishPending"/> publishes. Each publication builds a renderer for
-    /// each placement on the update thread, so a jump that completes many loads spreads them over frames. The rest stay
-    /// prepared for the next frame. The default is <see cref="DefaultMaxPublicationsPerFrame"/>.
+    /// each placement on the update thread, and the next render swap registers the new LOD in the GPU scene mesh atlas.
+    /// The cost of that registration grows with the size of the atlas, not with the size of the LOD, so the count of
+    /// publications in one frame sets the swap cost. A jump that completes many loads spreads them over frames. The rest
+    /// stay prepared for the next frame. The default is <see cref="DefaultMaxPublicationsPerFrame"/>.
     /// </summary>
     public int MaxPublicationsPerFrame { get; set; } = DefaultMaxPublicationsPerFrame;
 
-    /// <summary>The default of <see cref="MaxPublicationsPerFrame"/>.</summary>
-    public const int DefaultMaxPublicationsPerFrame = 8;
+    /// <summary>
+    /// The default of <see cref="MaxPublicationsPerFrame"/>. Two publications per frame keep the swap of a cold jump in
+    /// Sponza near the frame budget, and all T1 LODs still arrive in about 200 ms at 60 Hz.
+    /// </summary>
+    public const int DefaultMaxPublicationsPerFrame = 2;
 
     /// <summary>The number of LODs that the backend published and still holds.</summary>
     public int PublishedLodCount

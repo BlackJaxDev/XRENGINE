@@ -300,8 +300,14 @@ payload split). The GPU routes follow these rules:
   next registration misses the retained state and uploads the new level from CPU
   memory. The render side does no disk IO and no hash work, and a payload is
   complete before the backend publishes it. The mesh residency backend limits
-  publications per frame (`MeshResidencyBackend.MaxPublicationsPerFrame`). The
-  atlas has no separate per-frame byte budget.
+  publications per frame (`MeshResidencyBackend.MaxPublicationsPerFrame`,
+  default 2). The atlas has no separate per-frame byte budget.
+- The registration runs on the collect swap (`RenderCommandMesh3D.SwapBuffers`
+  -> `GPUScene.TryUpdateMeshCommand`), and the render thread waits for that swap.
+  Each registration that appends a level rebuilds the dirty atlas tier, and the
+  rebuild copies the whole face list of the tier. The cost of one publication
+  therefore grows with the atlas size, not with the LOD size. This is why the
+  limit counts publications and not bytes.
 - An eviction sets the source mesh of the LOD to null. The next registration
   writes mesh ID 0 for that level at once. The atlas reference of the old level
   goes to a pending list. At the next frame boundary (`SwapCommandBuffers`), the
