@@ -48,6 +48,7 @@ public sealed class MeshResidencyBackend : IResidencyBackend, IDisposable
     private readonly List<LodLoad> _prepared = [];
     private readonly List<LodLoad> _publishScratch = [];
     private readonly List<long> _completedScratch = [];
+    private readonly HashSet<SubMeshLOD> _warnedLods = new(ReferenceEqualityComparer.Instance);
     private Dictionary<Guid, MeshAssetEntry> _entries = [];
     private CutsceneResidencyPlanner? _planner;
     private long _nextTicketId;
@@ -88,6 +89,26 @@ public sealed class MeshResidencyBackend : IResidencyBackend, IDisposable
 
     /// <summary>The number of LOD payload loads that failed.</summary>
     public int FailedLoadCount => Volatile.Read(ref _failedLoadCount);
+
+    /// <summary>The number of LODs that gave a load warning. Each LOD warns one time for the life of the backend.</summary>
+    public int WarnedLodCount
+    {
+        get
+        {
+            lock (_sync)
+                return _warnedLods.Count;
+        }
+    }
+
+    /// <summary>
+    /// The largest number of LODs that one <see cref="PublishPending"/> publishes. Each publication builds a renderer for
+    /// each placement on the update thread, so a jump that completes many loads spreads them over frames. The rest stay
+    /// prepared for the next frame. The default is <see cref="DefaultMaxPublicationsPerFrame"/>.
+    /// </summary>
+    public int MaxPublicationsPerFrame { get; set; } = DefaultMaxPublicationsPerFrame;
+
+    /// <summary>The default of <see cref="MaxPublicationsPerFrame"/>.</summary>
+    public const int DefaultMaxPublicationsPerFrame = 8;
 
     /// <summary>The number of LODs that the backend published and still holds.</summary>
     public int PublishedLodCount
@@ -264,10 +285,12 @@ public sealed class MeshResidencyBackend : IResidencyBackend, IDisposable
                 return;
 
             _publishScratch.Clear();
-            for (int i = 0; i < _prepared.Count; i++)
-                if (_prepared[i].State == ELoadState.Prepared && _prepared[i].RefCount > 0)
-                    _publishScratch.Add(_prepared[i]);
-            _prepared.Clear();
+            int limit = Math.Max(1, MaxPublicationsPerFrame);
+            int taken = 0;
+            for (; taken < _prepared.Count && _publishScratch.Count < limit; taken++)
+                if (_prepared[taken].State == ELoadState.Prepared && _prepared[taken].RefCount > 0)
+                    _publishScratch.Add(_prepared[taken]);
+            _prepared.RemoveRange(0, taken);
         }
 
         // The scene objects react on this thread, so the backend lock is not held.
@@ -275,16 +298,23 @@ public sealed class MeshResidencyBackend : IResidencyBackend, IDisposable
         {
             LodLoad load = _publishScratch[i];
             XRMesh? mesh;
+            bool alreadyResident;
             lock (_sync)
             {
                 mesh = load.State == ELoadState.Prepared ? load.Prepared : null;
+                alreadyResident = load.Lod.Mesh is not null;
                 if (mesh is not null)
                 {
                     load.Prepared = null;
-                    load.State = ELoadState.Published;
+                    // Another owner gave the LOD a mesh meanwhile. The backend did not publish it, so it never releases it.
+                    load.State = alreadyResident ? ELoadState.Resident : ELoadState.Published;
                 }
             }
-            if (mesh is not null && load.Lod.Mesh is null)
+            if (mesh is null)
+                continue;
+            if (alreadyResident)
+                mesh.Destroy(now: true);
+            else
                 load.Lod.Mesh = mesh;
         }
         _publishScratch.Clear();
@@ -415,7 +445,11 @@ public sealed class MeshResidencyBackend : IResidencyBackend, IDisposable
             if (failure is not null)
             {
                 Interlocked.Increment(ref _failedLoadCount);
-                Debug.LogWarning(ELogCategory.Meshes, "Cutscene mesh residency: cooked sub-mesh '{0}' LOD {1} stays not resident: {2}.", load.SubMeshName ?? string.Empty, load.Index, failure);
+                bool warn;
+                lock (_sync)
+                    warn = _warnedLods.Add(load.Lod);
+                if (warn)
+                    Debug.LogWarning(ELogCategory.Meshes, "Cutscene mesh residency: cooked sub-mesh '{0}' LOD {1} stays not resident: {2}.", load.SubMeshName ?? string.Empty, load.Index, failure);
             }
             return;
         }

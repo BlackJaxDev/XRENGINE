@@ -12,7 +12,7 @@ namespace XREngine.Cutscenes;
 /// <remarks>
 /// <para>
 /// A sub-mesh with one LOD loads its full mesh at T0. Automatic LOD generation is off by default, also for the models that a
-/// cutscene binds, so the check reports the count of such sub-meshes in one warning.
+/// cutscene binds, and a simplification can also give one LOD. The check reports the count of such sub-meshes in one warning.
 /// </para>
 /// <para>
 /// A simplification does not always reduce a mesh. A sub-mesh whose coarsest LOD has more than
@@ -44,7 +44,7 @@ public static class CutsceneMeshLodBakeCheck
 
         if (singleLod > 0)
             diagnostics.Add(new CutsceneCompileDiagnostic(-1, -1,
-                $"{singleLod} sub-meshes of the cutscene have one LOD, so T0 loads their full mesh. Automatic LOD generation is off for them. Turn on LOD generation in the model import settings to load a smaller proxy first."));
+                $"{singleLod} sub-meshes of the cutscene have one LOD, so T0 loads their full mesh. Turn on LOD generation in the model import settings, or author LODs, to load a smaller proxy first."));
 
         if (notReduced.Count > 0)
         {

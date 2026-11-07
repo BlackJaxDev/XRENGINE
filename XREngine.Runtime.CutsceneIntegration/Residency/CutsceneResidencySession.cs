@@ -86,6 +86,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     private IResidencyBackend? _meshBackend;
     private int _reportedUnroutedMesh;
     private int _reportedLegacyMesh;
+    private int _meshLegacyCount;
     private string? _meshSignature;
     private string? _meshUnroutedReason;
     private CutscenePlayer? _player;
@@ -710,13 +711,14 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         try
         {
             backend.BeginSelection();
+            int legacy = backend is MeshResidencyBackend meshBackend ? meshBackend.LegacySubMeshCount : 0;
             CutsceneResidencyManifest manifest = selection.FullManifest.SelectKind(EResidencyAssetKind.Mesh, backend.CanResolve);
             if (manifest.Assets.Length == 0)
             {
                 (backend as IDisposable)?.Dispose();
-                return new PlannerParts(null, null, signature, "no mesh asset of the manifest is a sub-mesh of the scene now");
+                return new PlannerParts(null, null, signature, "no mesh asset of the manifest is a sub-mesh of the scene now", legacy);
             }
-            return new PlannerParts(backend, new CutsceneResidencyPlanner(manifest, backend), signature, null);
+            return new PlannerParts(backend, new CutsceneResidencyPlanner(manifest, backend), signature, null, legacy);
         }
         catch
         {
@@ -734,6 +736,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         CloseMesh();
         _meshSignature = parts.Signature;
         _meshUnroutedReason = parts.UnroutedReason;
+        _meshLegacyCount = parts.LegacyMeshCount;
         if (parts.Planner is not { } planner)
             return;
 
@@ -949,7 +952,8 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         }
         _reportedUnroutedMesh = unroutedMesh;
 
-        int legacyMesh = _meshBackend is MeshResidencyBackend meshBackend ? meshBackend.LegacySubMeshCount : 0;
+        // The count comes from the selection, so it stays when no mesh asset resolved and the backend was disposed.
+        int legacyMesh = _meshLegacyCount;
         if (legacyMesh > 0 && legacyMesh != _reportedLegacyMesh)
             Add(diagnostics, $"{legacyMesh} sub-meshes of the scene use an older cooked payload (version 1) with all LODs inline, so the open reads all of their LOD data and eviction cannot release it. Cook again for progressive mesh loading.");
         _reportedLegacyMesh = legacyMesh;
@@ -1090,7 +1094,7 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
         Debug.LogWarning(ELogCategory.Animation, "Cutscene residency: {0}", message);
     }
 
-    private readonly record struct PlannerParts(IResidencyBackend? Backend, CutsceneResidencyPlanner? Planner, string Signature, string? UnroutedReason);
+    private readonly record struct PlannerParts(IResidencyBackend? Backend, CutsceneResidencyPlanner? Planner, string Signature, string? UnroutedReason, int LegacyMeshCount = 0);
 
     private readonly record struct Selection(
         CutsceneResidencyManifest TextureManifest,

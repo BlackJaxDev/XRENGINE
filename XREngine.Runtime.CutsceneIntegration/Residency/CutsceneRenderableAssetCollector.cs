@@ -107,7 +107,7 @@ public sealed class CutsceneRenderableAssetCollector : ICutsceneResidencyAssetCo
         {
             bytes = SubMeshCookedCodec.GetCoarsestLodPayloadLength(subMesh);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             bytes = 0L;
             Debug.LogWarning(ELogCategory.Animation, "Cutscene residency: the T0 size of sub-mesh '{0}' is not known, so it counts as zero bytes: {1}", subMesh.Name ?? string.Empty, ex.Message);
