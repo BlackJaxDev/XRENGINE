@@ -21,6 +21,8 @@
   items:
     - name: Baked Value Compression
       href: animation/baked-value-compression.md
+    - name: Cutscene System
+      href: animation/cutscene-system.md
 
 - name: Editor
   items:

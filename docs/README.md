@@ -43,6 +43,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Physics Debug Frame](architecture/physics/physics-debug-frame.md)
 - [Physics Chain World Runtime](architecture/physics/physics-chain-world-runtime.md)
 - [Audio Architecture](architecture/audio/audio-architecture.md)
+- [Cutscene System](architecture/animation/cutscene-system.md)
 - [Networking Overview](architecture/networking/overview.md)
 - [Control Plane Runtime Architecture](architecture/runtime/control-plane.md)
 - [Portable Engine Host](architecture/runtime/portable-engine-host.md)

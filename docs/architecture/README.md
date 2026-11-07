@@ -49,6 +49,7 @@ Shared managed feature libraries, `Runtime.Core`, `Runtime.Rendering`, and the i
 ## Further Reading
 - [Audio Architecture](audio/audio-architecture.md)
 - [Animation Baked Value Compression](animation/baked-value-compression.md)
+- [Cutscene System](animation/cutscene-system.md)
 - [Cooked Asset Serialization - AOT And IO Design](assets/cooked-asset-aot-and-io.md)
 - [Modeling XRMesh Editing Architecture](modeling/xrmesh-editing.md)
 - [Scene Architecture](scene/overview.md)

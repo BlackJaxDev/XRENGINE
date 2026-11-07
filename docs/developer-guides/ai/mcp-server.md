@@ -636,7 +636,7 @@ the target's type and optional persistent ID.
 | `cutscene_open` | Open a cutscene. In edit mode this starts a preview that restores the scene when it closes. In play mode this opens a director. Uses asset_path (edit mode only), node_id of a node with a CutsceneDirectorComponent, the selected node, or the only director in the world. Set close to true to end the open cutscene. |
 | `cutscene_play` | Play or pause the open cutscene. A negative rate plays backward. At the end of the range the state becomes Paused. |
 | `cutscene_seek` | Move the open cutscene to a time in seconds. The tool evaluates the tracks before it returns, and the result is limited to the cutscene range. The transforms flush later in the same frame, so a capture after this call shows the new time. |
-| `cutscene_status` | Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), and diagnostics. |
+| `cutscene_status` | Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), diagnostics, the open readiness (readyForInstantSeek, pending T0 loads, pending and failed proxy programs, and whether the open sequence finished), and the audio clock (clock mode, fallback, mute, last heard-minus-clock difference in ms, read count, hard resync count, and output latency in ms). |
 | `delete_game_asset` | Delete a file or directory from the game project's assets directory. |
 | `delete_game_script` | Delete a .cs script file from the game project's assets directory. |
 | `delete_scene` | Delete a scene from the active world. |
