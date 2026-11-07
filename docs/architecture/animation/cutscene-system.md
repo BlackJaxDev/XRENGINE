@@ -28,7 +28,7 @@ The editor parts are in `XREngine.Editor/Cutscenes/` (`CutscenePreviewHost`, `Cu
 
 Composition:
 
-- `RuntimeRenderingBootstrap` (a windowed desktop host with asset services) installs the serialization contracts and the default texture residency backend factory (`CutsceneResidencyRegistration.InstallDefaultBackendFactory`).
+- `RuntimeRenderingBootstrap` (a windowed desktop host with asset services) installs the serialization contracts, the default texture residency backend factory (`CutsceneResidencyRegistration.InstallDefaultBackendFactory`), and the default binding resolver factory (`CutsceneBindingRegistration.InstallSceneResolverFactory`). Each registration is a lease that keeps a factory that is already set.
 - `RuntimeApplicationBootstrap` (a headless host) installs the serialization contracts and `CutsceneResidencyRegistration.InstallUnavailable`.
 - `CutscenePreviewSession.Initialize` registers the default binding resolver factory and the default residency backend factory of the editor.
 

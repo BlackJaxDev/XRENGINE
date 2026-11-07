@@ -150,6 +150,10 @@ public static class RuntimeRenderingBootstrap
                 // A windowed host streams textures, so a cutscene director gets texture residency from the engine asset manager.
                 leases.Add(XREngine.Cutscenes.CutsceneResidencyRegistration.InstallDefaultBackendFactory(
                     static _ => new XREngine.Cutscenes.TextureResidencyBackend(Engine.Assets)));
+
+                // A director in a play world binds to the root nodes of its world, so it opens with no game code.
+                // A resolver factory that the editor or game code set first stays in place.
+                leases.Add(XREngine.Cutscenes.CutsceneBindingRegistration.InstallSceneResolverFactory(Engine.Assets));
             }
             leases.Add(renderers);
             BuiltInPhysicsBackendModules.RegisterDesktop(physics);
