@@ -73,4 +73,8 @@ public enum EAdvancedTextureFormatClass : uint
     Depth24Stencil8 = 64,
     Depth32FloatStencil8 = 65,
     Stencil8 = 66,
+    Bc7Unorm = 67,
+    Bc7Srgb = 68,
+    Bc5Unorm = 69,
+    Bc4Unorm = 70,
 }

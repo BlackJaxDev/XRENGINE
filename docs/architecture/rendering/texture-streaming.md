@@ -135,6 +135,7 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 | `XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS` | Render-thread time budget, in milliseconds, for upload preparation work. |
 | `XRE_VULKAN_TEXTURE_UPLOAD_TRACE=1` | Verbose upload lifecycle logs. |
 | `XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE` | Requests a dedicated transfer queue. Currently logs a `[Vulkan Compat]` message; uploads stay on the graphics queue. |
+| `XRE_TEXTURE_COOK_COMPRESSION` | `Bc7` or `None`. Overrides `CookedTextureCompression` for the texture cook. The cache key includes the effective mode. |
 | `XRE_VULKAN_ASYNC_TEXTURE_UPLOAD`, `XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER` | Disabling either is ignored for imported uploads and logs a `[Vulkan Compat]` message. Preparation stays worker-only. |
 
 ## Diagnostics
@@ -143,12 +144,13 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 - Telemetry: `ImportedTextureStreamingTelemetry` and `ImportedTextureStreamingTextureTelemetry`. Vulkan rows add resident, published, upload, and retirement generations.
 - Editor: the ImGui texture streaming panel (`EditorImGuiUI.TextureStreamingPanel`).
 - MCP: `get_texture_streaming_summary` and `list_texture_streaming_textures`.
+- Cook compression, in the `texture-compression.log` auxiliary log in every build configuration: one line per cooked texture with its format, size, mip count, RGBA8 and BC7 byte counts, and encode time, and one line for each texture that stays RGBA8 with the reason.
 - Vulkan upload timing (Debug and editor builds): `[VkTextureUpload.DrainSlow]` splits a transfer drain step of 4 ms or more into submit, poll, batch completion, and child completion. `[VkTextureUpload.Publish]` reports a publication of 4 ms or more, and every publication with GPU-generated mips, with its mip level count. `[UploadMipmaps] ... scheduling ... took` reports a large runtime texture whose scheduling took 4 ms or more.
 
 ## Known Limits
 
 - Partial sparse page residency is disabled by policy on OpenGL. Vulkan sparse images are not implemented.
-- Cooked payloads are not page-addressable. GPU-native compressed payloads and compressed uploads are not implemented.
+- Cooked payloads are not page-addressable. Compressed (BC7) payloads use dense residency only.
 - Vulkan per-mip progressive exposure is opt-in and uses the render-thread path, not the synchronized service.
 - Vulkan imported uploads do not use a dedicated transfer queue.
 - Color-space and texture-role metadata are incomplete.

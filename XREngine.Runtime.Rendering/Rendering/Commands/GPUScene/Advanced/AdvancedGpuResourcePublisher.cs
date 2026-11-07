@@ -695,7 +695,7 @@ public sealed class AdvancedGpuResourcePublisher
             (source.TextureRecord.Dimension == EAdvancedTextureDimension.Cube && source.TextureRecord.DepthOrLayers != 6u) ||
             source.TextureRecord.MipCount == 0u ||
             source.TextureRecord.FormatClass == (uint)EAdvancedTextureFormatClass.Unknown ||
-            source.TextureRecord.FormatClass > (uint)EAdvancedTextureFormatClass.Stencil8)
+            source.TextureRecord.FormatClass > (uint)EAdvancedTextureFormatClass.Bc4Unorm)
         {
             reason = "Logical textures must describe one supported, nonempty 2D, 2D-array, or cube resource.";
             return false;

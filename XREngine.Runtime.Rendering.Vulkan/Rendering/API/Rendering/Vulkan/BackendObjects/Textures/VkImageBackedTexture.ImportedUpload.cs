@@ -157,6 +157,13 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
+        if (VkFormatConversions.IsBlockCompressed(format) && !BackendContext.Supports(EVulkanDeviceCapability.TextureCompressionBc))
+        {
+            failureReason = $"the cooked texture uses {format}, but the device does not support textureCompressionBC; " +
+                "set CookedTextureCompression to None (or XRE_TEXTURE_COOK_COMPRESSION=None) and cook again";
+            return false;
+        }
+
         ImageAspectFlags aspectMask = NormalizeAspectMaskForFormat(format, AspectFlags);
         ImageUsageFlags usage = ResolveImportedUploadUsage(
             format, publicationPlan.AuthoredSettings.RequiresStorageUsage);
@@ -374,7 +381,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                     return EVulkanImportedTextureChunkPreparation.Failed;
                 }
 
-                uint rowCount = Math.Max(mipExtent.Height, 1u);
+                // Block-compressed data is copied in rows of 4x4 blocks; other data in pixel rows.
+                bool blockCompressed = VkFormatConversions.IsBlockCompressed(upload.Format);
+                uint rowCount = GetImportedUploadRowCount(mip, upload.Format);
                 if ((ulong)uploadData.Length % rowCount != 0)
                 {
                     failureReason = $"normalized mip {level} byte count {uploadData.Length:N0} cannot be divided into {rowCount} rows for bounded staging";
@@ -424,8 +433,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                         BaseArrayLayer = 0,
                         LayerCount = 1,
                     },
-                    ImageOffset = new Offset3D(0, (int)firstRow, 0),
-                    ImageExtent = new Extent3D(mipExtent.Width, chunkRows, 1u),
+                    ImageOffset = new Offset3D(0, (int)(blockCompressed ? firstRow * 4u : firstRow), 0),
+                    // A block region may end at the image edge with a height that is not a multiple of 4.
+                    ImageExtent = new Extent3D(
+                        mipExtent.Width,
+                        blockCompressed ? Math.Min(chunkRows * 4u, mipExtent.Height - firstRow * 4u) : chunkRows,
+                        1u),
                 };
 
                 uint nextRow = firstRow + chunkRows;
@@ -462,6 +475,16 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         return EVulkanImportedTextureChunkPreparation.Failed;
     }
 
+    /// <summary>
+    /// Number of copy rows in a mip: pixel rows, or rows of 4x4 blocks for a
+    /// block-compressed format.
+    /// </summary>
+    private static uint GetImportedUploadRowCount(Mipmap2D mip, Format format)
+    {
+        uint height = Math.Max(mip.Height, 1u);
+        return VkFormatConversions.IsBlockCompressed(format) ? (height + 3u) / 4u : height;
+    }
+
     private static bool HasRemainingImportedUploadRows(
         VulkanImportedTexturePendingUpload upload,
         int nextMipLevel,
@@ -473,7 +496,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             Mipmap2D? mip = upload.ResidentData.Mipmaps[index];
             if (mip is null)
                 continue;
-            uint rows = Math.Max(mip.Height, 1u);
+            uint rows = GetImportedUploadRowCount(mip, upload.Format);
             if (index != nextMipLevel || nextMipRow < rows)
                 return true;
         }
@@ -636,6 +659,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     private ImageUsageFlags ResolveImportedUploadUsage(Format format, bool requiresStorageUsage)
     {
         ImageUsageFlags usage = DefaultUsage;
+        if (VkFormatConversions.IsBlockCompressed(format))
+        {
+            // Block-compressed images are sampled and copied only: they cannot be
+            // color attachments or storage images.
+            return usage & ~(ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.StorageBit);
+        }
         if (requiresStorageUsage)
             usage |= ImageUsageFlags.StorageBit;
         if (VkFormatConversions.IsDepthStencilFormat(format))

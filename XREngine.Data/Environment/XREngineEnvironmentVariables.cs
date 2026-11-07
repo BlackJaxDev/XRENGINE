@@ -165,6 +165,7 @@ public static class XREngineEnvironmentVariables
     public const string ShaderCacheMode = "XRE_SHADER_CACHE_MODE";
     public const string TextureCacheMode = "XRE_TEXTURE_CACHE_MODE";
     public const string TextureStreamingCacheWarmupEnabled = "XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED";
+    public const string TextureCookCompression = "XRE_TEXTURE_COOK_COMPRESSION";
     public const string ProfileCacheMode = "XRE_PROFILE_CACHE_MODE";
     public const string GpuClockPolicy = "XRE_GPU_CLOCK_POLICY";
     public const string ProfilePhase = "XRE_PROFILE_PHASE";

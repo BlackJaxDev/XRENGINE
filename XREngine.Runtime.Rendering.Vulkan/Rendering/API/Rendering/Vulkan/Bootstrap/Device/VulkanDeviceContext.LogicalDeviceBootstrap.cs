@@ -284,6 +284,13 @@ internal sealed unsafe partial class VulkanDeviceContext
             _deviceContext.MutableCapabilities._supportsAnisotropy = true;
         }
 
+        // The texture cook can store BC7 (and BC4/BC5) mips; desktop GPUs support them.
+        if (supportedFeatures.TextureCompressionBC)
+        {
+            deviceFeatures.TextureCompressionBC = Vk.True;
+            _deviceContext.MutableCapabilities._supportsTextureCompressionBc = true;
+        }
+
         if (supportedFeatures.FragmentStoresAndAtomics)
         {
             deviceFeatures.FragmentStoresAndAtomics = Vk.True;

@@ -299,6 +299,13 @@ public partial class GLTexture2D
     internal static long CalculateTextureVRAMSize(uint width, uint height, uint mipLevels, ESizedInternalFormat format, uint sampleCount)
     {
         long totalSize = 0;
+        if (TextureBlockFormats.IsBlockCompressed(format))
+        {
+            for (uint mip = 0; mip < mipLevels; mip++)
+                totalSize += TextureBlockFormats.GetImageBytes(format, Math.Max(1u, width >> (int)mip), Math.Max(1u, height >> (int)mip));
+            return totalSize;
+        }
+
         uint bytesPerPixel = GetBytesPerPixel(format);
 
         for (uint mip = 0; mip < mipLevels; mip++)

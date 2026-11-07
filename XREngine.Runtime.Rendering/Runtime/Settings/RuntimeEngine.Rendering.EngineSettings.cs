@@ -1017,6 +1017,21 @@ public static partial class RuntimeEngine
                     set => SetField(ref _desktopPresentPath, value);
                 }
 
+                private ETextureCookCompression _cookedTextureCompression = ETextureCookCompression.Bc7;
+
+                /// <summary>
+                /// Selects the block compression that the texture cook uses for the streaming cache.
+                /// The environment variable XRE_TEXTURE_COOK_COMPRESSION (None or Bc7) overrides it.
+                /// A change takes effect for textures that are cooked after it; the cache key includes the mode.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Block compression for cooked streaming textures. Bc7 uses a quarter of the memory of RGBA8.")]
+                public ETextureCookCompression CookedTextureCompression
+                {
+                    get => _cookedTextureCompression;
+                    set => SetField(ref _cookedTextureCompression, value);
+                }
+
                 /// <summary>
                 /// Number of samples to use when MSAA is enabled (set to 1 to disable).
                 /// </summary>

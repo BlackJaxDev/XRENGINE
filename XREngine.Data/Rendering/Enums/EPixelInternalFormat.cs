@@ -81,6 +81,13 @@
 
         //Stencil
         StencilIndex8,
+
+        //Block compressed. These values are appended so that the ordinals of the
+        //formats above, which cooked assets store, do not change.
+        Bc7Unorm,
+        Bc7Srgb,
+        Bc5Unorm,
+        Bc4Unorm,
     }
 
     public enum EPixelInternalFormat

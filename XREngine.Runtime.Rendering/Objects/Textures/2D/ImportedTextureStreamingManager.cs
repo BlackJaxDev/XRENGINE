@@ -920,6 +920,10 @@ internal sealed partial class ImportedTextureStreamingManager
         if (backend != RuntimeGraphicsApiKind.OpenGL)
             return OpenGlDenseBackend;
 
+        // Sparse pages upload pixel rectangles; block-compressed mips use the dense path.
+        if (TextureBlockFormats.IsBlockCompressed(format))
+            return OpenGlDenseBackend;
+
         SparseTextureStreamingSupport support = RuntimeRenderingHostServices.Assets.GetSparseTextureStreamingSupport(format);
         if (!support.IsAvailable || !support.IsPageAligned(sourceWidth, sourceHeight))
             return OpenGlDenseBackend;

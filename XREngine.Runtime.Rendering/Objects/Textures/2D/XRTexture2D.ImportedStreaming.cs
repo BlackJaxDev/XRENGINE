@@ -564,6 +564,8 @@ public partial class XRTexture2D
             (ETextureColorSpace.Srgb, ESizedInternalFormat.Rgba8) => ESizedInternalFormat.Srgb8Alpha8,
             (ETextureColorSpace.Linear, ESizedInternalFormat.Srgb8) => ESizedInternalFormat.Rgb8,
             (ETextureColorSpace.Linear, ESizedInternalFormat.Srgb8Alpha8) => ESizedInternalFormat.Rgba8,
+            (ETextureColorSpace.Srgb, ESizedInternalFormat.Bc7Unorm) => ESizedInternalFormat.Bc7Srgb,
+            (ETextureColorSpace.Linear, ESizedInternalFormat.Bc7Srgb) => ESizedInternalFormat.Bc7Unorm,
             _ => decodedFormat,
         };
 

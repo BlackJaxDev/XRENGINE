@@ -1300,6 +1300,20 @@ try {
         })
     }
 
+    $bc7EncLockPath = Join-Path $root 'Tools\Dependencies\Bc7Enc.lock.json'
+    if (Test-Path -LiteralPath $bc7EncLockPath) {
+        $bc7EncLock = Get-Content -Raw -LiteralPath $bc7EncLockPath | ConvertFrom-Json
+        $bc7EncLicensePath = Join-Path $root 'Build\Dependencies\Bc7Enc\source\LICENSE'
+        $nested.Add([pscustomobject]@{
+            Name = "bc7enc_rdo $(([string]$bc7EncLock.commit).Substring(0, 7)) (bc7enc.cpp and rgbcx.cpp only)"
+            UsedBy = 'XREngine.Runtime.Imaging.Bc7Enc'
+            Owner = 'Richard Geldreich, Jr.'
+            Url = "$($bc7EncLock.repository)/tree/$($bc7EncLock.commit)"
+            License = $bc7EncLock.license
+            LicenseSourcePath = if (Test-Path -LiteralPath $bc7EncLicensePath) { $bc7EncLicensePath } else { $null }
+        })
+    }
+
     $fastGltfVendorDir = Join-Path $root 'Build\Native\FastGltfBridge\vendor\fastgltf'
     if (Test-Path $fastGltfVendorDir) {
         $fastGltfLicenseInfo = Get-SubmoduleLicenseInfo -fullPath $fastGltfVendorDir

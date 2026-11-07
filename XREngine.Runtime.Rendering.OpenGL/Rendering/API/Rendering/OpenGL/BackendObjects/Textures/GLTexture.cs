@@ -548,6 +548,10 @@ namespace XREngine.Rendering.OpenGL
             if (IsMultisampleTarget)
                 return;
 
+            // Block-compressed textures carry cooked mips; drivers cannot render into them.
+            if (Data is XRTexture2D texture2D && TextureBlockFormats.IsBlockCompressed(texture2D.SizedInternalFormat))
+                return;
+
             // `glGenerateTextureMipmap` requires a valid texture object. With `glGenTextures`, the name
             // may not become a real texture object until it has been bound at least once.
             // Bloom (and other passes) can request mipmaps before the first bind/push in some paths (VR).

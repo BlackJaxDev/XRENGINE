@@ -519,11 +519,13 @@ public partial class GLTexture2D
         Mipmap2D mip = info.Mipmap;
         DataSource? data = mip.Data;
         XRDataBuffer? pbo = mip.StreamingPBO;
+        // Block-compressed mips upload as whole levels: rows of pixels do not exist in them.
         if (data is null
             || data.Length <= 0
             || pbo is not null
             || Data.MultiSample
-            || mip.Height == 0)
+            || mip.Height == 0
+            || TextureBlockFormats.IsBlockCompressed(mip.InternalFormat))
         {
             nextRow = 0;
             return false;
@@ -873,6 +875,13 @@ public partial class GLTexture2D
         if (pbo is not null && pbo.Target != EBufferTarget.PixelUnpackBuffer)
             throw new ArgumentException("PBO must be of type PixelUnpackBuffer.");
 
+        if (TextureBlockFormats.IsBlockCompressed((EPixelInternalFormat)(int)internalPixelFormat) ||
+            TextureBlockFormats.IsBlockCompressed(Data.SizedInternalFormat))
+        {
+            PushCompressedWithData(glTarget, mipLevel, width, height, data, pbo, fullPush);
+            return;
+        }
+
         bool usesSubImageUpload = !fullPush || StorageSet;
         if (usesSubImageUpload
             && !TryPrepareTexSubImageUpload(glTarget, mipLevel, 0u, 0u, width, height, allowImmutableRecreate: fullPush, operation: "TexSubImage2D"))
@@ -954,6 +963,70 @@ public partial class GLTexture2D
                 double uploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart);
                 RuntimeEngine.Rendering.Stats.RecordTextureUpload(uploadBytes, TimeSpan.FromMilliseconds(uploadMilliseconds));
             }
+        }
+    }
+
+    /// <summary>
+    /// Uploads one block-compressed mip level. The storage format comes from the texture
+    /// sized format, so an sRGB texture receives BC7 sRGB data from the BC7 UNORM cook.
+    /// </summary>
+    private unsafe void PushCompressedWithData(
+        GLEnum glTarget,
+        int mipLevel,
+        uint width,
+        uint height,
+        DataSource? data,
+        XRDataBuffer? pbo,
+        bool fullPush)
+    {
+        ESizedInternalFormat sizedFormat = TextureBlockFormats.IsBlockCompressed(Data.SizedInternalFormat)
+            ? Data.SizedInternalFormat
+            : ESizedInternalFormat.Bc7Unorm;
+        GLEnum compressedFormat = ToGLEnum(sizedFormat);
+        long expectedBytes = TextureBlockFormats.GetImageBytes(sizedFormat, Math.Max(1u, width), Math.Max(1u, height));
+        long imageBytes = data?.Length ?? pbo?.Length ?? 0L;
+        if (imageBytes != expectedBytes)
+        {
+            Debug.OpenGLWarning(
+                $"[GLTexture2D] Skipped block-compressed upload for '{GetDescribingName()}', mip={mipLevel}: " +
+                $"{imageBytes} bytes, but {sizedFormat} {width}x{height} needs {expectedBytes}.");
+            return;
+        }
+
+        bool usesSubImageUpload = !fullPush || StorageSet;
+        if (usesSubImageUpload
+            && !TryPrepareTexSubImageUpload(glTarget, mipLevel, 0u, 0u, width, height, allowImmutableRecreate: fullPush, operation: "CompressedTexSubImage2D"))
+        {
+            return;
+        }
+
+        ResetUnpackStateForTextureUpload();
+        long uploadStart = TextureRuntimeDiagnostics.StartTiming();
+        void* pixels = data is null ? null : data.Address.Pointer;
+        if (data is null)
+            pbo?.Bind();
+        try
+        {
+            if (usesSubImageUpload)
+            {
+                if (GLSubmitTracer.Enabled)
+                    TracePreSubmit("CompressedTexSubImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                Api.CompressedTexSubImage2D(glTarget, mipLevel, 0, 0, width, height, compressedFormat, (uint)imageBytes, pixels);
+            }
+            else
+            {
+                if (GLSubmitTracer.Enabled)
+                    TracePreSubmit("CompressedTexImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                Api.CompressedTexImage2D(glTarget, mipLevel, (InternalFormat)compressedFormat, width, height, 0, (uint)imageBytes, pixels);
+            }
+        }
+        finally
+        {
+            if (data is null)
+                pbo?.Unbind();
+            RuntimeEngine.Rendering.Stats.RecordTextureUpload(
+                imageBytes,
+                TimeSpan.FromMilliseconds(TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart)));
         }
     }
 

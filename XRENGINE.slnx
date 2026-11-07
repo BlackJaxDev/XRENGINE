@@ -54,6 +54,7 @@
   <Project Path="XREngine.Audio.SteamAudio/XREngine.Audio.SteamAudio.csproj" />
   <Project Path="XREngine.Audio.NAudio/XREngine.Audio.NAudio.csproj" />
   <Project Path="XREngine.Runtime.Media.FFmpeg/XREngine.Runtime.Media.FFmpeg.csproj" />
+  <Project Path="XREngine.Runtime.Imaging.Bc7Enc/XREngine.Runtime.Imaging.Bc7Enc.csproj" />
   <Project Path="XREngine.Runtime.Imaging.Magick/XREngine.Runtime.Imaging.Magick.csproj" />
   <Project Path="XREngine.Runtime.Platform.Desktop/XREngine.Runtime.Platform.Desktop.csproj" />
   <Project Path="XREngine.Runtime.Platform.Browser/XREngine.Runtime.Platform.Browser.csproj" />

@@ -202,8 +202,12 @@ public partial class XRTexture2D
     private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, RuntimeImage image)
         => CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(image));
 
-    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, Mipmap2D[] mipmaps)
-        => new()
+    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, Mipmap2D[] sourceMipmaps)
+    {
+        // The cook converts the RGBA8 chain to block-compressed mips when the effective
+        // cook compression asks for it; the cache key records that mode.
+        Mipmap2D[] mipmaps = TextureCookBlockCompressor.CompressForCache(sourceFilePath, sourceMipmaps);
+        return new()
         {
             Name = Path.GetFileNameWithoutExtension(sourceFilePath),
             FilePath = sourceFilePath,
@@ -219,6 +223,7 @@ public partial class XRTexture2D
                 : ESizedInternalFormat.Rgba8,
             Mipmaps = mipmaps
         };
+    }
 
     private static bool TryCreateTextureStreamingCacheAssetGpu(
         XRTexture2D sourceTexture,

@@ -27,6 +27,7 @@ Notes:
 | Name | Used by | Owner | License (best-effort) | URL |
 |---|---|---|---|---|
 | CDT | CoACD | artem-ogre | [MPL-2.0](licenses/github/CDT-MPL-2.0.txt) | https://github.com/artem-ogre/CDT |
+| bc7enc_rdo b943862 (bc7enc.cpp and rgbcx.cpp only) | XREngine.Runtime.Imaging.Bc7Enc | Richard Geldreich, Jr. | [MIT OR Unlicense](licenses/nested/bc7enc_rdo%20b943862%20%28bc7enc.cpp%20and%20rgbcx.cpp%20only%29-MIT%20OR%20Unlicense.txt) | https://github.com/richgel999/bc7enc_rdo/tree/b9438627eef73a1157e84201b6fa6eb2ffd6d9f0 |
 | fastgltf v0.9.0 | FastGltfBridge | Sean Apeler | [MIT](licenses/nested/fastgltf v0.9.0-MIT.md) | https://github.com/spnda/fastgltf/tree/v0.9.0 |
 | Jolt v5.6.0 (browser static source) | Jolt browser native archives | Jorrit Rouwe | [MIT](licenses/nested/Jolt%20v5.6.0%20%28browser%20static%20source%29-MIT.txt) | https://github.com/jrouwe/JoltPhysics/tree/e77f175595e64cb44218cc9d9d56fc365ad0e36a |
 | joltc (browser static source) | Jolt browser native archives | Amer Koleci and Contributors | [MIT](licenses/nested/joltc%20%28browser%20static%20source%29-MIT.txt) | https://github.com/amerkoleci/joltc/tree/886e088675bae3a086f8318c7803f8ee962c2f2c |

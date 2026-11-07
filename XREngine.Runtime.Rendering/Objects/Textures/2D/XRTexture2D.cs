@@ -1580,6 +1580,12 @@ namespace XREngine.Rendering
                 // Stencil formats
                 EPixelInternalFormat.StencilIndex8 => ESizedInternalFormat.StencilIndex8,
 
+                // Block-compressed formats from the texture cook
+                EPixelInternalFormat.CompressedRgbaBptcUnorm => ESizedInternalFormat.Bc7Unorm,
+                EPixelInternalFormat.CompressedSrgbAlphaBptcUnorm => ESizedInternalFormat.Bc7Srgb,
+                EPixelInternalFormat.CompressedRGRgtc2 => ESizedInternalFormat.Bc5Unorm,
+                EPixelInternalFormat.CompressedRedRgtc1 => ESizedInternalFormat.Bc4Unorm,
+
                 // Default fallback for unsized/legacy formats
                 _ => ESizedInternalFormat.Rgba32f,
             };

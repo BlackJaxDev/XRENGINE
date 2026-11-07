@@ -19,8 +19,11 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
 
     public string? ResolveDefaultVariantKey(string? explicitVariantKey)
     {
-        string payloadKey =
-            $"TextureStreaming_v3_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed_binary";
+        // The key includes the effective cook compression, so a cache cooked as RGBA8 is
+        // never reused when BC7 is active, and the reverse.
+        string payloadKey = TextureCookBlockCompressor.EffectiveMode == ETextureCookCompression.Bc7
+            ? $"TextureStreaming_v4_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_bc7_binary"
+            : $"TextureStreaming_v3_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed_binary";
         return string.IsNullOrWhiteSpace(explicitVariantKey)
             ? payloadKey
             : Path.Combine(payloadKey, explicitVariantKey);

@@ -88,6 +88,9 @@ internal sealed class VulkanDeviceMutableCapabilities
     internal ulong _nvMaxMemoryDecompressionIndirectCount;
     internal ulong _nvCopyMemoryIndirectSupportedQueues;
     internal bool _supportsAnisotropy;
+
+    /// <summary>True when the device enabled textureCompressionBC, so BC4, BC5, and BC7 images can be sampled.</summary>
+    internal bool _supportsTextureCompressionBc;
     internal bool _supportsTimelineSemaphores;
     internal bool _supportsSynchronization2Feature;
     internal bool _supportsDeviceAddressBindingReport;

@@ -104,8 +104,26 @@ internal unsafe static class VkFormatConversions
             // Stencil
             ESizedInternalFormat.StencilIndex8 => Format.S8Uint,
 
+            // Block compressed (needs the textureCompressionBC device feature)
+            ESizedInternalFormat.Bc7Unorm => Format.BC7UnormBlock,
+            ESizedInternalFormat.Bc7Srgb => Format.BC7SrgbBlock,
+            ESizedInternalFormat.Bc5Unorm => Format.BC5UnormBlock,
+            ESizedInternalFormat.Bc4Unorm => Format.BC4UnormBlock,
+
             _ => Format.R8G8B8A8Unorm,
         };
+
+    /// <summary>Returns true for the BC4, BC5, and BC7 block formats that the texture cook produces.</summary>
+    public static bool IsBlockCompressed(Format format)
+        => format is Format.BC7UnormBlock or Format.BC7SrgbBlock or Format.BC5UnormBlock or Format.BC4UnormBlock;
+
+    /// <summary>Bytes of one 4x4 block of a block-compressed format: 8 for BC4, 16 for BC5 and BC7.</summary>
+    public static uint GetBlockBytes(Format format)
+        => format == Format.BC4UnormBlock ? 8u : 16u;
+
+    /// <summary>Bytes of one block-compressed image region of the given pixel extent.</summary>
+    public static ulong GetBlockCompressedBytes(Format format, uint width, uint height)
+        => ((width + 3UL) / 4UL) * ((height + 3UL) / 4UL) * GetBlockBytes(format);
 
     /// <summary>
     /// Converts an engine <see cref="EPixelInternalFormat"/> (typically from mip data)
@@ -114,6 +132,12 @@ internal unsafe static class VkFormatConversions
     public static Format FromPixelInternalFormat(EPixelInternalFormat internalFormat)
         => internalFormat switch
         {
+            // Block-compressed formats from the texture cook
+            EPixelInternalFormat.CompressedRgbaBptcUnorm => FromSizedFormat(ESizedInternalFormat.Bc7Unorm),
+            EPixelInternalFormat.CompressedSrgbAlphaBptcUnorm => FromSizedFormat(ESizedInternalFormat.Bc7Srgb),
+            EPixelInternalFormat.CompressedRGRgtc2 => FromSizedFormat(ESizedInternalFormat.Bc5Unorm),
+            EPixelInternalFormat.CompressedRedRgtc1 => FromSizedFormat(ESizedInternalFormat.Bc4Unorm),
+
             // Red channel formats
             EPixelInternalFormat.R8 => FromSizedFormat(ESizedInternalFormat.R8),
             EPixelInternalFormat.R8SNorm => FromSizedFormat(ESizedInternalFormat.R8Snorm),
