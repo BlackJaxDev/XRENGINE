@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using XREngine.Core.Files;
 using XREngine.Rendering;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.Cutscenes;
 

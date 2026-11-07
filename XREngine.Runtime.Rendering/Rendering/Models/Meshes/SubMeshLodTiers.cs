@@ -1,4 +1,4 @@
-using XREngine.Cutscenes;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.Rendering.Models
 {

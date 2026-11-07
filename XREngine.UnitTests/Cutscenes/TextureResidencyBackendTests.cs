@@ -3,6 +3,7 @@ using Shouldly;
 using XREngine.Cutscenes;
 using XREngine.Rendering;
 using XREngine.UnitTests.Rendering;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.UnitTests.Cutscenes;
 

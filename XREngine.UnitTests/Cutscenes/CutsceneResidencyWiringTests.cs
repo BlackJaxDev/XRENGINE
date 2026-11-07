@@ -6,6 +6,7 @@ using XREngine.Cutscenes;
 using XREngine.Editor.Cutscenes;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.UnitTests.Cutscenes;
 

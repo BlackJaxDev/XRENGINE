@@ -1,5 +1,6 @@
 using System.Text;
 using XREngine.Data;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.Cutscenes;
 

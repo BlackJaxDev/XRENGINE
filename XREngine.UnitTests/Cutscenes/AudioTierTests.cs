@@ -7,6 +7,7 @@ using XREngine.Components;
 using XREngine.Cutscenes;
 using XREngine.Data;
 using XREngine.Scene;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.UnitTests.Cutscenes;
 

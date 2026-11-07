@@ -6,6 +6,7 @@ using XREngine.Cutscenes;
 using XREngine.Rendering.VideoStreaming;
 using XREngine.Rendering.VideoStreaming.Interfaces;
 using XREngine.Scene;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.UnitTests.Cutscenes;
 

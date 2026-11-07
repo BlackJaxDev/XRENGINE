@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Cutscenes;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.UnitTests.Cutscenes;
 

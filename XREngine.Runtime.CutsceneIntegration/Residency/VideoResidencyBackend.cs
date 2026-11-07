@@ -1,6 +1,7 @@
 using System.Text;
 using XREngine.Rendering.VideoStreaming;
 using XREngine.Rendering.VideoStreaming.Interfaces;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.Cutscenes;
 

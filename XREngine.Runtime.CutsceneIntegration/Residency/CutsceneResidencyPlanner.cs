@@ -1,3 +1,5 @@
+using XREngine.Rendering.Residency;
+
 namespace XREngine.Cutscenes;
 
 /// <summary>

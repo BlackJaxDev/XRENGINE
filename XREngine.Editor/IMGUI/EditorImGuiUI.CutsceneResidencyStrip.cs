@@ -3,6 +3,7 @@ using ImGuiNET;
 using XREngine.Cutscenes;
 using XREngine.Data;
 using XREngine.Editor.Cutscenes;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.Editor;
 

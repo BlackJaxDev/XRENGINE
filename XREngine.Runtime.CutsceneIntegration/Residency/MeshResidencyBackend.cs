@@ -2,6 +2,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.Cutscenes;
 

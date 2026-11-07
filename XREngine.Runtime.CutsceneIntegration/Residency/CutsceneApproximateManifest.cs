@@ -1,5 +1,6 @@
 using XREngine.Components;
 using XREngine.Scene;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.Cutscenes;
 

@@ -5,7 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Threading;
 using SimpleScene.Util.ssBVH;
-using XREngine.Cutscenes;
+using XREngine.Rendering.Residency;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;

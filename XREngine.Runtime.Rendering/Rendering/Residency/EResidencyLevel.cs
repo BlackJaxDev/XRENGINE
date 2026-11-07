@@ -1,4 +1,4 @@
-namespace XREngine.Cutscenes;
+namespace XREngine.Rendering.Residency;
 
 /// <summary>
 /// The level of detail of an asset that is resident in memory.
