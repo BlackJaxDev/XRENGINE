@@ -289,6 +289,14 @@ namespace XREngine.Rendering
         public bool RendersToExternalSwapchainTarget { get; set; }
 
         /// <summary>
+        /// Quad-view pair that this OpenXR stereo viewport renders: 0 for the wide pair,
+        /// 1 for the inset pair, or <see cref="RenderFrameViewSetPublication.AllViews"/>
+        /// for every published view. Capture, packages and frame plans read the published
+        /// view set through this pair.
+        /// </summary>
+        public int OpenXrViewPair { get; set; } = RenderFrameViewSetPublication.AllViews;
+
+        /// <summary>
         /// Monotonic sequence for full scene renders issued by this viewport. Render commands use
         /// this output-local counter for temporal model history so an independently scheduled
         /// desktop, mirror, or XR viewport cannot consume another output's previous transform.
@@ -1492,7 +1500,7 @@ namespace XREngine.Rendering
 
             VisualScene visualScene = world!.VisualScene!;
             bool stereoFamily =
-                RenderFrameViewSetPublication.TryGet(State.RenderFrameId, out RenderFrameViewSet publishedViews) &&
+                RenderFrameViewSetPublication.TryGet(State.RenderFrameId, OpenXrViewPair, out RenderFrameViewSet publishedViews) &&
                 publishedViews.ViewCount > 1 &&
                 camera.StereoEyeLeft.HasValue;
             XRRenderPipelineInstance.RenderingState visibilityState = _renderPipeline.CollectVisibleState;

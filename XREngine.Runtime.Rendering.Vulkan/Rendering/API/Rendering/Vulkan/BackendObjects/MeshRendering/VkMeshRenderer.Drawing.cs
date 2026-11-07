@@ -323,11 +323,12 @@ internal unsafe partial class VkMeshRenderer
 			PushPerDrawConstants(state.CommandBuffer, state.Material, state.Draw);
 
 		bool descriptorsBound;
+		string descriptorFailure;
 		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
-			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex);
+			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex, out descriptorFailure);
 		if (!descriptorsBound)
 		{
-			state.FailureReason = "indexed descriptors unavailable";
+			state.FailureReason = $"indexed descriptors unavailable: {descriptorFailure}";
 			if (state.VerboseTrace)
 				Debug.MeshesWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
 			return false;
@@ -446,11 +447,12 @@ internal unsafe partial class VkMeshRenderer
 			PushPerDrawConstants(state.CommandBuffer, state.Material, state.Draw);
 
 		bool descriptorsBound;
+		string descriptorFailure;
 		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
-			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex);
+			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex, out descriptorFailure);
 		if (!descriptorsBound)
 		{
-			state.FailureReason = "non-indexed descriptors unavailable";
+			state.FailureReason = $"non-indexed descriptors unavailable: {descriptorFailure}";
 			if (state.VerboseTrace)
 				Debug.MeshesWarning("[DrawTrace] {0}: non-indexed descriptors unavailable; pass={1} target={2}", Mesh?.Name ?? "?", state.PassIndex, state.TargetName);
 			return false;

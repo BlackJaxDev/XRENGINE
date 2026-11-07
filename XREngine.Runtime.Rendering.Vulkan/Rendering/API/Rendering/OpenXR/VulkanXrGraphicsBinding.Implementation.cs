@@ -1824,10 +1824,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
         uint leftView = pair * 2u;
         uint rightView = leftView + 1u;
         bool widePair = pair == 0u;
-        // Each pair renders as its own layered stereo frame and must see only its two views.
-        using RenderFrameViewSetPublication.ViewPairScope pairScope = Context.InsetPairActive
-            ? RenderFrameViewSetPublication.EnterViewPairScope((int)pair)
-            : default;
+        // Each quad-view pair renders as its own layered stereo frame and plans against its two views.
+        int viewPair = Context.InsetPairActive ? (int)pair : RenderFrameViewSetPublication.AllViews;
         injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
         if (!CanUseOpenXrTrueSinglePassStereo(out string unavailableReason))
         {
@@ -1975,7 +1973,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
             FrameOutputPacingDecision stereoPacing = CreateOpenXrStereoFrameOutputPacing(
                 renderFrameId,
                 checked((int)leftImageIndex),
-                Context.CurrentRenderDeadlineMs);
+                Context.CurrentRenderDeadlineMs,
+                ResolveOpenXrRvcViewKind(leftView));
             OpenXrSubmissionMetadata submissionMetadata = new(
                 Context.PendingFrameId,
                 Context.PendingPredictedDisplayTime);
@@ -2007,7 +2006,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 },
                 RendersExternalSwapchainTarget: false,
                 SubmissionMetadata: submissionMetadata,
-                ViewBatchStructuralIdentity: productionBatch.StructuralIdentity);
+                ViewBatchStructuralIdentity: productionBatch.StructuralIdentity,
+                ViewPair: viewPair);
 
             // The stereo publish command buffer also fills the eye preview textures, so
             // they need no separate tracked submissions.
@@ -2180,13 +2180,19 @@ Target:                 new RenderFrameViewTargetDescriptor(
             request));
     }
 
+    /// <summary>
+    /// Creates the eye-submit pacing of one layered stereo pair. <paramref name="leftViewKind"/>
+    /// is the located kind of the pair's first view: LeftEye for stereo, LeftWide or LeftInset
+    /// for a quad-view pair. The frame plan matches the output terminal by this kind.
+    /// </summary>
     internal static FrameOutputPacingDecision CreateOpenXrStereoFrameOutputPacing(
         ulong renderFrameId,
         int externalImageSlot,
-        double deadlineMs = 0.0)
+        double deadlineMs = 0.0,
+        EVrOutputViewKind leftViewKind = EVrOutputViewKind.LeftEye)
     {
         FrameOutputPacingDecision pacing = FrameOutputPacingDecision.Due(
-            EVrOutputViewKind.LeftEye,
+            leftViewKind,
             EFrameOutputKind.OpenXREyeSubmit,
             renderFrameId);
         RenderOutputTargetDescriptor target = pacing.Request.Target with

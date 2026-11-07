@@ -57,7 +57,8 @@ public unsafe partial class OpenXRAPI
             AllowUIRender = false,
             SetRenderPipelineFromCamera = false,
             AllowAutomaticInternalResolution = true,
-            RendersToExternalSwapchainTarget = true
+            RendersToExternalSwapchainTarget = true,
+            OpenXrViewPair = 1,
         };
 
         _openXrInsetStereoViewport.CullWithFrustum = RuntimeEngine.Rendering.Settings.OpenXrCullWithFrustum;
@@ -117,8 +118,6 @@ public unsafe partial class OpenXRAPI
 
         RenderCommandCollection meshCommands = viewport.RenderPipelineInstance.MeshRenderCommands;
         meshCommands.SetOwnerPipeline(viewport.RenderPipelineInstance);
-        using RenderFrameViewSetPublication.ViewPairScope pairScope =
-            RenderFrameViewSetPublication.EnterViewPairScope(1);
         return CollectOpenXrStereoVisible(
             world,
             left,
@@ -143,8 +142,6 @@ public unsafe partial class OpenXRAPI
         if (commands.GetUpdatingCommandCount() == 0 && commands.GetRenderingCommandCount() > 0)
             return;
 
-        using RenderFrameViewSetPublication.ViewPairScope pairScope =
-            RenderFrameViewSetPublication.EnterViewPairScope(1);
         viewport.SwapBuffers(commands, allowScreenSpaceUISwap: false);
     }
 

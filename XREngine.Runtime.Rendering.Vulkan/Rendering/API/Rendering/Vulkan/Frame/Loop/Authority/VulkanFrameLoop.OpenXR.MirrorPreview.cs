@@ -845,6 +845,10 @@ internal sealed partial class VulkanFrameLoop
                         _framePlanner,
                         _resourceRuntime.BackendObjectContext),
                     openXrViewIndex: request.OpenXrViewIndex,
+                    // A quad-view pair plans against its own two located views.
+                    publicationSnapshot: request.ViewPair == RenderFrameViewSetPublication.AllViews
+                        ? null
+                        : RenderFrameViewSetPublication.CaptureLatest(request.ViewPair),
                     logicalFrameSlot: 0);
                 framePlan.PrepareRecordingPlannerGenerations(in plannerState);
                 VulkanFrameOpPlannerStateKey recordingPlannerKey =

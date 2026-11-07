@@ -275,7 +275,8 @@ public sealed partial class BackendReadyFramePackage
         int viewportWidth,
         int viewportHeight,
         bool excludeProjectiveMirrors,
-        EMeshSubmissionStrategy submissionStrategy)
+        EMeshSubmissionStrategy submissionStrategy,
+        int viewPair = RenderFrameViewSetPublication.AllViews)
     {
         // A late package preparation only has command membership. It must not
         // discard the already captured canonical publication and its lease.
@@ -323,7 +324,7 @@ public sealed partial class BackendReadyFramePackage
             DependencySignature);
         SubmissionResolution = CreateCanonicalSubmissionResolution(submissionStrategy);
 
-        if (RenderFrameViewSetPublication.TryGetLatest(out RenderFrameViewSet viewSet))
+        if (RenderFrameViewSetPublication.TryGetLatest(viewPair, out RenderFrameViewSet viewSet))
         {
             EnsureCanonicalCapacity(ref _canonicalViews, viewSet.ViewCount);
             for (int viewIndex = 0; viewIndex < viewSet.ViewCount; ++viewIndex)

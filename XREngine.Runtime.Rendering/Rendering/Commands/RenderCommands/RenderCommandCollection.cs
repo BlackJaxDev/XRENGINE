@@ -915,7 +915,8 @@ namespace XREngine.Rendering.Commands
                 viewportWidth,
                 viewportHeight,
                 _updatingExcludeProjectiveMirrors,
-                _updatingMeshSubmissionStrategy);
+                _updatingMeshSubmissionStrategy,
+                submissionViewport?.OpenXrViewPair ?? RenderFrameViewSetPublication.AllViews);
         }
 
         /// <summary>
@@ -951,7 +952,9 @@ namespace XREngine.Rendering.Commands
                     viewportWidth,
                     viewportHeight,
                     _updatingExcludeProjectiveMirrors,
-                    _updatingMeshSubmissionStrategy);
+                    _updatingMeshSubmissionStrategy,
+                    (ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport)?.OpenXrViewPair
+                        ?? RenderFrameViewSetPublication.AllViews);
                 return _updatingBackendReadyPackage.TryGetCanonicalPublication(
                            out _, out _) &&
                        !_updatingBackendReadyPackage.CanonicalViews.IsEmpty;

@@ -338,6 +338,7 @@ public sealed partial class XRRenderPipelineInstance
                 RenderFrameViewSet? capturedViews = camera is null
                     ? null
                     : stereoPass && RenderFrameViewSetPublication.TryGetLatest(
+                        viewport?.OpenXrViewPair ?? RenderFrameViewSetPublication.AllViews,
                         out RenderFrameViewSet openXrViews)
                         ? openXrViews
                         : RenderFrameViewSetCapture.Capture(

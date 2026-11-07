@@ -976,25 +976,19 @@ public unsafe partial class OpenXRAPI
             if (useTrueSinglePassStereo)
             {
                 _openXrStereoUpdatingBufferFree = false;
-                bool collectedWidePair;
-                int collectedAdded;
-                long collectedBuildTicks;
-                // With quad view, the wide pair sees only views 0 and 1.
-                using (IsOpenXrInsetPairActive
-                    ? RenderFrameViewSetPublication.EnterViewPairScope(0)
-                    : default)
-                {
-                    collectedWidePair = CollectOpenXrStereoVisible(
+                // With quad view, the wide stereo viewport renders views 0 and 1 only.
+                collectViewport.OpenXrViewPair = IsOpenXrInsetPairActive
+                    ? 0
+                    : RenderFrameViewSetPublication.AllViews;
+                if (!CollectOpenXrStereoVisible(
                         resolvedWorld,
                         _openXrLeftEyeCamera,
                         _openXrRightEyeCamera,
                         collectViewport,
                         leftMeshCommands,
                         cullProjectionScale: 1.0f,
-                        out collectedAdded,
-                        out collectedBuildTicks);
-                }
-                if (!collectedWidePair)
+                        out int collectedAdded,
+                        out long collectedBuildTicks))
                 {
                     return;
                 }
@@ -1667,12 +1661,7 @@ public unsafe partial class OpenXRAPI
             }
             else
             {
-                using (IsOpenXrInsetPairActive
-                    ? RenderFrameViewSetPublication.EnterViewPairScope(0)
-                    : default)
-                {
-                    stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
-                }
+                stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
                 _openXrStereoUpdatingBufferFree = true;
                 SwapOpenXrInsetPairCommands();
                 Debug.RenderingEvery(

@@ -11,41 +11,22 @@ public static class RenderFrameViewSetPublication
     private static ulong _revision;
     private static bool _hasLatest;
 
+    /// <summary>View-pair argument that reads the complete published view set.</summary>
+    public const int AllViews = -1;
+
     // Quad view renders its wide pair (views 0, 1) and inset pair (views 2, 3) as two
-    // layered stereo frames. Each pair must see only its own two views, so a pair
-    // scope on the current thread narrows every read to that pair's subset.
+    // layered stereo frames. A reader that renders one pair asks for that pair's
+    // two-view subset, built once per publication.
     private static readonly RenderFrameViewSet[] PairSubsets = new RenderFrameViewSet[2];
     private static bool _hasPairSubsets;
     private static readonly RenderFrameViewDescriptor[] PairScratch = new RenderFrameViewDescriptor[2];
-    [ThreadStatic]
-    private static int t_pairScope;
-
     /// <summary>
-    /// Narrows the view set that this thread reads to one quad-view pair until the
-    /// returned scope is disposed. Pair 0 is views 0 and 1; pair 1 is views 2 and 3.
-    /// Has no effect when the latest publication is not a four-view set.
+    /// Returns the latest set, or one quad-view pair of it. Pair 0 is views 0 and 1;
+    /// pair 1 is views 2 and 3. A pair request on a set that is not a four-view set
+    /// returns the complete set. Caller holds <see cref="Sync"/>.
     /// </summary>
-    public static ViewPairScope EnterViewPairScope(int pair)
-    {
-        if ((uint)pair > 1u)
-            throw new ArgumentOutOfRangeException(nameof(pair));
-        int previous = t_pairScope;
-        t_pairScope = pair + 1;
-        return new ViewPairScope(previous);
-    }
-
-    /// <summary>Restores the previous view-pair scope of the current thread.</summary>
-    public readonly struct ViewPairScope(int previous) : IDisposable
-    {
-        public void Dispose() => t_pairScope = previous;
-    }
-
-    /// <summary>Returns the latest set, or the scoped pair's subset. Caller holds <see cref="Sync"/>.</summary>
-    private static RenderFrameViewSet ResolveScopedNoLock()
-    {
-        int scope = t_pairScope;
-        return scope != 0 && _hasPairSubsets ? PairSubsets[scope - 1] : _latest;
-    }
+    private static RenderFrameViewSet ResolveNoLock(int viewPair)
+        => (uint)viewPair <= 1u && _hasPairSubsets ? PairSubsets[viewPair] : _latest;
 
     private static void RebuildPairSubsetsNoLock()
     {
@@ -103,12 +84,16 @@ public static class RenderFrameViewSetPublication
     }
 
     public static bool TryGet(ulong frameId, out RenderFrameViewSet viewSet)
+        => TryGet(frameId, AllViews, out viewSet);
+
+    /// <summary>Reads the publication of <paramref name="frameId"/>, narrowed to <paramref name="viewPair"/>.</summary>
+    public static bool TryGet(ulong frameId, int viewPair, out RenderFrameViewSet viewSet)
     {
         lock (Sync)
         {
             if (_hasLatest && _latestFrameId == frameId)
             {
-                viewSet = ResolveScopedNoLock();
+                viewSet = ResolveNoLock(viewPair);
                 return true;
             }
 
@@ -124,12 +109,16 @@ public static class RenderFrameViewSetPublication
     /// planning therefore consume the latest publication until the next locate replaces it.
     /// </summary>
     public static bool TryGetLatest(out RenderFrameViewSet viewSet)
+        => TryGetLatest(AllViews, out viewSet);
+
+    /// <summary>Reads the latest publication, narrowed to <paramref name="viewPair"/>.</summary>
+    public static bool TryGetLatest(int viewPair, out RenderFrameViewSet viewSet)
     {
         lock (Sync)
         {
             if (_hasLatest)
             {
-                viewSet = ResolveScopedNoLock();
+                viewSet = ResolveNoLock(viewPair);
                 return true;
             }
 
@@ -140,13 +129,17 @@ public static class RenderFrameViewSetPublication
 
     /// <summary>Captures the exact current publication, including explicit absence.</summary>
     public static RenderFrameViewSetPublicationSnapshot CaptureLatest()
+        => CaptureLatest(AllViews);
+
+    /// <summary>Captures the current publication narrowed to <paramref name="viewPair"/>.</summary>
+    public static RenderFrameViewSetPublicationSnapshot CaptureLatest(int viewPair)
     {
         lock (Sync)
         {
             return new RenderFrameViewSetPublicationSnapshot(
                 _revision,
                 _hasLatest,
-                _hasLatest ? ResolveScopedNoLock() : _latest);
+                _hasLatest ? ResolveNoLock(viewPair) : _latest);
         }
     }
 
