@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// which is required for per-sample deferred lighting of complex pixels.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_SampleShading : ViewportRenderCommand
     {
         public bool Enable { get; set; }

@@ -1,0 +1,39 @@
+// XRENGINE render pipeline script.
+// Template: Deferred Lite.
+// A G-buffer pass, a light combine into an HDR target, forward passes for transparent
+// and on-top geometry, and tonemapping to the output.
+
+passes {
+    scene 0;
+    scene 1 sorter opaqueStateBucket;
+    scene 3 sorter nearToFar;
+    scene 5 sorter farToNear;
+}
+
+resources {
+    Texture AlbedoOpacityTexture(Format=Rgba8);
+    Texture NormalTexture(Format=Rg16f);
+    Texture RMSETexture(Format=Rgba8);
+    Texture DepthStencil(Format=Depth24Stencil8);
+    TextureView DepthViewTexture(Format=Depth24Stencil8, SourceTexture="DepthStencil", DepthStencilAspect=Depth);
+    FrameBuffer GBufferFBO(Attachments=[attachment(ResourceName="AlbedoOpacityTexture"), attachment(ResourceName="NormalTexture", Attachment=ColorAttachment1), attachment(ResourceName="RMSETexture", Attachment=ColorAttachment2), attachment(ResourceName="DepthStencil", Attachment=DepthStencilAttachment)]);
+    Texture HDRSceneTex;
+    FrameBuffer HDRSceneFBO(Attachments=[attachment(ResourceName="HDRSceneTex"), attachment(ResourceName="DepthStencil", Attachment=DepthStencilAttachment)]);
+}
+
+schema {
+    library tonemapping;
+}
+
+bindFBOByName(FrameBufferName="GBufferFBO");
+renderMeshesPass(RenderPass=1);
+unbindFBO();
+bindFBOByName(FrameBufferName="HDRSceneFBO", ClearDepth=false, ClearStencil=false);
+lightCombinePass();
+renderMeshesPass();
+renderMeshesPass(RenderPass=3);
+renderMeshesPass(RenderPass=5);
+unbindFBO();
+bindOutputFBO(ClearDepth=false, ClearStencil=false);
+tonemap(SourceTextureName="HDRSceneTex");
+unbindFBO();

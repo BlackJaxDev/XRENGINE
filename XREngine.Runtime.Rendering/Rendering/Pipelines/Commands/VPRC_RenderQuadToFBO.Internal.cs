@@ -446,7 +446,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 resources.DescribeDependencies(context, builder);
                 resources.DescribeInputs(context, builder);
             }
-            else
+            else if (!TryDescribeAuthoredQuadMaterialInputs(builder, SourceQuadFBOName))
             {
                 DescribeInferredQuadMaterialInputs(builder, SourceQuadFBOName, destination);
             }
@@ -484,6 +484,26 @@ namespace XREngine.Rendering.Pipelines.Commands
                     ERenderPassLoadOp.Load,
                     ERenderPassStoreOp.Store);
             }
+        }
+
+        /// <summary>
+        /// Declares the input textures of an authored quad material as sampled textures. The declaration is data, so
+        /// the metadata is correct before the generation creates the material.
+        /// </summary>
+        /// <returns>True when the source is an authored quad material.</returns>
+        private bool TryDescribeAuthoredQuadMaterialInputs(RenderPassBuilder builder, string sourceFboName)
+        {
+            if (ParentPipeline is not CustomRenderPipeline custom ||
+                !custom.TryGetAuthoredResource(sourceFboName, out Resources.Authoring.AuthoredRenderResource? resource) ||
+                resource!.Kind != Resources.Authoring.EAuthoredRenderResourceKind.QuadMaterial)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < resource.InputTextures.Count; i++)
+                builder.SampleTexture(MakeTextureResource(resource.InputTextures[i]));
+
+            return true;
         }
 
         /// <summary>

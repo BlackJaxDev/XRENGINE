@@ -5,7 +5,8 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
-    public class VPRC_IfElse : ViewportStateRenderCommand<VPRC_PopRenderArea>
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
+    public class VPRC_IfElse : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
         {
@@ -16,6 +17,22 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string? Label { get; set; }
 
         public Func<bool>? ConditionEvaluator { get; set; }
+
+        private RenderBranchCondition? _condition;
+
+        /// <summary>
+        /// Gets or sets a data condition. When it is set, it takes priority over <see cref="ConditionEvaluator"/>.
+        /// Authored pipelines use it because a data condition can be saved and shown by tools.
+        /// </summary>
+        public RenderBranchCondition? Condition
+        {
+            get => _condition;
+            set
+            {
+                if (SetField(ref _condition, value))
+                    _condition?.Bind(ParentPipeline);
+            }
+        }
 
         public override string GpuProfilingName
             => string.IsNullOrWhiteSpace(Label) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Label}]";
@@ -53,18 +70,25 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         //private bool _lastCondition = false;
 
+        /// <inheritdoc />
+        public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+        {
+            if (TrueCommands is not null)
+                results.Add(new RenderCommandChildContainer("True", TrueCommands));
+            if (FalseCommands is not null)
+                results.Add(new RenderCommandChildContainer("False", FalseCommands));
+        }
+
         protected override void Execute()
         {
             XRRenderPipelineInstance? instance = ActivePipelineInstance;
             if (instance is null)
                 return;
 
-            bool cond = ConditionEvaluator?.Invoke() ?? false;
-
-            if (cond)
-                ExecuteBranch(instance, TrueCommands);
-            else
-                ExecuteBranch(instance, FalseCommands);
+            bool cond = _condition is { } condition ? condition.Evaluate() : ConditionEvaluator?.Invoke() ?? false;
+            ViewportRenderCommandContainer? next = cond ? TrueCommands : FalseCommands;
+            instance.BranchTrace.Record(this, next);
+            ExecuteBranch(instance, next);
         }
 
         private void ExecuteBranch(XRRenderPipelineInstance instance, ViewportRenderCommandContainer? next)
@@ -91,6 +115,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         internal override void OnParentPipelineAssigned()
         {
             base.OnParentPipelineAssigned();
+            _condition?.Bind(ParentPipeline);
             AttachPipeline(_trueCommands);
             AttachPipeline(_falseCommands);
         }

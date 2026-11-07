@@ -71,6 +71,13 @@ namespace XREngine.Rendering
     {
         /// <inheritdoc />
         public virtual RendererBackendId BackendId => default;
+
+        /// <summary>
+        /// Gets the source of the render graph plan that this renderer executes, or null when the renderer publishes no plan.
+        /// Tools read it to show the backend order, batches, and barriers.
+        /// </summary>
+        public virtual XREngine.Rendering.RenderGraph.Diagnostics.IRenderGraphPlanDiagnosticsSource? PlanDiagnostics => null;
+
         public long BackendGeneration { get; }
         public virtual bool IsBackendReplacementFrameReady => true;
         /// <summary>

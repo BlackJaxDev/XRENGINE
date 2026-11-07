@@ -28,6 +28,13 @@ namespace XREngine
                     public static double GpuRenderPipelineFrameMs
                         => RenderPipelineGpuProfiler.Instance.LatestSnapshot.FrameMilliseconds;
 
+                    /// <summary>
+                    /// Returns the timing statistics of every profiled pipeline, keyed by profiler key and profiling path.
+                    /// The result is cached until the profiler records a new frame.
+                    /// </summary>
+                    public static RenderPipelineTimingSnapshot GetTimingSnapshot()
+                        => RenderPipelineGpuProfiler.Instance.GetTimingSnapshot();
+
                     public static Data.Profiling.GpuPipelineTimingNodeData[] GetGpuRenderPipelineTimingRoots()
                         => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Roots;
 

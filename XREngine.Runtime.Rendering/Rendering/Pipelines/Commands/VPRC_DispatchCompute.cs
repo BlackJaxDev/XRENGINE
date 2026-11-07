@@ -5,6 +5,7 @@ using static XREngine.Rendering.XRRenderProgram;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
     public class VPRC_DispatchCompute : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

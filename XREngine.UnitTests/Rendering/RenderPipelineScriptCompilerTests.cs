@@ -236,7 +236,7 @@ public sealed class RenderPipelineScriptCompilerTests
         string sampleScript = RenderPipelineScript.Export(pipeline.CommandChain);
 
         Assert.False(string.IsNullOrWhiteSpace(sampleScript));
-        Assert.Contains("if (false)", sampleScript);
+        Assert.Contains("if (code)", sampleScript);
         Assert.Contains("setClears", sampleScript);
         Assert.DoesNotContain(nameof(VPRC_SetClears), sampleScript);
 

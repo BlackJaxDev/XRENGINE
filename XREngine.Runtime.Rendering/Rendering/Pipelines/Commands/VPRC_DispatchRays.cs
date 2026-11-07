@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Dispatches the engine's existing native ray-tracing bridge using authored shader-binding-table parameters.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
 public class VPRC_DispatchRays : ViewportRenderCommand
 {
     public uint RayTracingPipelineId { get; set; }

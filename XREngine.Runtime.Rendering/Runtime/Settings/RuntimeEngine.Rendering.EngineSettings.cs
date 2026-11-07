@@ -626,6 +626,7 @@ public static partial class RuntimeEngine
                 private bool _preferNVStereo = true;
                 private EVrViewRenderMode _vrViewRenderMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
                 private EVrRenderPipeline _vrRenderPipeline = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrRenderPipeline;
+                private string _vrRenderPipelineScript = string.Empty;
                 private EVrMirrorMode _vrMirrorMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrMirrorMode;
                 private bool _renderWindowsWhileInVR = true;
                 private bool _vrMirrorComposeFromEyeTextures = true;
@@ -2186,6 +2187,21 @@ public static partial class RuntimeEngine
                 {
                     get => _vrRenderPipeline;
                     set => SetField(ref _vrRenderPipeline, value);
+                }
+
+                /// <summary>
+                /// Gets or sets an optional <c>.xrs</c> pipeline script for VR eye output. The script must derive from the
+                /// pipeline type of <see cref="VrRenderPipeline"/>. The eye pipeline applies the overlays and settings of
+                /// the script. A script with errors, or one with a different base type, renders no XR output and reports
+                /// a diagnostic. An empty value uses the plain family pipeline.
+                /// </summary>
+                [Category("VR")]
+                [DisplayName("VR Render Pipeline Script")]
+                [Description("Optional .xrs script that derives from the VR Render Pipeline family, such as 'derive Rvc;' with patches. The eye pipeline applies its overlays and settings. The base arguments of the script are ignored; the eye topology selects them. A script with errors or a different base type renders no XR output and reports a diagnostic. Leave empty to use the plain family pipeline.")]
+                public string VrRenderPipelineScript
+                {
+                    get => _vrRenderPipelineScript;
+                    set => SetField(ref _vrRenderPipelineScript, value?.Trim() ?? string.Empty);
                 }
 
                 /// <summary>

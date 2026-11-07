@@ -6,9 +6,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Explicit DLSS requests fail loudly when Streamline cannot run.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true)]
     public class VPRC_StreamlineDlssUpscale : VPRC_RenderQuadToFBO
     {
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DepthTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? MotionTextureName { get; set; }
 
         private static bool _reportedFailure;

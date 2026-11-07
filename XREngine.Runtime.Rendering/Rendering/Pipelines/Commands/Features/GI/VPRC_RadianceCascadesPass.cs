@@ -23,6 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// - Debug visualization modes
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_RadianceCascadesPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;
@@ -41,10 +42,15 @@ namespace XREngine.Rendering.Pipelines.Commands
         private bool _useHistoryA = true;
         private uint _frameIndex;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AlbedoTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RmseTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = RadianceCascadeResourceNames.ScreenDiffuse;
 
         protected override bool ShouldExecuteThisFrame()

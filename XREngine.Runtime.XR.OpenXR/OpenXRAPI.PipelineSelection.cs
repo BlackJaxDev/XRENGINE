@@ -37,7 +37,7 @@ public unsafe partial class OpenXRAPI
         }
 
         RenderPipeline? pipeline = viewport.RenderPipeline;
-        if (!OpenXrEyeRenderPipelineFactory.Matches(pipeline, stereo, family, rvcMode))
+        if (!OpenXrEyeRenderPipelineFactory.Matches(pipeline, stereo, family, rvcMode, RuntimeEngine.Rendering.Settings.VrRenderPipelineScript))
         {
             diagnostic =
                 $"The {eyeName} eye runs {OpenXrEyeRenderPipelineFactory.Describe(pipeline)}, " +

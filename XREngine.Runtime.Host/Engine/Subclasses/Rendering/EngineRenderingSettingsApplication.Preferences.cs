@@ -182,7 +182,7 @@ namespace XREngine
                 {
                     EVrRenderPipeline family = RuntimeEngine.Rendering.Settings.VrRenderPipeline;
                     ERvcPipelineMode rvcMode = RuntimeEngine.Rendering.Settings.RvcPipelineMode;
-                    if (!OpenXrEyeRenderPipelineFactory.Matches(pipeline, request.Stereo, family, rvcMode))
+                    if (!OpenXrEyeRenderPipelineFactory.Matches(pipeline, request.Stereo, family, rvcMode, RuntimeEngine.Rendering.Settings.VrRenderPipelineScript))
                     {
                         viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
                         // A family that has no pipeline for this topology keeps
@@ -557,6 +557,8 @@ namespace XREngine
                 RenderPipeline pipeline = OpenXrEyeRenderPipelineFactory.Create(stereo, family, rvcMode);
                 if (pipeline is RvcRenderPipeline rvcPipeline)
                     ApplyRvcSettings(rvcPipeline, rvcMode);
+                // The script settings apply after the runtime settings, so a script can change them.
+                OpenXrEyeRenderPipelineFactory.AttachScriptOverlays(pipeline, RuntimeEngine.Rendering.Settings.VrRenderPipelineScript);
                 return pipeline;
             }
 

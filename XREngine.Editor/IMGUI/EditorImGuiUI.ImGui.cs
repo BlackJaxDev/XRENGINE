@@ -75,7 +75,7 @@ public static partial class EditorImGuiUI
         private static bool _showBuildSettings;
         private static bool _showStatePanel;
         private static bool _showPlayerCameras;
-        private static bool _showRenderPipelineGraph;
+        private static bool _showRenderPipelineWorkbench;
         private static bool _showRendererDevelopment;
         private static bool _showShaderGraphPanel;
         private static int _probePreviewLayer;
@@ -168,6 +168,7 @@ public static partial class EditorImGuiUI
             [".glsl"] = "Shaders",
             [".compute"] = "Shaders",
             [".fx"] = "Shaders",
+            [".xrs"] = "Render Pipelines",
             [".json"] = "Data",
             [".yaml"] = "Data",
             [".yml"] = "Data",
@@ -247,7 +248,7 @@ public static partial class EditorImGuiUI
             bool Inspector,
             bool AssetExplorer,
             bool Console,
-            bool RenderPipelineGraph,
+            bool RenderPipelineWorkbench,
             bool EngineState,
             bool PlayerCameras,
             bool Profiler,
@@ -762,10 +763,10 @@ public static partial class EditorImGuiUI
                 using (Engine.Profiler.Start("UI.DrawAnimationClipEditorPanel"))
                     DrawAnimationClipEditorPanel();
             }
-            if (_showRenderPipelineGraph)
+            if (_showRenderPipelineWorkbench)
             {
-                using (Engine.Profiler.Start("UI.DrawRenderPipelineGraphPanel"))
-                    DrawRenderPipelineGraphPanel();
+                using (Engine.Profiler.Start("UI.DrawRenderPipelineWorkbenchPanel"))
+                    DrawRenderPipelineWorkbenchPanel();
             }
             if (_showRendererDevelopment)
             {
@@ -1460,7 +1461,9 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Asset Explorer", null, ref _showAssetExplorer);
                 ImGui.Separator();
                 ImGui.MenuItem("Console", null, ref _showConsole);
-                ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
+                ImGui.MenuItem("Render Pipeline Workbench", null, ref _showRenderPipelineWorkbench);
+                // Old name of the Workbench, kept for one release.
+                ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineWorkbench);
                 ImGui.MenuItem("Renderer Development", null, ref _showRendererDevelopment);
                 ImGui.MenuItem("Engine State", null, ref _showStatePanel);
                 ImGui.MenuItem("Player Cameras", null, ref _showPlayerCameras);
@@ -1510,6 +1513,9 @@ public static partial class EditorImGuiUI
 
                 if (ImGui.MenuItem("Renderer Development"))
                     _showRendererDevelopment = true;
+
+                if (ImGui.MenuItem("Render Pipeline Workbench"))
+                    _showRenderPipelineWorkbench = true;
 
                 ImGui.EndMenu();
             }
@@ -2381,7 +2387,7 @@ public static partial class EditorImGuiUI
                 Inspector: _showInspector,
                 AssetExplorer: _showAssetExplorer,
                 Console: _showConsole,
-                RenderPipelineGraph: _showRenderPipelineGraph,
+                RenderPipelineWorkbench: _showRenderPipelineWorkbench,
                 EngineState: _showStatePanel,
                 PlayerCameras: _showPlayerCameras,
                 Profiler: _showProfiler,
@@ -2433,8 +2439,10 @@ public static partial class EditorImGuiUI
                 case "Console":
                     _showConsole = value;
                     break;
+                case "RenderPipelineWorkbench":
                 case "RenderPipelineGraph":
-                    _showRenderPipelineGraph = value;
+                    // RenderPipelineGraph is the key that older layouts wrote.
+                    _showRenderPipelineWorkbench = value;
                     break;
                 case "EngineState":
                     _showStatePanel = value;
@@ -2495,7 +2503,7 @@ public static partial class EditorImGuiUI
             builder.AppendLine($"Inspector={FormatIniBoolean(state.Inspector)}");
             builder.AppendLine($"AssetExplorer={FormatIniBoolean(state.AssetExplorer)}");
             builder.AppendLine($"Console={FormatIniBoolean(state.Console)}");
-            builder.AppendLine($"RenderPipelineGraph={FormatIniBoolean(state.RenderPipelineGraph)}");
+            builder.AppendLine($"RenderPipelineWorkbench={FormatIniBoolean(state.RenderPipelineWorkbench)}");
             builder.AppendLine($"EngineState={FormatIniBoolean(state.EngineState)}");
             builder.AppendLine($"PlayerCameras={FormatIniBoolean(state.PlayerCameras)}");
             builder.AppendLine($"Profiler={FormatIniBoolean(state.Profiler)}");

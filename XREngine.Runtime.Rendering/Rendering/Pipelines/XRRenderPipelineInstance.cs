@@ -947,6 +947,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
                 ValidateActiveGenerationDescriptorParity();
                 ValidateRenderGraphExecutionAgainstMetadata();
+                lock (_renderGraphValidationLock)
+                    ExecutionTrace.Publish(RuntimeEngine.Rendering.State.RenderFrameId);
                 if (historyReservationOwned)
                 {
                     (historyReservationOwner ?? throw new InvalidOperationException(
@@ -1807,7 +1809,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="oldKey">The previous resource generation key, or null if there was no previous key.</param>
     /// <param name="newKey">The new resource generation key to compare against the old key.</param>
     /// <returns>A string describing the differences between the old and new keys, or "initial" if there was no old key.</returns>
-    private static string DescribeResourceGenerationKeyDelta(ResourceGenerationKey? oldKey, ResourceGenerationKey newKey)
+    public static string DescribeResourceGenerationKeyDelta(ResourceGenerationKey? oldKey, ResourceGenerationKey newKey)
     {
         if (!oldKey.HasValue)
             return "initial";
@@ -1930,7 +1932,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             EffectiveMsaaSampleCountThisFrame
                 ?? viewportCamera?.MsaaSampleCountOverride
                 ?? RuntimeRenderingHostServices.FrameTiming.DefaultMsaaSampleCount);
-        ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(this, viewport) ?? 0UL;
+        // The overlay resource hash joins the key here, so a pipeline override that skips the base still sees it.
+        ulong featureMask = pipeline is null ? 0UL : pipeline.BuildResourceFeatureMaskForGenerationKey(this, viewport) ^ pipeline.OverlayResourceHash;
         RenderPipelineExternalTargetKind externalTargetKind = FinalOutput is not null
             ? RenderPipelineExternalTargetKind.PresentationTarget
             : viewport?.RendersToExternalSwapchainTarget == true
@@ -3753,6 +3756,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         lock (_renderGraphValidationLock)
         {
             _executedRenderGraphPassIndices.Add(passIndex);
+            ExecutionTrace.Record(passIndex);
             if (_activeRenderGraphBranchDepth > 0)
                 _executedBranchRenderGraphPassIndices.Add(passIndex);
         }
@@ -3793,6 +3797,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         {
             _executedRenderGraphPassIndices.Clear();
             _executedBranchRenderGraphPassIndices.Clear();
+            ExecutionTrace.BeginFrame();
             _activeRenderGraphBranchDepth = 0;
         }
     }

@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Tracks the per-camera matrix history used by the separated volumetric fog temporal pass.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.VolumetricFog })]
 public sealed class VPRC_VolumetricFogHistoryPass : ViewportRenderCommand
 {
     private const float CameraCutTranslationThreshold = 2.0f;

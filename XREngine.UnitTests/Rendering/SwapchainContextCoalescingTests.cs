@@ -155,7 +155,7 @@ public sealed class SwapchainContextCoalescingTests
         return new(
             orderedPasses,
             passOrder,
-            Array.Empty<VulkanCompiledPassBatch>(),
+            Array.Empty<RenderGraphPassBatch>(),
             RenderGraphSynchronizationInfo.Empty);
     }
 

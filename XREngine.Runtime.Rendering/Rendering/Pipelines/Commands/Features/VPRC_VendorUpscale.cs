@@ -16,17 +16,24 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// via a passthrough quad instead of re-running the source quad shader directly to the backbuffer.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true)]
     public partial class VPRC_VendorUpscale : VPRC_RenderQuadToFBO
     {
         private static bool _diagEnabled => RenderDiagnosticsFlags.DiagVendorUpscale;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? SourceTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DepthTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DepthStencilTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? MotionTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? MotionFrameBufferName { get; set; }
         public bool ForceFallbackBlit { get; set; }
         public bool FlipSourceYOnVulkanFallback { get; set; } = true;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
 
         private static bool _reportedXessFailure;

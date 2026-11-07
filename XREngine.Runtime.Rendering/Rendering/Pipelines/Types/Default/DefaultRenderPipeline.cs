@@ -26,6 +26,7 @@ using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
+[RenderPipelineScriptBase("Default")]
 public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider
 {
     internal override bool RequiresCanonicalGpuScenePublication => !UsesWebOutputTier;

@@ -7,6 +7,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Targets)]
     public class VPRC_BindFBOByName : ViewportStateRenderCommand<VPRC_UnbindFBO>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -17,6 +18,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!Write) requirements.RequireOperation("framebuffer-read");
         }
 
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? FrameBufferName { get; set; }
         [System.ComponentModel.DefaultValue(true)]
         public bool Write { get; set; } = true;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
@@ -11,6 +12,18 @@ namespace XREngine.Rendering.Pipelines.Commands
         public const string SceneShaderPath = "Scene3D";
         private bool _shouldExecute = true;
         private bool _executeInShadowPass = false;
+        private string? _anchorId;
+
+        /// <summary>
+        /// Gets or sets the stable id that derived pipeline patches use to find this command, such as
+        /// <c>post.bloom</c>. Built-in pipelines keep each id, or record a rename in
+        /// <see cref="RenderPipeline.AnchorAliases"/>, when they change their chains.
+        /// </summary>
+        public string? AnchorId
+        {
+            get => _anchorId;
+            set => SetField(ref _anchorId, string.IsNullOrWhiteSpace(value) ? null : value);
+        }
 
         [YamlIgnore]
         public ViewportRenderCommandContainer? CommandContainer { get; internal set; }
@@ -147,6 +160,17 @@ namespace XREngine.Rendering.Pipelines.Commands
         public virtual void SwapBuffers()
         {
 
+        }
+
+        /// <summary>
+        /// Adds each nested command container that this command owns to <paramref name="results"/>.
+        /// Flow commands override this so tools can walk branches, cases, and loop bodies without reflection.
+        /// The order is stable: it is the order that tools show.
+        /// </summary>
+        /// <param name="results">The list that receives the child containers. The method does not clear it.</param>
+        public virtual void CollectChildContainers(List<RenderCommandChildContainer> results)
+        {
+            // Commands without nested containers add nothing.
         }
 
         /// <summary>

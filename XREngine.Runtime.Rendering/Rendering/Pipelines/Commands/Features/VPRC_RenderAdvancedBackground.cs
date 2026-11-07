@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Executes the explicitly authored CPU-direct background lane after native opaque
 /// compute shading. Far-depth admission keeps native geometry and identity intact.
 /// </summary>
+[RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
 public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
 {
     private readonly Predicate<RenderCommand> _filter;

@@ -17,9 +17,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// populating the persistent DDGIRayBuffer SSBO entirely on GPU.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIRaygenPass : VPRC_DDGIComputePass
     {
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string ProbeStateBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;
 
         private XRRenderProgram? _raygenProgram;

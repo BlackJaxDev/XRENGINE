@@ -4,12 +4,14 @@ using XREngine.Rendering.Commands;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Targets)]
     public class VPRC_RenderToTextureArray : ViewportRenderCommand
     {
         private XRFrameBuffer? _targetFbo;
         private RenderCommandCollection? _sliceCommands;
 
         public string TextureArrayName { get; set; } = "TextureArray";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DepthTextureName { get; set; }
         public int RenderPass { get; set; }
         public int LayerIndex { get; set; }

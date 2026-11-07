@@ -216,7 +216,7 @@ public static partial class EditorImGuiUI
             }
         }
 
-        DrawGrid(drawList, canvasPos, canvasSize, _shaderGraphView.Pan, _shaderGraphView.Zoom);
+        DrawEditorCanvasGrid(drawList, canvasPos, canvasSize, _shaderGraphView.Pan, _shaderGraphView.Zoom);
 
         var edges = graph.BuildEdges().ToArray();
         DrawShaderGraphLinks(drawList, edges, canvasPos);

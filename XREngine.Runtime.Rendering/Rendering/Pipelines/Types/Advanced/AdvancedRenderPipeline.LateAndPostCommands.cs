@@ -22,6 +22,7 @@ public partial class AdvancedRenderPipeline
 
         var late = commands.Add<VPRC_IfElse>();
         late.Label = "AdvancedLateTransparencyAllowed";
+        late.AnchorId = "advanced.lateTransparency";
         late.ConditionEvaluator = HasAnyAdvancedLateConsumers;
         var lateCommands = new ViewportRenderCommandContainer(this);
 
@@ -96,6 +97,7 @@ public partial class AdvancedRenderPipeline
     {
         var weighted = commands.Add<VPRC_IfElse>();
         weighted.Label = "AdvancedWeightedBlendedOitActive";
+        weighted.AnchorId = "advanced.weightedBlendedOit";
         weighted.ConditionEvaluator = ShouldRunAdvancedWeightedTransparency;
         var weightedCommands = new ViewportRenderCommandContainer(this);
         weightedCommands.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
@@ -126,6 +128,7 @@ public partial class AdvancedRenderPipeline
     {
         var post = commands.Add<VPRC_IfElse>();
         post.Label = "AdvancedPostProcessingAllowed";
+        post.AnchorId = "post.processing";
         post.ConditionEvaluator = () => AllowsPostProcessing;
         var postCommands = new ViewportRenderCommandContainer(this);
         AppendAdvancedPostProcessCommandsCore(postCommands);
@@ -145,6 +148,7 @@ public partial class AdvancedRenderPipeline
 
             var bloom = commands.Add<VPRC_IfElse>();
             bloom.Label = "AdvancedBloomActive";
+            bloom.AnchorId = "post.bloom";
             bloom.ConditionEvaluator = ShouldUseBloom;
             var bloomCommands = new ViewportRenderCommandContainer(this);
             _advancedBloomProvider = bloomCommands.Add<VPRC_BloomPass>();
@@ -159,14 +163,17 @@ public partial class AdvancedRenderPipeline
         }
 
         VPRC_ExposureUpdate exposure = commands.Add<VPRC_ExposureUpdate>();
+        exposure.AnchorId = "post.exposure";
         exposure.SetOptions(HDRSceneTextureName, true);
         exposure.GpuProgramBinding = "advanced::auto-exposure";
         using (commands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))
         {
             commands.Add<VPRC_RenderQuadToFBO>()
+                .WithAnchor("post.composite")
                 .SetTargets(PostProcessFBOName, PostProcessOutputFBOName, matchDestinationRenderArea: true)
                 .SetRenderGraphResources(CreateAdvancedPostProcessResources());
             commands.Add<VPRC_RenderQuadToFBO>()
+                .WithAnchor("post.final")
                 .SetTargets(FinalPostProcessFBOName, FinalPostProcessOutputFBOName, matchDestinationRenderArea: true)
                 .SetRenderGraphResources(CreateAdvancedFinalPostProcessResources());
         }
@@ -195,6 +202,7 @@ public partial class AdvancedRenderPipeline
     {
         var temporal = commands.Add<VPRC_IfElse>();
         temporal.Label = "AdvancedTemporalAccumulationActive";
+        temporal.AnchorId = "post.temporal";
         temporal.ConditionEvaluator = ShouldUseAdvancedTemporalAccumulationResources;
         var temporalCommands = new ViewportRenderCommandContainer(this);
         var accumulate = temporalCommands.Add<VPRC_TemporalAccumulationPass>();
@@ -217,6 +225,7 @@ public partial class AdvancedRenderPipeline
 
         var temporal = commands.Add<VPRC_IfElse>();
         temporal.Label = "AdvancedTemporalBeginActive";
+        temporal.AnchorId = "post.temporalBegin";
         temporal.ConditionEvaluator = ShouldUseAdvancedTemporalAccumulationResources;
         var temporalCommands = new ViewportRenderCommandContainer(this);
         temporalCommands.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Begin;
@@ -230,9 +239,11 @@ public partial class AdvancedRenderPipeline
 
         var aa = commands.Add<VPRC_IfElse>();
         aa.Label = "AdvancedPostAntiAliasingActive";
+        aa.AnchorId = "post.antiAliasing";
         aa.ConditionEvaluator = ShouldRunAdvancedPostAntiAliasing;
         var aaCommands = new ViewportRenderCommandContainer(this);
         var tsr = aaCommands.Add<VPRC_IfElse>();
+        tsr.Label = "TSR";
         tsr.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeNeedsTsrUpscale;
         var tsrCommands = new ViewportRenderCommandContainer(this);
         if (!Shaders.Compilation.WebPipelineRasterProgram.IsActive)
@@ -249,6 +260,7 @@ public partial class AdvancedRenderPipeline
         tsr.TrueCommands = tsrCommands;
         var postAaCommands = new ViewportRenderCommandContainer(this);
         var fxaa = postAaCommands.Add<VPRC_IfElse>();
+        fxaa.Label = "FXAA";
         fxaa.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeEnableFxaa;
         var fxaaCommands = new ViewportRenderCommandContainer(this);
         var fxaaPass = fxaaCommands.Add<VPRC_FXAA>();
@@ -271,6 +283,7 @@ public partial class AdvancedRenderPipeline
     {
         var motionBlur = commands.Add<VPRC_IfElse>();
         motionBlur.Label = "AdvancedMotionBlurActive";
+        motionBlur.AnchorId = "post.motionBlur";
         motionBlur.ConditionEvaluator = () => AllowsBloomAndDepthOfField && ShouldUseMotionBlur();
         motionBlur.TrueCommands = CreateAdvancedSceneFilterCommands(MotionBlurCopyFBOName, MotionBlurFBOName, CreateAdvancedMotionBlurResources());
 
@@ -278,6 +291,7 @@ public partial class AdvancedRenderPipeline
 
         var depthOfField = commands.Add<VPRC_IfElse>();
         depthOfField.Label = "AdvancedDepthOfFieldActive";
+        depthOfField.AnchorId = "post.dof";
         depthOfField.ConditionEvaluator = () => AllowsBloomAndDepthOfField && ShouldUseDepthOfField();
         depthOfField.TrueCommands = CreateAdvancedSceneFilterCommands(DepthOfFieldCopyFBOName, DepthOfFieldFBOName, CreateAdvancedDepthOfFieldResources());
 
@@ -360,10 +374,12 @@ public partial class AdvancedRenderPipeline
 
         var atmosphere = commands.Add<VPRC_IfElse>();
         atmosphere.Label = "AdvancedAtmosphereActive";
+        atmosphere.AnchorId = "post.atmosphere";
         atmosphere.ConditionEvaluator = ShouldRunAdvancedAtmosphericScattering;
         atmosphere.TrueCommands = CreateAdvancedAtmosphereCommands();
         var fog = commands.Add<VPRC_IfElse>();
         fog.Label = "AdvancedVolumetricFogActive";
+        fog.AnchorId = "post.volumetricFog";
         fog.ConditionEvaluator = ShouldRunAdvancedVolumetricFog;
         fog.TrueCommands = CreateAdvancedVolumetricFogCommands();
     }
@@ -461,13 +477,16 @@ public partial class AdvancedRenderPipeline
 
         var output = commands.Add<VPRC_IfElse>();
         output.Label = "AdvancedFinalOutputSource";
+        output.AnchorId = "advanced.finalOutputSource";
         output.ConditionEvaluator = ShouldRunAdvancedPostAntiAliasing;
         var antiAliasedOutput = new ViewportRenderCommandContainer(this);
         var tsr = antiAliasedOutput.Add<VPRC_IfElse>();
+        tsr.Label = "TSR";
         tsr.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeNeedsTsrUpscale;
         tsr.TrueCommands = CreateAdvancedResolvedOutputCommands(TsrUpscaleFBOName, TsrOutputTextureName);
         var postAa = new ViewportRenderCommandContainer(this);
         var fxaa = postAa.Add<VPRC_IfElse>();
+        fxaa.Label = "FXAA";
         fxaa.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeEnableFxaa;
         fxaa.TrueCommands = CreateAdvancedResolvedOutputCommands(FxaaFBOName, FxaaOutputTextureName);
         fxaa.FalseCommands = CreateAdvancedResolvedOutputCommands(SmaaFBOName, SmaaOutputTextureName);

@@ -26,6 +26,7 @@ using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
+[RenderPipelineScriptBase("Advanced")]
 public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider, IAdvancedRenderStageFamilyHost
 {
     internal override bool RequiresCanonicalGpuScenePublication => true;

@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Iterates the active cascades of a directional light, publishing per-cascade state and executing a nested command chain.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Flow)]
 public sealed class VPRC_ForEachCascade : ViewportRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -48,6 +49,13 @@ public sealed class VPRC_ForEachCascade : ViewportRenderCommand
             AttachPipeline(_body);
             ParentPipeline?.NotifyCommandChainStructureChanged();
         }
+    }
+
+    /// <inheritdoc />
+    public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+    {
+        if (Body is not null)
+            results.Add(new RenderCommandChildContainer("Body", Body));
     }
 
     protected override void Execute()

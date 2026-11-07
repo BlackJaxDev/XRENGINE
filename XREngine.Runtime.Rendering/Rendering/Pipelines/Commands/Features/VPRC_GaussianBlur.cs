@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Runs a reusable separable Gaussian blur over a named input texture and publishes the result as a named output texture/FBO.
     /// </summary>
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
     public sealed class VPRC_GaussianBlur : ViewportRenderCommand
     {
         private const string GaussianBlurShaderCode = """
@@ -61,8 +62,11 @@ void main()
         private uint _cachedWidth;
         private uint _cachedHeight;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string InputTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = "GaussianBlurOutputTexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? OutputFBOName { get; set; }
         public int KernelRadius { get; set; } = 5;
         public float Sigma { get; set; } = 2.5f;

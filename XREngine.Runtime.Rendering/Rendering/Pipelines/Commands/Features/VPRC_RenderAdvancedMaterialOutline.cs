@@ -7,6 +7,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands;
 
 /// <summary>Draws collected material outline companions over native HDR and depth.</summary>
+[RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
 public sealed class VPRC_RenderAdvancedMaterialOutline : ViewportRenderCommand
 {
     private const int OutlineRenderPass = (int)EDefaultRenderPass.MaskedForward;

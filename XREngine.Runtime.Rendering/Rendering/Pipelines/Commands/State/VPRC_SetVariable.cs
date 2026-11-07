@@ -4,6 +4,7 @@ using System.Globalization;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
     public sealed class VPRC_SetVariable : ViewportRenderCommand
     {
         public string VariableName { get; set; } = string.Empty;
@@ -17,9 +18,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         public Vector4? Vector4Value { get; set; }
         public Matrix4x4? Matrix4Value { get; set; }
         public string? StringValue { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Any)]
         public string? TextureResourceName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Any)]
         public string? FrameBufferResourceName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Any)]
         public string? BufferResourceName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Any)]
         public string? RenderBufferResourceName { get; set; }
         public Func<object?>? ValueEvaluator { get; set; }
 

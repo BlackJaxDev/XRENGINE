@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     /// <typeparam name="T">The element type yielded by the collection.</typeparam>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Flow, RequiresCode = true)]
     public class VPRC_ForEach<T> : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -45,6 +46,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 AttachPipeline(_body);
                 ParentPipeline?.NotifyCommandChainStructureChanged();
             }
+        }
+
+        /// <inheritdoc />
+        public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+        {
+            if (Body is not null)
+                results.Add(new RenderCommandChildContainer("Body", Body));
         }
 
         protected override void Execute()

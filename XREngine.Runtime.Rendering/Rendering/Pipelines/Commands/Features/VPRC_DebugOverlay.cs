@@ -23,6 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Renders a named texture into a normalized overlay region for in-game inspection.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
     public sealed class VPRC_DebugOverlay : ViewportRenderCommand
     {
         private const string OverlayShaderCode = """
@@ -72,7 +73,9 @@ void main()
         private XRMaterial? _material;
         private XRQuadFrameBuffer? _quad;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string SourceTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? DestinationFBOName { get; set; }
         public Vector4 NormalizedRegion { get; set; } = new(0.72f, 0.72f, 0.25f, 0.25f);
         public EDebugOverlayChannelMode ChannelMode { get; set; } = EDebugOverlayChannelMode.RGBA;

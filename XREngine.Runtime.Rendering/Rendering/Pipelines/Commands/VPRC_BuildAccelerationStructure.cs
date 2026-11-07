@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// and publishes the resulting buffers into pipeline variables.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
 public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
 {
     internal const string RenderGraphPassName = nameof(VPRC_BuildAccelerationStructure);

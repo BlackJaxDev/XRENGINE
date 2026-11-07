@@ -1169,6 +1169,12 @@ public static partial class EditorImGuiUI
             if (entry.IsDirectory)
                 return;
 
+            if (string.Equals(Path.GetExtension(entry.Path), RenderPipelineScriptLoader.FileExtension, StringComparison.OrdinalIgnoreCase))
+            {
+                OpenRenderPipelineScriptFile(entry.Path);
+                return;
+            }
+
             QueueOpenSceneAsset(entry.Path);
         }
 

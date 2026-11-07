@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// abstraction does not yet expose generic fill-mode switching.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug)]
 public sealed class VPRC_DebugWireframe : ViewportRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -31,6 +32,13 @@ public sealed class VPRC_DebugWireframe : ViewportRenderCommand
     }
 
     public override bool NeedsCollecVisible => Body is not null;
+
+    /// <inheritdoc />
+    public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+    {
+        if (Body is not null)
+            results.Add(new RenderCommandChildContainer("Body", Body));
+    }
 
     protected override void Execute()
     {

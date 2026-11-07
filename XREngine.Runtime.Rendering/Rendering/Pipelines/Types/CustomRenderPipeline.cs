@@ -1,6 +1,9 @@
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
+using XREngine.Rendering.Resources.Authoring;
 
 namespace XREngine.Rendering;
 
@@ -39,6 +42,119 @@ public class CustomRenderPipeline : RenderPipeline
         }
     }
 
+    private List<AuthoredRenderResource> _authoredResources = [];
+    private ulong _authoredResourceHash;
+
+    /// <summary>
+    /// Gets or sets the resources that this pipeline declares as data. The layout lowers them through
+    /// <see cref="AuthoredRenderResourceFactory"/>. Set a new list, or call <see cref="NotifyAuthoredResourcesChanged"/>
+    /// after an edit in place, to build a new resource generation.
+    /// </summary>
+    public List<AuthoredRenderResource> AuthoredResources
+    {
+        get => _authoredResources;
+        set
+        {
+            if (SetField(ref _authoredResources, value ?? []))
+                NotifyAuthoredResourcesChanged();
+        }
+    }
+
+    /// <summary>
+    /// Builds a new resource generation for every instance when a layout-affecting field of
+    /// <see cref="AuthoredResources"/> changed.
+    /// </summary>
+    public void NotifyAuthoredResourcesChanged()
+    {
+        ulong hash = AuthoredRenderResourceFactory.ComputeLayoutHash(_authoredResources);
+        if (hash == _authoredResourceHash)
+            return;
+
+        _authoredResourceHash = hash;
+        InvalidateOwnedInstancePhysicalResources("AuthoredResourcesChanged");
+    }
+
+    /// <summary>Finds an authored resource by name.</summary>
+    public bool TryGetAuthoredResource(string name, out AuthoredRenderResource? resource)
+    {
+        for (int i = 0; i < _authoredResources.Count; i++)
+        {
+            if (string.Equals(_authoredResources[i].Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                resource = _authoredResources[i];
+                return true;
+            }
+        }
+
+        resource = null;
+        return false;
+    }
+
+    /// <inheritdoc />
+    protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        base.DescribeResources(builder);
+        AuthoredRenderResourceFactory.Declare(builder, _authoredResources, ResolveAuthoredAttachment);
+    }
+
+    /// <inheritdoc />
+    internal override ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
+        => base.BuildResourceFeatureMaskForGenerationKey(instance, viewport) ^ _authoredResourceHash;
+
+    private List<AuthoredPostProcessStage> _authoredStages = [];
+
+    /// <summary>
+    /// Gets or sets the post-process stages that this pipeline declares as data. Set a new list, or call
+    /// <see cref="NotifyAuthoredStagesChanged"/> after an edit in place, to rebuild the schema. A parameter default is
+    /// the asset default that a new camera starts with.
+    /// </summary>
+    public List<AuthoredPostProcessStage> AuthoredStages
+    {
+        get => _authoredStages;
+        set
+        {
+            if (SetField(ref _authoredStages, value ?? []))
+                NotifyAuthoredStagesChanged();
+        }
+    }
+
+    /// <summary>Rebuilds the post-process schema from <see cref="AuthoredStages"/>.</summary>
+    public void NotifyAuthoredStagesChanged()
+        => RefreshPostProcessSchema();
+
+    /// <inheritdoc />
+    protected override void DescribePostProcessSchema(RenderPipelinePostProcessSchemaBuilder builder)
+    {
+        base.DescribePostProcessSchema(builder);
+        AuthoredPostProcessSchema.Describe(builder, _authoredStages);
+    }
+
+    private List<AuthoredPassDependency> _passDependencies = [];
+
+    /// <summary>
+    /// Gets or sets explicit pass dependencies that this pipeline stores as data. Set a new list to rebuild the pass
+    /// metadata.
+    /// </summary>
+    public List<AuthoredPassDependency> PassDependencies
+    {
+        get => _passDependencies;
+        set
+        {
+            if (SetField(ref _passDependencies, value ?? []))
+                RefreshAuthoredCommands();
+        }
+    }
+
+    /// <inheritdoc />
+    protected override void DescribeRenderPasses(RenderPassMetadataCollection metadata)
+    {
+        base.DescribeRenderPasses(metadata);
+        AuthoredPassDependency.Apply(metadata, _passDependencies);
+    }
+
+    private static IFrameBufferAttachement? ResolveAuthoredAttachment(string name)
+        => GetTexture<XRTexture>(name) as IFrameBufferAttachement ?? TryCurrentPipeline?.GetRenderBuffer(name);
+
     private void RefreshAuthoredCommands()
     {
         PassIndicesAndSorters = GetPassIndicesAndSorters();
@@ -74,6 +190,14 @@ public class CustomRenderPipeline : RenderPipeline
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
         => _commands ?? [];
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <see cref="GenerateCommandChain"/> returns the stored <see cref="Commands"/>. An overlay changes the chain in
+    /// place, so this method compiles a copy from the script text of the commands.
+    /// </remarks>
+    protected override ViewportRenderCommandContainer GenerateCommandChainForOverlays()
+        => _commands is { Count: > 0 } commands ? CompileScript(RenderPipelineScript.Export(commands)) : [];
 
     public override void DescribeRequirements(RenderPipelineRequirements requirements)
     {

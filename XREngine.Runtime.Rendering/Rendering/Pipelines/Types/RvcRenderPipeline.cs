@@ -14,7 +14,8 @@ namespace XREngine.Rendering;
 /// It runs only the RVC command chain. VR selects it only through
 /// <see cref="EVrRenderPipeline.Rvc"/>.
 /// </summary>
-public sealed class RvcRenderPipeline : DefaultRenderPipeline
+[RenderPipelineScriptBase("Rvc")]
+public sealed class RvcRenderPipeline : DefaultRenderPipeline, IRenderPipelineViewSetupSource
 {
     private const RenderPipelineResourceUsage RvcSampledColorAttachment =
         RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment;
@@ -72,6 +73,26 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
     }
 
     public override string DebugName => "RvcRenderPipeline";
+
+    private static readonly RenderPipelineViewSetup BothEyesSetup = new("Both eyes", 2u, null);
+    private static readonly RenderPipelineViewSetup SeparateEyeRequestSetup = new("Separate eye", 1u, null);
+    private static readonly RenderPipelineViewSetup LeftEyeSetup = new("Separate eye (left)", 1u, 0u);
+    private static readonly RenderPipelineViewSetup RightEyeSetup = new("Separate eye (right)", 1u, 1u);
+
+    /// <summary>
+    /// Returns the both-eye setup when the pipeline renders stereo views in one execution, and the
+    /// separate-eye setup otherwise. A separate-eye instance names its eye from its active resource generation.
+    /// </summary>
+    public RenderPipelineViewSetup GetViewSetup(XRRenderPipelineInstance? instance)
+    {
+        if (Stereo)
+            return BothEyesSetup;
+
+        if (instance?.ActiveGeneration is not { } generation || generation.Key.ReservedViewCount > 1u)
+            return SeparateEyeRequestSetup;
+
+        return generation.Key.ReservedEyeIndex == 0u ? LeftEyeSetup : RightEyeSetup;
+    }
 
     [Category("RVC")]
     [DisplayName("Pipeline Mode")]
@@ -356,7 +377,32 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
     {
         VPRC_RvcPass pass = commands.Add<VPRC_RvcPass>();
         pass.Stage = stage;
+        pass.AnchorId = GetRvcPassAnchorId(stage);
     }
+
+    /// <summary>
+    /// Gets the anchor id of an RVC pass. The ids are written out so that a rename of the enum member does not break
+    /// derived pipelines that patch the pass.
+    /// </summary>
+    private static string? GetRvcPassAnchorId(ERvcGpuPassStage stage)
+        => stage switch
+        {
+            ERvcGpuPassStage.OpenXrVisibilityMaskStencil => "rvc.visibilityMaskStencil",
+            ERvcGpuPassStage.VisibilityTargets => "rvc.visibilityTargets",
+            ERvcGpuPassStage.AttributeReconstruction => "rvc.attributeReconstruction",
+            ERvcGpuPassStage.HzbRejection => "rvc.hzbRejection",
+            ERvcGpuPassStage.PixelToShadeletMap => "rvc.pixelToShadeletMap",
+            ERvcGpuPassStage.MaterialShadeletShading => "rvc.materialShadeletShading",
+            ERvcGpuPassStage.FoveatedShadingRate => "rvc.foveatedShadingRate",
+            ERvcGpuPassStage.HeadSpaceLightClusters => "rvc.headSpaceLightClusters",
+            ERvcGpuPassStage.SharedLighting => "rvc.sharedLighting",
+            ERvcGpuPassStage.ReuseValidation => "rvc.reuseValidation",
+            ERvcGpuPassStage.TemporalCache => "rvc.temporalCache",
+            ERvcGpuPassStage.TransparencyForwardPlus => "rvc.transparencyForwardPlus",
+            ERvcGpuPassStage.FoveatedResolve => "rvc.foveatedResolve",
+            ERvcGpuPassStage.DiagnosticOverlay => "rvc.diagnosticOverlay",
+            _ => null,
+        };
 
     private void DeclareRvcResources(RenderPipelineResourceLayoutBuilder builder)
     {

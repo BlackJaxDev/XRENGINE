@@ -7,6 +7,7 @@ using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering;
 
+[RenderPipelineScriptBase("UserInterface")]
 public class UserInterfaceRenderPipeline : RenderPipeline
 {
     public const string SceneShaderPath = "Scene3D";
@@ -59,6 +60,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
+        ifElse.Label = "Viewport or FBO target";
         ifElse.ConditionEvaluator = () => State.WindowViewport is not null
             && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;
         ifElse.TrueCommands = CreateViewportTargetCommands();

@@ -259,6 +259,17 @@ public sealed class PipelinePostProcessState
         }
     }
 
+    /// <summary>
+    /// Creates a detached state bound to <paramref name="schema"/>. Editor tools use it as a scratch state to preview
+    /// stage declarations before they reach a pipeline.
+    /// </summary>
+    public static PipelinePostProcessState CreatePreview(RenderPipelinePostProcessSchema schema)
+    {
+        PipelinePostProcessState state = new();
+        state.BindToSchema(schema);
+        return state;
+    }
+
     internal bool IsBoundTo(RenderPipeline pipeline)
         => PipelineId == pipeline.ID &&
            ReferenceEquals(Schema, pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty);
@@ -479,6 +490,14 @@ public sealed class PostProcessStageState : IDisposable
 
         BackingInstance = backing;
 
+        // A property bag has no typed properties. It stores every parameter value by name.
+        if (backing is PostProcessPropertyBag bag)
+        {
+            foreach (KeyValuePair<string, object?> pair in _values)
+                bag.Set(pair.Key, pair.Value);
+            return;
+        }
+
         // Build backing property map off-thread then publish under lock to avoid concurrent mutations.
         var backingMap = new Dictionary<string, PropertyPathAccessor>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameter in descriptor.Parameters)
@@ -533,6 +552,11 @@ public sealed class PostProcessStageState : IDisposable
         {
             backing = BackingInstance;
             _backingProperties.TryGetValue(parameterName, out property);
+        }
+        if (backing is PostProcessPropertyBag bag)
+        {
+            bag.Set(parameterName, value);
+            return;
         }
         if (backing is null || property is null)
             return;

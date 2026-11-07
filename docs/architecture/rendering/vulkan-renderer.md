@@ -639,11 +639,21 @@ CPU readback or replace the requested GPU-driven submission path.
 
 ### The Render Graph
 
-`VulkanRenderGraphCompiler.cs` handles dependency-aware pass ordering:
+`VulkanRenderGraphCompiler.cs` caches compiled graphs. It calls the backend-neutral `RenderGraphCompiler` (`XREngine.Runtime.Rendering/RenderGraph/RenderGraphCompiler.cs`) for the order and the batches:
 
-- **Topological sort** of render pass metadata based on resource dependencies
-- **Pass batching** — groups compatible passes that share the same stage and attachment signature into `VulkanCompiledPassBatch` objects for reduced render pass transitions
+- **Topological sort** of render pass metadata based on resource dependencies. Independent components keep their declaration order.
+- **Pass batching** — groups compatible passes that share the same stage and attachment signature into `RenderGraphPassBatch` objects for reduced render pass transitions. `RenderGraphAttachmentCompatibility` owns the rules, so OpenGL validation and the Workbench use the same batches.
 - **Scheduling identity** — frame ops are sorted by `(SchedulingIdentity, PassOrder, OriginalIndex)` to maintain deterministic ordering while respecting dependencies
+
+#### Plan Diagnostics
+
+`VulkanRenderer` implements `IRenderGraphPlanDiagnosticsSource` (`VulkanRenderer.PlanDiagnostics.cs`). `GetPlanSnapshot(instance)` converts the newest published `VulkanRenderGraphPlan` into a backend-neutral `RenderGraphPlanSnapshot`:
+
+- Pass order, batches, submissions, and synchronization edges come from the compiled graph.
+- Barriers come from the frozen `VulkanBarrierPlan`. The plan keeps a resource name table (`DiagnosticResourceNames`) so tools can name image and swapchain barriers. Recording does not read the table.
+- Alias groups come from the physical image groups of the resource generation that owns the plan. A group with more than one logical resource shares one allocation.
+
+The renderer plans one pipeline instance at a time. It keeps the newest snapshot of each instance in a weak table and rebuilds a snapshot only when a new plan is published. A call with no new plan does not allocate. `OpenGLRenderer` implements the same interface with the recorded pass order of `XRRenderPipelineInstance.ExecutionTrace`, and `RenderGraphOfflinePlanner` plans metadata with no renderer. The editor Render Pipeline Workbench shows these snapshots in its Execution view. `RenderGraphPlanSnapshot.OrderViolations` lists dependency edges whose consumer runs before its producer; a Vulkan plan has none, and an OpenGL recorded order has them when the pass metadata does not match the command order.
 
 ### Frame Operations (FrameOps)
 

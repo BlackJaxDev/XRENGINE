@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Runs a separable bilateral filter over a named input texture with optional depth and normal guidance.
     /// </summary>
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
     public sealed class VPRC_BilateralFilter : ViewportRenderCommand
     {
         private const string BilateralFilterShaderCode = """
@@ -93,10 +94,15 @@ void main()
         private uint _cachedWidth;
         private uint _cachedHeight;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string InputTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = "BilateralFilterOutputTexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? OutputFBOName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
         public int KernelRadius { get; set; } = 4;
         public float SpatialSigma { get; set; } = 2.0f;

@@ -35,6 +35,7 @@ using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Caching;
+using XREngine.Rendering.Resources;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Runtime.Physics.Authoring;
@@ -2175,7 +2176,7 @@ internal partial class Program
         string outputPath = ResolvePathAgainstRepoRoot(
             outputPathArg,
             repoRoot,
-            Path.Combine("docs", "features", stereo ? "default-render-pipeline-stereo.xrs" : "default-render-pipeline.xrs"));
+            Path.Combine("docs", "developer-guides", "rendering", "render-pipelines", stereo ? "default-render-pipeline-stereo.xrs" : "default-render-pipeline.xrs"));
 
         if (!outputPath.EndsWith(".xrs", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Output path must end with .xrs.", nameof(outputPathArg));
@@ -2185,11 +2186,24 @@ internal partial class Program
             Directory.CreateDirectory(outputDirectory);
 
         DefaultRenderPipeline pipeline = new(stereo);
-        string script = RenderPipelineScript.Export(pipeline.CommandChain);
+        List<string> unconverted = [];
+        string script = RenderPipelineScriptWriter.WriteExpanded(pipeline, CreateScriptExportProfile(stereo), unconverted);
         File.WriteAllText(outputPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        Console.WriteLine($"Exported default render pipeline script ({(stereo ? "stereo" : "mono")}) -> {outputPath}");
+        Console.WriteLine($"Exported default render pipeline script ({(stereo ? "stereo" : "mono")}, {unconverted.Count} unconverted items) -> {outputPath}");
     }
+
+    /// <summary>The resource profile that the expanded script export writes: 1920x1080, with two views for stereo.</summary>
+    private static RenderPipelineResourceProfile CreateScriptExportProfile(bool stereo)
+        => RenderPipelineResourceProfile.Empty with
+        {
+            InternalWidth = 1920u,
+            InternalHeight = 1080u,
+            DisplayWidth = 1920u,
+            DisplayHeight = 1080u,
+            Stereo = stereo,
+            ViewCount = stereo ? 2u : 1u,
+        };
 
     private static bool TryParseCookCommonAssetsArgs(
         string[] args,

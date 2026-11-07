@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Applies a standalone LUT texture to a named input texture, supporting either 3D LUTs or 2D strip LUTs.
     /// </summary>
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.ColorGrading })]
     public sealed class VPRC_ApplyLUT : ViewportRenderCommand
     {
         private const string Lut3DShaderCode = """
@@ -110,9 +111,13 @@ void main()
         private uint _cachedWidth;
         private uint _cachedHeight;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string InputTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string LutTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = "ApplyLUTOutputTexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? OutputFBOName { get; set; }
         public float Strength { get; set; } = 1.0f;
         public float InputMin { get; set; } = 0.0f;

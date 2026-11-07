@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// the provider output.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
 public sealed class VPRC_DDGICompositeCompletionPass : ViewportRenderCommand
 {
     protected override bool ShouldExecuteThisFrame()

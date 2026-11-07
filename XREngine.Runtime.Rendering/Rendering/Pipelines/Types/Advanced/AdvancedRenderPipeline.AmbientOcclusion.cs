@@ -113,6 +113,7 @@ public partial class AdvancedRenderPipeline
 
         var active = commands.Add<VPRC_IfElse>();
         active.Label = "AdvancedAmbientOcclusionActive";
+        active.AnchorId = "advanced.ambientOcclusion";
         active.ConditionEvaluator = () => AoModeRunsPasses(EvaluateAmbientOcclusionMode());
 
         var aoCommands = new ViewportRenderCommandContainer(this);
@@ -125,6 +126,7 @@ public partial class AdvancedRenderPipeline
                     .UseColorTexture(AoNormalTextureName));
 
             var modes = aoCommands.Add<VPRC_Switch>();
+            modes.Label = "AO mode";
             modes.SwitchEvaluator = EvaluateAmbientOcclusionMode;
             modes.Cases = new()
             {

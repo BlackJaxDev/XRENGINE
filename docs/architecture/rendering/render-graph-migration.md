@@ -37,7 +37,11 @@ This guide documents how pipeline commands should participate in the render-grap
   - `RenderGraphSynchronizationPlanner` emits backend-agnostic sync edges.
   - `VulkanBarrierPlanner` converts those edges into image/buffer barriers.
 - OpenGL path:
-  - `OpenGLRenderGraphExecutor` validates the same metadata ordering and executes the existing sequential command chain.
+  - OpenGL executes the authored command chain in order. It does not reorder passes.
+  - `XRRenderPipelineInstance.ValidateRenderGraphExecutionAgainstMetadata` checks on every backend that each executed pass has metadata, and logs the passes that do not.
+  - `OpenGLRenderer` publishes the recorded pass order as a plan snapshot through `RenderGraphRecordedPlanner`, so tools show the OpenGL order next to the Vulkan plan.
+- Both paths:
+  - `RenderPipelineValidator` runs the pipeline rules on the metadata, the resource layout, and the schema, for example `command.gpu-without-pass` and `resource.undeclared-read`. The Render Pipeline Workbench and the `validate_render_pipeline` MCP tool show the results.
 
 ## 6. Checklist for new feature passes
 

@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Performs a framebuffer blit/resolve between two cached FBOs.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
     public class VPRC_BlitFrameBuffer : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -31,7 +32,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             requirements.RequireOperation("color-resolve");
         }
 
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? SourceFBOName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? DestinationFBOName { get; set; }
         public EReadBufferMode ReadBuffer { get; set; } = EReadBufferMode.ColorAttachment0;
         public bool BlitColor { get; set; } = true;
@@ -39,6 +42,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool BlitStencil { get; set; } = false;
         public bool LinearFilter { get; set; } = false;
         /// <summary>Omits an optional resolve from generation metadata when its target is absent.</summary>
+        [RenderResourceName(ERenderResourceNameKind.Any)]
         public string? RequiredDeclaredResourceName { get; set; }
 
         public override string GpuProfilingName

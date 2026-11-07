@@ -11,6 +11,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.RenderGraph.Diagnostics;
 using XREngine.Rendering.Resources;
 using YamlDotNet.Serialization;
 using static XREngine.Rendering.XRRenderPipelineInstance;
@@ -320,6 +321,35 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     [YamlIgnore]
     public IReadOnlyCollection<RenderPassMetadata> PassMetadata { get; private set; } = Array.Empty<RenderPassMetadata>();
     private readonly Dictionary<string, int> _renderPassIndicesByName = new(StringComparer.OrdinalIgnoreCase);
+    private RenderPipelineStructureSnapshot? _structureSnapshot;
+
+    /// <summary>
+    /// Gets the map from commands to the passes in <see cref="PassMetadata"/>. The snapshot builds on first
+    /// read after the command chain changes, so the runtime pays no cost when no tool reads it.
+    /// Resource generations own their own pass metadata; build a snapshot for those with
+    /// <see cref="RenderPipelineStructureSnapshot.Build"/>.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public RenderPipelineStructureSnapshot StructureSnapshot
+    {
+        get
+        {
+            RenderPipelineStructureSnapshot? snapshot = System.Threading.Volatile.Read(ref _structureSnapshot);
+            IReadOnlyCollection<RenderPassMetadata> passes = PassMetadata;
+            ulong generation = CommandGeneration;
+            if (snapshot is not null &&
+                snapshot.CommandGeneration == generation &&
+                ReferenceEquals(snapshot.SourcePassMetadata, passes))
+            {
+                return snapshot;
+            }
+
+            snapshot = RenderPipelineStructureSnapshot.Build(generation, CommandChain, passes);
+            System.Threading.Volatile.Write(ref _structureSnapshot, snapshot);
+            return snapshot;
+        }
+    }
 
     /// <summary>
     /// Resolves stable render-graph metadata without repeatedly scanning the pass
@@ -362,7 +392,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
         {
             ViewportRenderCommandContainer previous = CommandChain;
-            CommandChain = GenerateCommandChain();
+            CommandChain = GenerateChainWithOverlays();
 
             // Snapshot/cooked-data restoration suppresses XRBase property notifications.
             // A pipeline can still be constructed from an activation callback inside that
@@ -400,7 +430,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
         {
             ViewportRenderCommandContainer previous = CommandChain;
-            CommandChain = GenerateCommandChain();
+            CommandChain = GenerateChainWithOverlays();
             if (!ReferenceEquals(CommandChain.ParentPipeline, this))
             {
                 previous.ParentPipeline = null;
@@ -530,6 +560,13 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     /// <summary>
+    /// Builds the resource layout that this pipeline declares for <paramref name="profile"/>. Tools use it to inspect
+    /// or copy the layout without a live generation.
+    /// </summary>
+    public RenderPipelineResourceLayout DescribeResourceLayout(RenderPipelineResourceProfile profile)
+        => BuildResourceLayout(profile);
+
+    /// <summary>
     /// Builds a resource layout for this pipeline based on the provided resource profile.
     /// </summary>
     /// <param name="profile">The resource profile to use for building the layout.</param>
@@ -538,6 +575,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     {
         RenderPipelineResourceLayoutBuilder builder = new(profile);
         DescribeResources(builder);
+        ApplyOverlayResources(builder);
         return builder.Build(profile);
     }
 
@@ -721,6 +759,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     {
         RenderPipelinePostProcessSchemaBuilder builder = new(this);
         DescribePostProcessSchema(builder);
+        ApplyOverlaySchema(builder);
         return builder.Build();
     }
 
@@ -732,6 +771,40 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     {
         // Derived pipelines can override this method to describe their post-processing stages and categories.
     }
+
+    private RenderPipelineBranchSettings? _branchSettings;
+
+    /// <summary>
+    /// Gets the settings that data branch conditions can read. The table builds on first use from
+    /// <see cref="DescribeBranchSettings"/>.
+    /// </summary>
+    [YamlIgnore]
+    [Browsable(false)]
+    public RenderPipelineBranchSettings BranchSettings
+    {
+        get
+        {
+            if (_branchSettings is not null)
+                return _branchSettings;
+
+            RenderPipelineBranchSettings settings = new();
+            DescribeBranchSettings(settings);
+            return _branchSettings = settings;
+        }
+    }
+
+    /// <summary>
+    /// Registers the settings that data branch conditions can read by name. Override it to expose settings to
+    /// authored branches and to derived pipeline overlays.
+    /// </summary>
+    /// <param name="settings">The table to fill.</param>
+    protected virtual void DescribeBranchSettings(RenderPipelineBranchSettings settings)
+    {
+    }
+
+    /// <summary>Forgets the branch setting table so the next read builds it again.</summary>
+    protected void RefreshBranchSettings()
+        => _branchSettings = null;
 
     /// <summary>
     /// Attempts to retrieve the current render pipeline instance from the runtime rendering host services.

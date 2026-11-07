@@ -10,6 +10,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
     public class VPRC_RenderMotionVectorsPass : ViewportRenderCommand
     {
         private static readonly int[] DefaultRenderPasses =

@@ -82,6 +82,7 @@ public partial class AdvancedRenderPipeline
         // Decide admission when executing it so later-visible consumers run.
         var ppll = c.Add<VPRC_IfElse>();
         ppll.Label = "AdvancedPpllActive";
+        ppll.AnchorId = "advanced.ppll";
         ppll.ConditionEvaluator = () => ShouldRunAdvancedLatePass(
             (int)EDefaultRenderPass.PerPixelLinkedListForward);
         ppll.TrueCommands = new ViewportRenderCommandContainer(this);
@@ -89,6 +90,7 @@ public partial class AdvancedRenderPipeline
 
         var peeling = c.Add<VPRC_IfElse>();
         peeling.Label = "AdvancedDepthPeelingActive";
+        peeling.AnchorId = "advanced.depthPeeling";
         peeling.ConditionEvaluator = () => ShouldRunAdvancedLatePass(
             (int)EDefaultRenderPass.DepthPeelingForward);
         peeling.TrueCommands = new ViewportRenderCommandContainer(this);

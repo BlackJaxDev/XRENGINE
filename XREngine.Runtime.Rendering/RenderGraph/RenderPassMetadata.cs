@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering.RenderGraph;
 
@@ -13,6 +14,7 @@ public sealed class RenderPassMetadata
     private readonly List<RenderPassResourceUsage> _resourceUsages = new();
     private readonly HashSet<int> _explicitDependencies = new();
     private readonly HashSet<string> _descriptorSchemas = new(StringComparer.Ordinal);
+    private readonly List<ViewportRenderCommand> _contributingCommands = new(1);
     private readonly ReadOnlyCollection<RenderPassResourceUsage> _resourceUsagesView;
     private ReadOnlyCollection<int>? _explicitDependenciesView;
     private ReadOnlyCollection<string>? _descriptorSchemasView;
@@ -59,6 +61,34 @@ public sealed class RenderPassMetadata
 
     public ReadOnlyCollection<RenderPassResourceUsage> ResourceUsages
         => _resourceUsagesView;
+
+    /// <summary>
+    /// Gets the commands that described this pass, in description order. The list is empty when
+    /// the pipeline declared the pass directly through <c>DescribeRenderPasses</c>.
+    /// </summary>
+    public IReadOnlyList<ViewportRenderCommand> ContributingCommands
+        => _contributingCommands;
+
+    /// <summary>
+    /// Gets the command that first described this pass, or null when the pipeline declared it directly.
+    /// </summary>
+    public ViewportRenderCommand? OwnerCommand
+        => _contributingCommands.Count > 0 ? _contributingCommands[0] : null;
+
+    /// <summary>
+    /// Records that <paramref name="command"/> described this pass. Repeated calls for the same command add nothing.
+    /// This is diagnostic data, so it does not advance the metadata revision.
+    /// </summary>
+    internal void AddContributingCommand(ViewportRenderCommand command)
+    {
+        for (int i = 0; i < _contributingCommands.Count; i++)
+        {
+            if (ReferenceEquals(_contributingCommands[i], command))
+                return;
+        }
+
+        _contributingCommands.Add(command);
+    }
 
     public ReadOnlyCollection<int> ExplicitDependencies
         => _explicitDependenciesView ??= _explicitDependencies

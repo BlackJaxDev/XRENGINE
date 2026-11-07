@@ -6,6 +6,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
     public class VPRC_RenderCubemap : ViewportRenderCommand
     {
         private readonly RenderCommandCollection?[] _faceCommands = new RenderCommandCollection?[6];
@@ -14,7 +15,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private float _cachedNearPlane = -1.0f;
         private float _cachedFarPlane = -1.0f;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string CubemapTextureName { get; set; } = "EnvironmentCubemap";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DepthTextureName { get; set; }
         public int RenderPass { get; set; }
         public int MipLevel { get; set; }

@@ -69,14 +69,15 @@ namespace XREngine.Editor.Mcp
         }
 
         [XRMcp(Name = "list_render_pipeline_resources", Permission = McpPermissionLevel.ReadOnly)]
-        [Description("List live render-pipeline textures and framebuffers for the selected viewport.")]
+        [Description("List live render-pipeline textures and framebuffers for the selected viewport, plus the logical resources of the layout with lifetime, producer passes, consumer passes, and estimated size.")]
         public static Task<McpToolResponse> ListRenderPipelineResourcesAsync(
             McpToolContext context,
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
             [McpName("vr_eye"), Description("Optional runtime VR viewport: left, right, or stereo. For stereo texture captures, select the eye with layer_index.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
-            [McpName("capture_owner_id"), Description("Optional scene/probe/standalone capture component GUID to inspect its offscreen resources.")] string? captureOwnerId = null)
+            [McpName("capture_owner_id"), Description("Optional scene/probe/standalone capture component GUID to inspect its offscreen resources.")] string? captureOwnerId = null,
+            [McpName("include_logical"), Description("Include the logical resources of the layout. The default is true.")] bool includeLogical = true)
         {
             XRViewport? viewport = ResolveViewport(
                 context.World,
@@ -146,6 +147,9 @@ namespace XREngine.Editor.Mcp
                     framebuffer_count = frameBuffers.Length,
                     textures,
                     framebuffers = frameBuffers,
+                    logical_resources = includeLogical && instance.Pipeline is { } logicalPipeline
+                        ? DescribeLogicalResources(logicalPipeline, instance)
+                        : null,
                 }));
         }
 

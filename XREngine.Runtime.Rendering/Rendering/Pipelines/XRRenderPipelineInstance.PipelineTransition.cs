@@ -579,6 +579,7 @@ public sealed partial class XRRenderPipelineInstance
         {
             _executedRenderGraphPassIndices.Clear();
             _executedBranchRenderGraphPassIndices.Clear();
+            ExecutionTrace.Clear();
             _activeRenderGraphBranchDepth = 0;
         }
 
