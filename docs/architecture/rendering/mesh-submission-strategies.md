@@ -288,7 +288,11 @@ payload split). The GPU routes follow these rules:
   the nearest resident level. The shader needs no change. When the table has
   more LODs than `GPUScene.MaxLogicalMeshLodCount`, the last level is the last
   LOD of the table, so the lowest LOD is always a level.
-  `CollectLodRenderers` gives the renderers at the same levels.
+  `CollectLodRenderers` gives the renderers at the same levels. Its authored
+  LOD count is the table position of the last resident level plus one (or the
+  table length when the table is longer than the capacity). It is not the count
+  of resident LODs, so a WebGPU authored submission of a multi-LOD model that
+  registers one level gives `LodPublicationChanged` from its first frame.
 - The mandatory resident level is the lowest non-null level, not LOD0. With
   `StreamMeshLodsOnDemand`, the lowest LOD and the command's own mesh always
   stay in the atlas. `ReleaseLOD` refuses the lowest resident level.
@@ -309,8 +313,10 @@ payload split). The GPU routes follow these rules:
   readback. It runs only with `StreamMeshLodsOnDemand`. It uploads only levels
   whose CPU mesh is resident. It never loads a LOD payload, and it spends no
   load budget on a level with no CPU mesh. A cutscene does not depend on it: the
-  cutscene manifest gives the mesh residency backend its targets, so a
-  zero-readback route does no readback for this feature.
+  cutscene manifest gives the mesh residency backend its targets. The drain is
+  not stopped while a cutscene is open, so with `StreamMeshLodsOnDemand` on, a
+  zero-readback route still reads back the request buffer. The setting is off
+  by default.
 - A late LOD gets a new renderer. Deferred publication creates no backend
   wrappers, so the first use of the new level must resolve cold wrappers through
   the renderer facade (see the default render pipeline notes).

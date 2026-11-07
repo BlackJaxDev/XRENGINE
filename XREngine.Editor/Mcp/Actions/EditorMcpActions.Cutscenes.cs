@@ -116,7 +116,7 @@ public sealed partial class EditorMcpActions
     /// <summary>Reads the state of the open cutscene.</summary>
     [XRMcp(Name = "cutscene_status", Permission = McpPermissionLevel.ReadOnly)]
     [McpThreadAffinity(McpThreadAffinity.Update)]
-    [Description("Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), diagnostics, and the audio clock (clock mode, fallback, mute, last heard-minus-clock difference in ms, read count, hard resync count, and output latency in ms).")]
+    [Description("Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), diagnostics, the open readiness (readyForInstantSeek, pending T0 loads, pending and failed proxy programs, and whether the open sequence finished), and the audio clock (clock mode, fallback, mute, last heard-minus-clock difference in ms, read count, hard resync count, and output latency in ms).")]
     public static Task<McpToolResponse> CutsceneStatusAsync(McpToolContext context)
         => Task.FromResult(CutsceneStatusResponse("Read the cutscene status."));
 
@@ -136,6 +136,8 @@ public sealed partial class EditorMcpActions
         bool open = CutscenePreviewSession.IsOpen;
         string mode = !open ? "closed" : CutscenePreviewSession.Host is not null ? "preview" : "director";
         CutscenePlayer? player = open ? CutscenePreviewSession.Player : null;
+        CutsceneOpenSequence? sequence = open ? CutscenePreviewSession.OpenSequence : null;
+        CutsceneResidencySession? residency = open ? CutscenePreviewSession.Residency : null;
         return new McpToolResponse(message, new
         {
             open,
@@ -147,6 +149,16 @@ public sealed partial class EditorMcpActions
             rate = CutscenePreviewSession.Rate,
             compileCount = CutscenePreviewSession.Host?.CompileCount ?? 0,
             diagnostics = diagnosticItems,
+            readyForInstantSeek = player?.ReadyForInstantSeek ?? false,
+            openReadiness = !open ? null : new
+            {
+                residency = residency is not null,
+                pendingT0Loads = residency?.PendingProxyCount ?? 0,
+                pendingPrograms = sequence?.PendingProgramCount ?? 0,
+                failedPrograms = sequence?.FailedProgramCount ?? 0,
+                proxyMaterials = sequence?.ProxyMaterials.Count ?? 0,
+                sequenceFinished = sequence?.IsFinished ?? true,
+            },
             audioClock = player is null ? null : new
             {
                 mode = player.Clock.Mode.ToString(),

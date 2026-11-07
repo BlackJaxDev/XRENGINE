@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-
 namespace XREngine.Rendering.Commands
 {
     public partial class GPUScene

@@ -229,8 +229,14 @@ public sealed class CutscenePlayer
     /// <summary>
     /// True when a seek to any position shows resident data at once: T0 of the whole closure is resident and the programs of
     /// the T0 materials are ready. <see cref="CutsceneOpenSequence"/> sets it at the end of the open. A seek after that time
-    /// loads no T0 data, because T0 stays resident until the close. It is false for a player that no open sequence opened.
+    /// loads no T0 data, because T0 stays resident until the close.
     /// </summary>
+    /// <remarks>
+    /// Program readiness is checked at the material level (the uber variant build with the default prewarmer). The backend
+    /// program link and a Vulkan pipeline compile are not seen, so on Vulkan a T0 draw can still be skipped for some frames
+    /// after this flag is true. The flag is false for a player that no open sequence opened, for a host with no residency
+    /// session (T0 residency is then not known), and for the new player of a preview recompile.
+    /// </remarks>
     public bool ReadyForInstantSeek { get; internal set; }
 
     /// <summary>True while <see cref="PlaybackGate"/> holds playback. The audio sources stay stopped while it is true.</summary>

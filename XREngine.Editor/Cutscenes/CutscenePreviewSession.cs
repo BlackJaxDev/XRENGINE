@@ -21,6 +21,7 @@ public static class CutscenePreviewSession
     private static XRWorld? _previewTargetWorld;
     private static CutscenePreviewHost? _host;
     private static CutsceneDirectorComponent? _director;
+    private static CutsceneOpenSequence? _openSequence;
     private static bool _updateHooked;
     private static bool _initialized;
 
@@ -29,6 +30,12 @@ public static class CutscenePreviewSession
 
     /// <summary>The director that the session controls in play mode, or null.</summary>
     public static CutsceneDirectorComponent? Director => _director;
+
+    /// <summary>
+    /// The open sequence of the open preview or director, or null when nothing is open. It stays after it finished, so its
+    /// pending counts stay readable.
+    /// </summary>
+    public static CutsceneOpenSequence? OpenSequence => _openSequence;
 
     /// <summary>True when a preview or a director is open.</summary>
     public static bool IsOpen => _host is { IsActive: true } || _director is { IsOpen: true };
@@ -129,8 +136,10 @@ public static class CutscenePreviewSession
         Close();
         _sessionDiagnostics.Clear();
 
+        // The open sequence advances in the preview ticks. The task is not awaited, so the update thread never waits for it.
         CutscenePreviewHost host = new(CreateResolver(world), FindSceneViewport(world), CreateResidencyBackend);
-        host.Begin(asset);
+        _ = host.BeginWithOpenSequence(asset, out CutsceneOpenSequence sequence);
+        _openSequence = sequence;
         _host = host;
         _previewWorld = world;
         _previewTargetWorld = world.TargetWorld;
@@ -139,6 +148,8 @@ public static class CutscenePreviewSession
 
     /// <summary>
     /// Opens a director in play mode and shows its camera on the scene viewport. An open cutscene closes first.
+    /// The director opens through a <see cref="CutsceneOpenSequence"/>, which then advances in the director ticks. The task
+    /// is not awaited, so the update thread never waits for it.
     /// </summary>
     /// <param name="director">The director to open.</param>
     /// <returns>True if the director opened. If not, <see cref="CopyDiagnostics"/> gives the reason.</returns>
@@ -149,7 +160,9 @@ public static class CutscenePreviewSession
         _sessionDiagnostics.Clear();
 
         director.TargetViewport ??= FindSceneViewport(director.World as RuntimeWorld);
-        director.OpenAsync().GetAwaiter().GetResult();
+        CutsceneOpenSequence sequence = new(director);
+        _ = sequence.RunAsync(null, CancellationToken.None);
+        _openSequence = sequence;
         _director = director;
         return director.IsOpen;
     }
@@ -163,6 +176,7 @@ public static class CutscenePreviewSession
         CutsceneDirectorComponent? director = _director;
         _host = null;
         _director = null;
+        _openSequence = null;
         _previewWorld = null;
         _previewTargetWorld = null;
         host?.End();

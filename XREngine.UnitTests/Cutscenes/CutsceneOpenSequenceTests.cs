@@ -4,6 +4,7 @@ using Shouldly;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Cutscenes;
+using XREngine.Editor.Cutscenes;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Residency;
@@ -88,6 +89,7 @@ public sealed class CutsceneOpenSequenceTests
         public required FakePrewarmer Prewarmer { get; init; }
         public required XRMaterial DetailMaterial { get; init; }
         public required XRMaterial ProxyMaterial { get; init; }
+        public required CutsceneAsset Asset { get; init; }
     }
 
     private static CutsceneTime T(double seconds) => CutsceneTime.FromSeconds(seconds);
@@ -148,6 +150,7 @@ public sealed class CutsceneOpenSequenceTests
             Prewarmer = new FakePrewarmer(),
             DetailMaterial = detail,
             ProxyMaterial = proxy,
+            Asset = asset,
         };
     }
 
@@ -293,6 +296,102 @@ public sealed class CutsceneOpenSequenceTests
             d.Message.Contains("ProxyMaterial", StringComparison.Ordinal) &&
             d.Message.Contains("fragment compile failed at line 12", StringComparison.Ordinal));
         sequence.FailedProgramCount.ShouldBe(1);
+        rig.Director.Close();
+    }
+
+    [Test]
+    public void PreviewHost_OpenSequence_BecomesReady_AfterT0AndItsPrograms()
+    {
+        Rig rig = MakeRig();
+        CutscenePreviewHost host = new(new FakeResolver(rig.Node), residencyBackendFactory: () => rig.Backend);
+        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Ready, null);
+
+        Task<bool> task = host.BeginWithOpenSequence(rig.Asset, out CutsceneOpenSequence sequence, rig.Prewarmer);
+        try
+        {
+            host.IsActive.ShouldBeTrue();
+            rig.Backend.Planner = host.Residency.ShouldNotBeNull().Planner;
+            sequence.ProxyMaterials.ShouldBe([rig.ProxyMaterial]);
+
+            host.Tick(0);
+            task.IsCompleted.ShouldBeFalse();
+            sequence.PendingProxyCount.ShouldBeGreaterThan(0);
+            host.Player.ShouldNotBeNull().ReadyForInstantSeek.ShouldBeFalse();
+
+            CompleteProxies(rig.Backend);
+            host.Tick(0);
+
+            task.IsCompletedSuccessfully.ShouldBeTrue();
+            task.Result.ShouldBeTrue();
+            sequence.PendingProxyCount.ShouldBe(0);
+            host.Player.ShouldNotBeNull().ReadyForInstantSeek.ShouldBeTrue();
+        }
+        finally
+        {
+            host.End();
+        }
+    }
+
+    [Test]
+    public void PreviewHost_EndDuringOpen_CancelsTheTask_AndRestoresTheScene()
+    {
+        Rig rig = MakeRig();
+        CutscenePreviewHost host = new(new FakeResolver(rig.Node), residencyBackendFactory: () => rig.Backend);
+        Task<bool> task = host.BeginWithOpenSequence(rig.Asset, out _, rig.Prewarmer);
+        host.Seek(T(3), ESeekIntent.Jump);
+        host.Tick(0);
+        X(rig.Node).ShouldBe(100f);
+
+        host.End();
+
+        task.IsCanceled.ShouldBeTrue();
+        host.IsActive.ShouldBeFalse();
+        ((Transform)rig.Node.Transform).Translation.ShouldBe(OriginalPosition);
+    }
+
+    [Test]
+    public void CloseByAnotherCaller_CancelsTheTask()
+    {
+        Rig rig = MakeRig();
+        Task<bool> task = Start(rig, new CutsceneOpenSequence(rig.Director, rig.Prewarmer), null, CancellationToken.None);
+
+        rig.Director.Close();
+
+        task.IsCanceled.ShouldBeTrue();
+        ((Transform)rig.Node.Transform).Translation.ShouldBe(OriginalPosition);
+    }
+
+    [Test]
+    public void WithoutAResidencySession_ReadyForInstantSeekStaysFalse_AndADiagnosticSaysWhy()
+    {
+        Rig rig = MakeRig();
+        rig.Director.ResidencyEnabled = false;
+        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Ready, null);
+
+        Task<bool> task = new CutsceneOpenSequence(rig.Director, rig.Prewarmer).RunAsync(null, CancellationToken.None);
+
+        rig.Director.IsOpen.ShouldBeTrue();
+        rig.Director.Residency.ShouldBeNull();
+        task.IsCompletedSuccessfully.ShouldBeTrue();
+        task.Result.ShouldBeFalse();
+        rig.Director.Player.ShouldNotBeNull().ReadyForInstantSeek.ShouldBeFalse();
+        rig.Director.Diagnostics.ShouldContain(d => d.Message.Contains("No residency session", StringComparison.Ordinal));
+        rig.Director.Close();
+    }
+
+    [Test]
+    public void MaterialOverride_IsTheProxyMaterial()
+    {
+        Rig rig = MakeRig();
+        XRMaterial overrideMaterial = new() { Name = "OverrideMaterial" };
+        rig.Node.GetComponent<ModelComponent>().ShouldNotBeNull().Meshes.Single().MaterialOverride = overrideMaterial;
+        CutsceneOpenSequence sequence = new(rig.Director, rig.Prewarmer);
+
+        Start(rig, sequence, null, CancellationToken.None);
+
+        sequence.ProxyMaterials.ShouldBe([overrideMaterial]);
+        sequence.DetailMaterials.ShouldBeEmpty();
+        rig.Prewarmer.Requested.ShouldContain(overrideMaterial);
         rig.Director.Close();
     }
 }

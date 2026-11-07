@@ -369,10 +369,14 @@ A claim changes only the camera that shows the scene. The screen-space UI of the
 
 To open with T0 ready for an instant seek, use `new CutsceneOpenSequence(director).RunAsync(progress, cancellationToken)` in place of `OpenAsync`. The sequence opens the director, finds the proxy materials (the material of the lowest LOD of each sub-mesh of the bound nodes and their descendants, listed in `ProxyMaterials`), and requests their programs at once. At the end of each director frame it reads `CutsceneResidencySession.PendingProxyCount` and the program state of each proxy material. When both are complete, it sets `CutscenePlayer.ReadyForInstantSeek`, requests the programs of the other LOD materials as lower-priority work, and the task gives true. T0 stays resident until the close, so a later seek loads no T0 data.
 
-- The sequence advances on the director frame, on the update thread. It never waits for the render thread.
+- The editor uses the sequence for both open paths: the edit-mode preview (`CutscenePreviewHost.BeginWithOpenSequence`, from `CutscenePreviewSession.OpenPreview`) and the play-mode director (`CutscenePreviewSession.OpenDirector`). Both run it without waiting on its task. MCP `cutscene_status` and the residency strip of the sequencer panel show `readyForInstantSeek`, the pending T0 loads, and the pending and failed proxy programs. `cutscene_open` with `close` before the sequence finished cancels it and restores the scene.
+- The sequence works on any `ICutsceneOpenHost`. It advances at the end of each host frame, on the update thread. It never waits for the render thread, and a caller must not block on its task.
+- The proxy material of a renderable mesh is its material override when it has one, otherwise the material of the lowest LOD.
+- Without a residency session, T0 residency is not known: the sequence adds one diagnostic, `ReadyForInstantSeek` stays false, and the task gives false.
+- A preview recompile makes a new player, whose `ReadyForInstantSeek` is false. Open the preview again to measure it.
 - The default prewarmer (`CutsceneMaterialProgramPrewarmer`) uses the asynchronous uber variant build of the material and its state. A material without uber state is ready at once. This layer cannot see the backend program link or a Vulkan pipeline compile, which the backend mesh renderer makes at the first draw. Pass another `ICutsceneProgramPrewarmer` to change this.
 - A failed proxy program adds a diagnostic to `director.Diagnostics` with the material name and the reason. The task gives false, `ReadyForInstantSeek` stays false, and the cutscene stays open.
-- A cancel closes the director at the next frame, which restores the bound nodes and destroys the spawned instances. The task is then canceled. A `Close` from another caller also cancels the task.
+- A cancel closes the host at the next host frame, which restores the bound nodes and destroys the spawned instances. The task is then canceled. A `Close` from another caller also cancels the task.
 
 ### VR Camera Modes
 

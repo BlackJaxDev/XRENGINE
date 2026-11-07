@@ -99,6 +99,32 @@ public sealed class GpuLodResidencyContractTests
     }
 
     [Test]
+    public void TableLongerThanTheLevelCapacity_RegistersTheInlineLodAsTheLastLevel()
+    {
+        (SceneNode node, RenderableMesh renderable, _) = SpawnProxyFirst(6);
+        try
+        {
+            GPUScene scene = new();
+            XRMesh commandMesh = renderable.CurrentLODMesh.ShouldNotBeNull();
+
+            scene.ResolveRenderableLogicalMeshRegistration(renderable, commandMesh, 0, "Proxy", out uint meshId, out uint logicalMeshId, out uint lodCount, out string? failure)
+                .ShouldBeTrue(failure);
+
+            lodCount.ShouldBe((uint)GPUScene.MaxLogicalMeshLodCount);
+            scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry entry).ShouldBeTrue();
+            entry.LOD0_MeshDataID.ShouldBe(0u);
+            entry.LOD1_MeshDataID.ShouldBe(0u);
+            entry.LOD2_MeshDataID.ShouldBe(0u);
+            entry.LOD3_MeshDataID.ShouldBe(meshId);
+            entry.LOD3_MinProjectedRadiusPixels.ShouldBe(0.0f);
+        }
+        finally
+        {
+            node.Destroy(now: true);
+        }
+    }
+
+    [Test]
     public void PublishedLod_UploadsAtTheNextRegistration()
     {
         (SceneNode node, RenderableMesh renderable, SubMesh subMesh) = SpawnProxyFirst();
@@ -196,13 +222,13 @@ public sealed class GpuLodResidencyContractTests
             .ShouldNotBeNull()
             .Invoke(scene, [logicalMeshId]);
 
-    private (SceneNode Node, RenderableMesh Renderable, SubMesh SubMesh) SpawnProxyFirst()
+    private (SceneNode Node, RenderableMesh Renderable, SubMesh SubMesh) SpawnProxyFirst(int lodCount = 3)
     {
         XRMaterial material = new() { Name = "ProxyMaterial" };
-        SubMesh source = new(
-            new SubMeshLOD(material, CreateMesh(8, 0.0f), 10.0f),
-            new SubMeshLOD(material, CreateMesh(4, 0.1f), 30.0f),
-            new SubMeshLOD(material, CreateMesh(2, 0.2f), 1000.0f))
+        SubMeshLOD[] lods = new SubMeshLOD[lodCount];
+        for (int i = 0; i < lodCount; i++)
+            lods[i] = new SubMeshLOD(material, CreateMesh(2 * (lodCount - i), i * 0.1f), i == lodCount - 1 ? 1000.0f : 10.0f * (i + 1));
+        SubMesh source = new(lods)
         {
             Name = "GpuLodSubMesh",
         };
@@ -221,9 +247,9 @@ public sealed class GpuLodResidencyContractTests
         ModelComponent component = node.AddComponent<ModelComponent>()!;
         component.Model = new Model(loaded);
         RenderableMesh renderable = component.Meshes.Single();
-        renderable.LodTableCount.ShouldBe(3);
+        renderable.LodTableCount.ShouldBe(lodCount);
         renderable.IsLodResident(0).ShouldBeFalse();
-        renderable.IsLodResident(2).ShouldBeTrue();
+        renderable.IsLodResident(lodCount - 1).ShouldBeTrue();
         return (node, renderable, loaded);
     }
 

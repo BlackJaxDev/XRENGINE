@@ -32,7 +32,7 @@ namespace XREngine.Editor.Cutscenes;
 /// playback wait is off by default, because an author expects the preview to follow the clock.
 /// </para>
 /// </remarks>
-public sealed class CutscenePreviewHost
+public sealed class CutscenePreviewHost : ICutsceneOpenHost
 {
     /// <summary>The time in seconds with no edit after which the residency session selects the manifest again.</summary>
     public const double ResidencyRefreshDelaySeconds = 0.25;
@@ -45,6 +45,7 @@ public sealed class CutscenePreviewHost
     private readonly Func<IResidencyBackend?>? _residencyBackendFactory;
     private readonly ICutsceneResidencyAssetCollector _residencyCollector;
     private readonly List<CutsceneCompileDiagnostic> _residencyDiagnostics = [];
+    private readonly List<CutsceneCompileDiagnostic> _openDiagnostics = [];
 
     private long _undoMark;
     private CutsceneAsset? _asset;
@@ -64,6 +65,8 @@ public sealed class CutscenePreviewHost
     private bool _hasLoopRange;
     private CutsceneTime _loopStart;
     private CutsceneTime _loopEnd;
+    private CutsceneOpenSequence? _openSequence;
+    private CutsceneAsset? _sequenceAsset;
 
     /// <summary>Creates a host.</summary>
     /// <param name="resolver">The object that finds the bound scene nodes.</param>
@@ -170,11 +173,37 @@ public sealed class CutscenePreviewHost
         _undoMark = Undo.MarkHistory();
         _asset = asset;
         _residencyDiagnostics.Clear();
+        _openDiagnostics.Clear();
         Open(asset);
         _player!.Pause();
 
         // The first tick shows the state at position zero.
         Seek(CutsceneTime.Zero, ESeekIntent.Jump);
+    }
+
+    /// <summary>
+    /// Starts the preview through a <see cref="CutsceneOpenSequence"/>: <see cref="Begin"/> runs at once, and the sequence then
+    /// advances at the end of each <see cref="Tick"/> until T0 and the proxy programs are ready. Do not block on the task: it
+    /// needs later ticks. <see cref="End"/> before the sequence finished cancels the task and restores the scene.
+    /// </summary>
+    /// <param name="asset">The cutscene to preview.</param>
+    /// <param name="sequence">Receives the sequence, for its pending counts.</param>
+    /// <param name="prewarmer">The program prewarmer, or null for the default.</param>
+    /// <param name="cancellationToken">A token that cancels the open. The preview then ends at the next tick.</param>
+    /// <returns>The task of <see cref="CutsceneOpenSequence.RunAsync"/>.</returns>
+    public Task<bool> BeginWithOpenSequence(CutsceneAsset asset, out CutsceneOpenSequence sequence, ICutsceneProgramPrewarmer? prewarmer = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(asset);
+        _sequenceAsset = asset;
+        sequence = new CutsceneOpenSequence(this, prewarmer);
+        try
+        {
+            return sequence.RunAsync(null, cancellationToken);
+        }
+        finally
+        {
+            _sequenceAsset = null;
+        }
     }
 
     /// <summary>Asks for a new position. The next <see cref="Tick"/> moves it. The last seek before a tick wins.</summary>
@@ -239,6 +268,14 @@ public sealed class CutscenePreviewHost
     /// <param name="deltaSeconds">The wall time since the last tick, in seconds.</param>
     public void Tick(double deltaSeconds)
     {
+        TickPreview(deltaSeconds);
+
+        // The open sequence reads the residency state after the planner update of this tick.
+        _openSequence?.OnHostFrame();
+    }
+
+    private void TickPreview(double deltaSeconds)
+    {
         if (_player is null)
             return;
 
@@ -288,6 +325,11 @@ public sealed class CutscenePreviewHost
     /// </summary>
     public void End()
     {
+        // An end before the open sequence finished cancels its task.
+        CutsceneOpenSequence? openSequence = _openSequence;
+        _openSequence = null;
+        openSequence?.OnHostClosed();
+
         if (_player is null)
             return;
 
@@ -322,11 +364,48 @@ public sealed class CutscenePreviewHost
         ArgumentNullException.ThrowIfNull(destination);
         destination.AddRange(_compileDiagnostics);
         destination.AddRange(_residencyDiagnostics);
+        destination.AddRange(_openDiagnostics);
         if (_bindings is { } bindings)
             destination.AddRange(bindings.Diagnostics);
         if (_player is { } player)
             destination.AddRange(player.Diagnostics);
     }
+
+    /// <inheritdoc/>
+    bool ICutsceneOpenHost.OpenForSequence(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Begin(_sequenceAsset ?? throw new InvalidOperationException("Start the preview sequence with BeginWithOpenSequence."));
+        return IsActive;
+    }
+
+    /// <inheritdoc/>
+    CutscenePlayer? ICutsceneOpenHost.OpenPlayer => _player;
+
+    /// <inheritdoc/>
+    CutsceneResidencySession? ICutsceneOpenHost.OpenResidency => _residency;
+
+    /// <inheritdoc/>
+    CutsceneBindingTable? ICutsceneOpenHost.OpenBindings => _bindings;
+
+    /// <inheritdoc/>
+    void ICutsceneOpenHost.AttachOpenSequence(CutsceneOpenSequence sequence)
+        => _openSequence = sequence;
+
+    /// <inheritdoc/>
+    void ICutsceneOpenHost.DetachOpenSequence(CutsceneOpenSequence sequence)
+    {
+        if (ReferenceEquals(_openSequence, sequence))
+            _openSequence = null;
+    }
+
+    /// <inheritdoc/>
+    void ICutsceneOpenHost.CloseForSequence()
+        => End();
+
+    /// <inheritdoc/>
+    void ICutsceneOpenHost.AddOpenDiagnostic(string message)
+        => _openDiagnostics.Add(new CutsceneCompileDiagnostic(-1, -1, message));
 
     private void Open(CutsceneAsset asset)
     {

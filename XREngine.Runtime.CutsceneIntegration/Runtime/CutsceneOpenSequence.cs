@@ -6,29 +6,33 @@ using XREngine.Scene;
 namespace XREngine.Cutscenes;
 
 /// <summary>
-/// Opens a cutscene on a <see cref="CutsceneDirectorComponent"/> and reports when an instant seek can show the T0 data.
+/// Opens a cutscene on an <see cref="ICutsceneOpenHost"/> (a <see cref="CutsceneDirectorComponent"/> or the editor preview
+/// host) and reports when an instant seek can show the T0 data.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <see cref="RunAsync"/> does these steps:
 /// </para>
 /// <list type="number">
-/// <item><description>It opens the director: compile, bindings, player, and the residency session. The session requests T0
+/// <item><description>It opens the host: compile, bindings, player, and the residency session. The session requests T0
 /// for each asset of the closure.</description></item>
-/// <item><description>It finds the proxy materials: the material of the lowest LOD of each sub-mesh of the bound nodes and
-/// their descendants. The proxy material is an authored LOD material, not a fallback. <see cref="ProxyMaterials"/> lists
-/// them for diagnostics. It requests their programs at once.</description></item>
-/// <item><description>At each director frame, it reads the T0 loads that did not complete
+/// <item><description>It finds the proxy materials: for each renderable mesh of the bound nodes and their descendants, the
+/// material override if the mesh has one, otherwise the material of the lowest LOD of its sub-mesh. The proxy material is an
+/// authored LOD material, not a fallback. <see cref="ProxyMaterials"/> lists them for diagnostics. It requests their
+/// programs at once.</description></item>
+/// <item><description>At each host frame, it reads the T0 loads that did not complete
 /// (<see cref="CutsceneResidencySession.PendingProxyCount"/>) and the program state of each proxy material. When both are
 /// complete, it sets <see cref="CutscenePlayer.ReadyForInstantSeek"/>, requests the programs of the other LOD materials as
 /// lower-priority work, and completes the task with true.</description></item>
 /// </list>
 /// <para>
-/// The sequence advances on the director frame (<see cref="CutsceneDirectorComponent.AdvanceFrame"/>), on the update thread.
-/// It never waits for the render thread. A program failure adds a diagnostic to <see cref="CutsceneDirectorComponent.Diagnostics"/>
-/// that names the material and the reason; the task then completes with false and the cutscene stays open. A cancel closes
-/// the director at the next frame, which restores the bound nodes and destroys the spawned instances, and the task is
-/// canceled. A close of the director by another caller also cancels the task.
+/// The sequence advances on the host frame, on the update thread. It never waits for the render thread, and a caller must
+/// not block on its task, because the task needs later frames. A program failure adds a diagnostic to the host that names
+/// the material and the reason; the task then completes with false and the cutscene stays open. A host with no residency
+/// session cannot tell that T0 is resident: the sequence adds one diagnostic, <see cref="CutscenePlayer.ReadyForInstantSeek"/>
+/// stays false, and the task completes with false when the programs are ready. A cancel closes the host at the next host
+/// frame, which restores the bound nodes and destroys the spawned instances, and the task is canceled. A close of the host
+/// by another caller also cancels the task.
 /// </para>
 /// </remarks>
 public sealed class CutsceneOpenSequence
@@ -37,7 +41,7 @@ public sealed class CutsceneOpenSequence
     private const float ProxyProgressShare = 0.6f;
     private const float ProgramProgressShare = 0.3f;
 
-    private readonly CutsceneDirectorComponent _director;
+    private readonly ICutsceneOpenHost _host;
     private readonly ICutsceneProgramPrewarmer _prewarmer;
     private readonly List<XRMaterial> _proxyMaterials = [];
     private readonly List<XRMaterial> _detailMaterials = [];
@@ -47,8 +51,6 @@ public sealed class CutsceneOpenSequence
     private CancellationTokenRegistration _cancelRegistration;
     private CancellationToken _cancellationToken;
     private IProgress<float>? _progress;
-    private CutscenePlayer? _player;
-    private CutsceneResidencySession? _residency;
     private int _initialPendingProxies;
     private int _cancelRequested;
     private float _reportedProgress = -1.0f;
@@ -59,13 +61,21 @@ public sealed class CutsceneOpenSequence
     /// <param name="director">The director that opens the cutscene. Set its asset and resolver first.</param>
     /// <param name="prewarmer">The program prewarmer, or null for <see cref="CutsceneMaterialProgramPrewarmer.Instance"/>.</param>
     public CutsceneOpenSequence(CutsceneDirectorComponent director, ICutsceneProgramPrewarmer? prewarmer = null)
+        : this((ICutsceneOpenHost)director, prewarmer)
     {
-        ArgumentNullException.ThrowIfNull(director);
-        _director = director;
+    }
+
+    /// <summary>Creates an open sequence for a host.</summary>
+    /// <param name="host">The host that opens the cutscene.</param>
+    /// <param name="prewarmer">The program prewarmer, or null for <see cref="CutsceneMaterialProgramPrewarmer.Instance"/>.</param>
+    public CutsceneOpenSequence(ICutsceneOpenHost host, ICutsceneProgramPrewarmer? prewarmer = null)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        _host = host;
         _prewarmer = prewarmer ?? CutsceneMaterialProgramPrewarmer.Instance;
     }
 
-    /// <summary>The materials of the lowest LOD of each bound sub-mesh: the T0 materials whose programs the open waits for.</summary>
+    /// <summary>The proxy materials: the T0 materials whose programs the open waits for.</summary>
     public IReadOnlyList<XRMaterial> ProxyMaterials => _proxyMaterials;
 
     /// <summary>The materials of the other LODs. Their programs start after T0 is ready, and the open does not wait for them.</summary>
@@ -73,6 +83,9 @@ public sealed class CutsceneOpenSequence
 
     /// <summary>The number of proxy materials whose programs were not ready at the last frame.</summary>
     public int PendingProgramCount { get; private set; }
+
+    /// <summary>The number of T0 loads that did not complete at the last frame.</summary>
+    public int PendingProxyCount { get; private set; }
 
     /// <summary>The number of proxy materials whose programs failed.</summary>
     public int FailedProgramCount => _reportedFailures.Count;
@@ -82,12 +95,16 @@ public sealed class CutsceneOpenSequence
 
     /// <summary>
     /// Opens the cutscene and completes when T0 and the proxy programs are ready. Call it one time, on the update thread.
+    /// Do not block on the task: it needs later host frames.
     /// </summary>
     /// <param name="progress">Receives the progress from 0 to 1 when it changes, or null.</param>
-    /// <param name="cancellationToken">A token that cancels the open. A cancel closes the director and restores the scene.</param>
+    /// <param name="cancellationToken">
+    /// A token that cancels the open. The host closes and restores the scene at its next frame, so a host that does not tick
+    /// keeps the cutscene open until a frame runs or another caller closes it.
+    /// </param>
     /// <returns>
-    /// A task that gives true when <see cref="CutscenePlayer.ReadyForInstantSeek"/> is true, and false when the open failed
-    /// or a proxy program failed. <see cref="CutsceneDirectorComponent.Diagnostics"/> gives the reason of a false result.
+    /// A task that gives true when <see cref="CutscenePlayer.ReadyForInstantSeek"/> is true, and false when the open failed,
+    /// a proxy program failed, or no residency session exists. The diagnostics of the host give the reason.
     /// </returns>
     public Task<bool> RunAsync(IProgress<float>? progress, CancellationToken cancellationToken)
     {
@@ -101,32 +118,38 @@ public sealed class CutsceneOpenSequence
             return Task.FromCanceled<bool>(cancellationToken);
         }
 
-        Task open = _director.OpenAsync(cancellationToken);
-        if (open.IsCanceled)
+        bool opened;
+        try
+        {
+            opened = _host.OpenForSequence(cancellationToken);
+        }
+        catch (OperationCanceledException)
         {
             _finished = true;
             return Task.FromCanceled<bool>(cancellationToken);
         }
 
-        if (!_director.IsOpen || _director.Player is not { } player)
+        if (!opened || _host.OpenPlayer is null)
         {
             _finished = true;
             return Task.FromResult(false);
         }
 
-        _player = player;
-        _residency = _director.Residency;
         _progress = progress;
         _cancellationToken = cancellationToken;
         _completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        if (_director.Bindings is { } bindings)
+        if (_host.OpenBindings is { } bindings)
             CollectMaterials(bindings);
         for (int i = 0; i < _proxyMaterials.Count; i++)
             _prewarmer.Request(_proxyMaterials[i]);
 
-        _initialPendingProxies = _residency?.PendingProxyCount ?? 0;
-        _director.AttachOpenSequence(this);
+        if (_host.OpenResidency is { } residency)
+            _initialPendingProxies = residency.PendingProxyCount;
+        else
+            _host.AddOpenDiagnostic("No residency session runs, so the open cannot tell that T0 is resident. ReadyForInstantSeek stays false.");
+
+        _host.AttachOpenSequence(this);
         if (cancellationToken.CanBeCanceled)
             _cancelRegistration = cancellationToken.Register(static state => ((CutsceneOpenSequence)state!).RequestCancel(), this);
 
@@ -135,8 +158,8 @@ public sealed class CutsceneOpenSequence
         return _completion.Task;
     }
 
-    /// <summary>Advances the sequence. The director calls it at the end of each frame, on the update thread.</summary>
-    internal void OnFrame()
+    /// <summary>Advances the sequence. The host calls it at the end of each frame, on the update thread.</summary>
+    public void OnHostFrame()
     {
         if (_finished)
             return;
@@ -150,8 +173,8 @@ public sealed class CutsceneOpenSequence
         Evaluate();
     }
 
-    /// <summary>Cancels the task when the director closes before the sequence finished.</summary>
-    internal void OnDirectorClosed()
+    /// <summary>Cancels the task. The host calls it when it closes before the sequence finished.</summary>
+    public void OnHostClosed()
     {
         if (_finished)
             return;
@@ -161,7 +184,7 @@ public sealed class CutsceneOpenSequence
         _completion?.TrySetCanceled();
     }
 
-    // The token callback can run on any thread, so it only sets a flag. The next director frame closes the cutscene.
+    // The token callback can run on any thread, so it only sets a flag. The next host frame closes the cutscene.
     private void RequestCancel()
         => Volatile.Write(ref _cancelRequested, 1);
 
@@ -169,16 +192,24 @@ public sealed class CutsceneOpenSequence
     {
         _finished = true;
         _cancelRegistration.Dispose();
-        _director.DetachOpenSequence(this);
+        _host.DetachOpenSequence(this);
 
-        // Close restores the bound nodes with the restore setting of the asset and destroys the spawned instances.
-        _director.Close();
+        // The close restores the bound nodes with the restore setting of the asset and destroys the spawned instances.
+        _host.CloseForSequence();
         _completion?.TrySetCanceled(_cancellationToken);
     }
 
     private void Evaluate()
     {
-        int pendingProxies = _residency is { IsClosed: false } residency ? residency.PendingProxyCount : 0;
+        if (_host.OpenPlayer is not { } player)
+        {
+            OnHostClosed();
+            return;
+        }
+
+        CutsceneResidencySession? residency = _host.OpenResidency;
+        int pendingProxies = residency is { IsClosed: false } ? residency.PendingProxyCount : 0;
+        PendingProxyCount = pendingProxies;
 
         int pendingPrograms = 0;
         for (int i = 0; i < _proxyMaterials.Count; i++)
@@ -204,13 +235,14 @@ public sealed class CutsceneOpenSequence
         if (pendingProxies > 0 || pendingPrograms > 0)
             return;
 
-        if (_reportedFailures.Count > 0)
+        // With no residency session, T0 residency is not known, so the flag stays false.
+        if (_reportedFailures.Count > 0 || residency is null)
         {
             Finish(false);
             return;
         }
 
-        _player!.ReadyForInstantSeek = true;
+        player.ReadyForInstantSeek = true;
         for (int i = 0; i < _detailMaterials.Count; i++)
             _prewarmer.Request(_detailMaterials[i]);
         Report(1.0f);
@@ -221,14 +253,14 @@ public sealed class CutsceneOpenSequence
     {
         _finished = true;
         _cancelRegistration.Dispose();
-        _director.DetachOpenSequence(this);
+        _host.DetachOpenSequence(this);
         _completion?.TrySetResult(result);
     }
 
     private void ReportProgramFailure(XRMaterial material, string? failureReason)
     {
         string message = $"The program of proxy material '{material.Name ?? "<unnamed>"}' failed, so its T0 LOD cannot draw: {failureReason ?? "no reason was given"}.";
-        _director.AddOpenDiagnostic(message);
+        _host.AddOpenDiagnostic(message);
         Debug.LogWarning(ELogCategory.Animation, "Cutscene open: {0}", message);
     }
 
@@ -264,13 +296,13 @@ public sealed class CutsceneOpenSequence
         var components = node.Components;
         for (int c = 0; c < components.Count; c++)
         {
-            if (components[c] is not ModelComponent { Model: { } model })
+            if (components[c] is not RenderableComponent renderableComponent)
                 continue;
 
-            var meshes = model.Meshes;
+            var meshes = renderableComponent.Meshes;
             for (int m = 0; m < meshes.Count; m++)
-                if (meshes[m] is { } subMesh)
-                    CollectSubMesh(subMesh, proxies, details);
+                if (meshes[m] is { } renderable)
+                    CollectRenderable(renderable, proxies, details);
         }
 
         var children = node.Transform.Children;
@@ -279,8 +311,22 @@ public sealed class CutsceneOpenSequence
                 CollectNode(child, visited, proxies, details);
     }
 
-    private void CollectSubMesh(SubMesh subMesh, HashSet<XRMaterial> proxies, HashSet<XRMaterial> details)
+    private void CollectRenderable(RenderableMesh renderable, HashSet<XRMaterial> proxies, HashSet<XRMaterial> details)
     {
+        // A material override draws on every LOD, so it is the T0 material and no LOD material draws.
+        if (renderable.MaterialOverride is { } materialOverride)
+        {
+            AddProxy(materialOverride, proxies);
+            return;
+        }
+
+        if (renderable.SourceSubMesh is not { } subMesh)
+        {
+            if (renderable.CurrentLODRenderer?.Material is { } current)
+                AddProxy(current, proxies);
+            return;
+        }
+
         // The LODs sort by visible distance, so the last LOD is the lowest one: the T0 data of the sub-mesh.
         SubMeshLOD? lowest = null;
         foreach (SubMeshLOD lod in subMesh.LODs)
@@ -290,7 +336,13 @@ public sealed class CutsceneOpenSequence
             lowest = lod;
         }
 
-        if (lowest?.Material is { } proxy && proxies.Add(proxy))
-            _proxyMaterials.Add(proxy);
+        if (lowest?.Material is { } proxy)
+            AddProxy(proxy, proxies);
+    }
+
+    private void AddProxy(XRMaterial material, HashSet<XRMaterial> proxies)
+    {
+        if (proxies.Add(material))
+            _proxyMaterials.Add(material);
     }
 }

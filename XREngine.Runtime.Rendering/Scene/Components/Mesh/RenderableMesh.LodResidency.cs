@@ -43,6 +43,9 @@ namespace XREngine.Components.Scene.Mesh
             set => SetField(ref _forcedMinimumLod, value is { } index ? Math.Max(0, index) : null);
         }
 
+        /// <summary>The sub-mesh that this renderable draws, or null for a renderable made without one.</summary>
+        internal SubMesh? SourceSubMesh => _sourceSubMesh;
+
         /// <summary>The number of LODs in the LOD table of the source sub-mesh, resident or not.</summary>
         public int LodTableCount => _lodSlots.Length;
 
