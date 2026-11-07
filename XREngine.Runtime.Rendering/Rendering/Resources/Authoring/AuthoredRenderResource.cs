@@ -78,6 +78,16 @@ public sealed class AuthoredRenderResource
     /// <summary>Gets or sets the attachments of a framebuffer.</summary>
     public List<AuthoredAttachment> Attachments { get; set; } = [];
 
+    /// <summary>Gets or sets the engine-relative path of the fragment shader of a quad material.</summary>
+    public string FragmentShader { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the textures that a quad material samples. Each name must match a sampler of the fragment shader,
+    /// and the pass metadata declares each one as a sampled texture.
+    /// </summary>
+    [Pipelines.Commands.RenderResourceName(Pipelines.Commands.ERenderResourceNameKind.Texture)]
+    public List<string> InputTextures { get; set; } = [];
+
     /// <summary>Returns a deep copy.</summary>
     public AuthoredRenderResource Clone()
     {
@@ -86,6 +96,7 @@ public sealed class AuthoredRenderResource
         copy.Attachments = new List<AuthoredAttachment>(Attachments.Count);
         for (int i = 0; i < Attachments.Count; i++)
             copy.Attachments.Add(Attachments[i].Clone());
+        copy.InputTextures = [.. InputTextures];
 
         return copy;
     }

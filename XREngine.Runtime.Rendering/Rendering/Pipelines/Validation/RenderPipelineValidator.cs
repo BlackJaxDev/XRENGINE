@@ -15,6 +15,7 @@ public static class RenderPipelineValidator
         new ScenePassNotRegisteredRule(),
         new TransientReadBeforeWriteRule(),
         new FrameBufferAttachmentMismatchRule(),
+        new FullscreenSamplerWithoutInputRule(),
         new UndeclaredResourceReadRule(),
         new UnwrittenResourceRule(),
         new UnpairedStatePushRule(),

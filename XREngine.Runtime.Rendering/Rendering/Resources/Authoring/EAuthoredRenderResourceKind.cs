@@ -17,4 +17,10 @@ public enum EAuthoredRenderResourceKind
 
     /// <summary>A framebuffer that attaches other declared resources.</summary>
     FrameBuffer,
+
+    /// <summary>
+    /// A fullscreen material with a custom fragment shader. A quad command renders it into its destination framebuffer,
+    /// and each declared input texture binds to the shader sampler with the same name.
+    /// </summary>
+    QuadMaterial,
 }

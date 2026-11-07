@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Resources.Authoring;
 
@@ -55,6 +56,9 @@ public static class AuthoredRenderResourceFactory
             case EAuthoredRenderResourceKind.FrameBuffer:
                 DeclareFrameBuffer(builder, snapshot, resolver);
                 break;
+            case EAuthoredRenderResourceKind.QuadMaterial:
+                DeclareQuadMaterial(builder, snapshot, resolver);
+                break;
             default:
                 throw new ArgumentException(string.Concat("Authored resource '", snapshot.Name, "' has an unknown kind."), nameof(resource));
         }
@@ -109,6 +113,10 @@ public static class AuthoredRenderResourceFactory
                 hash = Mix(hash, (ulong)(uint)attachment.MipLevel);
                 hash = Mix(hash, (ulong)(uint)attachment.LayerIndex);
             }
+
+            hash = Mix(hash, r.FragmentShader);
+            for (int t = 0; t < r.InputTextures.Count; t++)
+                hash = Mix(hash, r.InputTextures[t]);
         }
 
         return hash;
@@ -352,5 +360,48 @@ public static class AuthoredRenderResourceFactory
         if (resource.Optional)
             frameBuffer.Optional();
         frameBuffer.Add();
+    }
+
+    /// <summary>Creates the quad framebuffer of an authored quad material declaration.</summary>
+    /// <exception cref="InvalidOperationException">Thrown when an input texture does not exist in the generation.</exception>
+    public static XRFrameBuffer CreateQuadMaterial(AuthoredRenderResource resource, AttachmentResolver resolver)
+    {
+        XRTexture?[] textures = new XRTexture?[resource.InputTextures.Count];
+        for (int i = 0; i < textures.Length; i++)
+        {
+            string name = resource.InputTextures[i];
+            textures[i] = resolver(name) as XRTexture
+                ?? throw new InvalidOperationException(string.Concat("Quad material '", resource.Name, "' samples '", name, "', which the generation does not have as a texture."));
+        }
+
+        XRMaterial material = new(textures, XRShader.EngineShader(resource.FragmentShader, EShaderType.Fragment))
+        {
+            Name = resource.Name,
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            },
+        };
+
+        return new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = resource.Name };
+    }
+
+    private static void DeclareQuadMaterial(RenderPipelineResourceLayoutBuilder builder, AuthoredRenderResource resource, AttachmentResolver resolver)
+    {
+        if (string.IsNullOrWhiteSpace(resource.FragmentShader))
+            throw new ArgumentException(string.Concat("Authored quad material '", resource.Name, "' has no fragment shader."));
+
+        RenderPipelineResourceLayoutBuilder.QuadMaterialSpecBuilder quad = builder.QuadMaterial(resource.Name)
+            .Lifetime(resource.Lifetime)
+            .DependsOn([.. resource.InputTextures])
+            .Factory(() => CreateQuadMaterial(resource, resolver));
+        if (resource.Optional)
+            quad.Optional();
+        quad.Add();
     }
 }
