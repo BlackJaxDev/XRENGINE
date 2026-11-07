@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Shared path routing now lives in <see cref="VPRC_RenderMeshesPassShared"/>.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
     public class VPRC_RenderMeshesPass : VPRC_RenderMeshesPassShared
     {
         public VPRC_RenderMeshesPass()

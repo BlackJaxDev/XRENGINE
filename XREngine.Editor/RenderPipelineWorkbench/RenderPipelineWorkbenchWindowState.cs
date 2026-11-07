@@ -20,6 +20,9 @@ public sealed class RenderPipelineWorkbenchWindowState
     /// <summary>Gets the commands and passes that relate to the selection.</summary>
     public RenderPipelineWorkbenchLinks Links { get; } = new();
 
+    /// <summary>Gets which outline rows executed in the newest traced frame of the instance.</summary>
+    public RenderPipelineWorkbenchExecutionState Execution { get; } = new();
+
     /// <summary>Gets the cached Inspector text for the selection.</summary>
     public RenderPipelineWorkbenchInspectorContent Inspector { get; } = new();
 

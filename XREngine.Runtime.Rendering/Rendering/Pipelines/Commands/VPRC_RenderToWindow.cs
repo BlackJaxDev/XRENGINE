@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// When a viewport index is supplied, presentation is clipped to that viewport region.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Targets)]
 public sealed class VPRC_RenderToWindow : ViewportRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)

@@ -59,6 +59,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
+        ifElse.Label = "Viewport or FBO target";
         ifElse.ConditionEvaluator = () => State.WindowViewport is not null
             && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;
         ifElse.TrueCommands = CreateViewportTargetCommands();

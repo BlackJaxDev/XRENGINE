@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// populating the persistent DDGIHitBuffer SSBO with closest-hit records.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGITracePass : VPRC_DDGIComputePass
     {
         public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;

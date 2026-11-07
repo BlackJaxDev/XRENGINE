@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// This deliberately bypasses presentation, post-processing, and screen-space UI.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Advanced, DoesGpuWork = true)]
 public sealed class VPRC_ExportAdvancedOffscreenOutput : ViewportRenderCommand
 {
     private ERenderPipelineOffscreenOutput _output;

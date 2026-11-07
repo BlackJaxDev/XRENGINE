@@ -7,6 +7,7 @@ using XREngine.Scene.Physics.DebugVisualization;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
     public class VPRC_RenderDebugPhysics : ViewportRenderCommand
     {
         public string? RenderGraphPassName { get; set; }

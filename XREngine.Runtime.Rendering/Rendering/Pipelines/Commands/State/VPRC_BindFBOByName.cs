@@ -7,6 +7,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Targets)]
     public class VPRC_BindFBOByName : ViewportStateRenderCommand<VPRC_UnbindFBO>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

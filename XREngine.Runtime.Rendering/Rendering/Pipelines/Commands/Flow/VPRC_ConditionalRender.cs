@@ -19,6 +19,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// This is intended to pair with authored query/readback commands that publish results into the variable store.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
     public sealed class VPRC_ConditionalRender : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -70,6 +71,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Invert)
                 shouldExecute = !shouldExecute;
 
+            XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            instance?.BranchTrace.Record(this, shouldExecute ? Body : null);
             if (!shouldExecute)
                 return;
 

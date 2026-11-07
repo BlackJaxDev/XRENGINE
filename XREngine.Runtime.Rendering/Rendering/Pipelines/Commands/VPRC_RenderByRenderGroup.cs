@@ -19,6 +19,7 @@ public enum ERenderGroupSource
 /// names, mesh names, material render passes, or command type names.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
 public class VPRC_RenderByRenderGroup : ViewportRenderCommand
 {
     public int RenderPass { get; set; }

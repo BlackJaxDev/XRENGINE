@@ -4,6 +4,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Targets)]
     public class VPRC_UnbindFBO : ViewportPopStateRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

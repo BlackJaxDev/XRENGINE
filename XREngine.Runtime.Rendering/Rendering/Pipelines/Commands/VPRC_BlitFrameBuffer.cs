@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Performs a framebuffer blit/resolve between two cached FBOs.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
     public class VPRC_BlitFrameBuffer : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

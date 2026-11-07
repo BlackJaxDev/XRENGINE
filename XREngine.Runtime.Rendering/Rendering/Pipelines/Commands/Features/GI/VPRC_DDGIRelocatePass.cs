@@ -17,6 +17,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// and open-space probes as sleeping.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIRelocatePass : VPRC_DDGIComputePass
     {
         public string ProbeBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;

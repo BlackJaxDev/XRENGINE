@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Tracks the per-camera matrix and active-atmosphere history used by atmospheric temporal reprojection.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
 public sealed class VPRC_AtmosphereHistoryPass : ViewportRenderCommand
 {
     private const float CameraCutTranslationThreshold = 2.0f;

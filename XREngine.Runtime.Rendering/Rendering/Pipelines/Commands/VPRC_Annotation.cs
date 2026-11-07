@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Useful for marking logical phases inside user-authored pipelines.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Debug)]
     public class VPRC_Annotation : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements) { }

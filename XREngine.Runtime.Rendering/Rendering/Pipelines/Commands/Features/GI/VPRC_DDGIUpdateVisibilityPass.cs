@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// in the visibility atlas using temporal hysteresis.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIUpdateVisibilityPass : VPRC_DDGIComputePass
     {
         public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;

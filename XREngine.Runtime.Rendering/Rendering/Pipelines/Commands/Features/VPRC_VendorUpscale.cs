@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// via a passthrough quad instead of re-running the source quad shader directly to the backbuffer.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true)]
     public partial class VPRC_VendorUpscale : VPRC_RenderQuadToFBO
     {
         private static bool _diagEnabled => RenderDiagnosticsFlags.DiagVendorUpscale;

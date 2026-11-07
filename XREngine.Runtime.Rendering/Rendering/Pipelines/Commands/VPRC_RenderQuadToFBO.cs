@@ -15,7 +15,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <param name="destination"></param>
     [XRTypeRedirect("XREngine.Rendering.Pipelines.Commands.VPRC_RenderQuadFBO")]
     [RenderPipelineScriptCommand]
-    public partial class VPRC_RenderQuadToFBO : ViewportRenderCommand
+    [RenderCommandInfo(ERenderCommandCategory.Fullscreen, DoesGpuWork = true)]
+    public partial class VPRC_RenderQuadToFBO : ViewportRenderCommand, IRenderCommandStageConsumer
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
             => requirements.RequireOperation("fullscreen-quad");
@@ -74,6 +75,23 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// The resources used by the render graph pass.
         /// </summary>
         public RenderGraphResourceDescriptor? RenderGraphResources { get; set; }
+
+        /// <summary>
+        /// The post-process schema stage keys whose values the material of this quad reads.
+        /// Tools use this list to link the command to its settings. Runtime execution does not read it.
+        /// </summary>
+        public string[]? ConsumedStageKeys { get; set; }
+
+        /// <inheritdoc />
+        public void CollectConsumedStages(List<string> stageKeys)
+        {
+            if (ConsumedStageKeys is not { Length: > 0 } keys)
+                return;
+
+            for (int i = 0; i < keys.Length; i++)
+                if (!string.IsNullOrWhiteSpace(keys[i]))
+                    stageKeys.Add(keys[i]);
+        }
 
         /// <summary>
         /// The GPU profiling name for this command, which includes the source and destination FBO names and the shader label if available.

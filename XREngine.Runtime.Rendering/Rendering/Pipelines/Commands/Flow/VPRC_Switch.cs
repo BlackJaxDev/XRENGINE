@@ -5,6 +5,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
     public class VPRC_Switch : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -98,6 +99,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 next = commands;
             else
                 next = DefaultCase;
+
+            instance.BranchTrace.Record(this, next);
 
             var state = _switchStates.GetValue(instance, _ => new SwitchState());
             if (!ReferenceEquals(state.ActiveContainer, next))

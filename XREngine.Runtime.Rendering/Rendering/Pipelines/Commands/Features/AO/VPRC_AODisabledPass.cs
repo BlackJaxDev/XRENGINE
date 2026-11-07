@@ -10,6 +10,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_AODisabledPass : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         private static void LogStub(string key, string message)

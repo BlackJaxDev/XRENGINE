@@ -233,6 +233,7 @@ public partial class AdvancedRenderPipeline
         aa.ConditionEvaluator = ShouldRunAdvancedPostAntiAliasing;
         var aaCommands = new ViewportRenderCommandContainer(this);
         var tsr = aaCommands.Add<VPRC_IfElse>();
+        tsr.Label = "TSR";
         tsr.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeNeedsTsrUpscale;
         var tsrCommands = new ViewportRenderCommandContainer(this);
         if (!Shaders.Compilation.WebPipelineRasterProgram.IsActive)
@@ -249,6 +250,7 @@ public partial class AdvancedRenderPipeline
         tsr.TrueCommands = tsrCommands;
         var postAaCommands = new ViewportRenderCommandContainer(this);
         var fxaa = postAaCommands.Add<VPRC_IfElse>();
+        fxaa.Label = "FXAA";
         fxaa.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeEnableFxaa;
         var fxaaCommands = new ViewportRenderCommandContainer(this);
         var fxaaPass = fxaaCommands.Add<VPRC_FXAA>();
@@ -464,10 +466,12 @@ public partial class AdvancedRenderPipeline
         output.ConditionEvaluator = ShouldRunAdvancedPostAntiAliasing;
         var antiAliasedOutput = new ViewportRenderCommandContainer(this);
         var tsr = antiAliasedOutput.Add<VPRC_IfElse>();
+        tsr.Label = "TSR";
         tsr.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeNeedsTsrUpscale;
         tsr.TrueCommands = CreateAdvancedResolvedOutputCommands(TsrUpscaleFBOName, TsrOutputTextureName);
         var postAa = new ViewportRenderCommandContainer(this);
         var fxaa = postAa.Add<VPRC_IfElse>();
+        fxaa.Label = "FXAA";
         fxaa.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeEnableFxaa;
         fxaa.TrueCommands = CreateAdvancedResolvedOutputCommands(FxaaFBOName, FxaaOutputTextureName);
         fxaa.FalseCommands = CreateAdvancedResolvedOutputCommands(SmaaFBOName, SmaaOutputTextureName);

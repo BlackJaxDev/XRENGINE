@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// tightly packed RGBA float32 data.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
 public class VPRC_ReadbackRegion : ViewportRenderCommand
 {
     public string? SourceTextureName { get; set; }

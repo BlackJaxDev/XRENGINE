@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// CPU-tests mesh render commands in a pass against the active camera frustum and writes visible source-command indices into a buffer.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
     public sealed class VPRC_FrustumCullToBuffer : ViewportRenderCommand
     {
         public int RenderPass { get; set; }

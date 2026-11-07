@@ -4,6 +4,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Begins a user-authored GPU timing scope that groups subsequent commands in the render-pipeline GPU profiler.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Debug)]
     public sealed class VPRC_GPUTimerBegin : ViewportRenderCommand
     {
         public string Label { get; set; } = "Timer";

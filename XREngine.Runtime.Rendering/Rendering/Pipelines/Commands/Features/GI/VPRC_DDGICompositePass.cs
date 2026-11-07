@@ -18,6 +18,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Presentation into a host-selected composition target is performed by the neutral GI composition command.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGICompositePass : VPRC_DDGIComputePass
     {
         public string DepthTextureName { get; set; } = string.Empty;

@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Coordinates are mip-space texel coordinates.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
 public class VPRC_ReadbackPixel : ViewportRenderCommand
 {
     public string? SourceTextureName { get; set; }

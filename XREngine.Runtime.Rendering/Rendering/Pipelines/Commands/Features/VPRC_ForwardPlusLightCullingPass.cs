@@ -18,6 +18,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// OpenGL-first; skipped for stereo and shadow passes.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_ForwardPlusLightCullingPass : ViewportRenderCommand
     {
         private const string MonoShaderPath = "ForwardPlus/LightCulling.comp";

@@ -28,6 +28,18 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// This list is read-only and reflects the types that have been registered with the container's factory system.
         /// New command types can be registered using the RegisterCommandFactory method.
         /// </summary>
+        /// <summary>
+        /// Gets the number of registered command types without copying the type list.
+        /// </summary>
+        public static int RegisteredCommandTypeCount
+        {
+            get
+            {
+                lock (FactorySync)
+                    return CommandFactories.Count;
+            }
+        }
+
         public static Type[] RegisteredCommandTypes
         {
             get

@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 
 /// <summary>Draws DDGI probes from their GPU state buffer without CPU readback.</summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
 public sealed class VPRC_DDGIDebugVisualization : ViewportRenderCommand
 {
     private const uint ComputeGroupSize = 64u;

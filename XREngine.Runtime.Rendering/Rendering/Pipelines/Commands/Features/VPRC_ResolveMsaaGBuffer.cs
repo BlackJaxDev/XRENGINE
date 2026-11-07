@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// one color read/draw buffer pair at a time.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
     public class VPRC_ResolveMsaaGBuffer : ViewportRenderCommand
     {
         private XRMaterial? _depthResolveMaterial;

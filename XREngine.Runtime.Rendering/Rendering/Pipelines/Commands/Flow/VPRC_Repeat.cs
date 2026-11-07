@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// or any multi-pass refinement technique.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
     public class VPRC_Repeat : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

@@ -124,6 +124,15 @@ public sealed class RenderPipelineScript
             : type.Name;
     }
 
+    /// <summary>
+    /// Gets the script method name of a command type, such as <c>renderQuadToFBO</c> for <c>VPRC_RenderQuadToFBO</c>.
+    /// </summary>
+    public static string GetCommandMethodName(Type commandType)
+    {
+        ArgumentNullException.ThrowIfNull(commandType);
+        return GetScriptCommandMethodName(commandType);
+    }
+
     private static string GetScriptCommandMethodName(Type type)
         => s_commandRegistry.Value.MethodNamesByType.TryGetValue(type, out string? methodName)
             ? methodName

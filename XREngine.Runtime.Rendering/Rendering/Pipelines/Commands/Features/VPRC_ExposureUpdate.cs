@@ -7,6 +7,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
     public class VPRC_ExposureUpdate : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

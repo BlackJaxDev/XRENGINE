@@ -1,6 +1,7 @@
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_PushMaterialOverride : ViewportStateRenderCommand<VPRC_PopMaterialOverride>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

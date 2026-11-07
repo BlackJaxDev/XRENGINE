@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Subsequent deferred lighting passes use the stencil to shade complex pixels per-sample.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
     public class VPRC_MarkComplexMsaaPixels : ViewportRenderCommand
     {
         /// <summary>

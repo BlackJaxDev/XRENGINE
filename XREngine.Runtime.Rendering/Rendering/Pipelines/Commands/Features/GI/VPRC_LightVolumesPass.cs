@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Supports both mono and stereo (VR) rendering modes.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_LightVolumesPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;

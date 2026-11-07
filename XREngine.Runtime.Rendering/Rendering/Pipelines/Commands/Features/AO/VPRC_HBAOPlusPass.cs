@@ -10,6 +10,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_HBAOPlusPass : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         private static void Log(string message)

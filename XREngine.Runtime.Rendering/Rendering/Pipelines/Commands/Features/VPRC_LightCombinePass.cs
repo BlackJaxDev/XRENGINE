@@ -15,6 +15,7 @@ using System.Runtime.InteropServices;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_LightCombinePass : ViewportRenderCommand
     {
         private const string MsaaDeferredDefine = "XRENGINE_MSAA_DEFERRED";

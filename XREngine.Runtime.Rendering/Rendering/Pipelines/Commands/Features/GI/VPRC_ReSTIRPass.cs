@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Dispatches the ReSTIR compute passes and composites the result into the forward lighting target.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_ReSTIRPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;

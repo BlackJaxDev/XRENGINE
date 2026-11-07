@@ -8,6 +8,7 @@ using XREngine.Scene;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
     public class VPRC_RenderDebugShapes : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

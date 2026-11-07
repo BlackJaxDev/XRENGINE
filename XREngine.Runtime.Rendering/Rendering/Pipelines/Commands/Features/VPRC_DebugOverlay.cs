@@ -23,6 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Renders a named texture into a normalized overlay region for in-game inspection.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
     public sealed class VPRC_DebugOverlay : ViewportRenderCommand
     {
         private const string OverlayShaderCode = """

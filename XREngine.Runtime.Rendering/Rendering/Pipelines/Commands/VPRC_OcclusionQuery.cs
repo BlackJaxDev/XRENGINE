@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// On unsupported backends, the command publishes the query as unavailable.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
     public sealed class VPRC_OcclusionQuery : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

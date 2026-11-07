@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// irradiance via DDGI probe sampling for all traced rays, outputting shaded radiance into DDGIRayRadianceBuffer.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIHitShadePass : VPRC_DDGIComputePass
     {
         public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;

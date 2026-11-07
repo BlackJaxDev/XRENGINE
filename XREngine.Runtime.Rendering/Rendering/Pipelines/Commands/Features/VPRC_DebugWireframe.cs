@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// abstraction does not yet expose generic fill-mode switching.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug)]
 public sealed class VPRC_DebugWireframe : ViewportRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)

@@ -5,6 +5,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
     public class VPRC_IfElse : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -69,11 +70,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             bool cond = ConditionEvaluator?.Invoke() ?? false;
-
-            if (cond)
-                ExecuteBranch(instance, TrueCommands);
-            else
-                ExecuteBranch(instance, FalseCommands);
+            ViewportRenderCommandContainer? next = cond ? TrueCommands : FalseCommands;
+            instance.BranchTrace.Record(this, next);
+            ExecuteBranch(instance, next);
         }
 
         private void ExecuteBranch(XRRenderPipelineInstance instance, ViewportRenderCommandContainer? next)

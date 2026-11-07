@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// expose mesh shaders but cannot run the production zero-readback meshlet path.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
 public sealed class VPRC_RenderMeshletDebugDisplay : ViewportRenderCommand
 {
     private static readonly int[] DefaultRenderPasses =

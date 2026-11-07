@@ -9,6 +9,9 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+    /// <summary>The draw alpha of outline rows and flow steps that did not run in the newest traced frame.</summary>
+    private const float WorkbenchSkippedAlpha = 0.4f;
+
     private static readonly List<int> _workbenchVisibleOutlineRows = new(256);
     private static int _workbenchOutlineKeyBuild = -1;
     private static string _workbenchOutlineKeySearch = string.Empty;
@@ -59,6 +62,7 @@ public static partial class EditorImGuiUI
     private static unsafe void DrawWorkbenchOutlineRows(RenderPipelineWorkbenchModel model)
     {
         RenderPipelineWorkbenchSelection selection = _workbench.Selection;
+        RenderPipelineWorkbenchExecutionState execution = _workbench.Execution;
         IReadOnlySet<int> linked = _workbench.Links.LinkedNodes;
         ImDrawListPtr drawList = ImGui.GetWindowDrawList();
         float rowStartX = ImGui.GetCursorPosX();
@@ -75,6 +79,9 @@ public static partial class EditorImGuiUI
                 for (int visibleIndex = clipper.DisplayStart; visibleIndex < clipper.DisplayEnd; visibleIndex++)
                 {
                     RenderPipelineOutlineRow row = model.Outline[_workbenchVisibleOutlineRows[visibleIndex]];
+                    bool skipped = execution.Get(row.RowIndex) == ERenderPipelineRowExecution.Skipped;
+                    if (skipped)
+                        ImGui.PushStyleVar(ImGuiStyleVar.Alpha, WorkbenchSkippedAlpha);
                     ImGui.PushID(row.NodeId);
                     ImGui.SetCursorPosX(rowStartX + (row.Depth * 12f));
 
@@ -114,8 +121,13 @@ public static partial class EditorImGuiUI
                         SelectWorkbenchRow(row);
                     if (row.Kind == ERenderPipelineOutlineRowKind.Container)
                         ImGui.PopStyleColor();
-                    if (ImGui.IsItemHovered() && row.Command is not null)
-                        DrawWorkbenchCommandTooltip(model, row);
+                    if (ImGui.IsItemHovered())
+                    {
+                        if (row.Command is not null)
+                            DrawWorkbenchCommandTooltip(model, row, skipped);
+                        else if (skipped)
+                            ImGui.SetTooltip("This branch did not run in the newest traced frame.");
+                    }
 
                     if (row.PassBadge.Length > 0 || row.HasProblem)
                     {
@@ -135,6 +147,8 @@ public static partial class EditorImGuiUI
                     }
 
                     ImGui.PopID();
+                    if (skipped)
+                        ImGui.PopStyleVar();
                 }
             }
         }
@@ -144,13 +158,15 @@ public static partial class EditorImGuiUI
         }
     }
 
-    private static void DrawWorkbenchCommandTooltip(RenderPipelineWorkbenchModel model, RenderPipelineOutlineRow row)
+    private static void DrawWorkbenchCommandTooltip(RenderPipelineWorkbenchModel model, RenderPipelineOutlineRow row, bool skipped)
     {
         ImGui.BeginTooltip();
         RenderCommandInfo info = RenderCommandInfo.Get(row.Command!);
         ImGui.TextUnformatted(info.DisplayName);
         if (info.Description.Length > 0)
             ImGui.TextDisabled(info.Description);
+        if (skipped)
+            ImGui.TextColored(WorkbenchWarningColor, "Did not run in the newest traced frame.");
         if (row.StructureIndex >= 0)
         {
             RenderPipelineStructureCommand entry = model.Structure.Commands[row.StructureIndex];

@@ -110,6 +110,7 @@ namespace XREngine.Components.Lights
     }
 
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     internal sealed class VPRC_SetShadowClears : ViewportRenderCommand
     {
         /// <summary>
@@ -128,6 +129,7 @@ namespace XREngine.Components.Lights
     }
 
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Targets, DoesGpuWork = true)]
     internal sealed class VPRC_ClearShadowOutputFBO : ViewportRenderCommand
     {
         protected override void Execute()
@@ -164,6 +166,7 @@ namespace XREngine.Components.Lights
     }
 
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     internal sealed class VPRC_PushShadowOutputFBORenderArea : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
         /// <summary>

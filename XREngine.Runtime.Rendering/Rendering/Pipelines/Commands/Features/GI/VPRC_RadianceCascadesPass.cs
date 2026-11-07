@@ -23,6 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// - Debug visualization modes
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_RadianceCascadesPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;

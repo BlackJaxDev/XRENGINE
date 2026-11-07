@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// selected HDR target. Provider lifecycle ownership stays outside this command.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
 public sealed class VPRC_GlobalIlluminationCompositePass : ViewportRenderCommand
 {
     public string SourceQuadFBOName { get; set; } = string.Empty;

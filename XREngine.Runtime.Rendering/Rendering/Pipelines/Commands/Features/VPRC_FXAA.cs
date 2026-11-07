@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Applies the engine FXAA shader as a standalone composable fullscreen pass.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true)]
 public sealed class VPRC_FXAA : ViewportRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)

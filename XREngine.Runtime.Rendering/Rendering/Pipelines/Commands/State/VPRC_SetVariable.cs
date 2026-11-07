@@ -4,6 +4,7 @@ using System.Globalization;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
     public sealed class VPRC_SetVariable : ViewportRenderCommand
     {
         public string VariableName { get; set; } = string.Empty;

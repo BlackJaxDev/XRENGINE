@@ -5,6 +5,7 @@ using XREngine.Rendering.Resources;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
     public sealed class VPRC_ResetPpllResources : ViewportRenderCommand
     {
         public string CounterBufferName { get; set; } = string.Empty;

@@ -38,6 +38,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Persistence/recycling, non-linear grids, and ray-traced irradiance integration are subsequent steps.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_SurfelGIPass : ViewportRenderCommand
     {
         private static void LogGuardFailure(string location, string reason)

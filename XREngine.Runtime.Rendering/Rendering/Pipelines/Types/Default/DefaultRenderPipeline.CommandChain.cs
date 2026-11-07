@@ -36,6 +36,7 @@ public partial class DefaultRenderPipeline
         ViewportRenderCommandContainer c = new(this);
         c.Add<VPRC_PrecomputeBRDF>();
         var ifElse = c.Add<VPRC_IfElse>();
+        ifElse.Label = "Viewport or FBO target";
         ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;
         ifElse.TrueCommands = CreateViewportTargetCommands();
         ifElse.FalseCommands = CreateFBOTargetCommands();
@@ -331,6 +332,7 @@ public partial class DefaultRenderPipeline
 
         var aoCommands = new ViewportRenderCommandContainer(this);
         var aoSwitch = aoCommands.Add<VPRC_Switch>();
+        aoSwitch.Label = "AO";
         aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
         aoSwitch.Cases = enableComputePasses
             ? new()
@@ -380,6 +382,7 @@ public partial class DefaultRenderPipeline
         if (!UseOpenXrVulkanDesktopStartupSafePath)
         {
             var msaaGBufferBranch = c.Add<VPRC_IfElse>();
+            msaaGBufferBranch.Label = "MSAA GBuffer";
             msaaGBufferBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
             {
                 var msaaGeomCmds = new ViewportRenderCommandContainer(this);
@@ -433,6 +436,7 @@ public partial class DefaultRenderPipeline
 
         var aoCommands = new ViewportRenderCommandContainer(this);
         var aoResolveSwitch = aoCommands.Add<VPRC_Switch>();
+        aoResolveSwitch.Label = "AO resolve";
         aoResolveSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
         aoResolveSwitch.Cases = new()
         {
@@ -461,6 +465,7 @@ public partial class DefaultRenderPipeline
         if (!UseOpenXrVulkanDesktopStartupSafePath)
         {
             var msaaMarkBranch = c.Add<VPRC_IfElse>();
+            msaaMarkBranch.Label = "MSAA mark";
             msaaMarkBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
             {
                 var markCmds = new ViewportRenderCommandContainer(this);
@@ -476,6 +481,7 @@ public partial class DefaultRenderPipeline
             }
 
             var msaaLightingBranch = c.Add<VPRC_IfElse>();
+            msaaLightingBranch.Label = "MSAA lighting";
             msaaLightingBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
             {
                 var msaaLightCmds = new ViewportRenderCommandContainer(this);
@@ -548,10 +554,12 @@ public partial class DefaultRenderPipeline
             if (includeMsaaCommandGraph)
             {
                 var msaaPreload = c.Add<VPRC_IfElse>();
+                msaaPreload.Label = "MSAA preload";
                 msaaPreload.ConditionEvaluator = () => RuntimeEnableMsaaTargets;
                 {
                     var preloadCmds = new ViewportRenderCommandContainer(this);
                     var deferredChoice = preloadCmds.Add<VPRC_IfElse>();
+                    deferredChoice.Label = "Deferred";
                     deferredChoice.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                     {
                         var blitCmds = new ViewportRenderCommandContainer(this);
@@ -610,6 +618,7 @@ public partial class DefaultRenderPipeline
         if (includeMsaaCommandGraph)
         {
             var msaaResolve = c.Add<VPRC_IfElse>();
+            msaaResolve.Label = "MSAA resolve";
             msaaResolve.ConditionEvaluator = () => RuntimeEnableMsaaTargets;
             {
                 var resolveCmds = new ViewportRenderCommandContainer(this);
@@ -744,6 +753,7 @@ public partial class DefaultRenderPipeline
             return;
 
         var bloomChoice = c.Add<VPRC_IfElse>();
+        bloomChoice.Label = "Bloom";
         bloomChoice.ConditionEvaluator = ShouldUseBloom;
         {
             var bloomCommands = new ViewportRenderCommandContainer(this);
@@ -769,12 +779,14 @@ public partial class DefaultRenderPipeline
             return;
 
         var motionBlurChoice = c.Add<VPRC_IfElse>();
+        motionBlurChoice.Label = "Motion blur";
         motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
         motionBlurChoice.TrueCommands = CreateMotionBlurPassCommands();
 
         AppendPostMotionBlurForwardPass(c);
 
         var dofChoice = c.Add<VPRC_IfElse>();
+        dofChoice.Label = "DOF";
         dofChoice.ConditionEvaluator = ShouldUseDepthOfField;
         dofChoice.TrueCommands = CreateDepthOfFieldPassCommands();
 
@@ -908,6 +920,7 @@ public partial class DefaultRenderPipeline
             return;
 
         var fullOverdraw = c.Add<VPRC_IfElse>();
+        fullOverdraw.Label = "Full overdraw";
         fullOverdraw.ConditionEvaluator = () => EnableFullOverdrawVisualization;
         {
             var countCommands = new ViewportRenderCommandContainer(this);
@@ -931,11 +944,13 @@ public partial class DefaultRenderPipeline
     private void AppendFxaaTsrUpscaleChain(ViewportRenderCommandContainer c)
     {
         var upscaleChoice = c.Add<VPRC_IfElse>();
+        upscaleChoice.Label = "Upscale";
         upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableDeclaredSmaa || RuntimeNeedsTsrUpscale;
         {
             var upscaleCmds = new ViewportRenderCommandContainer(this);
 
             var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
+            tsrOrPostAa.Label = "TSR or post AA";
             tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
             {
                 var tsrUpscale = new ViewportRenderCommandContainer(this);
@@ -973,6 +988,7 @@ public partial class DefaultRenderPipeline
             {
                 var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
                 var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
+                postAaChoice.Label = "Post AA";
                 postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
                 {
                     var fxaaUpscale = new ViewportRenderCommandContainer(this);
@@ -1205,6 +1221,7 @@ public partial class DefaultRenderPipeline
     private void AppendFinalOutput(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
     {
         var outputChoice = c.Add<VPRC_IfElse>();
+        outputChoice.Label = "Offscreen capture output";
         outputChoice.ConditionEvaluator = IsOffscreenSceneCaptureOutput;
         outputChoice.TrueCommands = CreateOffscreenCaptureFinalOutputCommands();
         outputChoice.FalseCommands = CreateViewportFinalOutputCommands(bypassVendorUpscale);
@@ -1260,6 +1277,7 @@ public partial class DefaultRenderPipeline
         }
 
         var fullOverdraw = c.Add<VPRC_IfElse>();
+        fullOverdraw.Label = "Full overdraw";
         fullOverdraw.ConditionEvaluator = () => EnableFullOverdrawVisualization;
         fullOverdraw.TrueCommands = CreateFullOverdrawFinalOutputCommands();
         fullOverdraw.FalseCommands = CreateLegacyDebugOrStandardFinalOutputCommands(bypassVendorUpscale);
@@ -1307,6 +1325,7 @@ public partial class DefaultRenderPipeline
         if (overrideSource is not null)
         {
             var overrideChoice = c.Add<VPRC_IfElse>();
+            overrideChoice.Label = "Output source override";
             overrideChoice.ConditionEvaluator = () => IsValidFinalOutputSourceFboOverride(overrideSource);
             overrideChoice.TrueCommands = CreateOutputSourceOverrideCommands(overrideSource, bypassVendorUpscale);
             overrideChoice.FalseCommands = CreateStandardViewportFinalOutputCommands(bypassVendorUpscale);
@@ -1326,15 +1345,18 @@ public partial class DefaultRenderPipeline
     private void AppendStandardViewportFinalOutputCommands(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
     {
         var upscaleOutputChoice = c.Add<VPRC_IfElse>();
+        upscaleOutputChoice.Label = "Upscale output";
         upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableDeclaredSmaa || RuntimeNeedsTsrUpscale;
         {
             var upscaleOutput = new ViewportRenderCommandContainer(this);
             var tsrOrPostAaFinal = upscaleOutput.Add<VPRC_IfElse>();
+            tsrOrPostAaFinal.Label = "TSR or post AA final";
             tsrOrPostAaFinal.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
             tsrOrPostAaFinal.TrueCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
             {
                 var postAaOutput = new ViewportRenderCommandContainer(this);
                 var fxaaOrSmaaFinal = postAaOutput.Add<VPRC_IfElse>();
+                fxaaOrSmaaFinal.Label = "FXAA or SMAA final";
                 fxaaOrSmaaFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
                 fxaaOrSmaaFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
                 fxaaOrSmaaFinal.FalseCommands = CreateFinalBlitCommands(SmaaFBOName, bypassVendorUpscale);

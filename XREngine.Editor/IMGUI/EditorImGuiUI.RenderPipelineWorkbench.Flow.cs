@@ -136,6 +136,8 @@ public static partial class EditorImGuiUI
         uint textColor = ImGui.GetColorU32(ImGuiCol.Text);
         uint subTextColor = ImGui.GetColorU32(ImGuiCol.TextDisabled);
         uint problemColor = ImGui.GetColorU32(WorkbenchErrorColor);
+        uint skippedVeil = ImGui.GetColorU32(ImGuiCol.WindowBg, 1f - WorkbenchSkippedAlpha);
+        RenderPipelineWorkbenchExecutionState execution = _workbench.Execution;
         int selectedNode = _workbench.Selection.NodeId;
         IReadOnlySet<int> linked = _workbench.Links.LinkedNodes;
         float rounding = 8f * view.Zoom;
@@ -175,6 +177,13 @@ public static partial class EditorImGuiUI
 
             if (entry is not null)
                 DrawWorkbenchFlowPassChips(drawList, model, entry, min, max, view.Zoom);
+
+            // A veil over the block shows that the command did not run in the newest traced frame.
+            if (model.OutlineRowByNodeId.TryGetValue(step.Id, out int rowIndex) &&
+                execution.Get(rowIndex) == ERenderPipelineRowExecution.Skipped)
+            {
+                drawList.AddRectFilled(min, max, skippedVeil, rounding);
+            }
 
             ImGui.SetCursorScreenPos(min);
             ImGui.PushID(step.Id);

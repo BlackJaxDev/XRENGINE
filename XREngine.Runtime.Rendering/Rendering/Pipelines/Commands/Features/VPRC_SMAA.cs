@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// without external area/search textures so it can remain fully self-contained in the command layer.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true)]
 public sealed class VPRC_SMAA : ViewportRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)

@@ -18,6 +18,7 @@ public enum EHistogramSourceChannel
 /// Summary statistics can also be exposed as pipeline variables for later commands.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
 public class VPRC_ComputeHistogram : ViewportRenderCommand
 {
     public string? SourceTextureName { get; set; }

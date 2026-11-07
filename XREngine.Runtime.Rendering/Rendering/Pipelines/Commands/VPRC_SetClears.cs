@@ -3,6 +3,7 @@ using XREngine.Data.Colors;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_SetClears : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

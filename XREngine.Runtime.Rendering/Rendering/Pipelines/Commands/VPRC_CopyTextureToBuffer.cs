@@ -3,6 +3,7 @@ using System;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
     public class VPRC_CopyTextureToBuffer : ViewportRenderCommand
     {
         public string? SourceTextureName { get; set; }

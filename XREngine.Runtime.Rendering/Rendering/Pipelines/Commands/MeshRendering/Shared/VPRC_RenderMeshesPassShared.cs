@@ -18,6 +18,7 @@ public enum EMeshRenderingPathIntent
 /// Callers configure one command and do not encode traditional/meshlet details.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
 public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)

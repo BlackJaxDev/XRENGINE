@@ -125,6 +125,7 @@ public partial class AdvancedRenderPipeline
                     .UseColorTexture(AoNormalTextureName));
 
             var modes = aoCommands.Add<VPRC_Switch>();
+            modes.Label = "AO mode";
             modes.SwitchEvaluator = EvaluateAmbientOcclusionMode;
             modes.Cases = new()
             {

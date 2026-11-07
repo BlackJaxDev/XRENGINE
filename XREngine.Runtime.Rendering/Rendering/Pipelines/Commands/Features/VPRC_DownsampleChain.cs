@@ -5,6 +5,7 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
     public sealed class VPRC_DownsampleChain : ViewportRenderCommand
     {
         private const string CopyShaderCode = """
