@@ -432,6 +432,13 @@ uniform ColorGradeStruct ColorGrade;";
             Interlocked.Increment(ref _autoExposureResetRequests);
         }
 
+        /// <summary>
+        /// Removes the resets that no exposure update has used yet. A CPU snap request that is in flight then has no effect.
+        /// Any thread can call it. It does not allocate.
+        /// </summary>
+        internal void ClearAutoExposureReset()
+            => MarkAutoExposureResetApplied(Volatile.Read(ref _autoExposureResetRequests));
+
         /// <summary>True while a reset from <see cref="ResetAutoExposureHistory(ulong)"/> waits for an exposure update.</summary>
         [Browsable(false)]
         public bool IsAutoExposureResetPending

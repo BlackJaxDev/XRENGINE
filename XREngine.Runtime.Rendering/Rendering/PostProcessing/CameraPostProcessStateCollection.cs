@@ -24,6 +24,10 @@ public sealed class CameraPostProcessStateCollection
     [NonSerialized]
     private Dictionary<Guid, PipelinePostProcessState> _publishedPipelines = new();
     private PipelinePostProcessState? _defaultState;
+    // The camera history epoch of an exposure reset that found no color grading stage, or -1 for none.
+    // The next state that a call creates or binds gets the reset, so the first cut to a camera with no state still snaps.
+    [NonSerialized]
+    private long _pendingAutoExposureResetEpoch = -1L;
 
     [YamlIgnore]
     public IReadOnlyDictionary<Guid, PipelinePostProcessState> Pipelines
@@ -61,7 +65,8 @@ public sealed class CameraPostProcessStateCollection
 
     /// <summary>
     /// Resets the automatic exposure history of the color grading stage in every existing pipeline state.
-    /// It creates no state and does not allocate.
+    /// It creates no state and does not allocate. If no state has a color grading stage, the reset waits, and the next
+    /// state that <see cref="GetOrCreateDefaultState"/> or <see cref="GetOrCreateState"/> returns gets it.
     /// </summary>
     /// <param name="minimumFrameCameraEpoch">The camera history epoch of the first frame that can use the reset.</param>
     /// <returns>The number of color grading stages that got the reset.</returns>
@@ -70,7 +75,36 @@ public sealed class CameraPostProcessStateCollection
         int count = ResetAutoExposureHistory(DefaultState, minimumFrameCameraEpoch);
         foreach (PipelinePostProcessState state in Volatile.Read(ref _publishedPipelines).Values)
             count += ResetAutoExposureHistory(state, minimumFrameCameraEpoch);
+        Volatile.Write(ref _pendingAutoExposureResetEpoch, count == 0 ? unchecked((long)minimumFrameCameraEpoch) : -1L);
         return count;
+    }
+
+    /// <summary>
+    /// Removes every exposure reset that no frame has used yet, also a waiting one. It does not allocate.
+    /// </summary>
+    internal void ClearAutoExposureReset()
+    {
+        Volatile.Write(ref _pendingAutoExposureResetEpoch, -1L);
+        ClearAutoExposureReset(DefaultState);
+        foreach (PipelinePostProcessState state in Volatile.Read(ref _publishedPipelines).Values)
+            ClearAutoExposureReset(state);
+    }
+
+    private static void ClearAutoExposureReset(PipelinePostProcessState? state)
+    {
+        if (state?.GetStage<ColorGradingSettings>()?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
+            grading.ClearAutoExposureReset();
+    }
+
+    /// <summary>True while an exposure reset waits for a state with a color grading stage.</summary>
+    internal bool IsAutoExposureResetWaiting => Volatile.Read(ref _pendingAutoExposureResetEpoch) >= 0L;
+
+    private PipelinePostProcessState ApplyWaitingAutoExposureReset(PipelinePostProcessState state)
+    {
+        long epoch = Volatile.Read(ref _pendingAutoExposureResetEpoch);
+        if (epoch >= 0L && ResetAutoExposureHistory(state, unchecked((ulong)epoch)) > 0)
+            Interlocked.CompareExchange(ref _pendingAutoExposureResetEpoch, -1L, epoch);
+        return state;
     }
 
     private static int ResetAutoExposureHistory(PipelinePostProcessState? state, ulong minimumFrameCameraEpoch)
@@ -83,6 +117,9 @@ public sealed class CameraPostProcessStateCollection
     }
 
     public PipelinePostProcessState GetOrCreateDefaultState(RenderPipeline pipeline)
+        => ApplyWaitingAutoExposureReset(GetOrCreateDefaultStateCore(pipeline));
+
+    private PipelinePostProcessState GetOrCreateDefaultStateCore(RenderPipeline pipeline)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         PipelinePostProcessState? published = DefaultState;
@@ -124,6 +161,9 @@ public sealed class CameraPostProcessStateCollection
     }
 
     public PipelinePostProcessState GetOrCreateState(RenderPipeline pipeline)
+        => ApplyWaitingAutoExposureReset(GetOrCreateStateCore(pipeline));
+
+    private PipelinePostProcessState GetOrCreateStateCore(RenderPipeline pipeline)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
 
@@ -490,10 +530,16 @@ public sealed class PostProcessStageState : IDisposable
         // A new binding keeps a backing object of the same type. The object holds runtime state that is not a parameter,
         // for example the automatic exposure history and its reset requests. A camera claim can bind the default state of a
         // camera to another pipeline instance of the same type, and that state must not be lost.
+        // The rule checks the backing type only, so it also applies outside a claim: a rebind of the default state to
+        // another pipeline family with the same backing type, or a schema rebuild with the same pipeline ID, keeps the
+        // object and its runtime state. Parameter values are pushed to it again below, as for a new object.
         object? kept = descriptor.BackingType is { } backingType && BackingInstance?.GetType() == backingType
             ? BackingInstance
             : null;
-        TeardownBacking();
+        // A kept object stays published, so a reader on another thread never sees no backing during the rebind
+        // (an exposure reset in that window would be lost).
+        if (kept is null)
+            TeardownBacking();
 
         if (descriptor.BackingType is null)
             return;
@@ -521,7 +567,7 @@ public sealed class PostProcessStageState : IDisposable
             _backingProperties = backingMap;
         }
 
-        if (BackingInstance is IXRNotifyPropertyChanged notifier)
+        if (BackingInstance is IXRNotifyPropertyChanged notifier && !ReferenceEquals(notifier, _backingNotifier))
         {
             _backingNotifier = notifier;
             notifier.PropertyChanged += OnBackingPropertyChanged;

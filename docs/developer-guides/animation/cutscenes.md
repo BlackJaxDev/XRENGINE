@@ -158,7 +158,7 @@ The warm-up budget measures the CPU time that records the emitter steps. The GPU
 
 ## Discontinuity Resets
 
-At each `Discontinuity`, the camera router resets the target viewport once, after it claimed the camera of the new shot. A `Full` discontinuity (a seek, a camera cut, or a stop) resets the temporal render history (TAA, TSR, camera motion vectors, and temporal AO) and snaps auto exposure to the new shot. A `ClockResync` (a hard resync to the audio with no camera change) resets only the temporal render history. GI history and per-mesh motion history do not reset. Without a target viewport, no render state resets. The [architecture document](../../architecture/animation/cutscene-system.md#discontinuity-resets) lists each reset and its effect in each pipeline.
+At each `Discontinuity`, the camera router resets the target viewport once, after it claimed the camera of the new shot. A `Full` discontinuity (a seek, a camera cut, or a stop) resets the temporal render history (TAA, TSR, camera motion vectors, and temporal AO) and snaps auto exposure to the new shot. A `ClockResync` (a hard resync to the audio with no camera change) resets only the temporal render history. When the preview or the director gives the viewport camera back, the returning camera snaps to its own exposure. GI history and per-mesh motion history do not reset. Without a target viewport, no render state resets. The [architecture document](../../architecture/animation/cutscene-system.md#discontinuity-resets) lists each reset and its effect in each pipeline.
 
 ## Residency
 

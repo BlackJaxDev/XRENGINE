@@ -683,6 +683,7 @@ namespace XREngine.Rendering
             ArgumentNullException.ThrowIfNull(owner);
             // The previous camera of a claim stays active until the next camera is set, and it must not request its own pipeline.
             bool released = false;
+            XRCamera? claimedCamera = _cameraClaims.Count > 0 ? _cameraComponent?.Camera : null;
             _releasingCameraClaim = true;
             try
             {
@@ -700,6 +701,8 @@ namespace XREngine.Rendering
             if (!released || _cameraClaims.Count != 0)
                 return;
 
+            ResetExposureAfterClaimRelease(claimedCamera);
+
             if (SetRenderPipelineFromCamera && !_destroyed)
                 SynchronizeRenderPipelineFromActiveCamera();
 
@@ -711,6 +714,25 @@ namespace XREngine.Rendering
                     ClearClaimBorrowsIfUnclaimed,
                     $"XRViewport.ClearClaimBorrows[{Index}]",
                     RenderThreadJobKind.RenderPipelineResource);
+        }
+
+        /// <summary>
+        /// The end of the last claim is a cut back to the returning camera. The cameras of the claim drop the exposure resets
+        /// that no frame used, and the returning camera starts from its own metered exposure, not from the exposure that the
+        /// claimed cameras left in this viewport. It does not allocate.
+        /// </summary>
+        private void ResetExposureAfterClaimRelease(XRCamera? claimedCamera)
+        {
+            claimedCamera?.ClearAutoExposureReset();
+            lock (_claimBorrowCameras)
+                for (int i = 0; i < _claimBorrowCameras.Count; i++)
+                    _claimBorrowCameras[i].ClearAutoExposureReset();
+
+            if (ActiveCamera is not { } returning)
+                return;
+
+            returning.ClearAutoExposureReset();
+            returning.ResetAutoExposureHistory();
         }
 
         private void ApplyCameraAfterClaimRelease()

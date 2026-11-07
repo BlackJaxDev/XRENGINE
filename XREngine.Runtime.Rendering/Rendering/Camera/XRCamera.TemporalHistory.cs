@@ -101,15 +101,21 @@ public partial class XRCamera
     /// after <see cref="InvalidateTemporalHistory()"/>. The reset applies only to frames captured with the current
     /// <see cref="TemporalHistoryEpoch"/> or a later one, so a frame from before the invalidation that still renders does not
     /// use it. <see cref="InvalidateTemporalHistory()"/> does not reset exposure, because smooth exposure adaptation is not
-    /// view history. A camera with no post-process state yet gets one first, so the first cut to a camera also resets its
-    /// exposure; only that first call allocates.
+    /// view history. A camera with no color grading state yet keeps the reset waiting, and the state that the next render
+    /// creates or binds gets it, so the first cut to a camera also resets its exposure. It creates no state and no render
+    /// pipeline, and it does not allocate.
     /// </summary>
     public void ResetAutoExposureHistory()
     {
         Interlocked.Increment(ref _autoExposureResetCount);
-        _ = GetActivePostProcessState();
         PostProcessStates.ResetAutoExposureHistory(TemporalHistoryEpoch);
     }
+
+    /// <summary>
+    /// Removes the exposure resets of this camera that no frame has used yet, also a waiting one. It does not allocate.
+    /// </summary>
+    internal void ClearAutoExposureReset()
+        => PostProcessStates.ClearAutoExposureReset();
 
     /// <summary>The number of <see cref="ResetAutoExposureHistory"/> calls on this camera.</summary>
     internal long AutoExposureResetCount => Interlocked.Read(ref _autoExposureResetCount);

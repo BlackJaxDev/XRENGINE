@@ -537,7 +537,17 @@ namespace XREngine.Rendering
             set => SetField(ref _postProcessStates, value ?? new CameraPostProcessStateCollection());
         }
 
+        /// <summary>
+        /// Finds the pipeline that renders a camera in the current render context, or null outside such a context.
+        /// Tests replace it to act as the render thread.
+        /// </summary>
+        internal static Func<XRCamera, RenderPipeline?> RenderContextPostProcessPipelineResolver { get; set; }
+            = static camera => camera.ResolveRenderContextPostProcessPipelineFromFrameTiming();
+
         private RenderPipeline? ResolveRenderContextPostProcessPipeline()
+            => RenderContextPostProcessPipelineResolver(this);
+
+        private RenderPipeline? ResolveRenderContextPostProcessPipelineFromFrameTiming()
         {
             IRuntimeRenderPipelineFrameContext? currentPipeline = RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext;
             IRuntimeRenderCommandExecutionState? renderState = currentPipeline?.RenderState;

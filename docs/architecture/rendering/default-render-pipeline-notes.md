@@ -176,7 +176,14 @@ These rules apply:
   the default state does not change its binding in each frame. When the default
   state binds to another pipeline of the same type, each stage keeps its backing
   object, so runtime state such as the automatic exposure history and a pending
-  exposure reset stays.
+  exposure reset stays. This rule checks the backing type only, so it also
+  applies to an unclaimed camera whose default state binds to another pipeline
+  with the same backing type, and to a schema rebuild.
+- An exposure reset of a camera with no color grading state waits and is applied
+  to the first state that the camera creates or binds.
+- When the last claim ends, the viewport removes the exposure resets that no
+  frame used from the claimed cameras, and resets the exposure of the returning
+  camera. The release is a cut back to gameplay.
 - Settings on the default asset of the claimed camera do not apply during the
   claim, because that asset does not render. Use an authored source for them.
 
