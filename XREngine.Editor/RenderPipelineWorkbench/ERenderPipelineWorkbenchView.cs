@@ -19,4 +19,6 @@ public enum ERenderPipelineWorkbenchView
     Validation,
     /// <summary>The render pipeline script text.</summary>
     Script,
+    /// <summary>The overlays and patches of a derived pipeline.</summary>
+    Patches,
 }

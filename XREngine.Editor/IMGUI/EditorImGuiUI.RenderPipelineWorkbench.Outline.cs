@@ -120,7 +120,10 @@ public static partial class EditorImGuiUI
                     if (ImGui.Selectable(row.Label, selected, ImGuiSelectableFlags.AllowOverlap))
                         SelectWorkbenchRow(row);
                     if (row.Command is not null)
+                    {
                         DrawWorkbenchCommandDragDrop(row.Command, row.Label);
+                        DrawWorkbenchCommandContextMenu(model.Pipeline, row.Command);
+                    }
                     if (row.Kind == ERenderPipelineOutlineRowKind.Container)
                         ImGui.PopStyleColor();
                     if (ImGui.IsItemHovered())
@@ -130,6 +133,9 @@ public static partial class EditorImGuiUI
                         else if (skipped)
                             ImGui.SetTooltip("This branch did not run in the newest traced frame.");
                     }
+
+                    if (row.Command is not null)
+                        DrawWorkbenchPatchMarker(model.Pipeline, row.Command);
 
                     string timingBadge = _workbench.Timing.GetNodeBadge(row.NodeId);
                     if (timingBadge.Length > 0)

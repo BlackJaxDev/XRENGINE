@@ -30,6 +30,7 @@ public static partial class EditorImGuiUI
         DrawWorkbenchGenerationBadge(instance);
         ImGui.SameLine();
         DrawWorkbenchBackendBadge();
+        DrawWorkbenchDerivedBadge(pipeline);
         ImGui.SameLine();
         DrawWorkbenchLiveToggle();
         DrawWorkbenchTargetBarExtras(pipeline, instance);

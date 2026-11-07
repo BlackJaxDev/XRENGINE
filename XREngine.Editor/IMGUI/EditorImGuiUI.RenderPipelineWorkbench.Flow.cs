@@ -1,5 +1,6 @@
 using System.Numerics;
 using ImGuiNET;
+using XREngine.Rendering.Pipelines.Overlays;
 using XREngine.Editor.RenderPipelineWorkbench;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph.Diagnostics;
@@ -211,6 +212,13 @@ public static partial class EditorImGuiUI
                 string timingBadge = timing.GetNodeBadge(step.Id);
                 if (timingBadge.Length > 0)
                     drawList.AddText(new Vector2(max.X - (64f * view.Zoom), min.Y + (26f * view.Zoom)), subTextColor, timingBadge);
+                // Overlay patch markers show which blocks a derived pipeline added or changed.
+                if (entry is not null && model.Pipeline is { IsDerived: true } derived &&
+                    derived.OverlayReport.Markers.TryGetValue(entry.Command, out ERenderCommandPatchKind patchKind))
+                {
+                    drawList.AddText(new Vector2(max.X - (28f * view.Zoom), min.Y + (4f * view.Zoom)),
+                        ImGui.GetColorU32(WorkbenchOverlayColor), GetWorkbenchPatchMarker(patchKind));
+                }
             }
 
             if (entry is not null)
@@ -229,7 +237,10 @@ public static partial class EditorImGuiUI
             if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
                 _workbench.Selection.Select(RenderPipelineWorkbenchSelectionEntry.ForCommand(step.Id));
             if (entry is not null)
+            {
                 DrawWorkbenchCommandDragDrop(entry.Command, step.Title);
+                DrawWorkbenchCommandContextMenu(model.Pipeline, entry.Command);
+            }
             ImGui.PopID();
         }
     }

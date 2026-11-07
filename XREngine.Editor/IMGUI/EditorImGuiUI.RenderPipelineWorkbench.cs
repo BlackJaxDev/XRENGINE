@@ -172,6 +172,8 @@ public static partial class EditorImGuiUI
         DrawWorkbenchViewTab(ERenderPipelineWorkbenchView.Settings, "Settings");
         DrawWorkbenchViewTab(ERenderPipelineWorkbenchView.Validation, "Validation");
         DrawWorkbenchViewTab(ERenderPipelineWorkbenchView.Script, "Script");
+        if (_workbench.Model.Pipeline is { IsDerived: true })
+            DrawWorkbenchViewTab(ERenderPipelineWorkbenchView.Patches, "Patches");
         _workbench.RequestedView = null;
         ImGui.EndTabBar();
     }
@@ -215,6 +217,9 @@ public static partial class EditorImGuiUI
                 break;
             case ERenderPipelineWorkbenchView.Script:
                 DrawWorkbenchScriptView();
+                break;
+            case ERenderPipelineWorkbenchView.Patches:
+                DrawWorkbenchPatchesView();
                 break;
         }
 
