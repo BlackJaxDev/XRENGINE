@@ -33,6 +33,7 @@ public static partial class EditorImGuiUI
             DrawWorkbenchCanvasGrid(drawList, canvasPos, canvasSize, _workbench.FlowView);
             DrawWorkbenchFlowLanes(drawList, canvasPos, canvasSize, layout);
             DrawWorkbenchFlowConnectors(drawList, canvasPos, layout);
+            DrawWorkbenchFlowStateScopes(drawList, canvasPos, canvasSize, layout);
             DrawWorkbenchFlowSteps(drawList, canvasPos, canvasSize, model, layout);
             DrawWorkbenchFlowOverlays(drawList, canvasPos, canvasSize, model, layout);
         }
@@ -56,6 +57,33 @@ public static partial class EditorImGuiUI
 
     private static Vector2 GetFlowStepMin(RenderPipelineTimelineStep step)
         => new(FlowLaneHeaderWidth + (step.OrderIndex * FlowOrderStep), (step.LaneIndex * FlowLaneHeight) + FlowStepYOffset);
+
+    /// <summary>
+    /// Draws a bracket above the steps between each push command and its pop command.
+    /// Nested scopes draw higher so that each bracket stays visible.
+    /// </summary>
+    private static void DrawWorkbenchFlowStateScopes(ImDrawListPtr drawList, Vector2 canvasPos, Vector2 canvasSize, RenderPipelineTimelineLayout layout)
+    {
+        RenderPipelineCanvasViewState view = _workbench.FlowView;
+        uint color = ImGui.GetColorU32(ImGuiCol.TextDisabled, 0.8f);
+        uint selectedColor = ImGui.GetColorU32(ImGuiCol.PlotLinesHovered);
+        int selectedNode = _workbench.Selection.NodeId;
+        for (int i = 0; i < layout.Scopes.Count; i++)
+        {
+            RenderPipelineStateScope scope = layout.Scopes[i];
+            float y = (scope.LaneIndex * FlowLaneHeight) + FlowStepYOffset - 6f - (Math.Min(scope.NestingLevel, 4) * 6f);
+            Vector2 start = view.ToScreen(canvasPos, new Vector2(FlowLaneHeaderWidth + (scope.StartOrder * FlowOrderStep) + 8f, y));
+            Vector2 end = view.ToScreen(canvasPos, new Vector2(FlowLaneHeaderWidth + (scope.EndOrder * FlowOrderStep) + FlowStepWidth - 8f, y));
+            if (!IsWorkbenchRectVisible(start - new Vector2(0f, 2f), end + new Vector2(0f, 6f * view.Zoom), canvasPos, canvasSize))
+                continue;
+
+            uint lineColor = scope.PushNodeId == selectedNode ? selectedColor : color;
+            float tick = 5f * view.Zoom;
+            drawList.AddLine(start, end, lineColor, 1.5f);
+            drawList.AddLine(start, start + new Vector2(0f, tick), lineColor, 1.5f);
+            drawList.AddLine(end, end + new Vector2(0f, tick), lineColor, 1.5f);
+        }
+    }
 
     private static void DrawWorkbenchFlowLanes(ImDrawListPtr drawList, Vector2 canvasPos, Vector2 canvasSize, RenderPipelineTimelineLayout layout)
     {

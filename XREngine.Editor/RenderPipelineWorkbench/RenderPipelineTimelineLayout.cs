@@ -17,6 +17,9 @@ public sealed class RenderPipelineTimelineLayout
     /// <summary>Gets the lanes by container node id.</summary>
     public Dictionary<int, RenderPipelineTimelineLane> LaneById { get; } = new(16);
 
+    /// <summary>Gets the push and pop pairs of every lane, ordered by lane and start column.</summary>
+    public List<RenderPipelineStateScope> Scopes { get; } = new(32);
+
     /// <summary>Gets the largest order column of any lane.</summary>
     public int MaxOrder { get; internal set; }
 
@@ -27,6 +30,7 @@ public sealed class RenderPipelineTimelineLayout
         Steps.Clear();
         StepById.Clear();
         LaneById.Clear();
+        Scopes.Clear();
         MaxOrder = 0;
     }
 }
