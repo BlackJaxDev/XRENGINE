@@ -71,6 +71,12 @@ public sealed class RenderPipelineWorkbenchWindowState
     /// <summary>Gets or sets whether the Barriers tab shows only the barriers of the selected resource.</summary>
     public bool BarriersOfSelectedResourceOnly { get; set; }
 
+    /// <summary>Gets the validator report and the rows of the Validation view.</summary>
+    public RenderPipelineWorkbenchValidation Validation { get; } = new();
+
+    /// <summary>Gets the cached script text of the Script view.</summary>
+    public RenderPipelineWorkbenchScript Script { get; } = new();
+
     /// <summary>Gets the cached Inspector text for the selection.</summary>
     public RenderPipelineWorkbenchInspectorContent Inspector { get; } = new();
 
