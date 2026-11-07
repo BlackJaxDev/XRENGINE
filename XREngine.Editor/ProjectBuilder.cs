@@ -1330,6 +1330,9 @@ internal static partial class ProjectBuilder
         if (asset is XRAsset xrAsset)
             CookedCopyGraph.ReleaseLiveAssets(xrAsset);
 
+        // The deserialized copy is not a live asset, so the cook clears its secrets before the write.
+        PublishedSecrets.Strip(asset);
+
         // The cooked build runs from another folder, so the asset headers get portable source paths and no file paths.
         CookedAssetBlob blob;
         using (CookedSourcePathScope sourcePaths = CookedSourcePathProjection.Begin())

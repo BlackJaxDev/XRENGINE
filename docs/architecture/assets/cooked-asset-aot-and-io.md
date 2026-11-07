@@ -378,10 +378,18 @@ source paths of cooked assets at write time, without changing any object:
   settings asset with no `FilePath` and a projected `OriginalPath`. The live
   settings do not change. An absolute `GameStartupSettings.TexturesFolder`
   fails the publish with the member named.
-- The published copy of the editor preferences holds no secret.
-  `EditorPreferences.ClearSecretsForPublishing` clears the MCP token, the
-  assistant API keys, and the names of their environment variables before the
-  write, because the MemoryPack codec writes the public plaintext members.
+- A published archive holds no secret. A secret is a settings member marked
+  with `[Secret]` (`SecretAttribute`). Its environment variable companion
+  (`<Name>EnvVar`) is cleared with it. One step, `PublishedSecrets.Strip`,
+  clears them on every copy that a publish writes: the config archive copies,
+  the deserialized copy of each content asset (full and incremental), and the
+  browser startup settings. The MemoryPack codecs write the public plaintext
+  members, so the strip must run before the write. The marked members are the
+  MCP token and the four assistant API keys of `EditorPreferences` (also
+  `[Password]` for the UI), and `MultiplayerSessionToken`,
+  `MultiplayerAdmissionSecret`, `MultiplayerAccountId`,
+  `MultiplayerReservationId`, and `MultiplayerClientId` of
+  `GameStartupSettings`. Mark each new secret member with `[Secret]`.
 
 ## Mesh LOD Payloads
 

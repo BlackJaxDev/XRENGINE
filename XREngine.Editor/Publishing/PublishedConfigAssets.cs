@@ -4,8 +4,9 @@ using XREngine.Core.Files;
 namespace XREngine.Editor.Publishing;
 
 /// <summary>
-/// Makes the copies of the settings assets that a publish writes into the config archive. A copy has no file path and a
-/// portable source path, so the archive holds no path of the cook machine. The live settings of the editor do not change.
+/// Makes the copies of the settings assets that a publish writes into the config archive. A copy has no secret, no file
+/// path, and a portable source path, so the archive holds no secret and no path of the cook machine. The live settings of
+/// the editor do not change.
 /// </summary>
 /// <remarks>
 /// The settings assets use registered MemoryPack codecs, which write the <see cref="XRAsset"/> members directly and do not
@@ -38,25 +39,24 @@ public static class PublishedConfigAssets
         return Copy(live);
     }
 
-    /// <summary>
-    /// Makes the published copy of an editor preferences snapshot. The copy holds no secret: the MCP token, the assistant
-    /// API keys, and the names of their environment variables are cleared (<see cref="EditorPreferences.ClearSecretsForPublishing"/>).
-    /// </summary>
+    /// <summary>Makes the published copy of an editor preferences snapshot.</summary>
     /// <param name="snapshot">A persistable snapshot of the editor preferences.</param>
     /// <returns>The copy to write.</returns>
     public static EditorPreferences CreateEditorPreferences(EditorPreferences snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        EditorPreferences copy = Copy(snapshot);
-        copy.ClearSecretsForPublishing();
-        return copy;
+        return Copy(snapshot);
     }
 
-    /// <summary>Copies a settings asset through its MemoryPack contract, then clears its file path and projects its source path.</summary>
+    /// <summary>
+    /// Copies a settings asset through its MemoryPack contract. Then it clears every secret
+    /// (<see cref="PublishedSecrets.Strip"/>) and the file path, and projects the source path.
+    /// </summary>
     private static T Copy<T>(T live) where T : XRAsset
     {
         T copy = MemoryPackSerializer.Deserialize<T>(MemoryPackSerializer.Serialize(live))
             ?? throw new InvalidOperationException($"The published copy of '{typeof(T).Name}' could not be made.");
+        PublishedSecrets.Strip(copy);
         copy.FilePath = null;
         copy.OriginalPath = CookedSourcePathProjection.ProjectOriginalPath(copy, copy.OriginalPath);
         return copy;
