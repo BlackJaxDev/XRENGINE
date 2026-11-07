@@ -232,14 +232,18 @@ internal sealed class CutsceneVideoChannel
             return;
         }
 
-        // The result of the request for this time shows, if the request gives the accuracy that the mode needs: a drag
-        // takes any result, and the other modes need an exact result.
+        // The result of the request for this time shows, if the request gives the accuracy that the mode needs.
         if (_hasResult && _requestTicks == ticks && (mode == ECutsceneVideoMode.Keyframe || _requestMode == ECutsceneVideoMode.Exact)
             && Cache.TryGetFrameAt(_resultPts, out frame))
         {
             Present(frame);
             return;
         }
+
+        // During a drag, a finished result of an older time is a frame at or before the wanted time, so it shows while the
+        // seek of the new time runs. A keyframe decode that takes longer than a tick then does not freeze the surface.
+        if (mode == ECutsceneVideoMode.Keyframe && _hasResult && _resultPts <= ticks && Cache.TryGetFrameAt(_resultPts, out frame))
+            Present(frame);
 
         if (mode == ECutsceneVideoMode.Sequential)
         {

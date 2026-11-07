@@ -84,7 +84,9 @@ internal static unsafe class VideoTestClips
     /// video is an intra-only codec, so FFmpeg marks every raw frame as a keyframe.
     /// </param>
     /// <param name="startFrame">The time of the first frame, in frames. A value above zero gives the file a non-zero start time.</param>
-    public static unsafe string Write(string directory, string extension, string muxer, bool interCoded = false, int startFrame = 0)
+    /// <param name="width">The frame width. A qtrle frame of any size stays small, so 1080p and 4K clips are cheap.</param>
+    /// <param name="height">The frame height.</param>
+    public static unsafe string Write(string directory, string extension, string muxer, bool interCoded = false, int startFrame = 0, int width = Width, int height = Height)
     {
         string path = Path.Combine(directory, $"clip{extension}");
         AVFormatContext* format = null;
@@ -103,8 +105,8 @@ internal static unsafe class VideoTestClips
             AVCodecParameters* parameters = stream->codecpar;
             parameters->codec_type = AVMediaType.AVMEDIA_TYPE_VIDEO;
             parameters->codec_id = interCoded ? AVCodecID.AV_CODEC_ID_QTRLE : AVCodecID.AV_CODEC_ID_RAWVIDEO;
-            parameters->width = Width;
-            parameters->height = Height;
+            parameters->width = width;
+            parameters->height = height;
             // AVI and the VFW mode of Matroska store bottom-up BGR24 (BI_RGB). QuickTime and NUT store RGB24. A gray frame
             // has the same bytes in both orders, so the decoder output is the same.
             bool bitmap = !interCoded && muxer is "avi" or "matroska";
@@ -125,14 +127,14 @@ internal static unsafe class VideoTestClips
             ffmpeg.av_dict_free(&options);
             Check(header, "avformat_write_header");
 
-            int size = interCoded ? QtrlePacketSize : Width * Height * 3;
+            int size = interCoded ? QtrlePacketSize(width, height) : width * height * 3;
             packet = ffmpeg.av_packet_alloc();
             for (int i = 0; i < FrameCount; i++)
             {
                 Check(ffmpeg.av_new_packet(packet, size), "av_new_packet");
                 Span<byte> data = new(packet->data, size);
                 if (interCoded)
-                    WriteQtrleFrame(data, GrayOf(i));
+                    WriteQtrleFrame(data, GrayOf(i), width, height);
                 else
                     data.Fill(GrayOf(i));
                 packet->pts = ffmpeg.av_rescale_q(i + startFrame, frameBase, stream->time_base);
@@ -155,29 +157,35 @@ internal static unsafe class VideoTestClips
         return path;
     }
 
-    // A qtrle packet: the chunk size, a header with no line range, and for each line one skip byte, one run of Width
-    // pixels, and the end code.
-    private const int QtrleLineSize = 1 + 1 + 3 + 1;
-    private const int QtrlePacketSize = 4 + 2 + Height * QtrleLineSize;
+    // A qtrle run code covers at most 128 pixels.
+    private const int QtrleMaxRun = 128;
+
+    // A qtrle packet: the chunk size, a header with no line range, and for each line one skip byte, runs of at most 128
+    // pixels (a code and three color bytes each), and the end code.
+    private static int QtrlePacketSize(int width, int height)
+        => 4 + 2 + height * (1 + (width + QtrleMaxRun - 1) / QtrleMaxRun * 4 + 1);
 
     /// <summary>
     /// Writes one 24-bit qtrle frame that sets every pixel to one gray level. Each frame updates every line, so a frame
     /// also decodes after a seek to an earlier keyframe.
     /// </summary>
-    private static void WriteQtrleFrame(Span<byte> data, byte gray)
+    private static void WriteQtrleFrame(Span<byte> data, byte gray, int width, int height)
     {
         System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(data, data.Length);
         data[4] = 0;
         data[5] = 0;
         int offset = 6;
-        for (int line = 0; line < Height; line++)
+        for (int line = 0; line < height; line++)
         {
-            data[offset++] = 1;                    // Skip code: start at pixel 0.
-            data[offset++] = unchecked((byte)-Width); // A run of Width pixels.
-            data[offset++] = gray;
-            data[offset++] = gray;
-            data[offset++] = gray;
-            data[offset++] = 0xFF;                 // End of the line.
+            data[offset++] = 1; // Skip code: start at pixel 0.
+            for (int left = width; left > 0; left -= QtrleMaxRun)
+            {
+                data[offset++] = unchecked((byte)-Math.Min(left, QtrleMaxRun)); // A run of pixels.
+                data[offset++] = gray;
+                data[offset++] = gray;
+                data[offset++] = gray;
+            }
+            data[offset++] = 0xFF; // End of the line.
         }
     }
 

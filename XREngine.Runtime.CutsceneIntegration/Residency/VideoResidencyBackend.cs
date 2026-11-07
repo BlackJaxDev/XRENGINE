@@ -11,8 +11,12 @@ namespace XREngine.Cutscenes;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The backend keeps only a small warm set for each source (<see cref="SourceCacheCapacity"/> frames and at most
-/// <see cref="SourceCacheBudgetBytes"/> bytes), so a source is not cached two times.
+/// The backend keeps only a small warm set for each source, so a source is not cached two times. The warm set guarantees
+/// this: the frame of the deadline of each complete level is pinned, so it stays until the planner cancels the level, and
+/// <see cref="GetLevel"/> reports a level only while its frame is held. At most three such frames exist for a source (one
+/// for each level), and they stay also above the byte budget. The warm frames after a T2 frame are best effort: they use
+/// the free slots and at most <see cref="SourceCacheBudgetBytes"/> bytes, and a warm frame that does not fit is skipped or
+/// evicted first.
 /// </para>
 /// <para>
 /// T0 opens the media session of the source and decodes the keyframe at or before the file time of the deadline. It stays
@@ -38,12 +42,15 @@ public sealed class VideoResidencyBackend : IResidencyBackend, IDisposable
     public const int WarmFrameCount = 2;
 
     /// <summary>
-    /// The number of frames that the warm set of each source holds. The set is small, because the track keeps its own
-    /// cache: the backend holds only the frames that a jump needs first.
+    /// The number of frames that the warm set of each source holds: one pinned deadline frame for each of the three levels,
+    /// and the <see cref="WarmFrameCount"/> warm frames. The set is small, because the track keeps its own cache.
     /// </summary>
-    public const int SourceCacheCapacity = 4;
+    public const int SourceCacheCapacity = 3 + WarmFrameCount;
 
-    /// <summary>The byte budget of the warm set of each source: 16 MiB (two 1080p frames, or one 4K frame).</summary>
+    /// <summary>
+    /// The byte budget of the warm frames of each source: 16 MiB (two 1080p frames, or no 4K frame). The pinned deadline
+    /// frames stay also above it.
+    /// </summary>
     public const long SourceCacheBudgetBytes = 16L * 1024 * 1024;
 
     /// <summary>The number of frames that the media session of a source queues. A load takes each frame at once.</summary>
@@ -326,22 +333,39 @@ public sealed class VideoResidencyBackend : IResidencyBackend, IDisposable
                 EVideoSeekMode mode = ticket.Level == (int)EResidencyLevel.Target ? EVideoSeekMode.Exact : EVideoSeekMode.NearestKeyframe;
                 await session.SeekAsync(ticks, mode, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(LoadTimeoutSeconds)).ConfigureAwait(false);
                 int count = mode == EVideoSeekMode.Exact ? 1 + WarmFrameCount : 1;
+                int received = 0;
                 System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
-                while (frames.Count < count && !IsCancelled(ticket))
+                while (received < count && !IsCancelled(ticket))
                 {
                     if (session.TryDequeueVideoFrame(ReleaseAnyFrame, out DecodedVideoFrame frame))
                     {
-                        source.Cache.Insert(frame);
-                        frames.Add(frame.PresentationTimestampTicks);
+                        // The first frame is the frame of the deadline, so it is pinned: no warm frame can evict the frame
+                        // of a level that the backend reports as resident. A warm frame that does not fit is skipped.
+                        bool deadline = received++ == 0;
+                        bool stored;
+                        lock (_sync)
+                        {
+                            stored = !ticket.Cancelled && !_disposed && source.Cache.Insert(frame, pin: deadline);
+                            if (stored && deadline)
+                                ticket.PinnedPts = frame.PresentationTimestampTicks;
+                        }
+                        if (stored)
+                            frames.Add(frame.PresentationTimestampTicks);
+                        else if (deadline)
+                        {
+                            if (!IsCancelled(ticket))
+                                throw new InvalidOperationException("the warm set has no slot for the deadline frame");
+                            break;
+                        }
                         continue;
                     }
 
                     // The end of the file can come before the warm frames. The first frame is the level itself.
-                    if (watch.Elapsed.TotalSeconds > (frames.Count == 0 ? LoadTimeoutSeconds : 0.5))
+                    if (watch.Elapsed.TotalSeconds > (received == 0 ? LoadTimeoutSeconds : 0.5))
                         break;
                     await Task.Delay(1).ConfigureAwait(false);
                 }
-                if (frames.Count == 0 && !IsCancelled(ticket))
+                if (received == 0 && !IsCancelled(ticket))
                     throw new TimeoutException("the session gave no frame after the seek");
             }
         }
@@ -439,9 +463,16 @@ public sealed class VideoResidencyBackend : IResidencyBackend, IDisposable
             return ticket.Cancelled || _disposed;
     }
 
-    // Call with _sync held. Removes the frames of a ticket that no other complete ticket of the source holds.
+    // Call with _sync held. Ends the pin of the deadline frame, and removes the frames of a ticket that no other complete
+    // ticket of the source holds. A frame that another ticket pins stays.
     private void ReleaseFrames(BackendTicket ticket)
     {
+        if (ticket.PinnedPts is { } pinned)
+        {
+            ticket.Source.Cache.Unpin(pinned);
+            ticket.PinnedPts = null;
+        }
+
         List<long>? frames = ticket.Frames;
         ticket.Frames = null;
         if (frames is null)
@@ -606,5 +637,6 @@ public sealed class VideoResidencyBackend : IResidencyBackend, IDisposable
         public bool Complete { get; set; }
         public bool Cancelled { get; set; }
         public List<long>? Frames { get; set; }
+        public long? PinnedPts { get; set; }
     }
 }

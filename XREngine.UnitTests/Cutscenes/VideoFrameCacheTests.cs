@@ -187,7 +187,7 @@ public sealed class VideoFrameCacheTests
     }
 
     [Test]
-    public void RemoveAndClear_KeepTheSlotBuffers()
+    public void Remove_KeepsTheSlotBuffer_AndClearReleasesEveryBuffer()
     {
         VideoFrameCache cache = new(2);
         byte[] buffer = new byte[FrameBytes];
@@ -197,12 +197,99 @@ public sealed class VideoFrameCacheTests
         cache.Remove(0).ShouldBeTrue();
         cache.Remove(0).ShouldBeFalse();
         cache.Count.ShouldBe(1);
+        cache.Insert(MakeFrame(2, buffer));
+        cache.BufferAllocationCount.ShouldBe(2, "a removed frame leaves its buffer for the next frame");
+
         cache.Clear();
         cache.Count.ShouldBe(0);
+        cache.AllocatedBytes.ShouldBe(0);
+    }
 
-        cache.Insert(MakeFrame(2, buffer));
-        cache.Insert(MakeFrame(3, buffer));
-        cache.BufferAllocationCount.ShouldBe(2);
+    private const int Bytes1080p = 1920 * 1080 * 3;
+    private const int Bytes4K = 3840 * 2160 * 3;
+
+    private static DecodedVideoFrame MakeSized(int index, int width, int height, byte[] buffer)
+    {
+        buffer[0] = (byte)index;
+        return new DecodedVideoFrame(width, height, index * FrameTicks, FrameTicks, VideoPixelFormat.Rgb24, buffer);
+    }
+
+    [Test]
+    public void ResolutionChange_From1080pTo4KMidStream_StaysWithinTheBudget()
+    {
+        VideoFrameCache cache = new(24, VideoFrameCache.DefaultBudgetBytes);
+        byte[] hd = new byte[Bytes1080p];
+        byte[] uhd = new byte[Bytes4K];
+        int index = 0;
+        for (int i = 0; i < 12; i++)
+        {
+            cache.Insert(MakeSized(index++, 1920, 1080, hd));
+            cache.AllocatedBytes.ShouldBeLessThanOrEqualTo(cache.BudgetBytes);
+        }
+        cache.Count.ShouldBe((int)(cache.BudgetBytes / Bytes1080p));
+
+        for (int i = 0; i < 12; i++)
+        {
+            cache.Insert(MakeSized(index++, 3840, 2160, uhd));
+            cache.AllocatedBytes.ShouldBeLessThanOrEqualTo(cache.BudgetBytes, $"4K frame {i}");
+        }
+        cache.Count.ShouldBe((int)(cache.BudgetBytes / Bytes4K));
+        cache.AllocatedBytes.ShouldBe(cache.Count * (long)Bytes4K, "no small buffer of the 1080p frames stays");
+
+        // Back to 1080p: the 4K buffers are two or more times the frame size, so they are made smaller.
+        for (int i = 0; i < 12; i++)
+        {
+            cache.Insert(MakeSized(index++, 1920, 1080, hd));
+            cache.AllocatedBytes.ShouldBeLessThanOrEqualTo(cache.BudgetBytes);
+        }
+        cache.Count.ShouldBe((int)(cache.BudgetBytes / Bytes1080p));
+        cache.AllocatedBytes.ShouldBe(cache.Count * (long)Bytes1080p);
+    }
+
+    [Test]
+    public void ClipChange_FreesTheUnusedBuffers()
+    {
+        VideoFrameCache cache = new(24, VideoFrameCache.DefaultBudgetBytes);
+        byte[] hd = new byte[Bytes1080p];
+        for (int i = 0; i < 10; i++)
+            cache.Insert(MakeSized(i, 1920, 1080, hd));
+        cache.AllocatedBytes.ShouldBeGreaterThan(50L * 1024 * 1024);
+
+        // A clip change clears the cache. The next clip has frames of another size.
+        cache.Clear();
+        cache.AllocatedBytes.ShouldBe(0);
+        cache.Insert(MakeSized(0, 3840, 2160, new byte[Bytes4K]));
+        cache.AllocatedBytes.ShouldBe(Bytes4K);
+    }
+
+    [Test]
+    public void PinnedFrame_IsNeverEvicted_AndDoesNotCountTowardTheBudget()
+    {
+        VideoFrameCache cache = new(4, 2 * FrameBytes);
+        byte[] buffer = new byte[FrameBytes];
+        cache.Insert(MakeFrame(0, buffer), pin: true).ShouldBeTrue();
+        for (int i = 1; i < 20; i++)
+            cache.Insert(MakeFrame(i, buffer));
+
+        cache.IsPinned(0).ShouldBeTrue();
+        cache.Count.ShouldBe(3, "the pinned frame comes on top of two unpinned frames");
+        cache.Remove(0).ShouldBeFalse("a pinned frame is not removed");
+
+        cache.Unpin(0).ShouldBeTrue();
+        cache.Insert(MakeFrame(20, buffer));
+        cache.Insert(MakeFrame(21, buffer));
+        cache.Contains(0).ShouldBeFalse("an unpinned frame can be evicted");
+    }
+
+    [Test]
+    public void AllSlotsPinned_RejectsAnUnpinnedFrame()
+    {
+        VideoFrameCache cache = new(2);
+        byte[] buffer = new byte[FrameBytes];
+        cache.Insert(MakeFrame(0, buffer), pin: true).ShouldBeTrue();
+        cache.Insert(MakeFrame(1, buffer), pin: true).ShouldBeTrue();
+        cache.Insert(MakeFrame(2, buffer)).ShouldBeFalse();
+        cache.Count.ShouldBe(2);
     }
 
     [Test]

@@ -331,8 +331,11 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             decodeThread = _decodeThread;
         }
 
-        if (!_wakeDisposed)
-            _wake.Set();
+        lock (_seekLock)
+        {
+            if (!_wakeDisposed)
+                _wake.Set();
+        }
         decodeThread?.Join(TimeSpan.FromSeconds(3));
         CancelSeeks();
 
@@ -353,8 +356,11 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             return;
         _disposed = true;
         Stop();
-        _wakeDisposed = true;
-        _wake.Dispose();
+        lock (_seekLock)
+        {
+            _wakeDisposed = true;
+            _wake.Dispose();
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -386,10 +392,12 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             _pendingGeneration = generation;
             _pendingCompletion = completion;
             _hasPendingSeek = true;
+
+            // Dispose disposes the wake event under this lock, so the set cannot meet a disposed event.
+            if (!_wakeDisposed)
+                _wake.Set();
         }
         superseded?.TrySetCanceled();
-        if (!_wakeDisposed)
-            _wake.Set();
         return true;
     }
 

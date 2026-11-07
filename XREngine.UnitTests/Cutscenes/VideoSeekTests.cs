@@ -396,16 +396,82 @@ public sealed class VideoSeekTests
         session.Seeks[0].State.ShouldBe(EVideoSeekState.Pending);
         rig.Target.SubmitCount.ShouldBe(0);
 
-        // The seek ends. Its keyframe (10) is not at or before the new time's range, so the track asks for the newest time.
+        // The seek ends. Its keyframe (10) is before the new time, so it shows, and the track asks for the newest time.
         session.Complete(0, VideoTestClips.TicksOf(10));
         ScrubUntil(rig, second, () => session.Seeks.Count > 1);
+        rig.Target.LastPts.ShouldBe(VideoTestClips.TicksOf(10));
         session.Seeks[1].TargetTicks.ShouldBe(VideoTestClips.TicksOf(33));
         session.Seeks[1].Mode.ShouldBe(EVideoSeekMode.NearestKeyframe);
 
         session.Complete(1, VideoTestClips.TicksOf(30));
-        ScrubUntil(rig, second, () => rig.Target.SubmitCount > 0);
+        ScrubUntil(rig, second, () => rig.Target.SubmitCount > 1);
         rig.Target.LastPts.ShouldBe(VideoTestClips.TicksOf(30));
+        rig.Target.SubmitCount.ShouldBe(2);
+    }
+
+    [Test]
+    public void Track_ForwardDrag_ShowsALateResultThatIsBeforeTheWantedTime()
+    {
+        FakeSeekSession session = new();
+        using Rig rig = MakeRig("unused-file.mp4", () => session);
+        rig.Player.BeginScrub();
+        ScrubUntil(rig, FromTicks(VideoTestClips.TicksOf(12)), () => session.Seeks.Count > 0);
+
+        // The keyframe decode takes longer than a tick: the drag moves on before it ends.
+        ScrubOnce(rig, FromTicks(VideoTestClips.TicksOf(20)));
+        session.Complete(0, VideoTestClips.TicksOf(10));
+        ScrubOnce(rig, FromTicks(VideoTestClips.TicksOf(28)));
+
+        // The late result (frame 10) is at or before the wanted time, so it shows, and the newest time is asked for.
         rig.Target.SubmitCount.ShouldBe(1);
+        rig.Target.LastPts.ShouldBe(VideoTestClips.TicksOf(10));
+        session.Seeks.Count.ShouldBe(2);
+        session.Seeks[1].TargetTicks.ShouldBe(VideoTestClips.TicksOf(28));
+
+        // A result after the wanted time (a backward drag) does not show.
+        ScrubOnce(rig, FromTicks(VideoTestClips.TicksOf(26)));
+        session.Complete(1, VideoTestClips.TicksOf(27));
+        ScrubOnce(rig, FromTicks(VideoTestClips.TicksOf(24)));
+        rig.Target.LastPts.ShouldBe(VideoTestClips.TicksOf(10));
+        rig.Target.MaxPts.ShouldBeLessThanOrEqualTo(VideoTestClips.TicksOf(24));
+    }
+
+    [Test]
+    public void Residency_At1080p_KeepsThePinnedDeadlineFrames_AndGetLevelMatchesWhatIsHeld()
+    {
+        string folder = Path.Combine(_directory, $"hd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        string path = Path.GetFullPath(VideoTestClips.Write(folder, ".mov", "mov", interCoded: true, width: 1920, height: 1080));
+        using VideoResidencyBackend backend = new(CompileVideoAsset(path));
+        Guid asset = backend.BuildManifest().Assets[0];
+        VideoFrameCache cache = backend.GetCache(path)!;
+
+        ResidencyTicket proxy = backend.Request(new ResidencyRequest(asset, (int)EResidencyLevel.Proxy, FromTicks(VideoTestClips.TicksOf(27)), 1.0f, 0));
+        RunUntil(() => backend.GetLevel(asset) == EResidencyLevel.Proxy, () => { });
+        ResidencyTicket target = backend.Request(new ResidencyRequest(asset, (int)EResidencyLevel.Target, FromTicks(VideoTestClips.TicksOf(33)), 1.0f, 0));
+        RunUntil(() => backend.GetLevel(asset) == EResidencyLevel.Target, () => { });
+        ResidencyTicket coarse = backend.Request(new ResidencyRequest(asset, (int)EResidencyLevel.Coarse, FromTicks(VideoTestClips.TicksOf(44)), 1.0f, 0));
+        RunUntil(() => cache.IsPinned(VideoTestClips.TicksOf(40)), () => { });
+
+        // The warm frames after frame 33 do not evict a deadline frame: each level keeps its frame.
+        cache.IsPinned(VideoTestClips.TicksOf(20)).ShouldBeTrue("T0 keyframe");
+        cache.IsPinned(VideoTestClips.TicksOf(33)).ShouldBeTrue("T2 exact frame");
+        cache.IsPinned(VideoTestClips.TicksOf(40)).ShouldBeTrue("T1 keyframe");
+        cache.TryGetFrameAt(VideoTestClips.TicksOf(33), out DecodedVideoFrame exact).ShouldBeTrue();
+        exact.Width.ShouldBe(1920);
+        VideoTestClips.FrameOf(exact).ShouldBe(33);
+        long warmBytes = cache.AllocatedBytes - 3L * 1920 * 1080 * 3;
+        warmBytes.ShouldBeLessThanOrEqualTo(VideoResidencyBackend.SourceCacheBudgetBytes);
+
+        // A cancel releases the frame of that level only.
+        backend.Cancel(target);
+        cache.Contains(VideoTestClips.TicksOf(33)).ShouldBeFalse();
+        cache.IsPinned(VideoTestClips.TicksOf(20)).ShouldBeTrue();
+        backend.GetLevel(asset).ShouldBe(EResidencyLevel.Coarse);
+        backend.Cancel(coarse);
+        backend.Cancel(proxy);
+        backend.GetLevel(asset).ShouldBe(EResidencyLevel.None);
+        backend.FailedLoadCount.ShouldBe(0);
     }
 
     private static void ScrubOnce(Rig rig, CutsceneTime position)
