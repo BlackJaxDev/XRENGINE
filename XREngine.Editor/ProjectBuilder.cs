@@ -775,7 +775,12 @@ internal static partial class ProjectBuilder
             archivePath: context.ContentArchivePath,
             intermediateDirectory: context.IntermediateDirectory,
             deltaFolderName: "CookedContentDelta",
-            transformFile: static (source, destination) => WritePublishedCookedFile(source, destination),
+            transformFile: static (source, destination) =>
+            {
+                WritePublishedCookedFile(source, destination);
+                if (string.Equals(Path.GetExtension(source), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                    CookedOutputPathGuard.ThrowIfMachinePath(destination, source);
+            },
             includeRelativePath: ShouldIncludeInCookedContent);
     }
 
@@ -1220,7 +1225,31 @@ internal static partial class ProjectBuilder
             progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
         }
 
+        GuardCookedContent(context.AssetsDirectory, cookedRoot, sourceFiles);
         return cookedRoot;
+    }
+
+    /// <summary>
+    /// Fails the cook if a cooked asset file, or a separate LOD entry, holds a machine path. Files that the cook copies as
+    /// they are (not asset files) are not checked.
+    /// </summary>
+    private static void GuardCookedContent(string assetsDirectory, string cookedRoot, string[] sourceFiles)
+    {
+        foreach (string sourceFile in sourceFiles)
+        {
+            if (!string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            string relative = Path.GetRelativePath(assetsDirectory, sourceFile);
+            CookedOutputPathGuard.ThrowIfMachinePath(Path.Combine(cookedRoot, relative), NormalizePath(relative));
+        }
+
+        string lodDirectory = Path.Combine(cookedRoot, "lod");
+        if (!Directory.Exists(lodDirectory))
+            return;
+
+        foreach (string lodFile in Directory.GetFiles(lodDirectory, "*", SearchOption.AllDirectories))
+            CookedOutputPathGuard.ThrowIfMachinePath(lodFile, NormalizePath(Path.GetRelativePath(cookedRoot, lodFile)));
     }
 
     /// <summary>Runs the incremental archive repack with a test transform. The delta folder name is fixed.</summary>
@@ -1299,11 +1328,32 @@ internal static partial class ProjectBuilder
             ?? throw new InvalidOperationException($"Failed to deserialize asset '{sourcePath}' as '{assetType.FullName}'.");
         loaded = asset;
 
-        // The cooked build runs from another folder, so the source paths are written as portable references.
         if (asset is XRAsset xrAsset)
-            Publishing.CookedSourcePathPolicy.MakeSourcePathsPortable(xrAsset);
+            CookedCopyGraph.ReleaseLiveAssets(xrAsset);
 
-        return CreateCookedBlob(asset);
+        // The cooked build runs from another folder, so the asset headers get portable source paths and no file paths.
+        CookedAssetBlob blob;
+        using (CookedSourcePathScope sourcePaths = CookedSourcePathProjection.Begin())
+        {
+            blob = CreateCookedBlob(asset);
+            ThrowIfSourcePathsNotPortable(sourcePaths, sourcePath);
+        }
+        return blob;
+    }
+
+    /// <summary>Fails the cook of an asset file if a source path in it is outside every asset root.</summary>
+    private static void ThrowIfSourcePathsNotPortable(CookedSourcePathScope sourcePaths, string sourcePath)
+    {
+        if (sourcePaths.Failures.Count == 0)
+            return;
+
+        StringBuilder message = new();
+        message.Append("Asset file '").Append(sourcePath).Append("' could not be cooked: ")
+            .Append(sourcePaths.Failures.Count).Append(" source path(s) are outside the game and engine asset folders, ")
+            .Append("so the cooked build would hold machine paths. Move the source files into an asset folder, or remove the paths.");
+        foreach (CookedSourcePathFailure failure in sourcePaths.Failures)
+            message.AppendLine().Append("  asset '").Append(failure.AssetName).Append("': ").Append(failure.Path);
+        throw new CookedSourcePathException(message.ToString());
     }
 
     private static void WriteCookedBlob(string destination, CookedAssetBlob blob)

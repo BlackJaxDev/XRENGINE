@@ -124,7 +124,7 @@ namespace XREngine.Rendering.Models
                 writer.Write((uint)CodecVersion);
                 WriteGuid(writer, subMesh.ID);
                 WriteNullableString(writer, subMesh.Name);
-                WriteNullableString(writer, subMesh.OriginalPath);
+                WriteNullableString(writer, CookedSourcePathProjection.ProjectOriginalPath(subMesh, subMesh.OriginalPath));
 
                 writer.Write(subMesh.ImportedEntityIdentity ?? string.Empty);
                 writer.Write(subMesh.ImportedEntityIdentityIsStable);

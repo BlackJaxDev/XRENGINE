@@ -219,7 +219,7 @@ internal static class AnimationClipSerialization
             AssetType = clip.GetType().FullName ?? clip.GetType().Name,
             Id = clip.ID,
             Name = clip.Name,
-            OriginalPath = clip.OriginalPath,
+            OriginalPath = CookedSourcePathProjection.ProjectOriginalPath(clip, clip.OriginalPath),
             OriginalLastWriteTimeUtc = clip.OriginalLastWriteTimeUtc,
             TraversalMethod = clip.TraversalMethod,
             LengthInSeconds = clip.LengthInSeconds,

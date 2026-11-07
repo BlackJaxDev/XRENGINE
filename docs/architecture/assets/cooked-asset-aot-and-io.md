@@ -314,42 +314,56 @@ assets on disk do not use it; play-mode snapshots do.
 
 ## Portable Source Paths
 
-The YAML cook (`ProjectBuilder.CreateCookedBlobFromYaml`) calls
-`CookedSourcePathPolicy.MakeSourcePathsPortable` on the asset that it
-deserialized, before it serializes the cooked payload. The policy writes
-`XRAsset.OriginalPath` of the asset, and of each asset that the cook writes
-with it, as a `game://` or `engine://` reference when the path is in an asset
-folder of the cook process. A path outside the asset folders stays absolute.
-Thus a cooked `OriginalPath` holds no source path of the cook machine, and a
-system that identifies an asset by its source file (for example the cutscene
-residency texture keys) gets the same value in the editor and in a cooked
-build.
+A cook must not ship a machine path. The content cook therefore writes the
+source paths of cooked assets at write time, without changing any object:
 
-- The policy finds the assets with
-  `XRAssetGraphUtility.VisitReachableAssets(root, isForeignAsset, visitor)`.
-  The walk follows the same serialized members as the graph refresh, and it
-  also reaches assets that the refresh does not claim as embedded: the items of
-  a collection in a `System` namespace (for example the
-  `EventList<XRTexture?>` texture list of a material), and a self-rooted asset
-  whose file exists (for example a texture that a source image backs). The walk
-  does not change `SourceAsset` or `EmbeddedAssets`.
-- The policy first calls
-  `XRAssetGraphUtility.RefreshAssetGraph(root, isForeignAsset)`, so live assets
-  that the deserialization claimed are released. A live asset that the copy
-  references (the asset services return the same instance for its ID) is
-  foreign: the refresh does not claim it, and the policy does not change it or
-  the assets in it.
-- The policy never fails a cook. If the graph refresh throws (for example the
-  1,000-entry collection limit) or the walk stops at its depth or count limit,
-  it logs one warning and still changes the paths that it reached.
-- The policy changes only `OriginalPath`. A texture that a source image backs
-  keeps the `FilePath` of the cook machine in its cooked bytes.
+- `ProjectBuilder.CreateCookedBlobFromYaml` opens a cook scope
+  (`CookedSourcePathProjection.Begin`) around the serialization of each asset
+  file. Inside the scope, the asset-header step of each cooked serializer
+  writes `XRAsset.OriginalPath` as a `game://` or `engine://` reference
+  (`CookedSourcePathProjection.ProjectOriginalPath`) and writes no
+  `XRAsset.FilePath` (`ProjectFilePath`). The steps are
+  `RuntimeCookedBinarySerializer.WriteBaseObject` and
+  `CalculateBaseObjectSize`, the reflective `OriginalPath` member of
+  `CookedBinarySerializer` (`MemberMetadata.GetSerializedValue`, for the size,
+  write, and schema passes), the `SubMeshCookedCodec` header, and the serialized
+  models of animation clips, blend trees, and state machines. The size pass and
+  the write pass use the same projection, and the scope caches each result, so
+  the sizes and the bytes agree.
+- The projection covers every asset that the cook writes into the bytes: the
+  root, embedded assets, the items of a material texture list, a texture that a
+  source image backs, and live assets that the copy references in full (for
+  example a material `.asset` that a prefab references by `{ID, Path}`). Live
+  editor assets do not change.
+- The cooked `FilePath` is empty. Do not write it as `game://`: the
+  `FilePath` setter calls `Path.GetFullPath`, and every reader treats it as a
+  file path. At runtime, `ImportedTextureStreamingManager.RegisterTexture`
+  sets an empty `FilePath` from the resolved `OriginalPath`, so the streaming
+  record points at a file that exists.
+- An absolute source path outside every asset root fails the cook with
+  `CookedSourcePathException`. The message names the asset file, the asset, and
+  the path. The cook does not clear such a path. Move the source file into an
+  asset folder before you publish. A relative value (not a machine path) is
+  written as it is.
+- After the cook, `CookedOutputPathGuard` checks each cooked asset file and
+  each separate `lod/` entry for the asset roots of the cook process, for
+  drive-letter paths, and for UNC paths, as UTF-8 and UTF-16 text. A hit fails
+  the cook with `CookedSourcePathException`, which names the asset and the
+  path. The drive-letter and UNC patterns need at least three path parts, so
+  random binary data does not match. The incremental archive build checks each
+  cooked asset file that it writes. Files that the cook copies as they are
+  (not asset files) are not checked.
+- `CookedSourcePathException` is not an `InvalidOperationException`, so the
+  cook does not fall back to a copy of the YAML source.
+- Before the serialization, `CookedCopyGraph.ReleaseLiveAssets` refreshes the
+  asset graph of the deserialized copy with live assets as foreign, so the copy
+  does not claim a live editor asset. A refresh failure fails the cook.
 - Code that reads a cooked `OriginalPath` for a file system call resolves it
   first with `AssetReferencePath.TryResolveFileSystemPath`: the texture
   streaming restore, the texture cache fallback, the texture streaming cache
   codec, and the font layout recovery (`FontGlyphSet`).
-- Cooks of live objects (`WriteCookedAsset`) and browser dependency cooks do
-  not use the policy.
+- The config archive (`WriteCookedAsset` of the settings assets) and the
+  browser dependency cooks do not use the cook scope or the check.
 
 ## Mesh LOD Payloads
 

@@ -97,7 +97,7 @@ internal static class AnimStateMachineSerialization
             AssetType = stateMachine.GetType().FullName ?? stateMachine.GetType().Name,
             Id = stateMachine.ID,
             Name = stateMachine.Name,
-            OriginalPath = stateMachine.OriginalPath,
+            OriginalPath = CookedSourcePathProjection.ProjectOriginalPath(stateMachine, stateMachine.OriginalPath),
             OriginalLastWriteTimeUtc = stateMachine.OriginalLastWriteTimeUtc,
             AnimatePhysics = stateMachine.AnimatePhysics,
             Variables = variables,

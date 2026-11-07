@@ -104,7 +104,7 @@ public static partial class CookedBinarySerializer
                 object? memberValue = null;
                 try
                 {
-                    memberValue = member.GetValue(value);
+                    memberValue = member.GetSerializedValue(value);
                 }
                 catch (Exception ex)
                 {

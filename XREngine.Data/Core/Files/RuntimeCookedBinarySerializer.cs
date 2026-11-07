@@ -543,8 +543,8 @@ public static class RuntimeCookedBinarySerializer
 
         return CalculateSize(asset.ID)
             + CalculateSize(asset.Name)
-            + CalculateSize(asset.FilePath)
-            + CalculateSize(asset.OriginalPath)
+            + CalculateSize(CookedSourcePathProjection.ProjectFilePath(asset.FilePath))
+            + CalculateSize(CookedSourcePathProjection.ProjectOriginalPath(asset, asset.OriginalPath))
             + CalculateSize(asset.OriginalLastWriteTimeUtc);
     }
 
@@ -562,8 +562,9 @@ public static class RuntimeCookedBinarySerializer
 
         writer.WriteValue(asset.ID);
         writer.WriteValue(asset.Name);
-        writer.WriteValue(asset.FilePath);
-        writer.WriteValue(asset.OriginalPath);
+        // A cook writes no file path of the cook machine and a portable source path. Size and write use the same projection.
+        writer.WriteValue(CookedSourcePathProjection.ProjectFilePath(asset.FilePath));
+        writer.WriteValue(CookedSourcePathProjection.ProjectOriginalPath(asset, asset.OriginalPath));
         writer.WriteValue(asset.OriginalLastWriteTimeUtc);
     }
 

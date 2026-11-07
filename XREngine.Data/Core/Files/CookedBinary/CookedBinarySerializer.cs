@@ -698,7 +698,7 @@ public static partial class CookedBinarySerializer
             object? value = null;
             try
             {
-                value = member.GetValue(instance);
+                value = member.GetSerializedValue(instance);
             }
             catch (Exception ex)
             {
@@ -2285,7 +2285,7 @@ public static partial class CookedBinarySerializer
                 object? value = null;
                 try
                 {
-                    value = member.GetValue(instance);
+                    value = member.GetSerializedValue(instance);
                 }
                 catch (Exception ex)
                 {
@@ -2420,6 +2420,7 @@ public static partial class CookedBinarySerializer
             Getter = property.GetGetMethod(true);
             Setter = property.GetSetMethod(true);
             IsValid = Getter is not null && Setter is not null;
+            IsAssetOriginalPath = property.DeclaringType == typeof(XRAsset) && property.Name == nameof(XRAsset.OriginalPath);
         }
 
         public MemberMetadata(FieldInfo field)
@@ -2436,10 +2437,25 @@ public static partial class CookedBinarySerializer
         public MethodInfo? Setter { get; }
         public bool IsValid { get; }
 
+        /// <summary>True for <see cref="XRAsset.OriginalPath"/>, whose written value a cook scope projects.</summary>
+        public bool IsAssetOriginalPath { get; }
+
         public object? GetValue(object instance)
             => _field is not null
                 ? _field.GetValue(instance)
                 : Getter?.Invoke(instance, null);
+
+        /// <summary>
+        /// Gets the value to write. It is <see cref="GetValue"/>, except that a cook scope projects
+        /// <see cref="XRAsset.OriginalPath"/> to a portable reference. The size pass and the write pass both call it.
+        /// </summary>
+        public object? GetSerializedValue(object instance)
+        {
+            object? value = GetValue(instance);
+            return IsAssetOriginalPath
+                ? CookedSourcePathProjection.ProjectOriginalPath(instance, value as string)
+                : value;
+        }
 
         public void SetValue(object instance, object? value)
         {
