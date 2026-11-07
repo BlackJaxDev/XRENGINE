@@ -49,6 +49,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Modeling XRMesh Editing](architecture/modeling/xrmesh-editing.md)
 - [Play Mode Architecture](architecture/editor/play-mode-architecture.md)
 - [Editor Undo System](architecture/editor/undo-system.md)
+- [Render Pipeline Workbench](architecture/editor/render-pipeline-workbench.md)
 - [Editor Background Preparation](architecture/editor/background-preparation.md)
 
 ## Developer Guides

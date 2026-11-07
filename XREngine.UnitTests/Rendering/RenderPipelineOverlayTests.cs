@@ -248,6 +248,24 @@ public sealed class RenderPipelineOverlayTests
     }
 
     [Test]
+    public void BuiltInBase_AcceptsSchemaPatches()
+    {
+        RenderPipelineScriptLoadResult loaded = RenderPipelineScriptLoader.Load("""
+            derive Default;
+            schema {
+                default bloom.Intensity = 0.5;
+                hide motionBlur;
+                category bloom = lens;
+            }
+            """);
+
+        loaded.Problems.Where(static p => p.IsError).ShouldBeEmpty(string.Join(Environment.NewLine, loaded.Problems));
+        RenderPipelinePostProcessSchema schema = loaded.Pipeline.ShouldNotBeNull().PostProcessSchema;
+        schema.StagesByKey.ShouldNotContainKey("motionBlur");
+        schema.StagesByKey["bloom"].Parameters.Single(static p => p.Name == "Intensity").DefaultValue.ShouldBe(0.5f);
+    }
+
+    [Test]
     public void BranchAnchor_RoundTripsInAStandaloneScript()
     {
         string text = RenderPipelineScriptWriter.Write(CreateBase());
