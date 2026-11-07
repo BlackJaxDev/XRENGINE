@@ -52,26 +52,39 @@ public sealed class CutsceneOpenSequenceTests
         }
     }
 
-    /// <summary>A program prewarmer whose states the test sets.</summary>
+    /// <summary>A program prewarmer whose backend states the test sets. A material with no state is not started.</summary>
     private sealed class FakePrewarmer : ICutsceneProgramPrewarmer
     {
         public Dictionary<XRMaterial, (ECutsceneProgramState State, string? Reason)> States { get; } = new(ReferenceEqualityComparer.Instance);
 
         public List<XRMaterial> Requested { get; } = [];
 
-        public void Request(XRMaterial material)
-            => Requested.Add(material);
+        public List<XRMeshRenderer?> RequestedRenderers { get; } = [];
 
-        public ECutsceneProgramState GetState(XRMaterial material, out string? failureReason)
+        public List<XRMeshRenderer?> QueriedRenderers { get; } = [];
+
+        public int StopCount { get; private set; }
+
+        public void Request(XRMaterial material, XRMeshRenderer? renderer)
         {
+            Requested.Add(material);
+            RequestedRenderers.Add(renderer);
+        }
+
+        public ECutsceneProgramState GetState(XRMaterial material, XRMeshRenderer? renderer, out string? reason)
+        {
+            QueriedRenderers.Add(renderer);
             if (States.TryGetValue(material, out (ECutsceneProgramState State, string? Reason) value))
             {
-                failureReason = value.Reason;
+                reason = value.Reason;
                 return value.State;
             }
-            failureReason = null;
-            return ECutsceneProgramState.Pending;
+            reason = null;
+            return ECutsceneProgramState.NotStarted;
         }
+
+        public void Stop()
+            => StopCount++;
     }
 
     private sealed class RecordingProgress : IProgress<float>
@@ -94,7 +107,9 @@ public sealed class CutsceneOpenSequenceTests
 
     private static CutsceneTime T(double seconds) => CutsceneTime.FromSeconds(seconds);
 
-    private static Rig MakeRig()
+    private static readonly XRMaterial SecondProxyMaterial = new() { Name = "SecondProxyMaterial" };
+
+    private static Rig MakeRig(bool withSecondMesh = false)
     {
         SceneNode node = new("Shot", new Transform());
         ((Transform)node.Transform).Translation = OriginalPosition;
@@ -102,12 +117,15 @@ public sealed class CutsceneOpenSequenceTests
         XRMaterial detail = new() { Name = "DetailMaterial" };
         XRMaterial proxy = new() { Name = "ProxyMaterial" };
         ModelComponent model = node.AddComponent<ModelComponent>()!;
-        model.Model = new Model(new SubMesh(
+        SubMesh shotMesh = new(
             new SubMeshLOD(detail, XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY), 10.0f),
             new SubMeshLOD(proxy, XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY), 1000.0f))
         {
             Name = "ShotMesh",
-        });
+        };
+        model.Model = withSecondMesh
+            ? new Model(shotMesh, new SubMesh(new SubMeshLOD(SecondProxyMaterial, XRMesh.CreateTriangles(Vector3.UnitY, Vector3.UnitY + Vector3.UnitX, Vector3.UnitY + Vector3.UnitZ), 1000.0f)) { Name = "SecondMesh" })
+            : new Model(shotMesh);
 
         CutsceneAsset asset = new() { Name = "Open", Duration = T(4) };
         asset.Bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.SceneObject, ObjectId = node.ID });
@@ -194,7 +212,7 @@ public sealed class CutsceneOpenSequenceTests
         task.IsCompleted.ShouldBeFalse();
 
         // T0 is resident, but the program is not ready.
-        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Pending, null);
+        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Compiling, null);
         CompleteProxies(rig.Backend);
         rig.Director.AdvanceFrame(0);
         player.ReadyForInstantSeek.ShouldBeFalse();
@@ -392,6 +410,115 @@ public sealed class CutsceneOpenSequenceTests
         sequence.ProxyMaterials.ShouldBe([overrideMaterial]);
         sequence.DetailMaterials.ShouldBeEmpty();
         rig.Prewarmer.Requested.ShouldContain(overrideMaterial);
+        rig.Director.Close();
+    }
+
+    [Test]
+    public void ProxyDraw_IsQueriedOnTheRendererOfTheLowestLod()
+    {
+        Rig rig = MakeRig();
+        RenderableMesh renderable = rig.Node.GetComponent<ModelComponent>().ShouldNotBeNull().Meshes.Single();
+        XRMeshRenderer lowest = renderable.LowestLodRenderer.ShouldNotBeNull();
+        CutsceneOpenSequence sequence = new(rig.Director, rig.Prewarmer);
+
+        Start(rig, sequence, null, CancellationToken.None);
+
+        sequence.ProxyDrawCount.ShouldBe(1);
+        rig.Prewarmer.RequestedRenderers.ShouldBe([lowest]);
+        rig.Prewarmer.QueriedRenderers.ShouldAllBe(r => ReferenceEquals(r, lowest));
+        lowest.Material.ShouldBeSameAs(rig.ProxyMaterial);
+        rig.Director.Close();
+    }
+
+    [Test]
+    public void ReadyForInstantSeek_NeverComesBeforeEveryProxyDrawIsReady()
+    {
+        Rig rig = MakeRig(withSecondMesh: true);
+        CutsceneOpenSequence sequence = new(rig.Director, rig.Prewarmer);
+        Task<bool> task = Start(rig, sequence, null, CancellationToken.None);
+        CompleteProxies(rig.Backend);
+        CutscenePlayer player = rig.Director.Player.ShouldNotBeNull();
+        sequence.ProxyDrawCount.ShouldBe(2);
+
+        // Each step leaves at least one draw that is not ready. The flag must stay false in each one.
+        (ECutsceneProgramState First, ECutsceneProgramState Second)[] steps =
+        [
+            (ECutsceneProgramState.NotStarted, ECutsceneProgramState.NotStarted),
+            (ECutsceneProgramState.Compiling, ECutsceneProgramState.NotStarted),
+            (ECutsceneProgramState.Ready, ECutsceneProgramState.NotStarted),
+            (ECutsceneProgramState.Ready, ECutsceneProgramState.Compiling),
+            (ECutsceneProgramState.Compiling, ECutsceneProgramState.Ready),
+        ];
+        foreach ((ECutsceneProgramState first, ECutsceneProgramState second) in steps)
+        {
+            rig.Prewarmer.States[rig.ProxyMaterial] = (first, null);
+            rig.Prewarmer.States[SecondProxyMaterial] = (second, null);
+            rig.Director.AdvanceFrame(0);
+
+            player.ReadyForInstantSeek.ShouldBeFalse($"first={first} second={second}");
+            task.IsCompleted.ShouldBeFalse();
+            sequence.PendingProgramCount.ShouldBeGreaterThan(0);
+            sequence.NotStartedProgramCount.ShouldBe((first == ECutsceneProgramState.NotStarted ? 1 : 0) + (second == ECutsceneProgramState.NotStarted ? 1 : 0));
+            sequence.CompilingProgramCount.ShouldBe((first == ECutsceneProgramState.Compiling ? 1 : 0) + (second == ECutsceneProgramState.Compiling ? 1 : 0));
+        }
+
+        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Ready, null);
+        rig.Prewarmer.States[SecondProxyMaterial] = (ECutsceneProgramState.Ready, null);
+        rig.Director.AdvanceFrame(0);
+
+        player.ReadyForInstantSeek.ShouldBeTrue();
+        task.Result.ShouldBeTrue();
+        sequence.ReadyProgramCount.ShouldBe(2);
+        sequence.PendingProgramCount.ShouldBe(0);
+        rig.Prewarmer.StopCount.ShouldBe(1);
+        rig.Director.Close();
+    }
+
+    [Test]
+    public void NotSupportedBackend_ReportsADiagnostic_AndIsNeverReady()
+    {
+        Rig rig = MakeRig(withSecondMesh: true);
+        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Ready, null);
+        rig.Prewarmer.States[SecondProxyMaterial] = (ECutsceneProgramState.NotSupported, "the render backend does not report draw readiness");
+        CutsceneOpenSequence sequence = new(rig.Director, rig.Prewarmer);
+        Task<bool> task = Start(rig, sequence, null, CancellationToken.None);
+        CompleteProxies(rig.Backend);
+
+        rig.Director.AdvanceFrame(0);
+        rig.Director.AdvanceFrame(0);
+
+        task.IsCompletedSuccessfully.ShouldBeTrue();
+        task.Result.ShouldBeFalse();
+        rig.Director.Player.ShouldNotBeNull().ReadyForInstantSeek.ShouldBeFalse();
+        sequence.UnsupportedProgramCount.ShouldBe(1);
+        sequence.ReadyProgramCount.ShouldBe(1);
+        rig.Director.Diagnostics.Count(d =>
+            d.Message.Contains("SecondProxyMaterial", StringComparison.Ordinal) &&
+            d.Message.Contains("does not report draw readiness", StringComparison.Ordinal)).ShouldBe(1);
+        rig.Prewarmer.StopCount.ShouldBe(1);
+        rig.Director.Close();
+    }
+
+    [Test]
+    public void FailedDraw_WaitsForThePendingDraws_ThenFails()
+    {
+        Rig rig = MakeRig(withSecondMesh: true);
+        rig.Prewarmer.States[rig.ProxyMaterial] = (ECutsceneProgramState.Failed, "pipeline creation failed");
+        rig.Prewarmer.States[SecondProxyMaterial] = (ECutsceneProgramState.Compiling, null);
+        CutsceneOpenSequence sequence = new(rig.Director, rig.Prewarmer);
+        Task<bool> task = Start(rig, sequence, null, CancellationToken.None);
+        CompleteProxies(rig.Backend);
+
+        rig.Director.AdvanceFrame(0);
+        task.IsCompleted.ShouldBeFalse();
+        sequence.FailedProgramCount.ShouldBe(1);
+        rig.Director.Diagnostics.ShouldContain(d => d.Message.Contains("pipeline creation failed", StringComparison.Ordinal));
+
+        rig.Prewarmer.States[SecondProxyMaterial] = (ECutsceneProgramState.Ready, null);
+        rig.Director.AdvanceFrame(0);
+
+        task.Result.ShouldBeFalse();
+        rig.Director.Player.ShouldNotBeNull().ReadyForInstantSeek.ShouldBeFalse();
         rig.Director.Close();
     }
 }

@@ -116,7 +116,7 @@ public sealed partial class EditorMcpActions
     /// <summary>Reads the state of the open cutscene.</summary>
     [XRMcp(Name = "cutscene_status", Permission = McpPermissionLevel.ReadOnly)]
     [McpThreadAffinity(McpThreadAffinity.Update)]
-    [Description("Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), diagnostics, the open readiness (readyForInstantSeek, pending T0 loads, pending and failed proxy programs, and whether the open sequence finished), and the audio clock (clock mode, fallback, mute, last heard-minus-clock difference in ms, read count, hard resync count, and output latency in ms).")]
+    [Description("Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), diagnostics, the open readiness (readyForInstantSeek, pending T0 loads, the T0 draw program states on the active backend (pending, not started, compiling, ready, failed, and not supported), the proxy draw and material counts, and whether the open sequence finished), and the audio clock (clock mode, fallback, mute, last heard-minus-clock difference in ms, read count, hard resync count, and output latency in ms).")]
     public static Task<McpToolResponse> CutsceneStatusAsync(McpToolContext context)
         => Task.FromResult(CutsceneStatusResponse("Read the cutscene status."));
 
@@ -155,7 +155,12 @@ public sealed partial class EditorMcpActions
                 residency = residency is not null,
                 pendingT0Loads = residency?.PendingProxyCount ?? 0,
                 pendingPrograms = sequence?.PendingProgramCount ?? 0,
+                notStartedPrograms = sequence?.NotStartedProgramCount ?? 0,
+                compilingPrograms = sequence?.CompilingProgramCount ?? 0,
+                readyPrograms = sequence?.ReadyProgramCount ?? 0,
                 failedPrograms = sequence?.FailedProgramCount ?? 0,
+                unsupportedPrograms = sequence?.UnsupportedProgramCount ?? 0,
+                proxyDraws = sequence?.ProxyDrawCount ?? 0,
                 proxyMaterials = sequence?.ProxyMaterials.Count ?? 0,
                 sequenceFinished = sequence?.IsFinished ?? true,
             },

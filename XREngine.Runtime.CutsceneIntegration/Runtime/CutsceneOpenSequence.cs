@@ -16,23 +16,24 @@ namespace XREngine.Cutscenes;
 /// <list type="number">
 /// <item><description>It opens the host: compile, bindings, player, and the residency session. The session requests T0
 /// for each asset of the closure.</description></item>
-/// <item><description>It finds the proxy materials: for each renderable mesh of the bound nodes and their descendants, the
-/// material override if the mesh has one, otherwise the material of the lowest LOD of its sub-mesh. The proxy material is an
-/// authored LOD material, not a fallback. <see cref="ProxyMaterials"/> lists them for diagnostics. It requests their
-/// programs at once.</description></item>
+/// <item><description>It finds the T0 draws: for each renderable mesh of the bound nodes and their descendants, the
+/// material override if the mesh has one, otherwise the material of the lowest LOD of its sub-mesh, drawn by the renderer of
+/// the lowest LOD. The proxy material is an authored LOD material, not a fallback. <see cref="ProxyMaterials"/> lists the
+/// materials for diagnostics. It requests the programs of the draws at once.</description></item>
 /// <item><description>At each host frame, it reads the T0 loads that did not complete
-/// (<see cref="CutsceneResidencySession.PendingProxyCount"/>) and the program state of each proxy material. When both are
-/// complete, it sets <see cref="CutscenePlayer.ReadyForInstantSeek"/>, requests the programs of the other LOD materials as
-/// lower-priority work, and completes the task with true.</description></item>
+/// (<see cref="CutsceneResidencySession.PendingProxyCount"/>) and the program state of each T0 draw on the active backend
+/// (the variant build, the program link, and on Vulkan the graphics pipelines). When every T0 load completed and every T0
+/// draw is ready, it sets <see cref="CutscenePlayer.ReadyForInstantSeek"/>, requests the programs of the other LOD
+/// materials as lower-priority work, and completes the task with true.</description></item>
 /// </list>
 /// <para>
 /// The sequence advances on the host frame, on the update thread. It never waits for the render thread, and a caller must
-/// not block on its task, because the task needs later frames. A program failure adds a diagnostic to the host that names
-/// the material and the reason; the task then completes with false and the cutscene stays open. A host with no residency
-/// session cannot tell that T0 is resident: the sequence adds one diagnostic, <see cref="CutscenePlayer.ReadyForInstantSeek"/>
-/// stays false, and the task completes with false when the programs are ready. A cancel closes the host at the next host
-/// frame, which restores the bound nodes and destroys the spawned instances, and the task is canceled. A close of the host
-/// by another caller also cancels the task.
+/// not block on its task, because the task needs later frames. A failed draw, or a draw whose backend does not report its
+/// state, adds one diagnostic to the host that names the material and the reason; when no draw is still waiting, the task
+/// completes with false and the cutscene stays open. A host with no residency session cannot tell that T0 is resident: the
+/// sequence adds one diagnostic, <see cref="CutscenePlayer.ReadyForInstantSeek"/> stays false, and the task completes with
+/// false when the programs are ready. A cancel closes the host at the next host frame, which restores the bound nodes and
+/// destroys the spawned instances, and the task is canceled. A close of the host by another caller also cancels the task.
 /// </para>
 /// </remarks>
 public sealed class CutsceneOpenSequence
@@ -43,14 +44,15 @@ public sealed class CutsceneOpenSequence
 
     private readonly ICutsceneOpenHost _host;
     private readonly ICutsceneProgramPrewarmer _prewarmer;
+    private readonly List<CutsceneProxyDraw> _proxyDraws = [];
     private readonly List<XRMaterial> _proxyMaterials = [];
     private readonly List<XRMaterial> _detailMaterials = [];
-    private readonly HashSet<XRMaterial> _reportedFailures = new(ReferenceEqualityComparer.Instance);
 
     private TaskCompletionSource<bool>? _completion;
     private CancellationTokenRegistration _cancelRegistration;
     private CancellationToken _cancellationToken;
     private IProgress<float>? _progress;
+    private bool[] _diagnosticReported = [];
     private int _initialPendingProxies;
     private int _cancelRequested;
     private float _reportedProgress = -1.0f;
@@ -59,7 +61,7 @@ public sealed class CutsceneOpenSequence
 
     /// <summary>Creates an open sequence for a director.</summary>
     /// <param name="director">The director that opens the cutscene. Set its asset and resolver first.</param>
-    /// <param name="prewarmer">The program prewarmer, or null for <see cref="CutsceneMaterialProgramPrewarmer.Instance"/>.</param>
+    /// <param name="prewarmer">The program prewarmer, or null for a new <see cref="CutsceneBackendProgramPrewarmer"/>.</param>
     public CutsceneOpenSequence(CutsceneDirectorComponent director, ICutsceneProgramPrewarmer? prewarmer = null)
         : this((ICutsceneOpenHost)director, prewarmer)
     {
@@ -67,34 +69,49 @@ public sealed class CutsceneOpenSequence
 
     /// <summary>Creates an open sequence for a host.</summary>
     /// <param name="host">The host that opens the cutscene.</param>
-    /// <param name="prewarmer">The program prewarmer, or null for <see cref="CutsceneMaterialProgramPrewarmer.Instance"/>.</param>
+    /// <param name="prewarmer">The program prewarmer, or null for a new <see cref="CutsceneBackendProgramPrewarmer"/>.</param>
     public CutsceneOpenSequence(ICutsceneOpenHost host, ICutsceneProgramPrewarmer? prewarmer = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         _host = host;
-        _prewarmer = prewarmer ?? CutsceneMaterialProgramPrewarmer.Instance;
+        _prewarmer = prewarmer ?? new CutsceneBackendProgramPrewarmer();
     }
 
-    /// <summary>The proxy materials: the T0 materials whose programs the open waits for.</summary>
+    /// <summary>The proxy materials: the distinct materials of the T0 draws whose programs the open waits for.</summary>
     public IReadOnlyList<XRMaterial> ProxyMaterials => _proxyMaterials;
 
     /// <summary>The materials of the other LODs. Their programs start after T0 is ready, and the open does not wait for them.</summary>
     public IReadOnlyList<XRMaterial> DetailMaterials => _detailMaterials;
 
-    /// <summary>The number of proxy materials whose programs were not ready at the last frame.</summary>
-    public int PendingProgramCount { get; private set; }
+    /// <summary>The number of T0 draws: one for each renderable mesh of the bound closure that has a T0 material.</summary>
+    public int ProxyDrawCount => _proxyDraws.Count;
+
+    /// <summary>The number of T0 draws that were not ready at the last frame and can still become ready.</summary>
+    public int PendingProgramCount => NotStartedProgramCount + CompilingProgramCount;
+
+    /// <summary>The number of T0 draws whose program work did not start, or whose state the backend cannot know yet.</summary>
+    public int NotStartedProgramCount { get; private set; }
+
+    /// <summary>The number of T0 draws whose variant build, program link, or pipeline compile ran at the last frame.</summary>
+    public int CompilingProgramCount { get; private set; }
+
+    /// <summary>The number of T0 draws that were ready at the last frame.</summary>
+    public int ReadyProgramCount { get; private set; }
+
+    /// <summary>The number of T0 draws whose programs failed at the last frame.</summary>
+    public int FailedProgramCount { get; private set; }
+
+    /// <summary>The number of T0 draws whose backend did not report the state at the last frame.</summary>
+    public int UnsupportedProgramCount { get; private set; }
 
     /// <summary>The number of T0 loads that did not complete at the last frame.</summary>
     public int PendingProxyCount { get; private set; }
-
-    /// <summary>The number of proxy materials whose programs failed.</summary>
-    public int FailedProgramCount => _reportedFailures.Count;
 
     /// <summary>True after the sequence completed, failed, or was canceled.</summary>
     public bool IsFinished => _finished;
 
     /// <summary>
-    /// Opens the cutscene and completes when T0 and the proxy programs are ready. Call it one time, on the update thread.
+    /// Opens the cutscene and completes when T0 and the T0 draws are ready. Call it one time, on the update thread.
     /// Do not block on the task: it needs later host frames.
     /// </summary>
     /// <param name="progress">Receives the progress from 0 to 1 when it changes, or null.</param>
@@ -104,7 +121,7 @@ public sealed class CutsceneOpenSequence
     /// </param>
     /// <returns>
     /// A task that gives true when <see cref="CutscenePlayer.ReadyForInstantSeek"/> is true, and false when the open failed,
-    /// a proxy program failed, or no residency session exists. The diagnostics of the host give the reason.
+    /// a T0 draw failed or has no backend state, or no residency session exists. The diagnostics of the host give the reason.
     /// </returns>
     public Task<bool> RunAsync(IProgress<float>? progress, CancellationToken cancellationToken)
     {
@@ -141,8 +158,12 @@ public sealed class CutsceneOpenSequence
 
         if (_host.OpenBindings is { } bindings)
             CollectMaterials(bindings);
-        for (int i = 0; i < _proxyMaterials.Count; i++)
-            _prewarmer.Request(_proxyMaterials[i]);
+        _diagnosticReported = new bool[_proxyDraws.Count];
+        for (int i = 0; i < _proxyDraws.Count; i++)
+        {
+            CutsceneProxyDraw draw = _proxyDraws[i];
+            _prewarmer.Request(draw.Material, draw.ResolveRenderer());
+        }
 
         if (_host.OpenResidency is { } residency)
             _initialPendingProxies = residency.PendingProxyCount;
@@ -180,6 +201,7 @@ public sealed class CutsceneOpenSequence
             return;
 
         _finished = true;
+        _prewarmer.Stop();
         _cancelRegistration.Dispose();
         _completion?.TrySetCanceled();
     }
@@ -191,6 +213,7 @@ public sealed class CutsceneOpenSequence
     private void Cancel()
     {
         _finished = true;
+        _prewarmer.Stop();
         _cancelRegistration.Dispose();
         _host.DetachOpenSequence(this);
 
@@ -211,32 +234,51 @@ public sealed class CutsceneOpenSequence
         int pendingProxies = residency is { IsClosed: false } ? residency.PendingProxyCount : 0;
         PendingProxyCount = pendingProxies;
 
-        int pendingPrograms = 0;
-        for (int i = 0; i < _proxyMaterials.Count; i++)
+        int notStarted = 0;
+        int compiling = 0;
+        int ready = 0;
+        int failed = 0;
+        int unsupported = 0;
+        for (int i = 0; i < _proxyDraws.Count; i++)
         {
-            XRMaterial material = _proxyMaterials[i];
-            switch (_prewarmer.GetState(material, out string? failureReason))
+            CutsceneProxyDraw draw = _proxyDraws[i];
+            switch (_prewarmer.GetState(draw.Material, draw.ResolveRenderer(), out string? reason))
             {
-                case ECutsceneProgramState.Pending:
-                    pendingPrograms++;
+                case ECutsceneProgramState.NotStarted:
+                    notStarted++;
+                    break;
+                case ECutsceneProgramState.Compiling:
+                    compiling++;
+                    break;
+                case ECutsceneProgramState.Ready:
+                    ready++;
                     break;
                 case ECutsceneProgramState.Failed:
-                    if (_reportedFailures.Add(material))
-                        ReportProgramFailure(material, failureReason);
+                    failed++;
+                    ReportDrawDiagnostic(i, draw.Material, "failed, so its T0 LOD cannot draw", reason);
+                    break;
+                default:
+                    unsupported++;
+                    ReportDrawDiagnostic(i, draw.Material, "has no readiness state on the active render backend, so the open cannot tell that its T0 LOD draws", reason);
                     break;
             }
         }
-        PendingProgramCount = pendingPrograms;
+        NotStartedProgramCount = notStarted;
+        CompilingProgramCount = compiling;
+        ReadyProgramCount = ready;
+        FailedProgramCount = failed;
+        UnsupportedProgramCount = unsupported;
 
+        int pendingPrograms = notStarted + compiling;
         float proxyFraction = _initialPendingProxies <= 0 ? 1.0f : 1.0f - ((float)pendingProxies / _initialPendingProxies);
-        float programFraction = _proxyMaterials.Count == 0 ? 1.0f : 1.0f - ((float)pendingPrograms / _proxyMaterials.Count);
+        float programFraction = _proxyDraws.Count == 0 ? 1.0f : (float)ready / _proxyDraws.Count;
         Report(OpenedProgress + (ProxyProgressShare * Math.Clamp(proxyFraction, 0.0f, 1.0f)) + (ProgramProgressShare * programFraction));
 
         if (pendingProxies > 0 || pendingPrograms > 0)
             return;
 
-        // With no residency session, T0 residency is not known, so the flag stays false.
-        if (_reportedFailures.Count > 0 || residency is null)
+        // A failed or unsupported draw is never ready. With no residency session, T0 residency is not known.
+        if (failed > 0 || unsupported > 0 || residency is null)
         {
             Finish(false);
             return;
@@ -244,7 +286,7 @@ public sealed class CutsceneOpenSequence
 
         player.ReadyForInstantSeek = true;
         for (int i = 0; i < _detailMaterials.Count; i++)
-            _prewarmer.Request(_detailMaterials[i]);
+            _prewarmer.Request(_detailMaterials[i], null);
         Report(1.0f);
         Finish(true);
     }
@@ -252,14 +294,19 @@ public sealed class CutsceneOpenSequence
     private void Finish(bool result)
     {
         _finished = true;
+        _prewarmer.Stop();
         _cancelRegistration.Dispose();
         _host.DetachOpenSequence(this);
         _completion?.TrySetResult(result);
     }
 
-    private void ReportProgramFailure(XRMaterial material, string? failureReason)
+    private void ReportDrawDiagnostic(int drawIndex, XRMaterial material, string problem, string? reason)
     {
-        string message = $"The program of proxy material '{material.Name ?? "<unnamed>"}' failed, so its T0 LOD cannot draw: {failureReason ?? "no reason was given"}.";
+        if (_diagnosticReported[drawIndex])
+            return;
+        _diagnosticReported[drawIndex] = true;
+
+        string message = $"The program of proxy material '{material.Name ?? "<unnamed>"}' {problem}: {reason ?? "no reason was given"}.";
         _host.AddOpenDiagnostic(message);
         Debug.LogWarning(ELogCategory.Animation, "Cutscene open: {0}", message);
     }
@@ -316,14 +363,14 @@ public sealed class CutsceneOpenSequence
         // A material override draws on every LOD, so it is the T0 material and no LOD material draws.
         if (renderable.MaterialOverride is { } materialOverride)
         {
-            AddProxy(materialOverride, proxies);
+            AddProxy(renderable, materialOverride, proxies);
             return;
         }
 
         if (renderable.SourceSubMesh is not { } subMesh)
         {
             if (renderable.CurrentLODRenderer?.Material is { } current)
-                AddProxy(current, proxies);
+                AddProxy(renderable, current, proxies);
             return;
         }
 
@@ -337,11 +384,13 @@ public sealed class CutsceneOpenSequence
         }
 
         if (lowest?.Material is { } proxy)
-            AddProxy(proxy, proxies);
+            AddProxy(renderable, proxy, proxies);
     }
 
-    private void AddProxy(XRMaterial material, HashSet<XRMaterial> proxies)
+    private void AddProxy(RenderableMesh renderable, XRMaterial material, HashSet<XRMaterial> proxies)
     {
+        // Each renderable is one T0 draw: two renderables with one material have their own program and pipeline state.
+        _proxyDraws.Add(new CutsceneProxyDraw(renderable, material));
         if (proxies.Add(material))
             _proxyMaterials.Add(material);
     }

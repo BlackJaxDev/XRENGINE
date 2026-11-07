@@ -227,15 +227,24 @@ public sealed class CutscenePlayer
     public ESeekIntent? LastTickSeek { get; private set; }
 
     /// <summary>
-    /// True when a seek to any position shows resident data at once: T0 of the whole closure is resident and the programs of
-    /// the T0 materials are ready. <see cref="CutsceneOpenSequence"/> sets it at the end of the open. A seek after that time
-    /// loads no T0 data, because T0 stays resident until the close.
+    /// True when a seek to any position shows resident data at once: T0 of the whole closure is resident and every T0 draw is
+    /// ready on the active render backend. <see cref="CutsceneOpenSequence"/> sets it at the end of the open. A seek after
+    /// that time loads no T0 data, because T0 stays resident until the close.
     /// </summary>
     /// <remarks>
-    /// Program readiness is checked at the material level (the uber variant build with the default prewarmer). The backend
-    /// program link and a Vulkan pipeline compile are not seen, so on Vulkan a T0 draw can still be skipped for some frames
-    /// after this flag is true. The flag is false for a player that no open sequence opened, for a host with no residency
-    /// session (T0 residency is then not known), and for the new player of a preview recompile.
+    /// <para>
+    /// With the default <see cref="CutsceneBackendProgramPrewarmer"/>, a T0 draw is ready when the uber variant build of its
+    /// material is ready and the backend reports the draw as ready (<see cref="XREngine.Rendering.XRMeshRenderer.QueryDrawReadiness"/>): on
+    /// OpenGL, the program link; on Vulkan, the program and the graphics pipelines that the frame loop resolved for the draws
+    /// of the renderer with that material. A failed draw, or a backend that does not report the state, adds a diagnostic and
+    /// keeps the flag false.
+    /// </para>
+    /// <para>
+    /// On Vulkan, the pipeline variant of a draw is known only after a frame drew the renderer, so a T0 renderer that no frame
+    /// drew (for example, one that is outside the view at the open) keeps the flag false until a frame draws it. The flag is
+    /// also false for a player that no open sequence opened, for a host with no residency session (T0 residency is then not
+    /// known), and for the new player of a preview recompile.
+    /// </para>
     /// </remarks>
     public bool ReadyForInstantSeek { get; internal set; }
 

@@ -78,6 +78,7 @@ public static partial class EditorImGuiUI
             residency.Manifest.Assets.Length,
             residency.PendingProxyCount,
             CutscenePreviewSession.OpenSequence?.PendingProgramCount ?? 0,
+            (CutscenePreviewSession.OpenSequence?.FailedProgramCount ?? 0) + (CutscenePreviewSession.OpenSequence?.UnsupportedProgramCount ?? 0),
             CutscenePreviewSession.Player?.ReadyForInstantSeek ?? false,
             planner.Generation,
             planner.PlaybackWaitTimeoutCount,
@@ -88,7 +89,7 @@ public static partial class EditorImGuiUI
         {
             _cutsceneResidencyStatusKey = key;
             _cutsceneResidencyStatus =
-                $"Assets {key.Assets}  T0 pending {key.PendingProxies}  Programs pending {key.PendingPrograms}  {(key.Ready ? "Ready" : "Not ready")}  Gen {key.Generation}  Waits timed out {key.Timeouts}{(key.Holding ? "  HOLD" : string.Empty)}{(key.Rejected > 0 ? $"  Rejected {key.Rejected}" : string.Empty)}";
+                $"Assets {key.Assets}  T0 pending {key.PendingProxies}  Programs pending {key.PendingPrograms}{(key.ProgramProblems > 0 ? $"  Programs failed or unsupported {key.ProgramProblems}" : string.Empty)}  {(key.Ready ? "Ready" : "Not ready")}  Gen {key.Generation}  Waits timed out {key.Timeouts}{(key.Holding ? "  HOLD" : string.Empty)}{(key.Rejected > 0 ? $"  Rejected {key.Rejected}" : string.Empty)}";
         }
         return _cutsceneResidencyStatus;
     }
@@ -305,5 +306,5 @@ public static partial class EditorImGuiUI
         });
     }
 
-    private readonly record struct CutsceneResidencyStatusKey(int Assets, int PendingProxies, int PendingPrograms, bool Ready, int Generation, int Timeouts, bool Holding, int Rejected);
+    private readonly record struct CutsceneResidencyStatusKey(int Assets, int PendingProxies, int PendingPrograms, int ProgramProblems, bool Ready, int Generation, int Timeouts, bool Holding, int Rejected);
 }

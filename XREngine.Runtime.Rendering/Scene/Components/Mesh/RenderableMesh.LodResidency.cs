@@ -74,6 +74,24 @@ namespace XREngine.Components.Scene.Mesh
         public int LodTableCount => _lodSlots.Length;
 
         /// <summary>
+        /// The renderer of the lowest LOD while it is resident, or null. This is the renderer of the T0 draw. A renderable
+        /// with no LOD table gives the renderer of its last LOD.
+        /// </summary>
+        internal XRMeshRenderer? LowestLodRenderer
+        {
+            get
+            {
+                lock (_lodsLock)
+                {
+                    LodSlot[] slots = _lodSlots;
+                    return slots.Length > 0
+                        ? slots[^1].Node?.Value.Renderer
+                        : LODs.Last?.Value.Renderer;
+                }
+            }
+        }
+
+        /// <summary>
         /// Gets the residency of a LOD of the table: its tier while it is resident, or <see cref="EResidencyLevel.None"/>.
         /// </summary>
         /// <param name="lodIndex">The index of the LOD in the table.</param>
