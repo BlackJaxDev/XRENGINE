@@ -5,9 +5,6 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
-    private static void DrawWorkbenchExecutionView()
-        => ImGui.TextDisabled("Execution view.");
-
     private static void DrawWorkbenchSettingsView()
         => ImGui.TextDisabled("Settings view.");
 
@@ -16,12 +13,6 @@ public static partial class EditorImGuiUI
 
     private static void DrawWorkbenchScriptView()
         => ImGui.TextDisabled("Script view.");
-
-    private static void DrawWorkbenchPlanBadge()
-    {
-        ImGui.SameLine();
-        ImGui.TextDisabled("plan not published");
-    }
 
     private static void DrawWorkbenchTargetBarExtras(RenderPipeline pipeline, XRRenderPipelineInstance? instance)
     {

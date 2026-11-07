@@ -66,9 +66,11 @@ internal sealed class VulkanBarrierPlan
         ulong generation,
         ulong nativeBufferBindingRevision,
         VulkanFrozenImageBarrier[] imageBarriers, VulkanFrozenBufferBarrier[] bufferBarriers,
-        VulkanFrozenSwapchainBarrier[] swapchainBarriers)
+        VulkanFrozenSwapchainBarrier[] swapchainBarriers,
+        string[]? diagnosticResourceNames = null)
     {
         Generation = generation;
+        DiagnosticResourceNames = diagnosticResourceNames ?? [];
         NativeBufferBindingRevision = nativeBufferBindingRevision;
         imageBarriers = CoalesceImageBarriers(imageBarriers);
         Array.Sort(imageBarriers, static (left, right) => left.PassIndex.CompareTo(right.PassIndex));
@@ -93,6 +95,16 @@ internal sealed class VulkanBarrierPlan
     internal ReadOnlySpan<VulkanFrozenBufferBarrier> BufferBarriers => _bufferBarriers;
     internal ReadOnlySpan<VulkanFrozenSwapchainBarrier> SwapchainBarriers => _swapchainBarriers;
     public bool HasCompleteNativeBindings { get; }
+
+    /// <summary>
+    /// Gets the resource names indexed by <see cref="VulkanResourceId.Value"/>. Tools read this table to name image
+    /// and swapchain barriers. The array is empty when the plan was built without names.
+    /// </summary>
+    internal string[] DiagnosticResourceNames { get; }
+
+    /// <summary>Returns the diagnostic name of <paramref name="id"/>, or an empty string when it is unknown.</summary>
+    internal string GetDiagnosticResourceName(VulkanResourceId id)
+        => id.IsValid && id.Value < DiagnosticResourceNames.Length ? DiagnosticResourceNames[id.Value] ?? string.Empty : string.Empty;
 
     internal ReadOnlySpan<VulkanFrozenImageBarrier> GetImageBarriersForPass(int passIndex)
         => _imageRanges.GetRange(_imageBarriers, passIndex);
@@ -154,7 +166,7 @@ internal sealed class VulkanBarrierPlan
         VulkanFrozenImageBarrier[] images = plannerImages.Select(barrier => new VulkanFrozenImageBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.Range, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex, barrier.NativeImage, barrier.NativeFormat, barrier.NativeGeneration, IsBloomName(barrier.ResourceName))).ToArray();
         VulkanFrozenBufferBarrier[] buffers = plannerBuffers.Select(barrier => new VulkanFrozenBufferBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.ResourceName, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex, barrier.NativeBuffer, barrier.NativeOffset, barrier.NativeSize, barrier.NativeGeneration)).ToArray();
         VulkanFrozenSwapchainBarrier[] swapchains = plannerSwapchains.Select(barrier => new VulkanFrozenSwapchainBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.ResourceType, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex)).ToArray();
-        return new VulkanBarrierPlan(generation, nativeBufferBindingRevision, images, buffers, swapchains);
+        return new VulkanBarrierPlan(generation, nativeBufferBindingRevision, images, buffers, swapchains, resourceIds.ToNameArray());
     }
 
     private static bool IsBloomName(string name) => name.Contains("bloom", StringComparison.OrdinalIgnoreCase);

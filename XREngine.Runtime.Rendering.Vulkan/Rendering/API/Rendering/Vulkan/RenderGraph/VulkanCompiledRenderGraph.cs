@@ -13,9 +13,22 @@ internal sealed class VulkanCompiledRenderGraph
     public static VulkanCompiledRenderGraph Empty { get; } = new(
         Array.Empty<RenderPassMetadata>(),
         new Dictionary<int, int>(),
-        Array.Empty<VulkanCompiledPassBatch>(),
+        Array.Empty<RenderGraphPassBatch>(),
         RenderGraphSynchronizationInfo.Empty,
         int.MaxValue);
+
+    /// <summary>
+    /// Initializes a compiled graph snapshot from a backend-neutral compilation.
+    /// </summary>
+    internal VulkanCompiledRenderGraph(RenderGraphCompilation compilation)
+        : this(
+            compilation.OrderedPasses,
+            compilation.PassOrder,
+            compilation.Batches,
+            compilation.Synchronization,
+            compilation.ScreenSpaceUiPassOrder)
+    {
+    }
 
     /// <summary>
     /// Initializes a compiled graph snapshot.
@@ -23,7 +36,7 @@ internal sealed class VulkanCompiledRenderGraph
     internal VulkanCompiledRenderGraph(
         IReadOnlyList<RenderPassMetadata> orderedPasses,
         IReadOnlyDictionary<int, int> passOrder,
-        IReadOnlyList<VulkanCompiledPassBatch> batches,
+        IReadOnlyList<RenderGraphPassBatch> batches,
         RenderGraphSynchronizationInfo synchronization,
         int screenSpaceUiPassOrder = int.MaxValue)
     {
@@ -45,7 +58,7 @@ internal sealed class VulkanCompiledRenderGraph
     public int ScreenSpaceUiPassOrder { get; }
 
     /// <summary>Cold compiler batch metadata.</summary>
-    public IReadOnlyList<VulkanCompiledPassBatch> Batches { get; }
+    public IReadOnlyList<RenderGraphPassBatch> Batches { get; }
 
     /// <summary>Cold synchronization source used to construct frozen barriers.</summary>
     public RenderGraphSynchronizationInfo Synchronization { get; }

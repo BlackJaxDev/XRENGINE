@@ -20,4 +20,16 @@ internal sealed class VulkanRenderGraphResourceIds
 
         return id;
     }
+
+    /// <summary>
+    /// Returns the resource names indexed by <see cref="VulkanResourceId.Value"/>. Diagnostics use this table to
+    /// show names for frozen barriers. Recording does not read it.
+    /// </summary>
+    internal string[] ToNameArray()
+    {
+        string[] names = new string[_ids.Count];
+        foreach (KeyValuePair<string, VulkanResourceId> pair in _ids)
+            names[pair.Value.Value] = pair.Key;
+        return names;
+    }
 }

@@ -41,6 +41,24 @@ public sealed class RenderPipelineWorkbenchWindowState
     /// <summary>Gets or sets the visible Resources view detail tab.</summary>
     public ERenderPipelineResourceDetailTab ResourceDetailTab { get; set; }
 
+    /// <summary>Gets the plan snapshots and rows of the Execution view.</summary>
+    public RenderPipelineWorkbenchPlanView Plan { get; } = new();
+
+    /// <summary>Gets or sets the visible Execution view tab.</summary>
+    public ERenderPipelineExecutionTab ExecutionTab { get; set; }
+
+    /// <summary>Gets or sets the Barriers tab search text.</summary>
+    public string BarrierSearch { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the barrier kinds that the Barriers tab shows.</summary>
+    public ERenderPipelineBarrierKindFilter BarrierKinds { get; set; } = ERenderPipelineBarrierKindFilter.All;
+
+    /// <summary>Gets or sets whether the Barriers tab shows only the barriers of the selected pass.</summary>
+    public bool BarriersOfSelectedPassOnly { get; set; }
+
+    /// <summary>Gets or sets whether the Barriers tab shows only the barriers of the selected resource.</summary>
+    public bool BarriersOfSelectedResourceOnly { get; set; }
+
     /// <summary>Gets the cached Inspector text for the selection.</summary>
     public RenderPipelineWorkbenchInspectorContent Inspector { get; } = new();
 

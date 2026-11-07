@@ -947,6 +947,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
                 ValidateActiveGenerationDescriptorParity();
                 ValidateRenderGraphExecutionAgainstMetadata();
+                lock (_renderGraphValidationLock)
+                    ExecutionTrace.Publish(RuntimeEngine.Rendering.State.RenderFrameId);
                 if (historyReservationOwned)
                 {
                     (historyReservationOwner ?? throw new InvalidOperationException(
@@ -3753,6 +3755,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         lock (_renderGraphValidationLock)
         {
             _executedRenderGraphPassIndices.Add(passIndex);
+            ExecutionTrace.Record(passIndex);
             if (_activeRenderGraphBranchDepth > 0)
                 _executedBranchRenderGraphPassIndices.Add(passIndex);
         }
@@ -3793,6 +3796,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         {
             _executedRenderGraphPassIndices.Clear();
             _executedBranchRenderGraphPassIndices.Clear();
+            ExecutionTrace.BeginFrame();
             _activeRenderGraphBranchDepth = 0;
         }
     }
