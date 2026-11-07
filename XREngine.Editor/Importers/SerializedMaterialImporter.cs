@@ -1575,6 +1575,18 @@ public static partial class SerializedMaterialImporter
             if (context.IsTextureValidated(source.FullName, length, lastWriteTicks))
                 return;
 
+            // A fresh cooked streaming cache was produced by a full decode of this exact
+            // source revision. Skip the repeated full decode, which costs about 0.3 s and a
+            // large transient allocation per 4K image on every import.
+            if (Engine.Assets?.HasFreshTextureStreamingCache(source.FullName) == true)
+            {
+                context.RecordValidatedTexture(source.FullName, length, lastWriteTicks);
+                context.Progress?.Invoke(
+                    0.12f,
+                    $"Validated required texture {Path.GetFileName(texturePath)} (fresh cooked cache)");
+                return;
+            }
+
             context.Progress?.Invoke(
                 0.12f,
                 $"Validating required texture {Path.GetFileName(texturePath)}");

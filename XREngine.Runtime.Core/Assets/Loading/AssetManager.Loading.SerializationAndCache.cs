@@ -455,19 +455,7 @@ namespace XREngine
             if (!File.Exists(normalizedPath))
                 return normalizedPath;
 
-            IThirdPartyCacheCodec? codec = ThirdPartyCacheCodecRegistry.FindByAuthorityRole(
-                ThirdPartyCacheAuthorityRoles.TextureStreaming);
-            Type? assetType = codec?.AuthorityAssetType;
-            if (assetType is null)
-            {
-                Debug.LogWarning(
-                    $"No cache codec registered for authority role '{ThirdPartyCacheAuthorityRoles.TextureStreaming}' " +
-                    $"while resolving '{normalizedPath}'. Install the Runtime.Rendering asset registrations.");
-                return normalizedPath;
-            }
-
-            string? cacheVariantKey = ResolveDefaultCacheVariantKey(assetType, explicitVariantKey: null);
-            if (!TryResolveCachePath(normalizedPath, assetType, cacheVariantKey, out string cachePath))
+            if (!TryResolveTextureStreamingCachePath(normalizedPath, out Type? assetType, out string? cacheVariantKey, out string cachePath))
                 return normalizedPath;
 
             if (IsCacheAssetFresh(cachePath, normalizedPath, assetType))
@@ -478,6 +466,58 @@ namespace XREngine
 
             QueueFeatureCacheImport(normalizedPath, cachePath, assetType, cacheVariantKey);
             return normalizedPath;
+        }
+
+        /// <summary>
+        /// Returns whether a fresh cooked texture-streaming cache asset exists for a source image.
+        /// A fresh cache was cooked from a successful decode of the current source file, so
+        /// callers can use this to skip a repeated full decode of the same source.
+        /// This check does not queue a cache warm-up.
+        /// </summary>
+        /// <param name="filePath">The path of the source image.</param>
+        public bool HasFreshTextureStreamingCache(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                return false;
+
+            // Without a synchronous host-file owner there is no cache to inspect.
+            if (!SupportsSynchronousAssetWork)
+                return false;
+
+            string normalizedPath = Path.GetFullPath(filePath);
+            if (!File.Exists(normalizedPath))
+                return false;
+
+            return TryResolveTextureStreamingCachePath(normalizedPath, out Type? assetType, out _, out string cachePath)
+                && IsCacheAssetFresh(cachePath, normalizedPath, assetType);
+        }
+
+        /// <summary>
+        /// Resolves the texture-streaming authority asset type, its default cache variant key,
+        /// and the cache path for a normalized source image path.
+        /// </summary>
+        /// <returns><c>false</c> when no texture-streaming codec is registered or no cache path applies.</returns>
+        private bool TryResolveTextureStreamingCachePath(
+            string normalizedPath,
+            [NotNullWhen(true)] out Type? assetType,
+            out string? cacheVariantKey,
+            out string cachePath)
+        {
+            cacheVariantKey = null;
+            cachePath = string.Empty;
+            IThirdPartyCacheCodec? codec = ThirdPartyCacheCodecRegistry.FindByAuthorityRole(
+                ThirdPartyCacheAuthorityRoles.TextureStreaming);
+            assetType = codec?.AuthorityAssetType;
+            if (assetType is null)
+            {
+                Debug.LogWarning(
+                    $"No cache codec registered for authority role '{ThirdPartyCacheAuthorityRoles.TextureStreaming}' " +
+                    $"while resolving '{normalizedPath}'. Install the Runtime.Rendering asset registrations.");
+                return false;
+            }
+
+            cacheVariantKey = ResolveDefaultCacheVariantKey(assetType, explicitVariantKey: null);
+            return TryResolveCachePath(normalizedPath, assetType, cacheVariantKey, out cachePath);
         }
 
         private static bool IsTextureStreamingCacheWarmupEnabled()
