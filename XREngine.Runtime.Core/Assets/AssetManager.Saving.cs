@@ -15,6 +15,7 @@ namespace XREngine
         /// <summary>
         /// Lets the application refuse a save. The delegate returns the reason, or null to allow the save.
         /// All save paths meet this check, on the thread that does the save.
+        /// The property has one owner: a new value replaces the old guard. The editor cutscene preview sets it.
         /// </summary>
         public Func<XRAsset, string?>? SaveGuard { get; set; }
 
