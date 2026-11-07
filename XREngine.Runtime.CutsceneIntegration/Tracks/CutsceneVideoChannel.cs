@@ -413,6 +413,11 @@ internal sealed class CutsceneVideoChannel
             return;
         if (_hasPresented && _presentedPts == frame.PresentationTimestampTicks)
             return;
+
+        // A forward drag never steps back: a frame older than the shown frame does not show while the shown frame is still
+        // at or before the wanted time. A backward drag (the wanted time is before the shown frame) shows older keyframes.
+        if (Mode == ECutsceneVideoMode.Keyframe && _hasPresented && _presentedPts <= DesiredTicks && frame.PresentationTimestampTicks < _presentedPts)
+            return;
         target.SubmitFrame(frame);
         _hasPresented = true;
         _presentedPts = frame.PresentationTimestampTicks;

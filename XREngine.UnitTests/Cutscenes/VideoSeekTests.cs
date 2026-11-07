@@ -474,6 +474,47 @@ public sealed class VideoSeekTests
         backend.FailedLoadCount.ShouldBe(0);
     }
 
+    [Test]
+    public void Track_ForwardDrag_NeverStepsBack_AfterAnExactFrame()
+    {
+        FakeTime time = new();
+        FakeSeekSession session = new();
+        using Rig rig = MakeRig("unused-file.mp4", () => session, time: time);
+        CutsceneTime held = FromTicks(VideoTestClips.TicksOf(27) + 80_000);
+
+        // A held playhead: first the keyframe, then the exact frame 27 after the dwell. The forward decode queues frame 28.
+        rig.Player.BeginScrub();
+        ScrubUntil(rig, held, () => session.Seeks.Count > 0);
+        session.Complete(0, VideoTestClips.TicksOf(20));
+        ScrubUntil(rig, held, () => rig.Target.SubmitCount > 0);
+        time.Advance(TimeSpan.FromSeconds(CutsceneVideoChannel.DragDwellSeconds * 2));
+        ScrubUntil(rig, held, () => session.Seeks.Count > 1);
+        session.Seeks[1].Mode.ShouldBe(EVideoSeekMode.Exact);
+        session.Complete(1, VideoTestClips.TicksOf(27));
+        session.EnqueueFrame(VideoTestClips.TicksOf(28));
+        ScrubUntil(rig, held, () => rig.Target.LastFrame == 27);
+
+        // The drag moves on: a cache hit shows frame 28.
+        ScrubOnce(rig, FromTicks(VideoTestClips.TicksOf(28) + 10_000));
+        rig.Target.LastFrame.ShouldBe(28);
+
+        // Past the cache: neither the late exact frame 27 nor the keyframe 20 of the new seek shows; 28 stays.
+        CutsceneTime past = FromTicks(VideoTestClips.TicksOf(29) + 200_000);
+        ScrubUntil(rig, past, () => session.Seeks.Count > 2);
+        rig.Target.LastFrame.ShouldBe(28);
+        session.Complete(2, VideoTestClips.TicksOf(20));
+        for (int i = 0; i < 3; i++)
+            ScrubOnce(rig, past);
+        rig.Target.LastFrame.ShouldBe(28);
+
+        // A backward drag still shows a keyframe at or before its time.
+        CutsceneTime back = FromTicks(VideoTestClips.TicksOf(15));
+        ScrubUntil(rig, back, () => session.Seeks.Count > 3);
+        session.Complete(3, VideoTestClips.TicksOf(10));
+        ScrubUntil(rig, back, () => rig.Target.LastFrame == 10);
+        rig.Target.LastPts.ShouldBe(VideoTestClips.TicksOf(10));
+    }
+
     private static void ScrubOnce(Rig rig, CutsceneTime position)
     {
         rig.Player.UpdateScrub(position);
@@ -794,6 +835,17 @@ public sealed class VideoSeekTests
 
         public Task SeekAsync(long targetTicks, EVideoSeekMode mode, CancellationToken cancellationToken)
             => throw new NotSupportedException("The track uses the polled seek.");
+
+        /// <summary>Queues one more frame after a completed seek, as the forward decode of an exact seek does.</summary>
+        public void EnqueueFrame(long framePts)
+        {
+            lock (_sync)
+            {
+                byte[] data = new byte[VideoTestClips.Width * VideoTestClips.Height * 3];
+                Array.Fill(data, VideoTestClips.GrayOf((int)(framePts / VideoTestClips.FrameTicks)));
+                _frames.Enqueue(new DecodedVideoFrame(VideoTestClips.Width, VideoTestClips.Height, framePts, VideoTestClips.FrameTicks, VideoPixelFormat.Rgb24, data));
+            }
+        }
 
         /// <summary>Completes a seek with one frame. A cancelled seek delivers nothing.</summary>
         public void Complete(int index, long framePts)

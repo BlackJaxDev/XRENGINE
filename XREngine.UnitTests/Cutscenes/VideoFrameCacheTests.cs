@@ -282,6 +282,38 @@ public sealed class VideoFrameCacheTests
     }
 
     [Test]
+    public void HardBudget_RejectsAnUnpinnedFrameLargerThanTheBudget()
+    {
+        VideoFrameCache cache = new(5, FrameBytes - 1, keepOneFrame: false);
+        byte[] buffer = new byte[FrameBytes];
+        cache.Insert(MakeFrame(0, buffer)).ShouldBeFalse();
+        cache.Insert(MakeFrame(1, buffer), pin: true).ShouldBeTrue("a pinned frame comes on top of the budget");
+        cache.AllocatedBytes.ShouldBe(FrameBytes);
+    }
+
+    [Test]
+    public void UnpinAndRemove_TrimThePooledBuffersToTheBudget()
+    {
+        VideoFrameCache cache = new(5, 2 * FrameBytes, keepOneFrame: false);
+        byte[] buffer = new byte[FrameBytes];
+        for (int i = 0; i < 3; i++)
+            cache.Insert(MakeFrame(i, buffer), pin: true);
+        cache.Insert(MakeFrame(3, buffer));
+        cache.Insert(MakeFrame(4, buffer));
+        cache.AllocatedBytes.ShouldBe(5 * FrameBytes);
+
+        // The pins end, so five unpinned frames are over the budget of two: the oldest go.
+        for (int i = 0; i < 3; i++)
+            cache.Unpin(i * FrameTicks);
+        cache.AllocatedBytes.ShouldBeLessThanOrEqualTo(cache.BudgetBytes);
+        cache.Count.ShouldBe(2);
+
+        // A removed frame leaves a pooled buffer only inside the budget.
+        cache.Remove(4 * FrameTicks);
+        cache.AllocatedBytes.ShouldBeLessThanOrEqualTo(cache.BudgetBytes);
+    }
+
+    [Test]
     public void AllSlotsPinned_RejectsAnUnpinnedFrame()
     {
         VideoFrameCache cache = new(2);

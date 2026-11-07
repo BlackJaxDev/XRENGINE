@@ -48,12 +48,18 @@ public sealed class VideoFrameCache
 
     /// <summary>Creates a cache.</summary>
     /// <param name="capacity">The maximum number of frames. It must be at least one.</param>
-    /// <param name="budgetBytes">The maximum number of bytes of pixel buffers. It must be at least one. One frame is always kept.</param>
-    public VideoFrameCache(int capacity = DefaultCapacity, long budgetBytes = DefaultBudgetBytes)
+    /// <param name="budgetBytes">The maximum number of bytes of the buffers of unpinned frames. It must be at least one.</param>
+    /// <param name="keepOneFrame">
+    /// True to keep one unpinned frame also when it is larger than the budget, so a track always has a frame to show.
+    /// False makes the budget a hard bound: an unpinned frame larger than the budget is not stored. The residency warm set
+    /// uses false.
+    /// </param>
+    public VideoFrameCache(int capacity = DefaultCapacity, long budgetBytes = DefaultBudgetBytes, bool keepOneFrame = true)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(budgetBytes, 1L);
         BudgetBytes = budgetBytes;
+        KeepsOneFrame = keepOneFrame;
         _slots = new Slot[capacity];
         for (int i = 0; i < capacity; i++)
             _slots[i] = new Slot();
@@ -66,6 +72,9 @@ public sealed class VideoFrameCache
     /// The maximum number of bytes of the pixel buffers of unpinned frames. One frame is always kept, also when it is larger.
     /// </summary>
     public long BudgetBytes { get; }
+
+    /// <summary>True if one unpinned frame stays also when it is larger than the budget.</summary>
+    public bool KeepsOneFrame { get; }
 
     /// <summary>The number of bytes of the pixel buffers that the slots hold now.</summary>
     public long AllocatedBytes => Interlocked.Read(ref _allocatedBytes);
@@ -119,6 +128,8 @@ public sealed class VideoFrameCache
         lock (_sync)
         {
             int length = frame.PackedData.Length;
+            if (!pin && !KeepsOneFrame && length > BudgetBytes)
+                return false;
             ReleaseStaleBuffers(length);
             Slot? found = FindSlotFor(frame.PresentationTimestampTicks, length, pin);
             if (found is not { } slot)
@@ -246,6 +257,7 @@ public sealed class VideoFrameCache
                     continue;
                 slot.Used = false;
                 _count--;
+                TrimToBudget();
                 return true;
             }
             return false;
@@ -265,6 +277,7 @@ public sealed class VideoFrameCache
                 if (slot.Used && slot.Pts == ptsTicks && slot.PinCount > 0)
                 {
                     slot.PinCount--;
+                    TrimToBudget();
                     return true;
                 }
             }
@@ -342,7 +355,7 @@ public sealed class VideoFrameCache
         if (free is not null)
         {
             long growth = Math.Max(0, length - free.Buffer.Length);
-            if (pin || growth == 0 || UnpinnedBytes() + growth <= BudgetBytes || unpinnedFrames == 0)
+            if (pin || growth == 0 || UnpinnedBytes() + growth <= BudgetBytes || (unpinnedFrames == 0 && KeepsOneFrame))
             {
                 _count++;
                 return free;
@@ -393,7 +406,29 @@ public sealed class VideoFrameCache
         _bufferAllocationCount++;
     }
 
-    private Slot? FindVictim(Slot keep)
+    // A remove or an unpin can leave more unpinned bytes than the budget: free buffers that wait for the next frame, or a
+    // frame that was pinned. It drops free buffers first, then unpinned frames used least recently. A cache that keeps one
+    // frame keeps its last unpinned frame.
+    private void TrimToBudget()
+    {
+        while (UnpinnedBytes() > BudgetBytes && FindVictim(null) is { } victim)
+        {
+            if (victim.Used && KeepsOneFrame && CountUnpinnedFrames() <= 1)
+                return;
+            Drop(victim);
+        }
+    }
+
+    private int CountUnpinnedFrames()
+    {
+        int count = 0;
+        for (int i = 0; i < _slots.Length; i++)
+            if (_slots[i].Used && _slots[i].PinCount == 0)
+                count++;
+        return count;
+    }
+
+    private Slot? FindVictim(Slot? keep)
     {
         Slot? victim = null;
         for (int i = 0; i < _slots.Length; i++)

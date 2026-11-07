@@ -589,7 +589,7 @@ public sealed class VideoResidencyBackend : IResidencyBackend, IDisposable
         public Guid AssetId { get; } = assetId;
         public string FullPath { get; } = fullPath;
         public List<VideoClipRange> Clips { get; } = [];
-        public VideoFrameCache Cache { get; } = new(SourceCacheCapacity, SourceCacheBudgetBytes);
+        public VideoFrameCache Cache { get; } = new(SourceCacheCapacity, SourceCacheBudgetBytes, keepOneFrame: false);
         public SemaphoreSlim Gate { get; } = new(1, 1);
         public IMediaStreamSession? Session { get; set; }
         public int TicketCount { get; set; }
