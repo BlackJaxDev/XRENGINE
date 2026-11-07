@@ -7,7 +7,7 @@ namespace XREngine.Editor.Cutscenes;
 /// <summary>The inputs and limits of a residency manifest bake. See <see cref="CutsceneBakeTool"/>.</summary>
 public sealed class CutsceneBakeOptions
 {
-    /// <summary>The default T0 budget: 64 MiB. The design estimate for 2000 textures and 400 mesh proxies is about 53 MB.</summary>
+    /// <summary>The default T0 budget: 64 MiB. An estimate for 2000 textures and 400 mesh proxies is about 53 MB.</summary>
     public const long DefaultT0BudgetBytes = 64L * 1024L * 1024L;
 
     /// <summary>The default number of assets that a T0 report lists.</summary>
