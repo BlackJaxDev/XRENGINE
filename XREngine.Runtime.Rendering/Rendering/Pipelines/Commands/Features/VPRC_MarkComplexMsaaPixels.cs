@@ -19,7 +19,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public const uint ComplexPixelStencilBit = 0x04;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string MsaaNormalTexture { get; set; } = DefaultRenderPipeline.MsaaNormalTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string MsaaDepthViewTexture { get; set; } = DefaultRenderPipeline.MsaaDepthViewTextureName;
 
         public VPRC_MarkComplexMsaaPixels SetOptions(string normalTexture, string depthViewTexture)

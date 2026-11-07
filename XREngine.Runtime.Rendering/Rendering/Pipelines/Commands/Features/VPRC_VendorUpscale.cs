@@ -21,13 +21,19 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         private static bool _diagEnabled => RenderDiagnosticsFlags.DiagVendorUpscale;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? SourceTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DepthTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DepthStencilTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? MotionTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string? MotionFrameBufferName { get; set; }
         public bool ForceFallbackBlit { get; set; }
         public bool FlipSourceYOnVulkanFallback { get; set; } = true;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
 
         private static bool _reportedXessFailure;

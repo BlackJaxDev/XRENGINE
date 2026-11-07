@@ -84,8 +84,11 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
     private string? _cachedProfilingSource;
     private string? _cachedProfilingName;
 
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string? SourceTextureName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? SourceFBOName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? DestinationFBOName { get; set; }
     public bool Stereo { get; set; }
 

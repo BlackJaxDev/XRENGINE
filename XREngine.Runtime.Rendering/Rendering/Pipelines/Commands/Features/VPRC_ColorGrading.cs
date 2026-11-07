@@ -104,9 +104,13 @@ void main()
         private uint _cachedWidth;
         private uint _cachedHeight;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string InputTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = "ColorGradingOutputTexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? OutputFBOName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
         public bool OutputHDR { get; set; }
         public bool UseSceneCameraSettings { get; set; } = true;

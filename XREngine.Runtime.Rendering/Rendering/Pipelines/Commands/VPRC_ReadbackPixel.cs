@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
 public class VPRC_ReadbackPixel : ViewportRenderCommand
 {
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string? SourceTextureName { get; set; }
     public string? ResultVariableName { get; set; }
     public int SourceMipLevel { get; set; }

@@ -18,8 +18,11 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIUpdateVisibilityPass : VPRC_DDGIComputePass
     {
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string RayRadianceBufferName { get; set; } = DDGIResourceNames.RayRadianceBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string VisibilityAtlasTextureName { get; set; } = DDGIResourceNames.VisibilityAtlas;
 
         private XRRenderProgram? _updateProgram;

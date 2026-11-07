@@ -13,8 +13,11 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
 public sealed class VPRC_GlobalIlluminationCompositePass : ViewportRenderCommand
 {
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string SourceQuadFBOName { get; set; } = string.Empty;
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string DestinationFBOName { get; set; } = string.Empty;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string OutputTextureName { get; set; } = string.Empty;
     public string ProducerPassName { get; set; } = string.Empty;
     public bool ForceMonoWhenPipelineIsMono { get; set; } = true;

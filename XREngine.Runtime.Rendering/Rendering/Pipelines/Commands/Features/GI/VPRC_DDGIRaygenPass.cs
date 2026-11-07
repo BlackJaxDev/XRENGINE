@@ -20,7 +20,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIRaygenPass : VPRC_DDGIComputePass
     {
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string ProbeStateBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;
 
         private XRRenderProgram? _raygenProgram;

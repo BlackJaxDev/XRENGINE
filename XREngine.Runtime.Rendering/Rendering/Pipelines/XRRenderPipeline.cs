@@ -763,6 +763,40 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         // Derived pipelines can override this method to describe their post-processing stages and categories.
     }
 
+    private RenderPipelineBranchSettings? _branchSettings;
+
+    /// <summary>
+    /// Gets the settings that data branch conditions can read. The table builds on first use from
+    /// <see cref="DescribeBranchSettings"/>.
+    /// </summary>
+    [YamlIgnore]
+    [Browsable(false)]
+    public RenderPipelineBranchSettings BranchSettings
+    {
+        get
+        {
+            if (_branchSettings is not null)
+                return _branchSettings;
+
+            RenderPipelineBranchSettings settings = new();
+            DescribeBranchSettings(settings);
+            return _branchSettings = settings;
+        }
+    }
+
+    /// <summary>
+    /// Registers the settings that data branch conditions can read by name. Override it to expose settings to
+    /// authored branches and to derived pipeline overlays.
+    /// </summary>
+    /// <param name="settings">The table to fill.</param>
+    protected virtual void DescribeBranchSettings(RenderPipelineBranchSettings settings)
+    {
+    }
+
+    /// <summary>Forgets the branch setting table so the next read builds it again.</summary>
+    protected void RefreshBranchSettings()
+        => _branchSettings = null;
+
     /// <summary>
     /// Attempts to retrieve the current render pipeline instance from the runtime rendering host services.
     /// </summary>

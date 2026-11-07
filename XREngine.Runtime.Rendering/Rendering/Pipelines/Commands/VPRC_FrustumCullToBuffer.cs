@@ -13,6 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     public sealed class VPRC_FrustumCullToBuffer : ViewportRenderCommand
     {
         public int RenderPass { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string? DestinationBufferName { get; set; }
         public bool UploadToGpuBuffer { get; set; } = true;
         public string? VisibleCountVariableName { get; set; }

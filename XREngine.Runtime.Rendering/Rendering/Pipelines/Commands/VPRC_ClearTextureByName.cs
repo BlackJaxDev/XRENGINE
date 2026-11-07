@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderCommandInfo(ERenderCommandCategory.Targets, DoesGpuWork = true)]
 public class VPRC_ClearTextureByName : ViewportRenderCommand
 {
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string? TextureName { get; set; }
     public ColorF4 ClearColor { get; set; } = ColorF4.Transparent;
 

@@ -6,7 +6,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
     public class VPRC_CopyTextureToBuffer : ViewportRenderCommand
     {
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? SourceTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string? DestinationBufferName { get; set; }
         public int SourceMipLevel { get; set; }
         public int SourceLayerIndex { get; set; }

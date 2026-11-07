@@ -17,8 +17,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRMaterial? _depthResolveMaterial;
         private XRQuadFrameBuffer? _depthResolveQuad;
 
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? SourceMsaaFBOName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? DestinationFBOName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthViewTextureName { get; set; } = DefaultRenderPipeline.MsaaDepthViewTextureName;
 
         /// <summary>

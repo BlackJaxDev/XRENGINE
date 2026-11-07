@@ -18,6 +18,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// The name of the FBO to render the UI to.
         /// If null, the UI will be rendered to the current viewport.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? OutputTargetFBOName { get; set; } = null;
 
         /// <summary>

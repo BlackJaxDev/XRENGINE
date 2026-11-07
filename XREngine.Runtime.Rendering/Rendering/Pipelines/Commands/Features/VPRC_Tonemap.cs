@@ -15,8 +15,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRMaterial? _material;
         private XRQuadFrameBuffer? _quad;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string SourceTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? BloomTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? DestinationFBOName { get; set; }
         public ETonemappingType TonemapType { get; set; } = ETonemappingType.Mobius;
         public float MobiusTransition { get; set; } = TonemappingSettings.DefaultMobiusTransition;

@@ -26,15 +26,18 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// The name of the source FBO that contains the quad to render.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? SourceQuadFBOName { get; set; }
         /// <summary>
         /// The name of the destination FBO to render into. 
         /// If null, the current render target will be used.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? DestinationFBOName { get; set; } = null;
         /// <summary>
         /// The name of the source FBO that contains the quad to render.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string? FrameBufferName
         {
             get => SourceQuadFBOName;
@@ -43,6 +46,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// The name of the destination FBO to render into.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string? TargetFrameBufferName
         {
             get => DestinationFBOName;
@@ -60,6 +64,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>Fails closed when a mandatory output pass loses its declared source or graph identity.</summary>
         public bool RequiredForOutput { get; set; }
         /// <summary>Omits an optional pass from generation metadata when its owning target is absent.</summary>
+        [RenderResourceName(ERenderResourceNameKind.Any)]
         public string? RequiredDeclaredResourceName { get; set; }
         /// <summary>
         /// Treats this draw as an intentional one-layer mono control rendered while

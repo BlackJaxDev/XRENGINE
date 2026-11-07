@@ -62,9 +62,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         private const string SpotShadowAtlasName = "SpotShadowAtlas";
         private readonly ConditionalWeakTable<XRRenderPipelineInstance, LightRendererCache> _rendererCaches = new();
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AlbedoOpacityTexture { get; set; } = "AlbedoOpacityTexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTexture { get; set; } = "NormalTexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RMSETexture { get; set; } = "RMSETexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthViewTexture { get; set; } = "DepthViewTexture";
 
         /// <summary>
@@ -77,9 +81,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// MSAA GBuffer texture names for the complex pixel per-sample pass.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string MsaaAlbedoOpacityTexture { get; set; } = DefaultRenderPipeline.MsaaAlbedoOpacityTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string MsaaNormalTexture { get; set; } = DefaultRenderPipeline.MsaaNormalTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string MsaaRMSETexture { get; set; } = DefaultRenderPipeline.MsaaRMSETextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string MsaaDepthViewTexture { get; set; } = DefaultRenderPipeline.MsaaDepthViewTextureName;
 
         public void SetOptions(string albedoOpacityTexture, string normalTexture, string rmseTexture, string depthViewTexture)

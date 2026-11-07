@@ -95,8 +95,11 @@ void main()
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
 
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string? SourceTextureName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? SourceFBOName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? DestinationFBOName { get; set; }
     public Vector4 NormalizedRegion { get; set; } = new(0.0f, 0.0f, 1.0f, 1.0f);
     public EDebugHeatmapSourceChannel ChannelMode { get; set; } = EDebugHeatmapSourceChannel.Luminance;

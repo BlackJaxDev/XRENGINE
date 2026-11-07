@@ -21,6 +21,22 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public Func<int>? SwitchEvaluator { get; set; }
 
+        private RenderBranchCondition? _condition;
+
+        /// <summary>
+        /// Gets or sets a data condition whose source value selects the case. When it is set, it takes priority over
+        /// <see cref="SwitchEvaluator"/>. The operator is not used; a missing source selects the default case.
+        /// </summary>
+        public RenderBranchCondition? Condition
+        {
+            get => _condition;
+            set
+            {
+                if (SetField(ref _condition, value))
+                    _condition?.Bind(ParentPipeline);
+            }
+        }
+
         public override string GpuProfilingName
             => string.IsNullOrWhiteSpace(Label) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Label}]";
 
@@ -92,7 +108,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (instance is null)
                 return;
 
-            int sw = SwitchEvaluator?.Invoke() ?? -1;
+            int sw = _condition is { } condition ? condition.EvaluateInt() : SwitchEvaluator?.Invoke() ?? -1;
             ViewportRenderCommandContainer? next;
 
             if (Cases?.TryGetValue(sw, out var commands) ?? false)
@@ -128,6 +144,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         internal override void OnParentPipelineAssigned()
         {
             base.OnParentPipelineAssigned();
+            _condition?.Bind(ParentPipeline);
             if (_cases is not null)
             {
                 foreach (var container in _cases.Values)

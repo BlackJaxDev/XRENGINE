@@ -18,6 +18,22 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public Func<bool>? ConditionEvaluator { get; set; }
 
+        private RenderBranchCondition? _condition;
+
+        /// <summary>
+        /// Gets or sets a data condition. When it is set, it takes priority over <see cref="ConditionEvaluator"/>.
+        /// Authored pipelines use it because a data condition can be saved and shown by tools.
+        /// </summary>
+        public RenderBranchCondition? Condition
+        {
+            get => _condition;
+            set
+            {
+                if (SetField(ref _condition, value))
+                    _condition?.Bind(ParentPipeline);
+            }
+        }
+
         public override string GpuProfilingName
             => string.IsNullOrWhiteSpace(Label) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Label}]";
 
@@ -69,7 +85,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (instance is null)
                 return;
 
-            bool cond = ConditionEvaluator?.Invoke() ?? false;
+            bool cond = _condition is { } condition ? condition.Evaluate() : ConditionEvaluator?.Invoke() ?? false;
             ViewportRenderCommandContainer? next = cond ? TrueCommands : FalseCommands;
             instance.BranchTrace.Record(this, next);
             ExecuteBranch(instance, next);
@@ -99,6 +115,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         internal override void OnParentPipelineAssigned()
         {
             base.OnParentPipelineAssigned();
+            _condition?.Bind(ParentPipeline);
             AttachPipeline(_trueCommands);
             AttachPipeline(_falseCommands);
         }

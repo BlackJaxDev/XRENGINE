@@ -351,7 +351,9 @@ void main()
     private string? _cachedPassSourceFboName;
     private string? _cachedRenderGraphPassName;
 
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string? SourceTextureName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? SourceFBOName { get; set; }
     public string? WindowTitle { get; set; }
     public int? ViewportIndex { get; set; }

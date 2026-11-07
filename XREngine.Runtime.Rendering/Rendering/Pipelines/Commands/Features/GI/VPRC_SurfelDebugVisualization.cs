@@ -30,11 +30,17 @@ public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
 
     public EVisualizationMode Mode { get; set; } = EVisualizationMode.SurfelCircles;
 
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string AlbedoTextureName { get; set; } = DefaultRenderPipeline.AlbedoOpacityTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string TransformIdTextureName { get; set; } = DefaultRenderPipeline.TransformIdTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string HDRSceneTextureName { get; set; } = DefaultRenderPipeline.HDRSceneTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string OutputTextureName { get; set; } = "SurfelDebugOutput";
 
     protected override void Execute()

@@ -1,11 +1,12 @@
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Resources.Authoring;
 
 namespace XREngine.Rendering.Pipelines.Validation.Rules;
 
 /// <summary>
 /// Finds texture formats that the target backend does not support well. Vulkan and WebGPU make three-channel formats
-/// optional, and most devices do not render to them.
+/// optional, and most devices do not render to them. The rule reads <see cref="PortableRenderFormats"/>.
 /// </summary>
 public sealed class BackendUnsupportedFormatRule : IRenderPipelineValidationRule
 {
@@ -37,8 +38,12 @@ public sealed class BackendUnsupportedFormatRule : IRenderPipelineValidationRule
 
     private static bool IsThreeChannel(TextureSpec texture)
     {
-        string name = texture.SizedInternalFormat?.ToString() ?? texture.InternalFormat?.ToString() ?? string.Empty;
-        return name.StartsWith("Rgb", StringComparison.Ordinal) && !name.StartsWith("Rgba", StringComparison.Ordinal) &&
-               !name.StartsWith("Rgb10A2", StringComparison.Ordinal) && !name.StartsWith("Rgb5A1", StringComparison.Ordinal);
+        if (texture.SizedInternalFormat is { } sized)
+            return PortableRenderFormats.IsUnpackedThreeChannel(sized);
+
+        // Some code textures give only the GL internal format. The sized enum uses the same names.
+        return texture.InternalFormat is { } internalFormat &&
+               Enum.TryParse(internalFormat.ToString(), out ESizedInternalFormat parsed) &&
+               PortableRenderFormats.IsUnpackedThreeChannel(parsed);
     }
 }

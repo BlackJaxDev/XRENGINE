@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
 public sealed class VPRC_TraceRaysIndirect : VPRC_DispatchRays
 {
+    [RenderResourceName(ERenderResourceNameKind.Buffer)]
     public string IndirectArgsBufferName { get; set; } = string.Empty;
     public uint IndirectArgsByteOffset { get; set; }
 

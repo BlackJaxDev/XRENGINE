@@ -19,7 +19,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIBorderCopyPass : VPRC_DDGIComputePass
     {
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string IrradianceAtlasTextureName { get; set; } = DDGIResourceNames.IrradianceAtlas;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string VisibilityAtlasTextureName { get; set; } = DDGIResourceNames.VisibilityAtlas;
 
         private XRRenderProgram? _irradianceBorderProgram;

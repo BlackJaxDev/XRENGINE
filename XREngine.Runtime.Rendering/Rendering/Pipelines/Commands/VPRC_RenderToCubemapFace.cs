@@ -15,7 +15,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private float _cachedNearPlane = -1.0f;
         private float _cachedFarPlane = -1.0f;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string CubemapTextureName { get; set; } = "EnvironmentCubemap";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DepthTextureName { get; set; }
         public int RenderPass { get; set; }
         public ECubemapFace Face { get; set; } = ECubemapFace.PosX;

@@ -21,14 +21,23 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGICompositePass : VPRC_DDGIComputePass
     {
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AlbedoTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RMSETextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = DDGIResourceNames.ScreenDiffuse;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string IrradianceAtlasTextureName { get; set; } = DDGIResourceNames.IrradianceAtlas;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string VisibilityAtlasTextureName { get; set; } = DDGIResourceNames.VisibilityAtlas;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string ProbeStateBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AmbientOcclusionTextureName { get; set; } = string.Empty;
 
         public EDDGIDebugMode DebugMode { get; set; } = EDDGIDebugMode.None;

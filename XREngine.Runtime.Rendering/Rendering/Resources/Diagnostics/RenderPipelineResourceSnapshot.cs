@@ -374,21 +374,7 @@ public sealed class RenderPipelineResourceSnapshot
     }
 
     private static (uint Width, uint Height) ResolveSize(RenderResourceSizePolicy size, RenderPipelineResourceProfile profile)
-        => size.SizeClass switch
-        {
-            RenderResourceSizeClass.AbsolutePixels => (size.Width, size.Height),
-            RenderResourceSizeClass.InternalResolution => (Scale(profile.InternalWidth, size.ScaleX, size.RoundUpDivisor), Scale(profile.InternalHeight, size.ScaleY, size.RoundUpDivisor)),
-            RenderResourceSizeClass.WindowResolution => (Scale(profile.DisplayWidth, size.ScaleX, size.RoundUpDivisor), Scale(profile.DisplayHeight, size.ScaleY, size.RoundUpDivisor)),
-            _ => (0u, 0u),
-        };
-
-    private static uint Scale(uint extent, float scale, uint divisor)
-    {
-        extent = Math.Max(1u, extent);
-        return divisor > 1u
-            ? (extent + divisor - 1u) / divisor
-            : (uint)Math.Max(1, (int)MathF.Round(extent * scale));
-    }
+        => size.Resolve(profile);
 
     private static ulong EstimateTextureBytes(RenderPipelineResourceEntry entry, ESizedInternalFormat? sized)
     {

@@ -8,7 +8,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
     public sealed class VPRC_ResetPpllResources : ViewportRenderCommand
     {
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string CounterBufferName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string HeadPointerTextureName { get; set; } = string.Empty;
         public string ClearHeadPointersComputeShaderPath { get; set; } = string.Empty;
 

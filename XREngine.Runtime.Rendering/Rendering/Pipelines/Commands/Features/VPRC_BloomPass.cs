@@ -289,11 +289,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// The name of the FBO that will be used as input for the bloom pass.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string InputFBOName { get; set; } = "BloomInputFBO";
 
         /// <summary>
         /// This is the texture that will contain the final bloom output.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string BloomOutputTextureName { get; set; } = "BloomOutputTexture";
 
         public bool Stereo { get; set; }

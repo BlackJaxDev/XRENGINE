@@ -1,6 +1,8 @@
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
+using XREngine.Rendering.Resources.Authoring;
 
 namespace XREngine.Rendering;
 
@@ -38,6 +40,52 @@ public class CustomRenderPipeline : RenderPipeline
                 RefreshAuthoredCommands();
         }
     }
+
+    private List<AuthoredRenderResource> _authoredResources = [];
+    private ulong _authoredResourceHash;
+
+    /// <summary>
+    /// Gets or sets the resources that this pipeline declares as data. The layout lowers them through
+    /// <see cref="AuthoredRenderResourceFactory"/>. Set a new list, or call <see cref="NotifyAuthoredResourcesChanged"/>
+    /// after an edit in place, to build a new resource generation.
+    /// </summary>
+    public List<AuthoredRenderResource> AuthoredResources
+    {
+        get => _authoredResources;
+        set
+        {
+            if (SetField(ref _authoredResources, value ?? []))
+                NotifyAuthoredResourcesChanged();
+        }
+    }
+
+    /// <summary>
+    /// Builds a new resource generation for every instance when a layout-affecting field of
+    /// <see cref="AuthoredResources"/> changed.
+    /// </summary>
+    public void NotifyAuthoredResourcesChanged()
+    {
+        ulong hash = AuthoredRenderResourceFactory.ComputeLayoutHash(_authoredResources);
+        if (hash == _authoredResourceHash)
+            return;
+
+        _authoredResourceHash = hash;
+        InvalidateOwnedInstancePhysicalResources("AuthoredResourcesChanged");
+    }
+
+    /// <inheritdoc />
+    protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        base.DescribeResources(builder);
+        AuthoredRenderResourceFactory.Declare(builder, _authoredResources, ResolveAuthoredAttachment);
+    }
+
+    /// <inheritdoc />
+    internal override ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
+        => base.BuildResourceFeatureMaskForGenerationKey(instance, viewport) ^ _authoredResourceHash;
+
+    private static IFrameBufferAttachement? ResolveAuthoredAttachment(string name)
+        => GetTexture<XRTexture>(name) as IFrameBufferAttachement ?? TryCurrentPipeline?.GetRenderBuffer(name);
 
     private void RefreshAuthoredCommands()
     {

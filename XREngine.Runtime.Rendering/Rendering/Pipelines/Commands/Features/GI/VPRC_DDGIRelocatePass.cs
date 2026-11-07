@@ -20,8 +20,11 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIRelocatePass : VPRC_DDGIComputePass
     {
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string ProbeBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string HitBufferName { get; set; } = DDGIResourceNames.HitBuffer;
         public string TriangleBufferVariableName { get; set; } = "DDGIGeometryTriangles";
 

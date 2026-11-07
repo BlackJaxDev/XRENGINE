@@ -94,10 +94,15 @@ void main()
         private uint _cachedWidth;
         private uint _cachedHeight;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string InputTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = "BilateralFilterOutputTexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? OutputFBOName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
         public int KernelRadius { get; set; } = 4;
         public float SpatialSigma { get; set; } = 2.0f;

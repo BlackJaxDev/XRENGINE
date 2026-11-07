@@ -195,6 +195,7 @@ void main()
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
 
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? DestinationFBOName { get; set; }
 
     public override string GpuProfilingName

@@ -22,16 +22,27 @@ namespace XREngine.Rendering.Pipelines.Commands
         private string MSVOBlurShaderName()
             => Stereo ? "SSAOBlurStereo.fs" : "SSAOBlur.fs";
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string MSVORawTextureName { get; set; } = "AmbientOcclusionRawTexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string MSVOIntensityTextureName { get; set; } = "AmbientOcclusionTexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string MSVOFBOName { get; set; } = "AmbientOcclusionFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string MSVOBlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string GBufferFBOFBOName { get; set; } = "GBufferFBO";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = "Normal";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthViewTextureName { get; set; } = "DepthView";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AlbedoTextureName { get; set; } = "AlbedoOpacity";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RMSETextureName { get; set; } = "RMSE";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string TransformIdTextureName { get; set; } = "TransformId";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
         public string[] DependentFboNames { get; set; } = Array.Empty<string>();
 

@@ -28,11 +28,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// This is the texture that exposure will be calculated from.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string HDRSceneTextureName { get; set; } = DefaultRenderPipeline.HDRSceneTextureName;
 
         /// <summary>
         /// The 1x1 texture that stores the current exposure value when using GPU auto exposure.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
 
         /// <summary>

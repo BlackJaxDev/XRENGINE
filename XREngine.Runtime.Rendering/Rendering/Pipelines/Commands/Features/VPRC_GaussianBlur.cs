@@ -62,8 +62,11 @@ void main()
         private uint _cachedWidth;
         private uint _cachedHeight;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string InputTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = "GaussianBlurOutputTexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? OutputFBOName { get; set; }
         public int KernelRadius { get; set; } = 5;
         public float Sigma { get; set; } = 2.5f;

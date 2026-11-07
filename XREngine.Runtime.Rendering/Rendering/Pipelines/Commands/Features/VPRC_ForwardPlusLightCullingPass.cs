@@ -39,6 +39,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         // Per-tile light count buffer used by debug visualization.
         public const uint TileLightCountsBinding = 29;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthViewTexture { get; set; } = "DepthView";
 
         private XRRenderProgram? _computeProgram;

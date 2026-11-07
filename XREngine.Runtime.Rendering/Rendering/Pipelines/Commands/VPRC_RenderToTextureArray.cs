@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private RenderCommandCollection? _sliceCommands;
 
         public string TextureArrayName { get; set; } = "TextureArray";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DepthTextureName { get; set; }
         public int RenderPass { get; set; }
         public int LayerIndex { get; set; }

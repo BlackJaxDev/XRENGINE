@@ -19,13 +19,19 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIHitShadePass : VPRC_DDGIComputePass
     {
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string HitBufferName { get; set; } = DDGIResourceNames.HitBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string RayRadianceBufferName { get; set; } = DDGIResourceNames.RayRadianceBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string ProbeBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;
         public string TriangleBufferVariableName { get; set; } = "DDGIGeometryTriangles";
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string IrradianceAtlasTextureName { get; set; } = DDGIResourceNames.IrradianceAtlas;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string VisibilityAtlasTextureName { get; set; } = DDGIResourceNames.VisibilityAtlas;
 
         private XRRenderProgram? _shadeProgram;

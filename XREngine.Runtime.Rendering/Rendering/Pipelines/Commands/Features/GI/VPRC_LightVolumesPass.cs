@@ -27,10 +27,15 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRRenderProgram? _computeProgramStereo;
         private uint _frameIndex;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = "LightVolumeGITexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string CompositeQuadFBOName { get; set; } = "LightVolumeCompositeFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         protected override bool ShouldExecuteThisFrame()

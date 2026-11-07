@@ -47,6 +47,7 @@ void main()
         private int _cachedLowestMip = -1;
         private bool _cachedAdditiveBlend;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string TextureName { get; set; } = string.Empty;
         public int HighestOutputMipLevel { get; set; } = 0;
         public int LowestSourceMipLevel { get; set; } = -1;
