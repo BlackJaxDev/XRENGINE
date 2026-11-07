@@ -2792,6 +2792,9 @@ namespace XREngine.Rendering.Vulkan
                     out string targetReason))
             {
                 optionalDeferred = !requirement.Required;
+                // The target is prepared again after a swapchain or framebuffer change, and the readiness
+                // watchdog bounds a retry that never clears, so a target that is not ready yet is retryable.
+                retryable = true;
                 pendingReason = targetReason;
                 return false;
             }
@@ -2904,6 +2907,9 @@ namespace XREngine.Rendering.Vulkan
                     out string targetReason))
             {
                 optionalDeferred = !requirement.Required;
+                // The target is prepared again after a swapchain or framebuffer change, and the readiness
+                // watchdog bounds a retry that never clears, so a target that is not ready yet is retryable.
+                retryable = true;
                 pendingReason = targetReason;
                 return false;
             }
