@@ -69,4 +69,19 @@ public sealed class QuaternionKeyframeRestoreTests
         foreach (QuaternionKeyframe key in ((PropAnimQuaternion)copy.RootMember!.Animation!).Keyframes)
             key.InterpolationTypeIn.ShouldBe(ERadialInterpType.Smooth);
     }
+
+    [Test]
+    public void ConstructorStepKeys_HoldEachValue_WithNoBlendInTheSpan()
+    {
+        Quaternion start = Quaternion.Identity;
+        Quaternion end = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 1f);
+        PropAnimQuaternion animation = new(2f, false, true);
+        animation.Keyframes.Add(new QuaternionKeyframe(0f, start, Quaternion.Identity, ERadialInterpType.Step));
+        animation.Keyframes.Add(new QuaternionKeyframe(2f, end, Quaternion.Identity, ERadialInterpType.Step));
+        QuaternionKeyframe first = animation.Keyframes.First!;
+
+        first.InterpolationTypeIn.ShouldBe(ERadialInterpType.Step);
+        Quaternion.Dot(first.Interpolate(0.5f), start).ShouldBeGreaterThan(0.99999f);
+        Quaternion.Dot(first.Interpolate(1.5f), end).ShouldBeGreaterThan(0.99999f);
+    }
 }

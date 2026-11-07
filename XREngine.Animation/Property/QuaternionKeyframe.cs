@@ -25,6 +25,7 @@ namespace XREngine.Animation
             OutValue = outValue;
             InTangent = inTangent;
             OutTangent = outTangent;
+            InterpolationTypeIn = type;
             InterpolationTypeOut = type;
         }
 
