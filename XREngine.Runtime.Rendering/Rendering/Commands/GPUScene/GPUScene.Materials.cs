@@ -167,7 +167,9 @@ namespace XREngine.Rendering.Commands
                 XRMesh? mesh = state!.Meshes[lodLevel];
                 if (mesh is null)
                 {
-                    failureReason = $"logical mesh {logicalMeshId} has no mesh registered for LOD {lodLevel}";
+                    // The render side never loads a payload. The mesh residency backend loads it, and
+                    // the publication registers the level again.
+                    failureReason = $"the CPU mesh of LOD {lodLevel} of logical mesh {logicalMeshId} is not resident";
                     return false;
                 }
 
@@ -200,9 +202,9 @@ namespace XREngine.Rendering.Commands
                 if (!TryGetLogicalMeshState(logicalMeshId, lodLevel, out LogicalMeshState? state, out failureReason))
                     return false;
 
-                if (lodLevel == 0)
+                if (lodLevel == FindLowestResidentLevel(state!.Meshes.AsSpan(0, (int)state.LODCount)))
                 {
-                    failureReason = "LOD0 must remain resident as the fallback mesh";
+                    failureReason = "the lowest resident LOD must remain resident as the fallback mesh";
                     return false;
                 }
 
@@ -297,11 +299,23 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        /// <summary>True when a level of a logical mesh has a resident CPU mesh that the atlas can upload.</summary>
+        private bool IsLodCpuMeshResident(uint logicalMeshId, int lodLevel)
+        {
+            using (_lock.EnterScope())
+                return _logicalMeshStates.TryGetValue(logicalMeshId, out LogicalMeshState? state)
+                    && lodLevel < state.LODCount
+                    && state.Meshes[lodLevel] is not null;
+        }
+
         /// <summary>
         /// Render-thread pump for GPU-authored mesh LOD residency requests.
         /// Drains <see cref="LODRequestBuffer"/> at a throttled frame interval and loads the
         /// requested LOD levels into the mesh atlas via <see cref="RequestLODLoad"/>.
-        /// No-op unless <c>StreamMeshLodsOnDemand</c> is enabled. Requests dropped by the
+        /// No-op unless <c>StreamMeshLodsOnDemand</c> is enabled. The drain maps the request buffer, so
+        /// it is a CPU readback; a cutscene does not depend on it, because the cutscene manifest gives the
+        /// mesh residency backend its targets. A level whose CPU mesh is not resident is skipped: only the
+        /// mesh residency backend loads LOD payloads. Requests dropped by the
         /// per-drain load budget are re-raised by the GPU while the level stays non-resident,
         /// so this loop is self-healing across frames.
         /// </summary>
@@ -332,6 +346,11 @@ namespace XREngine.Rendering.Commands
                 for (int lodLevel = 0; lodLevel < MaxLogicalMeshLodCount && budget > 0; lodLevel++)
                 {
                     if ((lodMask & (1u << lodLevel)) == 0)
+                        continue;
+
+                    // A level whose CPU payload is not resident waits for the mesh residency
+                    // backend; the drain does no disk work and spends no budget on it.
+                    if (!IsLodCpuMeshResident(logicalMeshId, lodLevel))
                         continue;
 
                     if (RequestLODLoad(logicalMeshId, lodLevel, out string? failureReason))

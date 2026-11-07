@@ -176,6 +176,16 @@ public sealed class CutsceneResidencySession : ICutscenePlaybackGate, IDisposabl
     /// <summary>True after <see cref="Close"/>.</summary>
     public bool IsClosed => _closed;
 
+    /// <summary>
+    /// The number of T0 loads that did not complete yet, for the texture, audio, video, and mesh planners together. At zero,
+    /// each asset that a backend accepted has its proxy. A planner counts a completion at its next update.
+    /// </summary>
+    public int PendingProxyCount
+        => Planner.PendingProxyCount
+            + (AudioPlanner?.PendingProxyCount ?? 0)
+            + (VideoPlanner?.PendingProxyCount ?? 0)
+            + (MeshPlanner?.PendingProxyCount ?? 0);
+
     /// <summary>The number of times that <see cref="Refresh"/> replaced the planner.</summary>
     public int RefreshCount { get; private set; }
 

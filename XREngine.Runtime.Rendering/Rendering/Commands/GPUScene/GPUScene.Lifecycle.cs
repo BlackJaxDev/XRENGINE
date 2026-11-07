@@ -65,6 +65,7 @@ namespace XREngine.Rendering.Commands
             _meshletValidationRevisionByMeshId.Clear();
             _meshletRangeDirtyRange.Clear();
             DestroyMeshletBufferGenerations();
+            DiscardPendingLodAtlasReleases();
 
             _lodTableBuffer?.Destroy();
             _lodTableBuffer = MakeLodTableBuffer();
@@ -207,6 +208,7 @@ namespace XREngine.Rendering.Commands
             _meshletValidationRevisionByMeshId.Clear();
             _meshletRangeDirtyRange.Clear();
             DestroyMeshletBufferGenerations();
+            DiscardPendingLodAtlasReleases();
             _lodTableBuffer?.Destroy();
             _lodTableBuffer = null;
             _lodRequestBuffer?.Destroy();

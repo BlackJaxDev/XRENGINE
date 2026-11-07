@@ -133,6 +133,7 @@ public interface IRuntimeRenderSettingsServices
 
     /// <summary>
     /// Gets whether non-essential mesh LOD levels defer atlas upload until the GPU LOD-select pass requests them.
+    /// The lowest LOD always stays resident.
     /// </summary>
     bool StreamMeshLodsOnDemand { get; }
 

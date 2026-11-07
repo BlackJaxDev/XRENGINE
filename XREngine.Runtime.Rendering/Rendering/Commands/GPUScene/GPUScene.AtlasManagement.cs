@@ -300,16 +300,15 @@ namespace XREngine.Rendering.Commands
         private const float MinimumDefaultLodMinProjectedRadiusPixels = 16.0f;
 
         /// <summary>
-        /// Fills the registration scratch with one submesh's LOD levels in list order:
-        /// the renderable's levels when the owner is a <see cref="RenderableMesh"/>,
-        /// otherwise the command mesh alone. Thresholds resolve to their effective
-        /// values and the last level always carries a zero threshold so LOD selection
-        /// never culls it. Returns the level count. Caller holds the scene lock and
-        /// clears the scratch afterwards.
+        /// Fills the registration scratch with one submesh's LOD levels: the renderable's
+        /// levels in LOD table order when a <see cref="RenderableMesh"/> is given, otherwise
+        /// the command mesh alone. A LOD whose CPU mesh is not resident gives a null level.
+        /// Thresholds resolve to their effective values and the last level always carries
+        /// a zero threshold so LOD selection never culls it. Returns the level count.
+        /// Caller holds the scene lock and clears the scratch afterwards.
         /// </summary>
-        private int CollectRegistrationLevels(RenderInfo renderInfo, XRMesh mesh, uint submeshIndex, out RenderableMesh? renderable)
+        private int CollectRegistrationLevels(RenderableMesh? renderable, XRMesh mesh, uint submeshIndex)
         {
-            renderable = renderInfo.Owner as RenderableMesh;
             int count = renderable?.CollectLodMeshes(submeshIndex, _registrationScratchMeshes, _registrationScratchRadii) ?? 0;
             if (count == 0)
             {
@@ -327,6 +326,18 @@ namespace XREngine.Rendering.Commands
             }
 
             return count;
+        }
+
+        /// <summary>Gets the index of the last non-null level, or -1 when every level is null.</summary>
+        private static int FindLowestResidentLevel(ReadOnlySpan<XRMesh?> levelMeshes)
+        {
+            for (int i = levelMeshes.Length - 1; i >= 0; i--)
+            {
+                if (levelMeshes[i] is not null)
+                    return i;
+            }
+
+            return -1;
         }
 
         private static float ResolveLevelMinProjectedRadiusPixels(float configuredMinProjectedRadiusPixels, int lodLevel)
@@ -399,12 +410,17 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Rebuilds a logical mesh's level layout from the given non-null level meshes:
-        /// ensures every mandatory level is resident in the atlas, reconciles atlas
-        /// reference counts for a referenced state, and writes the LOD table entry.
-        /// Scratch is stack-bounded to <see cref="MaxLogicalMeshLodCount"/> levels.
-        /// Any rebuild clears the retained registration first, so a failure leaves no
-        /// reusable signature behind.
+        /// Rebuilds a logical mesh's level layout from the given level meshes: ensures
+        /// every mandatory level is resident in the atlas, reconciles atlas reference
+        /// counts for a referenced state, and writes the LOD table entry. A null level is
+        /// a deferred level whose CPU mesh is not resident: it registers with mesh ID 0,
+        /// so GPU LOD selection clamps to the nearest resident level. The lowest non-null
+        /// level is the mandatory resident level. A level that becomes null releases its
+        /// atlas range only after the frames in flight end
+        /// (<see cref="RetirePendingLodAtlasReleasesAtFrameBoundary"/>); the table entry
+        /// shows mesh ID 0 at once. Scratch is stack-bounded to
+        /// <see cref="MaxLogicalMeshLodCount"/> levels. Any rebuild clears the retained
+        /// registration first, so a failure leaves no reusable signature behind.
         /// </summary>
         private bool TryPopulateLogicalMeshStateCore(
             LogicalMeshState state,
@@ -433,19 +449,30 @@ namespace XREngine.Rendering.Commands
             Span<uint> newMeshIds = stackalloc uint[MaxLogicalMeshLodCount];
             Span<float> newMinProjectedRadiusPixels = stackalloc float[MaxLogicalMeshLodCount];
 
+            int mandatoryLevel = FindLowestResidentLevel(levelMeshes);
+            if (mandatoryLevel < 0)
+            {
+                failureReason = "no LOD level has a resident mesh";
+                return false;
+            }
+
             bool deferNonEssentialLods = RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand && levelCount > 1;
 
             for (int i = 0; i < levelCount; i++)
             {
-                XRMesh mesh = levelMeshes[i] ?? throw new ArgumentException("Level meshes must be non-null.", nameof(levelMeshes));
                 newMinProjectedRadiusPixels[i] = i == lastIndex ? 0.0f : MathF.Max(0.0f, levelMinProjectedRadiusPixels[i]);
 
-                // LOD0 is the mandatory-resident fallback level; the command's own mesh must
-                // also stay resident because indirect draws reference it before (or without)
-                // the GPU LOD-select rewrite. Levels already resident stay resident so
+                // A null level has no resident CPU mesh. Its payload loads through the mesh
+                // residency backend, never on the render side, so the level stays at 0.
+                if (levelMeshes[i] is not { } mesh)
+                    continue;
+
+                // The lowest resident level is the mandatory fallback level; the command's own
+                // mesh must also stay resident because indirect draws reference it before (or
+                // without) the GPU LOD-select rewrite. Levels already resident stay resident so
                 // re-registration does not thrash atlas contents.
                 bool alreadyResident = state.MeshIds[i] != 0 && ReferenceEquals(state.Meshes[i], mesh);
-                bool mustBeResident = i == 0
+                bool mustBeResident = i == mandatoryLevel
                     || !deferNonEssentialLods
                     || alreadyResident
                     || ReferenceEquals(mesh, requiredResidentMesh);
@@ -480,7 +507,15 @@ namespace XREngine.Rendering.Commands
                 for (int i = 0; i < previousMeshIds.Length; i++)
                 {
                     uint meshId = previousMeshIds[i];
-                    if (meshId != 0 && !IsDuplicateMeshId(previousMeshIds, i) && !ContainsMeshId(newMeshIds, meshId))
+                    if (meshId == 0 || IsDuplicateMeshId(previousMeshIds, i) || ContainsMeshId(newMeshIds, meshId))
+                        continue;
+
+                    // An evicted level (its CPU mesh left) can still be drawn by frames in
+                    // flight, so its atlas range waits for the frame boundary fence. A level
+                    // that another mesh replaced keeps the immediate release.
+                    if (i < levelCount && levelMeshes[i] is null)
+                        DeferLodAtlasRelease(meshId, previousRefCount);
+                    else
                         DecrementAtlasMeshRefCount(meshId, "TryPopulateLogicalMeshState", previousRefCount);
                 }
             }
@@ -502,7 +537,8 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>
         /// Returns true when the state's retained registration still describes the
-        /// collected levels in the scratch: same LOD version, level count, meshes,
+        /// collected levels in the scratch: same LOD version, level count, meshes (a null
+        /// level must stay null),
         /// geometry revisions, thresholds, required resident mesh and streaming policy,
         /// and every resident level (including the required mesh's level) still holds
         /// atlas geometry. Constant-time and allocation-free; the retained command mesh
@@ -522,10 +558,14 @@ namespace XREngine.Rendering.Commands
             for (int i = 0; i < levelCount; i++)
             {
                 XRMesh? levelMesh = _registrationScratchMeshes[i];
-                if (levelMesh is null
-                    || !ReferenceEquals(state.Meshes[i], levelMesh)
-                    || state.RegistrationGeometryRevisions[i] != levelMesh.GeometryRevision
+                if (!ReferenceEquals(state.Meshes[i], levelMesh)
                     || state.MinProjectedRadiusPixels[i] != _registrationScratchRadii[i])
+                    return false;
+
+                if (levelMesh is null)
+                    continue;
+
+                if (state.RegistrationGeometryRevisions[i] != levelMesh.GeometryRevision)
                     return false;
 
                 if (state.MeshIds[i] == 0)
@@ -564,7 +604,29 @@ namespace XREngine.Rendering.Commands
         /// ensuring atlas buffers or writing the LOD table; anything else rebuilds the
         /// level layout and retains the new signature.
         /// </summary>
+        // The LOD levels come from the render info owner. A model component owns the render info of its renderable meshes,
+        // so their commands register the command mesh as one level, and the CPU LOD selection (which clamps to resident
+        // LODs) picks that mesh.
         private bool ResolveLogicalMeshRegistration(RenderInfo renderInfo, XRMesh mesh, uint submeshIndex, string meshLabel, ref MeshUpdateObservation observation, out uint meshId, out uint logicalMeshId, out uint lodCount, out string? failureReason)
+            => ResolveLogicalMeshRegistration(renderInfo.Owner as RenderableMesh, mesh, submeshIndex, meshLabel, ref observation, out meshId, out logicalMeshId, out lodCount, out failureReason);
+
+        /// <summary>
+        /// Resolves the registration of one submesh of a <see cref="RenderableMesh"/> with its LOD levels, as a render
+        /// command of that renderable does. Diagnostics and tests use it to check the LOD residency contract.
+        /// </summary>
+        internal bool ResolveRenderableLogicalMeshRegistration(RenderableMesh renderable, XRMesh mesh, uint submeshIndex, string meshLabel, out uint meshId, out uint logicalMeshId, out uint lodCount, out string? failureReason)
+        {
+            ArgumentNullException.ThrowIfNull(renderable);
+            MeshUpdateObservation observation = default;
+            if (!ResolveLogicalMeshRegistration(renderable, mesh, submeshIndex, meshLabel, ref observation, out meshId, out logicalMeshId, out lodCount, out failureReason))
+                return false;
+
+            using (_lock.EnterScope())
+                FlushMeshDataDirtyRange();
+            return true;
+        }
+
+        private bool ResolveLogicalMeshRegistration(RenderableMesh? renderable, XRMesh mesh, uint submeshIndex, string meshLabel, ref MeshUpdateObservation observation, out uint meshId, out uint logicalMeshId, out uint lodCount, out string? failureReason)
         {
             meshId = 0;
             logicalMeshId = 0;
@@ -577,7 +639,7 @@ namespace XREngine.Rendering.Commands
                 long tableWritesBefore = _logicalTableWrites;
                 try
                 {
-                    int levelCount = CollectRegistrationLevels(renderInfo, mesh, submeshIndex, out RenderableMesh? renderable);
+                    int levelCount = CollectRegistrationLevels(renderable, mesh, submeshIndex);
                     int lodVersion = renderable?.LodRegistrationVersion ?? 0;
                     logicalMeshId = renderable is not null
                         ? GetOrCreateRenderableLogicalMeshId(renderable, submeshIndex)

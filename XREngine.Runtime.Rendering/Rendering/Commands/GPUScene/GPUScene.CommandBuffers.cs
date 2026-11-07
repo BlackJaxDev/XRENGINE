@@ -100,6 +100,10 @@ namespace XREngine.Rendering.Commands
                     PublishMeshletBufferGenerationAtFrameBoundary();
                 }
 
+                // Evicted LOD levels left the LOD table in an earlier frame. Their atlas
+                // ranges go only after the frames that could read the old level IDs end.
+                RetirePendingLodAtlasReleasesAtFrameBoundary();
+
                 // The transparency stream publishes its own dirty range like the other
                 // draw-indexed streams; every updating-row write marks it, so a content
                 // version advance no longer copies the whole span.

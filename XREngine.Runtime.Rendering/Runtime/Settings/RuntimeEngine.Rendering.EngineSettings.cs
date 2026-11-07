@@ -1826,11 +1826,13 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// When true, non-essential mesh LOD levels stay out of the GPU mesh atlas until the
-                /// GPU LOD-select pass requests them. LOD0 and each command's own mesh always stay resident,
-                /// so selection clamps to the nearest resident level while finer/coarser data streams in.
+                /// GPU LOD-select pass requests them. The lowest LOD and each command's own mesh always stay
+                /// resident, so selection clamps to the nearest resident level while finer data streams in.
+                /// The request drain reads a GPU buffer, so it is a CPU readback. It uploads only levels whose
+                /// CPU mesh is resident; it never loads a LOD payload.
                 /// </summary>
                 [Category("LOD Streaming")]
-                [Description("When true, defers non-essential mesh LOD atlas uploads until the GPU LOD-select pass requests them. LOD0 and each command's own mesh always stay resident.")]
+                [Description("When true, defers non-essential mesh LOD atlas uploads until the GPU LOD-select pass requests them. The lowest LOD and each command's own mesh always stay resident.")]
                 public bool StreamMeshLodsOnDemand
                 {
                     get => _streamMeshLodsOnDemand;

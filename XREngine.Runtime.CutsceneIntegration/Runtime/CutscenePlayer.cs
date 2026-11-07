@@ -226,6 +226,13 @@ public sealed class CutscenePlayer
     /// </summary>
     public ESeekIntent? LastTickSeek { get; private set; }
 
+    /// <summary>
+    /// True when a seek to any position shows resident data at once: T0 of the whole closure is resident and the programs of
+    /// the T0 materials are ready. <see cref="CutsceneOpenSequence"/> sets it at the end of the open. A seek after that time
+    /// loads no T0 data, because T0 stays resident until the close. It is false for a player that no open sequence opened.
+    /// </summary>
+    public bool ReadyForInstantSeek { get; internal set; }
+
     /// <summary>True while <see cref="PlaybackGate"/> holds playback. The audio sources stay stopped while it is true.</summary>
     public bool IsHeldByGate => _heldByGate;
 

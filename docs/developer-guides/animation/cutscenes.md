@@ -365,6 +365,15 @@ Set `TargetViewport` to show the camera that the cut tracks select. The director
 
 A claim changes only the camera that shows the scene. The screen-space UI of the viewport stays on the camera from before the claim, so the editor panels and a player HUD stay visible. A gameplay system must hide a HUD itself if a cutscene must not show it.
 
+### Progressive Open
+
+To open with T0 ready for an instant seek, use `new CutsceneOpenSequence(director).RunAsync(progress, cancellationToken)` in place of `OpenAsync`. The sequence opens the director, finds the proxy materials (the material of the lowest LOD of each sub-mesh of the bound nodes and their descendants, listed in `ProxyMaterials`), and requests their programs at once. At the end of each director frame it reads `CutsceneResidencySession.PendingProxyCount` and the program state of each proxy material. When both are complete, it sets `CutscenePlayer.ReadyForInstantSeek`, requests the programs of the other LOD materials as lower-priority work, and the task gives true. T0 stays resident until the close, so a later seek loads no T0 data.
+
+- The sequence advances on the director frame, on the update thread. It never waits for the render thread.
+- The default prewarmer (`CutsceneMaterialProgramPrewarmer`) uses the asynchronous uber variant build of the material and its state. A material without uber state is ready at once. This layer cannot see the backend program link or a Vulkan pipeline compile, which the backend mesh renderer makes at the first draw. Pass another `ICutsceneProgramPrewarmer` to change this.
+- A failed proxy program adds a diagnostic to `director.Diagnostics` with the material name and the reason. The task gives false, `ReadyForInstantSeek` stays false, and the cutscene stays open.
+- A cancel closes the director at the next frame, which restores the bound nodes and destroys the spawned instances. The task is then canceled. A `Close` from another caller also cancels the task.
+
 ### VR Camera Modes
 
 In VR, a cutscene never takes head tracking away from the user. No mode writes an eye camera or the head pose, and no mode changes the VR view mode, the VR render pipeline, or the desktop mirror mode (see the exact VR pipeline selection contract in [OpenXR VR rendering](../../architecture/rendering/openxr-vr-rendering.md)). `CutsceneAsset.VrCameraMode` selects the mode:

@@ -111,6 +111,104 @@ namespace XREngine.Components.Scene.Mesh
             return _currentLOD;
         }
 
+        /// <summary>
+        /// Fills the GPU registration levels of one submesh index without allocating. With a LOD table, the levels follow the
+        /// table order, and a LOD that is not resident, or whose renderer has no mesh at the submesh index, gives a null level
+        /// with its configured screen radius. The GPU scene registers a null level with mesh ID 0, so the GPU LOD selection
+        /// clamps to the nearest resident level. When the table is longer than the spans, the last level is the last LOD of the
+        /// table, so the lowest LOD is always a registration level. Without a LOD table, the resident LODs fill the levels in
+        /// list order. Returns the level count: the index of the last non-null level plus one, or zero.
+        /// </summary>
+        internal int CollectLodMeshes(uint submeshIndex, Span<XRMesh?> meshes, Span<float> minProjectedRadiusPixels)
+        {
+            lock (_lodsLock)
+            {
+                LodSlot[] slots = _lodSlots;
+                if (slots.Length == 0)
+                {
+                    int count = 0;
+                    for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null && count < meshes.Length; node = node.Next)
+                    {
+                        RenderableLOD lod = node.Value;
+                        if (!lod.Renderer.TryGetMesh((int)submeshIndex, out XRMesh? lodMesh, out _) || lodMesh is null)
+                            continue;
+
+                        meshes[count] = lodMesh;
+                        minProjectedRadiusPixels[count] = lod.MinProjectedScreenRadiusPixels;
+                        count++;
+                    }
+                    return count;
+                }
+
+                int levelCount = Math.Min(slots.Length, meshes.Length);
+                int lastResident = -1;
+                for (int level = 0; level < levelCount; level++)
+                {
+                    LodSlot slot = slots[GetRegistrationSlotIndex(level, slots.Length, meshes.Length)];
+                    minProjectedRadiusPixels[level] = slot.MinProjectedScreenRadiusPixels;
+                    meshes[level] = null;
+                    if (slot.Node?.Value.Renderer is not { } renderer
+                        || !renderer.TryGetMesh((int)submeshIndex, out XRMesh? lodMesh, out _)
+                        || lodMesh is null)
+                        continue;
+
+                    meshes[level] = lodMesh;
+                    lastResident = level;
+                }
+                return lastResident + 1;
+            }
+        }
+
+        /// <summary>
+        /// Captures the LOD renderers of one submesh index at the same levels as <see cref="CollectLodMeshes"/>. A level with no
+        /// resident renderer for the submesh gets null. Returns the authored LOD count: the table length when the table is
+        /// longer than the span, otherwise the level count of <see cref="CollectLodMeshes"/>.
+        /// </summary>
+        internal int CollectLodRenderers(uint submeshIndex, Span<XRMeshRenderer?> renderers)
+        {
+            lock (_lodsLock)
+            {
+                LodSlot[] slots = _lodSlots;
+                if (slots.Length == 0)
+                {
+                    int count = 0;
+                    for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null; node = node.Next)
+                    {
+                        XRMeshRenderer renderer = node.Value.Renderer;
+                        if (!renderer.TryGetMesh((int)submeshIndex, out XRMesh? mesh, out _) || mesh is null)
+                            continue;
+                        if (count < renderers.Length)
+                            renderers[count] = renderer;
+                        count++;
+                    }
+                    return count;
+                }
+
+                int levelCount = Math.Min(slots.Length, renderers.Length);
+                int lastResident = -1;
+                for (int level = 0; level < levelCount; level++)
+                {
+                    LodSlot slot = slots[GetRegistrationSlotIndex(level, slots.Length, renderers.Length)];
+                    renderers[level] = null;
+                    if (slot.Node?.Value.Renderer is not { } renderer
+                        || !renderer.TryGetMesh((int)submeshIndex, out XRMesh? mesh, out _)
+                        || mesh is null)
+                        continue;
+
+                    renderers[level] = renderer;
+                    lastResident = level;
+                }
+                return slots.Length > renderers.Length ? slots.Length : lastResident + 1;
+            }
+        }
+
+        /// <summary>
+        /// Maps a GPU registration level to a LOD table index. The levels follow the table, except that the last level of a
+        /// table longer than the level capacity is the last LOD of the table: the lowest LOD, which is always resident.
+        /// </summary>
+        private static int GetRegistrationSlotIndex(int level, int slotCount, int levelCapacity)
+            => slotCount > levelCapacity && level == levelCapacity - 1 ? slotCount - 1 : level;
+
         /// <summary>Routes a change of a source LOD: a residency change publishes or removes the LOD; other changes update the renderer.</summary>
         private void OnSourceLodChanged(LodSlot slot, string? propertyName)
         {

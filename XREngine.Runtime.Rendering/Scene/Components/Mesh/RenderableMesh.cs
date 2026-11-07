@@ -79,50 +79,8 @@ namespace XREngine.Components.Scene.Mesh
         private void AdvanceLodRegistrationVersion()
             => Interlocked.Increment(ref _lodRegistrationVersion);
 
-        /// <summary>
-        /// Fills the per-level mesh and minimum projected radius for one submesh index
-        /// without allocating, in LOD list order, up to the span length. Levels whose
-        /// renderer has no mesh at that submesh index are skipped. Returns the level
-        /// count written.
-        /// </summary>
-        internal int CollectLodMeshes(uint submeshIndex, Span<XRMesh?> meshes, Span<float> minProjectedRadiusPixels)
-        {
-            int count = 0;
-            lock (_lodsLock)
-            {
-                for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null && count < meshes.Length; node = node.Next)
-                {
-                    RenderableLOD lod = node.Value;
-                    if (!lod.Renderer.TryGetMesh((int)submeshIndex, out XRMesh? lodMesh, out _) || lodMesh is null)
-                        continue;
-
-                    meshes[count] = lodMesh;
-                    minProjectedRadiusPixels[count] = lod.MinProjectedScreenRadiusPixels;
-                    count++;
-                }
-            }
-
-            return count;
-        }
-
         public XRMeshRenderer? CurrentLODRenderer
             => Volatile.Read(ref _currentLODRenderer);
-
-        /// <summary>Captures the renderer owners in the same filtered order as the shared LOD table.</summary>
-        internal int CollectLodRenderers(uint submeshIndex, Span<XRMeshRenderer?> renderers)
-        {
-            int count = 0;
-            lock (_lodsLock)
-                for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null; node = node.Next)
-                {
-                    XRMeshRenderer renderer = node.Value.Renderer;
-                    if (!renderer.TryGetMesh((int)submeshIndex, out XRMesh? mesh, out _) || mesh is null)
-                        continue;
-                    if (count < renderers.Length) renderers[count] = renderer;
-                    count++;
-                }
-            return count;
-        }
 
         /// <summary>Identifies the primary command whose pass follows its authored LOD material.</summary>
         internal bool IsPrimaryMeshCommand(IRenderCommandMesh command) => ReferenceEquals(command, _rc);

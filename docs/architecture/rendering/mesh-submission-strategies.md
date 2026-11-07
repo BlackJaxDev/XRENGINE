@@ -276,6 +276,50 @@ renderer does not.
 
 Broad model and prefab binary-cache hydration is open work.
 
+## Mesh LOD Residency Contract
+
+A cooked sub-mesh keeps its lowest LOD inline. Its other LODs can load later
+through the mesh residency backend (see the cooked asset documentation for the
+payload split). The GPU routes follow these rules:
+
+- `RenderableMesh.CollectLodMeshes` gives the registration levels in LOD table
+  order. A LOD whose CPU mesh is not resident gives a null level. The GPU scene
+  registers a null level with mesh ID 0, so `GPURenderLODSelect.comp` clamps to
+  the nearest resident level. The shader needs no change. When the table has
+  more LODs than `GPUScene.MaxLogicalMeshLodCount`, the last level is the last
+  LOD of the table, so the lowest LOD is always a level.
+  `CollectLodRenderers` gives the renderers at the same levels.
+- The mandatory resident level is the lowest non-null level, not LOD0. With
+  `StreamMeshLodsOnDemand`, the lowest LOD and the command's own mesh always
+  stay in the atlas. `ReleaseLOD` refuses the lowest resident level.
+- A publication of a LOD advances `RenderableMesh.LodRegistrationVersion`. The
+  next registration misses the retained state and uploads the new level from CPU
+  memory. The render side does no disk IO and no hash work, and a payload is
+  complete before the backend publishes it. The mesh residency backend limits
+  publications per frame (`MeshResidencyBackend.MaxPublicationsPerFrame`). The
+  atlas has no separate per-frame byte budget.
+- An eviction sets the source mesh of the LOD to null. The next registration
+  writes mesh ID 0 for that level at once. The atlas reference of the old level
+  goes to a pending list. At the next frame boundary (`SwapCommandBuffers`), the
+  scene inserts a GPU fence. The atlas range is released at a later boundary,
+  after that fence signals. Without a renderer fence, the release is at the
+  second boundary. A level that another mesh replaces keeps the immediate
+  release.
+- `ServiceLodStreamingRequests` maps the request buffer, so it is a CPU
+  readback. It runs only with `StreamMeshLodsOnDemand`. It uploads only levels
+  whose CPU mesh is resident. It never loads a LOD payload, and it spends no
+  load budget on a level with no CPU mesh. A cutscene does not depend on it: the
+  cutscene manifest gives the mesh residency backend its targets, so a
+  zero-readback route does no readback for this feature.
+- A late LOD gets a new renderer. Deferred publication creates no backend
+  wrappers, so the first use of the new level must resolve cold wrappers through
+  the renderer facade (see the default render pipeline notes).
+
+The render-command path takes the LOD levels from the render info owner. A model
+component owns the render info of its renderable meshes, so those commands
+register the command mesh as one level. The CPU LOD selection, which clamps to
+resident LODs, then chooses that mesh.
+
 ## Production Closeout Status
 
 The unconditional meshlet import/runtime production gate completed on

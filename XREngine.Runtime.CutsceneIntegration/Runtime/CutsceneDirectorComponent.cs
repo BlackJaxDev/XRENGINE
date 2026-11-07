@@ -29,6 +29,7 @@ public class CutsceneDirectorComponent : XRComponent
     private CutsceneCameraRouter? _router;
     private CutsceneVrCameraRouter? _vrRouter;
     private CutsceneResidencySession? _residency;
+    private CutsceneOpenSequence? _openSequence;
     private XRViewport? _targetViewport;
     private TransformBase? _vrRigOrigin;
     private bool _tickRegistered;
@@ -193,6 +194,9 @@ public class CutsceneDirectorComponent : XRComponent
     [YamlIgnore]
     public bool IsOpen => _player is not null;
 
+    /// <summary>The binding table of the open cutscene, or null.</summary>
+    internal CutsceneBindingTable? Bindings => _bindings;
+
     /// <summary>
     /// The problems that the last open found: compile errors, binding errors, and open failures.
     /// Problems that appear later in playback are in <see cref="CutscenePlayer.Diagnostics"/>.
@@ -257,7 +261,25 @@ public class CutsceneDirectorComponent : XRComponent
 
         // A handler in the tick can close the director, so the router is read after the tick.
         _vrRouter?.Update();
+
+        // The open sequence reads the residency state after the planner update of this frame.
+        _openSequence?.OnFrame();
     }
+
+    /// <summary>Connects the open sequence of the open cutscene, so that it advances at the end of each frame.</summary>
+    internal void AttachOpenSequence(CutsceneOpenSequence sequence)
+        => _openSequence = sequence;
+
+    /// <summary>Disconnects an open sequence that finished.</summary>
+    internal void DetachOpenSequence(CutsceneOpenSequence sequence)
+    {
+        if (ReferenceEquals(_openSequence, sequence))
+            _openSequence = null;
+    }
+
+    /// <summary>Adds a problem that an open sequence found to <see cref="Diagnostics"/>.</summary>
+    internal void AddOpenDiagnostic(string message)
+        => Fail(message);
 
     /// <summary>
     /// Closes the residency session, restores the state of the bound nodes, destroys the instances that the cutscene
@@ -265,6 +287,11 @@ public class CutsceneDirectorComponent : XRComponent
     /// </summary>
     public void Close()
     {
+        // A close before the open sequence finished cancels its task.
+        CutsceneOpenSequence? openSequence = _openSequence;
+        _openSequence = null;
+        openSequence?.OnDirectorClosed();
+
         if (_tickRegistered)
         {
             _tickRegistered = false;
