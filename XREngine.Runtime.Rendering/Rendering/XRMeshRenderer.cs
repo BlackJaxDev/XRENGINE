@@ -1562,6 +1562,52 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Starts the non-blocking backend preparation of a draw of this renderer with <paramref name="material"/> and gives
+        /// the state of the program link and, on backends that use them, the graphics pipelines (see
+        /// <see cref="IRenderPreparationState.QueryDrawReadiness"/>). Call it on the render thread, inside a window renderer
+        /// scope, for example from a render-thread coroutine. It never waits for a link or a compile.
+        /// </summary>
+        /// <remarks>
+        /// With no render host installed, no backend exists and no draw can be skipped, so the state is
+        /// <see cref="ERenderDrawReadiness.Ready"/> (reason "NoRenderHost"), as for <see cref="TryPrewarmForLodSelection"/>.
+        /// Off the render thread, or with no current renderer that accepts backend work, it does no backend work and gives
+        /// <see cref="ERenderDrawReadiness.NotStarted"/>, so the caller checks again later. A backend object that does not
+        /// report the state gives <see cref="ERenderDrawReadiness.NotSupported"/>.
+        /// </remarks>
+        /// <param name="material">The material of the draw, or null for <see cref="Material"/>.</param>
+        /// <param name="reason">The reason of the state, for diagnostics.</param>
+        public ERenderDrawReadiness QueryDrawReadiness(XRMaterial? material, out string reason)
+        {
+            if (!RuntimeRenderingHostServices.HasConcreteHost)
+            {
+                reason = "NoRenderHost";
+                return ERenderDrawReadiness.Ready;
+            }
+
+            if (!RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
+            {
+                reason = "NotRenderThread";
+                return ERenderDrawReadiness.NotStarted;
+            }
+
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null || !renderer.AcceptsBackendWork)
+            {
+                reason = "NoActiveRenderer";
+                return ERenderDrawReadiness.NotStarted;
+            }
+
+            AbstractRenderAPIObject? apiObject = renderer.GetOrCreateAPIRenderObject(GetVersion(false));
+            if (apiObject is IRenderPreparationState preparationState)
+                return preparationState.QueryDrawReadiness(material, out reason);
+
+            reason = apiObject is null
+                ? "the render backend made no object for this renderer"
+                : "the render backend object of this renderer does not report draw readiness";
+            return ERenderDrawReadiness.NotSupported;
+        }
+
+        /// <summary>
         /// Supplemental detail captured by the underlying API object on the most recent
         /// <see cref="TryPrepareForRendering(out string, bool)"/> call. Empty when not available.
         /// </summary>

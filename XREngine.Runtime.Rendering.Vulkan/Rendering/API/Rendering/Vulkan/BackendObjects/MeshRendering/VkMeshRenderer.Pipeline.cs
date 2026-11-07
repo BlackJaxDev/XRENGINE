@@ -754,9 +754,61 @@ internal unsafe partial class VkMeshRenderer
 	/// Ensures a valid Vulkan graphics pipeline for the given material, topology,
 	/// and draw state. Pipelines are cached by <see cref="VulkanGraphicsPipelineKey"/>. If no
 	/// cached pipeline matches, a new one is created with the current shader
-	/// program, vertex layout, and fixed-function state.
+	/// program, vertex layout, and fixed-function state. The result is recorded for
+	/// <see cref="QueryDrawReadiness"/>.
 	/// </summary>
 	private bool EnsurePipelineCore(
+		XRMaterial material,
+		PrimitiveTopology topology,
+		in PendingMeshDraw draw,
+		RenderPass renderPass,
+		bool useDynamicRendering,
+		DynamicRenderingFormatSignature dynamicRenderingFormats,
+		int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+		bool depthStencilReadOnly,
+		string pipelineName,
+		bool allowPipelineCreation,
+		bool foregroundRequired,
+		out Pipeline pipeline,
+		out bool retryable,
+		out string failureReason)
+	{
+		bool ready = ResolveOrCompilePipeline(
+			material,
+			topology,
+			draw,
+			renderPass,
+			useDynamicRendering,
+			dynamicRenderingFormats,
+			passIndex,
+			passMetadata,
+			depthStencilReadOnly,
+			pipelineName,
+			allowPipelineCreation,
+			foregroundRequired,
+			out pipeline,
+			out retryable,
+			out failureReason);
+		RecordPipelineAdmission(
+			material,
+			topology,
+			renderPass,
+			useDynamicRendering,
+			dynamicRenderingFormats,
+			passIndex,
+			pipelineName,
+			ready,
+			retryable,
+			failureReason);
+		return ready;
+	}
+
+	/// <summary>
+	/// Finds the graphics pipeline of a draw in the local or shared cache, or starts its compile.
+	/// <see cref="EnsurePipelineCore"/> calls it and records the result.
+	/// </summary>
+	private bool ResolveOrCompilePipeline(
 		XRMaterial material,
 		PrimitiveTopology topology,
 		in PendingMeshDraw draw,

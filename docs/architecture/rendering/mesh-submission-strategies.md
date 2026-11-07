@@ -335,6 +335,18 @@ payload split). The GPU routes follow these rules:
   resident LOD draws. With no active backend, the check runs at once.
   On Vulkan, the first draw of the new renderer is still a cold mesh admission
   in the frame loop, so PresentNow can still reject frames for it.
+- `XRMeshRenderer.QueryDrawReadiness(material)` (the backend
+  `IRenderPreparationState.QueryDrawReadiness`) gives `ERenderDrawReadiness`
+  for one renderer and material: `NotStarted`, `Compiling`, `Ready`, `Failed`,
+  or `NotSupported`, the default for a backend that does not implement it. It
+  runs on the render thread and never waits for a link or a compile. OpenGL
+  reports the non-blocking program preparation and treats a temporary fallback
+  program as compiling. Vulkan reports the program and buffers, and then the
+  results that `VkMeshRenderer.EnsurePipelineCore` recorded for the renderer in
+  each pass context (pre-recording admission and draw recording) with that
+  material and the current program link generation. A renderer that no frame
+  drew with them is `NotStarted`. The cutscene open uses it for
+  `ReadyForInstantSeek`.
 
 The render-command path takes the LOD levels from the render info owner. A model
 component owns the render info of its renderable meshes, so those commands
