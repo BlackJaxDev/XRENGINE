@@ -206,15 +206,15 @@ internal static partial class ProjectBuilder
         return path;
     }
 
-    /// <summary>Published settings must never carry an editor session's transient admission grant.</summary>
-    private static void ClearBrowserRealtimeCredentials(GameStartupSettings settings)
+    /// <summary>
+    /// Clears the realtime credentials and the handoff state of the startup settings copy that a browser build ships. The
+    /// secrets go through the shared publish step (<see cref="PublishedSecrets.Strip"/>). The other members are browser
+    /// handoff state that a browser build must not start with.
+    /// </summary>
+    internal static void ClearBrowserRealtimeCredentials(GameStartupSettings settings)
     {
+        PublishedSecrets.Strip(settings);
         settings.MultiplayerSessionId = null;
-        settings.MultiplayerSessionToken = null;
-        settings.MultiplayerAccountId = null;
-        settings.MultiplayerReservationId = null;
-        settings.MultiplayerAdmissionSecret = null;
-        settings.MultiplayerClientId = null;
         settings.MultiplayerWorkerGeneration = null;
         settings.MultiplayerResumeRequested = false;
         settings.MultiplayerCredentialEpoch = 0;

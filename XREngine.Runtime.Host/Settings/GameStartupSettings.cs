@@ -166,6 +166,7 @@ namespace XREngine
 
         [Category("Networking")]
         [Description("Optional opaque realtime session token supplied by an external control plane.")]
+        [Secret]
         public string? MultiplayerSessionToken
         {
             get => _multiplayerSessionToken;
@@ -174,6 +175,7 @@ namespace XREngine
 
         [Category("Networking")]
         [Description("Stable authenticated account identity supplied by a player-scoped realtime handoff.")]
+        [Secret]
         public string? MultiplayerAccountId
         {
             get => _multiplayerAccountId;
@@ -182,6 +184,7 @@ namespace XREngine
 
         [Category("Networking")]
         [Description("Control-plane reservation carried by a player-scoped realtime handoff.")]
+        [Secret]
         public string? MultiplayerReservationId
         {
             get => _multiplayerReservationId;
@@ -190,6 +193,7 @@ namespace XREngine
 
         [Category("Networking")]
         [Description("Opaque player-scoped admission grant. This must not be persisted or logged.")]
+        [Secret]
         public string? MultiplayerAdmissionSecret
         {
             get => _multiplayerAdmissionSecret;
@@ -197,6 +201,7 @@ namespace XREngine
         }
 
         [Category("Networking")]
+        [Secret]
         public string? MultiplayerClientId
         {
             get => _multiplayerClientId;

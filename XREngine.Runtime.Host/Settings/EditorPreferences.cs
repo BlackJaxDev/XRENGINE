@@ -434,6 +434,7 @@ namespace XREngine
         [Description("Bearer token for MCP authentication. Ignored unless MCP Require Auth is enabled.")]
         [YamlIgnore]
         [Password]
+        [Secret]
         public string McpServerAuthToken
         {
             get => string.IsNullOrEmpty(_mcpServerAuthTokenEnvVar)
@@ -611,6 +612,7 @@ namespace XREngine
         [Description("API key for OpenAI / Codex provider.")]
         [YamlIgnore]
         [Password]
+        [Secret]
         public string McpAssistantOpenAiApiKey
         {
             get => string.IsNullOrEmpty(_mcpAssistantOpenAiApiKeyEnvVar)
@@ -627,6 +629,7 @@ namespace XREngine
         [Description("API key for Anthropic / Claude Code provider.")]
         [YamlIgnore]
         [Password]
+        [Secret]
         public string McpAssistantAnthropicApiKey
         {
             get => string.IsNullOrEmpty(_mcpAssistantAnthropicApiKeyEnvVar)
@@ -813,6 +816,7 @@ namespace XREngine
         [Description("API key for Google Gemini provider (from Google AI Studio).")]
         [YamlIgnore]
         [Password]
+        [Secret]
         public string McpAssistantGeminiApiKey
         {
             get => string.IsNullOrEmpty(_mcpAssistantGeminiApiKeyEnvVar)
@@ -842,6 +846,7 @@ namespace XREngine
         [Description("GitHub PAT with models:read scope for GitHub Models inference API.")]
         [YamlIgnore]
         [Password]
+        [Secret]
         public string McpAssistantGitHubModelsToken
         {
             get => string.IsNullOrEmpty(_mcpAssistantGitHubModelsTokenEnvVar)

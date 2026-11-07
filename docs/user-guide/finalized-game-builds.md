@@ -69,6 +69,10 @@ AotRuntimeMetadata.bin
 
 The generated launcher resolves archives relative to `AppContext.BaseDirectory` first, then from sibling `Config` and `Content` folders beside `Binaries`.
 
+`GameConfig.pak` holds no secrets. The builder writes a copy of each settings asset (startup settings, editor preferences, and user settings) and clears every member marked with `[Secret]` on that copy. It also clears the environment-variable name companion (`<Name>EnvVar`) of each secret. The live settings in the editor do not change. The cleared members are the MCP auth token, the OpenAI, Anthropic, and Gemini API keys, the GitHub Models token, and the multiplayer session token, admission secret, account ID, reservation ID, and client ID. Browser builds use the same step. To add a new secret to a shipped settings type, mark the property with `[Secret]` (and `[Password]` if the inspector must mask it).
+
+Archives that were published before this change can contain these values in plaintext. Rotate those secrets and rebuild the archives.
+
 ## NativeAOT Finalized Build
 
 Use the validation script for the canonical AOT path:

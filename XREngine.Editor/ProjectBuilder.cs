@@ -15,6 +15,7 @@ using XREngine.Components.Scripting;
 using XREngine.Core.Attributes;
 using XREngine.Core.Files;
 using XREngine.Diagnostics;
+using XREngine.Editor.Publishing;
 using XREngine.Networking;
 using XREngine.Scene.Transforms;
 using XREngine.Serialization;
@@ -35,7 +36,7 @@ internal static partial class ProjectBuilder
     /// <param name="CookedAsBinaryAsset">Indicates whether the asset was successfully cooked into a binary format (true) or if it was copied as-is (false).</param>
     internal readonly record struct CookProgress(int ProcessedFiles, int TotalFiles, string RelativePath, bool CookedAsBinaryAsset);
 
-    private const string StartupAssetName = "startup.asset";
+    internal const string StartupAssetName = "startup.asset";
     private const string CommonAssetsArchiveName = "CommonAssets.pak";
     private const string AotRuntimeMetadataFileName = AotRuntimeMetadataStore.MetadataFileName;
 
@@ -353,14 +354,12 @@ internal static partial class ProjectBuilder
             ? BuildAotRuntimeMetadata(configuration, platform)
             : null;
 
-        WriteCookedAsset(Engine.PersistentGameSettings, Path.Combine(staging, StartupAssetName), aotMetadata);
-
-        WriteCookedAsset(
+        WriteConfigArchiveAssets(
+            staging,
+            Engine.PersistentGameSettings,
             Engine.CreatePersistableEditorPreferencesSnapshot(),
-            Path.Combine(staging, XRProject.EditorPreferencesFileName),
+            Engine.UserSettings ?? new UserSettings(),
             aotMetadata);
-
-        WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName), aotMetadata);
 
         if (aotMetadata is not null)
             WriteAotRuntimeMetadata(staging, aotMetadata);
@@ -384,6 +383,27 @@ internal static partial class ProjectBuilder
             if (Directory.Exists(staging))
                 Directory.Delete(staging, true);
         }
+    }
+
+    /// <summary>
+    /// Writes the settings assets of the config archive into the staging directory. The full and the incremental archive
+    /// builds both pack this directory. Each asset goes through <see cref="PublishedSecrets.CreatePublishedCopy"/>, so the
+    /// archive holds no secret and the live settings do not change.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    internal static void WriteConfigArchiveAssets(
+        string stagingDirectory,
+        GameStartupSettings startup,
+        EditorPreferences preferences,
+        UserSettings user,
+        AotRuntimeMetadata? aotMetadata)
+    {
+        WriteCookedAsset(PublishedSecrets.CreatePublishedCopy(startup), Path.Combine(stagingDirectory, StartupAssetName), aotMetadata);
+        WriteCookedAsset(
+            PublishedSecrets.CreatePublishedCopy(preferences),
+            Path.Combine(stagingDirectory, XRProject.EditorPreferencesFileName),
+            aotMetadata);
+        WriteCookedAsset(PublishedSecrets.CreatePublishedCopy(user), Path.Combine(stagingDirectory, XRProject.UserSettingsFileName), aotMetadata);
     }
 
     private static void WriteAotRuntimeMetadata(string stagingDirectory, AotRuntimeMetadata metadata)
