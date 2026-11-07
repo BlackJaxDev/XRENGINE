@@ -110,8 +110,9 @@ public sealed class MeshResidencyBackend : IResidencyBackend, IDisposable
     public int MaxPublicationsPerFrame { get; set; } = DefaultMaxPublicationsPerFrame;
 
     /// <summary>
-    /// The default of <see cref="MaxPublicationsPerFrame"/>. Two publications per frame keep the swap of a cold jump in
-    /// Sponza near the frame budget, and all T1 LODs still arrive in about 200 ms at 60 Hz.
+    /// The default of <see cref="MaxPublicationsPerFrame"/>. The swap cost of a frame grows with the number of
+    /// publications in it, so a low count limits the frame spike of a cold jump. The cost is a longer time until all
+    /// LODs of a shot are published.
     /// </summary>
     public const int DefaultMaxPublicationsPerFrame = 2;
 
