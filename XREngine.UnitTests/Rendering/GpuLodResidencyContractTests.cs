@@ -28,11 +28,16 @@ public sealed class GpuLodResidencyContractTests
         _root = Path.Combine(TestContext.CurrentContext.WorkDirectory, "GpuLodResidency", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
         _sourceRegistration = SubMeshLodPayloads.RegisterSource(new DirectoryLodPayloadSource(_root));
+        // A late LOD is ready at once; these tests cover registration, not backend readiness.
+        RenderableMesh.LateLodReadinessScheduler = step => { for (int i = 0; i < 100 && !step(); i++) { } };
+        RenderableMesh.LateLodReadinessProbe = _ => true;
     }
 
     [TearDown]
     public void TearDown()
     {
+        RenderableMesh.LateLodReadinessScheduler = null;
+        RenderableMesh.LateLodReadinessProbe = RenderableMesh.DefaultLateLodReadinessProbe;
         _sourceRegistration?.Dispose();
         _sourceRegistration = null;
         if (Directory.Exists(_root))

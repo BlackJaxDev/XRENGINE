@@ -169,7 +169,7 @@ public interface IRuntimeRenderSchedulingServices
         => task();
 
     /// <summary>
-    /// Queues a render-thread coroutine that returns <see langword="true"/> when it should continue.
+    /// Queues a render-thread coroutine. The task returns <see langword="true"/> when it is complete and <see langword="false"/> to run again at the next dispatch.
     /// </summary>
     void EnqueueRenderThreadCoroutine(Func<bool> task);
 
@@ -179,7 +179,7 @@ public interface IRuntimeRenderSchedulingServices
     void EnqueueRenderThreadCoroutine(Func<bool> task, RenderThreadJobKind renderThreadKind);
 
     /// <summary>
-    /// Queues a named render-thread coroutine that returns <see langword="true"/> when it should continue.
+    /// Queues a named render-thread coroutine. The task returns <see langword="true"/> when it is complete and <see langword="false"/> to run again at the next dispatch.
     /// </summary>
     void EnqueueRenderThreadCoroutine(Func<bool> task, string reason);
 

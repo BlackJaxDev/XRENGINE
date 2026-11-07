@@ -47,7 +47,14 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         internal static Func<XRMeshRenderer, bool> LateLodReadinessProbe { get; set; } = DefaultLateLodReadinessProbe;
 
-        private static bool DefaultLateLodReadinessProbe(XRMeshRenderer renderer)
+        /// <summary>
+        /// Schedules the readiness step of a late LOD, or null for the render-thread coroutine of the host. The step
+        /// follows the coroutine contract: it returns true when it is complete and false to run again in the next frame.
+        /// Tests replace it.
+        /// </summary>
+        internal static Action<Func<bool>>? LateLodReadinessScheduler { get; set; }
+
+        internal static bool DefaultLateLodReadinessProbe(XRMeshRenderer renderer)
             => renderer.TryPrewarmForLodSelection(out _);
 
         /// <summary>
@@ -375,34 +382,41 @@ namespace XREngine.Components.Scene.Mesh
 
         /// <summary>
         /// Starts the readiness check of a late LOD renderer on the render thread. When the renderer is ready on the active
-        /// backend, the LOD becomes selectable and its GPU registration level is refreshed. A cold program or late LOD so
-        /// never makes a frame wait: the lower resident LOD draws until then. One closure is made for each publication, not
-        /// for each frame.
+        /// backend, the LOD becomes selectable and its GPU registration level is refreshed one time. A cold program or late
+        /// LOD so never makes a frame wait: the lower resident LOD draws until then. One closure is made for each
+        /// publication, not for each frame. The update thread never calls backend preparation: with a render host
+        /// installed, the check always goes to the render thread.
         /// </summary>
         private void RequestLateLodReadiness(LodSlot slot, XRMeshRenderer renderer)
         {
-            // With no active render backend, no draw can wait for this renderer, so the check runs here at once.
-            if (AbstractRenderer.Current is null)
+            int attempts = 0;
+            Func<bool> step = () => StepLateLodReadiness(slot, renderer, ref attempts);
+            if (LateLodReadinessScheduler is { } scheduler)
             {
-                int inlineAttempts = 0;
-                _ = ContinueLateLodReadiness(slot, renderer, ref inlineAttempts);
+                scheduler(step);
                 return;
             }
 
-            int attempts = 0;
-            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
-                () => ContinueLateLodReadiness(slot, renderer, ref attempts),
-                "RenderableMesh.LateLodReadiness");
+            // With no render host, no backend exists and no draw can wait for this renderer, so one step runs here.
+            if (!RuntimeRenderingHostServices.HasConcreteHost)
+            {
+                _ = step();
+                return;
+            }
+
+            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(step, "RenderableMesh.LateLodReadiness");
         }
 
         /// <summary>
-        /// Runs one readiness check of a late LOD renderer. Returns true while the check must run again in the next frame.
+        /// Runs one readiness check of a late LOD renderer. It follows the coroutine contract: it returns true when the check
+        /// is complete (the LOD is ready, left the table, got another renderer, or the mesh retires) and false to check
+        /// again in the next frame.
         /// </summary>
-        private bool ContinueLateLodReadiness(LodSlot slot, XRMeshRenderer renderer, ref int attempts)
+        private bool StepLateLodReadiness(LodSlot slot, XRMeshRenderer renderer, ref int attempts)
         {
             // Stop when the LOD left the table or another renderer took its place.
             if (_retiring || !ReferenceEquals(slot.Node?.Value.Renderer, renderer))
-                return false;
+                return true;
             if (!LateLodReadinessProbe(renderer))
             {
                 if (++attempts == LateLodReadinessWarningAttempts)
@@ -411,13 +425,16 @@ namespace XREngine.Components.Scene.Mesh
                         slot.Index,
                         renderer.Mesh?.Name ?? "<unnamed mesh>",
                         attempts);
-                return true;
+                return false;
             }
 
+            // The update thread can evict the LOD and publish a new renderer while the probe runs.
+            if (_retiring || !ReferenceEquals(slot.Node?.Value.Renderer, renderer))
+                return true;
             Volatile.Write(ref slot.SelectionReady, 1);
             AdvanceLodRegistrationVersion();
             Volatile.Write(ref _lateLodReadinessChanged, 1);
-            return false;
+            return true;
         }
 
         /// <summary>

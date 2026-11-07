@@ -35,11 +35,16 @@ public sealed class MeshLodResidencyTests
         Directory.CreateDirectory(_root);
         _source = new CountingSource(new DirectoryLodPayloadSource(_root));
         _sourceRegistration = SubMeshLodPayloads.RegisterSource(_source);
+        // A late LOD is ready at once unless a test changes the probe or the scheduler.
+        RenderableMesh.LateLodReadinessScheduler = RunUntilComplete;
+        RenderableMesh.LateLodReadinessProbe = _ => true;
     }
 
     [TearDown]
     public void TearDown()
     {
+        RenderableMesh.LateLodReadinessScheduler = null;
+        RenderableMesh.LateLodReadinessProbe = RenderableMesh.DefaultLateLodReadinessProbe;
         _sourceRegistration?.Dispose();
         _sourceRegistration = null;
         if (Directory.Exists(_root))
@@ -187,36 +192,39 @@ public sealed class MeshLodResidencyTests
     }
 
     [Test]
-    public void UpdateLod_DoesNotSelectALateLod_UntilItsRendererIsReadyOnTheBackend()
+    public void LateLodReadiness_ChecksAgainWhileNotReady_ThenSelectsAndRegistersOnce()
     {
         SubMesh loaded = Load(Cook(CreateSubMesh(out _), out _), ELodPayloadLoadPolicy.ProxyFirst);
         (SceneNode node, RenderableMesh renderable) = Spawn(loaded);
-        Func<XRMeshRenderer, bool> previousProbe = RenderableMesh.LateLodReadinessProbe;
+        var steps = new List<Func<bool>>();
         int probeCalls = 0;
+        bool ready = false;
         try
         {
-            // The headless scheduler runs the readiness check one time, so a renderer that is not ready stays unselectable.
-            RenderableMesh.LateLodReadinessProbe = _ => { probeCalls++; return false; };
+            RenderableMesh.LateLodReadinessScheduler = steps.Add;
+            RenderableMesh.LateLodReadinessProbe = _ => { probeCalls++; return ready; };
             SubMeshLOD lod0 = loaded.LODs.First();
             SubMeshLodPayloads.TryLoadLod(lod0.CookedDescriptor!, out XRMesh? mesh, out _).ShouldBeTrue();
             lod0.Mesh = mesh;
+            steps.Count.ShouldBe(1);
+            int versionAtPublish = renderable.LodRegistrationVersion;
 
-            probeCalls.ShouldBe(1);
-            renderable.GetLodResidency(0).ShouldBe(EResidencyLevel.Target);
+            // Coroutine contract: false runs the step again at the next dispatch.
+            steps[0]().ShouldBeFalse();
+            steps[0]().ShouldBeFalse();
+            probeCalls.ShouldBe(2);
             SettleLod(renderable, 0.0f);
             renderable.CurrentLodIndex.ShouldBe(2);
-
+            renderable.LodRegistrationVersion.ShouldBe(versionAtPublish);
             var meshes = new XRMesh?[3];
             var radii = new float[3];
             renderable.CollectLodMeshes(0u, meshes, radii).ShouldBe(3);
             meshes[0].ShouldBeNull();
-            meshes[2].ShouldNotBeNull();
 
-            // The next publication of a ready renderer is selectable.
-            RenderableMesh.LateLodReadinessProbe = _ => true;
-            lod0.Mesh = null;
-            SubMeshLodPayloads.TryLoadLod(lod0.CookedDescriptor!, out XRMesh? again, out _).ShouldBeTrue();
-            lod0.Mesh = again;
+            // True completes the coroutine after one registration advance.
+            ready = true;
+            steps[0]().ShouldBeTrue();
+            renderable.LodRegistrationVersion.ShouldBe(versionAtPublish + 1);
             SettleLod(renderable, 0.0f);
             renderable.CurrentLodIndex.ShouldBe(0);
             renderable.CollectLodMeshes(0u, meshes, radii).ShouldBe(3);
@@ -224,7 +232,69 @@ public sealed class MeshLodResidencyTests
         }
         finally
         {
-            RenderableMesh.LateLodReadinessProbe = previousProbe;
+            node.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void LateLodReadiness_EndsWhenTheLodIsEvicted()
+    {
+        SubMesh loaded = Load(Cook(CreateSubMesh(out _), out _), ELodPayloadLoadPolicy.ProxyFirst);
+        (SceneNode node, RenderableMesh renderable) = Spawn(loaded);
+        var steps = new List<Func<bool>>();
+        int probeCalls = 0;
+        try
+        {
+            RenderableMesh.LateLodReadinessScheduler = steps.Add;
+            RenderableMesh.LateLodReadinessProbe = _ => { probeCalls++; return false; };
+            SubMeshLOD lod0 = loaded.LODs.First();
+            SubMeshLodPayloads.TryLoadLod(lod0.CookedDescriptor!, out XRMesh? mesh, out _).ShouldBeTrue();
+            lod0.Mesh = mesh;
+            steps[0]().ShouldBeFalse();
+
+            lod0.Mesh = null;
+            steps[0]().ShouldBeTrue();
+            probeCalls.ShouldBe(1);
+            SettleLod(renderable, 0.0f);
+            renderable.CurrentLodIndex.ShouldBe(2);
+        }
+        finally
+        {
+            node.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void LateLodReadiness_UnderACoroutineScheduler_RunsUntilReady()
+    {
+        SubMesh loaded = Load(Cook(CreateSubMesh(out _), out _), ELodPayloadLoadPolicy.ProxyFirst);
+        (SceneNode node, RenderableMesh renderable) = Spawn(loaded);
+        int probeCalls = 0;
+        int dispatches = 0;
+        try
+        {
+            // A scheduler with the engine contract: run the step until it gives true.
+            RenderableMesh.LateLodReadinessScheduler = step =>
+            {
+                do
+                    dispatches++;
+                while (!step() && dispatches < 100);
+            };
+            RenderableMesh.LateLodReadinessProbe = _ => ++probeCalls >= 3;
+            int versionBefore = renderable.LodRegistrationVersion;
+            SubMeshLOD lod0 = loaded.LODs.First();
+            SubMeshLodPayloads.TryLoadLod(lod0.CookedDescriptor!, out XRMesh? mesh, out _).ShouldBeTrue();
+            lod0.Mesh = mesh;
+
+            dispatches.ShouldBe(3);
+            probeCalls.ShouldBe(3);
+            // One advance for the publication and one for the readiness.
+            renderable.LodRegistrationVersion.ShouldBe(versionBefore + 2);
+            SettleLod(renderable, 0.0f);
+            renderable.CurrentLodIndex.ShouldBe(0);
+        }
+        finally
+        {
             node.Destroy(now: true);
         }
     }
@@ -950,6 +1020,14 @@ public sealed class MeshLodResidencyTests
     private static T GenericDeserialize<T>(byte[] payload) where T : class
         => CookedBinarySerializer.Deserialize(typeof(T), payload).ShouldBeOfType<T>();
 #pragma warning restore IL2026, IL3050
+
+    /// <summary>Runs a readiness step with the coroutine contract: again until it gives true.</summary>
+    private static void RunUntilComplete(Func<bool> step)
+    {
+        for (int i = 0; i < 100 && !step(); i++)
+        {
+        }
+    }
 
     private static void SettleLod(RenderableMesh renderable, float distance)
     {
