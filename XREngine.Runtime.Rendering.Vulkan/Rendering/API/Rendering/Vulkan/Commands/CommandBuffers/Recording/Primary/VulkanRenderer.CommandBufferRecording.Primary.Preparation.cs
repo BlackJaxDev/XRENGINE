@@ -2574,6 +2574,13 @@ namespace XREngine.Rendering.Vulkan
                     pendingRequirements.Count,
                     firstPendingRequirementIndex,
                     firstPendingReason);
+                // A pending pipeline is a transient state. A material or program change
+                // after the plan was accepted (for example, shader dependencies that are
+                // being replaced) gets here. The next frame admits the pipeline again, so
+                // this is a frame retry. An unclassified failure latches a PresentNow
+                // renderer as terminal.
+                recordingState.FailureKind =
+                    EVulkanCommandRecordingFailureKind.RetryFrame;
                 return false;
             }
 

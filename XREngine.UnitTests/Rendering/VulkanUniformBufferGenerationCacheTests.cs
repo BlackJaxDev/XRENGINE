@@ -159,6 +159,10 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         primary.ShouldContain("Mesh frame-data reservation deferred before command recording");
         primary.ShouldContain(
             "recordingState.FailureKind =\n                            EVulkanCommandRecordingFailureKind.RetryFrame;\n                        recordingState.RecordingDeferredReason =\n                            $\"Mesh frame-data reservation deferred before command recording for \" +");
+        primary.ShouldContain(
+            "firstPendingReason);\n                // A pending pipeline is a transient state.");
+        primary.ShouldContain(
+            "this is a frame retry. An unclassified failure latches a PresentNow\n                // renderer as terminal.\n                recordingState.FailureKind =\n                    EVulkanCommandRecordingFailureKind.RetryFrame;");
         primary.ShouldNotContain("$\"Mesh frame-data reservation failed before command recording for \" +");
         primary.ShouldContain("EnterRecordingResourceScope(recordingState.FramePlan, in operationContext)");
         secondary.ShouldContain("PushRenderingPipelineOverride(\n                    drawContext.PipelineInstance)");
