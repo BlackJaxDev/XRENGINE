@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
 using XREngine.Data.Core;
+using XREngine.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Pipelines.Overlays;
@@ -29,9 +30,10 @@ namespace XREngine.Editor.Mcp
             [McpName("vr_eye"), Description("Optional runtime VR viewport: left, right, or stereo.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
+            [McpName("capture_owner_id"), Description("Optional scene/probe/standalone capture component GUID to inspect its offscreen pipeline.")] string? captureOwnerId = null,
             [McpName("max_commands"), Description("Maximum number of commands to return. The default is 2000.")] int maxCommands = DefaultStructureCommandLimit)
         {
-            if (!TryResolveWorkbenchPipeline(context, cameraNodeId, vrEye, windowIndex, viewportIndex, out RenderPipeline? pipeline, out _, out string? error))
+            if (!TryResolveWorkbenchPipeline(context, cameraNodeId, vrEye, windowIndex, viewportIndex, captureOwnerId, out RenderPipeline? pipeline, out _, out string? error))
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
 
             int limit = maxCommands > 0 ? maxCommands : DefaultStructureCommandLimit;
@@ -67,9 +69,10 @@ namespace XREngine.Editor.Mcp
             [McpName("vr_eye"), Description("Optional runtime VR viewport: left, right, or stereo.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
+            [McpName("capture_owner_id"), Description("Optional scene/probe/standalone capture component GUID to inspect its offscreen pipeline.")] string? captureOwnerId = null,
             [McpName("include_barriers"), Description("Include the barrier list. Barrier lists can be long.")] bool includeBarriers = false)
         {
-            if (!TryResolveWorkbenchPipeline(context, cameraNodeId, vrEye, windowIndex, viewportIndex, out RenderPipeline? pipeline, out XRRenderPipelineInstance? instance, out string? error))
+            if (!TryResolveWorkbenchPipeline(context, cameraNodeId, vrEye, windowIndex, viewportIndex, captureOwnerId, out RenderPipeline? pipeline, out XRRenderPipelineInstance? instance, out string? error))
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
 
             AbstractRenderer? renderer = instance?.LastWindowViewport?.Window?.Renderer ?? AbstractRenderer.Current;
@@ -153,7 +156,8 @@ namespace XREngine.Editor.Mcp
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
             [McpName("vr_eye"), Description("Optional runtime VR viewport: left, right, or stereo.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
-            [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0)
+            [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
+            [McpName("capture_owner_id"), Description("Optional scene/probe/standalone capture component GUID to inspect its offscreen pipeline.")] string? captureOwnerId = null)
         {
             RendererBackendId backendId = string.IsNullOrWhiteSpace(backend)
                 ? AbstractRenderer.Current?.BackendId ?? RendererBackendId.OpenGL
@@ -184,7 +188,7 @@ namespace XREngine.Editor.Mcp
                         isError: true));
                 }
             }
-            else if (!TryResolveWorkbenchPipeline(context, cameraNodeId, vrEye, windowIndex, viewportIndex, out pipeline, out instance, out string? error))
+            else if (!TryResolveWorkbenchPipeline(context, cameraNodeId, vrEye, windowIndex, viewportIndex, captureOwnerId, out pipeline, out instance, out string? error))
             {
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
             }
@@ -247,17 +251,49 @@ namespace XREngine.Editor.Mcp
             string? vrEye,
             int windowIndex,
             int viewportIndex,
+            string? captureOwnerId,
             out RenderPipeline? pipeline,
             out XRRenderPipelineInstance? instance,
             out string? error)
         {
             pipeline = null;
             instance = null;
-            XRViewport? viewport = ResolveViewport(context.World, cameraNodeId, vrEye, windowIndex, viewportIndex, out string? viewportError);
-            if (viewport is null)
+            XRViewport? viewport;
+            if (!string.IsNullOrWhiteSpace(captureOwnerId))
             {
-                error = viewportError ?? "No viewport found.";
-                return false;
+                if (!string.IsNullOrWhiteSpace(cameraNodeId) || !string.IsNullOrWhiteSpace(vrEye) || windowIndex != 0 || viewportIndex != 0)
+                {
+                    error = "capture_owner_id cannot be combined with other viewport selectors.";
+                    return false;
+                }
+
+                if (!Guid.TryParse(captureOwnerId, out Guid ownerId) || !XRObjectBase.ObjectsCache.TryGetValue(ownerId, out var owner))
+                {
+                    error = "capture_owner_id must identify a live capture component.";
+                    return false;
+                }
+
+                viewport = owner switch
+                {
+                    XREngine.Components.Lights.SceneCaptureComponent capture => capture.CaptureViewport,
+                    XREngine.Components.Lights.AdvancedOffscreenTextureCaptureComponent capture => capture.CaptureViewport,
+                    XREngine.Components.Lights.MirrorCaptureComponent capture => capture.Viewport,
+                    _ => null,
+                };
+                if (viewport is null)
+                {
+                    error = "The capture owner has no assigned offscreen viewport.";
+                    return false;
+                }
+            }
+            else
+            {
+                viewport = ResolveViewport(context.World, cameraNodeId, vrEye, windowIndex, viewportIndex, out string? viewportError);
+                if (viewport is null)
+                {
+                    error = viewportError ?? "No viewport found.";
+                    return false;
+                }
             }
 
             instance = ResolveSelectedPipelineInstance(viewport, vrEye);
