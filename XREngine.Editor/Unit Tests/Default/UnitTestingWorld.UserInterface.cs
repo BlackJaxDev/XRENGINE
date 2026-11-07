@@ -1926,7 +1926,7 @@ public static partial class EditorUnitTests
             if (node.SuppressTransformTools)
             {
                 TransformToolUndoAdapter.Attach(null);
-                TransformTool3D.DestroyInstance();
+                TransformTool3D.HideInstance();
                 return;
             }
 
@@ -1936,7 +1936,7 @@ public static partial class EditorUnitTests
                 if (x.SuppressTransformTools)
                 {
                     TransformToolUndoAdapter.Attach(null);
-                    TransformTool3D.DestroyInstance();
+                    TransformTool3D.HideInstance();
                     x.Activated -= Edit;
                     return;
                 }
