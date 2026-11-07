@@ -7,6 +7,12 @@ namespace XREngine.Rendering.Vulkan
 {
     internal sealed partial class VulkanFrameLoop
     {
+        /// <summary>
+        /// The timestamp of the first PresentNow recording retry since the last presented scene
+        /// frame, or zero. A streak longer than the readiness watchdog escalates to a failure.
+        /// </summary>
+        private long _presentNowRecordingRetryStreakStartTicks;
+
         internal VulkanDesktopFramePhaseResult RecordDesktopFrame(
             ref VulkanFrameAttempt attempt)
             => attempt.CompletePhase(
@@ -469,6 +475,37 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer recoveryDynamicTextSecondaryCommandBuffer,
             int recoveryDynamicTextOperationCount)
         {
+            long now = Stopwatch.GetTimestamp();
+            if (_presentNowRecordingRetryStreakStartTicks == 0L)
+                _presentNowRecordingRetryStreakStartTicks = now;
+            else if (now - _presentNowRecordingRetryStreakStartTicks >=
+                     VulkanPresentNowReadinessWatchdog.StallTimeoutTicks)
+            {
+                // A retry that does not clear before the readiness watchdog expires has a
+                // reason that the next frame cannot fix, for example a missing material or a
+                // program with no descriptor pool requirements. Escalate once to a state-change
+                // recovery with a full failure record, so the stale image is not silent.
+                double streakSeconds =
+                    (now - _presentNowRecordingRetryStreakStartTicks) / (double)Stopwatch.Frequency;
+                _presentNowRecordingRetryStreakStartTicks = 0L;
+                Debug.VulkanError(
+                    "[Vulkan][PresentNow][RetryExpired] frame={0} stage={1} retrySeconds={2:F1} " +
+                    "PresentNow recording retried without progress until its readiness watchdog expired. " +
+                    "The renderer waits for a state change. Last reason: {3}",
+                    attempt.FrameNumber,
+                    stage,
+                    streakSeconds,
+                    reason);
+                return HandleDesktopPresentNowFailureAfterAcquire(
+                    ref attempt,
+                    stage,
+                    $"PresentNow recording retry expired after {streakSeconds:F1} s. Last reason: {reason}",
+                    recoveryOverlaySnapshot,
+                    recoveryDynamicTextSecondaryCommandBuffer,
+                    recoveryDynamicTextOperationCount,
+                    EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
+            }
+
             TimeSpan elapsed = Stopwatch.GetElapsedTime(attempt.StartTimestamp);
             VulkanPresentNowReadinessRetry retry = new(
                 attempt.FrameNumber,
