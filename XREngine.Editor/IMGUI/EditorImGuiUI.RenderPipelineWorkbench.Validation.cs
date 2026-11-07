@@ -164,11 +164,21 @@ public static partial class EditorImGuiUI
     }
 
     /// <summary>
-    /// Draws the Script view: the read-only script text of the command chain. The text updates when the command
-    /// chain changes.
+    /// Draws the Script view. An open draft can switch to the edit buffer; otherwise the view shows the read-only
+    /// script text of the command chain, which updates when the command chain changes.
     /// </summary>
     private static unsafe void DrawWorkbenchScriptView()
     {
+        RenderPipelineScriptDraftEditor editor = _workbench.ScriptEditor;
+        RenderPipelineDraft? draft = _workbench.Authoring.IsEditing(_workbench.Model.Pipeline) ? _workbench.Authoring.Draft : null;
+        if (editor.IsEditing && (draft is null || !ReferenceEquals(editor.Draft, draft)))
+            editor.End();
+        if (editor.IsEditing)
+        {
+            DrawWorkbenchScriptEditor(editor);
+            return;
+        }
+
         RenderPipelineWorkbenchScript script = _workbench.Script;
         script.Update(_workbench.Model);
         if (script.Error.Length > 0)
@@ -188,7 +198,17 @@ public static partial class EditorImGuiUI
         ImGui.SameLine();
         ImGui.TextDisabled(script.LineCountText);
         ImGui.SameLine();
-        ImGui.TextDisabled("Read-only. Editing comes with authoring support.");
+        if (draft is not null)
+        {
+            if (ImGui.SmallButton("Edit Script"))
+                editor.Begin(draft);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Edit the full .xrs text of the draft: passes, resources, schema, and commands.");
+        }
+        else
+        {
+            ImGui.TextDisabled("Read-only. Open a draft of an authored pipeline to edit the script.");
+        }
 
         // The view draws only the visible lines, so a long script costs no more than one screen of text.
         ImGui.BeginChild("##WorkbenchScript", Vector2.Zero, ImGuiChildFlags.Borders, ImGuiWindowFlags.HorizontalScrollbar);
@@ -208,5 +228,46 @@ public static partial class EditorImGuiUI
             ImGuiNative.ImGuiListClipper_End(&clipper);
         }
         ImGui.EndChild();
+    }
+
+    /// <summary>
+    /// Draws the edit buffer of the Script view. Apply Script replaces the draft as one undo step. A text with errors
+    /// leaves the draft unchanged and lists each error with its line and column.
+    /// </summary>
+    private static void DrawWorkbenchScriptEditor(RenderPipelineScriptDraftEditor editor)
+    {
+        if (ImGui.SmallButton("Apply Script"))
+            editor.Apply();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Load the text into the draft. Errors leave the draft unchanged.");
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Reload"))
+            editor.Reload();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Replace the text with the current draft. Changes that are not applied are lost.");
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Done"))
+        {
+            editor.End();
+            return;
+        }
+
+        if (editor.IsDraftNewer)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(WorkbenchWarningColor, "The draft changed after this text was loaded. Apply replaces those changes.");
+        }
+
+        IReadOnlyList<RenderPipelineScriptProblem> problems = editor.Problems;
+        for (int i = 0; i < problems.Count; i++)
+        {
+            RenderPipelineScriptProblem problem = problems[i];
+            ImGui.TextColored(problem.IsError ? WorkbenchErrorColor : WorkbenchWarningColor, problem.ToString());
+        }
+
+        string text = editor.Text;
+        uint capacity = (uint)Math.Max(4096, text.Length * 2 + 1);
+        if (ImGui.InputTextMultiline("##WorkbenchScriptEdit", ref text, capacity, ImGui.GetContentRegionAvail(), ImGuiInputTextFlags.AllowTabInput))
+            editor.Text = text;
     }
 }

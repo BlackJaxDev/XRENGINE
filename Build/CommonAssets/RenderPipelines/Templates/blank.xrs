@@ -1,0 +1,3 @@
+// XRENGINE render pipeline script.
+// Template: Blank.
+// An empty pipeline. Add passes, resources, and commands in the Render Pipeline Workbench.

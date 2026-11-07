@@ -77,6 +77,9 @@ public sealed class RenderPipelineWorkbenchWindowState
     /// <summary>Gets the cached script text of the Script view.</summary>
     public RenderPipelineWorkbenchScript Script { get; } = new();
 
+    /// <summary>Gets the edit buffer of the Script view for an open draft.</summary>
+    public RenderPipelineScriptDraftEditor ScriptEditor { get; } = new();
+
     /// <summary>Gets the draft, palette, and validation state of pipeline authoring.</summary>
     public RenderPipelineWorkbenchAuthoring Authoring { get; } = new();
 

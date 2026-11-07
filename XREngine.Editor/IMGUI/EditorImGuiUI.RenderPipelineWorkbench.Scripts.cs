@@ -54,6 +54,11 @@ public static partial class EditorImGuiUI
         if (!ImGui.BeginMenu("File"))
             return;
 
+        if (ImGui.MenuItem("New Pipeline..."))
+            OpenNewRenderPipelineWizard(pipeline);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Make a new .xrs pipeline from a template, a derived script, or a fork.");
+
         if (ImGui.MenuItem("Open Script..."))
         {
             ImGuiFileBrowser.OpenFile("WorkbenchOpenScript", "Open Render Pipeline Script", result =>

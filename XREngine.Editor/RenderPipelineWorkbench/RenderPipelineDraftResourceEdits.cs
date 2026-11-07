@@ -136,6 +136,34 @@ public static class RenderPipelineDraftResourceEdits
         });
     }
 
+    /// <summary>
+    /// Sets each optional command property that names <paramref name="name"/> to null. A property is optional when
+    /// its type is a nullable string. Required names and list entries stay, so validation still reports them.
+    /// </summary>
+    /// <returns>The number of properties that changed.</returns>
+    public static int ClearOptionalReferences(RenderPipelineDraftState state, string name)
+    {
+        int changed = 0;
+        NullabilityInfoContext nullability = new();
+        RenderPipelineDraftEdits.ForEachCommand(state.Commands, command =>
+        {
+            PropertyInfo[] properties = GetResourceNameProperties(command.GetType());
+            for (int i = 0; i < properties.Length; i++)
+            {
+                PropertyInfo property = properties[i];
+                if (property.PropertyType != typeof(string) || !property.CanWrite || property.GetValue(command) is not string value || !NameEquals(value, name))
+                    continue;
+                if (nullability.Create(property).WriteState != NullabilityState.Nullable)
+                    continue;
+
+                property.SetValue(command, null);
+                changed++;
+            }
+        });
+
+        return changed;
+    }
+
     /// <summary>Returns the declaration named <paramref name="name"/>, or null. Names compare without case.</summary>
     public static AuthoredRenderResource? FindResource(RenderPipelineDraftState state, string name)
     {

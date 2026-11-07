@@ -69,6 +69,14 @@ public sealed partial class RenderPipelineScript
         return builder.ToString();
     }
 
+    internal static string WriteDerivedFromScript(string parentPath)
+    {
+        StringBuilder builder = new();
+        builder.AppendLine(ScriptHeaderLine);
+        builder.Append("derive ").Append(ScriptExporter.Quote(parentPath.Replace('\\', '/'))).AppendLine(";");
+        return builder.ToString();
+    }
+
     private static string WriteStandalone(CustomRenderPipeline pipeline)
     {
         StringBuilder builder = new();

@@ -21,6 +21,14 @@ public static class RenderPipelineScriptWriter
         return RenderPipelineScript.WritePipeline(pipeline);
     }
 
+    /// <summary>Writes a derived script whose parent is the script at <paramref name="parentPath"/>.</summary>
+    /// <param name="parentPath">The parent path, relative to the new script or absolute.</param>
+    public static string WriteDerivedFromScript(string parentPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(parentPath);
+        return RenderPipelineScript.WriteDerivedFromScript(parentPath);
+    }
+
     /// <summary>
     /// Writes <paramref name="pipeline"/> as a standalone script for <paramref name="profile"/>. Code items that the
     /// text cannot hold become <c>// unconverted:</c> lines, and a load reports each one.

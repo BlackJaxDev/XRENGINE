@@ -60,6 +60,7 @@ public static partial class EditorImGuiUI
 
         DrawWorkbenchMenuBar();
         DrawWorkbenchScriptProblemsPopup();
+        DrawNewRenderPipelineWizard();
 
         RenderPipeline? pipeline = ResolveWorkbenchPipeline();
         if (pipeline is null)
