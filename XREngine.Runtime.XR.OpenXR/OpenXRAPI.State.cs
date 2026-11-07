@@ -578,7 +578,7 @@ public unsafe partial class OpenXRAPI
     {
         EVrRenderPipeline family = RuntimeEngine.Rendering.Settings.VrRenderPipeline;
         ERvcPipelineMode mode = RuntimeEngine.Rendering.Settings.RvcPipelineMode;
-        if (!OpenXrEyeRenderPipelineFactory.Matches(openXrPipeline, stereo, family, mode))
+        if (!OpenXrEyeRenderPipelineFactory.Matches(openXrPipeline, stereo, family, mode, RuntimeEngine.Rendering.Settings.VrRenderPipelineScript))
             openXrPipeline = CreateOpenXrPipeline(sourcePipeline, stereo);
 
         if (openXrPipeline is RvcRenderPipeline rvcPipeline)
@@ -597,7 +597,7 @@ public unsafe partial class OpenXRAPI
         ERvcPipelineMode mode = RuntimeEngine.Rendering.Settings.RvcPipelineMode;
         RenderPipeline created =
             RuntimeEngine.Rendering.NewOpenXrEyeRenderPipeline(stereo);
-        if (!OpenXrEyeRenderPipelineFactory.Matches(created, stereo, family, mode))
+        if (!OpenXrEyeRenderPipelineFactory.Matches(created, stereo, family, mode, RuntimeEngine.Rendering.Settings.VrRenderPipelineScript))
         {
             throw new InvalidOperationException(
                 $"OpenXR eye pipeline factory returned {OpenXrEyeRenderPipelineFactory.Describe(created)} " +

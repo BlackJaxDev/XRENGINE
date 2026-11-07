@@ -38,6 +38,13 @@ public abstract partial class RenderPipeline
         }
     }
 
+    /// <summary>
+    /// Gets the full path of the <c>.xrs</c> script whose overlays a host attached to this pipeline, such as the VR eye
+    /// pipeline script, or null.
+    /// </summary>
+    [Browsable(false), YamlIgnore]
+    public string? OverlaySourcePath { get; internal set; }
+
     /// <summary>Gets whether the pipeline has overlays, so that it is a derived pipeline.</summary>
     [Browsable(false), YamlIgnore]
     public bool IsDerived => _overlays.Count > 0;

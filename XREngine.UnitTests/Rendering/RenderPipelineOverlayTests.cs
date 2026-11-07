@@ -257,6 +257,42 @@ public sealed class RenderPipelineOverlayTests
         RenderCommandPaths.TryFindAnchor(loaded.CommandChain, "base.bloom", out _, out _).ShouldBeTrue();
     }
 
+    [Test]
+    public void VrEyeFactory_AttachesTheScriptOverlays()
+    {
+        string path = Path.Combine(Path.GetTempPath(), string.Concat("xrs-vr-", Guid.NewGuid().ToString("N"), ".xrs"));
+        File.WriteAllText(path, "derive Default;\nafter(post.bloom) {\n    annotation(Label=\"Eye\");\n}\n");
+        try
+        {
+            RenderPipeline pipeline = OpenXrEyeRenderPipelineFactory.Create(false, EVrRenderPipeline.Default, ERvcPipelineMode.ForwardPlusOracle, path);
+
+            pipeline.IsDerived.ShouldBeTrue();
+            pipeline.OverlayReport.HasErrors.ShouldBeFalse();
+            OpenXrEyeRenderPipelineFactory.Matches(pipeline, false, EVrRenderPipeline.Default, ERvcPipelineMode.ForwardPlusOracle, path).ShouldBeTrue();
+            OpenXrEyeRenderPipelineFactory.Matches(pipeline, false, EVrRenderPipeline.Default, ERvcPipelineMode.ForwardPlusOracle).ShouldBeFalse();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public void VrEyeFactory_RejectsAScriptWithADifferentBase()
+    {
+        string path = Path.Combine(Path.GetTempPath(), string.Concat("xrs-vr-", Guid.NewGuid().ToString("N"), ".xrs"));
+        File.WriteAllText(path, "derive Advanced;\nsettings {\n}\n");
+        try
+        {
+            Should.Throw<NotSupportedException>(() =>
+                OpenXrEyeRenderPipelineFactory.Create(false, EVrRenderPipeline.Default, ERvcPipelineMode.ForwardPlusOracle, path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static RenderPipeline LoadChild(string child)
     {
         RenderPipelineScriptLoadResult loaded = Load(child);

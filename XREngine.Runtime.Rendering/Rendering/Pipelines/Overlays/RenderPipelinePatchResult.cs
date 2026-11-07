@@ -9,4 +9,7 @@ public sealed record RenderPipelinePatchResult(int OverlayIndex, object Patch, E
 {
     /// <summary>Gets whether the patch blocks its overlay chain.</summary>
     public bool IsError => Status is ERenderPipelinePatchStatus.AnchorMissing or ERenderPipelinePatchStatus.Failed;
+
+    /// <summary>Gets a short text that names the patch, such as <c>remove(post.bloom)</c>.</summary>
+    public string PatchText => Patch.ToString() ?? string.Empty;
 }

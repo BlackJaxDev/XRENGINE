@@ -31,6 +31,62 @@ public static class OpenXrEyeRenderPipelineFactory
         };
 
     /// <summary>
+    /// Creates a new eye pipeline for <paramref name="family"/> and attaches the overlays of
+    /// <paramref name="scriptPath"/> with <see cref="AttachScriptOverlays"/>.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The family does not implement this topology, or the script does not apply.</exception>
+    public static RenderPipeline Create(
+        bool stereo,
+        EVrRenderPipeline family,
+        ERvcPipelineMode rvcMode,
+        string? scriptPath)
+    {
+        RenderPipeline pipeline = Create(stereo, family, rvcMode);
+        AttachScriptOverlays(pipeline, scriptPath);
+        return pipeline;
+    }
+
+    /// <summary>
+    /// Attaches the overlays and settings of the <c>.xrs</c> script at <paramref name="scriptPath"/> to an eye pipeline
+    /// that <see cref="Create"/> made. The script must derive from the same pipeline type. Its base arguments are
+    /// ignored, because the eye topology selects them. An empty path does nothing.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The script does not load, does not apply, or derives from a different type.</exception>
+    public static void AttachScriptOverlays(RenderPipeline pipeline, string? scriptPath)
+    {
+        ArgumentNullException.ThrowIfNull(pipeline);
+        if (string.IsNullOrWhiteSpace(scriptPath))
+            return;
+
+        string fullPath = Path.GetFullPath(scriptPath);
+        if (!File.Exists(fullPath))
+            throw new NotSupportedException($"VR.RenderPipelineScript '{scriptPath}' does not exist. No other pipeline is substituted.");
+
+        RenderPipelineScriptLoadResult loaded = RenderPipelineScriptLoader.LoadFile(fullPath);
+        if (!loaded.Succeeded || loaded.Pipeline is null || loaded.Problems.Any(static p => p.IsError))
+        {
+            string problems = string.Join("; ", loaded.Problems.Where(static p => p.IsError).Select(static p => p.ToString()));
+            throw new NotSupportedException($"VR.RenderPipelineScript '{scriptPath}' has errors: {problems}. No other pipeline is substituted.");
+        }
+
+        if (loaded.Pipeline.GetType() != pipeline.GetType())
+        {
+            throw new NotSupportedException(
+                $"VR.RenderPipelineScript '{scriptPath}' derives from {loaded.Pipeline.GetType().Name}, but VR.RenderPipeline creates {pipeline.GetType().Name}. " +
+                "Select a script that derives from the selected family. No other pipeline is substituted.");
+        }
+
+        pipeline.Overlays = [.. loaded.Pipeline.Overlays];
+        IReadOnlyList<string> settingErrors = pipeline.ApplyOverlaySettings();
+        if (settingErrors.Count > 0)
+            throw new NotSupportedException($"VR.RenderPipelineScript '{scriptPath}' has settings that do not apply: {string.Join("; ", settingErrors)}.");
+        if (pipeline.OverlayReport.HasErrors)
+            throw new NotSupportedException($"VR.RenderPipelineScript '{scriptPath}' has patches that do not apply to the eye pipeline. No other pipeline is substituted.");
+
+        pipeline.OverlaySourcePath = fullPath;
+    }
+
+    /// <summary>
     /// Returns true when <see cref="Create"/> can make a pipeline for this
     /// topology and family.
     /// </summary>
@@ -39,9 +95,23 @@ public static class OpenXrEyeRenderPipelineFactory
 
     /// <summary>
     /// Returns true when <paramref name="pipeline"/> is exactly the pipeline
-    /// that <see cref="Create"/> makes for the same arguments.
+    /// that <see cref="Create"/> makes for the same arguments, with the overlays
+    /// of <paramref name="scriptPath"/> when it is not empty.
     /// </summary>
     public static bool Matches(
+        [NotNullWhen(true)] RenderPipeline? pipeline,
+        bool stereo,
+        EVrRenderPipeline family,
+        ERvcPipelineMode rvcMode,
+        string? scriptPath = null)
+        => MatchesFamily(pipeline, stereo, family, rvcMode) && MatchesScript(pipeline, scriptPath);
+
+    private static bool MatchesScript(RenderPipeline pipeline, string? scriptPath)
+        => string.IsNullOrWhiteSpace(scriptPath)
+            ? pipeline.OverlaySourcePath is null
+            : string.Equals(pipeline.OverlaySourcePath, Path.GetFullPath(scriptPath), StringComparison.OrdinalIgnoreCase);
+
+    private static bool MatchesFamily(
         [NotNullWhen(true)] RenderPipeline? pipeline,
         bool stereo,
         EVrRenderPipeline family,

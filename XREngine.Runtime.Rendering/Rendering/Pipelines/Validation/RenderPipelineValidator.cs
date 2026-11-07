@@ -28,6 +28,9 @@ public static class RenderPipelineValidator
         new UnresolvedBranchKeyRule(),
         new CodeBranchWithoutLabelRule(),
         new CodeCommandInDataPipelineRule(),
+        new DerivedPatchNotAppliedRule(),
+        new DerivedStructuralPathRule(),
+        new DerivedBaseTypeMismatchRule(),
     ];
 
     /// <summary>Runs the rules on a context and returns the report.</summary>
