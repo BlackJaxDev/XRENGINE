@@ -744,6 +744,8 @@ The edits enter Undo and do not save assets.
 | `get_prefab_structure` | Get the node hierarchy for a prefab source or variant. |
 | `get_renderer_reload_status` | Return active backend generation, reload state, counters, timings, and the last actionable error. |
 | `get_render_capabilities` | Get renderer capability flags (GPU, extensions, ray tracing). |
+| `get_render_graph_plan` | Get the latest backend render-graph plan of the selected viewport's pipeline instance: pass order, batches, barriers, resource lifetimes, alias groups, and reorders. |
+| `get_render_pipeline_structure` | Get the command tree of the selected viewport's render pipeline: command types, labels, anchor ids, patch targets, overlay markers, derived overlays, and post-process stages. |
 | `get_render_profiler_stats` | Return the latest render-profiler counters, including Vulkan frame lifecycle timings and command-buffer cache state. |
 | `get_render_state` | Get current rendering pipeline and camera state. |
 | `get_s13a_identity_manifest` | Copy the selected viewport pipeline's published canonical resident identities and pass membership on demand. Fixture keys remain null where stable source hierarchy ownership is unavailable. |
@@ -793,7 +795,7 @@ The edits enter Undo and do not save assets.
 | `list_loaded_assets` | List assets currently loaded by the asset manager. |
 | `list_local_players` | List local player controllers, viewports, and input presence. |
 | `list_prefabs` | List loaded prefab assets. |
-| `list_render_pipeline_resources` | List live render-pipeline textures and framebuffers for the selected viewport. |
+| `list_render_pipeline_resources` | List live render-pipeline textures and framebuffers for the selected viewport, plus the logical resources of the layout with lifetime, producer passes, consumer passes, and estimated size. |
 | `list_scenes` | List scenes in the active world. |
 | `list_scene_nodes` | List scene nodes in the active world/scene. |
 | `list_tags` | List tags on a node or across the active world. |
@@ -876,6 +878,7 @@ The edits enter Undo and do not save assets.
 | `transaction_commit` | Commit an MCP transaction and discard its rollback snapshot. |
 | `transaction_rollback` | Rollback an MCP transaction by restoring the snapshot captured at begin. |
 | `undo` | Undo the most recent editor change. |
+| `validate_render_pipeline` | Run the render pipeline validator on the selected viewport's pipeline, or load and validate an .xrs script file without installing it. Returns script load problems and validator problems. |
 | `validate_scene` | Validate a scene for common hierarchy issues. |
 | `validate_scene_integrity` | Perform deep integrity validation on a scene hierarchy (null roots, parent mismatches, cycles, duplicate IDs, world binding issues). |
 | `watch_property` | Watch a property for changes on an XRBase object. Returns a watch_id for polling, or retrieves accumulated changes when watch_id is provided. |
