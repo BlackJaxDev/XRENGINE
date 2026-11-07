@@ -88,11 +88,17 @@ internal sealed partial class VulkanTextureUploadService
     {
         failureDisposition = EVulkanPresentNowFailureDisposition.RendererTerminal;
         VulkanImportedTextureUploadRequest request = upload.Request;
-        if (!TryAcquireTexturePublicationAuthority(
+        bool acquiredPublicationAuthority;
+        IDisposable? acquiredAuthority;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Publish.AcquireAuthority"))
+        {
+            acquiredPublicationAuthority = TryAcquireTexturePublicationAuthority(
                 upload,
                 uploadSource,
-                out IDisposable? acquiredAuthority,
-                out failureDetail))
+                out acquiredAuthority,
+                out failureDetail);
+        }
+        if (!acquiredPublicationAuthority)
         {
             failureDisposition = EVulkanPresentNowFailureDisposition.RetryFrame;
             upload.Texture.ReleasePreparedImportedUploadResources(upload);
@@ -133,11 +139,14 @@ internal sealed partial class VulkanTextureUploadService
             EVulkanTextureDescriptorPublicationDisposition disposition;
             try
             {
-                disposition =
-                    upload.Texture.PublishSynchronizedImportedTextureUpload(
-                        upload,
-                        requireExactDescriptorPublication,
-                        out failureDetail);
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Publish.Descriptor"))
+                {
+                    disposition =
+                        upload.Texture.PublishSynchronizedImportedTextureUpload(
+                            upload,
+                            requireExactDescriptorPublication,
+                            out failureDetail);
+                }
             }
             catch (Exception exception)
             {
@@ -408,7 +417,8 @@ internal sealed partial class VulkanTextureUploadService
 
         Interlocked.Increment(ref s_finalPublications);
 
-        InvokeTextureUploadFinished(upload);
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Publish.FinishedCallbacks"))
+            InvokeTextureUploadFinished(upload);
     }
 
     private static void RetireTextureUploadStagingResources(

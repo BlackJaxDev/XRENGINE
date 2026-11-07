@@ -41,7 +41,11 @@ internal sealed partial class VulkanTextureUploadService
 
         DrainTerminalFailedTransferRetirement(context);
 
-        if (TrySubmitReadyTransferBatch(context, requiredManifest, out bool gatherDeferred))
+        bool submittedReadyBatch;
+        bool gatherDeferred;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.SubmitReadyBatch"))
+            submittedReadyBatch = TrySubmitReadyTransferBatch(context, requiredManifest, out gatherDeferred);
+        if (submittedReadyBatch)
             return false;
         if (gatherDeferred)
             return true;
@@ -68,7 +72,11 @@ internal sealed partial class VulkanTextureUploadService
                 return false;
 
             Volatile.Write(ref s_lastTransferWaitMilliseconds, TextureRuntimeDiagnostics.ElapsedMilliseconds(submitted.SubmitTimestamp));
-            if (!context.Commands.CompleteSubmittedImportedTextureUploadBatch(submitted, out string? completeFailure))
+            bool batchCompleted;
+            string? completeFailure;
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.CompleteBatch"))
+                batchCompleted = context.Commands.CompleteSubmittedImportedTextureUploadBatch(submitted, out completeFailure);
+            if (!batchCompleted)
             {
                 string reason = completeFailure ??
                     "Required texture transfer upload completion failed.";
@@ -82,8 +90,11 @@ internal sealed partial class VulkanTextureUploadService
             }
             if (!RemoveSubmittedTransfer(submitted))
                 return false;
-            for (int child = 0; child < submitted.Uploads.Length; child++)
-                CompleteSubmittedBatchChild(context, submitted.Uploads[child], requiredManifest);
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.CompleteChildren"))
+            {
+                for (int child = 0; child < submitted.Uploads.Length; child++)
+                    CompleteSubmittedBatchChild(context, submitted.Uploads[child], requiredManifest);
+            }
             return HasSubmittedTransfersOrCompleteDrain(requiredManifest);
         }
 

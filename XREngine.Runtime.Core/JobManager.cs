@@ -800,7 +800,12 @@ namespace XREngine
             }
         }
 
-        private void MaybeLogSlowRenderThreadJob(Job job, string label, long elapsedTicks, double budgetMilliseconds)
+        private void MaybeLogSlowRenderThreadJob(
+            Job job,
+            string label,
+            long elapsedTicks,
+            double budgetMilliseconds,
+            RenderThreadJobGcSample gcSample)
         {
             if (elapsedTicks < SlowRenderThreadJobTicks)
                 return;
@@ -834,7 +839,7 @@ namespace XREngine
             }
             Log(
                 $"[RenderThreadJobs] {(isStall ? "STALL" : "Slow")} render-thread job '{label}' [{job.Priority}] took {elapsedMilliseconds:F2} ms in ProcessMainThreadJobs "
-                + $"(queuedRender={queuedRenderJobs}{budgetText}{memoryText}).");
+                + $"(queuedRender={queuedRenderJobs}{budgetText}, gcPause={gcSample.PauseDuration.TotalMilliseconds:F2} ms, gen2={gcSample.Gen2Collections}{memoryText}).");
         }
 
         private static TimeSpan TicksToTimeSpan(long ticks)
@@ -1222,12 +1227,17 @@ namespace XREngine
                 {
                     Log($"Caller-thread job dispatch observer faulted: {exception}");
                 }
+                TimeSpan gcPauseBefore = GC.GetTotalPauseDuration();
+                int gen2Before = GC.CollectionCount(2);
                 long jobStart = Stopwatch.GetTimestamp();
                 using (StartProfilerScope($"MainThreadJobs.{job.Priority}.{label}"))
                 {
                     ExecuteJob(job);
                 }
                 long jobElapsedTicks = Stopwatch.GetTimestamp() - jobStart;
+                RenderThreadJobGcSample gcSample = new(
+                    GC.GetTotalPauseDuration() - gcPauseBefore,
+                    GC.CollectionCount(2) - gen2Before);
                 double durationMilliseconds = jobElapsedTicks * 1000.0 / Stopwatch.Frequency;
                 double overBudgetMilliseconds = budgetMilliseconds <= 0.0
                     ? 0.0
@@ -1245,7 +1255,7 @@ namespace XREngine
                 {
                     Log($"Caller-thread job execution observer faulted: {exception}");
                 }
-                MaybeLogSlowRenderThreadJob(job, label, jobElapsedTicks, budgetMilliseconds);
+                MaybeLogSlowRenderThreadJob(job, label, jobElapsedTicks, budgetMilliseconds, gcSample);
                 processed++;
 
                 // Check time budget after each job completes.
