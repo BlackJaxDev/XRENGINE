@@ -171,6 +171,12 @@ These rules apply:
   it when its last claim ends, and an authored source clears it. Without a claim,
   the record is null and a pipeline other than the camera default uses its
   explicit per-pipeline entry, also when it has the same type.
+- While the record is set, a post-process query with no pipeline from outside
+  the render (for example on the update thread) also uses the kept pipeline, so
+  the default state does not change its binding in each frame. When the default
+  state binds to another pipeline of the same type, each stage keeps its backing
+  object, so runtime state such as the automatic exposure history and a pending
+  exposure reset stays.
 - Settings on the default asset of the claimed camera do not apply during the
   claim, because that asset does not render. Use an authored source for them.
 

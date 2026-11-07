@@ -487,12 +487,19 @@ public sealed class PostProcessStageState : IDisposable
 
     private void InitializeBacking(PostProcessStageDescriptor descriptor)
     {
+        // A new binding keeps a backing object of the same type. The object holds runtime state that is not a parameter,
+        // for example the automatic exposure history and its reset requests. A camera claim can bind the default state of a
+        // camera to another pipeline instance of the same type, and that state must not be lost.
+        object? kept = descriptor.BackingType is { } backingType && BackingInstance?.GetType() == backingType
+            ? BackingInstance
+            : null;
         TeardownBacking();
 
         if (descriptor.BackingType is null)
             return;
 
-        if (!descriptor.TryCreateBacking(out object? backing) || backing is null)
+        object? backing = kept;
+        if (backing is null && (!descriptor.TryCreateBacking(out backing) || backing is null))
         {
             if (XRRuntimeEnvironment.IsAotRuntimeBuild)
                 throw new InvalidOperationException($"Post-process stage '{descriptor.Key}' uses backing type {descriptor.BackingType.FullName} without a registered factory.");

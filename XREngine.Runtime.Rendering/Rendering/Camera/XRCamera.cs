@@ -551,13 +551,17 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Gets the post-process state for a specific render pipeline.
-        /// When no pipeline is supplied, prefers the pipeline currently rendering this camera.
+        /// When no pipeline is supplied, prefers the pipeline currently rendering this camera, then the pipeline that a viewport
+        /// keeps for this camera during a claim.
         /// </summary>
         /// <param name="pipeline">The pipeline whose state should be returned.</param>
         /// <returns>The post-process state for the resolved pipeline, or null if no pipeline is available.</returns>
         public PipelinePostProcessState? GetPostProcessState(RenderPipeline? pipeline)
         {
             pipeline ??= ResolveRenderContextPostProcessPipeline();
+            // During a claim, a query from outside the render (for example the update thread) uses the kept pipeline too.
+            // Otherwise the default state is bound to the own pipeline and back to the kept pipeline in each frame.
+            pipeline ??= _renderPipeline is null ? _claimBorrowedPipeline : null;
             pipeline ??= _renderPipeline ?? RenderPipeline;
             if (pipeline is null)
                 return null;
