@@ -13,6 +13,12 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private long _presentNowRecordingRetryStreakStartTicks;
 
+        /// <summary>
+        /// The desktop frame number of the last PresentNow recording retry. A retry that does not follow the frame
+        /// before it starts a new streak, so any frame that is not a retry ends the streak.
+        /// </summary>
+        private ulong _presentNowRecordingRetryLastFrame;
+
         internal VulkanDesktopFramePhaseResult RecordDesktopFrame(
             ref VulkanFrameAttempt attempt)
             => attempt.CompletePhase(
@@ -476,7 +482,10 @@ namespace XREngine.Rendering.Vulkan
             int recoveryDynamicTextOperationCount)
         {
             long now = Stopwatch.GetTimestamp();
-            if (_presentNowRecordingRetryStreakStartTicks == 0L)
+            bool consecutive = _presentNowRecordingRetryLastFrame != 0UL &&
+                attempt.FrameNumber == _presentNowRecordingRetryLastFrame + 1UL;
+            _presentNowRecordingRetryLastFrame = attempt.FrameNumber;
+            if (!consecutive || _presentNowRecordingRetryStreakStartTicks == 0L)
                 _presentNowRecordingRetryStreakStartTicks = now;
             else if (now - _presentNowRecordingRetryStreakStartTicks >=
                      VulkanPresentNowReadinessWatchdog.StallTimeoutTicks)
