@@ -19,9 +19,11 @@ using XREngine.Networking;
 using XREngine.Scene.Transforms;
 using XREngine.Serialization;
 using YamlDotNet.Serialization;
+using Model = XREngine.Rendering.Models.Model;
 using SubMesh = XREngine.Rendering.Models.SubMesh;
 using SubMeshLodDescriptor = XREngine.Rendering.Models.SubMeshLodDescriptor;
 using SubMeshLodPayloadCookSink = XREngine.Rendering.Models.SubMeshLodPayloadCookSink;
+using XRWorld = XREngine.Scene.XRWorld;
 
 namespace XREngine.Editor;
 
@@ -1066,18 +1068,62 @@ internal static partial class ProjectBuilder
             return false;
 
         CookedAssetBlob blob;
+        object? asset = null;
         try
         {
-            blob = CreateCookedBlobFromYaml(yaml, sourceFile);
+            blob = CreateCookedBlobFromYaml(yaml, sourceFile, out asset);
         }
         catch (Exception ex) when (ex is InvalidOperationException or YamlDotNet.Core.YamlException)
         {
-            // A cook failure is an error. A silent copy of the YAML source would ship a different format with no message.
-            throw new InvalidOperationException($"Asset '{sourceFile}' could not be cooked: {ex.Message}", ex);
+            // An asset whose cook needs the split sub-mesh format must not ship as YAML: the cooked build would load a
+            // different format. Any other asset keeps the older fallback to its YAML source, with one warning.
+            if (CookNeedsSubMeshFormat(ResolveAssetType(typeHint), asset))
+                throw new InvalidOperationException($"Asset '{sourceFile}' could not be cooked: {ex.Message}", ex);
+            if (ex is not InvalidOperationException)
+                throw;
+            Debug.LogWarning($"Asset '{sourceFile}' could not be cooked, so the build copies its YAML source: {ex.Message}");
+            return false;
         }
 
         WriteCookedBlob(destination, blob);
         return true;
+    }
+
+    /// <summary>
+    /// True if the cook of an asset needs the split sub-mesh format: a sub-mesh, or a model or world that holds sub-meshes.
+    /// A model or world that failed to load counts when it is a model; a world counts only when its loaded graph has a
+    /// sub-mesh.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static bool CookNeedsSubMeshFormat(Type? assetType, object? asset)
+    {
+        if (assetType is null)
+            return false;
+        if (typeof(SubMesh).IsAssignableFrom(assetType))
+            return true;
+        if (typeof(Model).IsAssignableFrom(assetType))
+            return asset is not Model model || model.Meshes.Count > 0;
+        if (!typeof(XRWorld).IsAssignableFrom(assetType) || asset is null)
+            return false;
+
+        bool hasSubMesh = false;
+        CookedBinarySerializationCallbacks callbacks = new()
+        {
+            OnSerializingValue = value =>
+            {
+                hasSubMesh |= value is SubMesh;
+                return value;
+            },
+        };
+        try
+        {
+            _ = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.CalculateSize(asset, callbacks));
+        }
+        catch (Exception walkFailure) when (walkFailure is not OutOfMemoryException)
+        {
+            // The walk can fail for the same reason as the cook. The members seen before the failure still count.
+        }
+        return hasSubMesh;
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
@@ -1182,7 +1228,13 @@ internal static partial class ProjectBuilder
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
     private static CookedAssetBlob CreateCookedBlobFromYaml(string yaml, string sourcePath)
+        => CreateCookedBlobFromYaml(yaml, sourcePath, out _);
+
+    /// <summary>Cooks a YAML asset, and gives the loaded asset (null if the load failed) for the error handling of the caller.</summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static CookedAssetBlob CreateCookedBlobFromYaml(string yaml, string sourcePath, out object? loaded)
     {
+        loaded = null;
         string? typeHint = ExtractAssetTypeHint(yaml);
         if (string.IsNullOrWhiteSpace(typeHint))
             throw new InvalidOperationException($"Asset '{sourcePath}' is missing an __assetType or __type hint and cannot be cooked.");
@@ -1192,6 +1244,7 @@ internal static partial class ProjectBuilder
 
         object asset = DeserializeAssetFromYaml(yaml, assetType)
             ?? throw new InvalidOperationException($"Failed to deserialize asset '{sourcePath}' as '{assetType.FullName}'.");
+        loaded = asset;
 
         // The cooked build runs from another folder, so the source paths are written as portable references.
         if (asset is XRAsset xrAsset)
@@ -1207,7 +1260,7 @@ internal static partial class ProjectBuilder
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static CookedAssetBlob CreateCookedBlob(object instance, AotRuntimeMetadata? aotMetadata = null,
+    internal static CookedAssetBlob CreateCookedBlob(object instance, AotRuntimeMetadata? aotMetadata = null,
         CookedBinarySerializationCallbacks? callbacks = null)
     {
         ArgumentNullException.ThrowIfNull(instance);
