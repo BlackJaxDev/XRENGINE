@@ -482,6 +482,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
             try
             {
+                ApplyLateLodReadinessChange();
                 if (Volatile.Read(ref _lodCount) <= 1)
                     return;
 

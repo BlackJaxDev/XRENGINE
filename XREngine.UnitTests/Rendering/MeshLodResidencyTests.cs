@@ -187,6 +187,49 @@ public sealed class MeshLodResidencyTests
     }
 
     [Test]
+    public void UpdateLod_DoesNotSelectALateLod_UntilItsRendererIsReadyOnTheBackend()
+    {
+        SubMesh loaded = Load(Cook(CreateSubMesh(out _), out _), ELodPayloadLoadPolicy.ProxyFirst);
+        (SceneNode node, RenderableMesh renderable) = Spawn(loaded);
+        Func<XRMeshRenderer, bool> previousProbe = RenderableMesh.LateLodReadinessProbe;
+        int probeCalls = 0;
+        try
+        {
+            // The headless scheduler runs the readiness check one time, so a renderer that is not ready stays unselectable.
+            RenderableMesh.LateLodReadinessProbe = _ => { probeCalls++; return false; };
+            SubMeshLOD lod0 = loaded.LODs.First();
+            SubMeshLodPayloads.TryLoadLod(lod0.CookedDescriptor!, out XRMesh? mesh, out _).ShouldBeTrue();
+            lod0.Mesh = mesh;
+
+            probeCalls.ShouldBe(1);
+            renderable.GetLodResidency(0).ShouldBe(EResidencyLevel.Target);
+            SettleLod(renderable, 0.0f);
+            renderable.CurrentLodIndex.ShouldBe(2);
+
+            var meshes = new XRMesh?[3];
+            var radii = new float[3];
+            renderable.CollectLodMeshes(0u, meshes, radii).ShouldBe(3);
+            meshes[0].ShouldBeNull();
+            meshes[2].ShouldNotBeNull();
+
+            // The next publication of a ready renderer is selectable.
+            RenderableMesh.LateLodReadinessProbe = _ => true;
+            lod0.Mesh = null;
+            SubMeshLodPayloads.TryLoadLod(lod0.CookedDescriptor!, out XRMesh? again, out _).ShouldBeTrue();
+            lod0.Mesh = again;
+            SettleLod(renderable, 0.0f);
+            renderable.CurrentLodIndex.ShouldBe(0);
+            renderable.CollectLodMeshes(0u, meshes, radii).ShouldBe(3);
+            meshes[0].ShouldNotBeNull();
+        }
+        finally
+        {
+            RenderableMesh.LateLodReadinessProbe = previousProbe;
+            node.Destroy(now: true);
+        }
+    }
+
+    [Test]
     public void UpdateLod_SelectsTheNearestResidentLod_ForAnyDistance()
     {
         SubMesh loaded = Load(Cook(CreateSubMesh(out _), out _), ELodPayloadLoadPolicy.ProxyFirst);

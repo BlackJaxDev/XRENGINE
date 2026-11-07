@@ -1526,6 +1526,28 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Prepares this renderer on the active render backend before a LOD selection can use it, and tells if it can draw
+        /// now. Call it on the render thread. With no active backend, nothing can draw, so the renderer counts as ready.
+        /// </summary>
+        /// <param name="reason">The preparation stage result, for example "Ready" or "ProgramsPending".</param>
+        public bool TryPrewarmForLodSelection(out string reason)
+        {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null)
+            {
+                reason = "NoActiveRenderer";
+                return true;
+            }
+
+            AbstractRenderAPIObject? apiObject = renderer.GetOrCreateAPIRenderObject(GetVersion(false));
+            if (apiObject is IRenderPreparationState preparationState)
+                return preparationState.TryPrewarmForSelection(out reason);
+
+            reason = apiObject is null ? "NoApiObject" : "NoPreparationState";
+            return apiObject is not null;
+        }
+
+        /// <summary>
         /// Supplemental detail captured by the underlying API object on the most recent
         /// <see cref="TryPrepareForRendering(out string, bool)"/> call. Empty when not available.
         /// </summary>

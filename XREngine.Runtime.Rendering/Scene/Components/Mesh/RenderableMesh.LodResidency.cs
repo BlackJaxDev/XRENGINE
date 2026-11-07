@@ -32,6 +32,23 @@ namespace XREngine.Components.Scene.Mesh
         private int _requestedLodIndex;
         private int? _forcedMinimumLod;
         private readonly HashSet<XRMeshRenderer> _lateLodRenderersAwaitingSeed = new(ReferenceEqualityComparer.Instance);
+        private int _lateLodReadinessChanged;
+
+        /// <summary>
+        /// The number of render-thread attempts after which a late LOD that is still not ready gives one warning. The LOD
+        /// stays unselectable; the lower resident LOD keeps drawing.
+        /// </summary>
+        private const int LateLodReadinessWarningAttempts = 1800;
+
+        /// <summary>
+        /// Prepares the renderer of a late LOD on the active backend and tells if it can draw now. It runs on the render
+        /// thread, once per frame until it gives true. The default uses <see cref="XRMeshRenderer.TryPrewarmForLodSelection"/>.
+        /// Tests replace it.
+        /// </summary>
+        internal static Func<XRMeshRenderer, bool> LateLodReadinessProbe { get; set; } = DefaultLateLodReadinessProbe;
+
+        private static bool DefaultLateLodReadinessProbe(XRMeshRenderer renderer)
+            => renderer.TryPrewarmForLodSelection(out _);
 
         /// <summary>
         /// The smallest LOD index that <see cref="UpdateLOD(float)"/> can request, or null for no limit. A value of 2 keeps the
@@ -105,10 +122,10 @@ namespace XREngine.Components.Scene.Mesh
             for (int offset = 0; offset < count; offset++)
             {
                 int coarser = target + offset;
-                if (coarser < count && slots[coarser].Node is { } coarserNode)
+                if (coarser < count && slots[coarser].Node is { } coarserNode && slots[coarser].IsSelectable)
                     return coarserNode;
                 int finer = target - offset;
-                if (offset > 0 && finer >= 0 && slots[finer].Node is { } finerNode)
+                if (offset > 0 && finer >= 0 && slots[finer].Node is { } finerNode && slots[finer].IsSelectable)
                     return finerNode;
             }
             return _currentLOD;
@@ -150,7 +167,8 @@ namespace XREngine.Components.Scene.Mesh
                     LodSlot slot = slots[GetRegistrationSlotIndex(level, slots.Length, meshes.Length)];
                     minProjectedRadiusPixels[level] = slot.MinProjectedScreenRadiusPixels;
                     meshes[level] = null;
-                    if (slot.Node?.Value.Renderer is not { } renderer
+                    if (!slot.IsSelectable
+                        || slot.Node?.Value.Renderer is not { } renderer
                         || !renderer.TryGetMesh((int)submeshIndex, out XRMesh? lodMesh, out _)
                         || lodMesh is null)
                         continue;
@@ -193,7 +211,8 @@ namespace XREngine.Components.Scene.Mesh
                 {
                     LodSlot slot = slots[GetRegistrationSlotIndex(level, slots.Length, renderers.Length)];
                     renderers[level] = null;
-                    if (slot.Node?.Value.Renderer is not { } renderer
+                    if (!slot.IsSelectable
+                        || slot.Node?.Value.Renderer is not { } renderer
                         || !renderer.TryGetMesh((int)submeshIndex, out XRMesh? mesh, out _)
                         || mesh is null)
                         continue;
@@ -261,6 +280,8 @@ namespace XREngine.Components.Scene.Mesh
                 RegisterCommittedBoundsRenderer(renderer);
                 lock (_lodsLock)
                 {
+                    // The LOD is not selectable until its renderer is ready on the active backend.
+                    Volatile.Write(ref slot.SelectionReady, 0);
                     LinkedListNode<RenderableLOD>? next = FindNextResidentNode(slot.Index);
                     RenderableLOD value = slot.CreateRenderableLod(renderer);
                     slot.Node = next is null ? LODs.AddLast(value) : LODs.AddBefore(next, value);
@@ -275,6 +296,7 @@ namespace XREngine.Components.Scene.Mesh
                 MarkSkinnedDataDirty();
                 if (!_retiring)
                     _rc?.MarkDirty();
+                RequestLateLodReadiness(slot, renderer);
             }
             catch (Exception failure)
             {
@@ -351,6 +373,63 @@ namespace XREngine.Components.Scene.Mesh
             return null;
         }
 
+        /// <summary>
+        /// Starts the readiness check of a late LOD renderer on the render thread. When the renderer is ready on the active
+        /// backend, the LOD becomes selectable and its GPU registration level is refreshed. A cold program or late LOD so
+        /// never makes a frame wait: the lower resident LOD draws until then. One closure is made for each publication, not
+        /// for each frame.
+        /// </summary>
+        private void RequestLateLodReadiness(LodSlot slot, XRMeshRenderer renderer)
+        {
+            // With no active render backend, no draw can wait for this renderer, so the check runs here at once.
+            if (AbstractRenderer.Current is null)
+            {
+                int inlineAttempts = 0;
+                _ = ContinueLateLodReadiness(slot, renderer, ref inlineAttempts);
+                return;
+            }
+
+            int attempts = 0;
+            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
+                () => ContinueLateLodReadiness(slot, renderer, ref attempts),
+                "RenderableMesh.LateLodReadiness");
+        }
+
+        /// <summary>
+        /// Runs one readiness check of a late LOD renderer. Returns true while the check must run again in the next frame.
+        /// </summary>
+        private bool ContinueLateLodReadiness(LodSlot slot, XRMeshRenderer renderer, ref int attempts)
+        {
+            // Stop when the LOD left the table or another renderer took its place.
+            if (_retiring || !ReferenceEquals(slot.Node?.Value.Renderer, renderer))
+                return false;
+            if (!LateLodReadinessProbe(renderer))
+            {
+                if (++attempts == LateLodReadinessWarningAttempts)
+                    Debug.RenderingWarning(
+                        "[RenderableMesh] Late LOD {0} of '{1}' is still not ready on the render backend after {2} attempts. The lower resident LOD keeps drawing.",
+                        slot.Index,
+                        renderer.Mesh?.Name ?? "<unnamed mesh>",
+                        attempts);
+                return true;
+            }
+
+            Volatile.Write(ref slot.SelectionReady, 1);
+            AdvanceLodRegistrationVersion();
+            Volatile.Write(ref _lateLodReadinessChanged, 1);
+            return false;
+        }
+
+        /// <summary>
+        /// Marks the render command dirty after a late LOD became ready, so the next registration sees the new level. Call it
+        /// on the update thread.
+        /// </summary>
+        private void ApplyLateLodReadinessChange()
+        {
+            if (Interlocked.Exchange(ref _lateLodReadinessChanged, 0) != 0 && !_retiring)
+                _rc?.MarkDirty();
+        }
+
         /// <summary>True while a LOD renderer that was published after construction waits for its first selection.</summary>
         internal bool IsAwaitingLateLodSeed(XRMeshRenderer renderer)
             => _lateLodRenderersAwaitingSeed.Contains(renderer);
@@ -394,6 +473,15 @@ namespace XREngine.Components.Scene.Mesh
             public float MaxVisibleDistance { get; } = source.MaxVisibleDistance;
             public float MinProjectedScreenRadiusPixels { get; } = source.MinProjectedScreenRadiusPixels;
             public LinkedListNode<RenderableLOD>? Node { get; set; }
+
+            /// <summary>
+            /// 1 when the LOD can be selected. A LOD resident at construction is ready at once. A late LOD is 0 until its
+            /// renderer is ready on the active backend.
+            /// </summary>
+            public int SelectionReady = 1;
+
+            /// <summary>True when the LOD is resident and its renderer can draw on the active backend.</summary>
+            public bool IsSelectable => Node is not null && Volatile.Read(ref SelectionReady) != 0;
 
             public RenderableLOD CreateRenderableLod(XRMeshRenderer renderer)
                 => new(renderer, MaxVisibleDistance, MinProjectedScreenRadiusPixels) { Index = Index, Residency = Tier };

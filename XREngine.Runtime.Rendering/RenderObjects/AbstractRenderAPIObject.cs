@@ -114,6 +114,14 @@ public interface IRenderPreparationState
     }
 
     /// <summary>
+    /// Prepares the object before a LOD selection can use it, outside a recorded draw, and tells if it can draw now. The
+    /// default is <see cref="TryPrepareForRendering(out string)"/>. A backend whose draw needs more than that preparation
+    /// (for example, a pipeline or descriptor sets) can do more here.
+    /// </summary>
+    bool TryPrewarmForSelection(out string reason)
+        => TryPrepareForRendering(out reason);
+
+    /// <summary>
     /// Optional supplemental detail describing the most recent prepare attempt
     /// (e.g. variant counts, revision numbers, which program slots were null).
     /// Empty when not implemented or no detail captured.

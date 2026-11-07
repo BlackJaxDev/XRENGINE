@@ -326,6 +326,15 @@ payload split). The GPU routes follow these rules:
 - A late LOD gets a new renderer. Deferred publication creates no backend
   wrappers, so the first use of the new level must resolve cold wrappers through
   the renderer facade (see the default render pipeline notes).
+- A late LOD is not selectable, and its GPU registration level stays null,
+  until its renderer is ready on the active backend. A render-thread coroutine
+  calls `XRMeshRenderer.TryPrewarmForLodSelection` (the backend
+  `IRenderPreparationState.TryPrewarmForSelection`, by default the program and
+  buffer preparation) once per frame. When it succeeds, the LOD becomes
+  selectable and the registration version advances. Until then the lower
+  resident LOD draws. With no active backend, the check runs at once.
+  On Vulkan, the first draw of the new renderer is still a cold mesh admission
+  in the frame loop, so PresentNow can still reject frames for it.
 
 The render-command path takes the LOD levels from the render info owner. A model
 component owns the render info of its renderable meshes, so those commands
