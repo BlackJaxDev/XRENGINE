@@ -2780,21 +2780,50 @@ namespace XREngine.Components.Lights
             ref float radius)
         {
             Vector3 point = EvaluateCascadeCorner(nearCorner, farCorner, t, worldToLight);
-            Vector2 delta = new(point.X - centerLS.X, point.Y - centerLS.Y);
-            radius = MathF.Max(radius, delta.Length());
+            radius = MathF.Max(radius, Vector3.Distance(point, centerLS));
         }
 
+        /// <summary>
+        /// Replaces the slice bounds with a light-space cube around the bounding sphere of
+        /// the slice corners. The sphere uses the corner centroid and the 3D corner distance,
+        /// which move rigidly with the camera, so the cube size does not change when the
+        /// camera turns or moves. A size that followed the camera orientation changed the
+        /// texel size every frame and made shadow edges shimmer. The radius is rounded up
+        /// to a fixed step so float noise cannot change it from frame to frame either.
+        /// </summary>
         private static void ApplySphereFit(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, ref Vector3 min, ref Vector3 max)
         {
-            Vector3 centerLS = (min + max) * 0.5f;
+            Vector3 centerLS = Vector3.Zero;
+            int cornerCount = 0;
+            for (int i = 0; i < cameraFrusta.Length; i++)
+                AccumulateCascadeCentroid(cameraFrusta[i], nearT, farT, worldToLight, ref centerLS, ref cornerCount);
+            if (cornerCount == 0)
+                return;
+            centerLS /= cornerCount;
+
             float radius = 1e-3f;
             for (int i = 0; i < cameraFrusta.Length; i++)
                 ExpandCascadeSphereRadius(cameraFrusta[i], nearT, farT, worldToLight, centerLS, ref radius);
+            radius = MathF.Ceiling(radius * CascadeSphereRadiusSteps) / CascadeSphereRadiusSteps;
 
-            min.X = centerLS.X - radius;
-            max.X = centerLS.X + radius;
-            min.Y = centerLS.Y - radius;
-            max.Y = centerLS.Y + radius;
+            min = centerLS - new Vector3(radius);
+            max = centerLS + new Vector3(radius);
+        }
+
+        /// <summary>Steps per world unit for the rounded cascade sphere radius.</summary>
+        private const float CascadeSphereRadiusSteps = 64.0f;
+
+        private static void AccumulateCascadeCentroid(Frustum cameraFrustum, float nearT, float farT, Matrix4x4 worldToLight, ref Vector3 sum, ref int count)
+        {
+            sum += EvaluateCascadeCorner(cameraFrustum.LeftBottomNear, cameraFrustum.LeftBottomFar, nearT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.RightBottomNear, cameraFrustum.RightBottomFar, nearT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.LeftTopNear, cameraFrustum.LeftTopFar, nearT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.RightTopNear, cameraFrustum.RightTopFar, nearT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.LeftBottomNear, cameraFrustum.LeftBottomFar, farT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.RightBottomNear, cameraFrustum.RightBottomFar, farT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.LeftTopNear, cameraFrustum.LeftTopFar, farT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.RightTopNear, cameraFrustum.RightTopFar, farT, worldToLight);
+            count += 8;
         }
 
         private static void SnapCascadeCenterToTexels(ref Vector3 centerLS, Vector3 halfExtents, uint resolution)
