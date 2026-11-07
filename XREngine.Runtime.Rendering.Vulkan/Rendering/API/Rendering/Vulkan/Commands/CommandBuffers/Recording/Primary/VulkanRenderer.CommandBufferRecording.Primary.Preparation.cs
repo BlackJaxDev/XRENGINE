@@ -2459,6 +2459,7 @@ namespace XREngine.Rendering.Vulkan
                 scratch.PipelinePrewarmInitialScanComplete;
             int firstPendingRequirementIndex = -1;
             string firstPendingReason = string.Empty;
+            bool anyPendingNotRetryable = false;
             long sliceStart = Stopwatch.GetTimestamp();
             bool foregroundRequired =
                 recordingState.Policy.FreshSerialRecording &&
@@ -2481,7 +2482,7 @@ namespace XREngine.Rendering.Vulkan
                             pipelineVariantManifest.Requirements[
                                 requirementIndex],
                             out bool optionalDeferred,
-                            out _,
+                            out bool requirementRetryable,
                             out string pendingReason);
                         int opIndex = pipelineVariantManifest.Requirements[
                             requirementIndex].OpIndex;
@@ -2503,6 +2504,8 @@ namespace XREngine.Rendering.Vulkan
                         {
                             optionalRequirements.Remove(requirementIndex);
                             pendingRequirements.Add(requirementIndex);
+                            if (!requirementRetryable)
+                                anyPendingNotRetryable = true;
                             if (firstPendingRequirementIndex < 0)
                             {
                                 firstPendingRequirementIndex = requirementIndex;
@@ -2574,13 +2577,15 @@ namespace XREngine.Rendering.Vulkan
                     pendingRequirements.Count,
                     firstPendingRequirementIndex,
                     firstPendingReason);
-                // A pending pipeline is a transient state. A material or program change
-                // after the plan was accepted (for example, shader dependencies that are
-                // being replaced) gets here. The next frame admits the pipeline again, so
-                // this is a frame retry. An unclassified failure latches a PresentNow
-                // renderer as terminal.
-                recordingState.FailureKind =
-                    EVulkanCommandRecordingFailureKind.RetryFrame;
+                // A retryable pending pipeline is still compiling, or its shader or layout
+                // dependencies are being replaced after a material or program change. The next
+                // frame admits it again, so this is a frame retry. A pipeline that failed for
+                // a reason that a retry cannot clear needs a state change, as at the other
+                // admission sites. An unclassified failure latches a PresentNow renderer as
+                // terminal.
+                recordingState.FailureKind = anyPendingNotRetryable
+                    ? EVulkanCommandRecordingFailureKind.RecoverAfterStateChange
+                    : EVulkanCommandRecordingFailureKind.RetryFrame;
                 return false;
             }
 

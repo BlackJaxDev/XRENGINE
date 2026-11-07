@@ -157,12 +157,20 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         lifecycle.ShouldContain("private bool RecordCommandBufferLifecycle(");
         lifecycle.ShouldContain("recordingState.RecordingDeferredReason = ref context.RecordingDeferredReason;");
         primary.ShouldContain("Mesh frame-data reservation deferred before command recording");
-        primary.ShouldContain(
-            "recordingState.FailureKind =\n                            EVulkanCommandRecordingFailureKind.RetryFrame;\n                        recordingState.RecordingDeferredReason =\n                            $\"Mesh frame-data reservation deferred before command recording for \" +");
-        primary.ShouldContain(
-            "firstPendingReason);\n                // A pending pipeline is a transient state.");
-        primary.ShouldContain(
-            "this is a frame retry. An unclassified failure latches a PresentNow\n                // renderer as terminal.\n                recordingState.FailureKind =\n                    EVulkanCommandRecordingFailureKind.RetryFrame;");
+        // Compare code tokens only, so a comment or format change does not fail the contract.
+        string primaryCode = System.Text.RegularExpressions.Regex.Replace(primary, @"\s+", string.Empty);
+        primaryCode.ShouldContain(
+            "recordingState.FailureKind=EVulkanCommandRecordingFailureKind.RetryFrame;recordingState.RecordingDeferredReason=$\"Meshframe-datareservationdeferredbeforecommandrecordingfor\"+");
+        primaryCode.ShouldContain("outboolrequirementRetryable,");
+        primaryCode.ShouldContain(
+            "recordingState.FailureKind=anyPendingNotRetryable?EVulkanCommandRecordingFailureKind.RecoverAfterStateChange:EVulkanCommandRecordingFailureKind.RetryFrame;");
+        string recordingCode = System.Text.RegularExpressions.Regex.Replace(
+            ReadWorkspaceFile(VulkanRoot + "Frame/Loop/VulkanRenderer.FrameLoop.Recording.cs"),
+            @"\s+",
+            string.Empty);
+        recordingCode.ShouldContain(
+            "elseif(now-_presentNowRecordingRetryStreakStartTicks>=VulkanPresentNowReadinessWatchdog.StallTimeoutTicks)");
+        recordingCode.ShouldContain("EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);");
         primary.ShouldNotContain("$\"Mesh frame-data reservation failed before command recording for \" +");
         primary.ShouldContain("EnterRecordingResourceScope(recordingState.FramePlan, in operationContext)");
         secondary.ShouldContain("PushRenderingPipelineOverride(\n                    drawContext.PipelineInstance)");
