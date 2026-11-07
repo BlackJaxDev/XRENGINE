@@ -28,7 +28,7 @@ internal sealed partial class BrowserMaterialCookProjection
         ObjectDisposedException.ThrowIf(_disposed, this);
         // Registered roots bypass the projection in CreateCookedBlob. Their owner remains
         // authoritative; inspecting a different reflection graph would invent consumer edges.
-        if (PublishedCookedAssetRegistry.IsRegistered(root.GetType()))
+        if (PublishedCookedAssetRegistry.Accepts(root))
             return;
         HashSet<object> inspected = new(ReferenceEqualityComparer.Instance);
         RenderPipelineResourceProfile output = BrowserRenderPipelineOutputProfile.FromStartup(Engine.PersistentGameSettings);

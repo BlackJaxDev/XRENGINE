@@ -360,10 +360,17 @@ payloads have one entry. A sub-mesh with one LOD writes it inline and has no sep
 The writer puts the separate entries in the `SubMeshLodPayloadCookSink` of the thread. `ProjectBuilder` opens a sink on
 the cooked content root, and on each staging folder of an incremental repack. An incremental repack keeps the `lod/`
 entries of the archive, because they have no source file of their own; an entry that no sub-mesh uses any more stays
-until a full cook. The writer of a sub-mesh with more than one LOD fails when no sink is open. A sink keeps the
-description of each mesh that it met (weakly), so a mesh is serialized one time even though a generic stream has a size
-pass and a write. `ProjectBuilder.TryWriteCookedAssetFile` reports a cook failure as an error; it does not copy the YAML
-source in place of the cooked file.
+until a full cook. With no sink open, the registered codec declines a sub-mesh with more than one LOD
+(`SubMeshCookedCodec.Accepts`, through the accept predicate of `PublishedCookedAssetRegistry.Register`), so the cook
+writes it with the generic cooked serializer with every LOD inline, the same fallback as a sub-mesh inside a model. A
+browser cook, which opens no sink, takes this path; `PublishedCookedAssetRegistry.Accepts` tells such cookers that the
+generic walk applies. The codec declares an empty dependency set, because its payload embeds the materials and meshes.
+A cook of a LOD that is a separate payload and not resident (a sub-mesh from a `ProxyFirst` load) fails with an error that
+names the sub-mesh, because the bytes are not in memory. A sink keeps the description of each mesh that it met (weakly),
+so a mesh is serialized one time even though a generic stream has a size pass and a write.
+`ProjectBuilder.TryWriteCookedAssetFile` reports a cook failure as an error for an asset whose cook needs the split
+sub-mesh format: a sub-mesh, a model, or a world whose loaded graph has a sub-mesh. Any other asset keeps the older
+fallback to its YAML source, with one warning that names the asset.
 
 ### Sub-meshes in a generic stream
 

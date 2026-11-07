@@ -6,6 +6,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Cutscenes;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -111,10 +112,48 @@ public sealed class MeshLodResidencyTests
     }
 
     [Test]
-    public void Writer_NeedsASink_ForMoreThanOneLod_AndReaderRejectsANewerVersion()
+    public void BrowserCookOfAStandaloneSubMesh_UsesTheInlineFallback_AndReaderRejectsANewerVersion()
     {
-        SubMesh source = CreateSubMesh(out _);
-        Should.Throw<InvalidOperationException>(() => PublishedCookedAssetRegistry.TrySerialize(source, out _));
+        // A browser cook opens no sink, so the registered codec declines a multi-LOD sub-mesh, and the cook writes it with
+        // the generic serializer with every LOD inline.
+        XRMaterial material = new() { Name = "BrowserMaterial" };
+        SubMesh source = CreateSubMesh(out XRMesh[] meshes, material, offset: 0.0f);
+        PublishedCookedAssetRegistry.Accepts(source).ShouldBeFalse();
+        PublishedCookedAssetRegistry.TrySerialize(source, out _).ShouldBeFalse();
+        PublishedCookedAssetRegistry.TryGetDependencies(source, out IReadOnlyList<PublishedCookedAssetDependency>? dependencies).ShouldBeTrue();
+        dependencies.ShouldNotBeNull().ShouldBeEmpty();
+
+        HashSet<object> walked = new(ReferenceEqualityComparer.Instance);
+        CookedBinarySerializationCallbacks callbacks = new()
+        {
+            OnSerializingValue = value =>
+            {
+                if (value is not null)
+                    walked.Add(value);
+                return value;
+            },
+        };
+        CookedAssetBlob blob = XREngine.Editor.ProjectBuilder.CreateCookedBlob(source, callbacks: callbacks);
+
+        blob.Format.ShouldBe(CookedAssetFormat.BinaryV2);
+        walked.ShouldContain(material);
+        foreach (XRMesh mesh in meshes)
+            walked.ShouldContain(mesh);
+        Directory.Exists(Path.Combine(_root, "lod")).ShouldBeFalse();
+        SubMesh loaded = Load(CookedAssetEnvelope.Serialize(blob), ELodPayloadLoadPolicy.ProxyFirst);
+        _source!.OpenCount.ShouldBe(0);
+        SubMeshLOD[] lods = [.. loaded.LODs];
+        lods.Length.ShouldBe(3);
+        for (int i = 0; i < lods.Length; i++)
+        {
+            lods[i].IsPayloadDeferred.ShouldBeFalse();
+            lods[i].Mesh.ShouldNotBeNull().VertexCount.ShouldBe(meshes[i].VertexCount);
+            lods[i].Material.ShouldBeSameAs(lods[0].Material);
+        }
+
+        // With a sink open the registered codec writes the split form.
+        using (SubMeshLodPayloadCookSink.Begin(_root))
+            PublishedCookedAssetRegistry.Accepts(source).ShouldBeTrue();
 
         SubMesh single = new(new SubMeshLOD(new XRMaterial(), CreateMesh(2, 0.0f), 0.0f));
         PublishedCookedAssetRegistry.TrySerialize(single, out byte[] payload).ShouldBeTrue();
@@ -548,8 +587,6 @@ public sealed class MeshLodResidencyTests
             proxy.EnsureBlendshapeBuffers(logWarnings: false).ShouldBeTrue();
             proxy.SetBlendshapeWeightNormalized("Smile", 0.75f);
             proxy.GetBlendshapeWeightNormalized("Smile").ShouldBe(0.75f);
-            renderable.SeedInitialRenderState(proxy);
-            renderable.InitialRenderStateSeeded.ShouldBeTrue();
             int trackedBefore = renderable.TrackedSkinnedBoneCount;
 
             SubMeshLOD full = loaded.LODs.First();
@@ -562,14 +599,23 @@ public sealed class MeshLodResidencyTests
             renderable.TrackedSkinnedBoneCount.ShouldBeGreaterThan(trackedBefore);
             renderable.IsAwaitingLateLodSeed(late).ShouldBeTrue();
 
-            // The proxy renderer was not published late, so its selection keeps the seed state.
-            renderable.ResetSeedStateForLateLod(proxy);
+            // Collect through the pre-collect callback (BeforeAdd), as a camera does. While the proxy is selected, the late
+            // renderer still waits for its seed.
+            RenderCommandCollection passes = new(new Dictionary<int, IComparer<RenderCommand>?>());
+            bool Collect() => renderable.RenderInfo.PreCollectCommandsCallback!(renderable.RenderInfo, passes, null);
+            renderable.ForcedMinimumLod = 1;
+            Collect();
+            renderable.CurrentLodIndex.ShouldBe(1);
             renderable.InitialRenderStateSeeded.ShouldBeTrue();
+            renderable.IsAwaitingLateLodSeed(late).ShouldBeTrue();
 
-            // The first selection of the late LOD seeds its palette again.
-            renderable.ResetSeedStateForLateLod(late);
-            renderable.InitialRenderStateSeeded.ShouldBeFalse();
+            // The first collect that selects the late LOD resets the seed state and seeds again for that renderer.
+            renderable.ForcedMinimumLod = null;
+            for (int i = 0; i < 4 && renderable.CurrentLodIndex != 0; i++)
+                Collect();
+            renderable.CurrentLodIndex.ShouldBe(0);
             renderable.IsAwaitingLateLodSeed(late).ShouldBeFalse();
+            renderable.InitialRenderStateSeeded.ShouldBeTrue();
         }
         finally
         {
@@ -628,6 +674,42 @@ public sealed class MeshLodResidencyTests
         {
             node.Destroy(now: true);
         }
+    }
+
+    [Test]
+    public void Cook_OfANonResidentSplitLod_FailsAndNamesTheSubMesh()
+    {
+        SubMesh loaded = Load(Cook(CreateSubMesh(out _), out _), ELodPayloadLoadPolicy.ProxyFirst);
+        string other = Path.Combine(_root, "Other");
+
+        using (SubMeshLodPayloadCookSink.Begin(other))
+        {
+            InvalidDataException standalone = Should.Throw<InvalidDataException>(() => PublishedCookedAssetRegistry.TrySerialize(loaded, out _));
+            standalone.Message.ShouldContain(loaded.Name!);
+            InvalidDataException embedded = Should.Throw<InvalidDataException>(() => GenericSerialize(new Model(loaded)));
+            embedded.Message.ShouldContain(loaded.Name!);
+        }
+        Directory.Exists(Path.Combine(other, "lod")).ShouldBeFalse();
+    }
+
+    [Test]
+    public void ContentCook_FailsForASubMesh_AndFallsBackToYamlForOtherTypes()
+    {
+        string assets = Path.Combine(_root, "Assets");
+        Directory.CreateDirectory(assets);
+        // A multi-LOD YAML sub-mesh does not load (the LODs sorted set has no comparer on read), so its cook fails.
+        WriteAsset(Path.Combine(assets, "Lods.asset"), CreateSubMesh(out _));
+        InvalidOperationException error = Should.Throw<InvalidOperationException>(() =>
+            XREngine.Editor.ProjectBuilder.PrepareCookedContentDirectoryForTests(assets, Path.Combine(_root, "Intermediate")));
+        error.Message.ShouldContain("Lods.asset");
+
+        // Any other type keeps the older fallback to its YAML source.
+        File.Delete(Path.Combine(assets, "Lods.asset"));
+        string brokenPath = Path.Combine(assets, "Broken.asset");
+        string brokenYaml = $"__assetType: XREngine.UnitTests.NoSuchAssetType{Environment.NewLine}Value: 1{Environment.NewLine}";
+        File.WriteAllText(brokenPath, brokenYaml);
+        string cooked = XREngine.Editor.ProjectBuilder.PrepareCookedContentDirectoryForTests(assets, Path.Combine(_root, "Intermediate2"));
+        File.ReadAllText(Path.Combine(cooked, "Broken.asset")).ShouldBe(brokenYaml);
     }
 
     [Test]

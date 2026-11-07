@@ -26,7 +26,8 @@ namespace XREngine.Core.Files
             Type AssetType,
             PublishedCookedAssetSerializeDelegate Serialize,
             PublishedCookedAssetDeserializeDelegate Deserialize,
-            PublishedCookedAssetDependenciesDelegate? Dependencies);
+            PublishedCookedAssetDependenciesDelegate? Dependencies,
+            PublishedCookedAssetAcceptDelegate? Accept);
 
         private static readonly object Sync = new();
         private static readonly Dictionary<Type, Entry> Entries = [];
@@ -46,6 +47,19 @@ namespace XREngine.Core.Files
             PublishedCookedAssetDeserializeDelegate deserialize,
             string? ownerName,
             PublishedCookedAssetDependenciesDelegate? dependencies)
+            => Register(assetType, serialize, deserialize, ownerName, dependencies, accept: null);
+
+        /// <summary>
+        /// Registers a codec that can decline an asset. When <paramref name="accept"/> returns false, <see cref="TrySerialize(object, IBufferWriter{byte})"/>
+        /// returns false and the cook uses the generic cooked serializer for that asset. Reads are not affected.
+        /// </summary>
+        public static IDisposable Register(
+            Type assetType,
+            PublishedCookedAssetSerializeDelegate serialize,
+            PublishedCookedAssetDeserializeDelegate deserialize,
+            string? ownerName,
+            PublishedCookedAssetDependenciesDelegate? dependencies,
+            PublishedCookedAssetAcceptDelegate? accept)
         {
             ArgumentNullException.ThrowIfNull(assetType);
             ArgumentNullException.ThrowIfNull(serialize);
@@ -62,7 +76,8 @@ namespace XREngine.Core.Files
                 assetType,
                 serialize,
                 deserialize,
-                dependencies);
+                dependencies,
+                accept);
             lock (Sync)
             {
                 if (Entries.TryGetValue(assetType, out Entry? existing))
@@ -92,9 +107,21 @@ namespace XREngine.Core.Files
 
             if (!TryGetEntry(asset.GetType(), out Entry? entry) || entry is null)
                 return false;
+            if (entry.Accept is { } accept && !accept(asset))
+                return false;
 
             entry.Serialize(asset, writer);
             return true;
+        }
+
+        /// <summary>
+        /// True if a registered codec writes this asset now: its type is registered and the codec does not decline it.
+        /// A cooker that bypasses the generic graph walk for registered assets uses this, not <see cref="IsRegistered"/>.
+        /// </summary>
+        public static bool Accepts(object asset)
+        {
+            ArgumentNullException.ThrowIfNull(asset);
+            return TryGetEntry(asset.GetType(), out Entry? entry) && entry is not null && (entry.Accept is null || entry.Accept(asset));
         }
 
         /// <summary>Serializes into a new array. Intended for cooking and tooling, never for the runtime load path.</summary>

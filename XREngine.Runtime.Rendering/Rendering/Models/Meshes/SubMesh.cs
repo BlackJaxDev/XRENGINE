@@ -88,8 +88,10 @@ namespace XREngine.Rendering.Models
         {
             if (SubMeshLodPayloadCookSink.Current is not { } sink)
                 return null;
-            if (_cookedWriteDepth++ == 0)
+            if (_cookedWriteDepth == 0)
                 _cookedWriteView = SubMeshCookedCodec.CreateSplitView(this, sink);
+            // Count the scope only after the view exists, so a failed view leaves no open scope behind.
+            _cookedWriteDepth++;
             return new CookedWriteScope(this);
         }
 

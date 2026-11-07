@@ -95,7 +95,7 @@ public partial class RenderableMesh
     /// <summary>True after the first collect seeded the palette and draw matrices from the current render state.</summary>
     internal bool InitialRenderStateSeeded => _initialRenderStateSeeded;
 
-    internal void SeedInitialRenderState(XRMeshRenderer? renderer)
+    private void SeedInitialRenderState(XRMeshRenderer? renderer)
     {
         if (_initialRenderStateSeeded)
             return;

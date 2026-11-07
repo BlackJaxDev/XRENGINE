@@ -255,7 +255,7 @@ namespace XREngine.Components.Scene.Mesh
             => _lateLodRenderersAwaitingSeed.Contains(renderer);
 
         /// <summary>Resets the per-mesh palette seed state at the first selection of a LOD that was published after construction.</summary>
-        internal void ResetSeedStateForLateLod(XRMeshRenderer? renderer)
+        private void ResetSeedStateForLateLod(XRMeshRenderer? renderer)
         {
             if (renderer is null || _lateLodRenderersAwaitingSeed.Count == 0 || !_lateLodRenderersAwaitingSeed.Remove(renderer))
                 return;

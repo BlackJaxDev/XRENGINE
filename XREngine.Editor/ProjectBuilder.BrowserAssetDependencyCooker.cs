@@ -205,7 +205,7 @@ internal static partial class ProjectBuilder
         {
             // Registered serializers own their separate graph. This prepass follows
             // the same ordinary cooked-binary members as the subsequent write.
-            if (PublishedCookedAssetRegistry.IsRegistered(asset.GetType()))
+            if (PublishedCookedAssetRegistry.Accepts(asset))
                 return;
             CookedBinarySerializationCallbacks callbacks = new()
             {
