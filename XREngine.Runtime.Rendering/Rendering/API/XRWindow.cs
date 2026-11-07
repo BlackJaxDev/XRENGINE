@@ -187,6 +187,12 @@ namespace XREngine.Rendering
         public bool PreferHDROutput { get; internal set; }
 
         /// <summary>
+        /// The requested present path for this window. Renderers that do not support the
+        /// requested path use their native path.
+        /// </summary>
+        public EDesktopPresentPath DesktopPresentPath { get; internal set; }
+
+        /// <summary>
         /// True when the platform's native chrome should remain visible. False means the engine is expected to render its own title bar.
         /// </summary>
         public bool UseNativeTitleBar { get; }

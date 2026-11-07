@@ -1003,6 +1003,20 @@ public static partial class RuntimeEngine
                     set => SetField(ref _outputHDR, value);
                 }
 
+                private EDesktopPresentPath _desktopPresentPath = EDesktopPresentPath.VulkanSwapchain;
+
+                /// <summary>
+                /// Selects how the Vulkan renderer presents a desktop window on Windows. Windows can
+                /// override this value. The environment variable XRE_DESKTOP_PRESENT_PATH overrides both.
+                /// </summary>
+                [Category("Performance")]
+                [Description("How the Vulkan renderer presents desktop windows on Windows. DxgiFlipModel avoids a high desktop compositor CPU cost on some drivers.")]
+                public EDesktopPresentPath DesktopPresentPath
+                {
+                    get => _desktopPresentPath;
+                    set => SetField(ref _desktopPresentPath, value);
+                }
+
                 /// <summary>
                 /// Number of samples to use when MSAA is enabled (set to 1 to disable).
                 /// </summary>

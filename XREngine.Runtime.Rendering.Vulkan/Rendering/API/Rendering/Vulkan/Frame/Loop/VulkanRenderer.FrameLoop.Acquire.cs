@@ -83,6 +83,14 @@ namespace XREngine.Rendering.Vulkan
                         throw new InvalidOperationException(message);
                     }
                 }
+                else if (OutputRuntime.Desktop.DxgiRing is { } dxgiRing)
+                {
+                    attempt.AcquireResult = AcquireDesktopDxgiImage(
+                        dxgiRing,
+                        acquireTimeoutNanoseconds,
+                        attempt.AcquireSemaphore,
+                        ref attempt.ImageIndex);
+                }
                 else
                 {
                     attempt.AcquireResult = OutputRuntime.Desktop.SwapchainExtension!.AcquireNextImage(

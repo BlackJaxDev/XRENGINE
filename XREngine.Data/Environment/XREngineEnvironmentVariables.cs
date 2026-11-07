@@ -150,6 +150,8 @@ public static class XREngineEnvironmentVariables
     public const string ProfileMode = "XRE_PROFILE_MODE";
     public const string TargetRefreshHz = "XRE_TARGET_REFRESH_HZ";
     public const string VulkanPresentationProfile = "XRE_VULKAN_PRESENTATION_PROFILE";
+    public const string DesktopPresentPath = "XRE_DESKTOP_PRESENT_PATH";
+    public const string OutputHdr = "XRE_OUTPUT_HDR";
     public const string UpdateFps = "XRE_UPDATE_FPS";
     public const string ProfileScene = "XRE_PROFILE_SCENE";
     public const string ProfileCamera = "XRE_PROFILE_CAMERA";

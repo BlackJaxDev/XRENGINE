@@ -81,8 +81,10 @@ Notes:
 | Silk.NET | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Core | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.IO.DirectStorage.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.Rendering.Vulkan.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.Core.Win32Extras | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core.Win32Extras-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Direct3D11 | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Direct3D11-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
 | Silk.NET.DirectStorage | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.DirectStorage-2.23.0-MIT.txt) | XREngine.Runtime.IO.DirectStorage.csproj |
 | Silk.NET.DirectStorage.Native | 1.3.0 | microsoft | [LICENSE.txt](licenses/nuget/Silk.NET.DirectStorage.Native-1.3.0-LICENSE.txt.txt) | XREngine.Runtime.IO.DirectStorage.csproj |
+| Silk.NET.DXGI | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.DXGI-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
 | Silk.NET.GLFW | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.GLFW-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Input | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Input.Silk.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Platform.Desktop.csproj |
 | Silk.NET.Input.Common | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input.Common-2.23.0-MIT.txt) | XREngine.Editor.csproj |

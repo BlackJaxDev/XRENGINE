@@ -131,6 +131,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         RetireOffscreenColorResources("Swapchain.OffscreenColor.Shutdown");
         DrainCompletedDependencies();
         DestroySwapchain();
+        DestroyDxgiPresenterForShutdown();
     }
 
     /// <summary>Hard shutdown boundary, before any present semaphores or views are destroyed.</summary>
@@ -222,6 +223,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             oldPresentCompletion?.Seal();
             _output.Desktop.PresentCompletion = null;
             bool oldStreamlineProxy = _output.Desktop.StreamlineFrameGenerationActive;
+            VulkanDxgiImageRing? oldDxgiRing = DetachLiveDxgiRing();
             uint oldWidth = _output.Desktop.Extent.Width;
             uint oldHeight = _output.Desktop.Extent.Height;
             ulong oldGraphicsCompletionValue = 0;
@@ -263,7 +265,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             RetiredSwapchainGeneration retired = new(
                 oldSwapchain, oldImages, oldImageLifetimeSlots, oldViews, oldFramebuffers,
                 oldPresentBridges, oldClear, oldLoad, graphicsMarker, oldPresentCompletion,
-                oldStreamlineProxy, oldWidth, oldHeight, Stopwatch.GetTimestamp());
+                oldStreamlineProxy, oldWidth, oldHeight, Stopwatch.GetTimestamp(), oldDxgiRing);
             if (hasLiveGeneration && (oldStreamlineProxy || successorUsesProxy))
             {
                 _output.Desktop.ImageTimelineValues = null;
@@ -323,6 +325,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 _output.Desktop.PresentCompletion = null;
                 SwapchainKHR failedSwapchain = _output.Desktop.Swapchain;
                 bool failedStreamlineProxy = _output.Desktop.StreamlineFrameGenerationActive;
+                VulkanDxgiImageRing? failedDxgiRing = DetachLiveDxgiRing();
                 uint failedWidth = _output.Desktop.Extent.Width;
                 uint failedHeight = _output.Desktop.Extent.Height;
 
@@ -341,7 +344,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 _output.Desktop.StreamlineFrameGenerationIncludesDlss = false;
                 if (failedSwapchain.Handle != 0 || failedImages.Length != 0 ||
                     failedViews.Length != 0 || failedPresentBridges.Length != 0 ||
-                    clear.Handle != 0 || load.Handle != 0)
+                    clear.Handle != 0 || load.Handle != 0 || failedDxgiRing is not null)
                     QueueRetiredGeneration(new(
                         failedSwapchain,
                         failedImages,
@@ -352,7 +355,8 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                         clear, load, default, failedPresentCompletion,
                         failedStreamlineProxy,
                         failedWidth, failedHeight,
-                        Stopwatch.GetTimestamp()));
+                        Stopwatch.GetTimestamp(),
+                        failedDxgiRing));
                 throw;
             }
             finally
@@ -370,6 +374,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     /// <summary>Creates the native desktop WSI swapchain and publishes its image generation.</summary>
     internal void CreateSwapchain(SwapchainKHR oldSwapchain = default)
     {
+        if (TryCreateDxgiGeneration())
+            return;
+
+        oldSwapchain = NativeOldSwapchain(oldSwapchain);
         SwapChainSupportDetails support = QuerySwapchainSupport(_device.PhysicalDevice);
         VulkanPresentationProfileResolution presentation =
             VulkanPresentationProfileResolver.Resolve(
@@ -551,9 +559,11 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         _output.Desktop.PresentCompletion?.Destroy(_resources.Lifetime.Tracker.DeviceLost);
         _output.Desktop.PresentCompletion = null;
 
-        if (!streamlineProxy)
+        if (!streamlineProxy && _output.Desktop.DxgiRing is null)
             RequireSwapchainExtension().DestroySwapchain(_device.Device, _output.Desktop.Swapchain, null);
 
+        // The live DXGI ring owns its images; a native swapchain destroys them implicitly.
+        DetachLiveDxgiRing()?.Dispose();
         ResetLiveSwapchainState();
     }
 
@@ -1141,7 +1151,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         for (int i = 0; i < generation.PresentBridgeSemaphores.Length; i++)
             if (generation.PresentBridgeSemaphores[i].Handle != 0)
                 _api.DestroySemaphore(_device.Device, generation.PresentBridgeSemaphores[i], null);
-        if (generation.Swapchain.Handle != 0 && !generation.StreamlineProxy)
+        if (generation.Swapchain.Handle != 0 && !generation.StreamlineProxy && generation.DxgiRing is null)
             RequireSwapchainExtension().DestroySwapchain(_device.Device, generation.Swapchain, null);
         for (int i = 0; i < generation.Images.Length; i++)
             _resources.CompleteDetachedExternalResourceDestruction(
@@ -1151,6 +1161,9 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                     ? generation.ImageLifetimeSlots[i]
                     : VulkanResourceSlotHandle.Invalid,
                 force);
+
+        // A DXGI generation owns its images, memory, and shared textures.
+        generation.DxgiRing?.Dispose();
     }
 
     private void DestroyRenderPass(RenderPass renderPass, bool force)

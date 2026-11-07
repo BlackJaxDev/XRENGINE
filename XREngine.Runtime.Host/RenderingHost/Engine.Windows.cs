@@ -62,7 +62,9 @@ namespace XREngine
                     "The active application profile does not install local window services.");
             }
 
-            bool preferHdrOutput = windowSettings.OutputHDR ?? RuntimeEngine.Rendering.Settings.OutputHDR;
+            bool preferHdrOutput = ResolveEnvironmentOutputHdr()
+                ?? windowSettings.OutputHDR
+                ?? RuntimeEngine.Rendering.Settings.OutputHDR;
             EInteractiveWindowResizeStrategy interactiveResizeStrategy = ResolveInteractiveResizeStrategy(windowSettings);
             var options = GetWindowOptions(windowSettings, preferHdrOutput, interactiveResizeStrategy);
 
@@ -167,12 +169,32 @@ namespace XREngine
         private static string SummarizeStartupException(Exception ex)
             => $"{ex.GetType().Name}: {ex.Message}";
 
+        /// <summary>
+        /// Reads the XRE_OUTPUT_HDR override ("1"/"true" or "0"/"false"). It takes priority over the
+        /// window and engine HDR settings, so test sessions can select HDR output without a settings file.
+        /// </summary>
+        private static bool? ResolveEnvironmentOutputHdr()
+        {
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OutputHdr);
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            string value = raw.Trim();
+            if (value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (value == "0" || value.Equals("false", StringComparison.OrdinalIgnoreCase))
+                return false;
+            return null;
+        }
+
         private static void FinishWindowCreation(
             GameWindowStartupSettings windowSettings,
             XRWindow window,
             bool preferHdrOutput)
         {
             window.PreferHDROutput = preferHdrOutput;
+            window.DesktopPresentPath =
+                windowSettings.DesktopPresentPath ?? RuntimeEngine.Rendering.Settings.DesktopPresentPath;
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
             RuntimeEngine.RegisterWindow(window);

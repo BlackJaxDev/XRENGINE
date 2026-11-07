@@ -44,6 +44,8 @@
     <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Core.Win32Extras" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Direct3D11" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.DXGI" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR.Extensions.KHR" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Shaderc" Version="2.23.0" />
