@@ -108,6 +108,26 @@ public static class AssetReferencePath
         }
     }
 
+    /// <summary>
+    /// Gets a file system path for a source path. A portable reference resolves against the asset roots of
+    /// <see cref="AssetSerializationServices.Current"/>. A path that is not portable returns unchanged.
+    /// Call this before a file system call on a path that a cook can make portable, for example <see cref="XRAsset.OriginalPath"/>.
+    /// </summary>
+    /// <param name="path">The source path or portable reference.</param>
+    /// <param name="fileSystemPath">The file system path, or null if a portable reference does not resolve.</param>
+    /// <returns>False if the path is a portable reference that does not resolve to a path in its asset root.</returns>
+    public static bool TryResolveFileSystemPath(string path, [NotNullWhen(true)] out string? fileSystemPath)
+    {
+        if (!IsPortable(path))
+        {
+            fileSystemPath = path;
+            return true;
+        }
+
+        IAssetSerializationServices services = AssetSerializationServices.Current;
+        return TryResolve(path, services.GameAssetsPath, services.EngineAssetsPath, out fileSystemPath);
+    }
+
     private static bool IsContainedRelativePath(string path)
         => path != "."
         && path != ".."

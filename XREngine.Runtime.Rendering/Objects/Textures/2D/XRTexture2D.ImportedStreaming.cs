@@ -3,6 +3,7 @@ using MemoryPack;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
+using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
@@ -100,7 +101,11 @@ public partial class XRTexture2D
             return false;
         }
 
-        RegisterImportedTextureStreamingPlaceholder(Path.GetFullPath(OriginalPath), this);
+        // A cook can write the source path as a portable game:// or engine:// reference. Resolve it before any file system call.
+        if (!AssetReferencePath.TryResolveFileSystemPath(OriginalPath, out string? sourcePath))
+            return false;
+
+        RegisterImportedTextureStreamingPlaceholder(Path.GetFullPath(sourcePath), this);
         return true;
     }
 

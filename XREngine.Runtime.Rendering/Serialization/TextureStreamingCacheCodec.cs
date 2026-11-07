@@ -191,7 +191,11 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
         if (string.IsNullOrWhiteSpace(sourcePath))
             return false;
 
-        sourcePath = Path.GetFullPath(sourcePath);
+        // A cook can write the source path as a portable reference. Resolve it before any file system call.
+        if (!AssetReferencePath.TryResolveFileSystemPath(sourcePath, out string? fileSystemPath))
+            return false;
+
+        sourcePath = Path.GetFullPath(fileSystemPath);
         if (Path.GetExtension(sourcePath).Equals(
             $".{AssetSerializationServices.Current.AssetExtension}",
             StringComparison.OrdinalIgnoreCase))
