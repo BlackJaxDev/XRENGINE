@@ -141,7 +141,8 @@ The render thread never mutates planner-owned collections.
 - `ShadowMomentEncoding.glsl` holds the VSM and EVSM encode and sample helpers, point radial moments, Chebyshev visibility, and the 2D, array, and cube moment receivers.
 - Point atlas receivers are cube-seam aware. A filter tap perturbs the direction, selects the owning face again, and samples that face's tile metadata.
 - Contact shadows (`XRENGINE_SampleContactShadowScreenSpace`) multiply on top of depth or moment visibility.
-- On Vulkan, `UsesDirectionalShadowAtlasForCurrentEncoding` accepts `Depth` only. Other backends accept `Depth`, `Variance2`, `ExponentialVariance2`, and `ExponentialVariance4` for directional atlases.
+- `UsesDirectionalShadowAtlasForCurrentEncoding` accepts `Depth`, `Variance2`, `ExponentialVariance2`, and `ExponentialVariance4` for directional atlases on every backend. Advanced native shading reads directional shadows only from atlas records, so a Vulkan moment encoding that fell back to the legacy cascade arrays rendered with no shadow.
+- Advanced native shading applies the light's soft-shadow mode, filter samples, filter radius (in tile-local UV, widened by 35% per cascade), PCSS blocker search and penumbra limits, and the short-range contact-shadow march from `AdvancedShadowRecord`, the same way as the forward receivers.
 
 ## Upscaler And Frame Generation Boundary
 
@@ -153,4 +154,3 @@ Shadow maps and atlas pages are engine-owned intermediate resources. DLSS Super 
 - No automatic fragmentation compaction exists.
 - No physical stale-tile reuse (scroll or reprojection) exists. Stale cascades use shader-side reprojection only.
 - Point-face groups form only when independently allocated faces land on the same page.
-- Vulkan directional moment-encoded atlases are not supported.
