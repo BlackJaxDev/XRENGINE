@@ -753,6 +753,12 @@ internal unsafe partial class VkMeshRenderer(
         XRFrameBuffer? target = producer.Target;
         VulkanFixedFunctionStateSnapshot producerState = producer.FixedFunctionState;
 
+        // The draw readiness prewarm needs the pass state of each pass context. It is stored one time for each context, and
+        // only while a readiness request is active, so a draw with no request pays one volatile read.
+        VulkanDrawReadinessRegistry readiness = BackendContext.Resources.DrawReadiness;
+        if (readiness.HasActiveRequests)
+            readiness.RecordPassState(producer.Context.PipelineInstance, passIndex, target, producerState);
+
         // Material, layered expansion, and view/shadow state were resolved while
         // the producer scopes were active. Re-resolving here can pair a warm
         // preparation signature with an ordinary scene material after a shadow
@@ -947,7 +953,6 @@ internal unsafe partial class VkMeshRenderer(
         {
             PreparationCompatibilitySignature =
                 request.PreparationCompatibilitySignature,
-            PassState = producerState,
             IndirectTopology = request.IndexedIndirect?.Topology ?? EPrimitiveType.Triangles,
             IndexedIndirectAuthoringLease = request.IndexedIndirect?.AuthoringLease,
             AutoUniformPublication =
@@ -1143,7 +1148,6 @@ internal unsafe partial class VkMeshRenderer(
             default);
         draw = draw with
         {
-            PassState = producerState,
             AutoUniformPublication =
                 VulkanAutoUniformPublicationSnapshot.Capture(
                     draw,

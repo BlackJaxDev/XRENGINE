@@ -49,13 +49,6 @@ internal readonly record struct PendingMeshDraw(
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
     internal EPrimitiveType IndirectTopology { get; init; } = EPrimitiveType.Triangles;
-
-    /// <summary>
-    /// The fixed-function state of the pass that produced the draw, before the render options of the material. The draw
-    /// readiness prewarm resolves the options of another material over this state, so its pipeline key matches the real
-    /// draw of that material in the same pass.
-    /// </summary>
-    internal VulkanFixedFunctionStateSnapshot PassState { get; init; }
     internal IRenderResourceLeaseOwner? IndexedIndirectAuthoringLease { get; init; }
 
     internal AdvancedGpuSceneDrawIdentity CanonicalDrawIdentity

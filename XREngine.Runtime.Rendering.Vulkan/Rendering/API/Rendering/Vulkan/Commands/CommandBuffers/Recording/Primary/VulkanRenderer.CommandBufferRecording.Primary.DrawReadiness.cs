@@ -12,6 +12,8 @@ namespace XREngine.Rendering.Vulkan
             "the view drew no non-shadow pass that uses the pass of this material in this frame, so no pipeline variant is known";
         private const string MeshTaskPipelinePendingReason =
             "the mesh-task pipeline of the view is not admitted yet";
+        private const string PassStateUnknownReason =
+            "no draw of the view stored the pass state of this pass context yet";
         private const string RendererCannotServeReason =
             "the renderer wrapper is not active, not linked, retired, or deleted";
 
@@ -58,6 +60,12 @@ namespace XREngine.Rendering.Vulkan
 
             List<VulkanDrawReadinessRequest> requests = recordingState.RecordingScratch.DrawReadinessRequests;
             registry.CopyActive(requests, Environment.TickCount64);
+            long retirementGeneration = ResourceRuntime.PipelineManager.SharedGraphicsPipelineRetirementGeneration;
+            ulong targetSignature = VulkanPipelineVariantManifest.ComputeTargetCompatibilitySignature(
+                recordingState.ResourcePlanStamp.ResourceAllocationSignature,
+                recordingState.SwapchainTarget,
+                recordingState.Policy.UseDynamicRendering,
+                ResourceRuntime.SwapchainRenderPass);
             for (int i = 0; i < requests.Count; i++)
             {
                 VulkanDrawReadinessRequest request = requests[i];
@@ -76,13 +84,22 @@ namespace XREngine.Rendering.Vulkan
                         manifest,
                         pendingRequirements,
                         admissionComplete,
+                        retirementGeneration,
+                        targetSignature,
                         request,
                         out ERenderDrawReadiness state,
                         out string reason,
                         out VkRenderProgram? measuredProgram))
                     continue;
 
-                registry.Publish(request, state, reason, measuredProgram, measuredProgram?.LinkGeneration ?? 0UL);
+                registry.Publish(
+                    request,
+                    state,
+                    reason,
+                    measuredProgram,
+                    measuredProgram?.LinkGeneration ?? 0UL,
+                    retirementGeneration,
+                    targetSignature);
             }
 
             requests.Clear();
@@ -93,6 +110,8 @@ namespace XREngine.Rendering.Vulkan
             VulkanPipelineVariantManifest manifest,
             HashSet<int>? pendingRequirements,
             bool admissionComplete,
+            long retirementGeneration,
+            ulong targetSignature,
             VulkanDrawReadinessRequest request,
             out ERenderDrawReadiness state,
             out string reason,
@@ -142,13 +161,14 @@ namespace XREngine.Rendering.Vulkan
                                 in context,
                                 recordingState.Ops.GetMeshDraw(opIndex).Draw,
                                 requirement.MaterialOverride,
-                                ref tally) &&
+                                ref tally,
+                                out VkRenderProgram? stepProgram) &&
                             !requirement.MaterialOverride &&
                             !programMeasured)
                         {
-                            // Right after the pipeline step with the material of the request, the active program of the
-                            // renderer is the program of that material.
-                            measuredProgram = request.Renderer.ActiveProgramForReadiness;
+                            // The program that the pipeline step used with the material of the request, read under the
+                            // recording lock of the renderer.
+                            measuredProgram = stepProgram;
                             programMeasured = true;
                         }
                         break;
@@ -165,7 +185,9 @@ namespace XREngine.Rendering.Vulkan
                             ref tally);
                         break;
                     case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
-                        if (contexts.Add(ComputeReadinessContextKey(header.PassIndex, null, 2)))
+                        // Before the normal admission ran (the PresentNow readiness gate), the admission state of the
+                        // mesh-task requirement is not known, so it does not count.
+                        if (admissionComplete && contexts.Add(ComputeReadinessContextKey(header.PassIndex, null, 2)))
                         {
                             bool admitted = admissionComplete && (pendingRequirements is null || !pendingRequirements.Contains(r));
                             tally.Add(admitted, retryable: true, MeshTaskPipelinePendingReason);
@@ -186,7 +208,7 @@ namespace XREngine.Rendering.Vulkan
             // nothing about the pipelines: it only names the reason while no frame measured the request.
             if (tally.Required == 0)
             {
-                ResourceRuntime.DrawReadiness.NoteNoContext(request, NoReadinessContextReason);
+                ResourceRuntime.DrawReadiness.NoteNoContext(request, NoReadinessContextReason, retirementGeneration, targetSignature);
                 state = default;
                 reason = string.Empty;
                 return false;
@@ -211,21 +233,31 @@ namespace XREngine.Rendering.Vulkan
             in FrameOpContext context,
             in PendingMeshDraw template,
             bool passOverridesMaterial,
-            ref VulkanDrawReadinessTally tally)
+            ref VulkanDrawReadinessTally tally,
+            out VkRenderProgram? activeProgram)
         {
+            activeProgram = null;
             XRFrameBuffer? target = recordingState.Ops.GetTarget(opIndex);
             if (!contexts.Add(ComputeReadinessContextKey(passIndex, target, passOverridesMaterial ? 1 : 0)))
                 return false;
+
+            // The draw enqueue stores the pass state of each pass context while a request is active.
+            if (!ResourceRuntime.DrawReadiness.TryGetPassState(context.PipelineInstance, passIndex, target, out VulkanFixedFunctionStateSnapshot passState))
+            {
+                tally.Add(ready: false, retryable: true, PassStateUnknownReason);
+                return false;
+            }
 
             XRMaterial material = passOverridesMaterial && template.MaterialOverride is { } passMaterial
                 ? passMaterial
                 : request.Material;
             PendingMeshDraw draw = VulkanDrawReadinessTemplate.Build(
                 template,
+                passState,
                 request.Renderer,
                 material,
                 request.RenderOptionsOverride);
-            return PrewarmReadinessDraw(ref recordingState, request.Renderer, opIndex, passIndex, in context, target, in draw, ref tally);
+            return PrewarmReadinessDraw(ref recordingState, request.Renderer, opIndex, passIndex, in context, target, in draw, ref tally, out activeProgram);
         }
 
         private void CheckIndirectDraw(
@@ -247,7 +279,7 @@ namespace XREngine.Rendering.Vulkan
             if (!contexts.Add(ComputeReadinessContextKey(passIndex, target, 3)))
                 return;
 
-            _ = PrewarmReadinessDraw(ref recordingState, draw.Renderer, opIndex, passIndex, in context, target, in draw, ref tally);
+            _ = PrewarmReadinessDraw(ref recordingState, draw.Renderer, opIndex, passIndex, in context, target, in draw, ref tally, out _);
         }
 
         /// <summary>Runs the pipeline step of one readiness draw. Returns false when the renderer cannot serve or the target is not ready.</summary>
@@ -259,8 +291,11 @@ namespace XREngine.Rendering.Vulkan
             in FrameOpContext context,
             XRFrameBuffer? target,
             in PendingMeshDraw draw,
-            ref VulkanDrawReadinessTally tally)
+            ref VulkanDrawReadinessTally tally,
+            out VkRenderProgram? activeProgram)
         {
+            activeProgram = null;
+
             // A wrapper that cannot serve must not make programs or pipelines again.
             if (renderer is null || !renderer.CanServeDrawReadiness)
             {
@@ -308,7 +343,8 @@ namespace XREngine.Rendering.Vulkan
                 context.PipelineInstance?.DebugName ?? "<no pipeline>",
                 foregroundRequired: false,
                 out bool retryable,
-                out string reason);
+                out string reason,
+                out activeProgram);
             tally.Add(ready, retryable, reason);
             return true;
         }

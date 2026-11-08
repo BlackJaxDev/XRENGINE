@@ -52,6 +52,12 @@ internal sealed class VulkanDrawReadinessRequest(
     /// <summary>The link generation of <see cref="PublishedProgram"/> when the last evaluation was published.</summary>
     public ulong PublishedLinkGeneration;
 
+    /// <summary>The shared graphics pipeline retirement generation when the last evaluation was published.</summary>
+    public long PublishedRetirementGeneration;
+
+    /// <summary>The target compatibility signature (formats, sample counts, render passes) when the last evaluation was published.</summary>
+    public ulong PublishedTargetSignature;
+
     /// <summary>True when the request asks the same question.</summary>
     public bool Matches(
         VkMeshRenderer renderer,

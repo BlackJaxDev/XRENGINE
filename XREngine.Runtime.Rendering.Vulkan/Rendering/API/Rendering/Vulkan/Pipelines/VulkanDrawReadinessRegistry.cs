@@ -5,28 +5,37 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// The active draw readiness requests of one Vulkan renderer generation. <see cref="VkMeshRenderer.QueryDrawReadiness"/>
-/// registers and renews a request; the pre-recording pipeline admission prewarms the pipelines of each active request for
-/// the pass contexts of its view and publishes the result with the program it measured. A request ends when the open ends
-/// it (<see cref="RemoveRenderer"/>), when its renderer is deleted or unlinked, or when no query renewed it for
-/// <see cref="RequestLifetimeMilliseconds"/>. A frame with no active request pays one volatile read.
+/// registers and renews a request; the pre-recording pipeline admission and the PresentNow readiness gate prewarm the
+/// pipelines of each active request for the pass contexts of its view and publish the result with the program, the shared
+/// pipeline retirement generation, and the target signature that they measured. A request ends when the open ends it
+/// (<see cref="RemoveRenderer"/>), when its renderer is deleted or unlinked, or when no query renewed it for
+/// <see cref="RequestLifetimeMilliseconds"/>. While a request is active, the draw enqueue stores the pass state of each
+/// pass context one time (<see cref="RecordPassState"/>). A frame with no active request pays one volatile read.
 /// </summary>
 internal sealed class VulkanDrawReadinessRegistry
 {
     /// <summary>The time after the last query when a request ends.</summary>
     internal const long RequestLifetimeMilliseconds = 2000;
 
+    /// <summary>The largest number of pass contexts that the pass-state table keeps before it starts again.</summary>
+    private const int MaxPassStates = 256;
+
     private const string ProgramChangedReason = "the program changed after the last pipeline check";
+    private const string PipelinesChangedReason = "the pipelines or the targets of the view changed after the last pipeline check";
 
     private readonly Lock _sync = new();
     private readonly List<VulkanDrawReadinessRequest> _requests = [];
+    private readonly Lock _passStateSync = new();
+    private readonly Dictionary<(object? Pipeline, int PassIndex, object? Target), VulkanFixedFunctionStateSnapshot> _passStates = [];
     private int _count;
 
     /// <summary>True while at least one request is active. One volatile read; the frame loop checks it first.</summary>
     public bool HasActiveRequests => Volatile.Read(ref _count) > 0;
 
     /// <summary>
-    /// Registers or renews a request and gives the result of its last frame-loop evaluation, with the program and link
-    /// generation that the evaluation measured. A new request allocates one object; a known request allocates nothing.
+    /// Registers or renews a request and gives the result of its last evaluation, with the program and link generation that
+    /// the evaluation measured. A ready result that another shared pipeline retirement generation measured gives
+    /// <see cref="ERenderDrawReadiness.Compiling"/>. A new request allocates one object; a known request allocates nothing.
     /// </summary>
     public ERenderDrawReadiness Observe(
         VkMeshRenderer renderer,
@@ -35,6 +44,7 @@ internal sealed class VulkanDrawReadinessRegistry
         XRRenderPipelineInstance? view,
         bool stereo,
         long nowTicks,
+        long currentRetirementGeneration,
         out string reason,
         out object? publishedProgram,
         out ulong publishedLinkGeneration)
@@ -59,10 +69,20 @@ internal sealed class VulkanDrawReadinessRegistry
             }
 
             request.LastQueryTicks = nowTicks;
-            reason = request.Reason;
             publishedProgram = request.PublishedProgram;
             publishedLinkGeneration = request.PublishedLinkGeneration;
-            return request.Evaluations == 0 ? ERenderDrawReadiness.NotStarted : request.State;
+            if (request.Evaluations == 0)
+            {
+                reason = request.Reason;
+                return ERenderDrawReadiness.NotStarted;
+            }
+
+            return ResolvePipelineGeneration(
+                request.State,
+                request.Reason,
+                request.PublishedRetirementGeneration,
+                currentRetirementGeneration,
+                out reason);
         }
     }
 
@@ -92,12 +112,36 @@ internal sealed class VulkanDrawReadinessRegistry
     }
 
     /// <summary>
+    /// Checks a published result against the current shared pipeline retirement generation. A retirement wave removes the
+    /// pipelines that the result measured, so a ready result of another generation gives
+    /// <see cref="ERenderDrawReadiness.Compiling"/>.
+    /// </summary>
+    public static ERenderDrawReadiness ResolvePipelineGeneration(
+        ERenderDrawReadiness publishedState,
+        string publishedReason,
+        long publishedRetirementGeneration,
+        long currentRetirementGeneration,
+        out string reason)
+    {
+        if (publishedState == ERenderDrawReadiness.Ready && publishedRetirementGeneration != currentRetirementGeneration)
+        {
+            reason = PipelinesChangedReason;
+            return ERenderDrawReadiness.Compiling;
+        }
+
+        reason = publishedReason;
+        return publishedState;
+    }
+
+    /// <summary>
     /// Removes the requests that no query renewed in time, or whose renderer cannot draw any more, and copies the active ones
-    /// to <paramref name="destination"/>. The destination list is reused, so this allocates nothing after it has grown.
+    /// to <paramref name="destination"/>. The destination list is reused, so this allocates nothing after it has grown. When
+    /// no request is left, the pass-state table is cleared.
     /// </summary>
     public void CopyActive(List<VulkanDrawReadinessRequest> destination, long nowTicks)
     {
         destination.Clear();
+        bool empty;
         lock (_sync)
         {
             for (int i = _requests.Count - 1; i >= 0; i--)
@@ -111,7 +155,12 @@ internal sealed class VulkanDrawReadinessRegistry
             Volatile.Write(ref _count, _requests.Count);
             for (int i = 0; i < _requests.Count; i++)
                 destination.Add(_requests[i]);
+            empty = _requests.Count == 0;
         }
+
+        if (empty)
+            lock (_passStateSync)
+                _passStates.Clear();
     }
 
     /// <summary>Ends every request of a renderer. The renderer calls it when it is deleted or unlinked, and the open at its end.</summary>
@@ -127,25 +176,78 @@ internal sealed class VulkanDrawReadinessRegistry
     }
 
     /// <summary>
-    /// Records that a frame plan of the view had no pass context for the request. It changes only the reason, and only while
-    /// no frame measured the request, so a plan with no context never replaces a measured result.
+    /// Stores the fixed-function state of one pass context (the render pipeline instance, the pass, and the target). The
+    /// draw enqueue calls it only while a request is active. An unchanged state writes nothing.
     /// </summary>
-    public void NoteNoContext(VulkanDrawReadinessRequest request, string reason)
+    public void RecordPassState(
+        XRRenderPipelineInstance? pipeline,
+        int passIndex,
+        XRFrameBuffer? target,
+        in VulkanFixedFunctionStateSnapshot passState)
+    {
+        (object? Pipeline, int PassIndex, object? Target) key = (pipeline, passIndex, target);
+        lock (_passStateSync)
+        {
+            if (_passStates.TryGetValue(key, out VulkanFixedFunctionStateSnapshot known) && known == passState)
+                return;
+            if (_passStates.Count >= MaxPassStates && !_passStates.ContainsKey(key))
+                _passStates.Clear();
+            _passStates[key] = passState;
+        }
+    }
+
+    /// <summary>Gets the fixed-function state of one pass context, when a draw of that context stored it.</summary>
+    public bool TryGetPassState(
+        XRRenderPipelineInstance? pipeline,
+        int passIndex,
+        XRFrameBuffer? target,
+        out VulkanFixedFunctionStateSnapshot passState)
+    {
+        lock (_passStateSync)
+            return _passStates.TryGetValue((pipeline, passIndex, target), out passState);
+    }
+
+    /// <summary>
+    /// Records that a frame plan of the view had no pass context for the request. While no frame measured the request, it
+    /// only changes the reason. A kept ready result whose shared pipeline retirement generation or target signature changed
+    /// becomes <see cref="ERenderDrawReadiness.Compiling"/>, because the measured pipelines may not exist any more.
+    /// </summary>
+    public void NoteNoContext(
+        VulkanDrawReadinessRequest request,
+        string reason,
+        long retirementGeneration,
+        ulong targetSignature)
     {
         lock (_sync)
         {
             if (request.Evaluations == 0)
+            {
                 request.Reason = reason;
+                return;
+            }
+
+            if (request.State == ERenderDrawReadiness.Ready &&
+                (request.PublishedRetirementGeneration != retirementGeneration ||
+                 request.PublishedTargetSignature != targetSignature))
+            {
+                request.State = ERenderDrawReadiness.Compiling;
+                request.Reason = PipelinesChangedReason;
+            }
         }
     }
 
-    /// <summary>Publishes the result of one frame-loop evaluation of a request, with the program it measured.</summary>
+    /// <summary>
+    /// Publishes the result of one evaluation of a request, with the program, the shared pipeline retirement generation, and
+    /// the target signature that it measured.
+    /// </summary>
     public void Publish(
         VulkanDrawReadinessRequest request,
         ERenderDrawReadiness state,
         string reason,
         object? program,
-        ulong linkGeneration)
+        ulong linkGeneration,
+        long retirementGeneration,
+        ulong targetSignature)
     {
         lock (_sync)
         {
@@ -153,6 +255,8 @@ internal sealed class VulkanDrawReadinessRegistry
             request.Reason = reason;
             request.PublishedProgram = program;
             request.PublishedLinkGeneration = linkGeneration;
+            request.PublishedRetirementGeneration = retirementGeneration;
+            request.PublishedTargetSignature = targetSignature;
             request.Evaluations++;
         }
     }

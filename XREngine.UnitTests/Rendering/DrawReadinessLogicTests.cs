@@ -64,22 +64,84 @@ public sealed class DrawReadinessLogicTests
     }
 
     [Test]
+    public void Registry_AReadyOfAnotherRetirementGeneration_IsCompiling()
+    {
+        VulkanDrawReadinessRegistry registry = new();
+        XRMaterial material = new() { Name = "Proxy" };
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 5, out _, out _, out _);
+        List<VulkanDrawReadinessRequest> active = [];
+        registry.CopyActive(active, nowTicks: 1);
+        registry.Publish(active[0], ERenderDrawReadiness.Ready, "Ready", null, 0UL, retirementGeneration: 5, targetSignature: 9UL);
+
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 2, currentRetirementGeneration: 5, out _, out _, out _)
+            .ShouldBe(ERenderDrawReadiness.Ready);
+
+        // A retirement wave removed the measured pipelines.
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 3, currentRetirementGeneration: 6, out string reason, out _, out _)
+            .ShouldBe(ERenderDrawReadiness.Compiling);
+        reason.ShouldContain("changed");
+    }
+
+    [TestCase(6L, 9UL)]
+    [TestCase(5L, 10UL)]
+    public void Registry_AKeptReady_BecomesCompiling_WhenThePipelinesOrTheTargetsChange(long retirementGeneration, ulong targetSignature)
+    {
+        VulkanDrawReadinessRegistry registry = new();
+        XRMaterial material = new() { Name = "Proxy" };
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 5, out _, out _, out _);
+        List<VulkanDrawReadinessRequest> active = [];
+        registry.CopyActive(active, nowTicks: 1);
+        registry.Publish(active[0], ERenderDrawReadiness.Ready, "Ready", null, 0UL, retirementGeneration: 5, targetSignature: 9UL);
+
+        // A plan with no context of the material: same generation and target keep the Ready.
+        registry.NoteNoContext(active[0], "no context", retirementGeneration: 5, targetSignature: 9UL);
+        active[0].State.ShouldBe(ERenderDrawReadiness.Ready);
+
+        // A resize, an MSAA change, or a retirement wave in that window: the kept Ready is stale.
+        registry.NoteNoContext(active[0], "no context", retirementGeneration, targetSignature);
+        active[0].State.ShouldBe(ERenderDrawReadiness.Compiling);
+    }
+
+    [Test]
+    public void Registry_StoresThePassStateOfEachPassContext_AndClearsItWithTheLastRequest()
+    {
+        VulkanDrawReadinessRegistry registry = new();
+        XRMaterial material = new() { Name = "Proxy" };
+        VulkanFixedFunctionStateSnapshot opaque = OpaquePassState();
+        VulkanFixedFunctionStateSnapshot forward = opaque with { BlendEnabled = true };
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
+
+        registry.RecordPassState(null, 3, null, opaque);
+        registry.RecordPassState(null, 4, null, forward);
+
+        registry.TryGetPassState(null, 3, null, out VulkanFixedFunctionStateSnapshot found).ShouldBeTrue();
+        found.ShouldBe(opaque);
+        registry.TryGetPassState(null, 4, null, out found).ShouldBeTrue();
+        found.ShouldBe(forward);
+        registry.TryGetPassState(null, 5, null, out _).ShouldBeFalse();
+
+        List<VulkanDrawReadinessRequest> active = [];
+        registry.CopyActive(active, nowTicks: VulkanDrawReadinessRegistry.RequestLifetimeMilliseconds + 1);
+        registry.TryGetPassState(null, 3, null, out _).ShouldBeFalse();
+    }
+
+    [Test]
     public void Registry_APlanWithNoContext_NeverReplacesAMeasuredResult()
     {
         VulkanDrawReadinessRegistry registry = new();
         XRMaterial material = new() { Name = "Proxy" };
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, out _, out _, out _);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
         List<VulkanDrawReadinessRequest> active = [];
         registry.CopyActive(active, nowTicks: 1);
 
-        registry.NoteNoContext(active[0], "no context");
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 2, out string reason, out _, out _)
+        registry.NoteNoContext(active[0], "no context", retirementGeneration: 0, targetSignature: 0UL);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 2, currentRetirementGeneration: 0, out string reason, out _, out _)
             .ShouldBe(ERenderDrawReadiness.NotStarted);
         reason.ShouldBe("no context");
 
-        registry.Publish(active[0], ERenderDrawReadiness.Ready, "Ready", null, 0UL);
-        registry.NoteNoContext(active[0], "no context");
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 3, out reason, out _, out _)
+        registry.Publish(active[0], ERenderDrawReadiness.Ready, "Ready", null, 0UL, retirementGeneration: 0, targetSignature: 0UL);
+        registry.NoteNoContext(active[0], "no context", retirementGeneration: 0, targetSignature: 0UL);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 3, currentRetirementGeneration: 0, out reason, out _, out _)
             .ShouldBe(ERenderDrawReadiness.Ready);
         reason.ShouldBe("Ready");
     }
@@ -92,17 +154,17 @@ public sealed class DrawReadinessLogicTests
         registry.HasActiveRequests.ShouldBeFalse();
 
         // The registry compares the renderer by reference only, so a test can use a null renderer key.
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 1000, out _, out _, out _).ShouldBe(ERenderDrawReadiness.NotStarted);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 1000, currentRetirementGeneration: 0, out _, out _, out _).ShouldBe(ERenderDrawReadiness.NotStarted);
         registry.HasActiveRequests.ShouldBeTrue();
 
         List<VulkanDrawReadinessRequest> active = [];
         registry.CopyActive(active, nowTicks: 1100);
         active.Count.ShouldBe(1);
-        registry.Publish(active[0], ERenderDrawReadiness.Ready, "Ready", null, 0UL);
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 1200, out _, out _, out _).ShouldBe(ERenderDrawReadiness.Ready);
+        registry.Publish(active[0], ERenderDrawReadiness.Ready, "Ready", null, 0UL, retirementGeneration: 0, targetSignature: 0UL);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 1200, currentRetirementGeneration: 0, out _, out _, out _).ShouldBe(ERenderDrawReadiness.Ready);
 
-        registry.Publish(active[0], ERenderDrawReadiness.Compiling, "a new variant compiles", null, 0UL);
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 1300, out string reason, out _, out _).ShouldBe(ERenderDrawReadiness.Compiling);
+        registry.Publish(active[0], ERenderDrawReadiness.Compiling, "a new variant compiles", null, 0UL, retirementGeneration: 0, targetSignature: 0UL);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 1300, currentRetirementGeneration: 0, out string reason, out _, out _).ShouldBe(ERenderDrawReadiness.Compiling);
         reason.ShouldBe("a new variant compiles");
     }
 
@@ -111,7 +173,7 @@ public sealed class DrawReadinessLogicTests
     {
         VulkanDrawReadinessRegistry registry = new();
         XRMaterial material = new() { Name = "Proxy" };
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, out _, out _, out _);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
 
         List<VulkanDrawReadinessRequest> active = [];
         registry.CopyActive(active, nowTicks: VulkanDrawReadinessRegistry.RequestLifetimeMilliseconds + 1);
@@ -125,8 +187,8 @@ public sealed class DrawReadinessLogicTests
     {
         VulkanDrawReadinessRegistry registry = new();
         XRMaterial material = new() { Name = "Proxy" };
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, out _, out _, out _);
-        registry.Observe(null!, material, null, null, stereo: true, nowTicks: 0, out _, out _, out _);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
+        registry.Observe(null!, material, null, null, stereo: true, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
 
         List<VulkanDrawReadinessRequest> active = [];
         registry.CopyActive(active, nowTicks: 10);
@@ -141,13 +203,13 @@ public sealed class DrawReadinessLogicTests
         XRMaterial material = new() { Name = "Proxy" };
         object canonicalProgram = new();
         object variantProgram = new();
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, out _, out _, out _);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
         List<VulkanDrawReadinessRequest> active = [];
         registry.CopyActive(active, nowTicks: 1);
-        registry.Publish(active[0], ERenderDrawReadiness.Ready, "Ready", canonicalProgram, 3UL);
+        registry.Publish(active[0], ERenderDrawReadiness.Ready, "Ready", canonicalProgram, 3UL, retirementGeneration: 0, targetSignature: 0UL);
 
         ERenderDrawReadiness state = registry.Observe(
-            null!, material, null, null, stereo: false, nowTicks: 2, out string reason, out object? program, out ulong generation);
+            null!, material, null, null, stereo: false, nowTicks: 2, currentRetirementGeneration: 0, out string reason, out object? program, out ulong generation);
         state.ShouldBe(ERenderDrawReadiness.Ready);
         program.ShouldBeSameAs(canonicalProgram);
         generation.ShouldBe(3UL);
@@ -178,8 +240,8 @@ public sealed class DrawReadinessLogicTests
     {
         VulkanDrawReadinessRegistry registry = new();
         XRMaterial material = new() { Name = "Proxy" };
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, out _, out _, out _);
-        registry.Observe(null!, material, null, null, stereo: true, nowTicks: 0, out _, out _, out _);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
+        registry.Observe(null!, material, null, null, stereo: true, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
         registry.HasActiveRequests.ShouldBeTrue();
 
         registry.RemoveRenderer(null!);
@@ -196,8 +258,8 @@ public sealed class DrawReadinessLogicTests
         VulkanDrawReadinessRegistry registry = new();
         XRMaterial material = new() { Name = "Proxy" };
         XREngine.Rendering.Models.Materials.RenderingParameters options = new();
-        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, out _, out _, out _);
-        registry.Observe(null!, material, options, null, stereo: false, nowTicks: 0, out _, out _, out _);
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
+        registry.Observe(null!, material, options, null, stereo: false, nowTicks: 0, currentRetirementGeneration: 0, out _, out _, out _);
 
         List<VulkanDrawReadinessRequest> active = [];
         registry.CopyActive(active, nowTicks: 1);
@@ -230,7 +292,6 @@ public sealed class DrawReadinessLogicTests
     private static PendingMeshDraw StencilBlendTemplate(VulkanFixedFunctionStateSnapshot passState)
         => default(PendingMeshDraw) with
         {
-            PassState = passState,
             RasterizationSamples = SampleCountFlags.Count1Bit,
             ViewportScissorCount = 1u,
             DepthTestEnabled = passState.DepthTestEnabled,
@@ -260,7 +321,7 @@ public sealed class DrawReadinessLogicTests
 
         // A T0 material with default render options leaves stencil unchanged, so the real draw uses the pass stencil.
         XRMaterial t0 = new() { Name = "T0" };
-        PendingMeshDraw prewarm = VulkanDrawReadinessTemplate.Build(template, null!, t0, renderOptionsOverride: null);
+        PendingMeshDraw prewarm = VulkanDrawReadinessTemplate.Build(template, pass, null!, t0, renderOptionsOverride: null);
         VulkanFixedFunctionStateSnapshot real = VulkanMeshDrawFixedState.Resolve(t0.RenderOptions, pass, SampleCountFlags.Count1Bit);
 
         VulkanDrawReadinessTemplate.GetDrawState(prewarm).ShouldBe(real);
@@ -285,7 +346,7 @@ public sealed class DrawReadinessLogicTests
         XREngine.Rendering.Models.Materials.RenderingParameters options = new();
         options.CullMode = XREngine.Data.Rendering.ECullMode.None;
 
-        PendingMeshDraw prewarm = VulkanDrawReadinessTemplate.Build(template, null!, t0, options);
+        PendingMeshDraw prewarm = VulkanDrawReadinessTemplate.Build(template, pass, null!, t0, options);
 
         VulkanDrawReadinessTemplate.GetDrawState(prewarm)
             .ShouldBe(VulkanMeshDrawFixedState.Resolve(options, pass, SampleCountFlags.Count1Bit));

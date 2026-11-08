@@ -80,6 +80,7 @@ internal unsafe partial class VkMeshRenderer
 			query.View,
 			query.Stereo,
 			Environment.TickCount64,
+			BackendContext.Resources.PipelineManager.SharedGraphicsPipelineRetirementGeneration,
 			out string publishedReason,
 			out object? publishedProgram,
 			out ulong publishedLinkGeneration);

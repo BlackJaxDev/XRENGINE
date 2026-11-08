@@ -2696,9 +2696,41 @@ internal unsafe partial class VkMeshRenderer
 		bool foregroundRequired,
 		out bool retryable,
 		out string reason)
+		=> TryPrewarmGraphicsPipelinesForRecording(
+			draw,
+			renderPass,
+			useDynamicRendering,
+			dynamicRenderingFormats,
+			passIndex,
+			passMetadata,
+			depthStencilReadOnly,
+			pipelineName,
+			foregroundRequired,
+			out retryable,
+			out reason,
+			out _);
+
+	/// <summary>
+	/// Runs the pipeline step of one draw for every topology of the renderer. <paramref name="activeProgram"/> is the active
+	/// program of the renderer at the end of the step, read under the recording lock, or null when the step did not run.
+	/// </summary>
+	internal bool TryPrewarmGraphicsPipelinesForRecording(
+		in PendingMeshDraw draw,
+		RenderPass renderPass,
+		bool useDynamicRendering,
+		DynamicRenderingFormatSignature dynamicRenderingFormats,
+		int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+		bool depthStencilReadOnly,
+		string pipelineName,
+		bool foregroundRequired,
+		out bool retryable,
+		out string reason,
+		out VkRenderProgram? activeProgram)
 	{
 		retryable = false;
 		reason = string.Empty;
+		activeProgram = null;
 		if (!_recordDrawSync.TryEnter())
 		{
 			retryable = true;
@@ -2843,6 +2875,7 @@ internal unsafe partial class VkMeshRenderer
 				reason = "Ready";
 			else if (reason.Length == 0)
 				reason = "graphics pipeline preparation failed without a diagnostic";
+			activeProgram = _program;
 			return ready;
 		}
 		finally

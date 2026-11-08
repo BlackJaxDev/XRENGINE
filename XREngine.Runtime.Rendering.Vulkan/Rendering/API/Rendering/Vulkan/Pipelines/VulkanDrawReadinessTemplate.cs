@@ -4,26 +4,28 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Builds the draw that the readiness prewarm compiles for a T0 renderer from a draw of the same pass (the template). The
-/// fixed-function state comes from the pass state of the template (<see cref="PendingMeshDraw.PassState"/>) and the render
-/// options of the T0 draw, with the same rules as the draw enqueue (<see cref="VulkanMeshDrawFixedState"/>). Nothing comes
+/// fixed-function state comes from the pass state of the pass context of the template
+/// (<see cref="VulkanDrawReadinessRegistry.TryGetPassState"/>) and the render options of the T0 draw, with the same rules as the draw enqueue (<see cref="VulkanMeshDrawFixedState"/>). Nothing comes
 /// from the material of the template, so the pipeline key matches the real T0 draw in that pass.
 /// </summary>
 internal static class VulkanDrawReadinessTemplate
 {
     /// <summary>Builds the prewarm draw.</summary>
     /// <param name="template">A draw of the pass and target, from the frame plan.</param>
+    /// <param name="passState">The fixed-function state of the pass context of the template.</param>
     /// <param name="renderer">The T0 renderer.</param>
     /// <param name="material">The material of the T0 draw.</param>
     /// <param name="renderOptionsOverride">The render options override of the T0 renderable, or null.</param>
     public static PendingMeshDraw Build(
         in PendingMeshDraw template,
+        in VulkanFixedFunctionStateSnapshot passState,
         VkMeshRenderer renderer,
         XRMaterial material,
         RenderingParameters? renderOptionsOverride)
     {
         VulkanFixedFunctionStateSnapshot drawState = VulkanMeshDrawFixedState.Resolve(
             renderOptionsOverride ?? material.RenderOptions,
-            template.PassState,
+            passState,
             template.RasterizationSamples);
         return template with
         {

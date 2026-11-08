@@ -350,14 +350,17 @@ payload split). The GPU routes follow these rules:
   each non-shadow pass context of the view that draws the pass of the material
   (a CPU mesh draw of that pass is the template; the draw state is the T0
   render options, or the render options override, over the pass state of the
-  template, `PendingMeshDraw.PassState`, with the rules of
-  `VulkanMeshDrawFixedState`; nothing comes from the template material),
+  pass context of the template, which the draw enqueue stores one time for each
+  pipeline instance, pass, and target while a request is active, with the rules
+  of `VulkanMeshDrawFixedState`; nothing comes from the template material),
   checks the indirect batch of the material on GPU-driven routes, and checks
-  the mesh-task requirement on meshlet routes. It is ready only when every
-  required context is ready, and only for the program and link generation that
-  it measured. A request ends at the end of the open (`EndDrawReadinessQueries`),
+  the mesh-task requirement on meshlet routes. The pre-recording admission and
+  the PresentNow readiness gate both run it. It is ready only when every
+  required context is ready, and only for the program, link generation, shared
+  pipeline retirement generation, and target signature that it measured. A
+  request ends at the end of the open (`EndDrawReadinessQueries`),
   when its wrapper is deleted or unlinked, or 2 s after the last query. A frame
-  with no active query pays one volatile read; draws pay nothing. The cutscene
+  admission and each draw enqueue with no active query pay one volatile read. The cutscene
   open uses it for `ReadyForInstantSeek`.
 
 The render-command path takes the LOD levels from the render info owner. A model
