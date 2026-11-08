@@ -11,22 +11,27 @@ namespace XREngine.Editor.Publishing;
 /// <remarks>
 /// The settings assets use registered MemoryPack codecs, which write the <see cref="XRAsset"/> members directly and do not
 /// pass through the write-time projection. So the publish clears the paths on a copy before the write. Call these methods
-/// inside a <see cref="CookedSourcePathProjection"/> scope, so that a source path outside every asset root is recorded.
+/// inside a <see cref="CookedSourcePathProjection"/> scope, so that a source path outside every asset root is cleared and recorded.
 /// </remarks>
 public static class PublishedConfigAssets
 {
     /// <summary>Makes the published copy of the startup settings.</summary>
     /// <param name="live">The live startup settings.</param>
     /// <returns>The copy to write.</returns>
-    /// <exception cref="CookedSourcePathException"><see cref="GameStartupSettings.TexturesFolder"/> is an absolute path.</exception>
+    /// <remarks>
+    /// An absolute <see cref="GameStartupSettings.TexturesFolder"/> is a machine path, so the copy clears it, and the publish
+    /// lists it in its warning.
+    /// </remarks>
     public static GameStartupSettings CreateStartupSettings(GameStartupSettings live)
     {
         ArgumentNullException.ThrowIfNull(live);
         GameStartupSettings copy = Copy(live);
         if (!string.IsNullOrWhiteSpace(copy.TexturesFolder) && Path.IsPathRooted(copy.TexturesFolder))
-            throw new CookedSourcePathException(
-                $"Startup settings member '{nameof(GameStartupSettings.TexturesFolder)}' holds the machine path '{copy.TexturesFolder}'. " +
-                "A publish must not ship a machine path. Use a folder relative to the project.");
+        {
+            PublishPathRedactionLog.Record("startup settings",
+                $"{copy.TexturesFolder} ({nameof(GameStartupSettings)}.{nameof(GameStartupSettings.TexturesFolder)})");
+            copy.TexturesFolder = string.Empty;
+        }
         return copy;
     }
 

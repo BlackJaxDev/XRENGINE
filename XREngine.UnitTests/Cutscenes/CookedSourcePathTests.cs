@@ -64,7 +64,7 @@ public sealed class CookedSourcePathTests
             using (CookedSourcePathScope scope = CookedSourcePathProjection.Begin())
             {
                 cooked = CookedBinarySerializer.Serialize(holder);
-                scope.Failures.ShouldBeEmpty();
+                scope.ClearedPaths.ShouldBeEmpty();
             }
 
             CookHolderAsset loaded = CookedBinarySerializer.Deserialize(typeof(CookHolderAsset), cooked).ShouldBeOfType<CookHolderAsset>();
@@ -90,7 +90,7 @@ public sealed class CookedSourcePathTests
     }
 
     [Test]
-    public void CookScope_RecordsAnAbsolutePathOutsideTheAssetRoots_AndKeepsRelativeValues()
+    public void CookScope_ClearsAnAbsolutePathOutsideTheAssetRoots_AndKeepsRelativeValues()
     {
         string outside = Path.Combine(_tempRoot, "Elsewhere", "wall.png");
         XRTexture2D texture = new() { Name = "wall", OriginalPath = outside };
@@ -102,7 +102,7 @@ public sealed class CookedSourcePathTests
 
             _ = CookedBinarySerializer.Serialize(holder);
 
-            scope.Failures.ShouldBe([new CookedSourcePathFailure("wall", outside)]);
+            scope.ClearedPaths.ShouldBe([new ClearedCookedSourcePath("wall", outside)]);
         }
         finally
         {
@@ -263,7 +263,7 @@ public sealed class CookedSourcePathTests
     }
 
     [Test]
-    public void ContentCook_FailsForASourcePathOutsideTheAssetRoots_AndNamesTheAssetAndThePath()
+    public void ContentCook_ClearsASourcePathOutsideTheAssetRoots_AndListsTheAssetAndThePath()
     {
         string outside = Path.Combine(_tempRoot, "Downloads", "wall.png");
         XRTexture2D texture = new() { Name = "downloaded wall", OriginalPath = outside, SamplerName = "_MainTex" };
@@ -271,13 +271,16 @@ public sealed class CookedSourcePathTests
         try
         {
             using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+            using PublishPathRedactionLog log = PublishPathRedactionLog.Begin();
             WriteAsset(Path.Combine(_assets, "WallMaterial.asset"), material);
 
-            CookedSourcePathException error = Should.Throw<CookedSourcePathException>(() => Cook());
+            string cooked = Cook();
 
-            error.Message.ShouldContain("WallMaterial.asset");
-            error.Message.ShouldContain("downloaded wall");
-            error.Message.ShouldContain(outside);
+            log.Entries.ShouldContain(entry => entry.File.EndsWith("WallMaterial.asset", StringComparison.Ordinal)
+                && entry.Item.Contains(outside, StringComparison.Ordinal) && entry.Item.Contains("downloaded wall", StringComparison.Ordinal));
+            byte[] bytes = File.ReadAllBytes(Path.Combine(cooked, "WallMaterial.asset"));
+            CookedOutputPathGuard.TryFindMachinePath(bytes, [], out _).ShouldBeFalse();
+            texture.OriginalPath.ShouldBe(outside);
         }
         finally
         {
@@ -287,21 +290,29 @@ public sealed class CookedSourcePathTests
     }
 
     [Test]
-    public void ContentCook_FailsWhenTheCookedBytesHoldAMachinePath_AndNamesTheAssetAndThePath()
+    public void ContentCook_StripsAMachinePathFromTheCookedBytes_AndListsIt()
     {
-        // A member that is not a source path holds an absolute path. The write-time projection does not see it, so the check
-        // after the cook finds it.
+        // A member that is not a source path holds an absolute path. The write-time projection does not see it, so the strip
+        // after the cook overwrites it with filler of the same length.
         string machinePath = Path.Combine(_tempRoot, "Notes", "readme.txt");
         CookHolderAsset holder = new() { Name = "Noted", Note = machinePath };
         try
         {
             using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
-            WriteAsset(Path.Combine(_assets, "Noted.asset"), holder);
+            using PublishPathRedactionLog log = PublishPathRedactionLog.Begin();
+            string source = Path.Combine(_assets, "Noted.asset");
+            WriteAsset(source, holder);
+            string sourceText = File.ReadAllText(source);
 
-            CookedSourcePathException error = Should.Throw<CookedSourcePathException>(() => Cook());
+            string cooked = Cook();
 
-            error.Message.ShouldContain("Noted.asset");
-            error.Message.ShouldContain(_tempRoot);
+            log.Entries.ShouldContain(entry => entry.File == "Noted.asset" && entry.Item.StartsWith(_tempRoot, StringComparison.Ordinal));
+            byte[] bytes = File.ReadAllBytes(Path.Combine(cooked, "Noted.asset"));
+            Encoding.Latin1.GetString(bytes).ShouldNotContain(_tempRoot);
+            File.ReadAllText(source).ShouldBe(sourceText);
+            CookHolderAsset loaded = CookedAssetReader.LoadAsset<CookHolderAsset>(bytes).ShouldNotBeNull();
+            loaded.Note!.Length.ShouldBe(machinePath.Length);
+            loaded.Note.ShouldNotContain(Path.DirectorySeparatorChar);
         }
         finally
         {
@@ -350,7 +361,7 @@ public sealed class CookedSourcePathTests
     }
 
     [Test]
-    public void IncrementalContentCook_FailsWhenTheCookedBytesHoldAMachinePath()
+    public void IncrementalContentCook_StripsAMachinePathFromTheCookedBytes()
     {
         // The startup settings have a registered runtime codec, so the published cook accepts them. A free folder string
         // holds an absolute path that the source path projection does not see.
@@ -359,15 +370,16 @@ public sealed class CookedSourcePathTests
         try
         {
             using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+            using PublishPathRedactionLog log = PublishPathRedactionLog.Begin();
             string source = Path.Combine(_assets, "Data", "Startup.asset");
             WriteAsset(source, settings);
             string destination = Path.Combine(_tempRoot, "Delta", "Data", "Startup.asset");
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 
-            CookedSourcePathException error = Should.Throw<CookedSourcePathException>(() =>
-                ProjectBuilder.TransformIncrementalContentFile(source, destination));
-            error.Message.ShouldContain("Startup.asset");
-            error.Message.ShouldContain(_tempRoot);
+            ProjectBuilder.TransformIncrementalContentFile(source, destination);
+
+            log.Entries.ShouldContain(entry => entry.File.EndsWith("Startup.asset", StringComparison.Ordinal));
+            Encoding.Latin1.GetString(File.ReadAllBytes(destination)).ShouldNotContain(_tempRoot);
         }
         finally
         {
@@ -409,29 +421,29 @@ public sealed class CookedSourcePathTests
     }
 
     [Test]
-    public void ConfigArchive_FailsForAnAbsoluteTexturesFolder_AndForASourcePathOutsideTheAssetRoots()
+    public void ConfigArchive_ClearsAnAbsoluteTexturesFolder_AndASourcePathOutsideTheAssetRoots()
     {
         string staging = Path.Combine(_tempRoot, "Staging");
         Directory.CreateDirectory(staging);
         string machinePath = Path.Combine(_tempRoot, "Textures");
+        string outside = Path.Combine(_tempRoot, "Elsewhere", "user.yaml");
         GameStartupSettings startup = new() { Name = "Startup", TexturesFolder = machinePath };
         EditorPreferences preferences = new() { Name = "Preferences" };
-        UserSettings user = new() { Name = "User" };
+        UserSettings user = new() { Name = "User", OriginalPath = outside };
         try
         {
             using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+            using PublishPathRedactionLog log = PublishPathRedactionLog.Begin();
 
-            CookedSourcePathException error = Should.Throw<CookedSourcePathException>(() =>
-                ProjectBuilder.WriteConfigArchiveAssets(staging, startup, preferences, user, aotMetadata: null));
-            error.Message.ShouldContain(nameof(GameStartupSettings.TexturesFolder));
-            error.Message.ShouldContain(machinePath);
+            ProjectBuilder.WriteConfigArchiveAssets(staging, startup, preferences, user, aotMetadata: null);
 
-            startup.TexturesFolder = "Textures";
-            string outside = Path.Combine(_tempRoot, "Elsewhere", "user.yaml");
-            user.OriginalPath = outside;
-            error = Should.Throw<CookedSourcePathException>(() =>
-                ProjectBuilder.WriteConfigArchiveAssets(staging, startup, preferences, user, aotMetadata: null));
-            error.Message.ShouldContain(outside);
+            log.Entries.ShouldContain(entry => entry.Item.Contains(nameof(GameStartupSettings.TexturesFolder), StringComparison.Ordinal)
+                && entry.Item.Contains(machinePath, StringComparison.Ordinal));
+            log.Entries.ShouldContain(entry => entry.Item.Contains(outside, StringComparison.Ordinal));
+            foreach (string file in Directory.GetFiles(staging))
+                Encoding.Latin1.GetString(File.ReadAllBytes(file)).ShouldNotContain(_tempRoot, Case.Insensitive, file);
+            startup.TexturesFolder.ShouldBe(machinePath);
+            user.OriginalPath.ShouldBe(outside);
         }
         finally
         {

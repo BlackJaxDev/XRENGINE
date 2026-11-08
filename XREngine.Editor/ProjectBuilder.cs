@@ -109,6 +109,7 @@ internal static partial class ProjectBuilder
             return;
         }
 
+        using PublishPathRedactionLog redactions = PublishPathRedactionLog.Begin();
         try
         {
             for (int i = 0; i < steps.Count; i++)
@@ -119,7 +120,7 @@ internal static partial class ProjectBuilder
                 float progress = (i + 1f) / steps.Count;
                 progressCallback?.Invoke(new JobProgress(progress, step.Description));
             }
-            progressCallback?.Invoke(new JobProgress(1f, "Build completed"));
+            progressCallback?.Invoke(new JobProgress(1f, DescribeCompletion(redactions, context)));
         }
         finally { context.CleanupAfterBuild?.Invoke(); }
     }
@@ -185,6 +186,7 @@ internal static partial class ProjectBuilder
             yield break;
         }
 
+        PublishPathRedactionLog redactions = PublishPathRedactionLog.Begin();
         try
         {
             for (int i = 0; i < steps.Count; i++)
@@ -195,9 +197,25 @@ internal static partial class ProjectBuilder
                 float progress = (i + 1f) / steps.Count;
                 yield return new JobProgress(progress, step.Description);
             }
-            yield return new JobProgress(1f, "Build completed");
+            yield return new JobProgress(1f, DescribeCompletion(redactions, context));
         }
-        finally { context.CleanupAfterBuild?.Invoke(); }
+        finally
+        {
+            redactions.Dispose();
+            context.CleanupAfterBuild?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Writes the publish warning and the report file when the publish removed machine paths or secrets, and gets the
+    /// completion text. The text names the report, so the editor shows it also in a Release build.
+    /// </summary>
+    private static string DescribeCompletion(PublishPathRedactionLog redactions, BuildContext context)
+    {
+        string? report = redactions.WriteWarningAndReport(context.BuildRoot);
+        return report is null
+            ? "Build completed"
+            : $"Build completed with {redactions.Entries.Count} removed machine path(s) or secret(s). Report: {report}";
     }
 
     private static XRProject EnsureProjectLoaded()
@@ -420,12 +438,12 @@ internal static partial class ProjectBuilder
             aotMetadata);
 
         // The published copies project their own source paths in this scope.
-        ThrowIfSourcePathsNotPortable(sourcePaths, "config archive settings");
+        RecordClearedItems(sourcePaths, "config archive settings");
     }
 
     /// <summary>
-    /// Writes one cooked asset under the cook scope, fails if a source path is outside every asset root, and checks the
-    /// written file for machine paths. The config archive and the browser cooks use it.
+    /// Writes one cooked asset under the cook scope, lists the source paths and secrets that the scope cleared, and strips
+    /// machine paths from the written file. The config archive and the browser cooks use it.
     /// </summary>
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
     private static void WriteGuardedCookedAsset(object data, string destination, string assetLabel,
@@ -434,9 +452,9 @@ internal static partial class ProjectBuilder
         using (CookedSourcePathScope sourcePaths = CookedSourcePathProjection.Begin())
         {
             WriteCookedAsset(data, destination, aotMetadata, callbacks);
-            ThrowIfSourcePathsNotPortable(sourcePaths, assetLabel);
+            RecordClearedItems(sourcePaths, assetLabel);
         }
-        CookedOutputPathGuard.ThrowIfMachinePath(destination, assetLabel);
+        CookedOutputPathGuard.StripCookedFile(destination, assetLabel);
     }
 
     private static void WriteAotRuntimeMetadata(string stagingDirectory, AotRuntimeMetadata metadata)
@@ -615,8 +633,8 @@ internal static partial class ProjectBuilder
     }
 
     /// <summary>
-    /// Packs the full engine asset folder as it is. Each packed file is checked for machine paths: every file in a full
-    /// pack, and each changed file in an incremental repack.
+    /// Packs the full engine asset folder as it is. Machine paths are stripped from the packed bytes of every file in a full
+    /// pack, and of each changed file in an incremental repack. The source files do not change.
     /// </summary>
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
     private static void PackFullCommonAssets(string engineAssetsPath, string commonAssetsArchivePath, string intermediateDirectory, bool incremental)
@@ -626,7 +644,7 @@ internal static partial class ProjectBuilder
             if (File.Exists(commonAssetsArchivePath))
                 File.Delete(commonAssetsArchivePath);
 
-            PackGuardedSourceDirectory(engineAssetsPath, commonAssetsArchivePath);
+            PackStrippedSourceDirectory(engineAssetsPath, commonAssetsArchivePath, intermediateDirectory, "CommonAssetsStripped");
             return;
         }
 
@@ -635,7 +653,7 @@ internal static partial class ProjectBuilder
             archivePath: commonAssetsArchivePath,
             intermediateDirectory: intermediateDirectory,
             deltaFolderName: "CommonAssetsDelta",
-            transformFile: CopyGuardedFile,
+            transformFile: CopyAndStripFile,
             packFullSourceDirectly: true);
     }
 
@@ -676,31 +694,66 @@ internal static partial class ProjectBuilder
         if (File.Exists(commonAssetsArchivePath))
             File.Delete(commonAssetsArchivePath);
 
-        PackGuardedSourceDirectory(stagingDirectory, commonAssetsArchivePath);
+        // The staging folder is a copy, so the strip changes it in place.
+        StripCopiedDirectory(stagingDirectory);
+        AssetPacker.Pack(stagingDirectory, commonAssetsArchivePath);
     }
 
     /// <summary>
-    /// Packs a folder as it is, after a check of each file for machine paths. The archive is compressed, so the check reads
-    /// the source files.
+    /// Packs a source folder as it is, but stores a stripped copy of each file that holds a machine path. The stripped copies
+    /// go to a folder in the intermediate directory; the source files do not change. The archive entry of a stripped file
+    /// keeps the path and the timestamp of the source file.
     /// </summary>
-    private static void PackGuardedSourceDirectory(string sourceDirectory, string archivePath)
+    private static void PackStrippedSourceDirectory(string sourceDirectory, string archivePath, string intermediateDirectory, string strippedFolderName)
     {
-        GuardCopiedDirectory(sourceDirectory);
-        AssetPacker.Pack(sourceDirectory, archivePath);
+        Dictionary<string, string> replacements = CreateStrippedCopies(sourceDirectory, Path.Combine(intermediateDirectory, "Build", strippedFolderName));
+        AssetPacker.Pack(sourceDirectory, archivePath, replacementFiles: replacements.Count > 0 ? replacements : null);
     }
 
-    /// <summary>Fails the publish if a file in a folder that the publish ships as it is holds a machine path.</summary>
-    internal static void GuardCopiedDirectory(string directory)
+    /// <summary>
+    /// Writes a stripped copy of each source file that holds a machine path into a folder, and records each stripped path.
+    /// The source files do not change.
+    /// </summary>
+    /// <param name="sourceDirectory">The source folder that a publish packs as it is.</param>
+    /// <param name="strippedRoot">The folder for the stripped copies. It is made again.</param>
+    /// <returns>A map from each full source file path to its stripped copy.</returns>
+    internal static Dictionary<string, string> CreateStrippedCopies(string sourceDirectory, string strippedRoot)
+    {
+        if (Directory.Exists(strippedRoot))
+            Directory.Delete(strippedRoot, true);
+
+        Dictionary<string, string> replacements = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string file in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            if (!CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file))
+                continue;
+
+            string relative = Path.GetRelativePath(sourceDirectory, file);
+            string copy = Path.Combine(strippedRoot, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+            File.Copy(file, copy, true);
+            CookedOutputPathGuard.StripCopiedFile(copy, NormalizePath(relative));
+            replacements.Add(Path.GetFullPath(file), copy);
+        }
+
+        return replacements;
+    }
+
+    /// <summary>
+    /// Strips machine paths from every file in a folder of the build output or of a staging copy. Never call it on a source
+    /// folder.
+    /// </summary>
+    internal static void StripCopiedDirectory(string directory)
     {
         foreach (string file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
-            CookedOutputPathGuard.ThrowIfMachinePathInCopiedFile(file, NormalizePath(Path.GetRelativePath(directory, file)));
+            CookedOutputPathGuard.StripCopiedFile(file, NormalizePath(Path.GetRelativePath(directory, file)));
     }
 
-    /// <summary>Copies a file that the publish ships as it is, then fails the publish if the file holds a machine path.</summary>
-    internal static void CopyGuardedFile(string source, string destination)
+    /// <summary>Copies a file that the publish ships as it is, then strips machine paths from the copy.</summary>
+    internal static void CopyAndStripFile(string source, string destination)
     {
         File.Copy(source, destination, true);
-        CookedOutputPathGuard.ThrowIfMachinePathInCopiedFile(destination, source);
+        CookedOutputPathGuard.StripCopiedFile(destination, source);
     }
 
     internal static string PackageRuntimeShaderAssetsForTests(
@@ -875,17 +928,17 @@ internal static partial class ProjectBuilder
     }
 
     /// <summary>
-    /// Cooks one file of the incremental content archive, then checks the cooked asset file, or the copied file, for
-    /// machine paths.
+    /// Cooks one file of the incremental content archive, then strips machine paths from the cooked asset file, or from the
+    /// copied file.
     /// </summary>
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
     internal static void TransformIncrementalContentFile(string source, string destination)
     {
         WritePublishedCookedFile(source, destination);
         if (string.Equals(Path.GetExtension(source), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
-            CookedOutputPathGuard.ThrowIfMachinePath(destination, source);
+            CookedOutputPathGuard.StripCookedFile(destination, source);
         else
-            CookedOutputPathGuard.ThrowIfMachinePathInCopiedFile(destination, source);
+            CookedOutputPathGuard.StripCopiedFile(destination, source);
     }
 
     private static void RepackConfigArchiveIncremental(BuildContext context, string stagingDirectory)
@@ -967,17 +1020,28 @@ internal static partial class ProjectBuilder
         Dictionary<string, AssetTimestampEntry> currentSnapshot = CaptureDirectorySnapshot(sourceDirectory, includeRelativePath);
         string ledgerPath = SubMeshLodEntryLedger.GetPath(intermediateDirectory, deltaFolderName);
 
+        // An archive that the current strip rules did not write can hold entries with machine paths. Pack it again in full,
+        // so every entry passes the current strip once.
+        string stripLedgerPath = StripLedger.GetPath(intermediateDirectory, deltaFolderName);
+        if (File.Exists(archivePath) && !StripLedger.IsCurrent(stripLedgerPath, archivePath))
+        {
+            File.Delete(archivePath);
+            SubMeshLodEntryLedger.Delete(ledgerPath);
+        }
+
         if (!File.Exists(archivePath))
         {
             if (packFullSourceDirectly)
             {
                 SubMeshLodEntryLedger.Delete(ledgerPath);
-                PackGuardedSourceDirectory(sourceDirectory, archivePath);
+                PackStrippedSourceDirectory(sourceDirectory, archivePath, intermediateDirectory, deltaFolderName + "_Stripped");
+                StripLedger.Save(stripLedgerPath, archivePath);
                 return;
             }
 
             string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_Full");
             PackFullAndWriteLedger(sourceDirectory, fullStagingDir, archivePath, ledgerPath, currentSnapshot.Keys, transformFile);
+            StripLedger.Save(stripLedgerPath, archivePath);
             return;
         }
 
@@ -996,7 +1060,8 @@ internal static partial class ProjectBuilder
                 if (File.Exists(archivePath))
                     File.Delete(archivePath);
 
-                PackGuardedSourceDirectory(sourceDirectory, archivePath);
+                PackStrippedSourceDirectory(sourceDirectory, archivePath, intermediateDirectory, deltaFolderName + "_Stripped");
+                StripLedger.Save(stripLedgerPath, archivePath);
                 return;
             }
 
@@ -1004,6 +1069,7 @@ internal static partial class ProjectBuilder
             if (File.Exists(archivePath))
                 File.Delete(archivePath);
             PackFullAndWriteLedger(sourceDirectory, fullStagingDir, archivePath, ledgerPath, currentSnapshot.Keys, transformFile);
+            StripLedger.Save(stripLedgerPath, archivePath);
             return;
         }
 
@@ -1059,6 +1125,7 @@ internal static partial class ProjectBuilder
             changedPaths.Count > 0 ? deltaDirectory : string.Empty,
             [.. removedPaths]);
         ledger?.Save(ledgerPath, archivePath);
+        StripLedger.Save(stripLedgerPath, archivePath);
     }
 
     private static void PackFullAndWriteLedger(
@@ -1275,24 +1342,24 @@ internal static partial class ProjectBuilder
             progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
         }
 
-        GuardCookedContent(context.AssetsDirectory, cookedRoot, sourceFiles);
+        StripCookedContent(context.AssetsDirectory, cookedRoot, sourceFiles);
         return cookedRoot;
     }
 
     /// <summary>
-    /// Fails the cook if a cooked asset file, a file that the cook copies as it is (text, JSON, media, and other files), or a
-    /// separate LOD entry holds a machine path.
+    /// Strips machine paths from the cooked copy of each cooked asset file, each file that the cook copies as it is (text,
+    /// JSON, media, and other files), and each separate LOD entry. The source files do not change.
     /// </summary>
-    private static void GuardCookedContent(string assetsDirectory, string cookedRoot, string[] sourceFiles)
+    private static void StripCookedContent(string assetsDirectory, string cookedRoot, string[] sourceFiles)
     {
         foreach (string sourceFile in sourceFiles)
         {
             string relative = Path.GetRelativePath(assetsDirectory, sourceFile);
             string cookedFile = Path.Combine(cookedRoot, relative);
             if (string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
-                CookedOutputPathGuard.ThrowIfMachinePath(cookedFile, NormalizePath(relative));
+                CookedOutputPathGuard.StripCookedFile(cookedFile, NormalizePath(relative));
             else
-                CookedOutputPathGuard.ThrowIfMachinePathInCopiedFile(cookedFile, NormalizePath(relative));
+                CookedOutputPathGuard.StripCopiedFile(cookedFile, NormalizePath(relative));
         }
 
         string lodDirectory = Path.Combine(cookedRoot, "lod");
@@ -1300,7 +1367,7 @@ internal static partial class ProjectBuilder
             return;
 
         foreach (string lodFile in Directory.GetFiles(lodDirectory, "*", SearchOption.AllDirectories))
-            CookedOutputPathGuard.ThrowIfMachinePath(lodFile, NormalizePath(Path.GetRelativePath(cookedRoot, lodFile)));
+            CookedOutputPathGuard.StripCookedFile(lodFile, NormalizePath(Path.GetRelativePath(cookedRoot, lodFile)));
     }
 
     /// <summary>Runs the incremental archive repack with a test transform. The delta folder name is fixed.</summary>
@@ -1389,7 +1456,7 @@ internal static partial class ProjectBuilder
         using (CookedSourcePathScope sourcePaths = CookedSourcePathProjection.Begin())
         {
             blob = CreateCookedBlob(asset);
-            ThrowIfSourcePathsNotPortable(sourcePaths, sourcePath);
+            RecordClearedItems(sourcePaths, sourcePath);
         }
         return blob;
     }
@@ -1417,19 +1484,16 @@ internal static partial class ProjectBuilder
         PublishedSecrets.Strip(asset);
     }
 
-    /// <summary>Fails the cook of an asset file if a source path in it is outside every asset root.</summary>
-    private static void ThrowIfSourcePathsNotPortable(CookedSourcePathScope sourcePaths, string sourcePath)
+    /// <summary>
+    /// Lists, in the publish warning, the source paths outside every asset root and the secret members that a cook scope
+    /// cleared from the cooked bytes. The cook continues.
+    /// </summary>
+    private static void RecordClearedItems(CookedSourcePathScope sourcePaths, string fileLabel)
     {
-        if (sourcePaths.Failures.Count == 0)
-            return;
-
-        StringBuilder message = new();
-        message.Append("Asset file '").Append(sourcePath).Append("' could not be cooked: ")
-            .Append(sourcePaths.Failures.Count).Append(" source path(s) are outside the game and engine asset folders, ")
-            .Append("so the cooked build would hold machine paths. Move the source files into an asset folder, or remove the paths.");
-        foreach (CookedSourcePathFailure failure in sourcePaths.Failures)
-            message.AppendLine().Append("  asset '").Append(failure.AssetName).Append("': ").Append(failure.Path);
-        throw new CookedSourcePathException(message.ToString());
+        foreach (ClearedCookedSourcePath cleared in sourcePaths.ClearedPaths)
+            PublishPathRedactionLog.Record(fileLabel, $"{cleared.Path} (source path of asset '{cleared.AssetName}')");
+        foreach (ClearedCookedSecret secret in sourcePaths.ClearedSecrets)
+            PublishPathRedactionLog.Record(fileLabel, $"secret member {secret.OwnerType}.{secret.Member}");
     }
 
     private static void WriteCookedBlob(string destination, CookedAssetBlob blob)

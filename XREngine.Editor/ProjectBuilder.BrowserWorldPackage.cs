@@ -121,7 +121,7 @@ internal static partial class ProjectBuilder
             throw new InvalidDataException("BrowserCook.SharedPackageOutputConflict: the native entry or descriptor already exists in browser staging.");
         Directory.CreateDirectory(Path.GetDirectoryName(nativePath)!);
         File.WriteAllBytes(nativePath, request.NativeWorldBytes);
-        Publishing.CookedOutputPathGuard.ThrowIfMachinePathInCopiedFile(nativePath, request.Manifest.WorldEntryPoint);
+        Publishing.CookedOutputPathGuard.StripCopiedFile(nativePath, request.Manifest.WorldEntryPoint);
         File.WriteAllBytes(catalogPath, catalogBytes);
         long totalBytes = 0;
         int fileCount = 0;

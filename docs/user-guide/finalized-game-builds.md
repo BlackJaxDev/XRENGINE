@@ -218,11 +218,14 @@ complete shader tree is retained so the render pipeline and shader includes
 remain functional. Both modes create a non-empty `CommonAssets.pak`, and a
 missing archive remains a hard startup error.
 
-A publish fails when a file that it ships holds an absolute machine path, for
-example a path in a user profile folder. This check covers cooked assets, files
-that the content cook copies as they are, and every file of `CommonAssets.pak`.
-The error names the file. Remove the path from the file, or remove the file from
-the asset folder. See
+A publish removes absolute machine paths (for example a path in a user profile
+folder, or an authoring path in an FBX or EXR file) from the files that it ships:
+cooked assets, files that the content cook copies as they are, and every file of
+`CommonAssets.pak`. It changes only the copy in the build output, never a source
+file, and it writes one warning that lists each file and each removed path. The
+same list goes to `<output folder>.publish-report.txt` next to the output folder.
+The publish fails only when a path cannot be removed safely, for example in a
+ZIP or GZIP file, and the error names the file. See
 [Cooked Assets, AOT, and IO](../architecture/assets/cooked-asset-aot-and-io.md).
 
 The compiled game assembly must contain exactly one public, concrete `IGameLaunchBootstrap` with a public parameterless constructor. The generated launcher constructs it directly, uses it to configure startup, and obtains the initial `GameState`; this is the supported way to root custom worlds and components under NativeAOT.

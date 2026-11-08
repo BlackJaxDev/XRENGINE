@@ -340,41 +340,71 @@ source paths of cooked assets at write time, without changing any object:
   file path. At runtime, `ImportedTextureStreamingManager.RegisterTexture`
   sets an empty `FilePath` from the resolved `OriginalPath`, so the streaming
   record points at a file that exists.
-- An absolute source path outside every asset root fails the cook with
-  `CookedSourcePathException`. The message names the asset file, the asset, and
-  the path. The cook does not clear such a path. Move the source file into an
-  asset folder before you publish. A relative value (not a machine path) is
-  written as it is.
-- After the cook, `CookedOutputPathGuard` checks each cooked asset file and
-  each separate `lod/` entry for the asset roots and the user profile folder of
-  the cook process, for drive-letter paths, and for UNC paths, as UTF-8 and
-  UTF-16 text. A hit fails the cook with `CookedSourcePathException`, which
-  names the asset and the path. The drive-letter and UNC patterns need at least
-  three path parts, so random binary data does not match. A separator can be a
-  slash, a backslash, or an escaped backslash (two backslashes, as in JSON). A
-  path part can hold non-ASCII characters (for example a non-ASCII user profile
-  name): in UTF-8 each must be a complete UTF-8 sequence, and in UTF-16 any
-  character except a control character, a reserved path character, or a lone
-  surrogate counts. The incremental archive build checks each cooked asset file
-  that it writes.
-- The guard also checks every file that a publish copies as it is
-  (`ThrowIfMachinePathInCopiedFile`): the non-asset files of the full and the
-  incremental content cook (text, JSON, media, and other files), every file of
-  `CommonAssets.pak` (the full pack checks all files of the engine asset folder,
-  the incremental repack checks each changed file, and the runtime shader pack
-  checks its staged files), and on the browser route the staged content sources,
-  the font license notices, and the native world of a shared world package. The
-  archives are compressed, so the guard reads the source files. The error names
-  the file.
-- A copied file is text when it starts with a byte order mark, or when its
-  first 8 KiB hold no zero byte and are valid UTF-8. Text uses the general
-  patterns. Other files (binary media) use only exact matches: the asset roots,
-  the user profile folder of the cook process, and any path in a Windows user
-  profile folder (`X:\Users\<name>` or `X:\Documents and Settings\<name>`). Raw
-  pixel and sample data holds long runs of printable bytes with many
-  backslashes, so the general patterns give false hits in it. As a result, a
-  drive path outside a user profile folder in binary media (for example an
-  authoring path such as `E:\Art\model.blend` in an FBX file) is not found.
+- An absolute source path outside every asset root is cleared: the cooked
+  bytes hold no value for it, and the publish lists the asset file, the asset,
+  and the path in its warning. The cook continues. A relative value (not a
+  machine path) is written as it is.
+- After the cook, `CookedOutputPathGuard` strips machine paths from the cooked
+  copy in the build output. It never changes a source file. It finds the asset
+  roots and the user profile folder of the cook process (with both separator
+  forms and the escaped form), drive-letter paths, user profile paths, and UNC
+  paths, as UTF-8 and UTF-16 text. It overwrites each path with underscores of
+  the same length, so the file layout and every length prefix stay valid, and
+  it records each path in the publish warning. A separator can be a slash, a
+  backslash, or an escaped backslash (two backslashes, as in JSON). A path part
+  can hold non-ASCII characters: in UTF-8 each must be a complete UTF-8
+  sequence, and in UTF-16 any character except a control character, a reserved
+  path character, or a lone surrogate counts.
+- The rules depend on the file (`EMachinePathScanProfile`):
+  - A cooked asset file or `lod/` entry: drive paths with three or more parts,
+    user profile paths, and UNC paths.
+  - A copied text file (a byte order mark, or a first 8 KiB with no zero byte
+    and valid UTF-8): drive paths with one or more parts (for example
+    `E:\Textures\wood.png` in an `.mtl` file) and UNC paths. A drive letter must
+    not follow a letter or a digit. A UNC path must not follow a path character
+    or a backslash, so an escaped relative path such as
+    `Textures\\Wall\\Brick\\albedo.png` is not a server name.
+  - A copied binary file: user profile paths, and file paths with two or more
+    folder parts, one separator style, plain name characters, and a file name
+    with an extension of two to five characters that starts with a letter. Raw
+    pixel and sample data (TGA, RLE HDR) holds long printable runs with many
+    backslashes, and these rules do not match them. A drive path with fewer than
+    two folder parts in binary media is not found.
+- The stripped range: in text, it stops before a quote, a comma, a semicolon,
+  an equals sign, or a closing brace, so a JSON or YAML string stays valid. In
+  binary data, it stops at the end of a length-prefixed string when the four
+  bytes before the path give its length (FBX string properties, EXR attributes,
+  MemoryPack strings); otherwise it stops at the first byte that is not a plain
+  name character. The range always covers the path through its last separator
+  and the user name of a user profile path. A PNG file gets new checksums for
+  the chunks that change.
+- A path that cannot be stripped safely fails the publish, and the error names
+  the file: a path in a compressed or checksummed container (ZIP, GZIP, 7z,
+  RAR, XZ, Zstandard, BZip2), a path in a critical PNG chunk, or a path that is
+  still found after the strip. A path inside compressed data cannot be seen at
+  all.
+- The strip covers every file that a publish ships: the cooked asset files, the
+  `lod/` entries, and the copied non-asset files of the full and the
+  incremental content cook; every file of `CommonAssets.pak` (the full pack
+  scans the engine asset folder, writes a stripped copy of each file with a hit
+  to the intermediate folder, and packs the copy under the source path and
+  timestamp through `AssetPacker.Pack(..., replacementFiles)`; the incremental
+  repack strips each changed file; the runtime shader pack strips its staging
+  copy); the config archive and the browser cooks (`WriteGuardedCookedAsset`);
+  and on the browser route the staged content sources, the font license
+  notices, and the native world of a shared world package.
+- An incremental archive build records the strip version in
+  `<intermediate>/Build/<delta folder>.strip-ledger`, with the archive length
+  and timestamp. When the record is missing, has another version
+  (`CookedOutputPathGuard.StripVersion`), or does not match the archive, the
+  build packs the archive again in full, so every entry passes the current
+  strip once.
+- The publish writes one warning that lists each file and each removed path or
+  secret (`PublishPathRedactionLog`). It goes to the engine log, to standard
+  error, and to the trace listeners, so a Release editor shows it, and the
+  completion text of the build job names the report. The same list goes to
+  `<output folder>.publish-report.txt`, next to the output folder and not in
+  it, so the report does not ship.
 - The guard reads each file in 4 MiB chunks that overlap by 4 KiB, so a file of
   any size is checked with a fixed buffer.
 - A cook does not ship YAML sources. An asset file with no `__assetType` or
@@ -391,12 +421,13 @@ source paths of cooked assets at write time, without changing any object:
   codec, and the font layout recovery (`FontGlyphSet`).
 - The config archive (`ProjectBuilder.WriteConfigArchiveAssets`) and the
   browser dependency and font cooks write each asset through
-  `WriteGuardedCookedAsset`: the cook scope, the failure check, and the guard.
+  `WriteGuardedCookedAsset`: the cook scope, the list of cleared items, and the
+  strip.
   The settings assets use registered MemoryPack codecs that do not pass through
   the projection, so `PublishedConfigAssets` writes a MemoryPack copy of each
   settings asset with no `FilePath` and a projected `OriginalPath`. The live
-  settings do not change. An absolute `GameStartupSettings.TexturesFolder`
-  fails the publish with the member named.
+  settings do not change. An absolute `GameStartupSettings.TexturesFolder` is
+  cleared in the copy and listed in the warning.
 - A published archive holds no secret. A secret is a settings member marked
   with `[Secret]` (`SecretAttribute`). Its environment variable companion
   (`<Name>EnvVar`) is cleared with it. One step, `PublishedSecrets.Strip`,
@@ -415,8 +446,17 @@ source paths of cooked assets at write time, without changing any object:
   walks the declared types of the serialized members of the asset type (YAML
   members, and MemoryPack members of a MemoryPack type). If it reaches a
   `[Secret]` member of a nested type, the publish fails and names the member
-  and the path to it. The walk follows declared types only: a secret on a
-  derived type that a base-typed member holds at run time is not found.
+  and the path to it. The walk enters the element type of arrays and the
+  generic arguments of every generic type (also engine collections such as
+  `EventList<T>`). It follows declared types only, so it does not see a secret
+  on a derived type that a base-typed member holds at run time.
+- At write time, inside a cook scope, the reflective cooked serializer writes
+  every `[Secret]` member that has a value as its default value
+  (`CookedSourcePathProjection.ProjectSecretValue`) and lists it in the publish
+  warning. This covers a secret on any nested object, list item, or derived
+  type that the serializer writes, and it does not change the object. The
+  registered MemoryPack codecs do not pass through this step; the settings
+  assets that use them are stripped as a copy.
 - The content cook strips only a copy. If the YAML load gives the live editor
   instance of an asset whose type has secrets, the cook fails, because a strip
   would clear the live secrets and a write without the strip would ship them.

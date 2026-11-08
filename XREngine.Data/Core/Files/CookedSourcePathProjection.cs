@@ -18,8 +18,9 @@ public static class CookedSourcePathProjection
     public static bool IsActive => CurrentScope.Value is not null;
 
     /// <summary>
-    /// Opens a cook scope on this execution context. Dispose the scope to close it, then call
-    /// <see cref="CookedSourcePathScope.Failures"/> to find the paths that could not be made portable.
+    /// Opens a cook scope on this execution context. Dispose the scope to close it, then read
+    /// <see cref="CookedSourcePathScope.ClearedPaths"/> and <see cref="CookedSourcePathScope.ClearedSecrets"/> to list what
+    /// the cook removed.
     /// </summary>
     /// <returns>The scope.</returns>
     public static CookedSourcePathScope Begin()
@@ -38,10 +39,10 @@ public static class CookedSourcePathProjection
 
     /// <summary>
     /// Gets the <see cref="XRAsset.OriginalPath"/> value to write for an asset. Inside a cook scope, an absolute path in an
-    /// asset root becomes a portable reference. An absolute path outside every asset root is recorded as a failure of the
-    /// scope and written as it is, because the cook fails after the write. Other values are written as they are.
+    /// asset root becomes a portable reference. An absolute path outside every asset root is cleared (written as null) and
+    /// recorded in the scope, so the publish can list it. Other values are written as they are.
     /// </summary>
-    /// <param name="owner">The asset that owns the path. The failure record uses its name.</param>
+    /// <param name="owner">The asset that owns the path. The record uses its name.</param>
     /// <param name="path">The path that the asset holds.</param>
     /// <returns>The path to write.</returns>
     public static string? ProjectOriginalPath(object? owner, string? path)
@@ -58,4 +59,28 @@ public static class CookedSourcePathProjection
     /// <returns>The path to write.</returns>
     public static string? ProjectFilePath(string? path)
         => CurrentScope.Value is null ? path : null;
+
+    /// <summary>
+    /// Gets the value to write for a member marked with <see cref="SecretAttribute"/>. Inside a cook scope, a value that is
+    /// not the default is written as the default and recorded in the scope: a secret must never ship, also when it is on a
+    /// nested object that the publish does not strip. The object does not change. Outside a cook scope, the value is
+    /// written as it is.
+    /// </summary>
+    /// <param name="declaringType">The type that declares the member.</param>
+    /// <param name="member">The member name.</param>
+    /// <param name="value">The value that the object holds.</param>
+    /// <param name="defaultValue">The default value of the member type.</param>
+    /// <returns>The value to write.</returns>
+    public static object? ProjectSecretValue(Type declaringType, string member, object? value, object? defaultValue)
+    {
+        CookedSourcePathScope? scope = CurrentScope.Value;
+        if (scope is null || value is null)
+            return value;
+
+        if (Equals(value, defaultValue) || value is string { Length: 0 })
+            return value;
+
+        scope.RecordClearedSecret(declaringType, member);
+        return defaultValue;
+    }
 }

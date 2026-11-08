@@ -540,3 +540,7 @@ Samples/BrowserUiParity/Assets/*
 
 # Native meshoptimizer source and build output.
 Build/Dependencies/Meshoptimizer/
+
+# Windows shell files. A publish would ship them in CommonAssets.pak.
+desktop.ini
+Thumbs.db

@@ -457,12 +457,18 @@ namespace XREngine.Core.Files
         /// a negative value to use <see cref="DefaultMaxMemoryBytes"/>.
         /// </param>
         /// <param name="progress">Optional callback invoked after each file is staged.</param>
+        /// <param name="replacementFiles">
+        /// Optional map from a full source file path to a file with the same length whose bytes the archive stores instead.
+        /// The entry keeps the path and the timestamp of the source file. A publish uses it to pack a stripped copy of a
+        /// source file without a change to the source.
+        /// </param>
         public static void Pack(
             string inputDir,
             string outputFile,
             TocLookupMode? lookupMode = null,
             long maxMemoryBytes = 0,
-            Action<PackProgress>? progress = null)
+            Action<PackProgress>? progress = null,
+            IReadOnlyDictionary<string, string>? replacementFiles = null)
         {
             if (string.IsNullOrWhiteSpace(inputDir) || !Directory.Exists(inputDir))
                 throw new DirectoryNotFoundException($"Input directory '{inputDir}' does not exist.");
@@ -546,7 +552,8 @@ namespace XREngine.Core.Files
                             int fileIndex = chunkStart + j;
                             string filePath = files[fileIndex];
                             string relativePath = NormalizePath(Path.GetRelativePath(inputDir, filePath));
-                            byte[] data = File.ReadAllBytes(filePath);
+                            byte[] data = File.ReadAllBytes(
+                                replacementFiles is not null && replacementFiles.TryGetValue(Path.GetFullPath(filePath), out string? replacement) ? replacement : filePath);
 
                             // V3: compute XXH64 content hash of uncompressed data
                             ulong contentHash = XxHash64.HashToUInt64(data);

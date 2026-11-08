@@ -1,14 +1,17 @@
 namespace XREngine.Core.Files;
 
 /// <summary>
-/// One open cook scope of <see cref="CookedSourcePathProjection"/>. It caches the projection of each path and records the
-/// absolute paths that are outside every asset root. A scope is used on one execution context at a time.
+/// One open cook scope of <see cref="CookedSourcePathProjection"/>. It caches the projection of each path, records the
+/// absolute paths outside every asset root that it cleared, and records the secret members that it wrote as their default
+/// value. A scope is used on one execution context at a time.
 /// </summary>
 public sealed class CookedSourcePathScope : IDisposable
 {
     private readonly Dictionary<string, string?> _projected = new(StringComparer.Ordinal);
-    private readonly List<CookedSourcePathFailure> _failures = [];
-    private readonly HashSet<CookedSourcePathFailure> _failureSet = [];
+    private readonly List<ClearedCookedSourcePath> _clearedPaths = [];
+    private readonly HashSet<ClearedCookedSourcePath> _clearedPathSet = [];
+    private readonly List<ClearedCookedSecret> _clearedSecrets = [];
+    private readonly HashSet<ClearedCookedSecret> _clearedSecretSet = [];
     private bool _disposed;
 
     internal CookedSourcePathScope(CookedSourcePathScope? parent)
@@ -16,8 +19,11 @@ public sealed class CookedSourcePathScope : IDisposable
 
     internal CookedSourcePathScope? Parent { get; }
 
-    /// <summary>The absolute source paths that the scope could not make portable, in the order of the first write.</summary>
-    public IReadOnlyList<CookedSourcePathFailure> Failures => _failures;
+    /// <summary>The absolute source paths outside every asset root that the scope cleared, in the order of the first write.</summary>
+    public IReadOnlyList<ClearedCookedSourcePath> ClearedPaths => _clearedPaths;
+
+    /// <summary>The secret members that the scope wrote as their default value, in the order of the first write.</summary>
+    public IReadOnlyList<ClearedCookedSecret> ClearedSecrets => _clearedSecrets;
 
     internal string? ProjectOriginalPath(object? owner, string? path)
     {
@@ -35,10 +41,17 @@ public sealed class CookedSourcePathScope : IDisposable
         if (reference is not null)
             return reference;
 
-        CookedSourcePathFailure failure = new(DescribeOwner(owner), path);
-        if (_failureSet.Add(failure))
-            _failures.Add(failure);
-        return path;
+        ClearedCookedSourcePath cleared = new(DescribeOwner(owner), path);
+        if (_clearedPathSet.Add(cleared))
+            _clearedPaths.Add(cleared);
+        return null;
+    }
+
+    internal void RecordClearedSecret(Type ownerType, string member)
+    {
+        ClearedCookedSecret cleared = new(ownerType.Name, member);
+        if (_clearedSecretSet.Add(cleared))
+            _clearedSecrets.Add(cleared);
     }
 
     /// <summary>True if the path is absolute on this machine: a drive or root path, or a UNC path.</summary>
@@ -63,7 +76,7 @@ public sealed class CookedSourcePathScope : IDisposable
             _ => owner.GetType().Name,
         };
 
-    /// <summary>Closes the scope. The failures stay readable.</summary>
+    /// <summary>Closes the scope. The records stay readable.</summary>
     public void Dispose()
     {
         if (_disposed)
