@@ -54,6 +54,8 @@ internal sealed class TextureStreamingDecodeWidthController
     private double _sinceRiseMilliseconds = double.PositiveInfinity;
     private double _sinceEvidenceMilliseconds = double.PositiveInfinity;
     private double _relearnRemainingMilliseconds = TextureStreamingWorkController.RelearnMilliseconds;
+    private double _relearnMinimum = double.PositiveInfinity;
+    private int _relearnFrames;
     private double _tolerance = 2.0;
     private long _backoffCount;
 
@@ -94,6 +96,8 @@ internal sealed class TextureStreamingDecodeWidthController
         _decodingFrames = 0;
         _idleFrames = 0;
         _relearnRemainingMilliseconds = TextureStreamingWorkController.RelearnMilliseconds;
+        _relearnMinimum = double.PositiveInfinity;
+        _relearnFrames = 0;
     }
 
     /// <summary>Adds one frame and returns the width for the next frames.</summary>
@@ -130,17 +134,31 @@ internal sealed class TextureStreamingDecodeWidthController
                 && _overRateDecoding > _overRateIdle + EvidenceMargin;
         }
 
-        // Frames without decodes teach the normal frame time; during a relearn, all frames do.
-        if (known && (!decoding || relearning))
+        // Frames without decodes teach the normal frame time. During a relearn, the lowest frame becomes the new normal
+        // frame time at its end, so a load stall does not raise it.
+        if (known && relearning)
         {
-            double tau = relearning
-                ? TextureStreamingWorkController.RelearnTimeConstantMilliseconds
-                : TextureStreamingWorkController.NormalFrameTimeConstantMilliseconds;
-            ObserveNormalFrame(frame, sample.TargetFrameMilliseconds, 1.0 - Math.Exp(-elapsed / tau), relearning);
+            _relearnMinimum = Math.Min(_relearnMinimum, sample.TargetFrameMilliseconds > 0.0 ? Math.Max(frame, sample.TargetFrameMilliseconds) : frame);
+            _relearnFrames++;
+        }
+        else if (known && !decoding)
+        {
+            ObserveNormalFrame(
+                frame,
+                sample.TargetFrameMilliseconds,
+                1.0 - Math.Exp(-elapsed / TextureStreamingWorkController.NormalFrameTimeConstantMilliseconds),
+                relearning: false);
         }
 
         _holdRemainingMilliseconds = Math.Max(0.0, _holdRemainingMilliseconds - elapsed);
         _relearnRemainingMilliseconds = Math.Max(0.0, _relearnRemainingMilliseconds - elapsed);
+        if (relearning && _relearnFrames < TextureStreamingWorkController.RelearnMinimumFrames)
+            _relearnRemainingMilliseconds = Math.Max(_relearnRemainingMilliseconds, 1.0);
+        if (relearning && _relearnRemainingMilliseconds <= 0.0 && double.IsFinite(_relearnMinimum))
+        {
+            _normalFrameMean = _relearnMinimum;
+            _relearnMinimum = double.PositiveInfinity;
+        }
         _sinceRiseMilliseconds += elapsed;
         _sinceEvidenceMilliseconds += elapsed;
 

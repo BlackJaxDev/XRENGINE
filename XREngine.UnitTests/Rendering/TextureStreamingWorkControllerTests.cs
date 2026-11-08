@@ -365,6 +365,20 @@ public sealed class TextureStreamingWorkControllerTests
     }
 
     [Test]
+    public void LoadStall_DuringARelearn_DoesNotRaiseTheBudget()
+    {
+        TextureStreamingWorkController controller = CreateController();
+        RunIdle(controller, 30, baseBusy: 8.0);
+        controller.MarkDiscontinuity();
+
+        controller.Update(new TextureStreamingWorkSample(900.0, 900.0, Period60Hz, 0.0, 0, false, 0.5));
+        RunIdle(controller, 30, baseBusy: 8.0);
+
+        controller.IsRelearning.ShouldBeFalse();
+        controller.BudgetMilliseconds.ShouldBeLessThan(Period60Hz + Tolerance);
+    }
+
+    [Test]
     public void UnknownFrameTime_UsesTheCostButCountsNoOverrun()
     {
         TextureStreamingWorkController controller = CreateController();

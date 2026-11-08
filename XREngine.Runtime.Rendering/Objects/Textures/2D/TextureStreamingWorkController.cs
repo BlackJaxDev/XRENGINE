@@ -70,11 +70,17 @@ internal sealed class TextureStreamingWorkController
     /// </summary>
     internal const double NormalFrameWorkTimeConstantMilliseconds = 1660.0;
 
-    /// <summary>The time constant of the normal frame time during a relearn.</summary>
+    /// <summary>
+    /// The time constant of the normal frame time during a relearn, for the decode width controller. The work controller
+    /// takes the lowest frame of the relearn instead, so a load stall in the relearn does not raise the budget.
+    /// </summary>
     internal const double RelearnTimeConstantMilliseconds = 50.0;
 
     /// <summary>The duration of a relearn after a scene discontinuity.</summary>
     internal const double RelearnMilliseconds = 250.0;
+
+    /// <summary>The fewest known frames in a relearn, so one long stall frame cannot end it alone.</summary>
+    internal const int RelearnMinimumFrames = 4;
 
     /// <summary>
     /// The number of frames in a row whose time without the effective work is over the rule that count as a scene step,
@@ -145,6 +151,8 @@ internal sealed class TextureStreamingWorkController
     private double _idleBusyMilliseconds = double.NaN;
     private double _holdRemainingMilliseconds;
     private double _relearnRemainingMilliseconds = RelearnMilliseconds;
+    private double _relearnMinimum = double.PositiveInfinity;
+    private int _relearnFrames;
     private double _millisecondsSinceRepeatedOverrun = double.PositiveInfinity;
     private double _millisecondsSinceExplainedOverrun = double.PositiveInfinity;
     private double _millisecondsSinceBaselineFrame = double.PositiveInfinity;
@@ -238,6 +246,8 @@ internal sealed class TextureStreamingWorkController
     {
         _discontinuityCount++;
         _relearnRemainingMilliseconds = RelearnMilliseconds;
+        _relearnMinimum = double.PositiveInfinity;
+        _relearnFrames = 0;
         _overRateBaseline = 0.0;
         _overRateMultipleItems = 0.0;
         _millisecondsSinceBaselineFrame = double.PositiveInfinity;
@@ -373,16 +383,35 @@ internal sealed class TextureStreamingWorkController
 
         if (frameKnown)
         {
-            double smoothing = relearning
-                ? Smoothing(RelearnTimeConstantMilliseconds, elapsed)
-                : Smoothing(idleFrame ? NormalFrameTimeConstantMilliseconds : NormalFrameWorkTimeConstantMilliseconds, elapsed);
-            ObserveNormalFrame(Math.Max(0.0, frameMilliseconds - work), sample.TargetFrameMilliseconds, smoothing, idleFrame || relearning, tolerance);
+            double withoutWork = Math.Max(0.0, frameMilliseconds - work);
+            if (relearning)
+            {
+                // The new normal frame time is the lowest frame of the relearn: a scene step moves every frame, and a
+                // load stall moves only some of them.
+                double counted = sample.TargetFrameMilliseconds > 0.0 ? Math.Max(withoutWork, sample.TargetFrameMilliseconds) : withoutWork;
+                _relearnMinimum = Math.Min(_relearnMinimum, counted);
+                _relearnFrames++;
+            }
+            else
+            {
+                double smoothing = Smoothing(idleFrame ? NormalFrameTimeConstantMilliseconds : NormalFrameWorkTimeConstantMilliseconds, elapsed);
+                ObserveNormalFrame(withoutWork, sample.TargetFrameMilliseconds, smoothing, idleFrame, tolerance);
+            }
+
             if (idleFrame)
                 ObserveIdleBusy(sample.BusyMilliseconds, elapsed);
         }
 
-        budget = ResolveBudget(sample.TargetFrameMilliseconds);
         AdvanceTimers(elapsed);
+        if (relearning && _relearnFrames < RelearnMinimumFrames)
+            _relearnRemainingMilliseconds = Math.Max(_relearnRemainingMilliseconds, 1.0);
+        if (relearning && _relearnRemainingMilliseconds <= 0.0 && double.IsFinite(_relearnMinimum))
+        {
+            _normalFrameMean = _relearnMinimum;
+            _relearnMinimum = double.PositiveInfinity;
+        }
+
+        budget = ResolveBudget(sample.TargetFrameMilliseconds);
 
         double headroom = ResolveHeadroom(budget);
         _lastHeadroomMilliseconds = headroom;
