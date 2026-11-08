@@ -64,6 +64,27 @@ public sealed class DrawReadinessLogicTests
     }
 
     [Test]
+    public void Registry_APlanWithNoContext_NeverReplacesAMeasuredResult()
+    {
+        VulkanDrawReadinessRegistry registry = new();
+        XRMaterial material = new() { Name = "Proxy" };
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 0, out _, out _, out _);
+        List<VulkanDrawReadinessRequest> active = [];
+        registry.CopyActive(active, nowTicks: 1);
+
+        registry.NoteNoContext(active[0], "no context");
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 2, out string reason, out _, out _)
+            .ShouldBe(ERenderDrawReadiness.NotStarted);
+        reason.ShouldBe("no context");
+
+        registry.Publish(active[0], ERenderDrawReadiness.Ready, "Ready", null, 0UL);
+        registry.NoteNoContext(active[0], "no context");
+        registry.Observe(null!, material, null, null, stereo: false, nowTicks: 3, out reason, out _, out _)
+            .ShouldBe(ERenderDrawReadiness.Ready);
+        reason.ShouldBe("Ready");
+    }
+
+    [Test]
     public void Registry_GivesNotStarted_UntilAFrameEvaluatesTheRequest_ThenFollowsEachFrame()
     {
         VulkanDrawReadinessRegistry registry = new();

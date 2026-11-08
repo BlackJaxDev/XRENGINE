@@ -182,6 +182,16 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            // A frame plan of the view with no context for the material (for example a sub-plan with no scene draw) says
+            // nothing about the pipelines: it only names the reason while no frame measured the request.
+            if (tally.Required == 0)
+            {
+                ResourceRuntime.DrawReadiness.NoteNoContext(request, NoReadinessContextReason);
+                state = default;
+                reason = string.Empty;
+                return false;
+            }
+
             // On a GPU-driven route no template step ran for the request renderer; its active program is the one that the
             // query prepared with the material of the request.
             if (!programMeasured)

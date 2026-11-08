@@ -320,6 +320,24 @@ public sealed class CutsceneBackendProgramPrewarmerTests
     }
 
     [Test]
+    public void Reset_KeepsTheRequestsOfARendererThatTheNewDrawsUseAgain()
+    {
+        FakeBackend backend = new();
+        ManualScheduler scheduler = new();
+        CutsceneBackendProgramPrewarmer prewarmer = Make(backend, scheduler);
+        XRMaterial material = new() { Name = "Proxy" };
+        XRMeshRenderer renderer = MakeRenderer(material);
+        prewarmer.Request(material, renderer, null);
+        scheduler.RunFrame();
+
+        prewarmer.Reset();
+        prewarmer.Request(material, renderer, null);
+        scheduler.RunFrame();
+
+        backend.Ended.ShouldBeEmpty();
+    }
+
+    [Test]
     public void TheRenderOptionsOverride_IsPassedToTheBackend()
     {
         FakeBackend backend = new();

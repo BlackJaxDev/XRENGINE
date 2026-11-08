@@ -272,7 +272,20 @@ public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
                 entry = _endingEntries[i];
             }
 
-            EndEntry(entry);
+            // A renderer that a new draw of the open uses again keeps its requests.
+            if (!IsRendererInUse(entry.Renderer))
+                EndEntry(entry);
+        }
+    }
+
+    private bool IsRendererInUse(XRMeshRenderer renderer)
+    {
+        lock (_entriesLock)
+        {
+            for (int i = 0; i < _entries.Count; i++)
+                if (ReferenceEquals(_entries[i].Renderer, renderer))
+                    return true;
+            return false;
         }
     }
 

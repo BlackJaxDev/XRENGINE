@@ -126,6 +126,19 @@ internal sealed class VulkanDrawReadinessRegistry
         }
     }
 
+    /// <summary>
+    /// Records that a frame plan of the view had no pass context for the request. It changes only the reason, and only while
+    /// no frame measured the request, so a plan with no context never replaces a measured result.
+    /// </summary>
+    public void NoteNoContext(VulkanDrawReadinessRequest request, string reason)
+    {
+        lock (_sync)
+        {
+            if (request.Evaluations == 0)
+                request.Reason = reason;
+        }
+    }
+
     /// <summary>Publishes the result of one frame-loop evaluation of a request, with the program it measured.</summary>
     public void Publish(
         VulkanDrawReadinessRequest request,
