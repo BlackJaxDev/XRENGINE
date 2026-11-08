@@ -147,6 +147,24 @@ public sealed class EngineExecutionTopologyTests
         topology.IsOversubscribed.ShouldBeFalse();
     }
 
+    [Test]
+    public void Resolve_DedicatedLanesConsumeBudget_KeepsMinimumGeneralPool()
+    {
+        // A 16-processor cache-affinity process with the desktop Vulkan and OpenXR lanes.
+        EngineExecutionTopology topology = EngineExecutionTopology.Resolve(
+            CreateRequest() with
+            {
+                EffectiveProcessorCount = 16,
+                SystemProcessorCount = 32,
+                RenderWorkerThreadCount = EngineExecutionTopology.AutomaticWorkerCount,
+                DedicatedBackgroundThreadCount = 12,
+            });
+
+        topology.ReservedForegroundThreadCount.ShouldBe(4);
+        topology.RenderWorkerThreadCount.ShouldBe(0);
+        topology.GeneralWorkerThreadCount.ShouldBe(EngineExecutionTopology.MinimumAutomaticGeneralWorkerCount);
+    }
+
     private static EngineExecutionTopologyRequest CreateRequest()
         => new()
         {
