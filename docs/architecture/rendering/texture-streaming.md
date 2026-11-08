@@ -27,6 +27,8 @@ The renderer-neutral kernel is in `XREngine.Runtime.Rendering/Objects/Textures/2
 | `ITextureStreamingBackendProvider`, `ITextureResidencyBackend` | Backend contracts for residency and synchronized upload. |
 | `TextureStreamingBackendRegistry` | Static, AOT-safe registry. Each renderer leaf module registers its provider in its module entry point. |
 | `TextureRuntimeDiagnostics` | Shared log and timing surface for cache reads, uploads, transitions, and rejections. |
+| `TextureStreamingCapacity`, `TextureStreamingCapacityModel` | Shared decode gate whose width follows the CPU capacity, and the per-frame work lanes. See [Capacity Model](#capacity-model). |
+| `TextureStreamingWorkLane`, `TextureStreamingWorkController` | Per-frame upload and publication limits from measured cost and frame time. |
 
 Backend implementations:
 | Backend | Type | Location |
@@ -53,7 +55,7 @@ The `XRTS` payload stores a preview mip and per-mip offsets. Streamability check
 
 - Each texture starts at its preview residency (`XRTexture2D.GetPreviewResidentSize`). Promotion raises the resident size to the policy target; demotion lowers it.
 - Promotion candidates are ranked by `TextureUploadPriorityClass`: `VisibleNow`, `NearVisible`, `Background`, then `Demotion`.
-- Per-frame limits in `ImportedTextureStreamingManager` cap resident transitions, promotions, sparse finalizations, and promotion bytes. Import scopes use a lower promotion byte limit.
+- Per-frame limits in `ImportedTextureStreamingManager` cap resident transitions, promotions, sparse finalizations, and promotion bytes. Import scopes use a lower promotion byte limit. These limits admit transitions; the decode width and the upload limits of the [capacity model](#capacity-model) set how fast the admitted transitions complete.
 - Cooldowns prevent churn: a short cooldown after promotion, a longer cooldown before demotion, a pin window that keeps newly promoted visible textures resident, and an increasing cooldown after a failed promotion.
 - Textures bound to visible materials keep a minimum resident size even when projected coverage is small.
 - Budget pressure fits the resident set to the texture budget. Pressure demotions log bytes reclaimed and the reason.
@@ -93,7 +95,85 @@ A budget profile lease (`ITextureResidencyRequests.AcquireBudgetProfile`) select
 | Promotion cooldown | 6 frames | `TextureStreamingCutscenePromotionCooldownFrames` (2) |
 | Mip fade after a promotion | 90 frames | `TextureStreamingCutscenePromotionFadeFrames` (12) |
 
-The settings are on `RuntimeEngine.Rendering.EngineSettings`. The `Cutscene` values stay provisional. On OpenGL they were measured with a cold jump in Sponza (37 textures, 1024 and 2048 texels): the targets were resident after 2.28 to 2.38 s with `Cutscene`, 2.38 to 2.45 s with `Default`, and 2.28 s with lower limits (3 transitions, 2 promotions, 16 MB). The frame time was the same with each profile. The OpenGL tiered backend applies at most one resident upload in each render frame, and each upload of a 1024-texel chain adds about 5 to 9 ms to that frame, so the upload path and not these limits sets the refine time and the frame cost on OpenGL. On Vulkan, a cold jump in Sponza gave almost the same refine time with each profile (T2 resident after 6.0 to 6.7 s with `Cutscene` and 6.2 to 6.9 s with `Default`), because the dense upload and publication service and the decode gate set it. Profile a cutscene before you change them. The short mip fade prevents a texture that loaded for a cutscene jump from looking late. Neither profile changes the VRAM budget fit, the import-era promotion limit, the demotion cooldown, or the visible pin.
+The settings are on `RuntimeEngine.Rendering.EngineSettings`. The `Cutscene` values stay provisional. Cold jumps in Sponza (37 textures, 1024 and 2048 texels) gave almost the same refine time with each profile on OpenGL and on Vulkan, because these admission limits are not the bottleneck: the decode width and the upload and publication limits of the [capacity model](#capacity-model) set the refine time. No measurement shows that other values are better. Profile a cutscene before you change them. The short mip fade prevents a texture that loaded for a cutscene jump from looking late. Neither profile changes the VRAM budget fit, the import-era promotion limit, the demotion cooldown, or the visible pin.
+
+The `Cutscene` profile also changes the capacity model: while it is active and at least one residency request is not resident (for example, at a cut hold), the upload lanes can use all of the measured idle frame headroom instead of half of it. The frame-time rule stays the same.
+
+## Capacity Model
+
+Texture streaming throughput follows the measured capacity of the machine, not fixed limits. `TextureStreamingCapacity` owns the shared decode gate and the per-frame work lanes. `TextureStreamingCapacityModel` and `TextureStreamingWorkController` are pure and deterministic; unit tests drive them with fake clocks and fake costs (`TextureStreamingCapacityModelTests`, `TextureStreamingWorkControllerTests`).
+
+### Decode Concurrency
+
+The OpenGL tiered, OpenGL sparse, and Vulkan dense backends share one `PriorityAsyncSemaphore` decode gate. Only one backend streams at a time. The gate width is:
+
+`width = clamp(min(processors - reserved, jobWorkers), 1, 8)` with `reserved = min(5, processors - 1)`
+
+- `processors` is the number of logical processors in the live process affinity. The desktop platform installs `RuntimeProcessorServices.EffectiveProcessorCountReader` (Windows affinity mask). Without a reader, the value is `Environment.ProcessorCount`, which .NET reads one time at startup.
+- `reserved` keeps one processor for each frame thread: render, update, fixed update, and collect/swap (the four foreground threads of `EngineExecutionTopology`), plus one for audio mixing and the operating system. A machine always keeps at least one processor for decodes.
+- `jobWorkers` is the general job worker count. The decodes do not use more parallel CPU than the engine gives to background jobs.
+- The upper bound 8 limits transient memory: one decode of a 2048-texel RGBA source holds the decoded image and its mip chain (about 16 MB and 22 MB), so 8 decodes hold about 300 MB.
+
+| Processors | 2 | 4 | 8 | 12 | 16 or more |
+|---|---|---|---|---|---|
+| Decode width | 1 | 1 | 3 | 7 | 8 |
+
+The gate refreshes its width at most one time each second. A larger width grants waiting decodes at once. A smaller width takes effect as held permits are released. The Vulkan upload preparation workers use the same width, not more than the 8 background staging buffers, because each worker holds one buffer until its chunk completes.
+
+### Upload And Publication Limits
+
+Two work lanes limit render-thread streaming work in each render frame:
+
+| Lane | Items | Measured cost | Start value |
+|---|---|---|---|
+| `OpenGL.ResidentApply` | Resident data applies (tiered) and sparse transitions on the OpenGL render thread | Render-thread CPU time of each apply | 1 (the old fixed limit) |
+| `Vulkan.Completion` | Transfer chunks that complete, retire, and publish | Render-thread CPU time of the batch completion, and the GPU timestamp of the transfer batch for each chunk | 4 (the old fixed limit) |
+
+A batch is indivisible: the first batch of a frame always completes, also when it has more chunks than the limit. A Vulkan preparation drain hands all completed worker results to the transfer queue (at most one for each worker), and it goes on to other jobs while a worker runs; the transfer drain completes all signaled batches that the completion lane admits in one tick.
+
+Each lane finds the frame boundary itself (`LastRenderTimestampTicks`) and reads the frame time from the render timestamps and the render-thread busy time from the frame lifecycle totals. The `TextureStreamingWorkController` then applies these rules:
+
+| Rule | Value | Derivation |
+|---|---|---|
+| Frame-time rule | frame time <= budget + tolerance | Design target: no frame more than 2 ms above the normal frame budget. `TextureStreamingFrameToleranceMilliseconds` (default 2). |
+| Normal frame budget | max(target period, mean + 2.5 x mean deviation) | The explicit target period, or the learned frame time without lane work when the machine cannot reach the target. 2.5 mean deviations are about 2 standard deviations, so scene jitter alone rarely breaks the rule. |
+| Headroom | budget - idle busy time | Only when the idle render-thread time is below 90 % of the budget; otherwise the frame is full or the busy time includes a present wait, and the headroom is 0. |
+| Allowed cost | tolerance + share x headroom | Share 0.5 normally (half of the idle time stays free for heavier gameplay frames), 1.0 while a cutscene waits for residency. |
+| Cost per item | peak of the measured costs that decays toward their mean (0.98 for each sample) | One slow item lowers the target at once; the target recovers in about 34 samples. |
+| Target | allowed cost / cost per item, at most 16 | 16 is a hard bound for a wrong measurement. |
+| Floor | 1 item per frame | The old fixed limit. The limit goes below it only after the measured work explains an overrun; then the floor is tolerance / cost (at least 1/32), so an item that is too large for one frame runs only as often as the tolerance pays for it on average. |
+| Back-off | limit x 0.5, then hold 500 ms | When the measured work explains at least half of the excess, or when frames with lane work go over more often than frames without it and frames with several items go over more often for each item than frames with one item. The excess divided by the items is then a cost sample, which finds cost that the CPU timer does not see. |
+| Ceiling | N - 1 items for 10 s | After an explained overrun with N items. At most one probe of N items occurs in this time. |
+| Rise | at most +25 % in one frame, never above the target | Only while work was deferred, after the hold time, and not in an over-budget frame with several items. |
+| Fall without overrun | to the target | Only when the target is more than 15 % below the limit, which is wider than the usual cost jitter. |
+
+A steady cost and a steady frame time give a constant limit. When frames with more items go over less often for each item than frames with one item, the cost is mostly a fixed cost of each work frame (for example, a descriptor rebuild after a publication). Then fewer items in a frame would only add frames that pay it, so the limit does not fall. The lanes allocate nothing in a frame.
+
+### Settings
+
+| Setting | Default | Effect |
+|---|---|---|
+| `TextureStreamingDecodeConcurrency` | null (automatic) | Pins the decode width, 1 to 32. |
+| `TextureStreamingUploadsPerFrame` | null (adaptive) | Pins the per-frame limit of each lane, 1 to 64. Tests and users can pin the old fixed values. |
+| `TextureStreamingMaxUploadsPerFrame` | null (built-in bound 16) | Caps the adaptive limit. |
+| `TextureStreamingFrameToleranceMilliseconds` | 2 | The frame-time rule tolerance. |
+
+### Diagnostics
+
+The profiler summary (`RenderWorkBudgetCoordinator.AppendProfilerSummary`) writes `TextureStreamingDecode:` (width, permits in use, processors, job workers, cutscene wait) and one line for each lane: limit, rate, target, cost per item, learned budget, headroom, ceiling, overruns, explained overruns, back-offs, items, and frames with deferred work.
+
+### Measurements
+
+Release builds, Sponza cold jump to one shot (37 textures), RTX 3090, SATA SSD, 16-core X3D CPU with the editor on 16 logical processors, 60 Hz frame target. The 4-processor rows set the process affinity to 4 logical processors after startup. "Over" counts frames from the jump to the last T2 texture that were more than 2 ms longer than the settled frame time of the shot.
+
+| Path | Processors | Before (fixed limits) T1 / T2 / over | After (capacity model) T1 / T2 / over |
+|---|---|---|---|
+| OpenGL | 16 | 2.05-2.10 s / 2.47-2.58 s / 29-32 frames | 0.67-0.80 s / 0.82-0.97 s / 13-18 frames |
+| OpenGL | 4 | 2.60-2.65 s / 3.17-3.20 s / 33-39 frames | 4.03-4.05 s / 4.87-4.90 s / 37-38 frames |
+| Vulkan | 16 | 5.55-6.82 s / 7.08-9.32 s / 111-121 frames | 3.60-3.65 s / 4.68-4.79 s / 34-46 frames |
+| Vulkan | 4 | 6.38-6.72 s / 8.05-8.53 s / 149-246 frames | 5.84-6.23 s / 7.37-7.82 s / 178-207 frames |
+
+On 4 processors the decode width is 1 (the old fixed width was 2), so the refine is slower on OpenGL; the frame-time rule still does not hold there, because CPU contention and the OpenGL upload cost that the CPU timer does not see are outside the lane limits.
 
 ## Vulkan Upload And Publication Contract
 
@@ -133,6 +213,10 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 - MCP: `get_texture_streaming_summary` and `list_texture_streaming_textures`.
 
 ## Known Limits
+
+- An OpenGL resident apply has cost that the CPU timer does not see (driver work at the next present, about 5 to 9 ms for a 1024-texel chain). The apply lane cannot split an apply, so a frame with one large apply can still break the frame-time rule.
+- A Vulkan imported upload stages one chunk for each mip level (or each 4 MB of rows), and the chunks of one texture complete in sequence. A 1024-texel chain needs 11 round trips through preparation, transfer, and completion, so the Vulkan refine is bound by this latency more than by the lane limits.
+- The decode width comes from the CPU count only. It does not measure the disk (an HDD can prefer fewer parallel reads) or frame-time contention from the decode threads. Use `TextureStreamingDecodeConcurrency` to pin it.
 
 - Partial sparse page residency is disabled by policy on OpenGL. Vulkan sparse images are not implemented.
 - Cooked payloads are not page-addressable. GPU-native compressed payloads and compressed uploads are not implemented.
