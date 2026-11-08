@@ -21,9 +21,21 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass)
                 return;
 
+            XRRenderPipelineInstance instance = ActivePipelineInstance;
+            // Debug primitives expand in a geometry shader and have only a single-view vertex
+            // stage, so they cannot draw into a multiview stereo target. Skip them in a stereo
+            // pass instead of submitting a mono draw that the frame plan must reject.
+            if (instance.RenderState.StereoPass || RuntimeEngine.Rendering.State.IsStereoPass)
+            {
+                Debug.RenderingEvery(
+                    "VPRC_RenderDebugShapes.StereoUnsupported",
+                    TimeSpan.FromSeconds(30),
+                    "[DebugShapes] Debug shapes are single-view only (geometry-shader expansion) and are not drawn in a single-pass stereo pass.");
+                return;
+            }
+
             try
             {
-                XRRenderPipelineInstance instance = ActivePipelineInstance;
                 XRCamera? camera = instance.RenderState.SceneCamera
                     ?? instance.RenderState.RenderingCamera
                     ?? instance.LastSceneCamera
