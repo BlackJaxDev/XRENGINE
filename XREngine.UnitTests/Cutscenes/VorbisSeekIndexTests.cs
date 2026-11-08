@@ -12,8 +12,45 @@ public sealed class VorbisSeekIndexTests
     private static byte[] Fixture()
         => Convert.FromBase64String(StreamingAudioTestData.VorbisStereoBase64);
 
+    /// <summary>A scheduler that queues each task until the test runs it, so the index build runs at a known time.</summary>
+    private sealed class ManualScheduler : TaskScheduler
+    {
+        private readonly List<Task> _tasks = [];
+
+        public int Pending => _tasks.Count;
+
+        public void RunAll()
+        {
+            while (_tasks.Count > 0)
+            {
+                Task task = _tasks[0];
+                _tasks.RemoveAt(0);
+                TryExecuteTask(task);
+            }
+        }
+
+        protected override IEnumerable<Task> GetScheduledTasks() => _tasks;
+
+        protected override void QueueTask(Task task) => _tasks.Add(task);
+
+        protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued) => false;
+    }
+
+    private static byte[] TwoBlockFixture()
+        => Convert.FromBase64String(VorbisTwoBlockTestData.Base64);
+
+    /// <summary>Opens a decoder. With the index, it waits for the build, so the test uses a known seek path.</summary>
     private static VorbisStreamingDecoder Open(byte[] file, bool useIndex)
-        => new(new MemoryStream(file, writable: false), leaveOpen: false, useSeekIndex: useIndex);
+    {
+        VorbisStreamingDecoder decoder = new(
+            new MemoryStream(file, writable: false),
+            leaveOpen: false,
+            useIndex ? () => new MemoryStream(file, writable: false) : null,
+            null);
+        if (useIndex)
+            decoder.WaitForSeekIndex(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+        return decoder;
+    }
 
     /// <summary>The decode of the whole file from frame zero, with no seek.</summary>
     private static float[] Linear(byte[] file)
@@ -60,12 +97,63 @@ public sealed class VorbisSeekIndexTests
         return mismatches;
     }
 
-    // Moves the decoder to the end and back by one frame, so the index is built.
+    // Checks that the index is ready and moves the decoder to the end, so the next seek is a backward seek.
     private static void BuildIndex(VorbisStreamingDecoder decoder)
     {
-        decoder.SeekToFrame(decoder.TotalFrames);
-        decoder.SeekToFrame(decoder.TotalFrames - 1);
         decoder.SeekIndexState.ShouldBe(EVorbisSeekIndexState.Ready, decoder.SeekIndexFailure);
+        decoder.SeekToFrame(decoder.TotalFrames);
+    }
+
+    /// <summary>
+    /// Seeks backward to every target from the last to the first and counts the samples that are not equal to the linear
+    /// decode. Each target is before the end of the previous read, so every seek is a backward seek.
+    /// </summary>
+    private static int BackwardSweep(VorbisStreamingDecoder decoder, float[] whole, SortedSet<long> targets, out int count)
+    {
+        float[] buffer = new float[ReadFrames * decoder.Channels];
+        int bad = 0;
+        count = 0;
+        foreach (long frame in targets.Reverse())
+        {
+            if (frame < 0 || frame >= decoder.TotalFrames)
+                continue;
+            bad += SeekMismatches(decoder, whole, frame, buffer);
+            count++;
+        }
+        return bad;
+    }
+
+    /// <summary>The targets around each index entry, each page granule, and each change between short and long blocks.</summary>
+    private static SortedSet<long> EdgeTargets(VorbisStreamingDecoder decoder, List<VorbisTestFileBuilder.Page> pages, VorbisTestFileBuilder.Packets packets)
+    {
+        long total = decoder.TotalFrames;
+        SortedSet<long> set = [0, 1, 100, total - 1, total - 300, total - ReadFrames];
+        foreach (VorbisPageIndexEntry entry in decoder.PageIndex!.Entries)
+        {
+            set.Add(entry.RestartFrame);
+            set.Add(entry.RestartFrame - 1);
+            set.Add(entry.RestartFrame + 1);
+        }
+        long previousGranule = 0;
+        foreach (VorbisTestFileBuilder.Page page in pages)
+        {
+            if (!page.IsAudio || page.Granule < 0)
+                continue;
+            set.Add(page.Granule - 1);
+            set.Add(page.Granule);
+            set.Add(page.Granule + 1);
+            set.Add((previousGranule + page.Granule) / 2);
+            previousGranule = page.Granule;
+        }
+        for (int i = 1; i < packets.IsLong.Length; i++)
+        {
+            if (packets.IsLong[i] == packets.IsLong[i - 1])
+                continue;
+            set.Add(packets.Ends[i - 1] - 1);
+            set.Add(packets.Ends[i - 1]);
+            set.Add(packets.Ends[i]);
+        }
+        return set;
     }
 
     [Test]
@@ -123,8 +211,136 @@ public sealed class VorbisSeekIndexTests
     }
 
     [Test]
+    public void TwoBlockFixture_HasTwoBlockSizesTwoModesAndBlockChanges()
+    {
+        VorbisTestFileBuilder.Packets packets = VorbisTestFileBuilder.Analyze(TwoBlockFixture());
+        TestContext.Out.WriteLine($"Block sizes {packets.ShortBlock}/{packets.LongBlock}, {packets.ModeCount} modes, {packets.IsLong.Length} audio packets, {packets.Changes} block changes.");
+        packets.ShortBlock.ShouldBe(256);
+        packets.LongBlock.ShouldBe(2048);
+        packets.ModeCount.ShouldBeGreaterThanOrEqualTo(2);
+        packets.Changes.ShouldBeGreaterThan(10);
+    }
+
+    [Test]
     [CancelAfter(60000)]
-    public void BackwardSeek_WithTheIndex_MatchesTheLinearDecodeOnTheFixtureFile()
+    public void BackwardSeek_OnATwoBlockFile_MatchesTheLinearDecodeAtEdgesAndBlockChanges()
+    {
+        // The libvorbis file re-paged with 160-byte pages and its packet run repeated once, so restart pages follow both
+        // short and long packets, and long packets cross pages.
+        byte[] file = VorbisTestFileBuilder.Build(TwoBlockFixture(), repeat: 1, maxBodyBytes: 160, out List<VorbisTestFileBuilder.Page> pages);
+        VorbisTestFileBuilder.Packets packets = VorbisTestFileBuilder.Analyze(file);
+        (int mismatches, int targets, int indexed, int afterShort, int afterLong) = RunGuarded(() =>
+        {
+            float[] whole = Linear(file);
+            using VorbisStreamingDecoder decoder = Open(file, useIndex: true);
+            BuildIndex(decoder);
+
+            int shortCount = 0;
+            int longCount = 0;
+            int longToShort = 0;
+            foreach (VorbisPageIndexEntry entry in decoder.PageIndex!.Entries)
+            {
+                // The first packet of the restart is the last packet that ends at or before the restart frame (the frame is
+                // later than its end after a long-to-short change). The packet before it ends on the earlier page.
+                int first = Array.BinarySearch(packets.Ends, entry.RestartFrame);
+                if (first < 0)
+                {
+                    first = ~first - 1;
+                    longToShort++;
+                }
+                first.ShouldBeGreaterThan(0, $"no packet ends before restart frame {entry.RestartFrame}");
+                if (packets.IsLong[first - 1])
+                    longCount++;
+                else
+                    shortCount++;
+            }
+
+            int bad = BackwardSweep(decoder, whole, EdgeTargets(decoder, pages, packets), out int count);
+            decoder.SeekIndexState.ShouldBe(EVorbisSeekIndexState.Ready, decoder.SeekIndexFailure);
+            longToShort.ShouldBeGreaterThan(0, "no restart page starts with a long packet before a short packet");
+            return (bad, count, decoder.IndexedSeekCount, shortCount, longCount);
+        });
+
+        TestContext.Out.WriteLine($"Two-block backward seeks: {targets} targets, {indexed} from an indexed page; restart pages after a short packet {afterShort}, after a long packet {afterLong}.");
+        afterShort.ShouldBeGreaterThan(0);
+        afterLong.ShouldBeGreaterThan(0);
+        indexed.ShouldBeGreaterThan(targets / 2);
+        mismatches.ShouldBe(0);
+    }
+
+    [Test]
+    [CancelAfter(60000)]
+    public void BackwardSeek_OnTheEncoderPagesOfATwoBlockFile_MatchesTheLinearDecode()
+    {
+        // The file as libvorbis wrote it, with its own pages of about 4 KB.
+        byte[] file = TwoBlockFixture();
+        VorbisTestFileBuilder.Packets packets = VorbisTestFileBuilder.Analyze(file);
+        (int mismatches, int indexed) = RunGuarded(() =>
+        {
+            float[] whole = Linear(file);
+            using VorbisStreamingDecoder decoder = Open(file, useIndex: true);
+            BuildIndex(decoder);
+            SortedSet<long> targets = [];
+            foreach (VorbisPageIndexEntry entry in decoder.PageIndex!.Entries)
+            {
+                targets.Add(entry.RestartFrame);
+                targets.Add(entry.RestartFrame + 1);
+                targets.Add(entry.RestartFrame + 5000);
+            }
+            for (int i = 1; i < packets.IsLong.Length; i += 7)
+                targets.Add(packets.Ends[i]);
+            targets.Add(decoder.TotalFrames - 1);
+            int bad = BackwardSweep(decoder, whole, targets, out _);
+            return (bad, decoder.IndexedSeekCount);
+        });
+
+        indexed.ShouldBeGreaterThan(0);
+        mismatches.ShouldBe(0);
+    }
+
+    [Test]
+    [CancelAfter(60000)]
+    public void RewindBeforeTheIndexIsReady_DecodesFromTheStart_WithNoBuildOnTheCallingThread()
+    {
+        byte[] file = TwoBlockFixture();
+        float[] whole = Linear(file);
+        ManualScheduler scheduler = new();
+        using VorbisStreamingDecoder decoder = new(new MemoryStream(file, writable: false), leaveOpen: false, () => new MemoryStream(file, writable: false), scheduler);
+        float[] buffer = new float[ReadFrames * decoder.Channels];
+
+        decoder.SeekIndexState.ShouldBe(EVorbisSeekIndexState.Building);
+        scheduler.Pending.ShouldBe(1);
+        decoder.SeekToFrame(60000);
+        int bad = SeekMismatches(decoder, whole, 0, buffer);
+        bad += SeekMismatches(decoder, whole, 30000, buffer);
+        bad += SeekMismatches(decoder, whole, 1000, buffer);
+
+        // No build ran: the build task still waits in the scheduler, and no seek used an index.
+        decoder.IndexBuildThreadId.ShouldBe(0);
+        scheduler.Pending.ShouldBe(1);
+        decoder.SeekIndexState.ShouldBe(EVorbisSeekIndexState.Building);
+        decoder.IndexedSeekCount.ShouldBe(0);
+        bad.ShouldBe(0);
+
+        // The build runs on another thread. The decoder takes the result at its next seek and does not wait for it.
+        int callingThread = Environment.CurrentManagedThreadId;
+        Task.Run(scheduler.RunAll).Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+        decoder.IndexBuildThreadId.ShouldNotBe(0);
+        decoder.IndexBuildThreadId.ShouldNotBe(callingThread);
+        decoder.SeekToFrame(decoder.TotalFrames);
+        bad += SeekMismatches(decoder, whole, decoder.TotalFrames - 2000, buffer);
+        decoder.SeekIndexState.ShouldBe(EVorbisSeekIndexState.Ready);
+        decoder.IndexedSeekCount.ShouldBe(1);
+
+        // A target at the first indexed page or earlier decodes from the start.
+        bad += SeekMismatches(decoder, whole, decoder.PageIndex!.Entries[0].RestartFrame + 10, buffer);
+        decoder.IndexedSeekCount.ShouldBe(1);
+        bad.ShouldBe(0);
+    }
+
+    [Test]
+    [CancelAfter(60000)]
+    public void BackwardSeek_OnTheFixtureFile_DecodesFromTheStartBeforeTheSecondEntry()
     {
         byte[] file = Fixture();
         (int mismatches, int indexed) = RunGuarded(() =>
@@ -140,7 +356,8 @@ public sealed class VorbisSeekIndexTests
             return (bad, decoder.IndexedSeekCount);
         });
 
-        indexed.ShouldBeGreaterThan(0);
+        // The file has one restart page, which is the first entry, so every seek decodes from the start.
+        indexed.ShouldBe(0);
         mismatches.ShouldBe(0);
     }
 
@@ -242,7 +459,7 @@ public sealed class VorbisSeekIndexTests
     {
         // One packet on each page gives more pages than the entry limit, so the build doubles the stride.
         byte[] file = VorbisTestFileBuilder.Build(Fixture(), repeat: 60, maxBodyBytes: 60, out List<VorbisTestFileBuilder.Page> pages);
-        VorbisPageIndex? index = VorbisPageIndex.TryBuild(new MemoryStream(file), out string? failure);
+        VorbisPageIndex? index = VorbisPageIndex.TryBuild(new MemoryStream(file), CancellationToken.None, out string? failure);
 
         index.ShouldNotBeNull(failure);
         pages.Count.ShouldBeGreaterThan(VorbisPageIndex.MaxEntries * 2);

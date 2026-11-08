@@ -98,8 +98,14 @@ public sealed class StreamingAudioDecoderTests
     private static double Pattern(int frame, int channel)
         => ((frame * 7 + channel * 1000) % 30000 - 15000) / 32768.0;
 
+    /// <summary>Opens the Vorbis test file and waits for its page index, so each test uses a known seek path.</summary>
     private static VorbisStreamingDecoder OpenVorbis()
-        => new(new MemoryStream(Convert.FromBase64String(StreamingAudioTestData.VorbisStereoBase64)), leaveOpen: false);
+    {
+        byte[] file = Convert.FromBase64String(StreamingAudioTestData.VorbisStereoBase64);
+        VorbisStreamingDecoder decoder = new(new MemoryStream(file, writable: false), leaveOpen: false, () => new MemoryStream(file, writable: false));
+        decoder.WaitForSeekIndex(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+        return decoder;
+    }
 
     /// <summary>The linear decode of the Vorbis test file, from a new decoder with no seek.</summary>
     private static float[] LinearVorbis()

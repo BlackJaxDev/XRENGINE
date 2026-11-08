@@ -19,6 +19,48 @@ internal static class VorbisTestFileBuilder
     /// <param name="IsAudio">True for a page after the header pages.</param>
     public readonly record struct Page(long Offset, long Granule, bool IsAudio);
 
+    /// <summary>The audio packets of a file: the end frame of each packet and its block type.</summary>
+    /// <param name="Ends">The end frame of each audio packet. The first packet ends at frame zero.</param>
+    /// <param name="IsLong">True for a packet with a long block.</param>
+    /// <param name="ShortBlock">The short block size.</param>
+    /// <param name="LongBlock">The long block size.</param>
+    /// <param name="ModeCount">The number of modes in the setup header.</param>
+    public sealed record Packets(long[] Ends, bool[] IsLong, int ShortBlock, int LongBlock, int ModeCount)
+    {
+        /// <summary>The number of changes between a short and a long block.</summary>
+        public int Changes
+        {
+            get
+            {
+                int changes = 0;
+                for (int i = 1; i < IsLong.Length; i++)
+                {
+                    if (IsLong[i] != IsLong[i - 1])
+                        changes++;
+                }
+                return changes;
+            }
+        }
+    }
+
+    /// <summary>Reads the block sizes, the modes, and the end frame and block type of each audio packet of a file.</summary>
+    public static Packets Analyze(byte[] ogg)
+    {
+        List<byte[]> packets = ReadPackets(ogg, out _, out _);
+        if (!VorbisSetupHeader.TryReadIdentification(packets[0], out _, out _, out int shortBlock, out int longBlock))
+            throw new InvalidDataException("The identification header is not valid.");
+        bool[] modeFlags = new bool[VorbisSetupHeader.MaxModes];
+        if (!VorbisSetupHeader.TryReadModeBlockFlags(packets[2], modeFlags, out int modeCount))
+            throw new InvalidDataException("The setup header has no modes.");
+        int modeMask = (1 << VorbisSetupHeader.BitCount(modeCount - 1)) - 1;
+        List<byte[]> audio = packets.GetRange(3, packets.Count - 3);
+        bool[] isLong = new bool[audio.Count];
+        for (int i = 0; i < audio.Count; i++)
+            isLong[i] = modeFlags[(audio[i][0] >> 1) & modeMask];
+        long[] ends = EndPositions(audio, packet => modeFlags[(packet[0] >> 1) & modeMask] ? longBlock : shortBlock);
+        return new Packets(ends, isLong, shortBlock, longBlock, modeCount);
+    }
+
     /// <summary>Builds a file from the packets of a source file.</summary>
     /// <param name="source">The source Ogg Vorbis file.</param>
     /// <param name="repeat">The number of extra copies of the repeated run of audio packets.</param>

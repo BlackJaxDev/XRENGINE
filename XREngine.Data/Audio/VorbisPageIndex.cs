@@ -23,9 +23,14 @@ namespace XREngine.Data;
 /// Memory bound: the index keeps at most <see cref="MaxEntries"/> entries of 32 bytes (32 KB). When the entry array is
 /// full, the build keeps every second entry and doubles <see cref="PageStride"/>, so entries are between
 /// <see cref="PageStride"/> and about two times <see cref="PageStride"/> pages apart. The index also keeps one buffer with
-/// new header pages (the identification header, an empty comment header, and the setup header) and space for one page
-/// of at most <see cref="MaxPageBytes"/> bytes. The original comment header is not kept, so embedded cover art does not
-/// add to the size.
+/// new header pages (the identification header, an empty comment header, and the setup header) and space for the largest
+/// audio page of the file (at most <see cref="MaxPageBytes"/> bytes; about 4 to 8 KB for libvorbis files). The original
+/// comment header is not kept, so embedded cover art does not add to the size.
+/// </para>
+/// <para>
+/// A page whose sequence number is smaller than the number of new header pages gets no entry, because the header pages
+/// take the sequence numbers just before the restart page. This loses at most the first audio pages and the pages just
+/// after a wrap of the 32-bit sequence number.
 /// </para>
 /// </remarks>
 internal sealed class VorbisPageIndex
@@ -93,8 +98,9 @@ internal sealed class VorbisPageIndex
     /// <summary>Finds the entry with the largest restart frame that is not after the target.</summary>
     /// <param name="frame">The target frame.</param>
     /// <param name="entry">The entry.</param>
+    /// <param name="index">The index of the entry, or -1.</param>
     /// <returns>False if the target is before the first entry.</returns>
-    public bool TryFind(long frame, out VorbisPageIndexEntry entry)
+    public bool TryFind(long frame, out VorbisPageIndexEntry entry, out int index)
     {
         int low = 0;
         int high = _entries.Length - 1;
@@ -112,6 +118,7 @@ internal sealed class VorbisPageIndex
         }
 
         entry = found >= 0 ? _entries[found] : default;
+        index = found;
         return found >= 0;
     }
 
@@ -127,8 +134,7 @@ internal sealed class VorbisPageIndex
     public bool TryPrepareRestart(Stream stream, in VorbisPageIndexEntry entry, OggSpliceStream splice, out string? failure)
     {
         failure = null;
-        int start = _headerLength;
-        Span<byte> page = _prefix.AsSpan(start);
+        Span<byte> page = _prefix.AsSpan(_headerLength);
         if (entry.ByteOffset < 0 || entry.ByteOffset >= stream.Length)
             return FailRestart(out failure, $"The index entry points to byte {entry.ByteOffset}, which is outside the file.");
 
@@ -137,10 +143,12 @@ internal sealed class VorbisPageIndex
             return FailRestart(out failure, $"No Ogg page starts at byte {entry.ByteOffset}.");
 
         int segments = page[26];
-        if (ReadFully(stream, page.Slice(PageHeaderBytes, segments)) < segments)
+        if (PageHeaderBytes + segments > page.Length || ReadFully(stream, page.Slice(PageHeaderBytes, segments)) < segments)
             return FailRestart(out failure, $"The page at byte {entry.ByteOffset} ends inside its lacing values.");
         int bodyLength = SumLacing(page.Slice(PageHeaderBytes, segments));
         int pageLength = PageHeaderBytes + segments + bodyLength;
+        if (pageLength > page.Length)
+            return FailRestart(out failure, $"The page at byte {entry.ByteOffset} is larger than every page that the build saw.");
         if (ReadFully(stream, page.Slice(PageHeaderBytes + segments, bodyLength)) < bodyLength)
             return FailRestart(out failure, $"The page at byte {entry.ByteOffset} ends inside its body.");
         if (!HasValidCrc(page[..pageLength]))
@@ -198,9 +206,11 @@ internal sealed class VorbisPageIndex
 
     /// <summary>Reads all pages of a stream and builds the index.</summary>
     /// <param name="stream">A readable and seekable stream that holds an Ogg Vorbis file.</param>
+    /// <param name="cancellationToken">Stops the build between two pages.</param>
     /// <param name="failure">The reason if the stream cannot be indexed.</param>
     /// <returns>The index, or null if the stream cannot be indexed.</returns>
-    public static VorbisPageIndex? TryBuild(Stream stream, out string? failure)
+    /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
+    public static VorbisPageIndex? TryBuild(Stream stream, CancellationToken cancellationToken, out string? failure)
     {
         failure = null;
         stream.Position = 0;
@@ -228,6 +238,16 @@ internal sealed class VorbisPageIndex
         int stride = 1;
         int pagesSinceEntry = 0;
 
+        // A candidate entry waits until the packet after its first packet starts, because its restart frame depends on
+        // the block size of that packet.
+        bool pending = false;
+        VorbisPageIndexEntry pendingEntry = default;
+        bool pendingFirstLong = false;
+        bool awaitingNext = false;
+        bool nextKnown = false;
+        bool nextLong = false;
+        bool freshLong = false;
+
         long offset = 0;
         int pageNumber = 0;
         uint serial = 0;
@@ -240,9 +260,11 @@ internal sealed class VorbisPageIndex
         long position = 0;
         long lastGranule = -1;
         long finalGranule = -1;
+        int largestPage = 0;
 
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int read = ReadFully(stream, page.AsSpan(0, PageHeaderBytes));
             if (read == 0)
                 break;
@@ -356,13 +378,28 @@ internal sealed class VorbisPageIndex
                         return FailBuild(out failure, $"A packet on the page at byte {offset} uses mode {mode}, but the setup header has {modeCount} modes.");
 
                     currentLong = modeFlags[mode];
+                    if (awaitingNext)
+                    {
+                        awaitingNext = false;
+                        nextKnown = true;
+                        nextLong = currentLong;
+                        if (pending)
+                        {
+                            AddEntry(entries, ref count, ref stride, Shifted(pendingEntry, pendingFirstLong, nextLong, shortBlock, longBlock));
+                            pending = false;
+                        }
+                    }
+
                     if (!packetStarted)
                     {
                         packetStarted = true;
                         if (havePrevious)
                         {
                             freshSegment = s;
+                            freshLong = currentLong;
                             restartFrame = position + Block(previousLong, shortBlock, longBlock) / 4 + Block(currentLong, shortBlock, longBlock) / 4;
+                            awaitingNext = true;
+                            nextKnown = false;
                         }
                     }
                     inPacket = true;
@@ -410,18 +447,19 @@ internal sealed class VorbisPageIndex
                 finalGranule = granule;
             }
 
+            largestPage = Math.Max(largestPage, pageLength);
             pagesSinceEntry++;
             if (freshSegment >= 0 && sequence >= (uint)headerPageStarts.Length && pagesSinceEntry >= stride)
             {
-                if (count == MaxEntries)
+                VorbisPageIndexEntry candidate = new(offset, granule, restartFrame, (int)sequence, freshSegment);
+                if (nextKnown)
+                    AddEntry(entries, ref count, ref stride, Shifted(candidate, freshLong, nextLong, shortBlock, longBlock));
+                else
                 {
-                    for (int i = 0; i < MaxEntries / 2; i++)
-                        entries[i] = entries[i * 2];
-                    count = MaxEntries / 2;
-                    stride *= 2;
+                    pending = true;
+                    pendingEntry = candidate;
+                    pendingFirstLong = freshLong;
                 }
-
-                entries[count++] = new VorbisPageIndexEntry(offset, (int)sequence, granule, freshSegment, restartFrame);
                 pagesSinceEntry = 0;
             }
 
@@ -434,21 +472,45 @@ internal sealed class VorbisPageIndex
         if (!endOfStream)
             return FailBuild(out failure, "The file has no end-of-stream page.");
 
+        // The restart area holds the largest audio page of the file, not the largest possible page.
         Array.Resize(ref entries, count);
+        Array.Resize(ref prefix, headerLength + largestPage);
         return new VorbisPageIndex(entries, prefix, headerLength, headerPageStarts, headerPageLengths, serial, finalGranule, pageNumber, stride);
     }
 
     private static int Block(bool isLong, int shortBlock, int longBlock)
         => isLong ? longBlock : shortBlock;
 
+    // NVorbis gives no samples for the first packet of a decode. When that packet has a long block and the next packet a
+    // short block, NVorbis also drops the flat part of the right half of the long window, before the short overlap starts.
+    // That part is a quarter of the long block minus a quarter of the short block, so the first sample comes that much later.
+    private static VorbisPageIndexEntry Shifted(in VorbisPageIndexEntry entry, bool firstLong, bool nextLong, int shortBlock, int longBlock)
+    {
+        int shift = Math.Max(0, (Block(firstLong, shortBlock, longBlock) - Block(nextLong, shortBlock, longBlock)) / 4);
+        return entry with { RestartFrame = entry.RestartFrame + shift };
+    }
+
+    // Adds an entry. When the array is full, it keeps every second entry and doubles the stride first.
+    private static void AddEntry(VorbisPageIndexEntry[] entries, ref int count, ref int stride, in VorbisPageIndexEntry entry)
+    {
+        if (count == MaxEntries)
+        {
+            for (int i = 0; i < MaxEntries / 2; i++)
+                entries[i] = entries[i * 2];
+            count = MaxEntries / 2;
+            stride *= 2;
+        }
+        entries[count++] = entry;
+    }
+
     // Writes the identification header on the first page, and an empty comment header and the setup header on the pages
-    // after it. Space for one more page follows the header pages. The sequence numbers are set at each restart.
+    // after it. The build adds space for the largest audio page later. The sequence numbers are set at each restart.
     private static byte[] BuildHeaderPages(ReadOnlySpan<byte> id, ReadOnlySpan<byte> setup, uint serial, out int length, out int[] pageStarts, out int[] pageLengths)
     {
         int commentAndSetup = EmptyCommentPacket.Length + setup.Length;
         int lacingCount = id.Length / 255 + 1 + EmptyCommentPacket.Length / 255 + 1 + setup.Length / 255 + 1;
         int pages = 1 + (lacingCount + 254) / 255;
-        byte[] prefix = new byte[pages * (PageHeaderBytes + 255) + id.Length + commentAndSetup + MaxPageBytes];
+        byte[] prefix = new byte[pages * (PageHeaderBytes + 255) + id.Length + commentAndSetup];
 
         byte[] lacing = new byte[lacingCount];
         byte[] body = new byte[commentAndSetup];
