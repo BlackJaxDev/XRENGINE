@@ -640,6 +640,11 @@ namespace XREngine
                 LogImportWarning($"Failed to assign filler texture for '{path}'. {ex.Message}");
             }
 
+            // The filler is only a loading placeholder for a texture that streams. Renderers
+            // with a per-binding fallback use that fallback until the first resident data.
+            if (schedulePreviewLoad || registerStreamingPlaceholder)
+                placeholder.MarkAwaitingFirstResidency();
+
             if (schedulePreviewLoad)
             {
                 XRTexture2D.ScheduleImportedTexturePreviewJob(

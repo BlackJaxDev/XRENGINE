@@ -97,6 +97,9 @@ public partial class XRTexture2D
         SetField(ref _residencyState.SparseLevelCount, 0, publishNotifications: false);
         SetField(ref _residencyState.CommittedBytes, 0L, publishNotifications: false);
         SetField(ref _residencyState.ResidentPageSelection, SparseTextureStreamingPageSelection.Full, publishNotifications: false);
+        // Clear the placeholder state before the source generation advances, so a publisher
+        // that sees the new generation also sees real resident data.
+        ClearAwaitingFirstResidency();
         PublishCanonicalSourceContentMutation();
     }
 

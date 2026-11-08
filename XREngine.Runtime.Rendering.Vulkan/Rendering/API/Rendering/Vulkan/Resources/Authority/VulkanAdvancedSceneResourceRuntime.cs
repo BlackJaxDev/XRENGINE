@@ -44,6 +44,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         new AdvancedSamplerRecord[SamplerCacheCapacity];
     private readonly Sampler[] _samplerCache = new Sampler[SamplerCacheCapacity];
     private AdvancedTextureRecord[] _textureRecordScratch = [];
+    private readonly VulkanAdvancedTextureReadinessTracker _textureReadiness = new();
     private AdvancedEncodedTextureReference[] _encodedTextureScratch = [];
     private AdvancedEncodedSamplerReference[] _encodedSamplerScratch = [];
     private DescriptorImageInfo[] _imageDescriptorScratch = [];
@@ -1425,6 +1426,14 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     "Advanced canonical scene publication cold readiness",
                     allowSynchronousUpload: true,
                     out descriptor);
+            // An imported placeholder that waits for its first streamed data has a ready
+            // image, but that image is only a loading filler. Publish it as still loading,
+            // so the shader uses the per-binding fallback instead of the filler.
+            if (IsAwaitingFirstResidency(source))
+            {
+                ++loadingTextureCount;
+                continue;
+            }
             if (!descriptorReady ||
                 !descriptor.IsReady || descriptor.View.Handle == 0 ||
                 descriptor.ViewType != requiredViewType ||
@@ -1498,10 +1507,21 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 loadingTextureCount);
         }
 
+        // Readiness is backend state outside the canonical generations. Advance the
+        // readiness generation, so the resident texture table writes the new rows.
+        _textureReadiness.Update(_textureRecordScratch.AsSpan(0, records.Length));
+
         failure = EVulkanAdvancedSceneResourceFailure.None;
         reason = "Ready";
         return true;
     }
+
+    /// <summary>
+    /// Returns whether <paramref name="source"/> shows only an imported loading placeholder
+    /// that waits for its first streamed resident data.
+    /// </summary>
+    internal static bool IsAwaitingFirstResidency(XRTexture source)
+        => source is XRTexture2D { IsAwaitingFirstResidency: true };
 
     private bool TryPrepareSamplerRows(
         AdvancedGpuRecordTablePublicationSnapshot<AdvancedSamplerRecord> samplers,
@@ -1703,7 +1723,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MaterialBindings, frameSlot, MemoryMarshal.AsBytes(material.TextureBindings), material.Generations.MaterialRows.Content, snapshot.DatabaseEpoch, slot.ResidentMaterialBindings, out bindings) &&
                TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Textures, frameSlot,
                    _textureRecordScratch.AsSpan(0, textureHighWater),
-                   snapshot.Textures, snapshot.DatabaseEpoch, slot.ResidentTextures, out textures) &&
+                   snapshot.Textures, snapshot.DatabaseEpoch, slot.ResidentTextures, out textures,
+                   _textureReadiness.Generation) &&
                TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Samplers, frameSlot, snapshot.Samplers.PhysicalRecords,
                    snapshot.Samplers, snapshot.DatabaseEpoch, slot.ResidentSamplers, out samplers) &&
                TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Lights, frameSlot, snapshot.GlobalResources.Lights.PhysicalRecords,
@@ -1854,7 +1875,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         AdvancedGpuRecordTablePublicationSnapshot<T> table,
         ulong databaseEpoch,
         VulkanAdvancedSceneResidentTable<T> resident,
-        out VulkanFrameDataSlice slice)
+        out VulkanFrameDataSlice slice,
+        ulong backendContentGeneration = 0u)
         where T : unmanaged
     {
         ReadOnlySpan<AdvancedGpuRecordPublicationDelta> deltas = table.Deltas;
@@ -1868,15 +1890,15 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             {
                 if (!resident.TryInitialize(slice, source))
                     return false;
-                resident.StampPublication(databaseEpoch, table.Sequence, table.Generations);
+                resident.StampPublication(databaseEpoch, table.Sequence, table.Generations, backendContentGeneration);
             }
 
             return true;
         }
 
-        if (resident.CanReuseUnchanged(databaseEpoch, table.Generations, source))
+        if (resident.CanReuseUnchanged(databaseEpoch, table.Generations, source, backendContentGeneration))
         {
-            resident.StampPublication(databaseEpoch, table.Sequence, table.Generations);
+            resident.StampPublication(databaseEpoch, table.Sequence, table.Generations, backendContentGeneration);
             slice = resident.CreateCurrentSlice(source.Length);
             return true;
         }
@@ -1886,7 +1908,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             table.Sequence,
             table.JournalFloorSequence,
             table.HasRetainedJournal,
-            source);
+            source,
+            backendContentGeneration);
 
         if (!deltaPatch && !TryWriteResidentBytes(
                 resident.Slice,
@@ -1916,7 +1939,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             resident.CommitPatched(source, deltas);
         else
             resident.Commit(source);
-        resident.StampPublication(databaseEpoch, table.Sequence, table.Generations);
+        resident.StampPublication(databaseEpoch, table.Sequence, table.Generations, backendContentGeneration);
         slice = resident.CreateCurrentSlice(source.Length);
         return true;
     }
@@ -2932,6 +2955,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         int descriptorCount = checked((int)capacity);
         _textureRecordScratch =
             new AdvancedTextureRecord[descriptorCount];
+        _textureReadiness.Allocate(descriptorCount);
         _encodedTextureScratch =
             new AdvancedEncodedTextureReference[descriptorCount];
         _encodedSamplerScratch =
