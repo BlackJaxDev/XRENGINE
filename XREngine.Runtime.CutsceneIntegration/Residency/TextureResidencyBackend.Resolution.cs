@@ -1,6 +1,7 @@
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.Cutscenes;
 
@@ -15,7 +16,7 @@ public sealed partial class TextureResidencyBackend
 
     /// <summary>True while model imports that register textures with the shared streaming manager are active.</summary>
     public static bool AreModelImportsActive
-        => ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports;
+        => TextureResidencyRequests.Shared.HasActiveImportedModelImports;
 
     /// <inheritdoc />
     /// <remarks>

@@ -49,9 +49,9 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
     private const int PreviewMip = 31;
 
     private static readonly Lock ProfileOwnersSync = new();
-    private static readonly ConditionalWeakTable<ImportedTextureStreamingManager, StrongBox<int>> ProfileOwners = new();
+    private static readonly ConditionalWeakTable<ITextureResidencyRequests, StrongBox<int>> ProfileOwners = new();
 
-    private readonly ImportedTextureStreamingManager _manager;
+    private readonly ITextureResidencyRequests _manager;
     private readonly Action<TextureResidencyTicket> _onRequestCompleted;
     private readonly bool _ownsBudgetProfile;
     private readonly Lock _sync = new();
@@ -76,7 +76,7 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
     /// <param name="assets">The asset manager that holds the loaded textures.</param>
     /// <param name="useCutsceneBudgetProfile">True to hold the cutscene budget profile until <see cref="Dispose"/>.</param>
     public TextureResidencyBackend(AssetManager assets, bool useCutsceneBudgetProfile = true)
-        : this(ImportedTextureStreamingManager.Instance, assets ?? throw new ArgumentNullException(nameof(assets)), new TextureResidencyKeyIndex(), useCutsceneBudgetProfile)
+        : this(TextureResidencyRequests.Shared, assets ?? throw new ArgumentNullException(nameof(assets)), new TextureResidencyKeyIndex(), useCutsceneBudgetProfile)
     {
     }
 
@@ -84,12 +84,12 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
     /// <param name="resolveTexture">Returns the loaded texture of an asset, or null if the asset is not a loaded texture.</param>
     /// <param name="useCutsceneBudgetProfile">True to hold the cutscene budget profile until <see cref="Dispose"/>.</param>
     public TextureResidencyBackend(Func<Guid, XRTexture2D?> resolveTexture, bool useCutsceneBudgetProfile = true)
-        : this(ImportedTextureStreamingManager.Instance, resolveTexture, useCutsceneBudgetProfile)
+        : this(TextureResidencyRequests.Shared, resolveTexture, useCutsceneBudgetProfile)
     {
     }
 
     internal TextureResidencyBackend(
-        ImportedTextureStreamingManager manager,
+        ITextureResidencyRequests manager,
         Func<Guid, XRTexture2D?> resolveTexture,
         bool useCutsceneBudgetProfile)
         : this(manager, AdaptResolver(resolveTexture), keys: null, useCutsceneBudgetProfile)
@@ -97,7 +97,7 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
     }
 
     internal TextureResidencyBackend(
-        ImportedTextureStreamingManager manager,
+        ITextureResidencyRequests manager,
         AssetManager assets,
         TextureResidencyKeyIndex keys,
         bool useCutsceneBudgetProfile)
@@ -106,7 +106,7 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
     }
 
     private TextureResidencyBackend(
-        ImportedTextureStreamingManager manager,
+        ITextureResidencyRequests manager,
         Action<Guid, List<XRTexture2D>> resolveTextures,
         TextureResidencyKeyIndex? keys,
         bool useCutsceneBudgetProfile)
@@ -358,13 +358,13 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
 
     /// <summary>The number of backends that hold the cutscene budget profile of a manager.</summary>
     /// <param name="manager">The streaming manager.</param>
-    internal static int GetBudgetProfileOwnerCount(ImportedTextureStreamingManager manager)
+    internal static int GetBudgetProfileOwnerCount(ITextureResidencyRequests manager)
     {
         lock (ProfileOwnersSync)
             return ProfileOwners.TryGetValue(manager, out StrongBox<int>? owners) ? owners.Value : 0;
     }
 
-    private static void AcquireBudgetProfile(ImportedTextureStreamingManager manager)
+    private static void AcquireBudgetProfile(ITextureResidencyRequests manager)
     {
         lock (ProfileOwnersSync)
         {
@@ -374,7 +374,7 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
         }
     }
 
-    private static void ReleaseBudgetProfile(ImportedTextureStreamingManager manager)
+    private static void ReleaseBudgetProfile(ITextureResidencyRequests manager)
     {
         lock (ProfileOwnersSync)
         {
