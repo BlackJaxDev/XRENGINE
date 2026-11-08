@@ -14,7 +14,9 @@ namespace XREngine.Rendering;
 /// <see cref="RiseIntervalMilliseconds"/>, up to the memory bound, so a fast machine reaches the bound in a few hundred
 /// milliseconds.</para>
 /// <para>Back-off: an over-budget frame with active decodes, when such frames go over more often than frames without
-/// decodes by <see cref="EvidenceMargin"/>, lowers the width by one and holds it for <see cref="HoldMilliseconds"/>.</para>
+/// decodes by <see cref="EvidenceMargin"/>, halves the width and holds it for <see cref="HoldMilliseconds"/>. The width
+/// that gave the evidence is a ceiling (less one) for <see cref="EvidenceMemoryMilliseconds"/>, so the rise does not bring
+/// it back at once.</para>
 /// <para>A scene discontinuity restarts the statistics and relearns the normal frame time for
 /// <see cref="TextureStreamingWorkController.RelearnMilliseconds"/>.</para>
 /// </remarks>
@@ -58,6 +60,7 @@ internal sealed class TextureStreamingDecodeWidthController
     private int _relearnFrames;
     private double _tolerance = 2.0;
     private long _backoffCount;
+    private double _evidenceCeiling = double.PositiveInfinity;
 
     /// <summary>Creates a controller.</summary>
     public TextureStreamingDecodeWidthController(int baseWidth, int maxWidth, int? pinnedWidth, double toleranceMilliseconds)
@@ -167,7 +170,9 @@ internal sealed class TextureStreamingDecodeWidthController
             _backoffCount++;
             _sinceEvidenceMilliseconds = 0.0;
             _holdRemainingMilliseconds = HoldMilliseconds;
-            _width = Math.Max(ResolveFloor(), Math.Floor(_width) - 1.0);
+            double current = Math.Floor(_width);
+            _evidenceCeiling = Math.Min(_evidenceCeiling, Math.Max(1.0, current - 1.0));
+            _width = Math.Max(ResolveFloor(), Math.Floor(current * 0.5));
         }
         else if (sample.WaitingDecodes > 0
             && sample.ActiveDecodes >= Width
@@ -179,7 +184,12 @@ internal sealed class TextureStreamingDecodeWidthController
             _width = Math.Min(_maxWidth, Math.Floor(_width) + Math.Max(1.0, Math.Floor(_width * 0.5)));
         }
 
-        _width = Math.Clamp(_width, ResolveFloor(), _maxWidth);
+        if (!HasRecentEvidence)
+            _evidenceCeiling = double.PositiveInfinity;
+
+        double ceiling = Math.Min(_maxWidth, _evidenceCeiling);
+        double floor = Math.Min(ResolveFloor(), ceiling);
+        _width = Math.Clamp(_width, floor, ceiling);
         return Width;
     }
 

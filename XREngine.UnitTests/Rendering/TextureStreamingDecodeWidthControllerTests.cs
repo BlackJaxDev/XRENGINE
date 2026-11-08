@@ -75,6 +75,18 @@ public sealed class TextureStreamingDecodeWidthControllerTests
     }
 
     [Test]
+    public void WeakMachine_DoesNotClimbBackToTheBound_AfterEvidence()
+    {
+        // One free processor, and decodes start from the memory bound (a fast base). The evidence must keep the width low
+        // for the evidence memory, not let the rise bring it back.
+        TextureStreamingDecodeWidthController controller = new(8, 8, null, 2.0);
+
+        Run(controller, 600, freeCores: 1, contentionPerDecode: 4.0);
+
+        controller.Width.ShouldBeLessThanOrEqualTo(2);
+    }
+
+    [Test]
     public void NoEvidence_KeepsTheOldWidthOfTwo()
     {
         // The frame does not get slower with decodes, but the queue is never saturated above the old width.

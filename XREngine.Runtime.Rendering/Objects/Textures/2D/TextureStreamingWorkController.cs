@@ -25,7 +25,7 @@ namespace XREngine.Rendering;
 /// <see cref="ExplainedOverrunRepeatMilliseconds"/> also sets a per-frame ceiling of <c>N - 1</c> items for
 /// <see cref="CeilingLifetimeMilliseconds"/> and lets the floor go below one item per frame for
 /// <see cref="RecoverMilliseconds"/>. An overrun that the work does not explain lowers the limit only when frames with
-/// several items go over more often for each item than recent frames with at most one item (the baseline); it sets the
+/// several items go over more often for each item than recent frames with one item (the baseline); it sets the
 /// same ceiling, because it rests on several frames, but it gives no cost sample. A fixed cost of each work frame fails that test, so the limit does not fall for it.</para>
 /// <para>Hysteresis: the limit rises toward the target only while work was deferred and the hold time has passed, by at
 /// most <see cref="RiseFraction"/> in one frame, and never above the target. It falls without an overrun only when the
@@ -84,16 +84,11 @@ internal sealed class TextureStreamingWorkController
 
     /// <summary>
     /// The number of frames in a row whose time without the effective work is over the rule that count as a scene step,
-    /// when the items do not explain them (see <see cref="StepExcessWorkRatio"/>). It is shorter than the two frames that a
+    /// when the items do not explain them (no more items than a work frame inside the rule before the streak). It is shorter than the two frames that a
     /// statistical back-off needs, so a scene step starts its relearn first.
     /// </summary>
     internal const int StepDetectFrames = 2;
 
-    /// <summary>
-    /// When the streak starts after a frame without lane work, the excess counts as a scene step only when it is more than
-    /// this many times the effective work, because new work and a scene change start together at a cold cut.
-    /// </summary>
-    internal const double StepExcessWorkRatio = 4.0;
 
     /// <summary>
     /// The normal frame budget is the mean frame time plus this many mean deviations. For normal jitter, 2.5 mean deviations
@@ -106,6 +101,13 @@ internal sealed class TextureStreamingWorkController
 
     /// <summary>A baseline over-budget rate is valid for a statistical back-off only from a frame in this recent time.</summary>
     internal const double BaselineRecencyMilliseconds = 500.0;
+
+    /// <summary>
+    /// Over-budget frames in a row with several items, and no recent baseline frame, after which the controller halves the
+    /// limit once to get baseline frames (an exploratory back-off). It sets no ceiling and gives no cost sample, so a wrong
+    /// probe costs one hold time. It is longer than <see cref="StepDetectFrames"/>, so a scene step starts its relearn first.
+    /// </summary>
+    internal const int ExploratoryBackoffFrames = 4;
 
     /// <summary>
     /// Frames with several items must go over the budget more often for each item than baseline frames by this share
@@ -156,6 +158,7 @@ internal sealed class TextureStreamingWorkController
     private double _millisecondsSinceRepeatedOverrun = double.PositiveInfinity;
     private double _millisecondsSinceExplainedOverrun = double.PositiveInfinity;
     private double _millisecondsSinceBaselineFrame = double.PositiveInfinity;
+    private double _millisecondsSinceExploratoryBackoff = double.PositiveInfinity;
     private int _ceilingItems;
     private double _ceilingAgeMilliseconds;
     private int _allowance;
@@ -164,6 +167,7 @@ internal sealed class TextureStreamingWorkController
     private int _underFrames;
     private int _itemsBeforeStep;
     private int _previousItems;
+    private bool _previousSceneOver;
     private long _overrunCount;
     private long _attributedOverrunCount;
     private long _backoffCount;
@@ -340,11 +344,12 @@ internal sealed class TextureStreamingWorkController
         bool sceneOver = frameKnown && double.IsFinite(budget) && frameMilliseconds - work > budget + tolerance;
         if (sceneOver && !relearning)
         {
+            // The reference is the last frame before the streak; it must itself be inside the rule.
             if (_stepFrames == 0)
-                _itemsBeforeStep = _previousItems;
-            bool sceneLike = _itemsBeforeStep > 0
-                ? items <= _itemsBeforeStep
-                : frameMilliseconds - work - budget > StepExcessWorkRatio * Math.Max(work, 0.001);
+                _itemsBeforeStep = _previousSceneOver ? 0 : _previousItems;
+            // After a frame without work, new work and a scene change start together and cannot be told apart: a cut
+            // there comes with the signal (MarkDiscontinuity), and the exploratory back-off tests new work.
+            bool sceneLike = _itemsBeforeStep > 0 && items <= _itemsBeforeStep;
             _stepFrames = sceneLike ? _stepFrames + 1 : 0;
             if (_stepFrames >= StepDetectFrames)
             {
@@ -371,16 +376,19 @@ internal sealed class TextureStreamingWorkController
         }
 
         bool growsWithItems = false;
+        bool exploratory = false;
         if (frameKnown && double.IsFinite(budget) && !relearning)
         {
             double rateAlpha = Smoothing(OverrunRateTimeConstantMilliseconds, elapsed);
             double over = frameOver ? 1.0 : 0.0;
-            if (items <= 1)
+            // The baseline is frames with exactly one item: a frame without work does not pay a fixed cost of each work
+            // frame, so it would make that cost look like a cost of each item.
+            if (items == 1)
             {
                 _overRateBaseline += (over - _overRateBaseline) * rateAlpha;
                 _millisecondsSinceBaselineFrame = 0.0;
             }
-            else
+            else if (items > 1)
             {
                 _overRateMultipleItems += (over - _overRateMultipleItems) * rateAlpha;
                 _multipleItemsMean += (items - _multipleItemsMean) * rateAlpha;
@@ -389,10 +397,18 @@ internal sealed class TextureStreamingWorkController
             _multipleItemOverStreak = frameOver && items > 1 ? _multipleItemOverStreak + 1 : 0;
 
             // At least StepDetectFrames over-budget frames in a row, so a scene step starts its relearn first.
+            bool baselineRecent = _millisecondsSinceBaselineFrame <= BaselineRecencyMilliseconds;
             growsWithItems = items > 1
                 && _multipleItemOverStreak >= StepDetectFrames
-                && _millisecondsSinceBaselineFrame <= BaselineRecencyMilliseconds
+                && baselineRecent
                 && MultipleItemFramesOverrunMorePerItem(OverrunCorrelationMargin);
+
+            // Without baseline frames the per-item test cannot run, and cost that no timer sees would raise the limit
+            // freely. Halve once to get frames with fewer items; the per-item test then decides.
+            exploratory = items > 1
+                && !baselineRecent
+                && _multipleItemOverStreak >= ExploratoryBackoffFrames
+                && _holdRemainingMilliseconds <= 0.0;
         }
 
         if (frameKnown)
@@ -442,7 +458,7 @@ internal sealed class TextureStreamingWorkController
         if (overBudget)
             _overrunCount++;
 
-        bool backoff = explained || (overBudget && growsWithItems);
+        bool backoff = explained || (overBudget && (growsWithItems || exploratory));
         if (backoff)
         {
             _backoffCount++;
@@ -458,10 +474,19 @@ internal sealed class TextureStreamingWorkController
                     SetCeiling(items);
                 }
             }
-            else
+            else if (growsWithItems)
             {
                 // A statistical back-off already rests on several over-budget frames, so it is not a single hitch.
                 SetCeiling(items);
+            }
+            else
+            {
+                // A second exploratory back-off in the ceiling lifetime shows that the item count, not a hitch, causes the
+                // overruns, so it sets the ceiling too.
+                if (_millisecondsSinceExploratoryBackoff <= CeilingLifetimeMilliseconds)
+                    SetCeiling(items);
+                _millisecondsSinceExploratoryBackoff = 0.0;
+                _multipleItemOverStreak = 0;
             }
 
             double floor = ResolveFloor(maxRate);
@@ -501,6 +526,7 @@ internal sealed class TextureStreamingWorkController
             _rate = Math.Min(_rate, _ceilingItems);
 
         _previousItems = items;
+        _previousSceneOver = sceneOver;
         _allowance = ResolveAllowance();
         return _allowance;
     }
@@ -594,6 +620,7 @@ internal sealed class TextureStreamingWorkController
         _millisecondsSinceRepeatedOverrun += elapsedMilliseconds;
         _millisecondsSinceExplainedOverrun += elapsedMilliseconds;
         _millisecondsSinceBaselineFrame += elapsedMilliseconds;
+        _millisecondsSinceExploratoryBackoff += elapsedMilliseconds;
         if (_ceilingItems > 0)
             _ceilingAgeMilliseconds += elapsedMilliseconds;
     }

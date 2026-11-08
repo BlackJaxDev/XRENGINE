@@ -304,12 +304,15 @@ public sealed class TextureStreamingWorkControllerTests
     [TestCase(false)]
     public void CameraCut_ToAHeavierShot_IsNotItemCost(bool signaled)
     {
-        // Before the cut the shot costs 16.7 ms and streaming is idle. The cut moves to a 24 ms shot and starts a burst
-        // with no idle frame; each item costs 0.03 ms. The cut is either signaled (the cutscene clock) or detected.
+        // Before the cut the shot costs 16.7 ms. The cut moves to a 24 ms shot during a burst with no idle frame; each
+        // item costs 0.03 ms. A signaled cut (the cutscene clock) comes when the burst starts; an unsignaled cut comes in
+        // the middle of a burst, where the step detector sees it.
         TextureStreamingWorkController controller = CreateController(initial: 4);
         RunIdle(controller, 120, baseBusy: 8.0);
         if (signaled)
             controller.MarkDiscontinuity();
+        else
+            RunBacklog(controller, 60, baseBusy: 8.0, costAt: _ => 0.03, share: 1.0);
 
         Frame[] frames = new Frame[120];
         for (int i = 0; i < frames.Length; i++)
@@ -324,7 +327,7 @@ public sealed class TextureStreamingWorkControllerTests
         controller.BackoffCount.ShouldBe(0);
         controller.CostPerItemMilliseconds.ShouldBeLessThan(0.1);
         controller.DiscontinuityCount.ShouldBeGreaterThan(0);
-        frames.Min(f => f.Items).ShouldBeGreaterThanOrEqualTo(4);
+        frames[^1].Items.ShouldBe(16);
         controller.ItemsThisFrame.ShouldBe(16);
     }
 
@@ -391,6 +394,30 @@ public sealed class TextureStreamingWorkControllerTests
         RunBacklog(controller, 120, baseBusy: 8.0, costAt: _ => 0.2);
 
         controller.BudgetMilliseconds.ShouldBeLessThan(Period60Hz + Tolerance);
+    }
+
+    [Test]
+    public void HiddenCost_AtTheStartOfABurstWithNoBaseline_IsProbedDown()
+    {
+        // The burst starts at 6 items in every frame; each item adds 3 ms that no timer sees, and no frame has at most
+        // one item, so the per-item test has no baseline at first.
+        TextureStreamingWorkController controller = CreateController(initial: 6);
+        RunIdle(controller, 30, baseBusy: 8.0);
+        Frame[] frames = new Frame[180];
+        for (int i = 0; i < frames.Length; i++)
+        {
+            int items = controller.ItemsThisFrame;
+            double busy = 8.0 + items * 3.0;
+            double frame = Math.Max(Period60Hz, busy);
+            frames[i] = new Frame(items, frame);
+            controller.Update(new TextureStreamingWorkSample(frame, busy, Period60Hz, items * 0.05, items, true, 0.5));
+        }
+
+        // The probe halves at once; a second probe sets a ceiling, so the limit stays near the 3 items that fit, and a new
+        // probe above them occurs at most once in each ceiling lifetime.
+        frames[..10].Max(f => f.Items).ShouldBeLessThanOrEqualTo(6);
+        frames[30..].Count(f => f.Items > 3).ShouldBeLessThanOrEqualTo(12);
+        frames[30..].Count(f => f.FrameMilliseconds > Period60Hz + Tolerance).ShouldBeLessThanOrEqualTo(12);
     }
 
     [Test]
