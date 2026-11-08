@@ -74,6 +74,12 @@ The handoff maps to:
 - `sessionToken` -> `GameStartupSettings.MultiplayerSessionToken`
 - `worldAsset` -> `GameStartupSettings.ExpectedMultiplayerWorldAsset`
 
+`admissionSecret` maps to `GameStartupSettings.MultiplayerAdmissionSecret`. This grant stays in memory only: the YAML save
+of the startup settings does not write it, and a publish clears it. To give the grant to a launched game, use
+`XRE_REALTIME_JOIN_PAYLOAD` in the process environment of the game, or a managed client launch configuration. Do not
+put the grant in a project file, and do not log it. `XRE_REALTIME_JOIN_PAYLOAD_FILE` is a file on disk, so use it only
+for a short-lived file that the launcher deletes.
+
 Session tokens are opaque to XRENGINE. The engine can compare a supplied token with the server's configured value, but it does not mint, refresh, or authorize tokens.
 
 `XREngine.ControlPlane` can mint local-dev session tokens and serialize this handoff payload for editor/server smoke paths. Production token policy still belongs to the external service layer.

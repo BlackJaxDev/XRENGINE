@@ -7,6 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Networking;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
+using YamlDotNet.Serialization;
 
 namespace XREngine
 {
@@ -191,9 +192,15 @@ namespace XREngine
             set => SetField(ref _multiplayerReservationId, value);
         }
 
+        /// <summary>
+        /// Opaque player-scoped admission grant. It stays in memory only: the YAML save does not write it, and a publish
+        /// clears it. A launched game gets it from the realtime join handoff (<c>XRE_REALTIME_JOIN_PAYLOAD</c> in the process
+        /// environment) or from a managed client launch configuration. Never log it.
+        /// </summary>
         [Category("Networking")]
-        [Description("Opaque player-scoped admission grant. This must not be persisted or logged.")]
+        [Description("Opaque player-scoped admission grant. It stays in memory only and must not be logged. A launched game gets it from the realtime join handoff.")]
         [Secret]
+        [YamlIgnore]
         public string? MultiplayerAdmissionSecret
         {
             get => _multiplayerAdmissionSecret;
