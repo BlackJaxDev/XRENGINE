@@ -42,7 +42,7 @@ full project dependency map.
 
 | Backend | Key | Notes |
 |---------|-----|-------|
-| **OpenAL** | `EAudioTransport.OpenAL` | OpenAL Soft playback and spatial listener controls. Default path. |
+| **OpenAL** | `EAudioTransport.OpenAL` | OpenAL Soft playback and spatial listener controls. Default path. `OpenALSoftLibrary` loads the packaged OpenAL Soft library (`soft_oal.dll` on Windows) for AL and ALC, never the system OpenAL router. A load failure throws a named error. OpenAL Soft supplies `AL_SOFT_source_latency`, so `TryGetPlaybackClock` reports the device position. |
 | **NAudio** | `EAudioTransport.NAudio` | Managed software mixer (`NAudioMixer`). Supports streaming queues and pitch-adjusted playback. |
 
 ## Effects Processors
@@ -258,4 +258,6 @@ Tools/Dependencies/
 ## License
 
 Steam Audio (`phonon.dll`) is licensed under **Apache-2.0** by Valve Corporation.
+
+OpenAL Soft (`soft_oal.dll`, from `Silk.NET.OpenAL.Soft.Native`) is licensed under **LGPL-2.0-or-later**. It stays a separate native file that Silk.NET loads at run time; do not link it statically. The build and publish output copy its license text to `licenses/`.
 See `docs/DEPENDENCIES.md` for the full dependency/license audit.

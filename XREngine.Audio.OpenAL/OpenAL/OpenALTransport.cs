@@ -91,10 +91,11 @@ namespace XREngine.Audio
 
         public OpenALTransport(string? deviceName = null)
         {
-            Api = AL.GetApi();
+            // Load OpenAL Soft for both AL and ALC. A load failure throws; the system router is not used in its place.
+            Api = OpenALSoftLibrary.LoadAl();
+            Context = OpenALSoftLibrary.LoadAlc();
 
             // Open device and context
-            Context = ALContext.GetApi(false);
             lock (NativeGate)
             {
                 DeviceHandle = Context.OpenDevice(deviceName);

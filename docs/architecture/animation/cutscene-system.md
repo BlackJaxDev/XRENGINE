@@ -243,7 +243,7 @@ Play dispatch keeps a high-water mark: a play step never fires an event at or be
 
 | Transport | Clock |
 |---|---|
-| OpenAL | `AL_SAMPLE_OFFSET_LATENCY_SOFT` from `AL_SOFT_source_latency`. Without the extension, there is no clock. |
+| OpenAL | `AL_SAMPLE_OFFSET_LATENCY_SOFT` from `AL_SOFT_source_latency`. The transport loads the packaged OpenAL Soft library (`soft_oal.dll` on Windows), which has this extension, so the default transport has a clock. It does not load the system OpenAL router (`OpenAL32.dll`), which does not have the extension. If OpenAL Soft does not load, the transport fails to open with a named error; it does not use the router in its place. |
 | NAudio | The mixer position. The latency is the `DesiredLatency` of the `WaveOutEvent` output, which is an estimate. |
 | WebAudio | No clock. |
 

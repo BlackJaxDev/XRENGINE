@@ -89,7 +89,9 @@ While the transport does not stream (a pause, a scrub, a stop, or a rate other t
 
 A cutscene with an audio track that has `DrivesClock` set (the default) follows the heard audio position: the clock runs on wall time, and the first such track corrects it in small steps. A difference of more than 100 ms is a hard resync: the clock jumps, the player raises `Discontinuity` with the `ClockResync` kind, and the events across the jump follow the seek policy of each track. Play dispatch never fires an event twice after a correction.
 
-If the audio transport has no playback clock (WebAudio, or OpenAL without `AL_SOFT_source_latency`), the player uses wall time, sets `CutscenePlayer.IsAudioClockFallback`, and adds one diagnostic. The [architecture document](../../architecture/animation/cutscene-system.md#audio-clock) gives the warm-up, restart, and per-transport rules.
+The default OpenAL transport has a playback clock. It loads the OpenAL Soft library that ships with the application (`soft_oal.dll` on Windows), which has `AL_SOFT_source_latency`. It does not load the system OpenAL router (`OpenAL32.dll`), because the router does not have that extension. If OpenAL Soft does not load, the OpenAL transport does not open, and the error names the missing library.
+
+If the audio transport has no playback clock (WebAudio, or an OpenAL device without `AL_SOFT_source_latency`), the player uses wall time, sets `CutscenePlayer.IsAudioClockFallback`, and adds one diagnostic. The [architecture document](../../architecture/animation/cutscene-system.md#audio-clock) gives the warm-up, restart, and per-transport rules.
 
 ## Video Tracks
 
