@@ -213,6 +213,103 @@ public sealed class PublishedCopiedFileGuardTests
     }
 
     [Test]
+    public void PrefixedStrings_StripOnlyThePathToken_AndKeepTheRestOfTheString()
+    {
+        using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+        string first = MachinePath("Art", "first.png");
+        string second = Path.Combine("C:\\", "Users", "other", "Docs", "second.png");
+
+        // A multi-line string attribute: the length covers both lines. Only the folder parts of the two paths change.
+        byte[] attribute = Encoding.UTF8.GetBytes(first + "\nnotes about it\\here\n" + second);
+        byte[] multiLine = [.. RandomBytes(16, 512), 0, .. LittleEndian(attribute.Length), .. attribute, 0, .. RandomBytes(17, 512)];
+        string multiLineFile = Path.Combine(_root, "history.bin");
+        File.WriteAllBytes(multiLineFile, multiLine);
+        CookedOutputPathGuard.StripCopiedFile(multiLineFile, "history.bin");
+        string expected = StripFolders(first) + "\nnotes about it\\here\n" + StripFolders(second);
+        Encoding.UTF8.GetString(File.ReadAllBytes(multiLineFile), 517, attribute.Length).ShouldBe(expected);
+
+        // A RIFF bext chunk: the chunk size covers the 256-byte description and binary fields that hold backslash bytes.
+        byte[] description = new byte[256];
+        Encoding.UTF8.GetBytes(first).CopyTo(description, 0);
+        byte[] binaryFields = [.. Enumerable.Repeat((byte)0x5C, 8), 0x41, 0x5C, 0x2F, 0x42, .. RandomBytes(18, 64)];
+        byte[] bext = [.. description, .. binaryFields];
+        byte[] riff = [.. Encoding.ASCII.GetBytes("RIFF"), .. LittleEndian(4 + 8 + bext.Length), .. Encoding.ASCII.GetBytes("WAVEbext"),
+            .. LittleEndian(bext.Length), .. bext];
+        string wav = Path.Combine(_root, "take.wav");
+        File.WriteAllBytes(wav, riff);
+        CookedOutputPathGuard.StripCopiedFile(wav, "take.wav");
+        byte[] wavStripped = File.ReadAllBytes(wav);
+        int descriptionStart = 20;
+        Encoding.UTF8.GetString(wavStripped, descriptionStart, first.Length).ShouldBe(StripFolders(first));
+        wavStripped.AsSpan(descriptionStart + first.Length).ToArray().ShouldBe(riff.AsSpan(descriptionStart + first.Length).ToArray());
+
+        // A false prefix: the four bytes before the path read as 4096, but the path ends at the zero byte after it.
+        byte[] tail = [.. Enumerable.Repeat((byte)'\\', 64), .. Encoding.ASCII.GetBytes("Shared\\Notes\\plan.txt"), .. RandomBytes(19, 4096)];
+        byte[] falsePrefix = [.. RandomBytes(20, 256), 0x00, 0x10, 0x00, 0x00, .. Encoding.UTF8.GetBytes(first), 0, .. tail];
+        string falseFile = Path.Combine(_root, "false.bin");
+        File.WriteAllBytes(falseFile, falsePrefix);
+        CookedOutputPathGuard.StripCopiedFile(falseFile, "false.bin");
+        byte[] falseStripped = File.ReadAllBytes(falseFile);
+        Encoding.UTF8.GetString(falseStripped, 260, first.Length).ShouldBe(StripFolders(first));
+        falseStripped.AsSpan(260 + first.Length).ToArray().ShouldBe(falsePrefix.AsSpan(260 + first.Length).ToArray());
+    }
+
+    [Test]
+    public void CompressedContent_PastTheInflateLimit_FailsThePublish_AndNamesTheLimit()
+    {
+        using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+        string bomb = Path.Combine(_root, "bomb.zip");
+        using (ZipArchive archive = ZipFile.Open(bomb, ZipArchiveMode.Create))
+        using (Stream entry = archive.CreateEntry("zeros.bin", CompressionLevel.Optimal).Open())
+        {
+            byte[] zeros = new byte[MiB];
+            for (int i = 0; i < 64; i++)
+                entry.Write(zeros);
+        }
+
+        new FileInfo(bomb).Length.ShouldBeLessThan(MiB);
+        long previous = CookedOutputPathGuard.MaxInflatedBytesPerItem;
+        try
+        {
+            CookedOutputPathGuard.MaxInflatedBytesPerItem = 16L * MiB;
+            CookedSourcePathException error = Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.StripCopiedFile(bomb, "Data/bomb.zip"));
+            error.Message.ShouldContain("Data/bomb.zip");
+            error.Message.ShouldContain("inflated size");
+            error.Message.ShouldContain("zeros.bin");
+        }
+        finally
+        {
+            CookedOutputPathGuard.MaxInflatedBytesPerItem = previous;
+        }
+
+        long previousFile = CookedOutputPathGuard.MaxInflatedBytesPerFile;
+        try
+        {
+            CookedOutputPathGuard.MaxInflatedBytesPerFile = 8L * MiB;
+            Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.StripCopiedFile(bomb, "Data/bomb.zip"))
+                .Message.ShouldContain("inflated size of the file");
+        }
+        finally
+        {
+            CookedOutputPathGuard.MaxInflatedBytesPerFile = previousFile;
+        }
+    }
+
+    [Test]
+    public void TextStartingWithBzh_IsNotABzip2Container()
+    {
+        using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+        string text = Path.Combine(_root, "notes.txt");
+        File.WriteAllText(text, "BZh is the start of this note, game://Textures/a.png\n", new UTF8Encoding(false));
+        CookedOutputPathGuard.StripCopiedFile(text, "notes.txt").ShouldBeEmpty();
+
+        string bzip2 = Path.Combine(_root, "data.bz2");
+        File.WriteAllBytes(bzip2, [(byte)'B', (byte)'Z', (byte)'h', (byte)'9', 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, .. RandomBytes(21, 64)]);
+        Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.StripCopiedFile(bzip2, "Data/data.bz2"))
+            .Message.ShouldContain("Data/data.bz2");
+    }
+
+    [Test]
     public void CompressedContent_WithAPath_FailsThePublish_AndCleanContentPasses()
     {
         using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));

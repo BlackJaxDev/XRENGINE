@@ -82,6 +82,20 @@ public static class CookedOutputPathGuard
         [(byte)'B', (byte)'Z', (byte)'h'],
     ];
 
+    private static readonly byte[] Bzip2BlockMagic = [0x31, 0x41, 0x59, 0x26, 0x53, 0x59];
+
+    /// <summary>The largest inflated size of one compressed item (a PNG text chunk, a ZIP entry, or GZIP data).</summary>
+    internal static long MaxInflatedBytesPerItem { get; set; } = 2L * 1024 * 1024 * 1024;
+
+    /// <summary>The largest inflated size of all compressed items in one file.</summary>
+    internal static long MaxInflatedBytesPerFile { get; set; } = 4L * 1024 * 1024 * 1024;
+
+    /// <summary>The longest inspection time of one compressed item.</summary>
+    internal static TimeSpan MaxInspectionTimePerItem { get; set; } = TimeSpan.FromSeconds(120);
+
+    /// <summary>The longest inspection time of all compressed items in one file.</summary>
+    internal static TimeSpan MaxInspectionTimePerFile { get; set; } = TimeSpan.FromSeconds(600);
+
     private static readonly byte[] PngSignature = [0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A];
 
     /// <summary>Strips every machine path from a cooked asset file in the build output.</summary>
@@ -252,14 +266,14 @@ public static class CookedOutputPathGuard
     private static List<MachinePathHit> FindMachinePathsInFile(string file, EMachinePathScanProfile profile)
     {
         using FileStream stream = new(file, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.SequentialScan);
-        return FindMachinePathsInStream(stream, profile);
+        return FindMachinePathsInStream(stream, profile, budget: null);
     }
 
     /// <summary>
     /// Reads a stream in chunks and finds every machine path. With no profile, the first chunk chooses the text or the
     /// binary rule. The stream does not need to support seeking, so it can be a decompression stream.
     /// </summary>
-    private static List<MachinePathHit> FindMachinePathsInStream(Stream stream, EMachinePathScanProfile? profile)
+    private static List<MachinePathHit> FindMachinePathsInStream(Stream stream, EMachinePathScanProfile? profile, CompressedInspectionBudget? budget)
     {
         List<string> roots = GetSearchRoots();
         List<MachinePathHit> hits = [];
@@ -271,6 +285,7 @@ public static class CookedOutputPathGuard
             while (true)
             {
                 int read = stream.ReadAtLeast(buffer.AsSpan(carried, ChunkSize), ChunkSize, throwOnEndOfStream: false);
+                budget?.Add(read);
                 int length = carried + read;
                 if (read == 0 && carried == 0)
                     break;
@@ -418,13 +433,26 @@ public static class CookedOutputPathGuard
         stream.Position = hit.Offset;
         stream.ReadExactly(ahead);
         string extended = hit.Utf16 ? Encoding.Unicode.GetString(ahead) : Encoding.Latin1.GetString(ahead);
-        units = prefixKnown
-            ? Math.Min(prefixed, extended.Length)
-            : Math.Min(Math.Max(GetUnprefixedLength(text, extended, hit.Utf16), minimum), extended.Length);
+        if (!prefixKnown)
+        {
+            units = Math.Min(Math.Max(GetUnprefixedLength(text, extended, hit.Utf16), minimum), extended.Length);
 
-        // Without a known length, the folder part must end inside the match: bytes after the match are not proven to be part
-        // of the path.
-        return (hit.Offset, extended[..units], prefixKnown ? units : Math.Min(units, text.Length));
+            // Without a known length, the folder part must end inside the match: bytes after the match are not proven to be
+            // part of the path.
+            return (hit.Offset, extended[..units], Math.Min(units, text.Length));
+        }
+
+        // With a known length, the length gives only the report text. The prefixed string can hold more than the path (more
+        // lines, or binary fields of a RIFF chunk), and a false prefix can cover unrelated data, so the folder part ends inside
+        // the path token (the leading separators and plain name characters) and inside the match. Every separator of the
+        // path is in the match, because only the extension match is short.
+        units = Math.Min(prefixed, extended.Length);
+        int token = TrimToNameCharacters(extended[..units], hit.Utf16);
+        int controlEnd = 0;
+        while (controlEnd < units && !char.IsControl(extended[controlEnd]))
+            controlEnd++;
+        int folderLimit = Math.Min(Math.Max(token, minimum), text.Length);
+        return (hit.Offset, extended[..Math.Max(folderLimit, controlEnd)], folderLimit);
     }
 
     private static int CountTrailingBackslashes(string text, int end)
@@ -659,12 +687,14 @@ public static class CookedOutputPathGuard
         using (FileStream probe = new(file, FileMode.Open, FileAccess.Read, FileShare.Read))
             headLength = probe.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
         ReadOnlySpan<byte> signature = head.AsSpan(0, headLength);
+        CompressedInspectionBudget budget = new(label, MaxInflatedBytesPerItem, MaxInflatedBytesPerFile,
+            MaxInspectionTimePerItem, MaxInspectionTimePerFile);
 
         try
         {
             if (signature.StartsWith(PngSignature))
             {
-                InspectPngTextChunks(file, label);
+                InspectPngTextChunks(file, label, budget);
                 return;
             }
 
@@ -675,8 +705,10 @@ public static class CookedOutputPathGuard
                 {
                     if (entry.FullName.EndsWith('/'))
                         continue;
+                    string place = $"ZIP entry '{entry.FullName}'";
+                    budget.BeginItem(place);
                     using Stream content = entry.Open();
-                    ThrowIfCompressedHit(FindMachinePathsInStream(content, profile: null), label, $"ZIP entry '{entry.FullName}'");
+                    ThrowIfCompressedHit(FindMachinePathsInStream(content, profile: null, budget), label, place);
                 }
                 return;
             }
@@ -685,7 +717,8 @@ public static class CookedOutputPathGuard
             {
                 using FileStream stream = new(file, FileMode.Open, FileAccess.Read, FileShare.Read);
                 using GZipStream content = new(stream, CompressionMode.Decompress);
-                ThrowIfCompressedHit(FindMachinePathsInStream(content, profile: null), label, "GZIP data");
+                budget.BeginItem("GZIP data");
+                ThrowIfCompressedHit(FindMachinePathsInStream(content, profile: null, budget), label, "GZIP data");
                 return;
             }
         }
@@ -696,13 +729,13 @@ public static class CookedOutputPathGuard
         }
 
         for (int i = 3; i < UnsafeContainerSignatures.Length; i++)
-            if (signature.StartsWith(UnsafeContainerSignatures[i]))
+            if (MatchesContainerSignature(signature, i))
                 throw new CookedSourcePathException(
                     $"Published file '{label}' is a compressed container that the publish cannot inspect for machine paths. " +
                     "Unpack it into the asset folder, or remove it.");
     }
 
-    private static void InspectPngTextChunks(string file, string label)
+    private static void InspectPngTextChunks(string file, string label, CompressedInspectionBudget budget)
     {
         using FileStream stream = new(file, FileMode.Open, FileAccess.Read, FileShare.Read);
         byte[] header = new byte[8];
@@ -726,7 +759,9 @@ public static class CookedOutputPathGuard
                 {
                     using MemoryStream compressed = new(data, compressedStart, data.Length - compressedStart, writable: false);
                     using ZLibStream content = new(compressed, CompressionMode.Decompress);
-                    ThrowIfCompressedHit(FindMachinePathsInStream(content, profile: null), label, $"PNG chunk '{type}'");
+                    string place = $"PNG chunk '{type}'";
+                    budget.BeginItem(place);
+                    ThrowIfCompressedHit(FindMachinePathsInStream(content, profile: null, budget), label, place);
                 }
             }
 
@@ -762,10 +797,25 @@ public static class CookedOutputPathGuard
                 "publish cannot strip. Remove the path from the source file.");
     }
 
+    /// <summary>
+    /// True if the first bytes match a container signature. The BZip2 signature <c>BZh</c> is plain text, so it also needs
+    /// the block-size digit (1 to 9) and the block magic, and a text file that starts with <c>BZh</c> is not a container.
+    /// </summary>
+    private static bool MatchesContainerSignature(ReadOnlySpan<byte> head, int index)
+    {
+        byte[] signature = UnsafeContainerSignatures[index];
+        if (!head.StartsWith(signature))
+            return false;
+        if (signature.Length != 3 || signature[0] != (byte)'B')
+            return true;
+
+        return head.Length >= 10 && head[3] is >= (byte)'1' and <= (byte)'9' && head.Slice(4, 6).SequenceEqual(Bzip2BlockMagic);
+    }
+
     private static void ThrowIfUnsafeContainer(ReadOnlySpan<byte> head, string label, List<MachinePathHit> hits)
     {
-        foreach (byte[] signature in UnsafeContainerSignatures)
-            if (head.StartsWith(signature))
+        for (int i = 0; i < UnsafeContainerSignatures.Length; i++)
+            if (MatchesContainerSignature(head, i))
                 throw new CookedSourcePathException(
                     $"Published file '{label}' holds the machine path '{hits[0].Text}' in a compressed or checksummed container, " +
                     "so it cannot be stripped safely. Remove the path from the source file.");

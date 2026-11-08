@@ -238,6 +238,16 @@ Limits of the path removal:
 - In a binary file (images, audio, video, models), a drive path with fewer than
   two folder parts (for example `D:\Art\tex.png`) is not found. Paths in a user
   profile folder and paths under the asset folders are always found.
+- In a binary file, a drive path that mixes forward slashes and backslashes (for
+  example `C:\proj\assets/textures/wood.png`) is not found. A path in a user
+  profile folder is still found.
+- A ZIP file whose entries use LZMA, BZip2, or Zstandard compression, or
+  encryption, cannot be checked, so the publish fails. Store the files unpacked,
+  or use a ZIP file with normal (deflate) compression.
+- The publish checks at most 2 GiB of inflated data for each compressed item and
+  4 GiB for each file, and spends at most 2 minutes on an item and 10 minutes on
+  a file. A file that goes past a limit fails the publish, and the error names
+  the file and the limit.
 
 The compiled game assembly must contain exactly one public, concrete `IGameLaunchBootstrap` with a public parameterless constructor. The generated launcher constructs it directly, uses it to configure startup, and obtains the initial `GameState`; this is the supported way to root custom worlds and components under NativeAOT.
 

@@ -383,17 +383,26 @@ source paths of cooked assets at write time, without changing any object:
   separators: an odd backslash is an escape and stays, a `\u`, `\x`, or `\U`
   escape gets the code of the underscore, and another escaped character stays.
   So JSON and double-quoted YAML stay valid. In binary data, the folder part
-  ends inside a length-prefixed string when the four bytes before the path give
-  its length (FBX string properties, EXR attributes, MemoryPack strings), and
-  otherwise inside the matched path, so the strip never writes past the file
-  name. A PNG file gets new checksums for the chunks that change.
+  always ends inside the matched path and inside the path token (the leading
+  separators and plain name characters), so the strip never writes past the
+  file name. A 32-bit length before the path (FBX string properties, EXR
+  attributes, MemoryPack strings, RIFF chunk sizes) gives only the report text:
+  such a string can hold more lines or binary fields, and a false prefix can
+  cover unrelated data. A PNG file gets new checksums for the chunks that
+  change.
 - Compressed content of a known container that can hold text is inflated and
   scanned: PNG `zTXt` chunks and `iTXt` chunks with the compression flag, every
   ZIP entry, and GZIP data. A path there fails the publish, because the strip
   cannot rewrite it in place, and the error names the file and the place. A
-  container that the guard cannot inflate (7z, RAR, XZ, Zstandard, BZip2, or
-  damaged data) fails the publish too. So a path in compressed data never
-  passes silently.
+  container that the guard cannot inflate (7z, RAR, XZ, Zstandard, BZip2, a ZIP
+  entry with LZMA, BZip2, Zstandard, or encryption, or damaged data) fails the
+  publish too. The BZip2 signature also needs the block-size digit and the block
+  magic, so a text file that starts with `BZh` is not a container. The
+  inflation has limits (`CompressedInspectionBudget`): 2 GiB and 2 minutes for
+  each item, and 4 GiB and 10 minutes for each file. Past a limit, the publish
+  fails and names the file and the limit. So a path in compressed data never
+  passes silently, and a decompression bomb cannot stall a publish. Nested
+  containers (a ZIP inside a ZIP) are not opened.
 - A path that cannot be stripped safely fails the publish, and the error names
   the file: a visible path in a compressed or checksummed container, a path in
   a critical PNG chunk, or a path that is still found after the strip.
