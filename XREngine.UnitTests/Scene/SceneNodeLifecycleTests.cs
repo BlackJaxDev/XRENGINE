@@ -261,6 +261,27 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void LoadingAScene_WhoseComponentActivationAddsARoot_LoadsBothRoots()
+    {
+        // A component that adds a root to its own scene while the world attaches the scene roots changed the
+        // list during its enumeration before; the world now reads a snapshot and loads the added root too.
+        SceneNode first = new("First");
+        RootAddingComponent adder = first.AddComponent<RootAddingComponent>()!;
+        XRScene scene = new("Scene", first);
+        adder.Scene = scene;
+
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene(), new XRWorld("World", scene));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(adder.AddedRoot, Is.Not.Null);
+            Assert.That(scene.RootNodes, Has.Count.EqualTo(2));
+            Assert.That(world.RootNodes.Any(node => ReferenceEquals(node, first)), Is.True);
+            Assert.That(world.RootNodes.Any(node => ReferenceEquals(node, adder.AddedRoot)), Is.True);
+        });
+    }
+
+    [Test]
     public void Undo_DestroyRootSceneNode_RestoresSceneAndWorldRoots()
     {
         Undo.ClearHistory();
@@ -954,6 +975,23 @@ public class SceneNodeLifecycleTests
 
     private static EditorWorldIntegration GetEditorWorld(RuntimeWorld world)
         => EditorWorldIntegrationRegistry.GetOrAttach(world);
+
+    private sealed class RootAddingComponent : XRComponent
+    {
+        public XRScene? Scene { get; set; }
+
+        public SceneNode? AddedRoot { get; private set; }
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            if (Scene is null || AddedRoot is not null)
+                return;
+
+            AddedRoot = new SceneNode("AddedDuringActivation");
+            Scene.RootNodes.Add(AddedRoot);
+        }
+    }
 
     private sealed class LifecycleTrackingComponent : XRComponent
     {

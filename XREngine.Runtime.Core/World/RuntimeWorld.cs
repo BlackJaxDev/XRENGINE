@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.ExceptionServices;
@@ -489,34 +490,68 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         if (!_visibleRootsByScene.TryGetValue(scene, out HashSet<SceneNode>? roots))
             _visibleRootsByScene[scene] = roots = new HashSet<SceneNode>(ReferenceEqualityComparer.Instance);
 
-        foreach (SceneNode node in scene.RootNodes)
+        // Root attach activates components synchronously, and an activated component can add or remove roots of the
+        // same scene. So the loop reads a pooled snapshot and repeats while the scene list has roots that it did not
+        // see. The roots set makes a repeated node a no-op. The pool is safe when a nested scene load uses it.
+        int snapshotCount;
+        do
         {
-            if (node is null || !roots.Add(node))
-                continue;
-
-            if (_scenePolicy?.TryAttachSceneRoot(this, scene, node) == true)
-                continue;
-
-            if (RootNodes.Any(existing => ReferenceEquals(existing, node)))
+            snapshotCount = scene.RootNodes.Count;
+            SceneNode[] snapshot = ArrayPool<SceneNode>.Shared.Rent(Math.Max(1, snapshotCount));
+            try
             {
-                if (!IsVisibleRootOfAnotherLoadedScene(scene, node))
-                    _externallyOwnedSceneRoots.Add(node);
+                scene.RootNodes.CopyTo(0, snapshot, 0, snapshotCount);
+                for (int i = 0; i < snapshotCount; i++)
+                    LoadVisibleSceneRoot(scene, roots, snapshot[i]);
             }
-            else
+            finally
             {
-                _externallyOwnedSceneRoots.Remove(node);
-                try
-                {
-                    RootNodes.Add(node);
-                }
-                catch
-                {
-                    if (!RootNodes.Any(existing => ReferenceEquals(existing, node)))
-                        roots.Remove(node);
-                    throw;
-                }
+                ArrayPool<SceneNode>.Shared.Return(snapshot, clearArray: true);
             }
         }
+        while (HasUnloadedVisibleRoot(scene, roots));
+    }
+
+    private void LoadVisibleSceneRoot(XRScene scene, HashSet<SceneNode> roots, SceneNode? node)
+    {
+        if (node is null || !roots.Add(node))
+            return;
+
+        if (_scenePolicy?.TryAttachSceneRoot(this, scene, node) == true)
+            return;
+
+        if (RootNodes.Any(existing => ReferenceEquals(existing, node)))
+        {
+            if (!IsVisibleRootOfAnotherLoadedScene(scene, node))
+                _externallyOwnedSceneRoots.Add(node);
+        }
+        else
+        {
+            _externallyOwnedSceneRoots.Remove(node);
+            try
+            {
+                RootNodes.Add(node);
+            }
+            catch
+            {
+                if (!RootNodes.Any(existing => ReferenceEquals(existing, node)))
+                    roots.Remove(node);
+                throw;
+            }
+        }
+    }
+
+    private static bool HasUnloadedVisibleRoot(XRScene scene, HashSet<SceneNode> roots)
+    {
+        List<SceneNode> sceneRoots = scene.RootNodes;
+        for (int i = 0; i < sceneRoots.Count; i++)
+        {
+            SceneNode node = sceneRoots[i];
+            if (node is not null && !roots.Contains(node))
+                return true;
+        }
+
+        return false;
     }
 
     private void UnloadVisibleScene(XRScene scene)
