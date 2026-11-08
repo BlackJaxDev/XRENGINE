@@ -48,6 +48,9 @@ internal sealed partial class ImportedTextureStreamingManager : ITextureResidenc
     bool ITextureResidencyRequests.TryGetSourceMaxDimension(XRTexture2D texture, out uint sourceMaxDimension)
         => TryGetSourceMaxDimension(texture, out sourceMaxDimension);
 
+    void ITextureResidencyRequests.NotifySceneDiscontinuity()
+        => TextureStreamingCapacity.NotifySceneDiscontinuity();
+
     IDisposable ITextureResidencyRequests.AcquireBudgetProfile(ETextureStreamingBudgetProfile profile)
     {
         if (profile is not ETextureStreamingBudgetProfile.Cutscene)

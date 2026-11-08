@@ -120,7 +120,7 @@ public sealed class TextureStreamingWorkControllerTests
     }
 
     [Test]
-    public void SuddenCostSpike_BacksOffWithinTwoFrames()
+    public void SuddenCostSpike_BacksOffWithinFourFrames()
     {
         TextureStreamingWorkController controller = CreateController();
         RunIdle(controller, 30, baseBusy: 6.0);
@@ -131,8 +131,10 @@ public sealed class TextureStreamingWorkControllerTests
         // The cost of each upload jumps tenfold, for example when a larger mip tier starts to stream.
         Frame[] frames = RunBacklog(controller, 60, baseBusy: 6.0, costAt: _ => 4.0);
 
+        // The robust cost ignores the first two slow items as hitches, but each explained overrun halves the limit, so the
+        // frames are inside the rule again after at most four frames.
         frames[0].FrameMilliseconds.ShouldBeGreaterThan(Period60Hz + Tolerance);
-        frames[1..].Max(f => f.FrameMilliseconds).ShouldBeLessThanOrEqualTo(Period60Hz + Tolerance);
+        frames[4..].Max(f => f.FrameMilliseconds).ShouldBeLessThanOrEqualTo(Period60Hz + Tolerance);
         controller.ItemsThisFrame.ShouldBeLessThan(before);
     }
 
@@ -296,6 +298,59 @@ public sealed class TextureStreamingWorkControllerTests
 
         controller.ItemsThisFrame.ShouldBeGreaterThanOrEqualTo(4);
         controller.CeilingItems.ShouldBe(0);
+    }
+
+    [TestCase(true)]
+    [TestCase(false)]
+    public void CameraCut_ToAHeavierShot_IsNotItemCost(bool signaled)
+    {
+        // Before the cut the shot costs 16.7 ms and streaming is idle. The cut moves to a 24 ms shot and starts a burst
+        // with no idle frame; each item costs 0.03 ms. The cut is either signaled (the cutscene clock) or detected.
+        TextureStreamingWorkController controller = CreateController(initial: 4);
+        RunIdle(controller, 120, baseBusy: 8.0);
+        if (signaled)
+            controller.MarkDiscontinuity();
+
+        Frame[] frames = new Frame[120];
+        for (int i = 0; i < frames.Length; i++)
+        {
+            int items = controller.ItemsThisFrame;
+            double work = items * 0.03;
+            double frame = 24.0 + work;
+            frames[i] = new Frame(items, frame);
+            controller.Update(new TextureStreamingWorkSample(frame, frame, Period60Hz, work, items, true, 1.0));
+        }
+
+        controller.BackoffCount.ShouldBe(0);
+        controller.CostPerItemMilliseconds.ShouldBeLessThan(0.1);
+        controller.DiscontinuityCount.ShouldBeGreaterThan(0);
+        frames.Min(f => f.Items).ShouldBeGreaterThanOrEqualTo(4);
+        controller.ItemsThisFrame.ShouldBe(16);
+    }
+
+    [Test]
+    public void SingleCpuHitch_InOneItem_DoesNotSetAFloorOrACeiling()
+    {
+        // Steady at 1.5 ms for each apply. One item takes 50 ms (a preemption that the GC pause correction cannot see).
+        TextureStreamingWorkController controller = CreateController();
+        RunIdle(controller, 30, baseBusy: 6.0);
+        RunBacklog(controller, 120, baseBusy: 6.0, costAt: _ => 1.5);
+        int before = controller.ItemsThisFrame;
+        before.ShouldBeGreaterThanOrEqualTo(2);
+
+        int items = controller.ItemsThisFrame;
+        double work = 50.0 + (items - 1) * 1.5;
+        double frame = 6.0 + work;
+        controller.Update(new TextureStreamingWorkSample(frame, frame, Period60Hz, work, items, true, 0.5));
+
+        // One explained overrun halves the limit and holds it 250 ms; it sets no ceiling and keeps the floor at 1.
+        controller.CeilingItems.ShouldBe(0);
+        controller.ItemsPerFrame.ShouldBeGreaterThanOrEqualTo(1.0);
+        controller.CostPerItemMilliseconds.ShouldBeLessThan(5.0);
+
+        Frame[] after = RunBacklog(controller, 60, baseBusy: 6.0, costAt: _ => 1.5);
+        after.Sum(f => f.Items).ShouldBeGreaterThan(60);
+        controller.ItemsThisFrame.ShouldBe(before);
     }
 
     [Test]

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 
@@ -17,15 +16,12 @@ namespace XREngine.Rendering;
 /// </remarks>
 internal sealed class TextureStreamingWorkLane
 {
-    // A gap of at least this many render frames gives one idle sample: the one lane frame in it is at most a quarter.
-    private const long MinimumIdleGapFrames = 4L;
-
     private readonly object _sync = new();
     private readonly TextureStreamingWorkController _controller;
+    private readonly TextureStreamingFrameSampler _sampler = new();
     private readonly int _initialItemsPerFrame;
     private long _frameKey = long.MinValue;
-    private long _frameRenderCalls;
-    private long _frameRenderTicks;
+    private long _discontinuityEpoch;
     private int _items;
     private double _workMilliseconds;
     private bool _deferred;
@@ -108,20 +104,6 @@ internal sealed class TextureStreamingWorkLane
         }
     }
 
-    /// <summary>Counts items that the current frame did without a limit check, for example a foreground barrier.</summary>
-    public void RecordItems(int count)
-    {
-        if (count <= 0)
-            return;
-
-        lock (_sync)
-        {
-            EnsureFrameNoLock();
-            _items += count;
-            _totalItems += count;
-        }
-    }
-
     /// <summary>
     /// Gives back items that <see cref="TryAcquire()"/> took in the current frame when the work did not run, for example
     /// when the backend deferred its admission. Items of an earlier frame are not given back.
@@ -162,6 +144,10 @@ internal sealed class TextureStreamingWorkLane
         }
     }
 
+    /// <summary>Adds the render-thread time of one timed piece of lane work to the current frame, without GC pauses.</summary>
+    public void RecordWork(in TextureStreamingWorkTimer timer)
+        => RecordWork(timer.ElapsedWorkMilliseconds);
+
     /// <summary>Adds measured render-thread time of lane work to the current frame.</summary>
     public void RecordWork(double milliseconds)
     {
@@ -179,7 +165,7 @@ internal sealed class TextureStreamingWorkLane
     public void RecordGpuItemCost(double milliseconds)
     {
         lock (_sync)
-            _controller.ObserveItemCost(milliseconds);
+            _controller.ObserveGpuItemCost(milliseconds);
     }
 
     /// <summary>Writes the controller state as one line.</summary>
@@ -193,12 +179,14 @@ internal sealed class TextureStreamingWorkLane
                 .Append(" rate=").Append(_controller.ItemsPerFrame.ToString("F3", inv))
                 .Append(" target=").Append(_controller.TargetItemsPerFrame.ToString("F3", inv))
                 .Append(" costMs=").Append(_controller.CostPerItemMilliseconds.ToString("F3", inv))
+                .Append(" gpuMs=").Append(_controller.GpuCostPerItemMilliseconds.ToString("F3", inv))
                 .Append(" budgetMs=").Append(_controller.BudgetMilliseconds.ToString("F2", inv))
                 .Append(" headroomMs=").Append(_controller.HeadroomMilliseconds.ToString("F2", inv))
                 .Append(" ceiling=").Append(_controller.CeilingItems.ToString(inv))
                 .Append(" overruns=").Append(_controller.OverrunCount.ToString(inv))
                 .Append(" attributed=").Append(_controller.AttributedOverrunCount.ToString(inv))
                 .Append(" backoffs=").Append(_controller.BackoffCount.ToString(inv))
+                .Append(" discontinuities=").Append(_controller.DiscontinuityCount.ToString(inv))
                 .Append(" items=").Append(_totalItems.ToString(inv))
                 .Append(" deferredFrames=").Append(_totalDeferredFrames.ToString(inv))
                 .AppendLine();
@@ -211,42 +199,34 @@ internal sealed class TextureStreamingWorkLane
         if (frameKey == _frameKey)
             return;
 
-        FrameLifecyclePhaseTotal render = RuntimeEngine.Rendering.Stats.FrameLifecycle.CapturePhaseTotals().Render;
-        if (_frameKey != long.MinValue)
+        _frameKey = frameKey;
+        if (_sampler.TryAdvance(out TextureStreamingClosedFrame closed))
         {
-            double frameMilliseconds = double.NaN;
-            double busyMilliseconds = double.NaN;
-            long completedFrames = render.Calls - _frameRenderCalls;
-            if (completedFrames == 1L && frameKey > _frameKey)
-            {
-                frameMilliseconds = (frameKey - _frameKey) * 1000.0 / Stopwatch.Frequency;
-                busyMilliseconds = (render.StopwatchTicks - _frameRenderTicks) * 1000.0 / Stopwatch.Frequency;
-            }
-            else if (completedFrames >= MinimumIdleGapFrames && frameKey > _frameKey)
-            {
-                // The lane was not active in most of these frames, so their average is a normal frame sample.
-                _controller.ObserveIdleFrame(
-                    (frameKey - _frameKey) * 1000.0 / Stopwatch.Frequency / completedFrames,
-                    (render.StopwatchTicks - _frameRenderTicks) * 1000.0 / Stopwatch.Frequency / completedFrames);
-            }
+            if (double.IsFinite(closed.IdleFrameMilliseconds))
+                _controller.ObserveIdleFrame(closed.IdleFrameMilliseconds, closed.IdleBusyMilliseconds);
 
             if (_deferred)
                 _totalDeferredFrames++;
 
             _controller.Configure(ResolveOptions());
             _controller.Update(new TextureStreamingWorkSample(
-                frameMilliseconds,
-                busyMilliseconds,
-                ResolveTargetFrameMilliseconds(),
+                closed.FrameMilliseconds,
+                closed.BusyMilliseconds,
+                TextureStreamingFrameSampler.ResolveTargetFrameMilliseconds(),
                 _workMilliseconds,
                 _items,
                 _deferred,
                 ResolveHeadroomShare()));
         }
 
-        _frameKey = frameKey;
-        _frameRenderCalls = render.Calls;
-        _frameRenderTicks = render.StopwatchTicks;
+        // A scene discontinuity (for example, a cutscene cut) starts a relearn before the new frame uses the limit.
+        long epoch = TextureStreamingCapacity.DiscontinuityEpoch;
+        if (epoch != _discontinuityEpoch)
+        {
+            _discontinuityEpoch = epoch;
+            _controller.MarkDiscontinuity();
+        }
+
         _items = 0;
         _workMilliseconds = 0.0;
         _deferred = false;
@@ -261,12 +241,6 @@ internal sealed class TextureStreamingWorkLane
             settings.TextureStreamingFrameToleranceMilliseconds,
             settings.TextureStreamingUploadsPerFrame,
             settings.TextureStreamingMaxUploadsPerFrame);
-    }
-
-    private static double ResolveTargetFrameMilliseconds()
-    {
-        float frequency = RuntimeRenderingHostServices.FrameTiming.TargetRenderFrequency;
-        return frequency > 0.0f ? 1000.0 / frequency : 0.0;
     }
 
     private static double ResolveHeadroomShare()

@@ -947,6 +947,8 @@ internal sealed partial class ImportedTextureStreamingManager
             return;
 
         UpdatePromotionFades(frameId);
+        // One frame sample for the decode width feedback (decode contention is not visible on the render thread).
+        TextureStreamingCapacity.ObserveDecodeFrame();
         Evaluate(frameId);
         Volatile.Write(ref _lastEvaluatedFrameId, frameId);
 

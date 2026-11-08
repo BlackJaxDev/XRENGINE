@@ -10,32 +10,25 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class TextureStreamingCapacityModelTests
 {
-    [TestCase(1, 0, 1)]
-    [TestCase(2, 1, 1)]
-    [TestCase(4, 2, 1)]
-    [TestCase(6, 4, 1)]
-    [TestCase(8, 4, 3)]
-    [TestCase(12, 8, 7)]
-    [TestCase(16, 16, 8)]
-    [TestCase(32, 16, 8)]
-    [TestCase(64, 16, 8)]
-    public void DecodeConcurrency_LeavesTheFrameThreads_AndStaysInTheSafeRange(int processors, int jobWorkers, int expected)
-        => TextureStreamingCapacityModel.ResolveDecodeConcurrency(processors, jobWorkers, null).ShouldBe(expected);
+    // Foreground threads follow EngineExecutionTopology: min(4, processors - 1). The desktop reserves 2 dedicated threads
+    // in a headless host and 12 with the Vulkan and OpenXR lanes; the base never goes below the old fixed width of 2.
+    [TestCase(4, 3, 2, 2)]
+    [TestCase(6, 4, 2, 2)]
+    [TestCase(8, 4, 2, 2)]
+    [TestCase(16, 4, 2, 8)]
+    [TestCase(16, 4, 12, 2)]
+    [TestCase(12, 4, 2, 6)]
+    [TestCase(32, 4, 12, 8)]
+    [TestCase(2, 1, 0, 2)]
+    public void BaseDecodeWidth_UsesTheTopologyReservation_AndNeverGoesBelowTheOldWidth(int processors, int foreground, int dedicated, int expected)
+        => TextureStreamingCapacityModel.ResolveBaseDecodeWidth(processors, foreground, dedicated, null).ShouldBe(expected);
 
-    [Test]
-    public void DecodeConcurrency_IsNotMoreThanTheJobWorkerCount()
-        => TextureStreamingCapacityModel.ResolveDecodeConcurrency(16, 3, null).ShouldBe(3);
-
-    [Test]
-    public void DecodeConcurrency_UnknownJobWorkerCount_UsesTheProcessorsOnly()
-        => TextureStreamingCapacityModel.ResolveDecodeConcurrency(10, 0, null).ShouldBe(5);
-
-    [TestCase(2, 3, 3)]
-    [TestCase(32, 1, 1)]
+    [TestCase(4, 1, 1)]
+    [TestCase(16, 3, 3)]
     [TestCase(4, 100, TextureStreamingCapacityModel.MaxDecodeConcurrencyOverride)]
     [TestCase(4, 0, 1)]
-    public void DecodeConcurrency_ExplicitOverride_PinsTheValue(int processors, int pinned, int expected)
-        => TextureStreamingCapacityModel.ResolveDecodeConcurrency(processors, 16, pinned).ShouldBe(expected);
+    public void BaseDecodeWidth_ExplicitOverride_PinsTheValue(int processors, int pinned, int expected)
+        => TextureStreamingCapacityModel.ResolveBaseDecodeWidth(processors, 4, 2, pinned).ShouldBe(expected);
 
     [TestCase(1, 8, 1)]
     [TestCase(3, 8, 3)]
@@ -43,6 +36,19 @@ public sealed class TextureStreamingCapacityModelTests
     [TestCase(8, 4, 4)]
     public void UploadPreparationWorkers_FollowTheDecodeWidth_AndTheStagingBuffers(int decode, int staging, int expected)
         => TextureStreamingCapacityModel.ResolveUploadPreparationWorkers(decode, staging).ShouldBe(expected);
+
+    [Test]
+    public void DecodeGate_ExtraRelease_IsCountedAndGrantsNothing()
+    {
+        PriorityAsyncSemaphore gate = new(1);
+        gate.Release();
+
+        gate.ExcessReleaseCount.ShouldBe(1);
+        gate.InUse.ShouldBe(0);
+        gate.WaitAsync(JobPriority.Normal, CancellationToken.None).IsCompletedSuccessfully.ShouldBeTrue();
+        gate.WaitAsync(JobPriority.Normal, CancellationToken.None).IsCompleted.ShouldBeFalse();
+        gate.WaitingCount.ShouldBe(1);
+    }
 
     [Test]
     public async Task DecodeGate_LargerCapacity_GrantsWaitingRequests()

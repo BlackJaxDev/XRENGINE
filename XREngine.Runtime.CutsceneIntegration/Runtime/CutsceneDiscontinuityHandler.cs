@@ -1,4 +1,5 @@
 using XREngine.Rendering;
+using XREngine.Rendering.Residency;
 
 namespace XREngine.Cutscenes;
 
@@ -55,6 +56,11 @@ public sealed class CutsceneDiscontinuityHandler
     /// <param name="kind">The kind of the discontinuity. A clock resync resets only the temporal history.</param>
     public void Handle(XRViewport? viewport, ECutsceneDiscontinuityKind kind = ECutsceneDiscontinuityKind.Full)
     {
+        // A cut or a jump changes the scene cost at once. Streaming relearns its normal frame time, so the new shot does
+        // not count as upload or decode cost. A clock resync stays in the same shot.
+        if (kind == ECutsceneDiscontinuityKind.Full)
+            TextureResidencyRequests.Shared.NotifySceneDiscontinuity();
+
         if (viewport is null)
             return;
 

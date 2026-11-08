@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Data.Rendering;
@@ -285,15 +284,14 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                 // The apply lane limits the applies of one render frame from their measured cost and the frame time.
                 void ApplyResidentDataOnRenderThreadMeasured()
                 {
-                    long applyStart = Stopwatch.GetTimestamp();
+                    TextureStreamingApplyMeasurement applyMeasurement = TextureStreamingCapacity.BeginOpenGlApply();
                     try
                     {
                         ApplyResidentDataOnRenderThreadCore();
                     }
                     finally
                     {
-                        TextureStreamingCapacity.OpenGlResidentApply.RecordWork(
-                            Stopwatch.GetElapsedTime(applyStart).TotalMilliseconds);
+                        TextureStreamingCapacity.EndOpenGlApply(applyMeasurement);
                     }
                 }
 
@@ -796,7 +794,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                         if (!TryEnterSparseTransitionScheduleBudget())
                             return false;
 
-                        long retryStart = Stopwatch.GetTimestamp();
+                        TextureStreamingApplyMeasurement retryMeasurement = TextureStreamingCapacity.BeginOpenGlApply();
                         Interlocked.Increment(ref s_inFlightUploadCount);
                         try
                         {
@@ -813,8 +811,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                         finally
                         {
                             ExitSharedUpload();
-                            TextureStreamingCapacity.OpenGlResidentApply.RecordWork(
-                                Stopwatch.GetElapsedTime(retryStart).TotalMilliseconds);
+                            TextureStreamingCapacity.EndOpenGlApply(retryMeasurement);
                         }
                     }
 
@@ -873,15 +870,14 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                 // frame time.
                 void ContinueOnRenderThreadMeasured()
                 {
-                    long continueStart = Stopwatch.GetTimestamp();
+                    TextureStreamingApplyMeasurement continueMeasurement = TextureStreamingCapacity.BeginOpenGlApply();
                     try
                     {
                         ContinueOnRenderThreadCore();
                     }
                     finally
                     {
-                        TextureStreamingCapacity.OpenGlResidentApply.RecordWork(
-                            Stopwatch.GetElapsedTime(continueStart).TotalMilliseconds);
+                        TextureStreamingCapacity.EndOpenGlApply(continueMeasurement);
                     }
                 }
 

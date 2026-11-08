@@ -397,11 +397,12 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
-                /// The number of texture decodes that can run at the same time. Null selects the automatic value from the
-                /// processor count, the process affinity, and the job worker count.
+                /// The number of texture decodes that can run at the same time. Null selects the automatic value: a base from
+                /// the process affinity and the execution topology reservation (at least 2), which frame-time feedback
+                /// raises while decodes wait and lowers only on evidence.
                 /// </summary>
                 [Category("Performance")]
-                [Description("Texture streaming: decodes that can run at the same time. Leave null for the automatic value from the processor count, the process affinity, and the job worker count; set a value to pin it.")]
+                [Description("Texture streaming: decodes that can run at the same time. Leave null for the automatic value (topology base of at least 2, adjusted by frame-time feedback); set a value to pin it.")]
                 public int? TextureStreamingDecodeConcurrency
                 {
                     get => _textureStreamingDecodeConcurrency;
@@ -409,11 +410,12 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
-                /// The number of texture uploads and publications that each streaming lane does in one render frame.
-                /// Null selects the adaptive limit, which the frame-time feedback controller sets.
+                /// The number of texture items that each streaming lane does in one render frame. The OpenGL lane counts whole
+                /// resident applies and sparse transitions; the Vulkan lane counts transfer chunks (a mip level or 4 MB of
+                /// rows). Null selects the adaptive limit, which the frame-time feedback controller sets.
                 /// </summary>
                 [Category("Performance")]
-                [Description("Texture streaming: uploads and publications in one render frame for each lane. Leave null for the adaptive limit from measured cost and frame time; set a value to pin it.")]
+                [Description("Texture streaming: items in one render frame for each lane (OpenGL: resident applies; Vulkan: transfer chunks). Leave null for the adaptive limit from measured cost and frame time; set a value to pin it.")]
                 public int? TextureStreamingUploadsPerFrame
                 {
                     get => _textureStreamingUploadsPerFrame;
@@ -421,15 +423,15 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
-                /// The highest adaptive number of texture uploads and publications in one render frame. Null uses the
-                /// built-in bound only.
+                /// The highest adaptive number of texture items in one render frame for each lane, at most the built-in bound
+                /// of 16. Null uses the built-in bound.
                 /// </summary>
                 [Category("Performance")]
-                [Description("Texture streaming: the highest adaptive uploads and publications in one render frame. Leave null for the built-in bound.")]
+                [Description("Texture streaming: the highest adaptive items in one render frame for each lane, 1 to 16 (the built-in bound). Leave null for the built-in bound.")]
                 public int? TextureStreamingMaxUploadsPerFrame
                 {
                     get => _textureStreamingMaxUploadsPerFrame;
-                    set => SetField(ref _textureStreamingMaxUploadsPerFrame, value is int count ? Math.Clamp(count, 1, 64) : null);
+                    set => SetField(ref _textureStreamingMaxUploadsPerFrame, value is int count ? Math.Clamp(count, 1, 16) : null);
                 }
 
                 /// <summary>

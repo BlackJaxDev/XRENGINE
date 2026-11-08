@@ -71,7 +71,7 @@ internal sealed partial class VulkanTextureUploadService
                 return false;
 
             Volatile.Write(ref s_lastTransferWaitMilliseconds, TextureRuntimeDiagnostics.ElapsedMilliseconds(submitted.SubmitTimestamp));
-            long completionCpuStart = Stopwatch.GetTimestamp();
+            TextureStreamingWorkTimer completionTimer = TextureStreamingWorkTimer.Start();
             try
             {
                 if (!context.Commands.CompleteSubmittedImportedTextureUploadBatch(submitted, out string? completeFailure))
@@ -93,9 +93,10 @@ internal sealed partial class VulkanTextureUploadService
             }
             finally
             {
-                // The completion lane uses this render-thread cost to set the chunk count of later frames.
-                TextureStreamingCapacity.VulkanCompletion.RecordWork(
-                    Stopwatch.GetElapsedTime(completionCpuStart).TotalMilliseconds);
+                // The completion lane uses this render-thread cost to set the chunk count of later frames. A foreground
+                // barrier completes outside the lane limit, so its cost is not a background streaming sample.
+                if (requiredManifest is null)
+                    TextureStreamingCapacity.VulkanCompletion.RecordWork(completionTimer);
             }
 
             // Go on with the next signaled batch while the completion lane admits it in this frame.

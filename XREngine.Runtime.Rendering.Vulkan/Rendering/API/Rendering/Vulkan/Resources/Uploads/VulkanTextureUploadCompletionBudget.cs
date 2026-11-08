@@ -44,7 +44,7 @@ internal sealed partial class VulkanTextureUploadService
         // remains governed by the limits below.
         if (requiredManifest is not null)
         {
-            TextureStreamingCapacity.VulkanCompletion.RecordItems(batch.Uploads.Length);
+            // A foreground barrier is outside the lane limit and is not a background streaming sample.
             _transferRetirementItemsThisFrame += batch.Uploads.Length;
             _transferRetirementBytesThisFrame += batch.BytesInFlight;
             _transferPublicationItemsThisFrame += publicationItems;
