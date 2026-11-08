@@ -255,7 +255,7 @@ public sealed class CutsceneOpenSequence
         for (int i = 0; i < _proxyDraws.Count; i++)
         {
             CutsceneProxyDraw draw = _proxyDraws[i];
-            ECutsceneProgramState state = _prewarmer.GetState(draw.Material, draw.ResolveRenderer(), out string? reason);
+            ECutsceneProgramState state = _prewarmer.GetState(draw.Material, draw.ResolveRenderer(), draw.RenderOptionsOverride, out string? reason);
             TrackWait(i, draw, state, reason);
             switch (state)
             {
@@ -301,7 +301,7 @@ public sealed class CutsceneOpenSequence
 
         player.ReadyForInstantSeek = true;
         for (int i = 0; i < _detailMaterials.Count; i++)
-            _prewarmer.Request(_detailMaterials[i], null);
+            _prewarmer.Request(_detailMaterials[i], null, null);
         Report(1.0f);
         Finish(true);
     }
@@ -334,7 +334,7 @@ public sealed class CutsceneOpenSequence
         for (int i = 0; i < _proxyDraws.Count; i++)
         {
             CutsceneProxyDraw draw = _proxyDraws[i];
-            _prewarmer.Request(draw.Material, draw.ResolveRenderer());
+            _prewarmer.Request(draw.Material, draw.ResolveRenderer(), draw.RenderOptionsOverride);
         }
     }
 

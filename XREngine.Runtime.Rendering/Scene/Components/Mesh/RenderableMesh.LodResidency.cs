@@ -74,6 +74,12 @@ namespace XREngine.Components.Scene.Mesh
         public int LodTableCount => _lodSlots.Length;
 
         /// <summary>
+        /// The render options override of the primary render command, or null. The draw uses it in place of the render
+        /// options of the material, so the draw readiness check uses it too.
+        /// </summary>
+        internal XREngine.Rendering.Models.Materials.RenderingParameters? PrimaryRenderOptionsOverride => _rc.RenderOptionsOverride;
+
+        /// <summary>
         /// The renderer of the lowest LOD while it is resident, or null. This is the renderer of the T0 draw. A renderable
         /// with no LOD table gives the renderer of its last LOD.
         /// </summary>

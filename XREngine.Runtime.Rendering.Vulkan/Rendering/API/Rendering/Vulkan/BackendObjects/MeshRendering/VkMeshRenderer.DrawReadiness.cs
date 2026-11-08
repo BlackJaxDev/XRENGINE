@@ -1,3 +1,4 @@
+using System.Threading;
 using static XREngine.Rendering.XRRenderProgram;
 
 namespace XREngine.Rendering.Vulkan;
@@ -12,6 +13,16 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private XRMaterial? _programFailureMaterial;
 
+	/// <summary>True after <see cref="DeleteObjectInternal"/> until the wrapper is made again.</summary>
+	private bool _drawReadinessDeleted;
+
+	/// <summary>
+	/// True when the readiness prewarm may use this wrapper: it is active, linked to its data, not retired, and not deleted.
+	/// The prewarm never makes programs or pipelines for a wrapper that is not.
+	/// </summary>
+	internal bool CanServeDrawReadiness
+		=> IsActive && _isDataLinked && !IsRetired && !Volatile.Read(ref _drawReadinessDeleted);
+
 	/// <summary>
 	/// Gives the draw readiness of this renderer with a material in the passes of a view: the program, the buffers, and the
 	/// graphics pipelines of every required pass context of the view.
@@ -20,7 +31,8 @@ internal unsafe partial class VkMeshRenderer
 	/// <para>
 	/// The program and buffer step is the same non-blocking preparation as <see cref="TryPrepareForRendering(out string)"/>,
 	/// under the recording lock. A program whose backend build failed, or a material with no compatible vertex shader,
-	/// gives <see cref="ERenderDrawReadiness.Failed"/>.
+	/// gives <see cref="ERenderDrawReadiness.Failed"/>. A retired or deleted wrapper does no work and gives
+	/// <see cref="ERenderDrawReadiness.NotStarted"/>.
 	/// </para>
 	/// <para>
 	/// A graphics pipeline depends on the render pass, the attachments, and the draw state of each pass, so only the frame
@@ -28,21 +40,20 @@ internal unsafe partial class VkMeshRenderer
 	/// the result of the last frame: the pre-recording admission prewarms the pipelines of this renderer and material for
 	/// every non-shadow pass context of the view that draws the pass of the material, also when no view draws the renderer
 	/// yet, and reads the batch or mesh-task pipelines on GPU-driven routes. The result is ready only when every required
-	/// context is ready. The result follows each frame, so a program or pipeline change makes it not ready again.
+	/// context is ready, and only for the program and link generation that the frame measured: after a program swap or a
+	/// relink, a ready result is <see cref="ERenderDrawReadiness.Compiling"/> until the next frame measures the new program.
 	/// </para>
 	/// </remarks>
 	public ERenderDrawReadiness QueryDrawReadiness(in RenderDrawReadinessQuery query, out string reason)
 	{
-		XRMaterial resolvedMaterial = query.Material ?? ResolveMaterial(null, 1u);
-		long nowTicks = Environment.TickCount64;
-		ERenderDrawReadiness pipelineState = BackendContext.Resources.DrawReadiness.Observe(
-			this,
-			resolvedMaterial,
-			query.View,
-			query.Stereo,
-			nowTicks,
-			out string pipelineReason);
+		if (IsRetired || Volatile.Read(ref _drawReadinessDeleted))
+		{
+			BackendContext.Resources.DrawReadiness.RemoveRenderer(this);
+			reason = "the renderer wrapper is retired or deleted";
+			return ERenderDrawReadiness.NotStarted;
+		}
 
+		XRMaterial resolvedMaterial = query.Material ?? ResolveMaterial(null, 1u);
 		if (!_recordDrawSync.TryEnter())
 		{
 			reason = "renderer recording state is busy";
@@ -51,21 +62,47 @@ internal unsafe partial class VkMeshRenderer
 
 		bool prepared;
 		string prepareReason;
+		VkRenderProgram? program;
 		try
 		{
 			prepared = TryPrepareForDrawEnqueue(resolvedMaterial, false, out prepareReason);
+			program = _program;
 		}
 		finally
 		{
 			_recordDrawSync.Exit();
 		}
 
+		ERenderDrawReadiness publishedState = BackendContext.Resources.DrawReadiness.Observe(
+			this,
+			resolvedMaterial,
+			query.RenderOptionsOverride,
+			query.View,
+			query.Stereo,
+			Environment.TickCount64,
+			out string publishedReason,
+			out object? publishedProgram,
+			out ulong publishedLinkGeneration);
+
 		if (!prepared)
 			return ClassifyPrepareFailure(resolvedMaterial, prepareReason, out reason);
 
-		reason = pipelineReason;
-		return pipelineState;
+		return VulkanDrawReadinessRegistry.ResolvePublishedState(
+			publishedState,
+			publishedReason,
+			publishedProgram,
+			publishedLinkGeneration,
+			program,
+			program?.LinkGeneration ?? 0UL,
+			out reason);
 	}
+
+	/// <summary>Ends the readiness requests of this renderer. The open calls it through the facade when it ends.</summary>
+	public void EndDrawReadinessQueries()
+		=> BackendContext.Resources.DrawReadiness.RemoveRenderer(this);
+
+	/// <summary>Gets the active program of this renderer and its link generation, for the readiness result.</summary>
+	internal VkRenderProgram? ActiveProgramForReadiness => _program;
 
 	private ERenderDrawReadiness ClassifyPrepareFailure(XRMaterial material, string prepareReason, out string reason)
 	{

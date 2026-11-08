@@ -1605,9 +1605,14 @@ namespace XREngine.Rendering
         /// </para>
         /// </remarks>
         /// <param name="material">The material of the draw, or null for <see cref="Material"/>.</param>
+        /// <param name="renderOptionsOverride">The render options override of the renderable, or null.</param>
         /// <param name="view">The render pipeline instance of the view that must draw it, or null for no view filter.</param>
         /// <param name="reason">The reason of the state, for diagnostics.</param>
-        public ERenderDrawReadiness QueryDrawReadiness(XRMaterial? material, XRRenderPipelineInstance? view, out string reason)
+        public ERenderDrawReadiness QueryDrawReadiness(
+            XRMaterial? material,
+            RenderingParameters? renderOptionsOverride,
+            XRRenderPipelineInstance? view,
+            out string reason)
         {
             if (!RuntimeRenderingHostServices.HasConcreteHost)
             {
@@ -1631,7 +1636,7 @@ namespace XREngine.Rendering
             ERenderDrawReadiness state = QueryVersionDrawReadiness(
                 renderer,
                 GetVersion(true),
-                new RenderDrawReadinessQuery(material, view, Stereo: false),
+                new RenderDrawReadinessQuery(material, renderOptionsOverride, view, Stereo: false),
                 out reason);
             if (GetActiveStereoVersionForReadiness() is not { } stereoVersion)
                 return state;
@@ -1639,7 +1644,7 @@ namespace XREngine.Rendering
             ERenderDrawReadiness stereoState = QueryVersionDrawReadiness(
                 renderer,
                 stereoVersion,
-                new RenderDrawReadinessQuery(material, View: null, Stereo: true),
+                new RenderDrawReadinessQuery(material, renderOptionsOverride, View: null, Stereo: true),
                 out string stereoReason);
             return RenderDrawReadinessCombiner.Combine(state, reason, stereoState, stereoReason, out reason);
         }
@@ -1662,6 +1667,28 @@ namespace XREngine.Rendering
 
             reason = "the render backend object of this renderer does not report draw readiness";
             return ERenderDrawReadiness.NotSupported;
+        }
+
+        /// <summary>
+        /// Ends the draw readiness work of this renderer on the active backend (for example the Vulkan pipeline prewarm
+        /// requests) for the mono version and, when it exists, the stereo version. Call it on the render thread when the
+        /// caller stops asking. It makes no backend object: a version with no object has nothing to end.
+        /// </summary>
+        public void EndDrawReadinessQueries()
+        {
+            if (!RuntimeRenderingHostServices.HasConcreteHost || AbstractRenderer.Current is not { } renderer)
+                return;
+
+            EndVersionDrawReadiness(renderer, GetVersion(true));
+            if (GetActiveStereoVersionForReadiness() is { } stereoVersion)
+                EndVersionDrawReadiness(renderer, stereoVersion);
+        }
+
+        private static void EndVersionDrawReadiness(AbstractRenderer renderer, BaseVersion version)
+        {
+            if (renderer.TryGetAPIRenderObject(version, out AbstractRenderAPIObject? apiObject) &&
+                apiObject is IRenderPreparationState preparationState)
+                preparationState.EndDrawReadinessQueries();
         }
 
         /// <summary>

@@ -69,13 +69,13 @@ public sealed class CutsceneOpenSequenceTests
 
         public XRRenderPipelineInstance? View { get; set; }
 
-        public void Request(XRMaterial material, XRMeshRenderer? renderer)
+        public void Request(XRMaterial material, XRMeshRenderer? renderer, XREngine.Rendering.Models.Materials.RenderingParameters? renderOptionsOverride)
         {
             Requested.Add(material);
             RequestedRenderers.Add(renderer);
         }
 
-        public ECutsceneProgramState GetState(XRMaterial material, XRMeshRenderer? renderer, out string? reason)
+        public ECutsceneProgramState GetState(XRMaterial material, XRMeshRenderer? renderer, XREngine.Rendering.Models.Materials.RenderingParameters? renderOptionsOverride, out string? reason)
         {
             QueriedRenderers.Add(renderer);
             if (States.TryGetValue(material, out (ECutsceneProgramState State, string? Reason) value))

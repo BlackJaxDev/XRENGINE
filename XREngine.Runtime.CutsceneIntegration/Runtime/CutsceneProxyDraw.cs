@@ -17,4 +17,7 @@ internal readonly record struct CutsceneProxyDraw(RenderableMesh Renderable, XRM
     /// </summary>
     public XRMeshRenderer? ResolveRenderer()
         => Renderable.LowestLodRenderer ?? (Renderable.LodTableCount == 0 ? Renderable.CurrentLODRenderer : null);
+
+    /// <summary>The render options override of the renderable, or null. The T0 draw uses it in place of the material options.</summary>
+    public XREngine.Rendering.Models.Materials.RenderingParameters? RenderOptionsOverride => Renderable.PrimaryRenderOptionsOverride;
 }

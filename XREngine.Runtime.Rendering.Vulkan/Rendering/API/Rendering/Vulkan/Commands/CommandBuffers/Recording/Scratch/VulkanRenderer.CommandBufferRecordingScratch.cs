@@ -19,6 +19,12 @@ internal sealed partial class CommandBufferRecordingScratch
             public VulkanPrimarySecondaryArtifactSequence ExecutedCommandChainSecondaryArtifactSequence { get; } = new();
             public HashSet<int> PipelineDeferredOperationIndices { get; } = [];
             public HashSet<int> PipelineDeferredRequirementIndices { get; } = [];
+
+            /// <summary>The active draw readiness requests that the current admission prewarms. Reused in each admission.</summary>
+            public List<VulkanDrawReadinessRequest> DrawReadinessRequests { get; } = [];
+
+            /// <summary>The pass contexts that the current draw readiness request already checked. Reused for each request.</summary>
+            public HashSet<ulong> DrawReadinessContexts { get; } = [];
             public HashSet<int> PipelineOptionalDeferredRequirementIndices { get; } = [];
             public HashSet<ulong> AdmittedPipelinePreparationSignatures { get; } =
                 new(MaxAdmittedPipelinePreparationSignatures);

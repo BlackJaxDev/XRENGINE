@@ -222,10 +222,17 @@ internal unsafe partial class VkMeshRenderer(
     public override VkObjectType Type => VkObjectType.MeshRenderer;
     public override bool IsGenerated => IsActive;
 
-    protected override uint CreateObjectInternal() => CacheObject(this);
+    protected override uint CreateObjectInternal()
+    {
+        Volatile.Write(ref _drawReadinessDeleted, false);
+        return CacheObject(this);
+    }
 
     protected override void DeleteObjectInternal()
     {
+        // A deleted wrapper must not make programs or pipelines again for a draw readiness request.
+        Volatile.Write(ref _drawReadinessDeleted, true);
+        BackendContext.Resources.DrawReadiness.RemoveRenderer(this);
         BackendContext.Resources.PipelineManager.DrainPipelineCompileJobsForOwner(
             PipelineCompileOwnerId,
             GetDescribingName());
@@ -278,6 +285,7 @@ internal unsafe partial class VkMeshRenderer(
         Mesh?.DataChanged -= OnMeshChanged;
         SubscribeMeshBufferCollection(null);
 
+        BackendContext.Resources.DrawReadiness.RemoveRenderer(this);
         BackendContext.Resources.PipelineManager.DrainPipelineCompileJobsForOwner(
             PipelineCompileOwnerId,
             GetDescribingName());
@@ -939,6 +947,7 @@ internal unsafe partial class VkMeshRenderer(
         {
             PreparationCompatibilitySignature =
                 request.PreparationCompatibilitySignature,
+            PassState = producerState,
             IndirectTopology = request.IndexedIndirect?.Topology ?? EPrimitiveType.Triangles,
             IndexedIndirectAuthoringLease = request.IndexedIndirect?.AuthoringLease,
             AutoUniformPublication =
@@ -1134,6 +1143,7 @@ internal unsafe partial class VkMeshRenderer(
             default);
         draw = draw with
         {
+            PassState = producerState,
             AutoUniformPublication =
                 VulkanAutoUniformPublicationSnapshot.Capture(
                     draw,

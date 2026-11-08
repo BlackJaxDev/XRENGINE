@@ -1,4 +1,5 @@
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Cutscenes;
 
@@ -9,10 +10,12 @@ namespace XREngine.Cutscenes;
 /// </summary>
 /// <param name="renderer">The renderer of the draw.</param>
 /// <param name="material">The material of the draw.</param>
+/// <param name="renderOptionsOverride">The render options override of the renderable, or null.</param>
 /// <param name="view">The render pipeline instance of the view, or null for no view filter.</param>
 /// <param name="reason">The reason of the state, for diagnostics.</param>
 internal delegate ERenderDrawReadiness CutsceneDrawReadinessProbe(
     XRMeshRenderer renderer,
     XRMaterial material,
+    RenderingParameters? renderOptionsOverride,
     XRRenderPipelineInstance? view,
     out string reason);

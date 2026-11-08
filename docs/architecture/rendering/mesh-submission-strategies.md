@@ -335,8 +335,8 @@ payload split). The GPU routes follow these rules:
   resident LOD draws. With no active backend, the check runs at once.
   On Vulkan, the first draw of the new renderer is still a cold mesh admission
   in the frame loop, so PresentNow can still reject frames for it.
-- `XRMeshRenderer.QueryDrawReadiness(material, view)` (the backend
-  `IRenderPreparationState.QueryDrawReadiness` with a
+- `XRMeshRenderer.QueryDrawReadiness(material, renderOptionsOverride, view)`
+  (the backend `IRenderPreparationState.QueryDrawReadiness` with a
   `RenderDrawReadinessQuery`) gives `ERenderDrawReadiness` for one renderer and
   material in the passes of one view: `NotStarted`, `Compiling`, `Ready`,
   `Failed`, or `NotSupported`, the default for a backend that does not
@@ -348,12 +348,17 @@ payload split). The GPU routes follow these rules:
   `VulkanDrawReadinessRegistry`: while a query is active, the pre-recording
   pipeline admission prewarms the pipelines of the renderer and material for
   each non-shadow pass context of the view that draws the pass of the material
-  (a CPU mesh draw of that pass is the template; the draw state comes from
-  `VulkanMeshDrawFixedState`, the same rules as the draw enqueue), checks the
-  indirect batch of the material on GPU-driven routes, and checks the mesh-task
-  requirement on meshlet routes. It is ready only when every required context
-  is ready. A frame with no active query pays one volatile read; draws pay
-  nothing. The cutscene open uses it for `ReadyForInstantSeek`.
+  (a CPU mesh draw of that pass is the template; the draw state is the T0
+  render options, or the render options override, over the pass state of the
+  template, `PendingMeshDraw.PassState`, with the rules of
+  `VulkanMeshDrawFixedState`; nothing comes from the template material),
+  checks the indirect batch of the material on GPU-driven routes, and checks
+  the mesh-task requirement on meshlet routes. It is ready only when every
+  required context is ready, and only for the program and link generation that
+  it measured. A request ends at the end of the open (`EndDrawReadinessQueries`),
+  when its wrapper is deleted or unlinked, or 2 s after the last query. A frame
+  with no active query pays one volatile read; draws pay nothing. The cutscene
+  open uses it for `ReadyForInstantSeek`.
 
 The render-command path takes the LOD levels from the render info owner. A model
 component owns the render info of its renderable meshes, so those commands

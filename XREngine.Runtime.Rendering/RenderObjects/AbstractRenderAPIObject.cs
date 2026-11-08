@@ -138,6 +138,14 @@ public interface IRenderPreparationState
     }
 
     /// <summary>
+    /// Ends the draw readiness work that <see cref="QueryDrawReadiness"/> started for this object, for example the pipeline
+    /// prewarm requests of a backend. The caller calls it when it stops asking. The default does nothing.
+    /// </summary>
+    void EndDrawReadinessQueries()
+    {
+    }
+
+    /// <summary>
     /// Optional supplemental detail describing the most recent prepare attempt
     /// (e.g. variant counts, revision numbers, which program slots were null).
     /// Empty when not implemented or no detail captured.

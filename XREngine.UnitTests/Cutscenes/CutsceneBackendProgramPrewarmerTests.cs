@@ -24,10 +24,18 @@ public sealed class CutsceneBackendProgramPrewarmerTests
 
         public XRRenderPipelineInstance? LastView { get; private set; }
 
-        public ERenderDrawReadiness Probe(XRMeshRenderer renderer, XRMaterial material, XRRenderPipelineInstance? view, out string reason)
+        public XREngine.Rendering.Models.Materials.RenderingParameters? LastRenderOptionsOverride { get; private set; }
+
+        public List<XRMeshRenderer> Ended { get; } = [];
+
+        public void End(XRMeshRenderer renderer)
+            => Ended.Add(renderer);
+
+        public ERenderDrawReadiness Probe(XRMeshRenderer renderer, XRMaterial material, XREngine.Rendering.Models.Materials.RenderingParameters? renderOptionsOverride, XRRenderPipelineInstance? view, out string reason)
         {
             ProbeCount++;
             LastView = view;
+            LastRenderOptionsOverride = renderOptionsOverride;
             if (Throwing.Contains(renderer))
                 throw new InvalidOperationException("wrapper publication is not ready");
 
@@ -68,7 +76,7 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         => new(XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY), material);
 
     private static CutsceneBackendProgramPrewarmer Make(FakeBackend backend, ManualScheduler scheduler, Func<XRMaterial, bool>? isVariantReady = null)
-        => new(backend.Probe, scheduler.Schedule, isVariantReady ?? (_ => true));
+        => new(backend.Probe, scheduler.Schedule, isVariantReady ?? (_ => true), backend.End);
 
     [Test]
     public void State_FollowsTheBackend_AndReadyComesOnlyAfterTheBackendIsReady()
@@ -79,27 +87,27 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         XRMaterial material = new() { Name = "Proxy" };
         XRMeshRenderer renderer = MakeRenderer(material);
 
-        prewarmer.Request(material, renderer);
+        prewarmer.Request(material, renderer, null);
         scheduler.ScheduleCount.ShouldBe(1);
 
         // The update thread reads only stored results, so nothing is ready before the render thread checks the draw.
         backend.States[renderer] = (ERenderDrawReadiness.Ready, "Ready");
-        prewarmer.GetState(material, renderer, out _).ShouldBe(ECutsceneProgramState.NotStarted);
+        prewarmer.GetState(material, renderer, null, out _).ShouldBe(ECutsceneProgramState.NotStarted);
         backend.ProbeCount.ShouldBe(0);
 
         backend.States[renderer] = (ERenderDrawReadiness.NotStarted, "no frame drew the renderer");
         scheduler.RunFrame();
-        prewarmer.GetState(material, renderer, out string? reason).ShouldBe(ECutsceneProgramState.NotStarted);
+        prewarmer.GetState(material, renderer, null, out string? reason).ShouldBe(ECutsceneProgramState.NotStarted);
         reason.ShouldBe("no frame drew the renderer");
 
         backend.States[renderer] = (ERenderDrawReadiness.Compiling, "graphics pipeline compile is queued");
         scheduler.RunFrame();
-        prewarmer.GetState(material, renderer, out reason).ShouldBe(ECutsceneProgramState.Compiling);
+        prewarmer.GetState(material, renderer, null, out reason).ShouldBe(ECutsceneProgramState.Compiling);
         reason.ShouldBe("graphics pipeline compile is queued");
 
         backend.States[renderer] = (ERenderDrawReadiness.Ready, "Ready");
         scheduler.RunFrame();
-        prewarmer.GetState(material, renderer, out _).ShouldBe(ECutsceneProgramState.Ready);
+        prewarmer.GetState(material, renderer, null, out _).ShouldBe(ECutsceneProgramState.Ready);
 
         // Ready is not final: the coroutine keeps checking until the open stops it.
         scheduler.ActiveCount.ShouldBe(1);
@@ -113,16 +121,16 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         CutsceneBackendProgramPrewarmer prewarmer = Make(backend, scheduler);
         XRMaterial material = new() { Name = "Proxy" };
         XRMeshRenderer renderer = MakeRenderer(material);
-        prewarmer.Request(material, renderer);
+        prewarmer.Request(material, renderer, null);
 
         backend.States[renderer] = (ERenderDrawReadiness.Ready, "Ready");
         scheduler.RunFrame();
-        prewarmer.GetState(material, renderer, out _).ShouldBe(ECutsceneProgramState.Ready);
+        prewarmer.GetState(material, renderer, null, out _).ShouldBe(ECutsceneProgramState.Ready);
 
         // A relink or a new pipeline variant makes the draw cold again.
         backend.States[renderer] = (ERenderDrawReadiness.Compiling, "graphics pipeline compile was queued");
         scheduler.RunFrame();
-        prewarmer.GetState(material, renderer, out string? reason).ShouldBe(ECutsceneProgramState.Compiling);
+        prewarmer.GetState(material, renderer, null, out string? reason).ShouldBe(ECutsceneProgramState.Compiling);
         reason.ShouldBe("graphics pipeline compile was queued");
     }
 
@@ -136,23 +144,23 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         XRMaterial material = new() { Name = "Proxy" };
         XRMeshRenderer renderer = MakeRenderer(material);
         backend.States[renderer] = (ERenderDrawReadiness.Ready, "Ready for the canonical program");
-        prewarmer.Request(material, renderer);
+        prewarmer.Request(material, renderer, null);
 
         scheduler.RunFrame();
         backend.ProbeCount.ShouldBe(0);
-        prewarmer.GetState(material, renderer, out string? reason).ShouldBe(ECutsceneProgramState.Compiling);
+        prewarmer.GetState(material, renderer, null, out string? reason).ShouldBe(ECutsceneProgramState.Compiling);
         reason.ShouldNotBeNull().ShouldContain("variant");
 
         // The variant activates. The stale backend result of the canonical program must not count: the next check decides.
         variantReady = true;
-        prewarmer.GetState(material, renderer, out _).ShouldBe(ECutsceneProgramState.Compiling);
+        prewarmer.GetState(material, renderer, null, out _).ShouldBe(ECutsceneProgramState.Compiling);
         backend.States[renderer] = (ERenderDrawReadiness.Compiling, "the variant pipeline compiles");
         scheduler.RunFrame();
-        prewarmer.GetState(material, renderer, out _).ShouldBe(ECutsceneProgramState.Compiling);
+        prewarmer.GetState(material, renderer, null, out _).ShouldBe(ECutsceneProgramState.Compiling);
 
         backend.States[renderer] = (ERenderDrawReadiness.Ready, "Ready");
         scheduler.RunFrame();
-        prewarmer.GetState(material, renderer, out _).ShouldBe(ECutsceneProgramState.Ready);
+        prewarmer.GetState(material, renderer, null, out _).ShouldBe(ECutsceneProgramState.Ready);
     }
 
     [TestCase(ERenderDrawReadiness.Failed, ECutsceneProgramState.Failed)]
@@ -166,10 +174,10 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         XRMeshRenderer renderer = MakeRenderer(material);
         backend.States[renderer] = (backendState, "backend reason");
 
-        prewarmer.Request(material, renderer);
+        prewarmer.Request(material, renderer, null);
         scheduler.RunFrame();
 
-        prewarmer.GetState(material, renderer, out string? reason).ShouldBe(expected);
+        prewarmer.GetState(material, renderer, null, out string? reason).ShouldBe(expected);
         reason.ShouldBe("backend reason");
 
         // A final state is not checked again, and no later backend state hides it.
@@ -177,7 +185,7 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         int probes = backend.ProbeCount;
         scheduler.RunFrame();
         backend.ProbeCount.ShouldBe(probes);
-        prewarmer.GetState(material, renderer, out _).ShouldBe(expected);
+        prewarmer.GetState(material, renderer, null, out _).ShouldBe(expected);
     }
 
     [Test]
@@ -192,19 +200,19 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         XRMeshRenderer secondRenderer = MakeRenderer(second);
         backend.Throwing.Add(firstRenderer);
         backend.States[secondRenderer] = (ERenderDrawReadiness.Compiling, "compiling");
-        prewarmer.Request(first, firstRenderer);
-        prewarmer.Request(second, secondRenderer);
+        prewarmer.Request(first, firstRenderer, null);
+        prewarmer.Request(second, secondRenderer, null);
 
         scheduler.RunFrame();
 
-        prewarmer.GetState(first, firstRenderer, out string? reason).ShouldBe(ECutsceneProgramState.Failed);
+        prewarmer.GetState(first, firstRenderer, null, out string? reason).ShouldBe(ECutsceneProgramState.Failed);
         reason.ShouldNotBeNull().ShouldContain("wrapper publication is not ready");
-        prewarmer.GetState(second, secondRenderer, out _).ShouldBe(ECutsceneProgramState.Compiling);
+        prewarmer.GetState(second, secondRenderer, null, out _).ShouldBe(ECutsceneProgramState.Compiling);
         scheduler.ActiveCount.ShouldBe(1);
 
         backend.States[secondRenderer] = (ERenderDrawReadiness.Ready, "Ready");
         scheduler.RunFrame();
-        prewarmer.GetState(second, secondRenderer, out _).ShouldBe(ECutsceneProgramState.Ready);
+        prewarmer.GetState(second, secondRenderer, null, out _).ShouldBe(ECutsceneProgramState.Ready);
     }
 
     [Test]
@@ -215,7 +223,7 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         CutsceneBackendProgramPrewarmer prewarmer = Make(backend, scheduler);
         XRMaterial material = new() { Name = "Proxy" };
         XRMeshRenderer renderer = MakeRenderer(material);
-        prewarmer.Request(material, renderer);
+        prewarmer.Request(material, renderer, null);
         prewarmer.View.ShouldBeNull();
 
         scheduler.RunFrame();
@@ -234,7 +242,7 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         XRMeshRenderer oldRenderer = MakeRenderer(material);
         XRMeshRenderer newRenderer = MakeRenderer(material);
         backend.States[oldRenderer] = (ERenderDrawReadiness.Ready, "Ready");
-        prewarmer.Request(material, oldRenderer);
+        prewarmer.Request(material, oldRenderer, null);
         scheduler.RunFrame();
 
         prewarmer.Reset();
@@ -243,12 +251,12 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         backend.ProbeCount.ShouldBe(probes);
 
         backend.States[newRenderer] = (ERenderDrawReadiness.Compiling, "compiling");
-        prewarmer.Request(material, newRenderer);
+        prewarmer.Request(material, newRenderer, null);
         scheduler.RunFrame();
-        prewarmer.GetState(material, newRenderer, out _).ShouldBe(ECutsceneProgramState.Compiling);
+        prewarmer.GetState(material, newRenderer, null, out _).ShouldBe(ECutsceneProgramState.Compiling);
 
         // The old renderer is not tracked any more: a query starts a new, not-checked entry.
-        prewarmer.GetState(material, oldRenderer, out _).ShouldBe(ECutsceneProgramState.NotStarted);
+        prewarmer.GetState(material, oldRenderer, null, out _).ShouldBe(ECutsceneProgramState.NotStarted);
     }
 
     [Test]
@@ -260,7 +268,7 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         XRMaterial material = new() { Name = "Proxy" };
         XRMeshRenderer renderer = MakeRenderer(material);
         backend.States[renderer] = (ERenderDrawReadiness.Compiling, "compiling");
-        prewarmer.Request(material, renderer);
+        prewarmer.Request(material, renderer, null);
         scheduler.RunFrame();
 
         prewarmer.Stop();
@@ -268,7 +276,63 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         scheduler.RunFrame();
 
         scheduler.ActiveCount.ShouldBe(0);
-        prewarmer.GetState(material, renderer, out _).ShouldBe(ECutsceneProgramState.Compiling);
+        prewarmer.GetState(material, renderer, null, out _).ShouldBe(ECutsceneProgramState.Compiling);
+    }
+
+    [Test]
+    public void Stop_EndsTheBackendRequestsOfEveryDraw()
+    {
+        FakeBackend backend = new();
+        ManualScheduler scheduler = new();
+        CutsceneBackendProgramPrewarmer prewarmer = Make(backend, scheduler);
+        XRMaterial first = new() { Name = "First" };
+        XRMaterial second = new() { Name = "Second" };
+        XRMeshRenderer firstRenderer = MakeRenderer(first);
+        XRMeshRenderer secondRenderer = MakeRenderer(second);
+        prewarmer.Request(first, firstRenderer, null);
+        prewarmer.Request(second, secondRenderer, null);
+        scheduler.RunFrame();
+        backend.Ended.ShouldBeEmpty();
+
+        prewarmer.Stop();
+        scheduler.RunFrame();
+
+        backend.Ended.ShouldBe([firstRenderer, secondRenderer], ignoreOrder: true);
+        scheduler.ActiveCount.ShouldBe(0);
+    }
+
+    [Test]
+    public void Reset_EndsTheBackendRequestsOfTheDroppedDraws()
+    {
+        FakeBackend backend = new();
+        ManualScheduler scheduler = new();
+        CutsceneBackendProgramPrewarmer prewarmer = Make(backend, scheduler);
+        XRMaterial material = new() { Name = "Proxy" };
+        XRMeshRenderer oldRenderer = MakeRenderer(material);
+        prewarmer.Request(material, oldRenderer, null);
+        scheduler.RunFrame();
+
+        prewarmer.Reset();
+        scheduler.RunFrame();
+
+        backend.Ended.ShouldBe([oldRenderer]);
+        scheduler.ActiveCount.ShouldBe(1);
+    }
+
+    [Test]
+    public void TheRenderOptionsOverride_IsPassedToTheBackend()
+    {
+        FakeBackend backend = new();
+        ManualScheduler scheduler = new();
+        CutsceneBackendProgramPrewarmer prewarmer = Make(backend, scheduler);
+        XRMaterial material = new() { Name = "Proxy" };
+        XRMeshRenderer renderer = MakeRenderer(material);
+        XREngine.Rendering.Models.Materials.RenderingParameters options = new();
+        prewarmer.Request(material, renderer, options);
+
+        scheduler.RunFrame();
+
+        backend.LastRenderOptionsOverride.ShouldBeSameAs(options);
     }
 
     [Test]
@@ -279,9 +343,9 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         CutsceneBackendProgramPrewarmer prewarmer = Make(backend, scheduler);
         XRMaterial material = new() { Name = "Proxy" };
 
-        prewarmer.Request(material, null);
+        prewarmer.Request(material, null, null);
 
-        prewarmer.GetState(material, null, out string? reason).ShouldBe(ECutsceneProgramState.NotStarted);
+        prewarmer.GetState(material, null, null, out string? reason).ShouldBe(ECutsceneProgramState.NotStarted);
         reason.ShouldNotBeNullOrEmpty();
         scheduler.ScheduleCount.ShouldBe(0);
         backend.ProbeCount.ShouldBe(0);
