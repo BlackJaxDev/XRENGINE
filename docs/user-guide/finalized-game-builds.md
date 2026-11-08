@@ -21,6 +21,7 @@ This is not the editor workflow. The editor remains the authoring, hot-reload, l
 |---|---|---|---|---|
 | NativeAOT finalized game | `PublishAot=true`, self-contained `win-x64` launcher | `XRE_PUBLISHED;XRE_AOT_RUNTIME` | Loads cooked archives and AOT metadata. Rejects dynamic managed plugins, authoring-time YAML asset loading, and unregistered runtime cooked asset types. | Shipping candidate once analyzer warnings are clean or explicitly accepted. |
 | Non-AOT finalized game | Normal managed launcher build | `XRE_PUBLISHED` | Loads cooked archives as a published game, but still runs on CoreCLR/JIT. | Finalized local/QA builds, or release candidates that still need dynamic-code-compatible runtime paths. |
+| Development launcher that reads archives | Normal managed launcher build, `Debug` or `Development` configuration | `XRE_DEVELOPMENT_ARCHIVES` | Loads the config, content, and common-assets archives (also the `lod/` entries), but stays a development build with reflection paths. | Development and testing of cooked content without NativeAOT. Never a production build. |
 | Development/editor | Editor or loose launcher without `XRE_PUBLISHED` | none | Uses development asset and reflection paths. | Authoring, debugging, hot reload, plugin iteration. |
 
 The important distinction is that "not AOT" does not mean "not cooked." A non-AOT finalized build should still define `XRE_PUBLISHED` so the generated launcher uses the packed config/content archives instead of development asset paths.
@@ -170,6 +171,20 @@ Do not use `--aot-smoke` for the non-AOT build unless you have intentionally add
 
 Use a different output subfolder, such as `PublishJit`, when keeping AOT and non-AOT builds side by side.
 
+## Development Launcher That Reads Archives
+
+Use this mode to test cooked content, such as split cooked models with separate `lod/` entries, in a non-AOT launcher. It is for development and testing only. Production builds must use NativeAOT.
+
+Set `DevelopmentLauncherReadsArchives: true` in the build settings, keep `PublishLauncherAsNativeAot: false`, and use the `Debug` or `Development` configuration. The builder then:
+
+- cooks the content archive and writes the config archive, as for a NativeAOT build;
+- adds the `XRE_DEVELOPMENT_ARCHIVES` define constant to the generated launcher;
+- does not add `XRE_PUBLISHED` or `XRE_AOT_RUNTIME`.
+
+The generated launcher configures the `EXRRuntimeBuildKind.DevelopmentArchives` build kind. It is not `Published` or `PublishedAot`, so `XRRuntimeEnvironment.IsPublishedBuild` is false and reflective loading stays available. At startup, the launcher writes one line that says it is a development build that reads the archives. A missing config, content, or common-assets archive stops the launcher. Asset loads read the archives through the authoring cooked reader, which also reads the reflective formats of a non-AOT cook. Separate `lod/` entries resolve through `PublishedArchiveRegistry`.
+
+A build with this option and the `Release` configuration fails with an error, because the project marks production builds with the `Release` configuration. The same rule applies when `LauncherDefineConstants` lists `XRE_DEVELOPMENT_ARCHIVES` by hand. A NativeAOT launcher ignores the option and never takes the define constant.
+
 ## Build Settings Asset
 
 Projects store build settings in `Config/build_settings.asset`. In the editor, use the ImGui Build Settings panel or edit the asset directly.
@@ -207,7 +222,7 @@ ValidateLauncherAotCompatibility: false
 LauncherDefineConstants: XRE_PUBLISHED
 ```
 
-When `PublishLauncherAsNativeAot` is true, the builder forces content cooking and config archive generation even if those settings were disabled. AOT launchers also automatically receive `XRE_PUBLISHED` and `XRE_AOT_RUNTIME`.
+When `PublishLauncherAsNativeAot` is true, the builder forces content cooking and config archive generation even if those settings were disabled. AOT launchers also automatically receive `XRE_PUBLISHED` and `XRE_AOT_RUNTIME`. A non-AOT launcher with `DevelopmentLauncherReadsArchives: true` also forces content cooking and config archive generation, and receives `XRE_DEVELOPMENT_ARCHIVES`.
 
 The headless NativeAOT build path also disables `CopyGameAssemblies` and
 `CopyEngineBinaries`; `dotnet publish` provides the self-contained executable
