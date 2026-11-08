@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Collections.Concurrent;
 using System.Reflection;
 using YamlDotNet.Serialization;
@@ -14,7 +13,9 @@ namespace XREngine.Editor.Publishing;
 /// The step clears the top-level secrets of the asset that a publish writes. It does not clear a secret of a nested
 /// object, so a publish of an asset whose type reaches a secret member through its serialized members fails
 /// (<see cref="ThrowIfNestedSecret"/>). The check follows the declared types of the members. A secret on a derived type
-/// that a member of a base type holds at run time is not found.
+/// that a member of a base type holds at run time is not found by this check; the reflective cooked serializer writes such
+/// a member as its default value at write time
+/// (<see cref="XREngine.Core.Files.CookedSourcePathProjection.ProjectSecretValue"/>).
 /// </remarks>
 public static class PublishedSecrets
 {
@@ -142,8 +143,8 @@ public static class PublishedSecrets
     }
 
     /// <summary>
-    /// Adds a member type to the walk. A type of the base class library or of a framework package is a leaf, but the
-    /// element and argument types of its collections and generic types are walked.
+    /// Adds a member type to the walk. A type of the base class library or of a framework package is a leaf. The element
+    /// type of an array and the generic arguments of every generic type are walked.
     /// </summary>
     private static void EnqueueType(Type type, string path, HashSet<Type> visited, Queue<(Type, string)> pending)
     {
@@ -158,16 +159,16 @@ public static class PublishedSecrets
             typeof(Type).IsAssignableFrom(type) || typeof(Delegate).IsAssignableFrom(type) || type.IsGenericParameter)
             return;
 
-        if (IsFrameworkType(type))
+        // The generic arguments of any generic type are walked, also for an engine collection such as EventList<T> that
+        // does not expose its item type as a property.
+        if (type.IsGenericType)
         {
-            if (type.IsGenericType && (typeof(IEnumerable).IsAssignableFrom(type) || Nullable.GetUnderlyingType(type) is not null ||
-                type.Name.StartsWith("KeyValuePair", StringComparison.Ordinal) || type.Name.StartsWith("ValueTuple", StringComparison.Ordinal)))
-            {
-                foreach (Type argument in type.GetGenericArguments())
-                    EnqueueType(argument, path + "[]", visited, pending);
-            }
-            return;
+            foreach (Type argument in type.GetGenericArguments())
+                EnqueueType(argument, path + "[]", visited, pending);
         }
+
+        if (IsFrameworkType(type))
+            return;
 
         if (visited.Add(type))
             pending.Enqueue((type, path));

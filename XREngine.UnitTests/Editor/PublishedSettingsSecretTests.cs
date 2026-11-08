@@ -257,6 +257,51 @@ public sealed class PublishedSettingsSecretTests
     }
 
     [Test]
+    public void NestedSecret_InAnEngineList_FailsTheStrip()
+    {
+        NestedSecretListHolderAsset holder = new() { Name = "ListHolder" };
+        holder.Items.Add(new NestedSecretOptions { Token = Sentinel + "list" });
+        try
+        {
+            InvalidOperationException error = Should.Throw<InvalidOperationException>(() => PublishedSecrets.Strip(holder));
+            error.Message.ShouldContain("NestedSecretOptions.Token");
+            error.Message.ShouldContain("Items");
+        }
+        finally
+        {
+            holder.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void SecretOnARuntimeSubtype_IsWrittenAsItsDefault_AndListed_AndTheObjectKeepsIt()
+    {
+        // The declared-type walk cannot see a secret-bearing object in an object-typed member. The cooked serializer writes
+        // the secret as its default value at write time, without a change to the object.
+        PolymorphicSecretHolderAsset holder = new() { Name = "Polymorphic", Payload = new NestedSecretOptions { Token = Sentinel + "runtime", Label = "kept" } };
+        try
+        {
+            Should.NotThrow(() => PublishedSecrets.ThrowIfNestedSecret(typeof(PolymorphicSecretHolderAsset)));
+            using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+            byte[] bytes;
+            using (CookedSourcePathScope scope = CookedSourcePathProjection.Begin())
+            {
+                bytes = CookedBinarySerializer.Serialize(holder);
+                scope.ClearedSecrets.ShouldBe([new ClearedCookedSecret(nameof(NestedSecretOptions), nameof(NestedSecretOptions.Token))]);
+            }
+
+            ContainsSentinel(bytes).ShouldBeFalse();
+            Encoding.Latin1.GetString(bytes).ShouldContain("kept");
+            ContainsSentinel(CookedBinarySerializer.Serialize(holder)).ShouldBeTrue();
+            ((NestedSecretOptions)holder.Payload!).Token.ShouldBe(Sentinel + "runtime");
+        }
+        finally
+        {
+            holder.Destroy(now: true);
+        }
+    }
+
+    [Test]
     public void ContentCookStrip_FailsForALiveAssetWithSecrets_AndKeepsItsSecrets()
     {
         GameStartupSettings live = Fill(new GameStartupSettings { Name = "Live" });

@@ -2421,6 +2421,9 @@ public static partial class CookedBinarySerializer
             Setter = property.GetSetMethod(true);
             IsValid = Getter is not null && Setter is not null;
             IsAssetOriginalPath = property.DeclaringType == typeof(XRAsset) && property.Name == nameof(XRAsset.OriginalPath);
+            SecretDeclaringType = property.GetCustomAttribute<SecretAttribute>(inherit: true) is not null ? property.DeclaringType : null;
+            if (SecretDeclaringType is not null && MemberType.IsValueType)
+                SecretDefaultValue = Activator.CreateInstance(MemberType);
         }
 
         public MemberMetadata(FieldInfo field)
@@ -2440,6 +2443,12 @@ public static partial class CookedBinarySerializer
         /// <summary>True for <see cref="XRAsset.OriginalPath"/>, whose written value a cook scope projects.</summary>
         public bool IsAssetOriginalPath { get; }
 
+        /// <summary>The declaring type of a member marked with <see cref="SecretAttribute"/>, or null.</summary>
+        public Type? SecretDeclaringType { get; }
+
+        /// <summary>The default value that a cook scope writes for a secret member.</summary>
+        public object? SecretDefaultValue { get; }
+
         public object? GetValue(object instance)
             => _field is not null
                 ? _field.GetValue(instance)
@@ -2447,14 +2456,17 @@ public static partial class CookedBinarySerializer
 
         /// <summary>
         /// Gets the value to write. It is <see cref="GetValue"/>, except that a cook scope projects
-        /// <see cref="XRAsset.OriginalPath"/> to a portable reference. The size pass and the write pass both call it.
+        /// <see cref="XRAsset.OriginalPath"/> to a portable reference and writes a secret member as its default value. The
+        /// size pass and the write pass both call it.
         /// </summary>
         public object? GetSerializedValue(object instance)
         {
             object? value = GetValue(instance);
-            return IsAssetOriginalPath
-                ? CookedSourcePathProjection.ProjectOriginalPath(instance, value as string)
-                : value;
+            if (IsAssetOriginalPath)
+                return CookedSourcePathProjection.ProjectOriginalPath(instance, value as string);
+            return SecretDeclaringType is null
+                ? value
+                : CookedSourcePathProjection.ProjectSecretValue(SecretDeclaringType, Name, value, SecretDefaultValue);
         }
 
         public void SetValue(object instance, object? value)
