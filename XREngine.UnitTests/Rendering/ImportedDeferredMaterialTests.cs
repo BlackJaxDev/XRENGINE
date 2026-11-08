@@ -226,6 +226,37 @@ public sealed class ImportedDeferredMaterialTests
     }
 
     [Test]
+    public void MakeMaterialDeferred_OpacityMappedDecalMaterial_IsMaskedSurfaceDecal()
+    {
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
+            [new XRTexture2D(), new XRTexture2D()],
+            [
+                CreateSlot("dirt_decal.png", TextureType.Diffuse),
+                CreateSlot("dirt_decal_mask.png", TextureType.Opacity),
+            ],
+            "dirt_decal");
+
+        // The masked mode stays as the fallback for renderers without the decal lane.
+        material.TransparencyMode.ShouldBe(ETransparencyMode.Masked);
+        material.AdvancedSurfaceDecal.ShouldBeTrue();
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_OpacityMappedNonDecalMaterial_IsNotSurfaceDecal()
+    {
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
+            [new XRTexture2D(), new XRTexture2D()],
+            [
+                CreateSlot("leaf.png", TextureType.Diffuse),
+                CreateSlot("leaf_mask.png", TextureType.Opacity),
+            ],
+            "leaf");
+
+        material.TransparencyMode.ShouldBe(ETransparencyMode.Masked);
+        material.AdvancedSurfaceDecal.ShouldBeFalse();
+    }
+
+    [Test]
     public void MakeMaterialDeferred_NormalSpecularOpacityTexturesSelectDeferredLegacyMaskedShader()
     {
         XRTexture2D albedo = new();
