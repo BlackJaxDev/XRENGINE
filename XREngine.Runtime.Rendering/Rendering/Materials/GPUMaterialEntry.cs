@@ -22,6 +22,12 @@ namespace XREngine.Rendering.Materials
         /// <summary>Parallax discards fragments whose ray leaves UV [0, 1].</summary>
         public const uint ParallaxSilhouetteFlag = 1u << 6;
 
+        /// <summary>
+        /// A separate opacity texture multiplies masked coverage by its red channel. Without
+        /// this flag, coverage reads no opacity texture.
+        /// </summary>
+        public const uint OpacityTextureFlag = 1u << 7;
+
         /// <summary>Bit offsets of the packed parallax step counts (8 bits max, 8 bits min, 4 bits refine).</summary>
         public const int ParallaxMaxStepsShift = 8;
         public const int ParallaxMinStepsShift = 16;
@@ -31,6 +37,9 @@ namespace XREngine.Rendering.Materials
         public uint NormalHandleIndex;
         public uint RMHandleIndex;
         public uint Flags;
+
+        /// <summary>Handle index of the separate opacity texture, or 0 when the material has none.</summary>
+        public uint OpacityHandleIndex;
         public Vector4 BaseColorOpacity;
         public Vector4 RMSE;
         public float AlphaCutoff;

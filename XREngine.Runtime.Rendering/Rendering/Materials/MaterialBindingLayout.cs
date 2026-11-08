@@ -473,6 +473,7 @@ namespace XREngine.Rendering.Materials
                 !TryWriteUInt(layout, destination, "NormalHandleIndex", entry.NormalHandleIndex, out error) ||
                 !TryWriteUInt(layout, destination, "RMHandleIndex", entry.RMHandleIndex, out error) ||
                 !TryWriteUInt(layout, destination, "Flags", entry.Flags, out error) ||
+                !TryWriteUInt(layout, destination, "OpacityHandleIndex", entry.OpacityHandleIndex, out error) ||
                 !TryWriteVector4(layout, destination, "BaseColorOpacity", entry.BaseColorOpacity, out error) ||
                 !TryWriteVector4(layout, destination, "RMSE", entry.RMSE, out error) ||
                 !TryWriteVector4(layout, destination, "EmissionColor", emissionColor, out error) ||
@@ -654,6 +655,12 @@ namespace XREngine.Rendering.Materials
         /// </summary>
         public const uint VulkanMaterialTextureDescriptorTableBinding = 31u;
 
+        /// <summary>
+        /// Texture slots of the standard layouts (<see cref="OpaqueDeferred"/>, <see cref="ForwardOpaque"/>,
+        /// <see cref="MaskedForward"/>): albedo, normal, metallic-roughness, emissive, and opacity.
+        /// </summary>
+        public const int StandardTextureCount = 5;
+
         public static MaterialBindingLayout OpaqueDeferred { get; } = new(
             "DeferredOpaque",
             (int)EDefaultRenderPass.OpaqueDeferred,
@@ -681,6 +688,7 @@ namespace XREngine.Rendering.Materials
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
                 new("Emissive", "emissive", "2D"),
+                new("Opacity", "opacity", "2D"),
             ],
             supportsGeneratedMaterialTableDispatch: true);
 
@@ -707,6 +715,7 @@ namespace XREngine.Rendering.Materials
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
                 new("Emissive", "emissive", "2D"),
+                new("Opacity", "opacity", "2D"),
             ],
             supportsGeneratedMaterialTableDispatch: true);
 
@@ -733,6 +742,7 @@ namespace XREngine.Rendering.Materials
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
                 new("Emissive", "emissive", "2D"),
+                new("Opacity", "opacity", "2D"),
             ],
             supportsGeneratedMaterialTableDispatch: true);
 

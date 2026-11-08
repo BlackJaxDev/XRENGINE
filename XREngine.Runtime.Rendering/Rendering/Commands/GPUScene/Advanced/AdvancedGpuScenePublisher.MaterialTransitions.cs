@@ -19,9 +19,9 @@ public sealed partial class AdvancedGpuScenePublisher
     // One reusable role destination for unchanged native Uber source checks.
     private readonly AdvancedGpuResourceBindingSource[] _reuseNativeUberSources =
         new AdvancedGpuResourceBindingSource[NativeUberMaterialSchema.TextureRoleCount];
-    // The legacy four slots and six engine-surface roles share one reuse check.
+    // The standard legacy slots and six engine-surface roles share one reuse check.
     private readonly AdvancedGpuResourceBindingSource[] _reuseStandardLitSources =
-        new AdvancedGpuResourceBindingSource[4 + AdvancedEngineSurfaceRecord.RoleCount];
+        new AdvancedGpuResourceBindingSource[MaterialBindingLayouts.StandardTextureCount + AdvancedEngineSurfaceRecord.RoleCount];
     private AdvancedMaterialTextureBinding[] _resourceAcquireBindings = [];
     private AdvancedMaterialTextureBinding[] _resourceReleaseBindings = [];
     private int[] _plannedVariantSlots = [];
@@ -1115,10 +1115,10 @@ public sealed partial class AdvancedGpuScenePublisher
         out EAdvancedCanonicalCompatibilityReason compatibilityReason,
         out string reason)
     {
-        if (destination.Length != 4)
+        if (destination.Length != MaterialBindingLayouts.StandardTextureCount)
         {
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
-            reason = "The bounded material bridge requires exactly four texture slots.";
+            reason = "The bounded material bridge requires one texture slot per standard layout texture.";
             return false;
         }
         if (!AdvancedGpuResourceSourceEncoder.TryEncode(
@@ -1143,6 +1143,12 @@ public sealed partial class AdvancedGpuScenePublisher
                 snapshot.Emissive,
                 EAdvancedResourceFallback.Black,
                 out destination[3],
+                out compatibilityReason,
+                out reason) ||
+            !AdvancedGpuResourceSourceEncoder.TryEncode(
+                snapshot.Opacity,
+                EAdvancedResourceFallback.White,
+                out destination[4],
                 out compatibilityReason,
                 out reason))
         {
@@ -1316,16 +1322,16 @@ public sealed partial class AdvancedGpuScenePublisher
     {
         if (material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
         {
-            if (bindings.Length != 4 ||
+            if (bindings.Length != MaterialBindingLayouts.StandardTextureCount ||
                 engineSurface.SchemaVersion != AdvancedEngineSurfaceRecord.CurrentSchemaVersion ||
                 uberSurface.SchemaVersion != 0)
                 return false;
             try
             {
                 Span<AdvancedGpuResourceBindingSource> legacySources =
-                    _reuseStandardLitSources.AsSpan(0, 4);
+                    _reuseStandardLitSources.AsSpan(0, MaterialBindingLayouts.StandardTextureCount);
                 Span<AdvancedGpuResourceBindingSource> companionSources =
-                    _reuseStandardLitSources.AsSpan(4, AdvancedEngineSurfaceRecord.RoleCount);
+                    _reuseStandardLitSources.AsSpan(MaterialBindingLayouts.StandardTextureCount, AdvancedEngineSurfaceRecord.RoleCount);
                 MaterialBindingSourceSnapshot snapshot = MaterialBindingSourceEncoder.Encode(material);
                 if (!TryEncodeMaterialResourceSources(in snapshot, legacySources, out _, out _) ||
                     !AdvancedEngineSurfaceSourceEncoder.TryEncode(material,
@@ -1347,9 +1353,9 @@ public sealed partial class AdvancedGpuScenePublisher
                          (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
                           source.SourceContentGeneration == 0UL)))
                         return false;
-                    AdvancedMaterialTextureBinding binding = index < 4
+                    AdvancedMaterialTextureBinding binding = index < MaterialBindingLayouts.StandardTextureCount
                         ? bindings[index]
-                        : engineSurface.GetRole(index - 4).Binding;
+                        : engineSurface.GetRole(index - MaterialBindingLayouts.StandardTextureCount).Binding;
                     if (!_resourcePublisher.BindingMatches(in binding, in source))
                         return false;
                 }

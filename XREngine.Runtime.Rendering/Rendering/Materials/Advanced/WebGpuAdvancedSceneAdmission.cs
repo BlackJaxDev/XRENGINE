@@ -97,28 +97,30 @@ public static class WebGpuAdvancedSceneAdmission
             reason = "The engine material has no exact typed native surface companion.";
             return false;
         }
-        XRTexture?[] textures = [snapshot.Albedo, snapshot.Normal, snapshot.RM, snapshot.Emissive,
+        // The standard legacy slots come first, then the six engine-surface roles.
+        const int legacyCount = MaterialBindingLayouts.StandardTextureCount;
+        XRTexture?[] textures = [snapshot.Albedo, snapshot.Normal, snapshot.RM, snapshot.Emissive, snapshot.Opacity,
             companionSources[0].Texture, companionSources[1].Texture, companionSources[2].Texture, companionSources[3].Texture,
             companionSources[4].Texture, companionSources[5].Texture];
         EAdvancedResourceFallback[] fallbacks = [EAdvancedResourceFallback.White, EAdvancedResourceFallback.FlatNormal,
-            EAdvancedResourceFallback.White, EAdvancedResourceFallback.Black,
+            EAdvancedResourceFallback.White, EAdvancedResourceFallback.Black, EAdvancedResourceFallback.White,
             EAdvancedResourceFallback.White, EAdvancedResourceFallback.FlatNormal, EAdvancedResourceFallback.White, EAdvancedResourceFallback.White,
             EAdvancedResourceFallback.White, EAdvancedResourceFallback.White];
-        string[] names = ["Albedo", "Normal", "RM", "Emissive", "EngineBaseColor", "EngineNormal", "EngineMetallic", "EngineRoughness", "EngineOpacity", "EngineSpecular"];
+        string[] names = ["Albedo", "Normal", "RM", "Emissive", "Opacity", "EngineBaseColor", "EngineNormal", "EngineMetallic", "EngineRoughness", "EngineOpacity", "EngineSpecular"];
         List<AdvancedGpuResourceBindingSource> pairs = [];
         for (int index = 0; index < textures.Length; index++)
         {
-            if (engineSurface.SchemaVersion != 0 && index < 4) continue;
+            if (engineSurface.SchemaVersion != 0 && index < legacyCount) continue;
             resource = $"{names[index]}/{textures[index]?.Name ?? "<unbound>"}";
             if (!AdvancedGpuResourceSourceEncoder.TryEncode(textures[index], fallbacks[index],
                 out AdvancedGpuResourceBindingSource source, out _, out reason))
                 return false;
             if (source.Texture is null) continue;
-            if (index >= 4 && engineSurface.SchemaVersion != 0)
-                source = source with { SamplerRecord = new AdvancedEngineSurfaceSamplingKey(engineSurface.GetSamplingKey(index - 4)).ApplyTo(source.SamplerRecord) };
+            if (index >= legacyCount && engineSurface.SchemaVersion != 0)
+                source = source with { SamplerRecord = new AdvancedEngineSurfaceSamplingKey(engineSurface.GetSamplingKey(index - legacyCount)).ApplyTo(source.SamplerRecord) };
             if (!TryInspectTexture(in source, allowDepthComparison: false, out reason))
                 return false;
-            if (translation.RequiredCoverage == EAdvancedMaterialCoverageMode.Masked && index is 0 or 8 &&
+            if (translation.RequiredCoverage == EAdvancedMaterialCoverageMode.Masked && index is 0 or 4 or (legacyCount + 4) &&
                 source.TextureRecord.Dimension != EAdvancedTextureDimension.Texture2D)
             {
                 reason = "Masked visibility requires exact 2D base-color and selected opacity texture/default-sampler pairs.";

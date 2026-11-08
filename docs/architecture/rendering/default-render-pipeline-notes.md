@@ -585,6 +585,16 @@ behavior. Material rows separate instance constants and texture references from
 shared shading-kernel identity, so warmed shading does not select descriptor
 sets per material.
 
+The standard material layouts (`MaterialBindingLayouts.OpaqueDeferred`,
+`ForwardOpaque`, and `MaskedForward`) have five texture slots: albedo, normal,
+metallic-roughness, emissive, and opacity. `MaterialBindingSourceEncoder` fills
+the opacity slot from the `Opacity` surface binding, but only for a masked
+material whose opacity texture is not also its albedo. It then sets
+`GPUMaterialEntry.OpacityTextureFlag`. Masked visibility and masked shadow
+coverage multiply the albedo alpha by the red channel of the opacity texture
+only when that flag is set. Rows without the flag do not read the opacity
+texture.
+
 Early visibility clears each view's append counters before one dispatch for
 that view. The dispatch admits at most `payloadCapacity` candidates. Each
 candidate appends once to either the early-visible list or the deferred list,

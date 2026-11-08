@@ -24,6 +24,8 @@ internal static class AdvancedStandardMaterialShaderContract
         AppendMember(source, layout, "Flags", "XR_ADV_STANDARD_FLAGS_WORD");
         AppendMember(source, layout, "SurfaceDetailHeightScale", "XR_ADV_STANDARD_SURFACE_DETAIL_HEIGHT_SCALE_WORD");
         AppendMember(source, layout, "ParallaxScale", "XR_ADV_STANDARD_PARALLAX_SCALE_WORD");
+        Append(source, "XR_ADV_STANDARD_OPACITY_TEXTURE_FLAG", GPUMaterialEntry.OpacityTextureFlag);
+        Append(source, "XR_ADV_STANDARD_OPACITY_TEXTURE_SLOT", ResolveTextureSlot(layout, "opacity"));
         Append(source, "XR_ADV_STANDARD_HEIGHT_MAP_FLAG", GPUMaterialEntry.HeightMapFlag);
         Append(source, "XR_ADV_STANDARD_PARALLAX_FLAG", GPUMaterialEntry.ParallaxFlag);
         Append(source, "XR_ADV_STANDARD_PARALLAX_SILHOUETTE_FLAG", GPUMaterialEntry.ParallaxSilhouetteFlag);
@@ -67,6 +69,28 @@ internal static class AdvancedStandardMaterialShaderContract
             member.WordCount != forward.WordCount || member.WordCount != masked.WordCount)
             throw new InvalidOperationException($"Native material field '{name}' requires an explicit shader translation for the published layout.");
         Append(source, define, member.WordOffset);
+    }
+
+    /// <summary>
+    /// Returns the texture slot of a semantic. The slot must be the same in the deferred,
+    /// forward, and masked standard layouts, because one native shader reads all three.
+    /// </summary>
+    private static uint ResolveTextureSlot(MaterialBindingLayout layout, string semantic)
+    {
+        int slot = IndexOfTexture(layout, semantic);
+        if (slot < 0 ||
+            IndexOfTexture(MaterialBindingLayouts.ForwardOpaque, semantic) != slot ||
+            IndexOfTexture(MaterialBindingLayouts.MaskedForward, semantic) != slot)
+            throw new InvalidOperationException($"Native material texture '{semantic}' requires the same slot in every published standard layout.");
+        return (uint)slot;
+    }
+
+    private static int IndexOfTexture(MaterialBindingLayout layout, string semantic)
+    {
+        for (int index = 0; index < layout.Textures.Count; ++index)
+            if (string.Equals(layout.Textures[index].Semantic, semantic, StringComparison.OrdinalIgnoreCase))
+                return index;
+        return -1;
     }
 
     private static void AppendProjectiveMirrorMember(StringBuilder source, MaterialBindingLayout layout, string name, string define)

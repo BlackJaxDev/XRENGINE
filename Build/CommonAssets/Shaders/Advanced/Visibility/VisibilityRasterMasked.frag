@@ -135,6 +135,11 @@ void main()
             if ((flags & 1u) != 0u)
                 alpha *= XR_ADV_StandardTexture(material, 0u, VisibilityCoverageUv,
                     dFdx(VisibilityCoverageUv), dFdy(VisibilityCoverageUv), vec4(1.0)).a;
+            // A separate opacity map (for example an imported decal mask) multiplies
+            // coverage by its red channel. Rows without one skip the fetch.
+            if ((flags & XR_ADV_STANDARD_OPACITY_TEXTURE_FLAG) != 0u)
+                alpha *= XR_ADV_StandardTexture(material, XR_ADV_STANDARD_OPACITY_TEXTURE_SLOT, VisibilityCoverageUv,
+                    dFdx(VisibilityCoverageUv), dFdy(VisibilityCoverageUv), vec4(1.0)).r;
             float alphaCutoff = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_ALPHA_CUTOFF_WORD));
             if (alpha < alphaCutoff) discard;
         }

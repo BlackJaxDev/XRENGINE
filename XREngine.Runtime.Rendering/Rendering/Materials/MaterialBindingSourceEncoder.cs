@@ -25,6 +25,9 @@ namespace XREngine.Rendering.Materials
                 material.GetSurfaceTexture(EMaterialTextureSemantic.Roughness)?.Texture;
             MaterialSurfaceTextureBinding? emissiveBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Emissive);
             XRTexture? emissive = emissiveBinding?.Texture;
+            // A separate opacity map only matters for coverage. A map that is also the base
+            // color adds nothing, because coverage already reads the albedo alpha.
+            XRTexture? opacity = material.GetSurfaceTexture(EMaterialTextureSemantic.Opacity)?.Texture;
             bool uberSource = !hasSurfaceBindings && IsUberSource(material);
             if (uberSource)
             {
@@ -34,13 +37,17 @@ namespace XREngine.Rendering.Materials
                 normal = FindTextureBySampler(material, "_BumpMap");
                 rm = null;
                 emissive = FindTextureBySampler(material, "_EmissionMap");
+                opacity = null;
             }
             else if (!hasSurfaceBindings)
             {
                 albedo = material.Textures.Count > 0 ? material.Textures[0] : null;
                 normal = material.Textures.Count > 1 ? material.Textures[1] : null;
                 rm = material.Textures.Count > 2 ? material.Textures[2] : null;
+                opacity = null;
             }
+            if (ReferenceEquals(opacity, albedo))
+                opacity = null;
             uint flags = 0u;
 
             if (albedo is not null)
@@ -50,7 +57,16 @@ namespace XREngine.Rendering.Materials
             if (rm is not null)
                 flags |= 1u << 2;
             if (material.GetEffectiveTransparencyMode() is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
+            {
                 flags |= GPUMaterialEntry.MaskedCoverageFlag;
+                if (opacity is not null)
+                    flags |= GPUMaterialEntry.OpacityTextureFlag;
+            }
+            else
+            {
+                // Only masked coverage reads the opacity map.
+                opacity = null;
+            }
 
             SurfaceDetailControls surfaceDetail = ResolveSurfaceDetail(material, ref normal, uberSource);
             if (normal is not null)
@@ -75,7 +91,8 @@ namespace XREngine.Rendering.Materials
                 ResolveEmissionStrength(material),
                 ResolveEmissionTextureMetadata(emissiveBinding),
                 emissiveBinding?.UvScaleOffset ?? new Vector4(1.0f, 1.0f, 0.0f, 0.0f),
-                emissiveBinding?.UvRotation ?? 0.0f);
+                emissiveBinding?.UvRotation ?? 0.0f,
+                opacity);
         }
 
         private readonly record struct SurfaceDetailControls(uint Flags, float HeightScale, float ParallaxScale);

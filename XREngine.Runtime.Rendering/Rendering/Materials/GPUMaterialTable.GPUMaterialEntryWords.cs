@@ -16,11 +16,11 @@ public partial class GPUMaterialTable
             public uint NormalHandleIndex;
             public uint RMHandleIndex;
             public uint EmissiveHandleIndex;
+            public uint OpacityHandleIndex;
             public uint Flags;
-            // Four texture indices plus flags require padding before the first vec4.
+            // Five texture indices plus flags require padding before the first vec4.
             public uint HeaderPadding0;
             public uint HeaderPadding1;
-            public uint HeaderPadding2;
             public uint BaseColorX;
             public uint BaseColorY;
             public uint BaseColorZ;
