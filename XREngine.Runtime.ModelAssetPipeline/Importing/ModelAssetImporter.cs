@@ -301,6 +301,7 @@ namespace XREngine
             return material;
         }
 
+
         /// <summary>Returns the authored replacement before producer material conversion.</summary>
         internal XRMaterial? ResolveMaterialRemap(string name)
         {
@@ -1234,10 +1235,22 @@ namespace XREngine
 
             List<MaterialSurfaceTextureBinding> bindings = new(textureSlots.Count);
             int count = Math.Min(textureSlots.Count, textureList.Length);
+            XRTexture? opacityTexture = ResolveTexture(textureList, ResolveTextureIndex(textureSlots, TextureType.Opacity));
+            if (opacityTexture is not null && !HasDistinctBaseColorTexture(textureList, textureSlots, count, opacityTexture))
+                opacityTexture = null;
             for (int index = 0; index < count; index++)
             {
                 XRTexture? texture = textureList[index];
-                if (texture is null || !TryGetSurfaceTextureSemantic(NormalizeTextureType(textureSlots[index].TextureType), out EMaterialTextureSemantic semantic))
+                // Use the same effective type as the material factories. Some exporters file
+                // every map of a material in one slot type (NewSponza "metal_door" puts its
+                // base color, roughness and metalness maps in Metalness slots); the file name
+                // then names the real role.
+                if (texture is null || !TryGetSurfaceTextureSemantic(GetEffectiveTextureType(textureSlots[index]), out EMaterialTextureSemantic semantic))
+                    continue;
+
+                // Some exporters write the opacity mask into a color slot too. The mask is
+                // not a base color, so it must not take the color role or a color binding.
+                if (semantic == EMaterialTextureSemantic.BaseColor && ReferenceEquals(texture, opacityTexture))
                     continue;
 
                 ETexWrapMode wrapU = ETexWrapMode.Repeat;
@@ -1264,6 +1277,25 @@ namespace XREngine
             }
 
             material.SurfaceTextureBindings = [.. bindings];
+        }
+
+        /// <summary>
+        /// Returns true when a color slot holds a texture other than <paramref name="opacityTexture"/>.
+        /// Only then is a color slot that repeats the opacity mask a duplicate. A diffuse texture
+        /// that is also the opacity source stays the base color.
+        /// </summary>
+        private static bool HasDistinctBaseColorTexture(XRTexture[] textureList, List<TextureSlot> textureSlots, int count, XRTexture opacityTexture)
+        {
+            for (int index = 0; index < count; index++)
+            {
+                if (textureList[index] is not { } texture || ReferenceEquals(texture, opacityTexture))
+                    continue;
+
+                if (GetEffectiveTextureType(textureSlots[index]) is TextureType.Diffuse or TextureType.BaseColor)
+                    return true;
+            }
+
+            return false;
         }
 
         private static bool TryGetSurfaceTextureSemantic(TextureType textureType, out EMaterialTextureSemantic semantic)
