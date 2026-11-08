@@ -23,6 +23,13 @@ public sealed class TextureStreamingCapacityModelTests
     public void BaseDecodeWidth_UsesTheTopologyReservation_AndNeverGoesBelowTheOldWidth(int processors, int foreground, int dedicated, int expected)
         => TextureStreamingCapacityModel.ResolveBaseDecodeWidth(processors, foreground, dedicated, null).ShouldBe(expected);
 
+    [TestCase(4, 3, 2)]
+    [TestCase(6, 4, 2)]
+    [TestCase(8, 4, 4)]
+    [TestCase(16, 4, 8)]
+    public void MaxDecodeWidth_LeavesTheForegroundProcessorsFree(int processors, int foreground, int expected)
+        => TextureStreamingCapacityModel.ResolveMaxDecodeWidth(processors, foreground).ShouldBe(expected);
+
     [TestCase(4, 1, 1)]
     [TestCase(16, 3, 3)]
     [TestCase(4, 100, TextureStreamingCapacityModel.MaxDecodeConcurrencyOverride)]

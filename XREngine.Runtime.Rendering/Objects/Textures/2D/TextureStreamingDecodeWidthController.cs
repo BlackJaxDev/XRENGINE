@@ -10,9 +10,10 @@ namespace XREngine.Rendering;
 /// <para>Start and floor: the width starts at the topology base width and never goes below
 /// <see cref="TextureStreamingCapacityModel.MinimumDecodeConcurrency"/> (the old fixed width) without evidence. With
 /// evidence in the last <see cref="EvidenceMemoryMilliseconds"/>, the floor is 1.</para>
-/// <para>Rise: while decodes wait and every permit is in use, the width grows by half (at least 1) each
-/// <see cref="RiseIntervalMilliseconds"/>, up to the memory bound, so a fast machine reaches the bound in a few hundred
-/// milliseconds.</para>
+/// <para>Rise: while decodes wait and every permit is in use, the width grows by half (at least 1), but only after
+/// <see cref="MinimumDecodingFrames"/> frames with decodes at the current width and at least
+/// <see cref="RiseIntervalMilliseconds"/>, and only when those frames do not go over the rule more often than frames
+/// without decodes. The bound is the processors that the foreground threads leave free.</para>
 /// <para>Back-off: an over-budget frame with active decodes, when such frames go over more often than frames without
 /// decodes by <see cref="EvidenceMargin"/>, halves the width and holds it for <see cref="HoldMilliseconds"/>. The width
 /// that gave the evidence is a ceiling (less one) for <see cref="EvidenceMemoryMilliseconds"/>, so the rise does not bring
@@ -54,6 +55,7 @@ internal sealed class TextureStreamingDecodeWidthController
     private int _idleFrames;
     private double _holdRemainingMilliseconds;
     private double _sinceRiseMilliseconds = double.PositiveInfinity;
+    private int _decodingFramesAtWidth;
     private double _sinceEvidenceMilliseconds = double.PositiveInfinity;
     private double _relearnRemainingMilliseconds = TextureStreamingWorkController.RelearnMilliseconds;
     private double _relearnMinimum = double.PositiveInfinity;
@@ -125,6 +127,7 @@ internal sealed class TextureStreamingDecodeWidthController
             {
                 _overRateDecoding += ((over ? 1.0 : 0.0) - _overRateDecoding) * alpha;
                 _decodingFrames++;
+                _decodingFramesAtWidth++;
             }
             else
             {
@@ -173,14 +176,17 @@ internal sealed class TextureStreamingDecodeWidthController
             double current = Math.Floor(_width);
             _evidenceCeiling = Math.Min(_evidenceCeiling, Math.Max(1.0, current - 1.0));
             _width = Math.Max(ResolveFloor(), Math.Floor(current * 0.5));
+            _decodingFramesAtWidth = 0;
         }
         else if (sample.WaitingDecodes > 0
             && sample.ActiveDecodes >= Width
             && _holdRemainingMilliseconds <= 0.0
             && _sinceRiseMilliseconds >= RiseIntervalMilliseconds
-            && !(_decodingFrames >= MinimumDecodingFrames && _overRateDecoding > _overRateIdle + EvidenceMargin * 0.5))
+            && _decodingFramesAtWidth >= MinimumDecodingFrames
+            && _overRateDecoding <= _overRateIdle + EvidenceMargin * 0.5)
         {
             _sinceRiseMilliseconds = 0.0;
+            _decodingFramesAtWidth = 0;
             _width = Math.Min(_maxWidth, Math.Floor(_width) + Math.Max(1.0, Math.Floor(_width * 0.5)));
         }
 

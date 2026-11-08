@@ -55,7 +55,7 @@ public sealed class TextureStreamingDecodeWidthControllerTests
     {
         TextureStreamingDecodeWidthController controller = Create(2);
 
-        int width = Run(controller, 30, freeCores: 16, contentionPerDecode: 3.0);
+        int width = Run(controller, 90, freeCores: 16, contentionPerDecode: 3.0);
 
         width.ShouldBe(TextureStreamingCapacityModel.MaxAutomaticDecodeConcurrency);
         controller.BackoffCount.ShouldBe(0);

@@ -40,6 +40,7 @@ internal static class TextureStreamingCapacity
 
     private static readonly object s_decodeSync = new();
     private static readonly long s_refreshIntervalTicks = (long)(CapacityRefreshInterval.TotalSeconds * Stopwatch.Frequency);
+    private static int s_maxDecodeWidth = TextureStreamingCapacityModel.MaxAutomaticDecodeConcurrency;
     private static readonly TextureStreamingDecodeWidthController s_decodeWidth = CreateDecodeWidthController();
     private static readonly PriorityAsyncSemaphore s_decodeGate = new(s_decodeWidth.Width);
     private static readonly TextureStreamingFrameSampler s_decodeSampler = new();
@@ -229,7 +230,7 @@ internal static class TextureStreamingCapacity
     private static int ResolveMaxDecodeWidth()
         => RuntimeEngine.Rendering.Settings.TextureStreamingDecodeConcurrency is int pinned
             ? Math.Clamp(pinned, 1, TextureStreamingCapacityModel.MaxDecodeConcurrencyOverride)
-            : TextureStreamingCapacityModel.MaxAutomaticDecodeConcurrency;
+            : Volatile.Read(ref s_maxDecodeWidth);
 
     private static int ResolveBaseDecodeWidth(out int processors)
     {
@@ -250,6 +251,7 @@ internal static class TextureStreamingCapacity
             }
         }
 
+        Volatile.Write(ref s_maxDecodeWidth, TextureStreamingCapacityModel.ResolveMaxDecodeWidth(processors, foreground));
         return TextureStreamingCapacityModel.ResolveBaseDecodeWidth(
             processors,
             foreground,

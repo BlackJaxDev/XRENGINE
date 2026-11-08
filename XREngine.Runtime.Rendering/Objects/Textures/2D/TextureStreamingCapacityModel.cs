@@ -50,6 +50,14 @@ internal static class TextureStreamingCapacityModel
     }
 
     /// <summary>
+    /// Resolves the highest automatic decode width: the processors that the foreground threads leave free, clamped to
+    /// <see cref="MinimumDecodeConcurrency"/>..<see cref="MaxAutomaticDecodeConcurrency"/>. The feedback never raises the
+    /// width onto the processors of the render, update, fixed-update, and collect threads.
+    /// </summary>
+    public static int ResolveMaxDecodeWidth(int effectiveProcessorCount, int foregroundThreads)
+        => Math.Clamp(Math.Max(1, effectiveProcessorCount) - Math.Max(0, foregroundThreads), MinimumDecodeConcurrency, MaxAutomaticDecodeConcurrency);
+
+    /// <summary>
     /// Resolves how many upload preparation workers (staging copies) can run at the same time.
     /// </summary>
     /// <param name="decodeConcurrency">The current decode width.</param>
