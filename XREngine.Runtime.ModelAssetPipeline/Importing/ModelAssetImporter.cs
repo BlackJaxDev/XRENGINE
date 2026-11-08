@@ -37,7 +37,7 @@ namespace XREngine
     /// Returns a SceneNode hierarchy populated with model components and outputs generated materials and meshes.
     /// </summary>
     [XRTypeRedirect("XREngine.ModelImporter")]
-    public class ModelAssetImporter : IDisposable
+    public partial class ModelAssetImporter : IDisposable
     {
         private sealed class ImportOptionsScope(ModelImportOptions? previous) : IDisposable
         {
@@ -256,7 +256,9 @@ namespace XREngine
                     EDiffuseAlphaMode.Opaque => ETransparencyMode.Opaque,
                     EDiffuseAlphaMode.Masked => ETransparencyMode.Masked,
                     EDiffuseAlphaMode.Blended => ETransparencyMode.WeightedBlendedOit,
-                    _ => hasTransparentBlendHint ? ETransparencyMode.WeightedBlendedOit : ETransparencyMode.Opaque,
+                    // Imported glass draws as sorted alpha by default. Weighted blended OIT
+                    // needs an explicit Blended import option.
+                    _ => hasTransparentBlendHint ? ETransparencyMode.AlphaBlend : ETransparencyMode.Opaque,
                 };
             }
 
@@ -319,6 +321,11 @@ namespace XREngine
             XRTexture[] textureList = textures.Count > 0 ? LoadTextures(modelFilePath, textures) : [];
             XRMaterial material = MakeMaterialInternal(textureList, textures, name);
             ApplyImportedDiffuseColor(material, properties);
+            if (properties.Count != 0)
+                ApplyImportedOpacity(
+                    material,
+                    ResolveImportedOpacity(properties),
+                    material.Parameter<ShaderVector3>("BaseColor")?.Value ?? Vector3.One);
             return material;
         }
 
@@ -1411,6 +1418,7 @@ namespace XREngine
                         new ShaderFloat(0.9f, "Roughness"),
                         new ShaderFloat(0.0f, "Metallic"),
                         new ShaderFloat(0.0f, "Emission"),
+                        new ShaderFloat(0.0f, MaterialTransparencyParameterName),
                     ];
                     mat.RenderPass = ShaderHelper.ResolveTransparentRenderPass(transparencyMode);
                     mat.RenderOptions = new RenderingParameters()

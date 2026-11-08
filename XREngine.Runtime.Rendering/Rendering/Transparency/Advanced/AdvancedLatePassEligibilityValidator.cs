@@ -68,7 +68,7 @@ public static class AdvancedLatePassEligibilityValidator
             GpuTransparencyClassification.ResolveDomain(mode) is
                 EGpuTransparencyDomain.OpaqueOrOther or
                 EGpuTransparencyDomain.Masked;
-        AdvancedLatePassMetadata? metadata = material.AdvancedLatePassMetadata;
+        AdvancedLatePassMetadata? metadata = material.ResolveAdvancedLatePassMetadata();
         if (metadata is null)
         {
             // On-top is an intentional overlay lane and may contain opaque

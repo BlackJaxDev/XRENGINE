@@ -1704,7 +1704,10 @@ internal static class NativeFbxSceneImporter
         Vector3 diffuseColor = GetVectorProperty(materialObject, "DiffuseColor")
             ?? GetVectorProperty(materialObject, "BaseColor")
             ?? new Vector3((float)ColorF4.Magenta.R, (float)ColorF4.Magenta.G, (float)ColorF4.Magenta.B);
+        // The deferred surface keeps the authored Opacity scalar. The resolved opacity
+        // (which also reads TransparencyFactor) only decides forward glass below.
         float opacity = GetFloatProperty(materialObject, "Opacity") ?? 1.0f;
+        float resolvedOpacity = ResolveImportedOpacity(materialObject);
         float? roughness = GetFloatProperty(materialObject, "Roughness");
         float metallic = GetFloatProperty(materialObject, "Metalness") ?? 0.0f;
         Vector3 emissive = GetVectorProperty(materialObject, "EmissiveColor") ?? Vector3.Zero;
@@ -1726,6 +1729,9 @@ internal static class NativeFbxSceneImporter
         if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 &&
             !StandardLitTextureSurfaceBinding.TryRead(material, out _, out _))
             material.EngineSemantic = EngineMaterialSemanticIdentity.None;
+        // A connected TransparencyFactor map controls coverage; the scalar is only its fallback.
+        if (!hasTransparencyFactorMask)
+            ModelAssetImporter.ApplyImportedOpacity(material, resolvedOpacity, diffuseColor);
     }
 
     private static bool ShouldUseTransparentBlend(FbxSceneObject? materialObject)
@@ -1733,11 +1739,18 @@ internal static class NativeFbxSceneImporter
         if (materialObject is null)
             return false;
 
-        float opacity = GetFloatProperty(materialObject, "Opacity") ?? 1.0f;
-        float transparencyFactor = GetFloatProperty(materialObject, "TransparencyFactor") ?? 0.0f;
-        Vector3 transparentColor = GetVectorProperty(materialObject, "TransparentColor") ?? Vector3.Zero;
-        return opacity < 0.999f || transparencyFactor > 0.001f || transparentColor.LengthSquared() > 0.0f;
+        return ResolveImportedOpacity(materialObject) < ModelAssetImporter.ImportedOpaqueThreshold;
     }
+
+    /// <summary>
+    /// Resolves the FBX material opacity: <c>Opacity</c> when present, otherwise one minus
+    /// <c>TransparencyFactor</c> times <c>TransparentColor</c>.
+    /// </summary>
+    private static float ResolveImportedOpacity(FbxSceneObject materialObject)
+        => ModelAssetImporter.ResolveImportedOpacity(
+            GetFloatProperty(materialObject, "Opacity"),
+            GetFloatProperty(materialObject, "TransparencyFactor"),
+            GetVectorProperty(materialObject, "TransparentColor"));
 
     private static string? GetInlineAttribute(FbxSceneObject sceneObject, string key)
         => sceneObject.InlineAttributes.TryGetValue(key, out FbxSemanticValue value) ? value.AsString() : null;

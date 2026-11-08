@@ -69,7 +69,7 @@ public sealed class ModelImportBackendResolverTests
         first.ResolverPolicyVersion.ShouldBe(ModelImportBackendResolver.PolicyVersion);
         CandidateIds(first).ShouldBe(new[] { ModelImportBackendIds.NativeGltf, ModelImportBackendIds.Assimp });
         first.CandidateListHash.ShouldBe(second.CandidateListHash);
-        first.CandidateListHash.ShouldBe("811d6a5902ffdcd9b317fb0d086a791d95daa37908196065c705bf55b033da0f");
+        first.CandidateListHash.ShouldBe("a26bfad72664e7fe1935d599f600362413724343bd0f94cec5ce8b51f3f8f1ad");
         first.CandidateListHash.Length.ShouldBe(64);
         first.CandidateListHash.ShouldBe(first.CandidateListHash.ToLowerInvariant());
     }
