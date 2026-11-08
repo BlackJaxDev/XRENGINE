@@ -22,13 +22,13 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[11];
 
     /// <summary>
-    /// <c>XRE_ADVANCED_UBER_KERNEL_PREWARM=1</c> compiles the native Uber kernel after the
-    /// standard kernel is ready, also in scenes without Uber materials, so an Uber model
-    /// that loads later shades at once. By default the Uber kernel compiles only when the
-    /// scene has Uber shading kernels.
+    /// By default the native Uber kernel compiles in the background after the standard
+    /// kernel is ready, also in scenes without Uber materials, so an Uber model that loads
+    /// later shades at once. <c>XRE_ADVANCED_UBER_KERNEL_PREWARM=0</c> compiles it only when
+    /// the scene has Uber shading kernels.
     /// </summary>
     internal static bool PrewarmUberShadingKernels { get; } =
-        XREnvironment.IsEnabled(XREngineEnvironmentVariables.AdvancedUberKernelPrewarm);
+        XREnvironment.IsEnabled(XREngineEnvironmentVariables.AdvancedUberKernelPrewarm, defaultValue: true);
 
     /// <summary>
     /// Returns the native Uber kernels for a scene that has Uber shading kernels. The first

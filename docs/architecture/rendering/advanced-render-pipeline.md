@@ -48,7 +48,7 @@ preamble define `XR_ADV_NATIVE_SHADING_FAMILY` selects the family:
 | Family | Define | Shades | When it compiles |
 |---|---|---|---|
 | Standard | `1` | Standard, masked, forward, and mirror materials. Native Uber pixels get a fallback while the Uber kernel is not ready. | Always. Advanced admission waits for it. |
-| Uber | `2` | Native Uber materials only. | When the published scene has native Uber shading kernels, or at startup with `XRE_ADVANCED_UBER_KERNEL_PREWARM=1`. Admission never waits for it. |
+| Uber | `2` | Native Uber materials only. | In the background after the standard kernel is ready (prewarm, the default). With `XRE_ADVANCED_UBER_KERNEL_PREWARM=0`, only when the published scene has native Uber shading kernels. Admission never waits for it. |
 
 - `VulkanAdvancedNativeShadingKernelFamilies` splits the published shading
   kernel records into a standard mask and an Uber mask by material layout hash.
