@@ -58,14 +58,13 @@ namespace XREngine.Rendering.OpenGL
                     return ERenderDrawReadiness.Failed;
                 }
 
+                // The readiness check never generates inline on the render thread: the generation queue does it, with its
+                // budget and its priority, as for a queued draw.
                 if (!IsGenerated)
                 {
-                    Generate();
-                    if (!IsGenerated)
-                    {
-                        reason = PrepareResultGenerateFailed;
-                        return ERenderDrawReadiness.Failed;
-                    }
+                    Renderer.MeshGenerationQueue.EnqueueGeneration(this);
+                    reason = "the renderer waits in the mesh generation queue";
+                    return ERenderDrawReadiness.Compiling;
                 }
 
                 EnsureProgramsMatchRenderSettings();
