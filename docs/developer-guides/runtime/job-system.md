@@ -53,7 +53,13 @@ Before the topology resolves, startup applies the cache-core affinity policy
 (`Engine.ApplyProcessorCacheAffinityPolicy`). When the CPU's L3 caches have
 different sizes, for example a core complex with a stacked cache, the process is
 restricted to the logical processors that share the largest L3, and the topology
-then sizes automatic worker counts from only those processors. The startup
+then sizes automatic worker counts from only those processors. An automatic
+general count keeps a floor of `MinimumAutomaticGeneralWorkerCount` (2) workers
+whenever processors remain after the foreground reservation, because the
+dedicated background lanes (Vulkan recording, pipeline compile, OpenXR) are
+mostly idle and must not take every processor from imports and texture cooks.
+With 16 large-cache processors, 4 foreground and 12 dedicated lanes, the general
+pool is 2 instead of 0. The startup
 oversubscription check still uses the machine's processor count
 (`SystemProcessorCount`), because the fixed dedicated loops and explicit worker
 counts fit the machine and only share the narrowed cores. The rule reads the cache topology from the
