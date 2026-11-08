@@ -224,6 +224,14 @@ public partial class XRTexture2D
         => HasAssetExtension(filePath);
 
     internal static string ResolveTextureStreamingAuthorityPathInternal(string filePath, out string? originalSourcePath)
+        => ResolveTextureStreamingAuthorityPathInternal(filePath, usage: null, out originalSourcePath);
+
+    /// <summary>
+    /// Resolves the authority path for a texture role. With role-dependent block
+    /// compression, the role selects a cache variant folder, so the cook knows the role.
+    /// </summary>
+    /// <param name="usage">The texture role, or null when it is unknown.</param>
+    internal static string ResolveTextureStreamingAuthorityPathInternal(string filePath, ETextureImportUsage? usage, out string? originalSourcePath)
     {
         RuntimeTextureSourceAccess.RequireHostFiles();
         originalSourcePath = null;
@@ -234,7 +242,10 @@ public partial class XRTexture2D
         if (HasAssetExtension(normalizedPath))
             return normalizedPath;
 
-        string authorityPath = RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath);
+        string? variantKey = usage is { } role ? TextureCookUsageVariant.ResolveVariantKey(role) : null;
+        string authorityPath = variantKey is null
+            ? RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath)
+            : RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath, variantKey);
         if (string.IsNullOrWhiteSpace(authorityPath))
             return normalizedPath;
 
@@ -247,7 +258,7 @@ public partial class XRTexture2D
 
     internal static void ApplyTextureStreamingAuthorityPath(XRTexture2D texture, string requestedFilePath)
     {
-        string authorityPath = ResolveTextureStreamingAuthorityPathInternal(requestedFilePath, out string? originalSourcePath);
+        string authorityPath = ResolveTextureStreamingAuthorityPathInternal(requestedFilePath, texture.ImportedUsage, out string? originalSourcePath);
         texture.FilePath = authorityPath;
         if (!string.IsNullOrWhiteSpace(originalSourcePath))
             texture.OriginalPath ??= originalSourcePath;

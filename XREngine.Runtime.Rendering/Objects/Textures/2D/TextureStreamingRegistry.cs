@@ -145,8 +145,8 @@ internal sealed class TextureStreamingRegistry
                 {
                     record.FilePath = filePath;
                     record.Source = deferAuthorityResolution
-                        ? TextureStreamingSourceFactory.CreateDeferred(filePath)
-                        : TextureStreamingSourceFactory.Create(filePath);
+                        ? TextureStreamingSourceFactory.CreateDeferred(filePath, texture)
+                        : TextureStreamingSourceFactory.Create(filePath, texture.ImportedUsage);
                 }
 
                 record.Backend ??= resolvePreviewBackend(record.Format);

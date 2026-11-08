@@ -74,7 +74,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             Image = _image,
             ViewType = descriptor.ViewType,
             Format = ResolvedFormat,
-            Components = new ComponentMapping(ComponentSwizzle.Identity, ComponentSwizzle.Identity, ComponentSwizzle.Identity, ComponentSwizzle.Identity),
+            Components = VkFormatConversions.GetSampledComponentMapping(ResolvedFormat),
             SubresourceRange = new ImageSubresourceRange
             {
                 AspectMask = aspectMask,

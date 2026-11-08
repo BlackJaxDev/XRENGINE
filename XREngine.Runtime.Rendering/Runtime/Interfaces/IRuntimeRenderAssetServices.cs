@@ -124,6 +124,13 @@ public interface IRuntimeRenderAssetServices
     string ResolveTextureStreamingAuthorityPath(string filePath);
 
     /// <summary>
+    /// Resolves the authoritative path for one cache variant, such as the texture role
+    /// folder that role-dependent block compression uses. A null variant is the default key.
+    /// </summary>
+    string ResolveTextureStreamingAuthorityPath(string filePath, string? cacheVariantKey)
+        => ResolveTextureStreamingAuthorityPath(filePath);
+
+    /// <summary>
     /// Reports sparse texture streaming support for the supplied internal texture format.
     /// </summary>
     SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format);

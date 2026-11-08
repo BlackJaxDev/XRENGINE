@@ -355,6 +355,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public string ResolveTextureStreamingAuthorityPath(string filePath)
         => Engine.Assets?.ResolveTextureStreamingAuthorityPath(filePath) ?? Path.GetFullPath(filePath);
 
+    public string ResolveTextureStreamingAuthorityPath(string filePath, string? cacheVariantKey)
+        => Engine.Assets?.ResolveTextureStreamingAuthorityPath(filePath, cacheVariantKey) ?? Path.GetFullPath(filePath);
+
     public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
     {
         ISparseTextureStreamingBackendCapability? capability =

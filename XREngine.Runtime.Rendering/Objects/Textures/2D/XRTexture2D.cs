@@ -53,7 +53,7 @@ namespace XREngine.Rendering
 
         public override bool Load3rdParty(string filePath)
         {
-            string authorityPath = ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
+            string authorityPath = ResolveTextureStreamingAuthorityPathInternal(filePath, ImportedUsage, out string? originalSourcePath);
             return Load3rdPartyCore(authorityPath, originalSourcePath);
         }
 
@@ -183,7 +183,7 @@ namespace XREngine.Rendering
             for (int i = 0; i < entries.Length; i++)
             {
                 var (filePath, target) = entries[i];
-                string resolvedPath = ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
+                string resolvedPath = ResolveTextureStreamingAuthorityPathInternal(filePath, target.ImportedUsage, out string? originalSourcePath);
                 target.FilePath = resolvedPath;
                 if (!string.IsNullOrWhiteSpace(originalSourcePath))
                     target.OriginalPath ??= originalSourcePath;

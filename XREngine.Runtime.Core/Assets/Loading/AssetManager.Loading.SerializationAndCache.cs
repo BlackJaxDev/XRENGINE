@@ -440,8 +440,12 @@ namespace XREngine
         /// Resolves the authority path for a texture asset, which may be the original source file or a cached version depending on cache validity and streaming settings.
         /// </summary>
         /// <param name="filePath">The file path of the texture asset.</param>
+        /// <param name="cacheVariantKey">
+        /// An optional variant below the codec payload key, such as a texture role folder.
+        /// Null uses the default key.
+        /// </param>
         /// <returns>The resolved authority path for the texture asset.</returns>
-        public string ResolveTextureStreamingAuthorityPath(string filePath)
+        public string ResolveTextureStreamingAuthorityPath(string filePath, string? cacheVariantKey = null)
         {
             if (string.IsNullOrWhiteSpace(filePath))
                 return filePath;
@@ -455,7 +459,7 @@ namespace XREngine
             if (!File.Exists(normalizedPath))
                 return normalizedPath;
 
-            if (!TryResolveTextureStreamingCachePath(normalizedPath, out Type? assetType, out string? cacheVariantKey, out string cachePath))
+            if (!TryResolveTextureStreamingCachePath(normalizedPath, cacheVariantKey, out Type? assetType, out string? resolvedVariantKey, out string cachePath))
                 return normalizedPath;
 
             if (IsCacheAssetFresh(cachePath, normalizedPath, assetType))
@@ -464,7 +468,7 @@ namespace XREngine
             if (!IsTextureStreamingCacheWarmupEnabled())
                 return normalizedPath;
 
-            QueueFeatureCacheImport(normalizedPath, cachePath, assetType, cacheVariantKey);
+            QueueFeatureCacheImport(normalizedPath, cachePath, assetType, resolvedVariantKey);
             return normalizedPath;
         }
 
@@ -488,7 +492,7 @@ namespace XREngine
             if (!File.Exists(normalizedPath))
                 return false;
 
-            return TryResolveTextureStreamingCachePath(normalizedPath, out Type? assetType, out _, out string cachePath)
+            return TryResolveTextureStreamingCachePath(normalizedPath, explicitVariantKey: null, out Type? assetType, out _, out string cachePath)
                 && IsCacheAssetFresh(cachePath, normalizedPath, assetType);
         }
 
@@ -499,6 +503,7 @@ namespace XREngine
         /// <returns><c>false</c> when no texture-streaming codec is registered or no cache path applies.</returns>
         private bool TryResolveTextureStreamingCachePath(
             string normalizedPath,
+            string? explicitVariantKey,
             [NotNullWhen(true)] out Type? assetType,
             out string? cacheVariantKey,
             out string cachePath)
@@ -516,7 +521,7 @@ namespace XREngine
                 return false;
             }
 
-            cacheVariantKey = ResolveDefaultCacheVariantKey(assetType, explicitVariantKey: null);
+            cacheVariantKey = ResolveDefaultCacheVariantKey(assetType, explicitVariantKey);
             return TryResolveCachePath(normalizedPath, assetType, cacheVariantKey, out cachePath);
         }
 
@@ -540,7 +545,7 @@ namespace XREngine
             string? cacheVariantKey)
         {
             EnsureHostFileAssetAccess();
-            if (!_pendingFeatureCacheImports.TryAdd(sourcePath, 0))
+            if (!_pendingFeatureCacheImports.TryAdd(cachePath, 0))
                 return;
 
             _jobManagerProvider().Schedule(
@@ -548,10 +553,10 @@ namespace XREngine
                 error: ex =>
                 {
                     Debug.LogWarning($"Failed to warm the {assetType.FullName} cache for '{sourcePath}'. {ex.Message}");
-                    _pendingFeatureCacheImports.TryRemove(sourcePath, out _);
+                    _pendingFeatureCacheImports.TryRemove(cachePath, out _);
                 },
-                completed: () => _pendingFeatureCacheImports.TryRemove(sourcePath, out _),
-                canceled: () => _pendingFeatureCacheImports.TryRemove(sourcePath, out _),
+                completed: () => _pendingFeatureCacheImports.TryRemove(cachePath, out _),
+                canceled: () => _pendingFeatureCacheImports.TryRemove(cachePath, out _),
                 priority: JobPriority.Low);
 
             IEnumerable CacheImportRoutine()

@@ -1017,15 +1017,15 @@ public static partial class RuntimeEngine
                     set => SetField(ref _desktopPresentPath, value);
                 }
 
-                private ETextureCookCompression _cookedTextureCompression = ETextureCookCompression.Bc7;
+                private ETextureCookCompression _cookedTextureCompression = ETextureCookCompression.Bcn;
 
                 /// <summary>
                 /// Selects the block compression that the texture cook uses for the streaming cache.
-                /// The environment variable XRE_TEXTURE_COOK_COMPRESSION (None or Bc7) overrides it.
+                /// The environment variable XRE_TEXTURE_COOK_COMPRESSION (None, Bc7, or Bcn) overrides it.
                 /// A change takes effect for textures that are cooked after it; the cache key includes the mode.
                 /// </summary>
                 [Category("Performance")]
-                [Description("Block compression for cooked streaming textures. Bc7 uses a quarter of the memory of RGBA8.")]
+                [Description("Block compression for cooked streaming textures. Bcn selects BC7, BC5 (normal maps), or BC4 (single-channel data) by texture role; Bc7 uses BC7 for every role. BC7 and BC5 use a quarter of the memory of RGBA8, and BC4 an eighth.")]
                 public ETextureCookCompression CookedTextureCompression
                 {
                     get => _cookedTextureCompression;

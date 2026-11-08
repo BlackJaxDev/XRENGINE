@@ -599,7 +599,7 @@ internal sealed partial class ImportedTextureStreamingManager
         }
 
         return previewBackend.SchedulePreviewLoad(
-            record.Source ?? TextureStreamingSourceFactory.Create(filePath),
+            record.Source ?? TextureStreamingSourceFactory.Create(filePath, target.ImportedUsage),
             target,
             residentData =>
             {

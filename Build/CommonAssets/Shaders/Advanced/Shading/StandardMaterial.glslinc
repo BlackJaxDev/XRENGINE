@@ -38,6 +38,17 @@ vec4 XR_ADV_StandardTexture(XRAdvancedMaterialRecord material, uint slot,
 // (Snippets/SurfaceDetailNormalMapping.glsl), which spans two texels per axis.
 // tapCount must come from material data: it keeps the loop rolled, so the large
 // texture-sampling code is emitted once in the native shading kernel.
+// Decodes a tangent-space normal-map sample to [-1, 1]. A BC5 normal map samples with
+// alpha 0 (view swizzle R, G, 0, 0) and stores only X and Y, so Z is rebuilt from them.
+// Other samples keep their stored Z.
+vec3 XR_ADV_DecodeTangentNormal(vec4 packedNormal)
+{
+    vec3 normal = packedNormal.xyz * 2.0 - 1.0;
+    if (packedNormal.a < 0.5)
+        normal.z = sqrt(clamp(1.0 - dot(normal.xy, normal.xy), 0.0, 1.0));
+    return normal;
+}
+
 vec3 XR_ADV_StandardHeightTangentNormal(XRAdvancedMaterialRecord material,
     vec2 uv, vec2 dx, vec2 dy, float heightScale, uint tapCount)
 {

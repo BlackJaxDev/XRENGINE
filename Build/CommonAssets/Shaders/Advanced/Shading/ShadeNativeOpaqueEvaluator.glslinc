@@ -439,9 +439,9 @@ void XR_ADV_EvaluateNativeOpaqueSample(
                 heightTaps);
         }
         else
-            normalTex = XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
+            normalTex = XR_ADV_DecodeTangentNormal(XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
                 surface.texCoord0Dx, surface.texCoord0Dy,
-                vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;
+                vec4(0.5, 0.5, 1.0, 1.0)));
         N = normalize(surface.tangent * normalTex.x +
             surface.bitangent * normalTex.y + N * normalTex.z);
     }

@@ -2,14 +2,19 @@ using XREngine.Imaging;
 using System.IO;
 using System.Threading;
 using XREngine.Data;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
 internal static class TextureStreamingSourceFactory
 {
     internal static ITextureStreamingSource Create(string filePath)
+        => Create(filePath, usage: null);
+
+    /// <param name="usage">The texture role that selects the cache variant, or null when it is unknown.</param>
+    internal static ITextureStreamingSource Create(string filePath, ETextureImportUsage? usage)
     {
-        string authorityPath = XRTexture2D.ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
+        string authorityPath = XRTexture2D.ResolveTextureStreamingAuthorityPathInternal(filePath, usage, out string? originalSourcePath);
 
         if (XRTexture2D.HasAssetExtensionInternal(authorityPath))
             return new AssetTextureStreamingSource(authorityPath, originalSourcePath);
@@ -21,10 +26,14 @@ internal static class TextureStreamingSourceFactory
     /// Creates a source whose cache authority is resolved on first residency
     /// request rather than during placeholder registration.
     /// </summary>
-    internal static ITextureStreamingSource CreateDeferred(string filePath)
+    /// <param name="texture">
+    /// The texture whose role selects the cache variant. The role is read when the
+    /// authority is resolved, because importers can assign it after registration.
+    /// </param>
+    internal static ITextureStreamingSource CreateDeferred(string filePath, XRTexture2D? texture = null)
     {
         RuntimeTextureSourceAccess.RequireHostFiles();
-        return new DeferredAuthorityTextureStreamingSource(Path.GetFullPath(filePath));
+        return new DeferredAuthorityTextureStreamingSource(Path.GetFullPath(filePath), texture);
     }
 }
 
@@ -32,10 +41,10 @@ internal static class TextureStreamingSourceFactory
 /// Delays cache lookup and potential cache cooking until a texture is actually
 /// asked to become resident.
 /// </summary>
-internal sealed class DeferredAuthorityTextureStreamingSource(string sourcePath) : ITextureStreamingSource
+internal sealed class DeferredAuthorityTextureStreamingSource(string sourcePath, XRTexture2D? texture = null) : ITextureStreamingSource
 {
     private readonly Lazy<ITextureStreamingSource> _source = new(
-        () => TextureStreamingSourceFactory.Create(sourcePath),
+        () => TextureStreamingSourceFactory.Create(sourcePath, texture?.ImportedUsage),
         LazyThreadSafetyMode.ExecutionAndPublication);
 
     public string SourcePath => sourcePath;

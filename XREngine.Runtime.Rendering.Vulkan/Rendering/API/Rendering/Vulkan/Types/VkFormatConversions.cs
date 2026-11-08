@@ -117,6 +117,20 @@ internal unsafe static class VkFormatConversions
     public static bool IsBlockCompressed(Format format)
         => format is Format.BC7UnormBlock or Format.BC7SrgbBlock or Format.BC5UnormBlock or Format.BC4UnormBlock;
 
+    /// <summary>
+    /// Component mapping for sampled views of a format. BC4 samples as (R, R, R, 1), so a
+    /// gray texture reads the same RGB as an RGBA8 copy. BC5 samples as (R, G, 0, 0); the
+    /// zero alpha tells the normal-unpack helpers to rebuild Z from X and Y. Other formats
+    /// use the identity mapping.
+    /// </summary>
+    public static ComponentMapping GetSampledComponentMapping(Format format)
+        => format switch
+        {
+            Format.BC4UnormBlock => new ComponentMapping(ComponentSwizzle.R, ComponentSwizzle.R, ComponentSwizzle.R, ComponentSwizzle.One),
+            Format.BC5UnormBlock => new ComponentMapping(ComponentSwizzle.R, ComponentSwizzle.G, ComponentSwizzle.Zero, ComponentSwizzle.Zero),
+            _ => new ComponentMapping(ComponentSwizzle.Identity, ComponentSwizzle.Identity, ComponentSwizzle.Identity, ComponentSwizzle.Identity),
+        };
+
     /// <summary>Bytes of one 4x4 block of a block-compressed format: 8 for BC4, 16 for BC5 and BC7.</summary>
     public static uint GetBlockBytes(Format format)
         => format == Format.BC4UnormBlock ? 8u : 16u;

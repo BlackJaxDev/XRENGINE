@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Assimp;
 using Assimp.Configs;
 using Assimp.Unmanaged;
@@ -1190,6 +1191,35 @@ namespace XREngine
             parameters[start + 4] = new ShaderInt(0, ImportedParallaxSilhouetteParameter);
         }
 
+        /// <summary>Textures that any color slot of an import uses. Their role stays Color.</summary>
+        private static readonly ConditionalWeakTable<XRTexture2D, object> s_colorRoleTextures = new();
+
+        /// <summary>
+        /// Sets the texture role from a material slot. One texture can fill several slots,
+        /// also across materials (for example base color in one material and opacity in
+        /// another). A color slot always wins, because a color texture must never cook to a
+        /// format without sRGB; a normal slot wins over a data slot.
+        /// </summary>
+        private static void AssignImportedTextureRole(XRTexture2D texture, EMaterialTextureSemantic semantic)
+        {
+            if (semantic is EMaterialTextureSemantic.BaseColor or EMaterialTextureSemantic.Emissive)
+            {
+                s_colorRoleTextures.AddOrUpdate(texture, s_colorRoleMarker);
+                texture.ImportedUsage = ETextureImportUsage.Color;
+                return;
+            }
+
+            if (s_colorRoleTextures.TryGetValue(texture, out _))
+                return;
+
+            if (semantic == EMaterialTextureSemantic.Normal)
+                texture.ImportedUsage = ETextureImportUsage.Normal;
+            else if (texture.ImportedUsage != ETextureImportUsage.Normal)
+                texture.ImportedUsage = ETextureImportUsage.Data;
+        }
+
+        private static readonly object s_colorRoleMarker = new();
+
         /// <summary>
         /// Publishes source texture roles before legacy material factories compact or reorder sampler slots.
         /// These references intentionally use the original loaded texture array rather than <see cref="XRMaterial.Textures"/>.
@@ -1216,6 +1246,10 @@ namespace XREngine
                 {
                     wrapU = texture2D.UWrap;
                     wrapV = texture2D.VWrap;
+
+                    // The texture role selects the cooked block format (BC5 for normal maps,
+                    // BC4 for single-channel data).
+                    AssignImportedTextureRole(texture2D, semantic);
                 }
 
                 bindings.Add(new MaterialSurfaceTextureBinding(
