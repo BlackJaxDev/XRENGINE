@@ -142,6 +142,8 @@ The loop:
 
 Notes:
 - Record durable findings (symptoms, ruled-out causes, render-pass order, next isolation step) so later iterations build on earlier ones instead of repeating them.
+- Use Vulkan validation off (do not set `XRE_VULKAN_VALIDATION`) for performance, timing, and visual verification runs. The validation layer checks each large shader module when the pipeline is made. For the Advanced native shading kernels (about 3.4 MB of SPIR-V each), this check can delay the first rendered frame by many minutes. If a run needs validation, you can skip only the shader-module check through the layer settings (`VK_EXT_layer_settings` or `vk_layer_settings.txt`). Do a separate validation-on run only when the task needs a correctness check, and use it to confirm that the validation error count is 0.
+- `Stop` first asks the editor windows to close. This lets the engine shut down cleanly and the Vulkan layers save their caches. If the process does not exit in a short time, `Stop` ends it.
 
 ### RenderDoc GPU Captures
 
