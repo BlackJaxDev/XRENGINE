@@ -161,6 +161,7 @@ internal sealed class TextureStreamingWorkController
     private int _allowance;
     private int _stepFrames;
     private int _multipleItemOverStreak;
+    private int _underFrames;
     private int _itemsBeforeStep;
     private int _previousItems;
     private long _overrunCount;
@@ -356,6 +357,19 @@ internal sealed class TextureStreamingWorkController
             _stepFrames = 0;
         }
 
+        // A step down: the frame without the work is below the mean by more than the jitter allowance and two
+        // tolerances for several frames (the scene became cheaper, or a slow period of another process ended).
+        double floorFrame = sample.TargetFrameMilliseconds > 0.0 ? sample.TargetFrameMilliseconds : 0.0;
+        bool sceneUnder = frameKnown && !relearning && double.IsFinite(_normalFrameMean)
+            && Math.Max(frameMilliseconds - work, floorFrame) + 2.0 * tolerance + JitterDeviationFactor * _normalFrameDeviation < _normalFrameMean;
+        _underFrames = sceneUnder ? _underFrames + 1 : 0;
+        if (_underFrames >= StepDetectFrames)
+        {
+            MarkDiscontinuity();
+            relearning = true;
+            _underFrames = 0;
+        }
+
         bool growsWithItems = false;
         if (frameKnown && double.IsFinite(budget) && !relearning)
         {
@@ -394,8 +408,11 @@ internal sealed class TextureStreamingWorkController
             }
             else
             {
-                double smoothing = Smoothing(idleFrame ? NormalFrameTimeConstantMilliseconds : NormalFrameWorkTimeConstantMilliseconds, elapsed);
-                ObserveNormalFrame(withoutWork, sample.TargetFrameMilliseconds, smoothing, idleFrame, tolerance);
+                // A work frame shorter than the normal frame time proves that the normal frame is shorter, so it teaches
+                // as fast as a frame without work. Only a longer work frame can hold cost that no timer sees.
+                bool teachesFast = idleFrame || (double.IsFinite(_normalFrameMean) && withoutWork < _normalFrameMean);
+                double smoothing = Smoothing(teachesFast ? NormalFrameTimeConstantMilliseconds : NormalFrameWorkTimeConstantMilliseconds, elapsed);
+                ObserveNormalFrame(withoutWork, sample.TargetFrameMilliseconds, smoothing, teachesFast, tolerance);
             }
 
             if (idleFrame)
@@ -407,7 +424,9 @@ internal sealed class TextureStreamingWorkController
             _relearnRemainingMilliseconds = Math.Max(_relearnRemainingMilliseconds, 1.0);
         if (relearning && _relearnRemainingMilliseconds <= 0.0 && double.IsFinite(_relearnMinimum))
         {
+            // The jitter of the old scene does not belong to the new one; frames without work teach it again.
             _normalFrameMean = _relearnMinimum;
+            _normalFrameDeviation = 0.0;
             _relearnMinimum = double.PositiveInfinity;
         }
 

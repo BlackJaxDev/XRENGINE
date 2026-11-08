@@ -379,6 +379,21 @@ public sealed class TextureStreamingWorkControllerTests
     }
 
     [Test]
+    public void SlowPeriodThatEnds_DuringAStreamingBurst_LetsTheBudgetComeBack()
+    {
+        // Another process slows every frame to 120 ms for a while; then the frames are normal again, with streaming
+        // work in every frame and no frame without work.
+        TextureStreamingWorkController controller = CreateController();
+        RunIdle(controller, 30, baseBusy: 8.0);
+        for (int i = 0; i < 60; i++)
+            controller.Update(new TextureStreamingWorkSample(120.0, 120.0, Period60Hz, 0.2, 1, true, 0.5));
+
+        RunBacklog(controller, 120, baseBusy: 8.0, costAt: _ => 0.2);
+
+        controller.BudgetMilliseconds.ShouldBeLessThan(Period60Hz + Tolerance);
+    }
+
+    [Test]
     public void UnknownFrameTime_UsesTheCostButCountsNoOverrun()
     {
         TextureStreamingWorkController controller = CreateController();
