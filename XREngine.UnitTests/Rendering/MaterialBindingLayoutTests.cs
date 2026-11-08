@@ -23,7 +23,8 @@ public sealed class MaterialBindingLayoutTests
         layout.PackedMembers[0].WordOffset.ShouldBe(0u);
         layout.PackedMembers[3].Name.ShouldBe("EmissiveHandleIndex");
         layout.PackedMembers[3].WordOffset.ShouldBe(3u);
-        WordOffset(layout, "Flags").ShouldBe(4);
+        WordOffset(layout, "OpacityHandleIndex").ShouldBe(4);
+        WordOffset(layout, "Flags").ShouldBe(5);
         WordOffset(layout, "BaseColorOpacity").ShouldBe(8);
         WordOffset(layout, "RMSE").ShouldBe(12);
     }
