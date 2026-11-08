@@ -69,4 +69,99 @@ public sealed class PublishedLauncherGenerationTests
         source.ShouldContain("Environment.ExitCode = 1;");
         source.ShouldContain("AssetManager.ConfigurePublishedArchives(");
     }
+
+    [Test]
+    public void DevelopmentArchiveLauncher_DefineConstantsSelectDevelopmentArchivesOnly()
+    {
+        HashSet<string> constants = ComposeConstants(new BuildSettings { DevelopmentLauncherReadsArchives = true });
+
+        constants.ShouldContain(XRRuntimeEnvironment.DevelopmentArchivesDefineConstant);
+        constants.ShouldNotContain(XRRuntimeEnvironment.PublishedDefineConstant);
+        constants.ShouldNotContain(XRRuntimeEnvironment.AotRuntimeDefineConstant);
+    }
+
+    [Test]
+    public void DefaultLauncher_DefineConstantsSelectNoArchiveOrPublishedKind()
+    {
+        HashSet<string> constants = ComposeConstants(new BuildSettings());
+
+        constants.ShouldNotContain(XRRuntimeEnvironment.DevelopmentArchivesDefineConstant);
+        constants.ShouldNotContain(XRRuntimeEnvironment.PublishedDefineConstant);
+        constants.ShouldNotContain(XRRuntimeEnvironment.AotRuntimeDefineConstant);
+    }
+
+    [Test]
+    public void NativeAotLauncher_NeverTakesTheDevelopmentArchiveConstant()
+    {
+        HashSet<string> constants = ComposeConstants(new BuildSettings
+        {
+            PublishLauncherAsNativeAot = true,
+            DevelopmentLauncherReadsArchives = true,
+            LauncherDefineConstants = XRRuntimeEnvironment.DevelopmentArchivesDefineConstant,
+        });
+
+        constants.ShouldContain(XRRuntimeEnvironment.PublishedDefineConstant);
+        constants.ShouldContain(XRRuntimeEnvironment.AotRuntimeDefineConstant);
+        constants.ShouldNotContain(XRRuntimeEnvironment.DevelopmentArchivesDefineConstant);
+    }
+
+    [Test]
+    public void DevelopmentArchiveLauncher_ProgramReadsTheArchivesAsADevelopmentBuild()
+    {
+        BuildSettings settings = new() { DevelopmentLauncherReadsArchives = true };
+        string active = ActiveLauncherCode(settings);
+
+        active.ShouldContain("XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.DevelopmentArchives);", Case.Sensitive);
+        active.ShouldNotContain("EXRRuntimeBuildKind.Published", Case.Sensitive);
+        active.ShouldNotContain("EXRRuntimeBuildKind.Development);", Case.Sensitive);
+        active.ShouldContain(PreprocessedSource.Squash($"Console.WriteLine(\"{CodeManager.DevelopmentArchiveLauncherStartupMessage}\");"), Case.Sensitive);
+        active.ShouldContain("AssetManager.ConfigurePublishedArchives(archivePath,contentArchivePath,commonAssetsArchivePath);", Case.Sensitive);
+        active.ShouldNotContain("AssetManager.ConfigurePublishedArchives(null,null,null);", Case.Sensitive);
+        active.ShouldContain("if(!File.Exists(commonAssetsArchivePath))", Case.Sensitive);
+        // The published-only paths stay out of a development build.
+        active.ShouldNotContain("LoadRequiredPublishedAsset", Case.Sensitive);
+        active.ShouldNotContain("RunAotSmoke(", Case.Sensitive);
+    }
+
+    [Test]
+    public void DefaultLauncher_ProgramReadsLooseFilesAsADevelopmentBuild()
+    {
+        string active = ActiveLauncherCode(new BuildSettings());
+
+        active.ShouldContain("XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);", Case.Sensitive);
+        active.ShouldNotContain("EXRRuntimeBuildKind.DevelopmentArchives", Case.Sensitive);
+        active.ShouldNotContain(PreprocessedSource.Squash(CodeManager.DevelopmentArchiveLauncherStartupMessage), Case.Sensitive);
+        active.ShouldContain("AssetManager.ConfigurePublishedArchives(null,null,null);", Case.Sensitive);
+    }
+
+    [Test]
+    public void NativeAotLauncher_ProgramStaysAPublishedAotBuild_WithTheDevelopmentOption()
+    {
+        BuildSettings settings = new() { PublishLauncherAsNativeAot = true, DevelopmentLauncherReadsArchives = true };
+        string active = ActiveLauncherCode(settings);
+
+        active.ShouldContain("XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);", Case.Sensitive);
+        active.ShouldNotContain("EXRRuntimeBuildKind.DevelopmentArchives", Case.Sensitive);
+        active.ShouldNotContain(PreprocessedSource.Squash(CodeManager.DevelopmentArchiveLauncherStartupMessage), Case.Sensitive);
+        active.ShouldContain("AssetManager.ConfigurePublishedArchives(archivePath,contentArchivePath,commonAssetsArchivePath);", Case.Sensitive);
+    }
+
+    private static HashSet<string> ComposeConstants(BuildSettings settings)
+        => CodeManager
+            .ComposeLauncherDefineConstantsForTests(settings)
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gives the generated launcher code that the compiler sees with the launcher define constants, with no white space.
+    /// </summary>
+    private static string ActiveLauncherCode(BuildSettings settings)
+    {
+        string source = CodeManager.BuildLauncherProgramSourceForTests(
+            settings,
+            "startup.asset",
+            "editor_preferences.asset",
+            "user_settings.asset");
+        return PreprocessedSource.Active(source, ComposeConstants(settings));
+    }
 }

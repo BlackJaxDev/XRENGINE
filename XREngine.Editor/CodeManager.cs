@@ -1177,8 +1177,55 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
     #region Launcher Code Generation
 
+    /// <summary>
+    /// The line that a development launcher which reads the published archives writes at startup.
+    /// </summary>
+    internal const string DevelopmentArchiveLauncherStartupMessage =
+        "Development build: this launcher reads the published archives. It is not a production build.";
+
     internal static string ComposeLauncherDefineConstantsForTests(BuildSettings settings)
         => ComposeLauncherDefineConstants(settings);
+
+    /// <summary>
+    /// True when the launcher is a non-AOT development build that reads the published archives. The
+    /// <see cref="BuildSettings.DevelopmentLauncherReadsArchives"/> option or the development-archive define constant
+    /// selects it. A NativeAOT launcher never uses it.
+    /// </summary>
+    internal static bool UsesDevelopmentArchiveLauncher(BuildSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (settings.PublishLauncherAsNativeAot)
+            return false;
+
+        return settings.DevelopmentLauncherReadsArchives
+            || ContainsDefineConstant(settings.LauncherDefineConstants, XRRuntimeEnvironment.DevelopmentArchivesDefineConstant);
+    }
+
+    private static bool ContainsDefineConstant(string? constants, string name)
+    {
+        if (string.IsNullOrWhiteSpace(constants))
+            return false;
+
+        foreach (string token in constants.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (string.Equals(token, name, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string RemoveDefineConstant(string constants, string name)
+    {
+        List<string> kept = [];
+        foreach (string token in constants.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!string.Equals(token, name, StringComparison.Ordinal))
+                kept.Add(token);
+        }
+
+        return string.Join(';', kept);
+    }
 
     private static string ComposeLauncherDefineConstants(BuildSettings settings)
     {
@@ -1202,6 +1249,11 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             ? rendererBackendConstants
             : $"{settings.LauncherDefineConstants};{rendererBackendConstants}";
 
+        // A NativeAOT launcher is a published build. It never takes the development-archive constant, also when the
+        // project lists that constant by hand.
+        if (settings.PublishLauncherAsNativeAot)
+            requestedConstants = RemoveDefineConstant(requestedConstants, XRRuntimeEnvironment.DevelopmentArchivesDefineConstant);
+
         // BuildProjectFile passes DefineConstants as a global MSBuild property so
         // referenced engine projects receive the published-build symbols. Global
         // properties are immutable during child-project evaluation, so include the
@@ -1210,7 +1262,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         return XRRuntimeEnvironment.ComposeDefineConstants(
             requestedConstants,
             includePublishedBuild: settings.PublishLauncherAsNativeAot,
-            includeAotRuntime: settings.PublishLauncherAsNativeAot);
+            includeAotRuntime: settings.PublishLauncherAsNativeAot,
+            includeDevelopmentArchives: UsesDevelopmentArchiveLauncher(settings));
     }
 
     internal static string BuildLauncherProgramSourceForTests(
@@ -1278,6 +1331,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);");
         sb.AppendLine("#elif XRE_PUBLISHED");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Published);");
+        sb.AppendLine("#elif XRE_DEVELOPMENT_ARCHIVES");
+        sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.DevelopmentArchives);");
+        sb.AppendLine($"        Console.WriteLine(\"{DevelopmentArchiveLauncherStartupMessage}\");");
         sb.AppendLine("#else");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
         sb.AppendLine("#endif");
@@ -1310,7 +1366,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine();
         sb.AppendLine($"        string commonAssetsArchivePath = ResolvePublishedArchivePath(\"{escapedContentFolder}\", \"{escapedCommonAssetsArchive}\");");
         sb.AppendLine();
-        sb.AppendLine("#if XRE_PUBLISHED");
+        sb.AppendLine("#if XRE_PUBLISHED || XRE_DEVELOPMENT_ARCHIVES");
         sb.AppendLine("        if (!File.Exists(archivePath))");
         sb.AppendLine("        {");
         sb.AppendLine("            Console.Error.WriteLine($\"Config archive '{archivePath}' not found.\");");

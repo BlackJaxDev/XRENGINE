@@ -266,6 +266,36 @@ internal static partial class ProjectBuilder
             configArchivePath);
     }
 
+    /// <summary>
+    /// Stops a build in which a non-AOT launcher reads the archives as a production build. The project marks a
+    /// production build with the <see cref="EBuildConfiguration.Release"/> configuration, and production builds must use
+    /// NativeAOT. A development launcher that reads the archives is for Debug and Development builds only.
+    /// </summary>
+    /// <param name="settings">The build settings.</param>
+    /// <exception cref="InvalidOperationException">The settings make a Release launcher that reads the archives without NativeAOT.</exception>
+    internal static void ValidateDevelopmentArchiveLauncher(BuildSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (!global::CodeManager.UsesDevelopmentArchiveLauncher(settings))
+            return;
+
+        if (settings.Configuration == EBuildConfiguration.Release)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(BuildSettings.DevelopmentLauncherReadsArchives)} makes a non-AOT development launcher, but the " +
+                $"build configuration is {EBuildConfiguration.Release}, which is a production build. Production builds must use " +
+                $"NativeAOT: enable {nameof(BuildSettings.PublishLauncherAsNativeAot)}, or use the " +
+                $"{EBuildConfiguration.Debug} or {EBuildConfiguration.Development} configuration for a development launcher " +
+                $"that reads the archives.");
+        }
+
+        if (!settings.BuildLauncherExecutable)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(BuildSettings.DevelopmentLauncherReadsArchives)} requires {nameof(BuildSettings.BuildLauncherExecutable)} to be enabled.");
+        }
+    }
+
     private static List<BuildStep> CreateSteps(BuildSettings settings, BuildContext context)
     {
         if (settings.Platform == EBuildPlatform.BrowserWebGPU)
@@ -278,9 +308,13 @@ internal static partial class ProjectBuilder
         if (settings.PublishLauncherAsNativeAot && !settings.BuildLauncherExecutable)
             throw new InvalidOperationException("PublishLauncherAsNativeAot requires BuildLauncherExecutable to be enabled.");
 
+        ValidateDevelopmentArchiveLauncher(settings);
+
         bool isFinalBuild = settings.PublishLauncherAsNativeAot;
-        bool cookContent = settings.CookContent || isFinalBuild;
-        bool generateConfigArchive = settings.GenerateConfigArchive || isFinalBuild;
+        // A development launcher that reads the archives needs the same archives as a final build.
+        bool readsArchives = isFinalBuild || global::CodeManager.UsesDevelopmentArchiveLauncher(settings);
+        bool cookContent = settings.CookContent || readsArchives;
+        bool generateConfigArchive = settings.GenerateConfigArchive || readsArchives;
 
         if (settings.SaveSettingsBeforeBuild)
         {

@@ -1,5 +1,5 @@
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.UserSettings), "xre.settings.user", 2)]
-[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.BuildSettings), "xre.settings.build", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.BuildSettings), "xre.settings.build", 2)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Data.AudioProxyAsset), "xre.audio.proxy", 1)]
 [assembly: XREngine.RuntimeCookedAsset(typeof(XREngine.UserSettings), XREngine.ERuntimeCookedAssetCodec.MemoryPack)]
 [assembly: XREngine.RuntimeCookedAsset(typeof(XREngine.BuildSettings), XREngine.ERuntimeCookedAssetCodec.MemoryPack)]

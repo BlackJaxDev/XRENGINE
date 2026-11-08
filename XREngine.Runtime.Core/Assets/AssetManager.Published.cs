@@ -53,17 +53,18 @@ namespace XREngine
 
         /// <summary>
         /// Loads a cooked asset from the published archives through the long-lived archive handles.
-        /// The payload is leased, never copied into a transient array, and deserialized through the
-        /// published reader, which performs no reflection.
+        /// The payload is leased, never copied into a transient array. A published build deserializes it through the
+        /// published reader, which performs no reflection. A development build that reads the archives uses the
+        /// authoring reader, which also reads the reflective formats of a non-AOT cook.
         /// </summary>
-        private static bool TryLoadPublishedAssetFromArchive(
+        internal static bool TryLoadPublishedAssetFromArchive(
             string filePath,
             Type expectedType,
             [NotNullWhen(true)] out XRAsset? asset)
         {
             asset = null;
 
-            if (!XRRuntimeEnvironment.IsPublishedBuild)
+            if (!XRRuntimeEnvironment.ReadsPublishedArchives)
                 return false;
 
             if (!string.Equals(Path.GetExtension(filePath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
@@ -93,7 +94,7 @@ namespace XREngine
                         CookedPayloadLease lease = handle.ReadEntry(entryIndex);
                         try
                         {
-                            asset = PublishedCookedAssetReader.LoadAsset(lease.Span, expectedType) as XRAsset;
+                            asset = ReadArchiveAsset(lease.Span, expectedType);
                         }
                         finally
                         {
@@ -112,6 +113,26 @@ namespace XREngine
 
             return false;
         }
+
+        /// <summary>
+        /// Deserializes one archive payload. A published build always uses the published reader. A development build
+        /// that reads the archives uses the authoring reader. A published engine build compiles that branch out.
+        /// </summary>
+        private static XRAsset? ReadArchiveAsset(ReadOnlySpan<byte> payload, Type expectedType)
+        {
+#if !XRE_PUBLISHED
+            if (!XRRuntimeEnvironment.IsPublishedBuild)
+                return ReadDevelopmentArchiveAsset(payload, expectedType);
+#endif
+            return PublishedCookedAssetReader.LoadAsset(payload, expectedType) as XRAsset;
+        }
+
+#if !XRE_PUBLISHED
+        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Only a non-AOT development build that reads the archives runs this reader. A published engine build compiles it out.")]
+        [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Only a non-AOT development build that reads the archives runs this reader. A published engine build compiles it out.")]
+        private static XRAsset? ReadDevelopmentArchiveAsset(ReadOnlySpan<byte> payload, Type expectedType)
+            => CookedAssetReader.LoadAsset(payload, expectedType) as XRAsset;
+#endif
 
         /// <summary>Orders the three roots by how the request path classifies, writing into <paramref name="order"/>.</summary>
         private static int ResolvePublishedRootOrder(string filePath, Span<EPublishedContentRoot> order)
