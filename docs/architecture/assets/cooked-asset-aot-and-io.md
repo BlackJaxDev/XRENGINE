@@ -348,9 +348,15 @@ source paths of cooked assets at write time, without changing any object:
   copy in the build output. It never changes a source file. It finds the asset
   roots and the user profile folder of the cook process (with both separator
   forms and the escaped form), drive-letter paths, user profile paths, and UNC
-  paths, as UTF-8 and UTF-16 text. It overwrites each path with underscores of
-  the same length, so the file layout and every length prefix stay valid, and
-  it records each path in the publish warning. A separator can be a slash, a
+  paths, as UTF-8 and UTF-16 text. It overwrites the folder part of each path
+  with underscores and keeps every separator and the file name, for example
+  `C:\Users\alice\Proj\wood.png` becomes `__\_____\_____\____\wood.png`.
+  The length stays the same, so the file layout and every length prefix stay
+  valid, and an importer can still find a texture by its file name (the FBX
+  importer tries the file name in the model folder and its `textures` folder).
+  The folder part always covers the user name of a user profile path. A leading
+  UNC backslash run becomes underscores too. The strip records each full path
+  in the publish warning. A separator can be a slash, a
   backslash, or an escaped backslash (two backslashes, as in JSON). A path part
   can hold non-ASCII characters: in UTF-8 each must be a complete UTF-8
   sequence, and in UTF-16 any character except a control character, a reserved
@@ -370,19 +376,27 @@ source paths of cooked assets at write time, without changing any object:
     pixel and sample data (TGA, RLE HDR) holds long printable runs with many
     backslashes, and these rules do not match them. A drive path with fewer than
     two folder parts in binary media is not found.
-- The stripped range: in text, it stops before a quote, a comma, a semicolon,
-  an equals sign, or a closing brace, so a JSON or YAML string stays valid. In
-  binary data, it stops at the end of a length-prefixed string when the four
-  bytes before the path give its length (FBX string properties, EXR attributes,
-  MemoryPack strings); otherwise it stops at the first byte that is not a plain
-  name character. The range always covers the path through its last separator
-  and the user name of a user profile path. A PNG file gets new checksums for
-  the chunks that change.
+- The path range: in text, it stops before a quote, a comma, a semicolon, an
+  equals sign, or a closing brace. A backslash run of odd length before a quote
+  ends in an escape (for example `\"` in JSON), so it is not part of the path.
+  In a text range with escaped separators (`\\`), only backslash pairs are
+  separators: an odd backslash is an escape and stays, a `\u`, `\x`, or `\U`
+  escape gets the code of the underscore, and another escaped character stays.
+  So JSON and double-quoted YAML stay valid. In binary data, the folder part
+  ends inside a length-prefixed string when the four bytes before the path give
+  its length (FBX string properties, EXR attributes, MemoryPack strings), and
+  otherwise inside the matched path, so the strip never writes past the file
+  name. A PNG file gets new checksums for the chunks that change.
+- Compressed content of a known container that can hold text is inflated and
+  scanned: PNG `zTXt` chunks and `iTXt` chunks with the compression flag, every
+  ZIP entry, and GZIP data. A path there fails the publish, because the strip
+  cannot rewrite it in place, and the error names the file and the place. A
+  container that the guard cannot inflate (7z, RAR, XZ, Zstandard, BZip2, or
+  damaged data) fails the publish too. So a path in compressed data never
+  passes silently.
 - A path that cannot be stripped safely fails the publish, and the error names
-  the file: a path in a compressed or checksummed container (ZIP, GZIP, 7z,
-  RAR, XZ, Zstandard, BZip2), a path in a critical PNG chunk, or a path that is
-  still found after the strip. A path inside compressed data cannot be seen at
-  all.
+  the file: a visible path in a compressed or checksummed container, a path in
+  a critical PNG chunk, or a path that is still found after the strip.
 - The strip covers every file that a publish ships: the cooked asset files, the
   `lod/` entries, and the copied non-asset files of the full and the
   incremental content cook; every file of `CommonAssets.pak` (the full pack
@@ -398,13 +412,18 @@ source paths of cooked assets at write time, without changing any object:
   and timestamp. When the record is missing, has another version
   (`CookedOutputPathGuard.StripVersion`), or does not match the archive, the
   build packs the archive again in full, so every entry passes the current
-  strip once.
+  strip once. The record also lists the stripped paths of the archive entries.
+  A repack keeps the earlier paths of the entries that it does not write again
+  and lists them in the warning as "stripped in an earlier build", also when
+  the build changes nothing.
 - The publish writes one warning that lists each file and each removed path or
   secret (`PublishPathRedactionLog`). It goes to the engine log, to standard
   error, and to the trace listeners, so a Release editor shows it, and the
   completion text of the build job names the report. The same list goes to
-  `<output folder>.publish-report.txt`, next to the output folder and not in
-  it, so the report does not ship.
+  `<intermediate>/Build/Logs/publish-report.txt`. The intermediate folder is
+  never part of a publish output tree, because the report holds the removed
+  paths. Each build deletes the old report first, and a build that removes
+  nothing writes a report that says so.
 - The guard reads each file in 4 MiB chunks that overlap by 4 KiB, so a file of
   any size is checked with a fixed buffer.
 - A cook does not ship YAML sources. An asset file with no `__assetType` or

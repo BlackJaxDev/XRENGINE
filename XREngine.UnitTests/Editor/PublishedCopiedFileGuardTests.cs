@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
+using System.IO.Compression;
 using System.Text.Json;
 using NUnit.Framework;
 using Shouldly;
@@ -7,6 +8,7 @@ using XREngine.Core.Files;
 using XREngine.Editor;
 using XREngine.Editor.Publishing;
 using XREngine.UnitTests.Cutscenes;
+using YamlDotNet.RepresentationModel;
 
 namespace XREngine.UnitTests.Editor;
 
@@ -70,12 +72,51 @@ public sealed class PublishedCopiedFileGuardTests
             stripped.Length.ShouldBe(bytes.Length, name);
             string text = name == "notes.txt" ? Encoding.Unicode.GetString(stripped, 2, stripped.Length - 2) : Encoding.UTF8.GetString(stripped);
             text.ShouldNotContain(removed, Case.Sensitive, name);
-            CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file).ShouldBeFalse(name);
+            CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file, file).ShouldBeFalse(name);
             if (name.EndsWith(".json", StringComparison.Ordinal))
                 Should.NotThrow(() => JsonDocument.Parse(stripped).Dispose(), name);
             if (name == "quoted.yaml")
                 text.ShouldContain("'\nnext: 1");
             log.Entries.ShouldContain(entry => entry.File == "Data/" + name, name);
+        }
+
+        File.ReadAllText(Path.Combine(_root, "wood.mtl")).ShouldContain(@"\wood.png");
+        File.ReadAllText(Path.Combine(_root, "data.json")).ShouldContain(@"\\floor.png");
+    }
+
+    [Test]
+    public void EscapedTextSamples_StayValidJsonAndYaml_AndKeepTheirFileNames()
+    {
+        (string Name, string Text, string FileName, string Removed)[] samples =
+        [
+            ("cmd.json", "{\"cmd\": \"\\\"C:\\\\Tools\\\\bin\\\\app.exe\\\" --x\"}", "app.exe", "Tools"),
+            ("unicode.json", "{\"p\": \"C:\\\\Users\\\\b\\u00f6b\\\\a.png\", \"n\": 1}", "a.png", "\\u00f6"),
+            ("tab.json", "{\"p\": \"D:\\\\Art\\\\new\\\\tex\\\\a.png\\t\"}", "a.png", "Art"),
+            ("end.json", "{\"dir\": \"C:\\\\Tools\\\\bin\\\\\"}", "", "Tools"),
+            ("cmd.yaml", "cmd: \"\\\"C:\\\\Tools\\\\bin\\\\app.exe\\\" --x\"\nnext: 1\n", "app.exe", "Tools"),
+            ("hex.yaml", "p: \"C:\\\\Users\\\\b\\xf6b\\\\a.png\"\n", "a.png", "\\xf6"),
+        ];
+
+        using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+        foreach ((string name, string text, string fileName, string removed) in samples)
+        {
+            string file = Path.Combine(_root, name);
+            File.WriteAllText(file, text, new UTF8Encoding(false));
+
+            CookedOutputPathGuard.StripCopiedFile(file, name).ShouldNotBeEmpty(name);
+
+            string stripped = File.ReadAllText(file);
+            stripped.Length.ShouldBe(text.Length, name);
+            stripped.ShouldNotContain(removed, Case.Sensitive, name);
+            stripped.ShouldContain(fileName, Case.Sensitive, name);
+            if (name.EndsWith(".json", StringComparison.Ordinal))
+            {
+                using JsonDocument document = JsonDocument.Parse(stripped);
+            }
+            else
+            {
+                Should.NotThrow(() => new YamlStream().Load(new StringReader(stripped)), name);
+            }
         }
     }
 
@@ -118,12 +159,12 @@ public sealed class PublishedCopiedFileGuardTests
             string file = Path.Combine(_root, name);
             File.WriteAllBytes(file, bytes);
             CookedOutputPathGuard.StripCopiedFile(file, name).ShouldBeEmpty(name);
-            CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file).ShouldBeFalse(name);
+            CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file, file).ShouldBeFalse(name);
         }
     }
 
     [Test]
-    public void BinaryMediaSamples_LoseTheirPaths_AndKeepTheirStructure()
+    public void BinaryMediaSamples_LoseTheirFolders_AndKeepTheirFileNamesAndStructure()
     {
         using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
         using PublishPathRedactionLog log = PublishPathRedactionLog.Begin();
@@ -135,7 +176,7 @@ public sealed class PublishedCopiedFileGuardTests
         CookedOutputPathGuard.StripCopiedFile(png, "floor.png").ShouldBe([documentPath]);
         byte[] pngBytes = File.ReadAllBytes(png);
         AssertPngChecksums(pngBytes);
-        Encoding.Latin1.GetString(pngBytes).ShouldContain("stRef:filePath=\"" + new string('_', documentPath.Length) + "\"");
+        Encoding.Latin1.GetString(pngBytes).ShouldContain("stRef:filePath=\"" + StripFolders(documentPath) + "\"");
 
         // FBX: a length-prefixed string property holds a drive path outside a user folder. The bytes after it stay.
         string blendPath = Path.Combine("E:\\", "Billy", "Blender", "Projects", "Car", "Corvette.blend");
@@ -148,7 +189,7 @@ public sealed class PublishedCopiedFileGuardTests
         byte[] fbxStripped = File.ReadAllBytes(fbx);
         fbxStripped.Length.ShouldBe(fbxBytes.Length);
         int stringStart = fbxBytes.Length - 4096 - next.Length - blend.Length;
-        fbxStripped.AsSpan(stringStart, blend.Length).ToArray().ShouldAllBe(value => value == (byte)'_');
+        Encoding.UTF8.GetString(fbxStripped, stringStart, blend.Length).ShouldBe(StripFolders(blendPath));
         fbxStripped.AsSpan(stringStart + blend.Length).ToArray().ShouldBe(fbxBytes.AsSpan(stringStart + blend.Length).ToArray());
 
         // EXR: a string attribute holds a user profile path, and the next attribute name follows without a separator.
@@ -159,15 +200,64 @@ public sealed class PublishedCopiedFileGuardTests
         string exr = Path.Combine(_root, "sky.exr");
         File.WriteAllBytes(exr, exrBytes);
         CookedOutputPathGuard.StripCopiedFile(exr, "sky.exr").ShouldBe([skyPath]);
-        Encoding.Latin1.GetString(File.ReadAllBytes(exr)).ShouldContain(new string('_', sky.Length) + "Frame\0int\0");
+        Encoding.Latin1.GetString(File.ReadAllBytes(exr)).ShouldContain(StripFolders(skyPath) + "Frame\0int\0");
 
         // A UTF-16 user profile path in a document format.
         string utf16Path = Path.Combine("E:\\", "Users", "artist", "Desktop", "floor.png");
         string doc = Path.Combine(_root, "model.bin");
         File.WriteAllBytes(doc, [.. RandomBytes(8, MiB), .. Encoding.Unicode.GetBytes(utf16Path), 0, 0, .. RandomBytes(9, MiB)]);
         CookedOutputPathGuard.StripCopiedFile(doc, "model.bin").ShouldBe([utf16Path]);
+        Encoding.Unicode.GetString(File.ReadAllBytes(doc)).ShouldNotContain("artist");
 
         log.Entries.Count.ShouldBe(4);
+    }
+
+    [Test]
+    public void CompressedContent_WithAPath_FailsThePublish_AndCleanContentPasses()
+    {
+        using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+        string path = MachinePath("Documents", "Art", "floor.psd");
+
+        // PNG zTXt and compressed iTXt chunks.
+        string ztxt = Path.Combine(_root, "ztxt.png");
+        File.WriteAllBytes(ztxt, CreatePngWithChunk("zTXt", [.. Encoding.ASCII.GetBytes("Comment"), 0, 0, .. Deflate(Encoding.UTF8.GetBytes("source " + path))]));
+        Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.StripCopiedFile(ztxt, "Data/ztxt.png")).Message.ShouldContain("Data/ztxt.png");
+
+        string itxt = Path.Combine(_root, "itxt.png");
+        File.WriteAllBytes(itxt, CreatePngWithChunk("iTXt", [.. Encoding.ASCII.GetBytes("XML:com.adobe.xmp"), 0, 1, 0, 0, 0, .. Deflate(Encoding.UTF8.GetBytes("<x path=\"" + path + "\"/>"))]));
+        Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.ContainsMachinePathInCopiedFile(itxt, "Data/itxt.png")).Message.ShouldContain("Data/itxt.png");
+
+        string cleanPng = Path.Combine(_root, "clean.png");
+        File.WriteAllBytes(cleanPng, CreatePngWithChunk("zTXt", [.. Encoding.ASCII.GetBytes("Comment"), 0, 0, .. Deflate(Encoding.UTF8.GetBytes("made with care"))]));
+        CookedOutputPathGuard.StripCopiedFile(cleanPng, "clean.png").ShouldBeEmpty();
+
+        // ZIP and GZIP content.
+        string zip = Path.Combine(_root, "bundle.zip");
+        using (ZipArchive archive = ZipFile.Open(zip, ZipArchiveMode.Create))
+        using (StreamWriter writer = new(archive.CreateEntry("notes/readme.txt", CompressionLevel.Optimal).Open()))
+            writer.Write("Built at " + path + "\n");
+        Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.StripCopiedFile(zip, "Data/bundle.zip")).Message.ShouldContain("notes/readme.txt");
+
+        string cleanZip = Path.Combine(_root, "clean.zip");
+        using (ZipArchive archive = ZipFile.Open(cleanZip, ZipArchiveMode.Create))
+        using (StreamWriter writer = new(archive.CreateEntry("readme.txt").Open()))
+            writer.Write("game://Textures/a.png\n");
+        CookedOutputPathGuard.StripCopiedFile(cleanZip, "clean.zip").ShouldBeEmpty();
+
+        string gzip = Path.Combine(_root, "notes.txt.gz");
+        using (FileStream stream = File.Create(gzip))
+        using (GZipStream compressed = new(stream, CompressionLevel.Optimal))
+            compressed.Write(Encoding.UTF8.GetBytes("Built at " + path + "\n"));
+        Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.StripCopiedFile(gzip, "Data/notes.txt.gz")).Message.ShouldContain("Data/notes.txt.gz");
+
+        // A container that the guard cannot inflate, and damaged compressed data.
+        string sevenZip = Path.Combine(_root, "pack.7z");
+        File.WriteAllBytes(sevenZip, [(byte)'7', (byte)'z', 0xBC, 0xAF, 0x27, 0x1C, 0, 4, .. RandomBytes(12, 256)]);
+        Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.StripCopiedFile(sevenZip, "Data/pack.7z")).Message.ShouldContain("Data/pack.7z");
+
+        string broken = Path.Combine(_root, "broken.png");
+        File.WriteAllBytes(broken, CreatePngWithChunk("zTXt", [.. Encoding.ASCII.GetBytes("Comment"), 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]));
+        Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.StripCopiedFile(broken, "Data/broken.png")).Message.ShouldContain("Data/broken.png");
     }
 
     [Test]
@@ -192,6 +282,7 @@ public sealed class PublishedCopiedFileGuardTests
         using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
         string path = MachinePath("Documents", "Art", "floor.psd");
 
+        // A damaged ZIP file cannot be inspected.
         string zip = Path.Combine(_root, "bundle.zip");
         File.WriteAllBytes(zip, [(byte)'P', (byte)'K', 3, 4, 0, 0, .. Encoding.UTF8.GetBytes(path), 0]);
         Should.Throw<CookedSourcePathException>(() => CookedOutputPathGuard.StripCopiedFile(zip, "Data/bundle.zip"))
@@ -215,8 +306,9 @@ public sealed class PublishedCopiedFileGuardTests
         File.WriteAllBytes(file, bytes);
 
         using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
-        CookedOutputPathGuard.StripCopiedFile(file, "edge.bin").ShouldContain(path);
-        CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file).ShouldBeFalse();
+        // Random name bytes can follow the path, so the reported text can be longer than the path.
+        CookedOutputPathGuard.StripCopiedFile(file, "edge.bin").ShouldContain(item => item.StartsWith(path, StringComparison.Ordinal));
+        CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file, file).ShouldBeFalse();
     }
 
     [Test]
@@ -290,25 +382,70 @@ public sealed class PublishedCopiedFileGuardTests
         ProjectBuilder.PackFullCommonAssetsForTests(engine, intermediate, content, incremental: true);
         Encoding.UTF8.GetString(AssetPacker.GetAsset(archive, "Shaders/common.glsl")).ShouldNotContain("someone");
 
+        // An incremental build that changes nothing still lists the stripped entries of the archive.
+        using (PublishPathRedactionLog quiet = PublishPathRedactionLog.Begin())
+        {
+            ProjectBuilder.PackFullCommonAssetsForTests(engine, intermediate, content, incremental: true);
+            quiet.Entries.ShouldContain(entry => entry.File.EndsWith("Shaders/common.glsl", StringComparison.Ordinal)
+                && entry.Item.Contains("earlier build", StringComparison.Ordinal));
+        }
+
         string shaders = ProjectBuilder.PackageRuntimeShaderAssetsForTests(engine, intermediate, Path.Combine(_root, "ShaderContent"));
         Encoding.UTF8.GetString(AssetPacker.GetAsset(shaders, "Shaders/common.glsl")).ShouldNotContain("someone");
         File.ReadAllText(leaking).ShouldContain("someone");
     }
 
     [Test]
-    public void RedactionLog_WritesTheReportNextToTheOutputFolder()
+    public void RedactionLog_WritesTheReport_AndSaysWhenNothingWasRemoved()
     {
-        string output = Path.Combine(_root, "Build", "Game");
-        using PublishPathRedactionLog log = PublishPathRedactionLog.Begin();
-        PublishPathRedactionLog.Record("Models/a.fbx", MachinePath("Downloads", "a.fbx"));
-        PublishPathRedactionLog.Record("Models/a.fbx", MachinePath("Downloads", "a.fbx"));
+        string report = Path.Combine(_root, "Intermediate", "Build", "Logs", "publish-report.txt");
+        using (PublishPathRedactionLog log = PublishPathRedactionLog.Begin())
+        {
+            PublishPathRedactionLog.Record("Models/a.fbx", MachinePath("Downloads", "a.fbx"));
+            PublishPathRedactionLog.Record("Models/a.fbx", MachinePath("Downloads", "a.fbx"));
 
-        string report = log.WriteWarningAndReport(output).ShouldNotBeNull();
+            log.WriteReport(report).ShouldBe(report);
+            File.ReadAllText(report).ShouldContain("Models/a.fbx: " + MachinePath("Downloads", "a.fbx"));
+            log.Entries.Count.ShouldBe(1);
+        }
 
-        report.ShouldBe(output + PublishPathRedactionLog.ReportSuffix);
-        string text = File.ReadAllText(report);
-        text.ShouldContain("Models/a.fbx: " + MachinePath("Downloads", "a.fbx"));
-        log.Entries.Count.ShouldBe(1);
+        PublishPathRedactionLog.DeleteReport(report);
+        File.Exists(report).ShouldBeFalse();
+        using (PublishPathRedactionLog empty = PublishPathRedactionLog.Begin())
+        {
+            empty.WriteReport(report);
+            File.ReadAllText(report).ShouldContain("removed no machine path");
+        }
+    }
+
+    /// <summary>Replaces each character before the last separator with an underscore and keeps the separators.</summary>
+    private static string StripFolders(string path)
+    {
+        int end = path.LastIndexOfAny(['\\', '/']) + 1;
+        char[] result = path.ToCharArray();
+        for (int i = 0; i < end; i++)
+            if (result[i] is not ('\\' or '/'))
+                result[i] = '_';
+        return new string(result);
+    }
+
+    private static byte[] Deflate(byte[] data)
+    {
+        using MemoryStream stream = new();
+        using (ZLibStream compressed = new(stream, CompressionLevel.Optimal, leaveOpen: true))
+            compressed.Write(data);
+        return stream.ToArray();
+    }
+
+    private static byte[] CreatePngWithChunk(string type, byte[] data)
+    {
+        using MemoryStream stream = new();
+        stream.Write([0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        WriteChunk(stream, "IHDR", [0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        WriteChunk(stream, type, data);
+        WriteChunk(stream, "IDAT", RandomBytes(15, 1024));
+        WriteChunk(stream, "IEND", []);
+        return stream.ToArray();
     }
 
     private static void AssertEntryStripped(string archive, string entry, int length)

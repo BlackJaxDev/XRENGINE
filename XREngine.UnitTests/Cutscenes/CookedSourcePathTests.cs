@@ -312,7 +312,8 @@ public sealed class CookedSourcePathTests
             File.ReadAllText(source).ShouldBe(sourceText);
             CookHolderAsset loaded = CookedAssetReader.LoadAsset<CookHolderAsset>(bytes).ShouldNotBeNull();
             loaded.Note!.Length.ShouldBe(machinePath.Length);
-            loaded.Note.ShouldNotContain(Path.DirectorySeparatorChar);
+            loaded.Note.ShouldEndWith(Path.DirectorySeparatorChar + "readme.txt");
+            loaded.Note.ShouldNotContain("Notes");
         }
         finally
         {

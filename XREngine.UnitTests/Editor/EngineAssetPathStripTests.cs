@@ -1,3 +1,4 @@
+using System.Text;
 using ImageMagick;
 using NUnit.Framework;
 using Shouldly;
@@ -44,7 +45,7 @@ public sealed class EngineAssetPathStripTests
 
             Dictionary<string, string> copies = ProjectBuilder.CreateStrippedCopies(engine, Path.Combine(root, "Stripped"));
 
-            string report = log.WriteWarningAndReport(Path.Combine(root, "Build", "Game")).ShouldNotBeNull();
+            string report = log.WriteReport(Path.Combine(root, "Intermediate", "Build", "Logs", "publish-report.txt"));
             string output = Environment.GetEnvironmentVariable("SCAN_OUT") ?? root;
             File.Copy(report, Path.Combine(output, "engine-assets-strip-report.txt"), overwrite: true);
             TestContext.Out.WriteLine(File.ReadAllText(report));
@@ -55,12 +56,12 @@ public sealed class EngineAssetPathStripTests
                 copies.ShouldContainKey(source, known);
                 string copy = copies[source];
                 new FileInfo(copy).Length.ShouldBe(new FileInfo(source).Length, known);
-                CookedOutputPathGuard.ContainsMachinePathInCopiedFile(copy).ShouldBeFalse(known);
+                CookedOutputPathGuard.ContainsMachinePathInCopiedFile(copy, copy).ShouldBeFalse(known);
                 log.Entries.ShouldContain(entry => entry.File == known, known);
             }
 
             foreach ((string source, string copy) in copies)
-                CookedOutputPathGuard.ContainsMachinePathInCopiedFile(copy).ShouldBeFalse(source);
+                CookedOutputPathGuard.ContainsMachinePathInCopiedFile(copy, copy).ShouldBeFalse(source);
 
             // Every stripped EXR keeps its pixels, and every stripped FBX still loads, not only the known files.
             foreach ((string source, string copy) in copies)
@@ -69,13 +70,80 @@ public sealed class EngineAssetPathStripTests
                 if (string.Equals(extension, ".exr", StringComparison.OrdinalIgnoreCase))
                     AssertExrPixelsUnchanged(source, copy);
                 else if (string.Equals(extension, ".fbx", StringComparison.OrdinalIgnoreCase))
+                {
                     AssertFbxStillLoads(source, copy);
+                    AssertFileNamesKept(source, copy, log.Entries);
+                }
             }
         }
         finally
         {
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Checks that the file names of the stripped paths of a file stay: each name occurs as often in the stripped copy as in
+    /// the source, so an importer can still find a texture by its name.
+    /// </summary>
+    private static void AssertFileNamesKept(string source, string copy, IReadOnlyList<(string File, string Item)> entries)
+    {
+        // A name that is also a folder part of another stripped path (for example an .fbm folder) is overwritten there, so
+        // only names that are never a folder part are counted.
+        string label = Path.GetFileName(source);
+        HashSet<string> names = new(StringComparer.Ordinal);
+        HashSet<string> folders = new(StringComparer.Ordinal);
+        foreach ((string file, string item) in entries)
+        {
+            if (!file.EndsWith(label, StringComparison.Ordinal))
+                continue;
+            string[] parts = item.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < parts.Length - 1; i++)
+                folders.Add(parts[i]);
+            if (parts.Length > 0 && parts[^1].Contains('.', StringComparison.Ordinal))
+                names.Add(parts[^1]);
+        }
+
+        names.ExceptWith(folders);
+
+        names.Count.ShouldBeGreaterThan(0, label);
+        byte[][] needles = [.. names.Select(static name => Encoding.UTF8.GetBytes(name))];
+        long[] sourceCounts = CountOccurrences(source, needles);
+        long[] copyCounts = CountOccurrences(copy, needles);
+        copyCounts.ShouldBe(sourceCounts, label);
+    }
+
+    private static long[] CountOccurrences(string file, byte[][] needles)
+    {
+        const int chunk = 4 * 1024 * 1024;
+        const int overlap = 4096;
+        long[] counts = new long[needles.Length];
+        byte[] buffer = new byte[chunk + overlap];
+        using FileStream stream = File.OpenRead(file);
+        int carried = 0;
+        while (true)
+        {
+            int read = stream.ReadAtLeast(buffer.AsSpan(carried, chunk), chunk, throwOnEndOfStream: false);
+            int length = carried + read;
+            for (int i = 0; i < needles.Length; i++)
+            {
+                ReadOnlySpan<byte> span = buffer.AsSpan(0, length);
+                int offset = 0;
+                int index;
+                while ((index = span[offset..].IndexOf(needles[i])) >= 0)
+                {
+                    // A match that ends in the carried bytes was counted in the chunk before.
+                    if (offset + index + needles[i].Length > carried)
+                        counts[i]++;
+                    offset += index + 1;
+                }
+            }
+
+            if (read < chunk)
+                return counts;
+            carried = Math.Min(overlap, length);
+            buffer.AsSpan(length - carried, carried).CopyTo(buffer);
         }
     }
 

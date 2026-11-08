@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -100,13 +101,24 @@ public static class CookedOutputPathGuard
     /// <returns>The stripped paths.</returns>
     /// <exception cref="CookedSourcePathException">A path cannot be stripped safely.</exception>
     public static IReadOnlyList<string> StripCopiedFile(string copiedFile, string label)
-        => Strip(copiedFile, label, DetectCopiedFileProfile(copiedFile));
+    {
+        InspectCompressedContent(copiedFile, label);
+        return Strip(copiedFile, label, DetectCopiedFileProfile(copiedFile));
+    }
 
-    /// <summary>True if a copied or source file holds a machine path. The file does not change.</summary>
+    /// <summary>
+    /// True if a copied or source file holds a machine path that the strip would remove. The file does not change. The
+    /// compressed content of a known container is checked too (<see cref="StripCopiedFile"/>).
+    /// </summary>
     /// <param name="file">The file.</param>
+    /// <param name="label">The name of the file in an error.</param>
     /// <returns>True if the strip would change the file.</returns>
-    public static bool ContainsMachinePathInCopiedFile(string file)
-        => FindMachinePathsInFile(file, DetectCopiedFileProfile(file)).Count > 0;
+    /// <exception cref="CookedSourcePathException">Compressed content holds a path, or cannot be inspected.</exception>
+    public static bool ContainsMachinePathInCopiedFile(string file, string label)
+    {
+        InspectCompressedContent(file, label);
+        return FindMachinePathsInFile(file, DetectCopiedFileProfile(file)).Count > 0;
+    }
 
     /// <summary>Finds the first machine path in cooked bytes.</summary>
     /// <param name="bytes">The cooked bytes.</param>
@@ -197,18 +209,24 @@ public static class CookedOutputPathGuard
             bool png = head.AsSpan(0, headLength).StartsWith(PngSignature);
 
             List<(long Start, int Length, bool Utf16)> ranges = new(hits.Count);
+            List<byte[]> replacements = new(hits.Count);
             foreach (MachinePathHit hit in hits)
             {
-                (long start, int length) = BoundRange(stream, hit, profile);
-                if (length <= 0)
+                (long start, string text, int folderLimit) = BoundRange(stream, hit, profile);
+                if (text.Length == 0)
                     continue;
-                ranges.Add((start, length, hit.Utf16));
-                stripped.Add(ReadText(stream, start, length, hit.Utf16));
+                byte[] replacement = EncodeView(CreateReplacement(text, profile, folderLimit), hit.Utf16);
+                ranges.Add((start, replacement.Length, hit.Utf16));
+                replacements.Add(replacement);
+                stripped.Add(hit.Utf16 ? text : Encoding.UTF8.GetString(Encoding.Latin1.GetBytes(text)));
             }
 
             List<(long DataStart, int DataLength)>? pngChunks = png ? FindModifiedPngChunks(stream, ranges, label) : null;
-            foreach ((long start, int length, bool utf16) in ranges)
-                WriteFiller(stream, start, length, utf16);
+            for (int i = 0; i < ranges.Count; i++)
+            {
+                stream.Position = ranges[i].Start;
+                stream.Write(replacements[i]);
+            }
             if (pngChunks is not null)
                 foreach ((long dataStart, int dataLength) in pngChunks)
                     RewritePngChunkCrc(stream, dataStart, dataLength);
@@ -233,12 +251,21 @@ public static class CookedOutputPathGuard
     /// </summary>
     private static List<MachinePathHit> FindMachinePathsInFile(string file, EMachinePathScanProfile profile)
     {
+        using FileStream stream = new(file, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.SequentialScan);
+        return FindMachinePathsInStream(stream, profile);
+    }
+
+    /// <summary>
+    /// Reads a stream in chunks and finds every machine path. With no profile, the first chunk chooses the text or the
+    /// binary rule. The stream does not need to support seeking, so it can be a decompression stream.
+    /// </summary>
+    private static List<MachinePathHit> FindMachinePathsInStream(Stream stream, EMachinePathScanProfile? profile)
+    {
         List<string> roots = GetSearchRoots();
         List<MachinePathHit> hits = [];
         byte[] buffer = ArrayPool<byte>.Shared.Rent(ChunkSize + ChunkOverlap);
         try
         {
-            using FileStream stream = new(file, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.SequentialScan);
             int carried = 0;
             long chunkStart = 0;
             while (true)
@@ -248,7 +275,8 @@ public static class CookedOutputPathGuard
                 if (read == 0 && carried == 0)
                     break;
 
-                AddHits(buffer.AsSpan(0, length), roots, profile, chunkStart, hits);
+                profile ??= LooksLikeText(buffer.AsSpan(0, length)) ? EMachinePathScanProfile.Text : EMachinePathScanProfile.BinaryMedia;
+                AddHits(buffer.AsSpan(0, length), roots, profile.Value, chunkStart, hits);
                 if (read < ChunkSize)
                     break;
 
@@ -344,17 +372,24 @@ public static class CookedOutputPathGuard
         return result;
     }
 
-    /// <summary>Gets the byte range to overwrite for a hit. See the remarks of the class for the rules.</summary>
-    private static (long Start, int Length) BoundRange(FileStream stream, MachinePathHit hit, EMachinePathScanProfile profile)
+    /// <summary>
+    /// Gets the start and the text of the range that holds a hit. See the remarks of the class for the rules. Only the
+    /// folder part of the range is overwritten later (<see cref="CreateReplacement"/>).
+    /// </summary>
+    private static (long Start, string Text, int FolderLimit) BoundRange(FileStream stream, MachinePathHit hit, EMachinePathScanProfile profile)
     {
         int unit = hit.Utf16 ? 2 : 1;
         int prefixLength = (int)Math.Min(hit.Offset, 4);
-        byte[] bytes = new byte[prefixLength + hit.ByteLength];
+        int nextLength = (int)Math.Min(unit, stream.Length - (hit.Offset + hit.ByteLength));
+        byte[] bytes = new byte[prefixLength + hit.ByteLength + nextLength];
         stream.Position = hit.Offset - prefixLength;
         stream.ReadExactly(bytes);
         string text = hit.Utf16
             ? Encoding.Unicode.GetString(bytes, prefixLength, hit.ByteLength)
             : Encoding.Latin1.GetString(bytes, prefixLength, hit.ByteLength);
+        string next = nextLength == unit
+            ? hit.Utf16 ? Encoding.Unicode.GetString(bytes, prefixLength + hit.ByteLength, unit) : Encoding.Latin1.GetString(bytes, prefixLength + hit.ByteLength, unit)
+            : string.Empty;
 
         int units;
         if (profile == EMachinePathScanProfile.Text)
@@ -365,15 +400,172 @@ public static class CookedOutputPathGuard
                 units = cut;
             while (units > 0 && text[units - 1] is ' ' or '\t')
                 units--;
-            return (hit.Offset, units * unit);
+
+            // A backslash run of odd length before a quote ends in an escape (for example the \" of a JSON string). The
+            // escape is not part of the path.
+            char after = units < text.Length ? text[units] : next.Length > 0 ? next[0] : '\0';
+            if (after == '"' && CountTrailingBackslashes(text, units) % 2 == 1)
+                units--;
+            return (hit.Offset, text[..units], units);
         }
 
+        // Read on past the match, so a length-prefixed string or a file name that the match cut short is read in full. Only
+        // the folder part is overwritten, so the bytes after it are written back unchanged.
         int minimum = GetMinimumUnits(text);
-        units = TryReadLengthPrefix(bytes.AsSpan(0, prefixLength), out int prefixed) && prefixed >= minimum
-            ? Math.Min(prefixed, text.Length)
-            : Math.Max(TrimToNameCharacters(text, hit.Utf16), minimum);
-        return (hit.Offset, units * unit);
+        bool prefixKnown = TryReadLengthPrefix(bytes.AsSpan(0, prefixLength), out int prefixed) && prefixed >= minimum;
+        int lookahead = (int)Math.Min(stream.Length - hit.Offset, (long)(prefixKnown ? Math.Max(prefixed, text.Length) : text.Length + MaxReportedLength) * unit);
+        byte[] ahead = new byte[lookahead - lookahead % unit];
+        stream.Position = hit.Offset;
+        stream.ReadExactly(ahead);
+        string extended = hit.Utf16 ? Encoding.Unicode.GetString(ahead) : Encoding.Latin1.GetString(ahead);
+        units = prefixKnown
+            ? Math.Min(prefixed, extended.Length)
+            : Math.Min(Math.Max(GetUnprefixedLength(text, extended, hit.Utf16), minimum), extended.Length);
+
+        // Without a known length, the folder part must end inside the match: bytes after the match are not proven to be part
+        // of the path.
+        return (hit.Offset, extended[..units], prefixKnown ? units : Math.Min(units, text.Length));
     }
+
+    private static int CountTrailingBackslashes(string text, int end)
+    {
+        int count = 0;
+        while (end - count - 1 >= 0 && text[end - count - 1] == '\\')
+            count++;
+        return count;
+    }
+
+    /// <summary>
+    /// Makes the replacement text of a range. Only the folder part changes: each character before the end of the last
+    /// folder becomes an underscore, and every separator stays. The file name and everything after it stay, so an importer
+    /// can still find a file by its name. The folder part also covers the user name of a user profile path. A leading UNC
+    /// run of backslashes becomes underscores too, so the result is not a UNC path. In a text range that holds escaped
+    /// separators (two backslashes), an odd backslash is an escape: it stays, a <c>\u</c>, <c>\x</c>, or <c>\U</c> escape gets
+    /// the code of the underscore, and another escaped character stays, so JSON and double-quoted YAML stay valid.
+    /// </summary>
+    internal static string CreateReplacement(string text, EMachinePathScanProfile profile, int folderLimit)
+    {
+        bool escaped = profile == EMachinePathScanProfile.Text && text.Contains("\\\\", StringComparison.Ordinal);
+        int folderEnd = GetFolderEnd(text[..Math.Min(folderLimit, text.Length)], escaped);
+        char[] result = text.ToCharArray();
+        int index = 0;
+        int leading = 0;
+        while (leading < text.Length && text[leading] == '\\')
+            leading++;
+        if (leading > 0 && (!escaped || leading % 2 == 0))
+        {
+            for (; index < leading; index++)
+                result[index] = '_';
+        }
+
+        while (index < folderEnd)
+        {
+            char c = text[index];
+            if (c == '/')
+            {
+                index++;
+                continue;
+            }
+
+            if (c != '\\')
+            {
+                result[index++] = '_';
+                continue;
+            }
+
+            int run = 0;
+            while (index + run < text.Length && text[index + run] == '\\')
+                run++;
+            if (!escaped || run % 2 == 0)
+            {
+                index += run;
+                continue;
+            }
+
+            // The last backslash of an odd run escapes the next character.
+            index += run;
+            index += RewriteEscape(text, result, index);
+        }
+
+        return new string(result);
+    }
+
+    /// <summary>Rewrites the escape that starts after a backslash at an index, and gets the number of characters it used.</summary>
+    private static int RewriteEscape(string text, char[] result, int index)
+    {
+        if (index >= text.Length)
+            return 0;
+
+        (int digits, string underscore) = text[index] switch
+        {
+            'u' => (4, "005F"),
+            'x' => (2, "5F"),
+            'U' => (8, "0000005F"),
+            _ => (0, string.Empty),
+        };
+        if (digits == 0 || index + digits >= text.Length || !IsHex(text, index + 1, digits))
+            return 1;
+
+        for (int i = 0; i < digits; i++)
+            result[index + 1 + i] = underscore[i];
+        return 1 + digits;
+    }
+
+    private static bool IsHex(string text, int start, int count)
+    {
+        for (int i = start; i < start + count; i++)
+            if (!char.IsAsciiHexDigit(text[i]))
+                return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the end of the folder part: after the last separator, and after the user name of a user profile path. In an
+    /// escaped text range, only backslash pairs are separators; the last backslash of an odd run is an escape.
+    /// </summary>
+    private static int GetFolderEnd(string text, bool escaped)
+    {
+        int end = 0;
+        int index = 0;
+        while (index < text.Length)
+        {
+            char c = text[index];
+            if (c == '/')
+            {
+                end = ++index;
+                continue;
+            }
+
+            if (c != '\\')
+            {
+                index++;
+                continue;
+            }
+
+            int run = 0;
+            while (index + run < text.Length && text[index + run] == '\\')
+                run++;
+            int separators = escaped ? run - run % 2 : run;
+            if (separators > 0)
+                end = index + separators;
+            index += run;
+        }
+
+        Match user = UserFolderToken.Match(text);
+        if (user.Success)
+        {
+            int nameStart = user.Index + user.Length;
+            while (nameStart < text.Length && text[nameStart] is '\\' or '/')
+                nameStart++;
+            int nameEnd = text.IndexOfAny(['\\', '/'], nameStart);
+            end = Math.Max(end, nameEnd < 0 ? text.Length : nameEnd);
+        }
+
+        return Math.Min(end, text.Length);
+    }
+
+    private static byte[] EncodeView(string text, bool utf16)
+        => utf16 ? Encoding.Unicode.GetBytes(text) : Encoding.Latin1.GetBytes(text);
 
     /// <summary>
     /// Gets the smallest number of characters to strip: through the last separator, and through the user name of a user
@@ -415,6 +607,25 @@ public static class CookedOutputPathGuard
         return false;
     }
 
+    /// <summary>
+    /// Gets the length of a path with no known length: the match, cut at the first character that is not a separator or a
+    /// plain name character. When the whole match is a path, a short tail of letters, digits, underscores, dots, and hyphens
+    /// after it is added, so the report shows the file name that a short extension match cut. Only the report uses the tail;
+    /// the folder part ends inside the match.
+    /// </summary>
+    private static int GetUnprefixedLength(string match, string extended, bool utf16)
+    {
+        int length = TrimToNameCharacters(match, utf16);
+        if (length < match.Length)
+            return length;
+
+        const int MaxTail = 64;
+        while (length < extended.Length && length - match.Length < MaxTail &&
+               (char.IsAsciiLetterOrDigit(extended[length]) || extended[length] is '_' or '.' or '-'))
+            length++;
+        return length;
+    }
+
     /// <summary>Gets the number of leading characters that are separators or plain name characters.</summary>
     private static int TrimToNameCharacters(string text, bool utf16)
     {
@@ -433,29 +644,122 @@ public static class CookedOutputPathGuard
         return index;
     }
 
-    private static string ReadText(FileStream stream, long start, int length, bool utf16)
+    /// <summary>
+    /// Inspects the compressed content of a known container that can hold text: the compressed text chunks of a PNG file
+    /// (<c>zTXt</c>, and <c>iTXt</c> with the compression flag), every entry of a ZIP file, and the data of a GZIP file. A
+    /// path in compressed content fails the publish, because the strip cannot rewrite it in place. A container that the
+    /// guard cannot inflate (7z, RAR, XZ, Zstandard, BZip2, or damaged data) fails the publish too. A path in compressed
+    /// data must never pass silently.
+    /// </summary>
+    /// <exception cref="CookedSourcePathException">Compressed content holds a path, or cannot be inspected.</exception>
+    private static void InspectCompressedContent(string file, string label)
     {
-        byte[] bytes = new byte[length];
-        stream.Position = start;
-        stream.ReadExactly(bytes);
-        return utf16 ? Encoding.Unicode.GetString(bytes) : Encoding.UTF8.GetString(bytes);
+        byte[] head = new byte[16];
+        int headLength;
+        using (FileStream probe = new(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+            headLength = probe.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+        ReadOnlySpan<byte> signature = head.AsSpan(0, headLength);
+
+        try
+        {
+            if (signature.StartsWith(PngSignature))
+            {
+                InspectPngTextChunks(file, label);
+                return;
+            }
+
+            if (signature.StartsWith(UnsafeContainerSignatures[0]) || signature.StartsWith(UnsafeContainerSignatures[1]))
+            {
+                using ZipArchive archive = ZipFile.OpenRead(file);
+                foreach (ZipArchiveEntry entry in archive.Entries)
+                {
+                    if (entry.FullName.EndsWith('/'))
+                        continue;
+                    using Stream content = entry.Open();
+                    ThrowIfCompressedHit(FindMachinePathsInStream(content, profile: null), label, $"ZIP entry '{entry.FullName}'");
+                }
+                return;
+            }
+
+            if (signature.StartsWith(UnsafeContainerSignatures[2]))
+            {
+                using FileStream stream = new(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using GZipStream content = new(stream, CompressionMode.Decompress);
+                ThrowIfCompressedHit(FindMachinePathsInStream(content, profile: null), label, "GZIP data");
+                return;
+            }
+        }
+        catch (Exception error) when (error is InvalidDataException or NotSupportedException or IOException)
+        {
+            throw new CookedSourcePathException(
+                $"Published file '{label}' holds compressed data that the publish cannot inspect for machine paths: {error.Message}");
+        }
+
+        for (int i = 3; i < UnsafeContainerSignatures.Length; i++)
+            if (signature.StartsWith(UnsafeContainerSignatures[i]))
+                throw new CookedSourcePathException(
+                    $"Published file '{label}' is a compressed container that the publish cannot inspect for machine paths. " +
+                    "Unpack it into the asset folder, or remove it.");
     }
 
-    private static void WriteFiller(FileStream stream, long start, int length, bool utf16)
+    private static void InspectPngTextChunks(string file, string label)
     {
-        byte[] filler = new byte[length];
-        if (utf16)
+        using FileStream stream = new(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+        byte[] header = new byte[8];
+        long position = PngSignature.Length;
+        while (position + 12 <= stream.Length)
         {
-            for (int i = 0; i + 1 < length; i += 2)
-                filler[i] = Filler;
-        }
-        else
-        {
-            filler.AsSpan().Fill(Filler);
-        }
+            stream.Position = position;
+            stream.ReadExactly(header);
+            int dataLength = BinaryPrimitives.ReadInt32BigEndian(header);
+            string type = Encoding.ASCII.GetString(header, 4, 4);
+            long dataStart = position + 8;
+            if (dataLength < 0 || dataStart + dataLength + 4 > stream.Length)
+                throw new InvalidDataException("A PNG chunk runs past the end of the file.");
 
-        stream.Position = start;
-        stream.Write(filler);
+            if (type is "zTXt" or "iTXt")
+            {
+                byte[] data = new byte[dataLength];
+                stream.ReadExactly(data);
+                int compressedStart = FindCompressedTextStart(data, type);
+                if (compressedStart >= 0)
+                {
+                    using MemoryStream compressed = new(data, compressedStart, data.Length - compressedStart, writable: false);
+                    using ZLibStream content = new(compressed, CompressionMode.Decompress);
+                    ThrowIfCompressedHit(FindMachinePathsInStream(content, profile: null), label, $"PNG chunk '{type}'");
+                }
+            }
+
+            position = dataStart + dataLength + 4;
+        }
+    }
+
+    /// <summary>Gets the start of the compressed text in a zTXt or iTXt chunk, or -1 when the text is not compressed.</summary>
+    private static int FindCompressedTextStart(byte[] data, string type)
+    {
+        int keywordEnd = Array.IndexOf(data, (byte)0);
+        if (keywordEnd < 0)
+            throw new InvalidDataException($"The PNG chunk '{type}' has no keyword end.");
+
+        if (type == "zTXt")
+            return keywordEnd + 2;
+
+        // iTXt: keyword, 0, compression flag, compression method, language tag, 0, translated keyword, 0, text.
+        if (keywordEnd + 2 >= data.Length || data[keywordEnd + 1] == 0)
+            return -1;
+        int languageEnd = Array.IndexOf(data, (byte)0, keywordEnd + 3);
+        int translatedEnd = languageEnd < 0 ? -1 : Array.IndexOf(data, (byte)0, languageEnd + 1);
+        if (translatedEnd < 0)
+            throw new InvalidDataException("The PNG chunk 'iTXt' has no translated keyword end.");
+        return translatedEnd + 1;
+    }
+
+    private static void ThrowIfCompressedHit(List<MachinePathHit> hits, string label, string place)
+    {
+        if (hits.Count > 0)
+            throw new CookedSourcePathException(
+                $"Published file '{label}' holds the machine path '{hits[0].Text}' in compressed data ({place}), which the " +
+                "publish cannot strip. Remove the path from the source file.");
     }
 
     private static void ThrowIfUnsafeContainer(ReadOnlySpan<byte> head, string label, List<MachinePathHit> hits)
@@ -550,7 +854,7 @@ public static class CookedOutputPathGuard
     /// </summary>
     private static Regex CreateBinaryFilePattern(string nameChar, string nameEnd)
         => new(@"(?<![A-Za-z0-9])[A-Za-z]:(?<s>\\\\|\\|/)(?:" + nameChar + @"{2,}\k<s>){2,}" + nameChar + "*?" + nameEnd +
-            @"\.[A-Za-z][A-Za-z0-9]{1,4}",
+            @"\.[A-Za-z][A-Za-z0-9]{1,4}?",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static bool IsPathCharOrSeparator(char c, bool isUtf8View)

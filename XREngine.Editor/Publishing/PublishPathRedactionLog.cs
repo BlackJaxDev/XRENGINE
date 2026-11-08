@@ -24,8 +24,6 @@ public sealed class PublishPathRedactionLog : IDisposable
     private PublishPathRedactionLog(PublishPathRedactionLog? parent)
         => _parent = parent;
 
-    /// <summary>The name of the report file that a publish writes next to its output folder.</summary>
-    public const string ReportSuffix = ".publish-report.txt";
 
     /// <summary>The removed items, each with the file that held it, in the order of the first record.</summary>
     public IReadOnlyList<(string File, string Item)> Entries
@@ -67,6 +65,43 @@ public sealed class PublishPathRedactionLog : IDisposable
         }
     }
 
+    /// <summary>The number of items in the current log, or zero when no log is open.</summary>
+    public static int CurrentCount
+    {
+        get
+        {
+            PublishPathRedactionLog? log;
+            lock (CurrentSync)
+                log = _current;
+            if (log is null)
+                return 0;
+            lock (log._sync)
+                return log._entries.Count;
+        }
+    }
+
+    /// <summary>Gets the items of the current log from an index on.</summary>
+    /// <param name="start">The first index, for example a <see cref="CurrentCount"/> read earlier.</param>
+    /// <returns>The items, or an empty list when no log is open.</returns>
+    public static List<(string File, string Item)> CurrentEntriesFrom(int start)
+    {
+        PublishPathRedactionLog? log;
+        lock (CurrentSync)
+            log = _current;
+        if (log is null)
+            return [];
+        lock (log._sync)
+            return log._entries.GetRange(Math.Min(start, log._entries.Count), Math.Max(0, log._entries.Count - start));
+    }
+
+    /// <summary>Deletes the report of an earlier publish, so a report never describes another publish.</summary>
+    /// <param name="reportPath">The report path.</param>
+    public static void DeleteReport(string reportPath)
+    {
+        if (File.Exists(reportPath))
+            File.Delete(reportPath);
+    }
+
     /// <summary>Formats the warning text, one line for each file and removed item.</summary>
     /// <returns>The text, or an empty string when nothing was removed.</returns>
     public string FormatReport()
@@ -84,21 +119,19 @@ public sealed class PublishPathRedactionLog : IDisposable
     }
 
     /// <summary>
-    /// Writes the warning to every log that a Release editor shows (the engine log, standard error, and trace listeners),
-    /// and writes the report file. The report file goes next to the output folder, not into it, so it does not ship.
+    /// Writes the report file, and writes the warning to every log that a Release editor shows (the engine log, standard
+    /// error, and trace listeners) when the publish removed something. When nothing was removed, the report says so. Write
+    /// the report in a folder that is never part of a publish output tree, because it lists the removed machine paths.
     /// </summary>
-    /// <param name="outputRoot">The output folder of the publish.</param>
-    /// <returns>The report file path, or null when nothing was removed.</returns>
-    public string? WriteWarningAndReport(string outputRoot)
+    /// <param name="reportPath">The report path.</param>
+    /// <returns>The report path.</returns>
+    public string WriteReport(string reportPath)
     {
         string report = FormatReport();
-        if (report.Length == 0)
-            return null;
-
-        string full = Path.GetFullPath(outputRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        string reportPath = full + ReportSuffix;
         Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
-        File.WriteAllText(reportPath, report, Encoding.UTF8);
+        File.WriteAllText(reportPath, report.Length == 0 ? "The publish removed no machine path and no secret from its output." + Environment.NewLine : report, Encoding.UTF8);
+        if (report.Length == 0)
+            return reportPath;
 
         string warning = report + "Report: " + reportPath;
         Debug.LogWarning(warning);

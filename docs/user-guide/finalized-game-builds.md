@@ -222,11 +222,22 @@ A publish removes absolute machine paths (for example a path in a user profile
 folder, or an authoring path in an FBX or EXR file) from the files that it ships:
 cooked assets, files that the content cook copies as they are, and every file of
 `CommonAssets.pak`. It changes only the copy in the build output, never a source
-file, and it writes one warning that lists each file and each removed path. The
-same list goes to `<output folder>.publish-report.txt` next to the output folder.
-The publish fails only when a path cannot be removed safely, for example in a
-ZIP or GZIP file, and the error names the file. See
-[Cooked Assets, AOT, and IO](../architecture/assets/cooked-asset-aot-and-io.md).
+file. It replaces the folder part of each path with underscores and keeps the
+separators and the file name, so a model can still find its textures by file
+name. It writes one warning that lists each file and each removed path. The same
+list goes to `<project>/Intermediate/Build/Logs/publish-report.txt`, which is not
+part of the build output. The publish fails when a path cannot be removed safely
+or cannot be checked, for example a path inside a compressed PNG text chunk or a
+ZIP or GZIP file, or a 7z file that the publish cannot open. The error names the
+file. See [Cooked Assets, AOT, and IO](../architecture/assets/cooked-asset-aot-and-io.md).
+
+Limits of the path removal:
+
+- In a text file, a comma, a semicolon, or an equals sign in a folder name stops
+  the removal early. The rest of the path stays, without its drive.
+- In a binary file (images, audio, video, models), a drive path with fewer than
+  two folder parts (for example `D:\Art\tex.png`) is not found. Paths in a user
+  profile folder and paths under the asset folders are always found.
 
 The compiled game assembly must contain exactly one public, concrete `IGameLaunchBootstrap` with a public parameterless constructor. The generated launcher constructs it directly, uses it to configure startup, and obtains the initial `GameState`; this is the supported way to root custom worlds and components under NativeAOT.
 

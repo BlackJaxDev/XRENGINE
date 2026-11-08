@@ -109,6 +109,7 @@ internal static partial class ProjectBuilder
             return;
         }
 
+        PublishPathRedactionLog.DeleteReport(GetPublishReportPath(context));
         using PublishPathRedactionLog redactions = PublishPathRedactionLog.Begin();
         try
         {
@@ -186,6 +187,7 @@ internal static partial class ProjectBuilder
             yield break;
         }
 
+        PublishPathRedactionLog.DeleteReport(GetPublishReportPath(context));
         PublishPathRedactionLog redactions = PublishPathRedactionLog.Begin();
         try
         {
@@ -207,16 +209,23 @@ internal static partial class ProjectBuilder
     }
 
     /// <summary>
-    /// Writes the publish warning and the report file when the publish removed machine paths or secrets, and gets the
+    /// Writes the publish report (and the warning when the publish removed machine paths or secrets), and gets the
     /// completion text. The text names the report, so the editor shows it also in a Release build.
     /// </summary>
     private static string DescribeCompletion(PublishPathRedactionLog redactions, BuildContext context)
     {
-        string? report = redactions.WriteWarningAndReport(context.BuildRoot);
-        return report is null
-            ? "Build completed"
+        string report = redactions.WriteReport(GetPublishReportPath(context));
+        return redactions.Entries.Count == 0
+            ? $"Build completed. Report: {report}"
             : $"Build completed with {redactions.Entries.Count} removed machine path(s) or secret(s). Report: {report}";
     }
+
+    /// <summary>
+    /// Gets the path of the publish report. It is in the intermediate folder of the project, which is never part of a
+    /// publish output tree, because the report lists the removed machine paths.
+    /// </summary>
+    private static string GetPublishReportPath(BuildContext context)
+        => Path.Combine(context.IntermediateDirectory, "Build", "Logs", "publish-report.txt");
 
     private static XRProject EnsureProjectLoaded()
         => Engine.CurrentProject ?? throw new InvalidOperationException("No project is currently loaded.");
@@ -725,10 +734,10 @@ internal static partial class ProjectBuilder
         Dictionary<string, string> replacements = new(StringComparer.OrdinalIgnoreCase);
         foreach (string file in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
         {
-            if (!CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file))
+            string relative = Path.GetRelativePath(sourceDirectory, file);
+            if (!CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file, NormalizePath(relative)))
                 continue;
 
-            string relative = Path.GetRelativePath(sourceDirectory, file);
             string copy = Path.Combine(strippedRoot, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
             File.Copy(file, copy, true);
@@ -1023,10 +1032,36 @@ internal static partial class ProjectBuilder
         // An archive that the current strip rules did not write can hold entries with machine paths. Pack it again in full,
         // so every entry passes the current strip once.
         string stripLedgerPath = StripLedger.GetPath(intermediateDirectory, deltaFolderName);
+        int logStart = PublishPathRedactionLog.CurrentCount;
+        List<(string Entry, string Item)> earlierStrips = [];
         if (File.Exists(archivePath) && !StripLedger.IsCurrent(stripLedgerPath, archivePath))
         {
             File.Delete(archivePath);
             SubMeshLodEntryLedger.Delete(ledgerPath);
+        }
+        else if (File.Exists(archivePath))
+        {
+            earlierStrips = StripLedger.ReadEntries(stripLedgerPath);
+        }
+
+        // Saves the strip record. A full pack lists only the strips of this build. A repack keeps the earlier strips of
+        // the entries that it did not write again, and lists them in the warning, so the warning describes the whole archive.
+        void SaveStripLedger(ICollection<string>? rewrittenEntries)
+        {
+            List<(string Entry, string Item)> entries = [];
+            List<(string Entry, string Item)> kept = [];
+            if (rewrittenEntries is not null)
+            {
+                foreach ((string entry, string item) in earlierStrips)
+                    if (!rewrittenEntries.Contains(entry))
+                        kept.Add((entry, item));
+                entries.AddRange(kept);
+            }
+
+            foreach ((string file, string item) in PublishPathRedactionLog.CurrentEntriesFrom(logStart))
+                entries.Add((ToArchiveEntryKey(sourceDirectory, file), item));
+            StripLedger.Save(stripLedgerPath, archivePath, entries);
+            RecordEarlierStrips(archivePath, kept);
         }
 
         if (!File.Exists(archivePath))
@@ -1035,13 +1070,13 @@ internal static partial class ProjectBuilder
             {
                 SubMeshLodEntryLedger.Delete(ledgerPath);
                 PackStrippedSourceDirectory(sourceDirectory, archivePath, intermediateDirectory, deltaFolderName + "_Stripped");
-                StripLedger.Save(stripLedgerPath, archivePath);
+                SaveStripLedger(rewrittenEntries: null);
                 return;
             }
 
             string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_Full");
             PackFullAndWriteLedger(sourceDirectory, fullStagingDir, archivePath, ledgerPath, currentSnapshot.Keys, transformFile);
-            StripLedger.Save(stripLedgerPath, archivePath);
+            SaveStripLedger(rewrittenEntries: null);
             return;
         }
 
@@ -1061,7 +1096,7 @@ internal static partial class ProjectBuilder
                     File.Delete(archivePath);
 
                 PackStrippedSourceDirectory(sourceDirectory, archivePath, intermediateDirectory, deltaFolderName + "_Stripped");
-                StripLedger.Save(stripLedgerPath, archivePath);
+                SaveStripLedger(rewrittenEntries: null);
                 return;
             }
 
@@ -1069,7 +1104,7 @@ internal static partial class ProjectBuilder
             if (File.Exists(archivePath))
                 File.Delete(archivePath);
             PackFullAndWriteLedger(sourceDirectory, fullStagingDir, archivePath, ledgerPath, currentSnapshot.Keys, transformFile);
-            StripLedger.Save(stripLedgerPath, archivePath);
+            SaveStripLedger(rewrittenEntries: null);
             return;
         }
 
@@ -1099,7 +1134,10 @@ internal static partial class ProjectBuilder
         }
 
         if (changedPaths.Count == 0 && removedPaths.Count == 0)
+        {
+            RecordEarlierStrips(archivePath, earlierStrips);
             return;
+        }
 
         // The ledger knows the LOD entries of the files that this build does not cook again.
         // With no valid ledger, the build keeps all LOD entries, because it cannot know which entries are live.
@@ -1125,7 +1163,35 @@ internal static partial class ProjectBuilder
             changedPaths.Count > 0 ? deltaDirectory : string.Empty,
             [.. removedPaths]);
         ledger?.Save(ledgerPath, archivePath);
-        StripLedger.Save(stripLedgerPath, archivePath);
+        HashSet<string> rewritten = new(StringComparer.Ordinal);
+        foreach (string path in changedPaths)
+            rewritten.Add(NormalizePath(path));
+        foreach (string path in removedPaths)
+            rewritten.Add(NormalizePath(path));
+        SaveStripLedger(rewritten);
+    }
+
+    /// <summary>Gets the archive entry path of a file label: a path relative to the source folder, or the label itself.</summary>
+    private static string ToArchiveEntryKey(string sourceDirectory, string fileLabel)
+    {
+        if (!Path.IsPathRooted(fileLabel))
+            return NormalizePath(fileLabel);
+
+        string relative = Path.GetRelativePath(sourceDirectory, fileLabel);
+        return Path.IsPathRooted(relative) || relative.StartsWith("..", StringComparison.Ordinal)
+            ? NormalizePath(fileLabel)
+            : NormalizePath(relative);
+    }
+
+    /// <summary>
+    /// Lists, in the publish warning, the stripped paths that archive entries from an earlier build hold. A build that
+    /// writes no entry again still shows what the archive holds.
+    /// </summary>
+    private static void RecordEarlierStrips(string archivePath, List<(string Entry, string Item)> strips)
+    {
+        string archiveName = Path.GetFileName(archivePath);
+        foreach ((string entry, string item) in strips)
+            PublishPathRedactionLog.Record($"{archiveName}: {entry}", $"{item} (stripped in an earlier build)");
     }
 
     private static void PackFullAndWriteLedger(
