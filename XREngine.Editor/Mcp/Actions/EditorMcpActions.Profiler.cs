@@ -1502,6 +1502,15 @@ namespace XREngine.Editor.Mcp
                             driver_cache_runtime_hits = VulkanStats.VulkanDriverPipelineCacheRuntimeHits,
                             driver_cache_misses = VulkanStats.VulkanDriverPipelineCacheMisses,
                             driver_cache_unknown = VulkanStats.VulkanDriverPipelineCacheUnknown,
+                            // Cumulative since process start; the driver_cache_* fields above are per frame.
+                            compute_cache_cumulative = new
+                            {
+                                persisted_hits = VulkanStats.VulkanComputePipelineCachePersistedHitsTotal,
+                                runtime_hits = VulkanStats.VulkanComputePipelineCacheRuntimeHitsTotal,
+                                misses = VulkanStats.VulkanComputePipelineCacheMissesTotal,
+                                unknown = VulkanStats.VulkanComputePipelineCacheUnknownTotal,
+                                creation_ms = VulkanStats.VulkanComputePipelineCreationMillisecondsTotal,
+                            },
                             compile_required_count = VulkanStats.VulkanPipelineCompileRequiredCount,
                             compile_completed_count = VulkanStats.VulkanPipelineCompileCompletedCount,
                             background_compile_completed_count = VulkanStats.VulkanPipelineBackgroundCompileCompletedCount,
