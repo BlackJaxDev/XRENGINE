@@ -183,6 +183,10 @@ public static partial class RuntimeEngine
                 private int _textureStreamingCutscenePromotionCooldownFrames = 2;
                 private int _textureStreamingCutscenePromotionFadeFrames = 12;
                 private int _textureStreamingBudgetProfileFadeFrames = 30;
+                private int? _textureStreamingDecodeConcurrency;
+                private int? _textureStreamingUploadsPerFrame;
+                private int? _textureStreamingMaxUploadsPerFrame;
+                private double _textureStreamingFrameToleranceMilliseconds = 2.0;
 
                 /// <summary>
                 /// Whether to enable frame logging for performance profiling.
@@ -390,6 +394,54 @@ public static partial class RuntimeEngine
                 {
                     get => _textureStreamingBudgetProfileFadeFrames;
                     set => SetField(ref _textureStreamingBudgetProfileFadeFrames, Math.Clamp(value, 0, 600));
+                }
+
+                /// <summary>
+                /// The number of texture decodes that can run at the same time. Null selects the automatic value from the
+                /// processor count, the process affinity, and the job worker count.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: decodes that can run at the same time. Leave null for the automatic value from the processor count, the process affinity, and the job worker count; set a value to pin it.")]
+                public int? TextureStreamingDecodeConcurrency
+                {
+                    get => _textureStreamingDecodeConcurrency;
+                    set => SetField(ref _textureStreamingDecodeConcurrency, value is int count ? Math.Clamp(count, 1, 32) : null);
+                }
+
+                /// <summary>
+                /// The number of texture uploads and publications that each streaming lane does in one render frame.
+                /// Null selects the adaptive limit, which the frame-time feedback controller sets.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: uploads and publications in one render frame for each lane. Leave null for the adaptive limit from measured cost and frame time; set a value to pin it.")]
+                public int? TextureStreamingUploadsPerFrame
+                {
+                    get => _textureStreamingUploadsPerFrame;
+                    set => SetField(ref _textureStreamingUploadsPerFrame, value is int count ? Math.Clamp(count, 1, 64) : null);
+                }
+
+                /// <summary>
+                /// The highest adaptive number of texture uploads and publications in one render frame. Null uses the
+                /// built-in bound only.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: the highest adaptive uploads and publications in one render frame. Leave null for the built-in bound.")]
+                public int? TextureStreamingMaxUploadsPerFrame
+                {
+                    get => _textureStreamingMaxUploadsPerFrame;
+                    set => SetField(ref _textureStreamingMaxUploadsPerFrame, value is int count ? Math.Clamp(count, 1, 64) : null);
+                }
+
+                /// <summary>
+                /// The time, in milliseconds, that texture streaming work can add to a render frame above the normal
+                /// frame budget. The adaptive upload limits keep frames inside this tolerance.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: milliseconds that streaming work can add to a frame above the normal frame budget. The adaptive upload limits keep frames inside it.")]
+                public double TextureStreamingFrameToleranceMilliseconds
+                {
+                    get => _textureStreamingFrameToleranceMilliseconds;
+                    set => SetField(ref _textureStreamingFrameToleranceMilliseconds, Math.Clamp(value, 0.1, 50.0));
                 }
 
                 /// <summary>

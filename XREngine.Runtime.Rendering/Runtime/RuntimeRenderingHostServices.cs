@@ -112,6 +112,13 @@ public static class RuntimeRenderingHostServices
     public static IRuntimeRenderWorkServices Work
         => _work ?? ThrowMissingCapability<IRuntimeRenderWorkServices>("render work scheduling");
 
+    /// <summary>Gets the work scheduling services when a host installed them. It does not throw.</summary>
+    internal static bool TryGetWork(out IRuntimeRenderWorkServices? work)
+    {
+        work = _work;
+        return work is not null;
+    }
+
     /// <summary>
     /// Required asset and texture IO.
     /// </summary>

@@ -32,6 +32,7 @@ public static class DesktopPlatformBackend
         XREngine.Data.RuntimePlatformPaths.Current = new DesktopPlatformPaths();
         XREngine.Data.RuntimeProcessServices.Current = new DesktopProcessRunner();
         XREngine.Data.RuntimeProcessMemoryServices.WorkingSetBytesReader = DesktopProcessDiagnostics.ReadWorkingSetBytes;
+        XREngine.Data.RuntimeProcessorServices.EffectiveProcessorCountReader = DesktopProcessDiagnostics.ReadEffectiveProcessorCount;
         XREngine.Data.RuntimeAssemblyLoadingServices.Current = new DesktopRuntimeAssemblyLoader();
         XREngine.Core.Files.AssetFileSystemServices.Current = new DesktopAssetFileSystem();
         ShaderSourceFileBackendServices.Current = new DesktopShaderSourceFileBackend();

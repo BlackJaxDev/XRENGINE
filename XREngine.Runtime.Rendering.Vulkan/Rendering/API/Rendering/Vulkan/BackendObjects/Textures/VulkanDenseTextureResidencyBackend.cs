@@ -8,8 +8,6 @@ namespace XREngine.Rendering;
 
 internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBackend
 {
-    private const int MaxConcurrentStreamingDecodes = 2;
-
     private static readonly uint[] ResidentCandidates =
     [
         1u,
@@ -28,7 +26,8 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
         8192u,
     ];
 
-    private static readonly PriorityAsyncSemaphore DecodeGate = new(MaxConcurrentStreamingDecodes);
+    // The decode width follows the CPU capacity of the machine (TextureStreamingCapacity).
+    private static PriorityAsyncSemaphore DecodeGate => TextureStreamingCapacity.DecodeGate;
 
     private static int s_activeDecodeCount;
     private static int s_queuedDecodeCount;

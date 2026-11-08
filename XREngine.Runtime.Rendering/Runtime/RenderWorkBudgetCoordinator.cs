@@ -170,6 +170,7 @@ internal static class RenderWorkBudgetCoordinator
         builder.Append("RenderBackgroundYieldCount: ").Append(foreground.BackgroundYieldCount).AppendLine();
         builder.Append("RenderBackgroundResumeCount: ").Append(foreground.BackgroundResumeCount).AppendLine();
         XRBufferWriteTelemetry.AppendProfilerSummary(builder);
+        TextureStreamingCapacity.AppendDiagnosticSummary(builder);
         if (TextureStreamingBackendRegistry.TryGet(
                 RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend,
                 out ITextureStreamingBackendProvider? textureStreaming)

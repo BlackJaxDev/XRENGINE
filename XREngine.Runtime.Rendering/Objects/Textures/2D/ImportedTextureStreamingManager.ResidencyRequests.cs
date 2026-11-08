@@ -79,6 +79,14 @@ internal sealed partial class ImportedTextureStreamingManager
     /// <summary>The current collect frame. Use it to compute the deadline frame of a request.</summary>
     internal long CurrentFrameId => Volatile.Read(ref _collectFrameId);
 
+    // Written by the evaluation, read by the texture streaming work lanes on the render thread.
+    private int _pendingResidencyRequestCount;
+
+    /// <summary>
+    /// The number of requests that the last evaluation found not resident. Any thread can read it; it allocates nothing.
+    /// </summary>
+    internal int PendingResidencyRequestCount => Volatile.Read(ref _pendingResidencyRequestCount);
+
     /// <summary>The number of requests that are not cancelled.</summary>
     internal int ActiveResidencyRequestCount
     {
@@ -266,9 +274,13 @@ internal sealed partial class ImportedTextureStreamingManager
             _requestedRecords.Clear();
 
             if (_activeResidencyRequests.Count == 0)
+            {
+                Volatile.Write(ref _pendingResidencyRequestCount, 0);
                 return;
+            }
 
             long sequence = ++_residencyRefreshSequence;
+            int pending = 0;
             EEngineQuality quality = RuntimeRenderingHostServices.Settings.TextureQuality;
             for (int i = 0; i < _activeResidencyRequests.Count; i++)
             {
@@ -308,8 +320,12 @@ internal sealed partial class ImportedTextureStreamingManager
                     // completion event does not repeat.
                     request.State = ETextureResidencyRequestState.Pending;
                 }
+
+                if (request.State == ETextureResidencyRequestState.Pending)
+                    pending++;
             }
 
+            Volatile.Write(ref _pendingResidencyRequestCount, pending);
             DropResidencyRequestsNoLock(_droppedResidencyRequestScratch);
         }
 
