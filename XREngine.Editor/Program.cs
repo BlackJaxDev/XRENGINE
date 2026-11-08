@@ -1433,6 +1433,7 @@ internal partial class Program
                 out string? launcherNameArg,
                 out bool? publishNativeAot,
                 out bool? validateAotCompatibility,
+                out bool? developmentArchives,
                 out string? defineConstantsArg,
                 out string? error))
         {
@@ -1462,6 +1463,7 @@ internal partial class Program
                 launcherNameArg,
                 publishNativeAot,
                 validateAotCompatibility,
+                developmentArchives,
                 defineConstantsArg);
 
             Environment.ExitCode = 0;
@@ -1651,6 +1653,7 @@ internal partial class Program
         out string? launcherNameArg,
         out bool? publishNativeAot,
         out bool? validateAotCompatibility,
+        out bool? developmentArchives,
         out string? defineConstantsArg,
         out string? error)
     {
@@ -1662,6 +1665,7 @@ internal partial class Program
         launcherNameArg = null;
         publishNativeAot = null;
         validateAotCompatibility = null;
+        developmentArchives = null;
         defineConstantsArg = null;
         error = null;
 
@@ -1756,6 +1760,22 @@ internal partial class Program
                     validateAotCompatibility = validateValue;
                     break;
 
+                case "--development-archives":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --development-archives (expected true/false).";
+                        return false;
+                    }
+
+                    if (!TryParseBooleanArgument(args[++i], out bool developmentArchivesValue))
+                    {
+                        error = "--development-archives must be true/false, yes/no, or 1/0.";
+                        return false;
+                    }
+
+                    developmentArchives = developmentArchivesValue;
+                    break;
+
                 case "--define-constants":
                 case "--launcher-define-constants":
                     if (i + 1 >= args.Length)
@@ -1789,6 +1809,7 @@ internal partial class Program
         string? launcherNameArg,
         bool? publishNativeAot,
         bool? validateAotCompatibility,
+        bool? developmentArchives,
         string? defineConstantsArg)
     {
         ConfigureMsBuildEnvironmentForHeadlessBuild();
@@ -1849,6 +1870,9 @@ internal partial class Program
 
         if (validateAotCompatibility.HasValue)
             settings.ValidateLauncherAotCompatibility = validateAotCompatibility.Value;
+
+        if (developmentArchives.HasValue)
+            settings.DevelopmentLauncherReadsArchives = developmentArchives.Value;
 
         // NativeAOT publish produces a self-contained output. Copying the managed
         // game and engine build directories first only bloats the final package;

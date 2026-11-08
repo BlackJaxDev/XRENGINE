@@ -191,7 +191,7 @@ namespace XREngine
         }
 
         [Category("Build Target")]
-        [Description("Semicolon-delimited compile constants passed when building the generated launcher project. XRE_PUBLISHED is reserved for published launcher builds and XRE_AOT_RUNTIME is reserved for NativeAOT runtime launchers; both are added automatically when applicable.")]
+        [Description("Semicolon-delimited compile constants passed when building the generated launcher project. XRE_PUBLISHED and XRE_AOT_RUNTIME are reserved for NativeAOT launchers and are added automatically. A non-AOT launcher that lists either one fails the build, because production published builds must use NativeAOT; use DevelopmentLauncherReadsArchives for non-AOT tests of the archives.")]
         public string LauncherDefineConstants
         {
             get => _launcherDefineConstants;

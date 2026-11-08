@@ -1201,6 +1201,34 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             || ContainsDefineConstant(settings.LauncherDefineConstants, XRRuntimeEnvironment.DevelopmentArchivesDefineConstant);
     }
 
+    /// <summary>
+    /// Stops a non-AOT launcher that lists a published define constant. A published build is a production build, and
+    /// production builds must use NativeAOT. Non-AOT tests of the archives use
+    /// <see cref="BuildSettings.DevelopmentLauncherReadsArchives"/>.
+    /// </summary>
+    /// <param name="settings">The build settings.</param>
+    /// <exception cref="InvalidOperationException">A non-AOT launcher lists <c>XRE_PUBLISHED</c> or <c>XRE_AOT_RUNTIME</c>.</exception>
+    internal static void ValidateLauncherDefineConstants(BuildSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (settings.PublishLauncherAsNativeAot)
+            return;
+
+        string? published = ContainsDefineConstant(settings.LauncherDefineConstants, XRRuntimeEnvironment.PublishedDefineConstant)
+            ? XRRuntimeEnvironment.PublishedDefineConstant
+            : ContainsDefineConstant(settings.LauncherDefineConstants, XRRuntimeEnvironment.AotRuntimeDefineConstant)
+                ? XRRuntimeEnvironment.AotRuntimeDefineConstant
+                : null;
+        if (published is null)
+            return;
+
+        throw new InvalidOperationException(
+            $"The launcher defines {published}, but {nameof(BuildSettings.PublishLauncherAsNativeAot)} is off. " +
+            $"Production published builds must use NativeAOT: enable {nameof(BuildSettings.PublishLauncherAsNativeAot)}. " +
+            $"For non-AOT testing of the archives, enable {nameof(BuildSettings.DevelopmentLauncherReadsArchives)} and remove " +
+            $"{published} from {nameof(BuildSettings.LauncherDefineConstants)} (or from --define-constants).");
+    }
+
     private static bool ContainsDefineConstant(string? constants, string name)
     {
         if (string.IsNullOrWhiteSpace(constants))
@@ -1230,6 +1258,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     private static string ComposeLauncherDefineConstants(BuildSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        ValidateLauncherDefineConstants(settings);
 
         string rendererBackendConstants = settings.RendererBackendPackage switch
         {

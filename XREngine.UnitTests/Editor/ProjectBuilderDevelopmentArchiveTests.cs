@@ -17,7 +17,7 @@ public sealed class ProjectBuilderDevelopmentArchiveTests
     {
         BuildSettings settings = new() { Configuration = configuration, DevelopmentLauncherReadsArchives = true };
 
-        Should.NotThrow(() => ProjectBuilder.ValidateDevelopmentArchiveLauncher(settings));
+        Should.NotThrow(() => ProjectBuilder.ValidateLauncherBuildKind(settings));
         CodeManager.UsesDevelopmentArchiveLauncher(settings).ShouldBeTrue();
     }
 
@@ -27,7 +27,7 @@ public sealed class ProjectBuilderDevelopmentArchiveTests
         BuildSettings settings = new() { Configuration = EBuildConfiguration.Release, DevelopmentLauncherReadsArchives = true };
 
         InvalidOperationException error = Should.Throw<InvalidOperationException>(
-            () => ProjectBuilder.ValidateDevelopmentArchiveLauncher(settings));
+            () => ProjectBuilder.ValidateLauncherBuildKind(settings));
         error.Message.ShouldContain(nameof(BuildSettings.DevelopmentLauncherReadsArchives));
         error.Message.ShouldContain("NativeAOT");
     }
@@ -41,7 +41,7 @@ public sealed class ProjectBuilderDevelopmentArchiveTests
             LauncherDefineConstants = $"CUSTOM;{XRRuntimeEnvironment.DevelopmentArchivesDefineConstant}",
         };
 
-        Should.Throw<InvalidOperationException>(() => ProjectBuilder.ValidateDevelopmentArchiveLauncher(settings));
+        Should.Throw<InvalidOperationException>(() => ProjectBuilder.ValidateLauncherBuildKind(settings));
     }
 
     [Test]
@@ -55,7 +55,7 @@ public sealed class ProjectBuilderDevelopmentArchiveTests
         };
 
         CodeManager.UsesDevelopmentArchiveLauncher(settings).ShouldBeFalse();
-        Should.NotThrow(() => ProjectBuilder.ValidateDevelopmentArchiveLauncher(settings));
+        Should.NotThrow(() => ProjectBuilder.ValidateLauncherBuildKind(settings));
     }
 
     [Test]
@@ -63,7 +63,7 @@ public sealed class ProjectBuilderDevelopmentArchiveTests
     {
         BuildSettings settings = new() { DevelopmentLauncherReadsArchives = true, BuildLauncherExecutable = false };
 
-        Should.Throw<InvalidOperationException>(() => ProjectBuilder.ValidateDevelopmentArchiveLauncher(settings));
+        Should.Throw<InvalidOperationException>(() => ProjectBuilder.ValidateLauncherBuildKind(settings));
     }
 
     [Test]
@@ -72,6 +72,50 @@ public sealed class ProjectBuilderDevelopmentArchiveTests
         BuildSettings settings = new() { Configuration = EBuildConfiguration.Release };
 
         CodeManager.UsesDevelopmentArchiveLauncher(settings).ShouldBeFalse();
-        Should.NotThrow(() => ProjectBuilder.ValidateDevelopmentArchiveLauncher(settings));
+        Should.NotThrow(() => ProjectBuilder.ValidateLauncherBuildKind(settings));
+    }
+
+    [TestCase(EBuildConfiguration.Debug, "XRE_PUBLISHED")]
+    [TestCase(EBuildConfiguration.Development, "XRE_PUBLISHED")]
+    [TestCase(EBuildConfiguration.Release, "XRE_PUBLISHED")]
+    [TestCase(EBuildConfiguration.Release, "XRE_AOT_RUNTIME")]
+    public void NonAotLauncher_WithAPublishedDefine_FailsTheBuild_InEveryConfiguration(
+        EBuildConfiguration configuration,
+        string define)
+    {
+        BuildSettings settings = new() { Configuration = configuration, LauncherDefineConstants = $"CUSTOM;{define}" };
+
+        InvalidOperationException error = Should.Throw<InvalidOperationException>(
+            () => ProjectBuilder.ValidateLauncherBuildKind(settings));
+        error.Message.ShouldContain(define);
+        error.Message.ShouldContain("Production published builds must use NativeAOT");
+        error.Message.ShouldContain(nameof(BuildSettings.DevelopmentLauncherReadsArchives));
+    }
+
+    [Test]
+    public void NonAotLauncher_WithAPublishedDefineAndTheDevelopmentOption_FailsTheBuild()
+    {
+        BuildSettings settings = new()
+        {
+            Configuration = EBuildConfiguration.Debug,
+            DevelopmentLauncherReadsArchives = true,
+            LauncherDefineConstants = XRRuntimeEnvironment.PublishedDefineConstant,
+        };
+
+        Should.Throw<InvalidOperationException>(() => ProjectBuilder.ValidateLauncherBuildKind(settings));
+        Should.Throw<InvalidOperationException>(() => CodeManager.ComposeLauncherDefineConstantsForTests(settings));
+    }
+
+    [Test]
+    public void NativeAotLauncher_WithThePublishedDefines_IsAllowed()
+    {
+        BuildSettings settings = new()
+        {
+            Configuration = EBuildConfiguration.Release,
+            PublishLauncherAsNativeAot = true,
+            LauncherDefineConstants = "XRE_PUBLISHED;XRE_AOT_RUNTIME",
+        };
+
+        Should.NotThrow(() => ProjectBuilder.ValidateLauncherBuildKind(settings));
     }
 }

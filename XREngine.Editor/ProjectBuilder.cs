@@ -267,15 +267,17 @@ internal static partial class ProjectBuilder
     }
 
     /// <summary>
-    /// Stops a build in which a non-AOT launcher reads the archives as a production build. The project marks a
-    /// production build with the <see cref="EBuildConfiguration.Release"/> configuration, and production builds must use
-    /// NativeAOT. A development launcher that reads the archives is for Debug and Development builds only.
+    /// Stops a build in which a non-AOT launcher counts as a production build. A non-AOT launcher that lists a published
+    /// define constant fails in every configuration. A non-AOT launcher that reads the archives fails in the
+    /// <see cref="EBuildConfiguration.Release"/> configuration, which the project uses to mark production builds.
+    /// Production builds must use NativeAOT.
     /// </summary>
     /// <param name="settings">The build settings.</param>
-    /// <exception cref="InvalidOperationException">The settings make a Release launcher that reads the archives without NativeAOT.</exception>
-    internal static void ValidateDevelopmentArchiveLauncher(BuildSettings settings)
+    /// <exception cref="InvalidOperationException">The settings make a non-AOT launcher that counts as a production build.</exception>
+    internal static void ValidateLauncherBuildKind(BuildSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        global::CodeManager.ValidateLauncherDefineConstants(settings);
         if (!global::CodeManager.UsesDevelopmentArchiveLauncher(settings))
             return;
 
@@ -308,7 +310,7 @@ internal static partial class ProjectBuilder
         if (settings.PublishLauncherAsNativeAot && !settings.BuildLauncherExecutable)
             throw new InvalidOperationException("PublishLauncherAsNativeAot requires BuildLauncherExecutable to be enabled.");
 
-        ValidateDevelopmentArchiveLauncher(settings);
+        ValidateLauncherBuildKind(settings);
 
         bool isFinalBuild = settings.PublishLauncherAsNativeAot;
         // A development launcher that reads the archives needs the same archives as a final build.

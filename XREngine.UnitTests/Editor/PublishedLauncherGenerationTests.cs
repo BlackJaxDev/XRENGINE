@@ -146,6 +146,23 @@ public sealed class PublishedLauncherGenerationTests
         active.ShouldContain("AssetManager.ConfigurePublishedArchives(archivePath,contentArchivePath,commonAssetsArchivePath);", Case.Sensitive);
     }
 
+    [Test]
+    public void NonAotLauncher_WithAPublishedDefine_DoesNotCompose()
+    {
+        BuildSettings settings = new() { LauncherDefineConstants = XRRuntimeEnvironment.PublishedDefineConstant };
+
+        InvalidOperationException error = Should.Throw<InvalidOperationException>(
+            () => CodeManager.ComposeLauncherDefineConstantsForTests(settings));
+        error.Message.ShouldContain("NativeAOT");
+    }
+
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    [TestCase(true, true)]
+    public void ComposeDefineConstants_RejectsDevelopmentArchivesWithAPublishedConstant(bool published, bool aot)
+        => Should.Throw<ArgumentException>(() => XRRuntimeEnvironment.ComposeDefineConstants(
+            null, includePublishedBuild: published, includeAotRuntime: aot, includeDevelopmentArchives: true));
+
     private static HashSet<string> ComposeConstants(BuildSettings settings)
         => CodeManager
             .ComposeLauncherDefineConstantsForTests(settings)
