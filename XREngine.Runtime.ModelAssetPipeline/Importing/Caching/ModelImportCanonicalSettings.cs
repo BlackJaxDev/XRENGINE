@@ -30,6 +30,7 @@ public static class ModelImportCanonicalSettings
         writer.WriteBytes(24, SerializeSearchPaths(options.TextureLoadDirSearchPaths, sourceFilePath));
         writer.WriteBoolean(25, options.ImportBlendShapeNormals);
         writer.WriteInt32(26, (int)options.SurfaceDetailMapMode);
+        writer.WriteInt32(27, (int)options.DecalMaterialMode);
 
         // MultiThread, native worker count, ProcessMeshesAsynchronously,
         // GenerateMeshRenderersAsync, batch publication, and ProgressCallback affect only

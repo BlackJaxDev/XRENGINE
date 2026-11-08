@@ -277,7 +277,28 @@ namespace XREngine
             }
 
             mat.TransparencyMode = mode;
+            mat.AdvancedSurfaceDecal = IsImportedSurfaceDecal(mat.Name, mode, textures);
         }
+
+        /// <summary>
+        /// A masked material with an opacity map and "decal" in its name is a mesh surface decal.
+        /// It keeps its masked mode as the fallback for renderers without the decal lane.
+        /// </summary>
+        private static bool IsImportedSurfaceDecal(string? materialName, ETransparencyMode mode, List<TextureSlot> textures)
+            => ClassifySurfaceDecal(materialName, mode, textures,
+                _currentImportOptions.Value?.DecalMaterialMode ?? EDecalMaterialMode.Auto);
+
+        /// <summary>Pure surface decal rule for one imported material and decal mode.</summary>
+        internal static bool ClassifySurfaceDecal(
+            string? materialName,
+            ETransparencyMode mode,
+            List<TextureSlot> textures,
+            EDecalMaterialMode decalMode)
+            => decalMode == EDecalMaterialMode.Auto &&
+               mode == ETransparencyMode.Masked &&
+               materialName is not null &&
+               materialName.Contains("decal", StringComparison.OrdinalIgnoreCase) &&
+               HasOpacityMask(textures);
 
         public static XRMaterial MakeMaterialDefault(XRTexture[] textureList, List<TextureSlot> textures, string name)
             => MakeMaterialDeferred(textureList, textures, name);

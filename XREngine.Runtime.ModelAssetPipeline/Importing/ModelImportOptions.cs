@@ -230,6 +230,13 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public ESurfaceDetailMapMode SurfaceDetailMapMode { get; set; } = ESurfaceDetailMapMode.Auto;
 
     /// <summary>
+    /// Controls whether materials with an opacity map and "decal" in their name become surface
+    /// decals. The Advanced Render Pipeline on Vulkan blends a surface decal over the surface
+    /// below it before lighting. Other renderers draw it as a masked material.
+    /// </summary>
+    public EDecalMaterialMode DecalMaterialMode { get; set; } = EDecalMaterialMode.Auto;
+
+    /// <summary>
     /// Enables Assimp multithreading when the Assimp backend is used.
     /// </summary>
     [DefaultValue(true)]
