@@ -32,7 +32,8 @@ internal sealed partial class ImportedTextureStreamingManager
     /// Selects the per-frame limits. The limits fade to the new profile over
     /// <see cref="RuntimeEngine.Rendering.EngineSettings.TextureStreamingBudgetProfileFadeFrames"/> evaluations.
     /// The VRAM budget fit, the publish rule, and the generation checks do not change.
-    /// Any thread can call it.
+    /// Any thread can call it. It does not count holders: production code takes a lease through
+    /// <see cref="XREngine.Rendering.Residency.ITextureResidencyRequests.AcquireBudgetProfile"/>, and tests call this directly.
     /// </summary>
     /// <param name="profile">The profile to use.</param>
     internal void SetBudgetProfile(ETextureStreamingBudgetProfile profile)

@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Residency;
@@ -28,10 +27,10 @@ namespace XREngine.Cutscenes;
 /// first one of each asset gives one warning.
 /// </para>
 /// <para>
-/// By default, the backend holds the <see cref="ETextureStreamingBudgetProfile.Cutscene"/> budget profile while it
-/// exists. The profile is global to the streaming manager, so the backends of one manager share it with a reference count:
-/// the first backend selects the cutscene profile, and the last <see cref="Dispose"/> selects
-/// <see cref="ETextureStreamingBudgetProfile.Default"/> again.
+/// By default, the backend holds a lease on the <see cref="ETextureStreamingBudgetProfile.Cutscene"/> budget profile
+/// (<see cref="ITextureResidencyRequests.AcquireBudgetProfile"/>) while it exists. The seam counts the leases of all
+/// holders, so the profile goes back to <see cref="ETextureStreamingBudgetProfile.Default"/> only when the last lease is
+/// released. Each request of the backend is an owned <see cref="TextureResidencyHandle"/>.
 /// </para>
 /// </remarks>
 public sealed partial class TextureResidencyBackend : IResidencyBackend, IDisposable
@@ -48,12 +47,9 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
     /// <summary>A mip so high that the request asks for the preview only.</summary>
     private const int PreviewMip = 31;
 
-    private static readonly Lock ProfileOwnersSync = new();
-    private static readonly ConditionalWeakTable<ITextureResidencyRequests, StrongBox<int>> ProfileOwners = new();
-
     private readonly ITextureResidencyRequests _manager;
     private readonly Action<TextureResidencyTicket> _onRequestCompleted;
-    private readonly bool _ownsBudgetProfile;
+    private IDisposable? _budgetProfileLease;
     private readonly Lock _sync = new();
     private readonly Dictionary<long, BackendTicket> _tickets = [];
     private readonly Dictionary<long, long> _managerTickets = [];
@@ -119,9 +115,8 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
         _keys = keys;
         _onRequestCompleted = OnRequestCompleted;
         _manager.ResidencyRequestCompleted += _onRequestCompleted;
-        _ownsBudgetProfile = useCutsceneBudgetProfile;
-        if (_ownsBudgetProfile)
-            AcquireBudgetProfile(_manager);
+        if (useCutsceneBudgetProfile)
+            _budgetProfileLease = _manager.AcquireBudgetProfile(ETextureStreamingBudgetProfile.Cutscene);
     }
 
     /// <summary>The largest side of T1, in texels. The default is <see cref="DefaultCoarseMaxDimension"/>.</summary>
@@ -159,7 +154,7 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
     /// <inheritdoc />
     /// <remarks>True while model imports that register textures with streaming are active.</remarks>
     public bool AreAssetsLoading
-        => _manager.HasActiveImportedModelImports;
+        => _manager.AreStreamedTexturesImporting;
 
     /// <summary>
     /// Sets the planner that receives complete work. Call it one time, before <see cref="CutsceneResidencyPlanner.Open"/>.
@@ -223,18 +218,18 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
                     continue;
                 }
 
-                TextureResidencyTicket ticket = _manager.RequestResidency(texture, targetMip, deadlineFrame, priority, request.Generation);
-                if (!ticket.IsValid)
+                TextureResidencyHandle? handle = _manager.RequestResidency(texture, targetMip, deadlineFrame, priority, request.Generation);
+                if (handle is null)
                 {
                     notAccepted++;
                     continue;
                 }
 
-                entry.ManagerTickets.Add(ticket);
-                _managerTickets.Add(ticket.Id, id);
+                entry.Handles.Add(handle);
+                _managerTickets.Add(handle.Ticket.Id, id);
             }
 
-            if (entry.ManagerTickets.Count == 0)
+            if (entry.Handles.Count == 0)
             {
                 return Reject(request, sizeUnknown
                     ? "the source size of the texture is not known yet"
@@ -272,13 +267,13 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
             if (!_tickets.Remove(ticket.Id, out entry))
                 return;
 
-            for (int i = 0; i < entry.ManagerTickets.Count; i++)
-                _managerTickets.Remove(entry.ManagerTickets[i].Id);
+            for (int i = 0; i < entry.Handles.Count; i++)
+                _managerTickets.Remove(entry.Handles[i].Ticket.Id);
             RemoveAssetTicket(entry.AssetId, ticket.Id);
         }
 
-        for (int i = 0; i < entry.ManagerTickets.Count; i++)
-            _manager.CancelResidency(entry.ManagerTickets[i]);
+        for (int i = 0; i < entry.Handles.Count; i++)
+            entry.Handles[i].Dispose();
     }
 
     /// <inheritdoc />
@@ -321,15 +316,15 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
 
     private bool IsResidentLocked(BackendTicket entry)
     {
-        for (int i = 0; i < entry.ManagerTickets.Count; i++)
-            if (_manager.GetResidencyRequestState(entry.ManagerTickets[i]) != ETextureResidencyRequestState.Resident)
+        for (int i = 0; i < entry.Handles.Count; i++)
+            if (entry.Handles[i].State != ETextureResidencyRequestState.Resident)
                 return false;
         return true;
     }
 
     /// <summary>
-    /// Cancels all tickets of this backend, stops the completion reports, and releases the hold on the cutscene
-    /// budget profile. The last holder of the manager selects the default profile.
+    /// Disposes all request handles of this backend, stops the completion reports, and releases the lease on the cutscene
+    /// budget profile.
     /// </summary>
     public void Dispose()
     {
@@ -344,46 +339,15 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
 
             // The manager raises completions outside its own locks, so a cancel here cannot deadlock with them.
             foreach (BackendTicket entry in _tickets.Values)
-                for (int i = 0; i < entry.ManagerTickets.Count; i++)
-                    _manager.CancelResidency(entry.ManagerTickets[i]);
+                for (int i = 0; i < entry.Handles.Count; i++)
+                    entry.Handles[i].Dispose();
             _tickets.Clear();
             _managerTickets.Clear();
             _assetTickets.Clear();
         }
 
         ClearResolved();
-        if (_ownsBudgetProfile)
-            ReleaseBudgetProfile(_manager);
-    }
-
-    /// <summary>The number of backends that hold the cutscene budget profile of a manager.</summary>
-    /// <param name="manager">The streaming manager.</param>
-    internal static int GetBudgetProfileOwnerCount(ITextureResidencyRequests manager)
-    {
-        lock (ProfileOwnersSync)
-            return ProfileOwners.TryGetValue(manager, out StrongBox<int>? owners) ? owners.Value : 0;
-    }
-
-    private static void AcquireBudgetProfile(ITextureResidencyRequests manager)
-    {
-        lock (ProfileOwnersSync)
-        {
-            StrongBox<int> owners = ProfileOwners.GetValue(manager, static _ => new StrongBox<int>());
-            if (owners.Value++ == 0)
-                manager.SetBudgetProfile(ETextureStreamingBudgetProfile.Cutscene);
-        }
-    }
-
-    private static void ReleaseBudgetProfile(ITextureResidencyRequests manager)
-    {
-        lock (ProfileOwnersSync)
-        {
-            if (!ProfileOwners.TryGetValue(manager, out StrongBox<int>? owners) || owners.Value <= 0)
-                return;
-
-            if (--owners.Value == 0)
-                manager.SetBudgetProfile(ETextureStreamingBudgetProfile.Default);
-        }
+        Interlocked.Exchange(ref _budgetProfileLease, null)?.Dispose();
     }
 
     private void OnRequestCompleted(TextureResidencyTicket ticket)
@@ -477,12 +441,12 @@ public sealed partial class TextureResidencyBackend : IResidencyBackend, IDispos
             _assetTickets.Remove(assetId);
     }
 
-    /// <summary>One request of the planner, with the streaming tickets of each live texture of its asset.</summary>
+    /// <summary>One request of the planner, with the owned streaming request handle of each live texture of its asset.</summary>
     private sealed class BackendTicket(Guid assetId, int level, int textureCount)
     {
         public Guid AssetId { get; } = assetId;
         public int Level { get; } = level;
-        public List<TextureResidencyTicket> ManagerTickets { get; } = new(textureCount);
+        public List<TextureResidencyHandle> Handles { get; } = new(textureCount);
         public bool Notified { get; set; }
     }
 }

@@ -63,7 +63,14 @@ The `XRTS` payload stores a preview mip and per-mip offsets. Streamability check
 
 ## Explicit Residency Requests
 
-A caller can request a mip of a streamed texture before the texture is visible. The public seam is `ITextureResidencyRequests` (namespace `XREngine.Rendering.Residency`). `TextureResidencyRequests.Shared` returns the shared instance. `ImportedTextureStreamingManager` stays internal and implements the interface explicitly; each interface member forwards to the manager member with the same name. The interface also exposes `CurrentFrameId`, `IsUnderBudgetPressure`, `BudgetPressureFrameId`, `HasActiveImportedModelImports`, `TryGetSourceMaxDimension`, and `SetBudgetProfile`. The cutscene residency planner uses this seam through `TextureResidencyBackend` (see [Cutscene System](../animation/cutscene-system.md#residency)).
+A caller can request a mip of a streamed texture before the texture is visible. The public seam is `ITextureResidencyRequests` (namespace `XREngine.Rendering.Residency`). `TextureResidencyRequests.Shared` returns the shared instance. `ImportedTextureStreamingManager` stays internal and implements the interface explicitly. Any thread can call each member.
+
+- `RequestResidency` returns an owned `TextureResidencyHandle`, or null when streaming does not track the texture. Dispose the handle to cancel the request; `TextureResidencyHandle.State` gives the request state. A handle that is never disposed keeps the mip resident until the process ends or the texture is destroyed. Streaming does not keep the handle alive and the handle has no finalizer.
+- Each evaluation drops the request of a texture that was collected, destroyed, or queued for destruction. The state of a dropped request is `None`, and one `Texture` log line records the drop.
+- `AcquireBudgetProfile(profile)` returns a lease. The seam counts the leases; the last dispose selects `Default` again. `Default` itself takes no lease. The interface has no setter, so callers that do not know each other cannot release the profile of another caller.
+- The interface also exposes `CurrentFrameId` (the streaming collect frame, not the engine frame), `IsUnderBudgetPressure`, `BudgetPressureFrameId`, `AreStreamedTexturesImporting`, and `TryGetSourceMaxDimension`.
+
+The internal manager members below implement the seam. The cutscene residency planner uses this seam through `TextureResidencyBackend` (see [Cutscene System](../animation/cutscene-system.md#residency)).
 
 - `ImportedTextureStreamingManager.RequestResidency(texture, targetMip, deadlineFrame, priority, generation)` returns a `TextureResidencyTicket`. Mip 0 is the full source size; each step halves it. A large mip asks for the preview only. `CancelResidency(ticket)` ends the request. `GetResidencyRequestState(ticket)` returns `Pending`, `Resident`, or `None`. The event `ResidencyRequestCompleted` occurs one time for each request, after the state becomes `Resident`. A cancel can occur between the state change and the event, so a handler must ignore a ticket that it already cancelled. The `generation` argument appears in the rejection and cancel logs; the manager does not compare it.
 - The texture must be tracked by streaming. A request registers a native imported texture the same way a first material use does. Otherwise the manager rejects the request, logs a warning, and returns `TextureResidencyTicket.None`.
@@ -76,7 +83,7 @@ A caller can request a mip of a streamed texture before the texture is visible. 
 
 ## Budget Profiles
 
-`ImportedTextureStreamingManager.SetBudgetProfile(ETextureStreamingBudgetProfile)` selects the per-frame limits (`TextureStreamingBudgetLimits`). The limits fade from one profile to the other over `TextureStreamingBudgetProfileFadeFrames` evaluations (default 30; 0 changes them in one frame). The profile is global to the manager. The cutscene `TextureResidencyBackend` instances of one manager share the `Cutscene` profile with a reference count, so the profile goes back to `Default` only when the last backend is disposed.
+A budget profile lease (`ITextureResidencyRequests.AcquireBudgetProfile`) selects the per-frame limits (`TextureStreamingBudgetLimits`). The internal `ImportedTextureStreamingManager.SetBudgetProfile` does not count holders; only the lease code and tests call it. The limits fade from one profile to the other over `TextureStreamingBudgetProfileFadeFrames` evaluations (default 30; 0 changes them in one frame). The profile is global to the manager. The seam counts the leases of all holders, so the profile goes back to `Default` only when the last lease is disposed. Each cutscene `TextureResidencyBackend` holds one lease until it is disposed.
 
 | Limit | `Default` | `Cutscene` setting (provisional default) |
 |---|---|---|

@@ -14,9 +14,9 @@ public sealed partial class TextureResidencyBackend
     private readonly List<XRTexture2D> _resolveScratch = [];
     private bool _deadHitRebuildUsed;
 
-    /// <summary>True while model imports that register textures with the shared streaming manager are active.</summary>
+    /// <summary>True while imports that register textures with the shared streaming manager are active.</summary>
     public static bool AreModelImportsActive
-        => TextureResidencyRequests.Shared.HasActiveImportedModelImports;
+        => TextureResidencyRequests.Shared.AreStreamedTexturesImporting;
 
     /// <inheritdoc />
     /// <remarks>

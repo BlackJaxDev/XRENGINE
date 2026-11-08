@@ -17,6 +17,7 @@ internal sealed partial class ImportedTextureStreamingManager
     private readonly List<TextureResidencyRequest> _activeResidencyRequests = [];
     private readonly List<ImportedTextureStreamingRecord> _requestedRecords = [];
     private readonly List<long> _completedResidencyRequestScratch = [];
+    private readonly List<TextureResidencyRequest> _droppedResidencyRequestScratch = [];
     private long _nextResidencyTicketId;
     private long _residencyRefreshSequence;
     private bool _requestImportDeferralLogged;
@@ -228,6 +229,12 @@ internal sealed partial class ImportedTextureStreamingManager
             {
                 TextureResidencyRequest request = _activeResidencyRequests[i];
                 ImportedTextureStreamingRecord record = request.Record;
+                if (IsRequestTextureGone(record))
+                {
+                    _droppedResidencyRequestScratch.Add(request);
+                    continue;
+                }
+
                 bool resident;
                 lock (record.Sync)
                 {
@@ -257,6 +264,8 @@ internal sealed partial class ImportedTextureStreamingManager
                     request.State = ETextureResidencyRequestState.Pending;
                 }
             }
+
+            DropResidencyRequestsNoLock(_droppedResidencyRequestScratch);
         }
 
         Action<TextureResidencyTicket>? handler = ResidencyRequestCompleted;
@@ -287,6 +296,32 @@ internal sealed partial class ImportedTextureStreamingManager
             previewMaxDimension,
             quality);
         return record.ResidentMaxDimension >= target;
+    }
+
+    /// <summary>True if the texture of a record was collected, destroyed, or queued for destruction.</summary>
+    private static bool IsRequestTextureGone(ImportedTextureStreamingRecord record)
+        => !record.Texture.TryGetTarget(out XRTexture2D? texture) || texture.IsDestroyed || texture.IsDestroyQueued;
+
+    /// <summary>
+    /// Ends the requests of textures that are gone, so a request whose owner never cancels it does not stay for the life
+    /// of the process. A dropped request has the state <see cref="ETextureResidencyRequestState.None"/>, and a later cancel
+    /// of its ticket returns false. The caller holds the request lock. It clears the list.
+    /// </summary>
+    private void DropResidencyRequestsNoLock(List<TextureResidencyRequest> dropped)
+    {
+        for (int i = 0; i < dropped.Count; i++)
+        {
+            TextureResidencyRequest request = dropped[i];
+            if (!_residencyRequestsById.Remove(request.Id))
+                continue;
+
+            RemoveActiveRequestNoLock(request);
+            request.State = ETextureResidencyRequestState.None;
+            Debug.Textures(
+                $"[TextureStreaming] Residency request {request.Id} (generation {request.Generation}) for '{request.Record.FilePath}' ended: the texture was destroyed.");
+        }
+
+        dropped.Clear();
     }
 
     private void RemoveActiveRequestNoLock(TextureResidencyRequest request)
