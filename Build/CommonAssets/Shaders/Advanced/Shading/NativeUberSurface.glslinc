@@ -21,13 +21,57 @@ vec3 XR_UBER_UnpackNormal(vec4 sampleValue, float scale)
     return vec3(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
 }
 
+// Converts the _BumpMap height (red channel) to a tangent-space normal when the
+// material sets NormalMapMode 1. The 3x3 Sobel kernel, the 0.25 slope factor, and the
+// HeightMapScale * _BumpScale scale match heightMapToTangentNormal in the forward Uber
+// shader, so both pipelines shade height maps the same way. The slopes already follow
+// the tangent and bitangent, so no green flip applies.
+vec3 XR_UBER_HeightTangentNormal(XRUberCoordinates c, float scale)
+{
+    uint slot = UBER_T(_BumpMap);
+    XRAdvancedEncodedTextureReference reference;
+    if (slot >= XR_UBER_Material.textureReferenceCount ||
+        !XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(XR_UBER_Material, slot), reference))
+        return vec3(0.0, 0.0, 1.0);
+
+    vec2 uv, dx, dy;
+    XR_UBER_CoverageUv(c, UBER_I(_BumpMapUV), uv, dx, dy);
+    vec4 st = UBER_V(_BumpMap_ST);
+    uv = uv * st.xy + st.zw + UBER_V(_BumpMapPan).xy * c.time;
+    dx *= st.xy;
+    dy *= st.xy;
+    vec2 texel = 1.0 / vec2(max(XR_ADV_Texture2DSize(reference), ivec2(1)));
+
+    float tl = XR_ADV_SampleTexture2DGrad(reference, uv + vec2(-texel.x, -texel.y), dx, dy).r;
+    float t  = XR_ADV_SampleTexture2DGrad(reference, uv + vec2(0.0, -texel.y), dx, dy).r;
+    float tr = XR_ADV_SampleTexture2DGrad(reference, uv + vec2(texel.x, -texel.y), dx, dy).r;
+    float l  = XR_ADV_SampleTexture2DGrad(reference, uv + vec2(-texel.x, 0.0), dx, dy).r;
+    float r  = XR_ADV_SampleTexture2DGrad(reference, uv + vec2(texel.x, 0.0), dx, dy).r;
+    float bl = XR_ADV_SampleTexture2DGrad(reference, uv + vec2(-texel.x, texel.y), dx, dy).r;
+    float b  = XR_ADV_SampleTexture2DGrad(reference, uv + vec2(0.0, texel.y), dx, dy).r;
+    float br = XR_ADV_SampleTexture2DGrad(reference, uv + vec2(texel.x, texel.y), dx, dy).r;
+
+    float slopeX = ((tl + 2.0 * l + bl) - (tr + 2.0 * r + br)) * 0.25;
+    float slopeY = ((tl + 2.0 * t + tr) - (bl + 2.0 * b + br)) * 0.25;
+    return normalize(vec3(vec2(slopeX, slopeY) * scale, 1.0));
+}
+
 vec3 XR_UBER_Normal(XRUberCoordinates c, vec3 geometric, vec3 tangent, vec3 bitangent)
 {
     vec3 mapped = vec3(0.0, 0.0, 1.0);
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_NORMAL_MAP))
     {
-        mapped = XR_UBER_UnpackNormal(UBER_SAMPLE(c, _BumpMap, vec4(0.5, 0.5, 1.0, 1.0)), UBER_F(_BumpScale));
-        if (UBER_I(_BumpMapFlipGreen) != 0) mapped.y = -mapped.y;
+        if (UBER_I(NormalMapMode) == 1)
+        {
+            // A height map is not a tangent normal: decoding it as one tilts every normal.
+            float heightScale = abs(UBER_F(HeightMapScale)) > 1.0e-6 ? UBER_F(HeightMapScale) : 1.0;
+            mapped = XR_UBER_HeightTangentNormal(c, heightScale * UBER_F(_BumpScale));
+        }
+        else
+        {
+            mapped = XR_UBER_UnpackNormal(UBER_SAMPLE(c, _BumpMap, vec4(0.5, 0.5, 1.0, 1.0)), UBER_F(_BumpScale));
+            if (UBER_I(_BumpMapFlipGreen) != 0) mapped.y = -mapped.y;
+        }
     }
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_DETAIL_TEXTURES) && abs(UBER_F(_DetailNormalMapScale)) > 1.0e-6)
     {

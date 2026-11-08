@@ -1031,6 +1031,9 @@ namespace XREngine
         private const int ImportedSurfaceDetailNormalMapMode = 0;
         private const int ImportedSurfaceDetailHeightMapMode = 1;
         private const float ImportedHeightMapScale = 1.0f;
+
+        /// <summary>Uber lighting mode for generic model imports: 6 is Realistic.</summary>
+        private const int ImportedUberLightingMode = 6;
         private const string ImportedHeightMapShaderDefine = "XRENGINE_HEIGHTMAP_MODE";
         private const string ImportedHeightMapParallaxShaderDefine = "XRENGINE_HEIGHTMAP_POM";
         private const string ImportedParallaxScaleParameter = "ParallaxScale";
@@ -1692,7 +1695,9 @@ namespace XREngine
                 new ShaderInt(0, "_MainHueShiftColorSpace"),
                 new ShaderFloat(0.0f, "_MainHueShiftReplace"),
 
-                new ShaderInt(5, "_LightingMode"),
+                // Generic model imports use Realistic lighting. Only Poiyomi conversions keep the
+                // lighting mode of the source material (see SourceToonEnumMapper.LightingMode).
+                new ShaderInt(ImportedUberLightingMode, "_LightingMode"),
                 new ShaderInt(0, "_LightingColorMode"),
                 new ShaderInt(2, "_LightingMapMode"),
                 new ShaderInt(0, "_LightingDirectionMode"),
