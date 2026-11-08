@@ -492,8 +492,10 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
 
         // Root attach activates components synchronously, and an activated component can add or remove roots of the
         // same scene. So the loop reads a pooled snapshot and repeats while the scene list has roots that it did not
-        // see. The roots set makes a repeated node a no-op. The pool is safe when a nested scene load uses it.
+        // see. The roots set makes a repeated node a no-op. The pool is safe when a nested scene load uses it. The repeat
+        // stops when a nested unload took the scene out of the visible set, and after a bounded number of passes.
         int snapshotCount;
+        int pass = 0;
         do
         {
             snapshotCount = scene.RootNodes.Count;
@@ -509,8 +511,14 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
                 ArrayPool<SceneNode>.Shared.Return(snapshot, clearArray: true);
             }
         }
-        while (HasUnloadedVisibleRoot(scene, roots));
+        while (++pass < MaxVisibleRootLoadPasses
+            && _visibleRootsByScene.TryGetValue(scene, out HashSet<SceneNode>? current)
+            && ReferenceEquals(current, roots)
+            && HasUnloadedVisibleRoot(scene, roots));
     }
+
+    // Each pass loads the roots that activation added in the pass before; a chain longer than this is a defect.
+    private const int MaxVisibleRootLoadPasses = 16;
 
     private void LoadVisibleSceneRoot(XRScene scene, HashSet<SceneNode> roots, SceneNode? node)
     {
