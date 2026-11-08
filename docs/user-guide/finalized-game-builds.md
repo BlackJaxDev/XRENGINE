@@ -156,7 +156,12 @@ Set `DevelopmentLauncherReadsArchives: true` in the build settings (or pass `--d
 
 The generated launcher configures the `EXRRuntimeBuildKind.DevelopmentArchives` build kind. It is not `Published` or `PublishedAot`, so `XRRuntimeEnvironment.IsPublishedBuild` is false and reflective loading stays available. At startup, the launcher writes one line that says it is a development build that reads the archives. A missing config, content, or common-assets archive stops the launcher. Asset loads read the archives through the authoring cooked reader, which also reads the reflective formats of a non-AOT cook. Separate `lod/` entries resolve through `PublishedArchiveRegistry`.
 
-This mode never uses a loose file in place of an archive entry. When an archive is configured for a request, an entry that does not read, an entry with a stale contract version, or a missing entry fails the load with an error that names the asset and the archive. Re-cook the content, or cook the missing asset into the archives.
+This mode never uses a loose file in place of an archive entry. When an archive is configured for a request:
+
+- An entry that exists but does not read, has a stale contract version, or deserializes to null fails the load with an error that names the asset and the archive. Re-cook the content.
+- A missing entry gives null from the APIs that can return null (`Load`, `LoadAsync`, `LoadGameAsset`, and the `Try` APIs). The load records one missing-asset diagnostic that names the searched archives. It does not read the loose file.
+- `LoadEngineAsset` cannot return null, so a missing entry throws.
+- The launcher throws its own error when the required startup settings do not load from the config archive. The optional user settings can be missing.
 
 A build with this option and the `Release` configuration fails with an error, because the project marks production builds with the `Release` configuration. The same rule applies when `LauncherDefineConstants` lists `XRE_DEVELOPMENT_ARCHIVES` by hand. A NativeAOT launcher ignores the option and never takes the define constant. Do not add `XRE_PUBLISHED` to this mode: a non-AOT launcher with that define fails the build.
 
@@ -316,13 +321,13 @@ The asset is being loaded by a published AOT runtime without an explicit runtime
 
 The cooked blob says `RuntimeBinaryV1`, but the final runtime did not register a matching serializer. Ensure the registration assembly is referenced by the final launcher closure and that the registration runs before asset load.
 
-`The launcher defines XRE_PUBLISHED, but PublishLauncherAsNativeAot is off.`
+`The launcher defines XRE_PUBLISHED (build settings '<path>'), but PublishLauncherAsNativeAot is off.`
 
 A non-AOT launcher cannot be a published build. Enable `PublishLauncherAsNativeAot` for a production build. For non-AOT testing of the archives, enable `DevelopmentLauncherReadsArchives` and remove `XRE_PUBLISHED` and `XRE_AOT_RUNTIME` from `LauncherDefineConstants` or `--define-constants`.
 
 `Development archive build: asset '<path>' ...`
 
-A development launcher that reads the archives could not load an asset from the archives, and it does not use the loose file instead. The message names the asset and the archive. Re-cook the content, or cook the missing asset into the archives.
+A development launcher that reads the archives found an archive entry that does not load, and it does not use the loose file instead. The message names the asset and the archive. Re-cook the content. A missing entry shows as a missing-asset diagnostic that names the searched archives; cook the asset into the archives.
 
 AOT publish stops because the warning report is non-empty.
 

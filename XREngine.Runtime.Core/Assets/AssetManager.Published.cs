@@ -39,10 +39,11 @@ namespace XREngine
 
         private static bool TryLoadPublishedAssetFromArchive<T>(
             string filePath,
-            [NotNullWhen(true)] out T? asset) where T : XRAsset, new()
+            [NotNullWhen(true)] out T? asset,
+            out bool searchedWithoutEntry) where T : XRAsset, new()
         {
             asset = default;
-            if (TryLoadPublishedAssetFromArchive(filePath, typeof(T), out XRAsset? loaded) && loaded is T typed)
+            if (TryLoadPublishedAssetFromArchive(filePath, typeof(T), out XRAsset? loaded, out searchedWithoutEntry) && loaded is T typed)
             {
                 asset = typed;
                 return true;
@@ -60,17 +61,27 @@ namespace XREngine
         /// <remarks>
         /// A published build logs a failed read as a warning and returns false. A development build that reads the archives
         /// must not use a loose file in place of an archive entry, because that hides cooked content that does not load. So
-        /// when at least one archive root is configured for the request, a failed read, a stale contract, or a missing entry
-        /// throws an error that names the asset and the archive.
+        /// when at least one archive root is configured for the request, an entry that exists but does not read, has a stale
+        /// contract, or deserializes to null throws an error that names the asset and the archive. A missing entry is not an
+        /// error of the entry: the method records one missing-asset diagnostic, sets <paramref name="searchedWithoutEntry"/>,
+        /// and returns false. The caller then returns null and does not read the loose file.
         /// </remarks>
-        /// <exception cref="InvalidDataException">A development archive build cannot read the archive entry.</exception>
-        /// <exception cref="FileNotFoundException">A development archive build finds no entry for the asset in the configured archives.</exception>
+        /// <param name="filePath">The requested asset path.</param>
+        /// <param name="expectedType">The type that the caller expects.</param>
+        /// <param name="asset">Receives the loaded asset.</param>
+        /// <param name="searchedWithoutEntry">
+        /// True when a development archive build searched at least one configured archive and found no entry. The caller
+        /// must not use the loose file.
+        /// </param>
+        /// <exception cref="InvalidDataException">A development archive build cannot read an existing archive entry.</exception>
         internal static bool TryLoadPublishedAssetFromArchive(
             string filePath,
             Type expectedType,
-            [NotNullWhen(true)] out XRAsset? asset)
+            [NotNullWhen(true)] out XRAsset? asset,
+            out bool searchedWithoutEntry)
         {
             asset = null;
+            searchedWithoutEntry = false;
 
             if (!XRRuntimeEnvironment.ReadsPublishedArchives)
                 return false;
@@ -138,9 +149,11 @@ namespace XREngine
 
             if (failLoudly && searchedArchives is not null)
             {
-                throw new FileNotFoundException(
-                    $"Development archive build: asset '{filePath}' has no entry in the configured archives ({string.Join(", ", searchedArchives)}). The loose file is not used in place of the archive entry. Cook the asset into the archives.",
-                    filePath);
+                AssetDiagnostics.RecordMissingAsset(
+                    filePath,
+                    expectedType.Name,
+                    $"Development archive build: no entry in the configured archives ({string.Join(", ", searchedArchives)}). The loose file is not used in place of the archive entry.");
+                searchedWithoutEntry = true;
             }
 
             return false;

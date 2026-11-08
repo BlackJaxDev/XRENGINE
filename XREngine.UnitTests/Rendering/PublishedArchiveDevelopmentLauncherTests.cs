@@ -2,6 +2,7 @@ using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
+using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 
@@ -18,6 +19,7 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
 
     private string _root = string.Empty;
     private EXRRuntimeBuildKind _previousBuildKind;
+    private AssetManager? _manager;
 
     [SetUp]
     public void SetUp()
@@ -25,14 +27,18 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
         _root = Path.Combine(TestContext.CurrentContext.WorkDirectory, "PublishedArchiveDevelopmentLauncher", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
         _previousBuildKind = XRRuntimeEnvironment.BuildKind;
+        AssetDiagnostics.ClearTrackedMissingAssets();
     }
 
     [TearDown]
     public void TearDown()
     {
+        _manager?.Dispose();
+        _manager = null;
         AssetManager.ConfigurePublishedArchives(null, null, null);
         AssetManager.ClosePublishedArchives();
         XRRuntimeEnvironment.ConfigureBuildKind(_previousBuildKind);
+        AssetDiagnostics.ClearTrackedMissingAssets();
         if (Directory.Exists(_root))
             Directory.Delete(_root, recursive: true);
     }
@@ -57,7 +63,7 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
 
         using (SubMeshLodPayloads.UseLoadPolicy(ELodPayloadLoadPolicy.All))
         {
-            AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out XRAsset? loaded).ShouldBeTrue();
+            AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out XRAsset? loaded, out _).ShouldBeTrue();
             Model model = loaded.ShouldBeOfType<Model>();
             SubMesh subMesh = model.Meshes.Single();
             subMesh.HasNonResidentLods.ShouldBeFalse();
@@ -67,7 +73,7 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
 
         using (SubMeshLodPayloads.UseLoadPolicy(ELodPayloadLoadPolicy.ProxyFirst))
         {
-            AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out XRAsset? loaded).ShouldBeTrue();
+            AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out XRAsset? loaded, out _).ShouldBeTrue();
             SubMesh subMesh = loaded.ShouldBeOfType<Model>().Meshes.Single();
             SubMeshLOD[] deferred = [.. subMesh.LODs.Where(lod => lod.IsPayloadDeferred)];
             deferred.Length.ShouldBe(lodEntryCount);
@@ -90,7 +96,8 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
 
         XRRuntimeEnvironment.ReadsPublishedArchives.ShouldBeFalse();
         AssetManager.TryLoadPublishedAssetFromArchive(
-            Path.Combine(_root, "Assets", "Models", "Split.asset"), typeof(Model), out XRAsset? loaded).ShouldBeFalse();
+            Path.Combine(_root, "Assets", "Models", "Split.asset"), typeof(Model), out XRAsset? loaded, out bool searched).ShouldBeFalse();
+        searched.ShouldBeFalse();
         loaded.ShouldBeNull();
     }
 
@@ -103,7 +110,7 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
         string requestPath = WriteLooseFile("Broken", "Bad.asset");
 
         InvalidDataException error = Should.Throw<InvalidDataException>(
-            () => AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out _));
+            () => AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out _, out _));
 
         error.Message.ShouldContain("Broken/Bad.asset");
         error.Message.ShouldContain(archivePath);
@@ -121,7 +128,7 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
         string requestPath = WriteLooseFile("Stale", "Old.asset");
 
         InvalidDataException error = Should.Throw<InvalidDataException>(
-            () => AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(BuildSettings), out _));
+            () => AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(BuildSettings), out _, out _));
 
         error.Message.ShouldContain("Stale/Old.asset");
         error.Message.ShouldContain(archivePath);
@@ -129,18 +136,63 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
     }
 
     [Test]
-    public void DevelopmentArchiveBuild_FailsLoudly_ForAMissingEntry_AlsoWhenTheLooseFileExists()
+    public void DevelopmentArchiveBuild_MissingEntry_ReturnsFalse_WithOneDiagnostic()
     {
         string archivePath = PackSplitModelArchive(out _);
         ConfigureDevelopmentArchives(archivePath);
         string requestPath = WriteLooseFile("Models", "Missing.asset");
 
-        FileNotFoundException error = Should.Throw<FileNotFoundException>(
-            () => AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out _));
+        AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out XRAsset? loaded, out bool searched)
+            .ShouldBeFalse();
 
-        error.Message.ShouldContain(requestPath);
-        error.Message.ShouldContain(archivePath);
-        error.Message.ShouldContain("loose file is not used");
+        loaded.ShouldBeNull();
+        searched.ShouldBeTrue();
+        MissingDiagnosticCount("Missing.asset").ShouldBe(1);
+    }
+
+    [Test]
+    public void DevelopmentArchiveBuild_NullableLoads_ReturnNull_ForAMissingEntry_AndNeverReadTheLooseFile()
+    {
+        string archivePath = PackSplitModelArchive(out _);
+        ConfigureDevelopmentArchives(archivePath);
+        // A loose file that would load as a model sits beside the missing entry.
+        string loosePath = WriteLooseFile("Models", "Missing.asset");
+        AssetManager manager = CreateManager();
+
+        manager.Load<Model>(loosePath, JobPriority.Normal, bypassJobThread: true).ShouldBeNull();
+        MissingDiagnosticCount("Missing.asset").ShouldBe(1);
+
+        manager.LoadGameAsset<Model>(JobPriority.Normal, true, "Models", "Other.asset").ShouldBeNull();
+        MissingDiagnosticCount("Other.asset").ShouldBe(1);
+
+        // The optional user settings of the launcher: no entry gives null, not an error.
+        manager.Load<UserSettings>(Path.Combine(_root, "Config", "user_settings.asset"), JobPriority.Normal, true).ShouldBeNull();
+        MissingDiagnosticCount("user_settings.asset").ShouldBe(1);
+    }
+
+    [Test]
+    public void DevelopmentArchiveBuild_StartupFallback_LoadsTheGameAssetFromTheArchive()
+    {
+        string archivePath = PackSplitModelArchive(out _);
+        ConfigureDevelopmentArchives(archivePath);
+        AssetManager manager = CreateManager();
+
+        // The launcher pattern: Load(x) ?? LoadGameAsset(x). The first load misses and gives null, so the fallback runs.
+        Model? model = manager.Load<Model>(Path.Combine(_root, "Elsewhere", "Split.asset"), JobPriority.Normal, true)
+            ?? manager.LoadGameAsset<Model>(JobPriority.Normal, true, "Models", "Split.asset");
+
+        model.ShouldNotBeNull().Meshes.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public void DevelopmentArchiveBuild_LoadEngineAsset_Throws_ForAMissingEntry()
+    {
+        string archivePath = PackSplitModelArchive(out _);
+        ConfigureDevelopmentArchives(archivePath);
+        AssetManager manager = CreateManager();
+
+        Should.Throw<FileNotFoundException>(
+            () => manager.LoadEngineAsset<Model>(JobPriority.Normal, bypassJobThread: true, "Missing", "Engine.asset"));
     }
 
     [Test]
@@ -152,8 +204,9 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
         AssetManager.ConfigurePublishedArchives(null, archivePath, null);
 
         AssetManager.TryLoadPublishedAssetFromArchive(
-            Path.Combine(_root, "Assets", "Broken", "Bad.asset"), typeof(Model), out XRAsset? loaded).ShouldBeFalse();
+            Path.Combine(_root, "Assets", "Broken", "Bad.asset"), typeof(Model), out XRAsset? loaded, out bool searched).ShouldBeFalse();
         loaded.ShouldBeNull();
+        searched.ShouldBeFalse();
     }
 
     [TestCase(EXRRuntimeBuildKind.Development, false, false, true)]
@@ -169,6 +222,28 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
         XRRuntimeEnvironment.IsPublishedBuild.ShouldBe(published);
         XRRuntimeEnvironment.IsDevelopmentBuild.ShouldBe(development);
         XRRuntimeEnvironment.IsAotRuntimeBuild.ShouldBe(kind == EXRRuntimeBuildKind.PublishedAot);
+    }
+
+    /// <summary>Creates the asset manager of a test. The teardown disposes it.</summary>
+    private AssetManager CreateManager()
+    {
+        _manager = new AssetManager
+        {
+            MonitorGameAssetsForChanges = false,
+            GameAssetsPath = Path.Combine(_root, "Assets"),
+        };
+        return _manager;
+    }
+
+    private static int MissingDiagnosticCount(string fileName)
+    {
+        int count = 0;
+        foreach (AssetDiagnostics.MissingAssetInfo info in AssetDiagnostics.GetTrackedMissingAssets())
+        {
+            if (info.AssetPath.EndsWith(fileName, StringComparison.OrdinalIgnoreCase))
+                count += info.Count;
+        }
+        return count;
     }
 
     private static void ConfigureDevelopmentArchives(string archivePath)

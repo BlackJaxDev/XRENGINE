@@ -121,6 +121,9 @@ public sealed class PublishedLauncherGenerationTests
         // The published-only paths stay out of a development build.
         active.ShouldNotContain("LoadRequiredPublishedAsset", Case.Sensitive);
         active.ShouldNotContain("RunAotSmoke(", Case.Sensitive);
+        // The required startup load fails with its own error when both loads give null.
+        active.ShouldContain("Developmentarchivebuild:therequiredstartupsettings'startup.asset'didnotload", Case.Sensitive);
+        active.ShouldNotContain("Console.Error.WriteLine(\"Failedtoloadstartupsettings.\");", Case.Sensitive);
     }
 
     [Test]

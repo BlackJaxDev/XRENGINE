@@ -215,13 +215,20 @@ namespace XREngine
             CancellationToken cancellationToken)
             where T : XRAsset, new()
         {
-            if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, out T? publishedAsset))
+            if (normalizedExtension == AssetExtension)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                CompleteLoadObjectPublication(publication);
-                AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Loaded published asset from archive.", 1.0f);
-                PostLoaded(filePath, publishedAsset);
-                return publishedAsset;
+                if (TryLoadPublishedAssetFromArchive(filePath, out T? publishedAsset, out bool archiveSearchedWithoutEntry))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    CompleteLoadObjectPublication(publication);
+                    AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Loaded published asset from archive.", 1.0f);
+                    PostLoaded(filePath, publishedAsset);
+                    return publishedAsset;
+                }
+
+                // A development archive build recorded the missing entry. It never reads the loose file instead.
+                if (archiveSearchedWithoutEntry)
+                    return null;
             }
 
             if (!File.Exists(filePath))
@@ -313,12 +320,19 @@ namespace XREngine
             Type type,
             ObjectCachePublicationScope? publication)
         {
-            if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, type, out XRAsset? publishedAsset))
+            if (normalizedExtension == AssetExtension)
             {
-                CompleteLoadObjectPublication(publication);
-                AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Loaded published asset from archive.", 1.0f);
-                PostLoaded(filePath, publishedAsset);
-                return publishedAsset;
+                if (TryLoadPublishedAssetFromArchive(filePath, type, out XRAsset? publishedAsset, out bool archiveSearchedWithoutEntry))
+                {
+                    CompleteLoadObjectPublication(publication);
+                    AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Loaded published asset from archive.", 1.0f);
+                    PostLoaded(filePath, publishedAsset);
+                    return publishedAsset;
+                }
+
+                // A development archive build recorded the missing entry. It never reads the loose file instead.
+                if (archiveSearchedWithoutEntry)
+                    return null;
             }
 
             if (!File.Exists(filePath))

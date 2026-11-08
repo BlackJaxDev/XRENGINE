@@ -1222,19 +1222,25 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         if (published is null)
             return;
 
+        string settingsAsset = settings.FilePath
+            ?? Engine.CurrentProject?.BuildSettingsPath
+            ?? $"Config/{XRProject.BuildSettingsFileName}";
         throw new InvalidOperationException(
-            $"The launcher defines {published}, but {nameof(BuildSettings.PublishLauncherAsNativeAot)} is off. " +
+            $"The launcher defines {published} (build settings '{settingsAsset}'), but {nameof(BuildSettings.PublishLauncherAsNativeAot)} is off. " +
             $"Production published builds must use NativeAOT: enable {nameof(BuildSettings.PublishLauncherAsNativeAot)}. " +
             $"For non-AOT testing of the archives, enable {nameof(BuildSettings.DevelopmentLauncherReadsArchives)} and remove " +
             $"{published} from {nameof(BuildSettings.LauncherDefineConstants)} (or from --define-constants).");
     }
+
+    /// <summary>The separators that the C# compiler accepts between define constants.</summary>
+    private static readonly char[] DefineConstantSeparators = [';', ',', ' ', '\t', '\r', '\n'];
 
     private static bool ContainsDefineConstant(string? constants, string name)
     {
         if (string.IsNullOrWhiteSpace(constants))
             return false;
 
-        foreach (string token in constants.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (string token in constants.Split(DefineConstantSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (string.Equals(token, name, StringComparison.Ordinal))
                 return true;
@@ -1246,7 +1252,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     private static string RemoveDefineConstant(string constants, string name)
     {
         List<string> kept = [];
-        foreach (string token in constants.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (string token in constants.Split(DefineConstantSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (!string.Equals(token, name, StringComparison.Ordinal))
                 kept.Add(token);
@@ -1428,6 +1434,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        {");
         sb.AppendLine("#if XRE_PUBLISHED");
         sb.AppendLine($"            startup = LoadRequiredPublishedAsset<GameStartupSettings>(archivePath, \"{escapedStartup}\");");
+        sb.AppendLine("#elif XRE_DEVELOPMENT_ARCHIVES");
+        sb.AppendLine($"            throw new InvalidOperationException($\"Development archive build: the required startup settings '{escapedStartup}' did not load from config archive '{{archivePath}}'. Re-cook the content.\");");
         sb.AppendLine("#else");
         sb.AppendLine("            Console.Error.WriteLine(\"Failed to load startup settings.\");");
         sb.AppendLine("            return;");

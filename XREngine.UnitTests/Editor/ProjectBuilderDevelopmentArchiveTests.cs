@@ -106,6 +106,26 @@ public sealed class ProjectBuilderDevelopmentArchiveTests
         Should.Throw<InvalidOperationException>(() => CodeManager.ComposeLauncherDefineConstantsForTests(settings));
     }
 
+    [TestCase("XRE_PUBLISHED,FOO")]
+    [TestCase("FOO XRE_PUBLISHED")]
+    [TestCase("FOO;\tXRE_AOT_RUNTIME")]
+    public void NonAotLauncher_FindsAPublishedDefine_WithAnySeparator(string defines)
+    {
+        BuildSettings settings = new() { LauncherDefineConstants = defines };
+
+        Should.Throw<InvalidOperationException>(() => ProjectBuilder.ValidateLauncherBuildKind(settings));
+    }
+
+    [Test]
+    public void NonAotLauncher_Rejection_NamesTheSettingsAsset()
+    {
+        BuildSettings settings = new() { LauncherDefineConstants = XRRuntimeEnvironment.PublishedDefineConstant };
+
+        InvalidOperationException error = Should.Throw<InvalidOperationException>(
+            () => ProjectBuilder.ValidateLauncherBuildKind(settings));
+        error.Message.ShouldContain("build_settings.asset");
+    }
+
     [Test]
     public void NativeAotLauncher_WithThePublishedDefines_IsAllowed()
     {
