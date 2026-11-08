@@ -545,6 +545,13 @@ namespace XREngine
             string? cacheVariantKey)
         {
             EnsureHostFileAssetAccess();
+            long sourceWriteTicks = GetSourceWriteTicks(sourcePath);
+            if (_failedFeatureCacheImports.TryGetValue(cachePath, out long failedWriteTicks) &&
+                failedWriteTicks == sourceWriteTicks)
+            {
+                return;
+            }
+
             if (!_pendingFeatureCacheImports.TryAdd(cachePath, 0))
                 return;
 
@@ -553,6 +560,7 @@ namespace XREngine
                 error: ex =>
                 {
                     Debug.LogWarning($"Failed to warm the {assetType.FullName} cache for '{sourcePath}'. {ex.Message}");
+                    _failedFeatureCacheImports[cachePath] = sourceWriteTicks;
                     _pendingFeatureCacheImports.TryRemove(cachePath, out _);
                 },
                 completed: () => _pendingFeatureCacheImports.TryRemove(cachePath, out _),
@@ -562,10 +570,26 @@ namespace XREngine
             IEnumerable CacheImportRoutine()
             {
                 EnsureHostFileAssetAccess();
-                if (!IsCacheAssetFresh(cachePath, sourcePath, assetType))
-                    TryImportThirdPartyCacheAsset(sourcePath, assetType, importOptions: null, cacheVariantKey, cachePath);
+                if (!IsCacheAssetFresh(cachePath, sourcePath, assetType) &&
+                    !TryImportThirdPartyCacheAsset(sourcePath, assetType, importOptions: null, cacheVariantKey, cachePath))
+                {
+                    _failedFeatureCacheImports[cachePath] = sourceWriteTicks;
+                }
 
                 yield break;
+            }
+        }
+
+        /// <summary>Returns the last write time of a source file in ticks, or 0 when it cannot be read.</summary>
+        private static long GetSourceWriteTicks(string sourcePath)
+        {
+            try
+            {
+                return File.GetLastWriteTimeUtc(sourcePath).Ticks;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                return 0L;
             }
         }
 

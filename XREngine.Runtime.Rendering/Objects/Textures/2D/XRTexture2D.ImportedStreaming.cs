@@ -607,14 +607,21 @@ public partial class XRTexture2D
         int mipCount = includeMipChain
             ? XRTexture.GetSmallestMipmapLevel(residentWidth, residentHeight) + 1
             : 1;
-        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(format));
+        // Block formats store less than one byte per pixel (BC4 stores half a byte), so an
+        // integer bytes-per-pixel value cannot express them. Count whole 4x4 blocks instead.
+        bool blockCompressed = TextureBlockFormats.IsBlockCompressed(format);
+        int bytesPerPixel = blockCompressed
+            ? 0
+            : Math.Max(1, RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(format));
 
         long totalBytes = 0L;
         for (int mipIndex = 0; mipIndex < mipCount; mipIndex++)
         {
             uint mipWidth = Math.Max(1u, residentWidth >> mipIndex);
             uint mipHeight = Math.Max(1u, residentHeight >> mipIndex);
-            totalBytes += (long)mipWidth * mipHeight * bytesPerPixel;
+            totalBytes += blockCompressed
+                ? TextureBlockFormats.GetImageBytes(format, mipWidth, mipHeight)
+                : (long)mipWidth * mipHeight * bytesPerPixel;
         }
 
         return totalBytes;
