@@ -338,7 +338,8 @@ internal sealed partial class VulkanCommandRuntime
         ulong elapsedNanoseconds = RenderQueryTimestampMath.TicksToNanoseconds(
             elapsedTicks, lease.TimestampPeriodNanoseconds);
         VulkanTextureUploadService.RecordImportedTextureTransferGpu(
-            elapsedNanoseconds / 1_000_000.0);
+            elapsedNanoseconds / 1_000_000.0,
+            submitted.Uploads.Length);
     }
 
 

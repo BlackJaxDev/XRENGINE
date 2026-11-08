@@ -23,11 +23,8 @@ internal sealed partial class VulkanTextureUploadService
 {
     internal const int MaxTransferBatchChunks = 4;
     internal const long MaxTransferBatchBytes = 16L * 1024L * 1024L;
-    internal const int MaxTransferCompletionItemsPerFrame = 4;
     internal const long MaxTransferRetirementBytesPerFrame = 16L * 1024L * 1024L;
     internal VulkanTextureUploadPublicationState PublicationState { get; } = new();
-    private const int MaxPreparedUploadsPerDrain = 1;
-    private const int MaxInFlightPreparationWorkers = 2;
     private const double AllocationPressureRetryDelayMilliseconds = 500.0;
 
     private static int s_synchronizedImportedTextureStreamingAvailable = 1;
@@ -41,6 +38,12 @@ internal sealed partial class VulkanTextureUploadService
     private readonly List<VulkanImportedTexturePendingUpload> _readyTransferUploads = [];
     private readonly List<VulkanSubmittedImportedTextureUploadBatch> _pendingTransferUploads = [];
     private readonly List<VulkanImportedTexturePendingUpload> _transferBatchScratch = new(4);
+    // Render-owner-only scratch. A drain parks the jobs whose preparation worker is running here, so it can go on
+    // with other jobs in the same drain, and requeues them when the drain ends.
+    private readonly List<VulkanImportedTextureUploadJob> _drainWorkerInFlightScratch =
+        new(VulkanStagingManager.ImportedBackgroundBufferCapacity);
+    private readonly VulkanImportedTextureUploadJob?[] _observeWorkerScratch =
+        new VulkanImportedTextureUploadJob?[VulkanStagingManager.ImportedBackgroundBufferCapacity];
     private readonly object _transferQueueSync = new();
     private int _pendingTransferReservations;
     private int _prepDrainScheduled;

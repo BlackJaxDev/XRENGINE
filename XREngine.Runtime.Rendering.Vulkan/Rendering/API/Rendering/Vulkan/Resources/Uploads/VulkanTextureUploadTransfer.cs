@@ -39,11 +39,14 @@ internal sealed partial class VulkanTextureUploadService
             return true;
         }
 
+        // The completion lane sees each frame of the drain, also the frames in which no batch completes.
+        TextureStreamingCapacity.VulkanCompletion.Touch();
         DrainTerminalFailedTransferRetirement(context);
 
-        if (TrySubmitReadyTransferBatch(context, requiredManifest, out bool gatherDeferred))
-            return false;
-        if (gatherDeferred)
+        // A submission does not end the tick: older batches can complete in the same tick. A gather deferral queued a
+        // continuation that owns the next tick, so this coroutine ends.
+        bool submittedBatch = TrySubmitReadyTransferBatch(context, requiredManifest, out bool gatherDeferred);
+        if (!submittedBatch && gatherDeferred)
             return true;
 
         while (TryPeekSubmittedTransfer(requiredManifest, out VulkanSubmittedImportedTextureUploadBatch? submitted) && submitted is not null)
@@ -68,24 +71,38 @@ internal sealed partial class VulkanTextureUploadService
                 return false;
 
             Volatile.Write(ref s_lastTransferWaitMilliseconds, TextureRuntimeDiagnostics.ElapsedMilliseconds(submitted.SubmitTimestamp));
-            if (!context.Commands.CompleteSubmittedImportedTextureUploadBatch(submitted, out string? completeFailure))
+            long completionCpuStart = Stopwatch.GetTimestamp();
+            try
             {
-                string reason = completeFailure ??
-                    "Required texture transfer upload completion failed.";
-                if (submitted.TryMarkTerminalFailure(reason))
+                if (!context.Commands.CompleteSubmittedImportedTextureUploadBatch(submitted, out string? completeFailure))
                 {
-                    for (int child = 0; child < submitted.Uploads.Length; child++)
-                        ReportSubmittedUploadTerminalFailure(
-                            submitted.Uploads[child], reason, requiredManifest);
+                    string reason = completeFailure ??
+                        "Required texture transfer upload completion failed.";
+                    if (submitted.TryMarkTerminalFailure(reason))
+                    {
+                        for (int child = 0; child < submitted.Uploads.Length; child++)
+                            ReportSubmittedUploadTerminalFailure(
+                                submitted.Uploads[child], reason, requiredManifest);
+                    }
+                    continue;
                 }
-                continue;
+                if (!RemoveSubmittedTransfer(submitted))
+                    return false;
+                for (int child = 0; child < submitted.Uploads.Length; child++)
+                    CompleteSubmittedBatchChild(context, submitted.Uploads[child], requiredManifest);
             }
-            if (!RemoveSubmittedTransfer(submitted))
-                return false;
-            for (int child = 0; child < submitted.Uploads.Length; child++)
-                CompleteSubmittedBatchChild(context, submitted.Uploads[child], requiredManifest);
-            return HasSubmittedTransfersOrCompleteDrain(requiredManifest);
+            finally
+            {
+                // The completion lane uses this render-thread cost to set the chunk count of later frames.
+                TextureStreamingCapacity.VulkanCompletion.RecordWork(
+                    Stopwatch.GetElapsedTime(completionCpuStart).TotalMilliseconds);
+            }
+
+            // Go on with the next signaled batch while the completion lane admits it in this frame.
         }
+
+        if (submittedBatch)
+            return false;
 
         return HasSubmittedTransfersOrCompleteDrain(requiredManifest);
     }

@@ -44,6 +44,7 @@ internal sealed partial class VulkanTextureUploadService
         // remains governed by the limits below.
         if (requiredManifest is not null)
         {
+            TextureStreamingCapacity.VulkanCompletion.RecordItems(batch.Uploads.Length);
             _transferRetirementItemsThisFrame += batch.Uploads.Length;
             _transferRetirementBytesThisFrame += batch.BytesInFlight;
             _transferPublicationItemsThisFrame += publicationItems;
@@ -51,11 +52,13 @@ internal sealed partial class VulkanTextureUploadService
             return true;
         }
 
+        // The completion lane sets the chunk count of one frame from the measured completion cost and the frame
+        // time. A batch is indivisible, so the first batch of a frame is admitted even when it is larger than the
+        // limit. The byte limits bound the staging retirement of one frame.
         bool fits =
-            _transferRetirementItemsThisFrame + batch.Uploads.Length <= MaxTransferCompletionItemsPerFrame &&
             _transferRetirementBytesThisFrame + batch.BytesInFlight <= MaxTransferRetirementBytesPerFrame &&
-            _transferPublicationItemsThisFrame + publicationItems <= MaxTransferCompletionItemsPerFrame &&
-            _transferPublicationBytesThisFrame + publicationBytes <= MaxTransferRetirementBytesPerFrame;
+            _transferPublicationBytesThisFrame + publicationBytes <= MaxTransferRetirementBytesPerFrame &&
+            TextureStreamingCapacity.VulkanCompletion.TryAcquire(batch.Uploads.Length, allowFirstOversized: true);
 
         if (!fits)
         {
@@ -91,10 +94,11 @@ internal sealed partial class VulkanTextureUploadService
         Volatile.Write(ref s_lastTransferRecordCpuMilliseconds, milliseconds);
     }
 
-    internal static void RecordImportedTextureTransferGpu(double milliseconds)
+    internal static void RecordImportedTextureTransferGpu(double milliseconds, int chunkCount)
     {
         Interlocked.Increment(ref s_transferGpuTimingSamples);
         Volatile.Write(ref s_lastTransferGpuMilliseconds, milliseconds);
+        TextureStreamingCapacity.VulkanCompletion.RecordGpuItemCost(milliseconds / Math.Max(1, chunkCount));
     }
 
     internal static void RecordImportedTextureTransferGpuUnavailable()
