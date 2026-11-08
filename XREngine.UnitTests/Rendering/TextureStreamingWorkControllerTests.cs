@@ -354,6 +354,17 @@ public sealed class TextureStreamingWorkControllerTests
     }
 
     [Test]
+    public void IdleGapWithALoadStall_DoesNotRaiseTheBudget()
+    {
+        TextureStreamingWorkController controller = CreateController();
+        controller.ObserveIdleFrame(900.0, 900.0);
+        RunIdle(controller, 30, baseBusy: 8.0);
+        controller.ObserveIdleFrame(900.0, 900.0);
+
+        controller.BudgetMilliseconds.ShouldBeLessThan(Period60Hz + Tolerance + 0.5);
+    }
+
+    [Test]
     public void UnknownFrameTime_UsesTheCostButCountsNoOverrun()
     {
         TextureStreamingWorkController controller = CreateController();

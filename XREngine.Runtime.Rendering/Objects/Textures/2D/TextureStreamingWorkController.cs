@@ -281,12 +281,18 @@ internal sealed class TextureStreamingWorkController
     /// </summary>
     public void ObserveIdleFrame(double frameMilliseconds, double busyMilliseconds)
     {
-        if (!double.IsFinite(frameMilliseconds) || frameMilliseconds <= 0.0)
+        // A gap average can hold a load stall, so it never seeds the budget and always counts as at most the budget plus
+        // the tolerance, also during a relearn.
+        if (!double.IsFinite(frameMilliseconds) || frameMilliseconds <= 0.0 || !double.IsFinite(_normalFrameMean))
             return;
 
         double tolerance = Math.Max(0.0, _options.ToleranceMilliseconds);
-        ObserveNormalFrame(frameMilliseconds, 0.0, Smoothing(NormalFrameTimeConstantMilliseconds, frameMilliseconds), learnJitter: true, tolerance);
-        ObserveIdleBusy(busyMilliseconds, frameMilliseconds);
+        double counted = Math.Min(frameMilliseconds, ResolveLearnedBudget() + tolerance);
+        double smoothing = Smoothing(NormalFrameTimeConstantMilliseconds, counted);
+        double deviation = Math.Abs(counted - _normalFrameMean);
+        _normalFrameMean += (counted - _normalFrameMean) * smoothing;
+        _normalFrameDeviation += (deviation - _normalFrameDeviation) * smoothing;
+        ObserveIdleBusy(busyMilliseconds, counted);
     }
 
     /// <summary>Adds the measurements of one completed frame and computes the limit of the next frame.</summary>
