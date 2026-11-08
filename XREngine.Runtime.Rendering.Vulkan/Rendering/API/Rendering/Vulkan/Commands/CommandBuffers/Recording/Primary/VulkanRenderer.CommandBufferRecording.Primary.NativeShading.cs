@@ -15,6 +15,28 @@ internal sealed partial class VulkanCommandRuntime
     private static readonly string[] NativeBackgroundGpuProfilerPath = ["Advanced", "Shading", "Background"];
     private static readonly string[] NativeOpaqueGpuProfilerPath = ["Advanced", "Shading", "NativeOpaque"];
     private static readonly string[] NativeOpaqueRepairGpuProfilerPath = ["Advanced", "Shading", "GpuOverflowRepair"];
+    private static readonly string[] NativeOpaqueUberGpuProfilerPath = ["Advanced", "Shading", "NativeOpaqueUber"];
+    // Matches XR_ADV_SHADING_UBER_FALLBACK in ShadeNativeOpaqueEvaluator.glslinc.
+    private const uint NativeUberFallbackShadingFlag = 1u << 29;
+
+    /// <summary>
+    /// Records one indirect dispatch for each dense shading kernel in <paramref name="kernels"/>.
+    /// The other family's kernels are not dispatched.
+    /// </summary>
+    private void RecordNativeKernelDispatches(CommandBuffer commandBuffer, in VulkanAdvancedNativeComputeClosure closure,
+        in VulkanAdvancedComputePipeline shade, ref VulkanAdvancedNativeShadingPushConstants push, ulong parameterAddress,
+        UInt128 kernels)
+    {
+        for (uint kernel = 0; kernel < AdvancedRenderPipeline.DefaultMaxShadingKernels; ++kernel)
+        {
+            if (!VulkanAdvancedNativeShadingKernelFamilies.Contains(kernels, kernel))
+                continue;
+            push = push with { KernelIndex = kernel };
+            PushNativeConstants(commandBuffer, shade, in push, parameterAddress);
+            Api.CmdDispatchIndirect(commandBuffer, closure.DispatchArguments.NativeBuffer,
+                closure.DispatchArguments.NativeOffset + kernel * 16UL);
+        }
+    }
     // Nest under the Advanced root: a separate root scope measured from the start of the frame.
     private static readonly string[] RvcShadeletTelemetryGpuProfilerPath = ["Advanced", "Rvc", "ShadeletTelemetry"];
     private static readonly string[] FoveatedQuadFillGpuProfilerPath = ["Advanced", "Rvc", "FoveatedQuadFill"];
@@ -163,8 +185,24 @@ internal sealed partial class VulkanCommandRuntime
             TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
             TransitionNativeDdgiOutputs(state.CommandBuffer, in closure);
         }
-        VulkanAdvancedComputePipeline shade = closure.UsesMultisampleVisibility
-            ? payload.NativeComputePipelines.ShadeMultisample
+        // Native shading families. The standard kernel shades standard materials and,
+        // while the Uber kernel is not ready, Uber materials with a base-color fallback.
+        // The Uber kernel then shades only Uber materials in its own pass. Multisample
+        // shading resolves every sample of a pixel in one pass, so a scene with Uber
+        // materials uses the combined multisample kernel when it is ready.
+        VulkanAdvancedNativeShadingKernelFamilies families = payload.SceneState.KernelFamilies;
+        VulkanAdvancedComputePipeline uberShade = payload.NativeComputePipelines.ShadeUber;
+        VulkanAdvancedComputePipeline combinedMultisampleShade = payload.NativeComputePipelines.ShadeMultisampleCombined;
+        bool uberPass = !closure.UsesMultisampleVisibility && families.HasUber && uberShade.IsCurrent;
+        bool combinedMultisample = closure.UsesMultisampleVisibility && families.HasUber && combinedMultisampleShade.IsCurrent;
+        bool uberFallback = families.HasUber && !uberPass && !combinedMultisample;
+        if (uberFallback)
+            push = push with { Flags = push.Flags | NativeUberFallbackShadingFlag };
+        UInt128 standardKernels = families.Standard | (uberFallback ? families.Uber : UInt128.Zero);
+        // A publication without family masks keeps the full kernel range.
+        if ((families.Standard | families.Uber) == UInt128.Zero)
+            standardKernels = UInt128.MaxValue;        VulkanAdvancedComputePipeline shade = closure.UsesMultisampleVisibility
+            ? combinedMultisample ? combinedMultisampleShade : payload.NativeComputePipelines.ShadeMultisample
             : payload.NativeComputePipelines.Shade;
         ulong parameterAddress = shade.UsesAddressRoot
             ? WriteNativeShadingAddressRoot(ref state, closure.ShadingAddressRoot, in push)
@@ -187,27 +225,42 @@ internal sealed partial class VulkanCommandRuntime
                 Api.CmdDispatch(state.CommandBuffer, tilesX, tilesY, 1u);
             }
             else
-            {
-                for (uint kernel = 0; kernel < AdvancedRenderPipeline.DefaultMaxShadingKernels; ++kernel)
-                {
-                    push = push with { KernelIndex = kernel };
-                    PushNativeConstants(state.CommandBuffer, shade, in push, parameterAddress);
-                    Api.CmdDispatchIndirect(state.CommandBuffer, closure.DispatchArguments.NativeBuffer,
-                        closure.DispatchArguments.NativeOffset + kernel * 16UL);
-                }
-            }
+                RecordNativeKernelDispatches(state.CommandBuffer, in closure, shade, ref push, parameterAddress, standardKernels);
             CmdEndLabel(state.CommandBuffer);
         }
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
-        push = push with { Flags = push.Flags | 1u };
+        VulkanAdvancedNativeShadingPushConstants repairPush = push with { Flags = push.Flags | 1u };
         if (!closure.UsesMultisampleVisibility)
         {
             RecordNativeDispatch(state.CommandBuffer, in payload, shade,
-                in push, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, parameterAddress);
+                in repairPush, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, parameterAddress);
             RecordNativeShadingRootUse(shade.UsesAddressRoot, checked((int)AdvancedRenderPipeline.DefaultMaxShadingKernels + 1));
         }
         else
             RecordNativeShadingRootUse(shade.UsesAddressRoot, 1);
+        if (uberPass)
+        {
+            // One compute-to-compute dependency orders the Uber pass after the standard
+            // pass. The two passes write disjoint pixels of the same images.
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
+            ulong uberParameterAddress = uberShade.UsesAddressRoot
+                ? WriteNativeShadingAddressRoot(ref state, closure.ShadingAddressRoot, in push)
+                : 0UL;
+            using (TryBeginVulkanGpuProfilerScope(state.CommandBuffer, NativeOpaqueUberGpuProfilerPath))
+            {
+                CmdBeginLabel(state.CommandBuffer, "Advanced.NativeOpaque.Uber");
+                BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute, uberShade.Pipeline);
+                BindAdvancedVisibilityDescriptorSets(state.CommandBuffer, PipelineBindPoint.Compute,
+                    uberShade.Program.PipelineLayout, in payload, payload.NativeComputeDescriptorSet);
+                RecordNativeKernelDispatches(state.CommandBuffer, in closure, uberShade, ref push, uberParameterAddress, families.Uber);
+                CmdEndLabel(state.CommandBuffer);
+            }
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
+            RecordNativeDispatch(state.CommandBuffer, in payload, uberShade,
+                in repairPush, tilesX, tilesY, 1, "Advanced.NativeOpaque.Uber.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, uberParameterAddress);
+            RecordNativeShadingRootUse(uberShade.UsesAddressRoot, checked((int)AdvancedRenderPipeline.DefaultMaxShadingKernels + 1));
+        }
+        push = repairPush;
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
         if ((push.Flags & FoveatedQuadShadingFlag) != 0u)
         {

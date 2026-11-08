@@ -40,6 +40,31 @@ FrameBegin
 - Native opaque shading reconstructs surface attributes from visibility identity, evaluates material lighting, and writes HDR scene color.
 - Late passes hold transparent, refractive, volumetric, particle, editor-overlay, gizmo, and other special work.
 
+### Native opaque shading kernel families
+
+On Vulkan, `ShadeNativeOpaque.comp` compiles as two kernel families. The
+preamble define `XR_ADV_NATIVE_SHADING_FAMILY` selects the family:
+
+| Family | Define | Shades | When it compiles |
+|---|---|---|---|
+| Standard | `1` | Standard, masked, forward, and mirror materials. Native Uber pixels get a fallback while the Uber kernel is not ready. | Always. Advanced admission waits for it. |
+| Uber | `2` | Native Uber materials only. | When the published scene has native Uber shading kernels, or at startup with `XRE_ADVANCED_UBER_KERNEL_PREWARM=1`. Admission never waits for it. |
+
+- `VulkanAdvancedNativeShadingKernelFamilies` splits the published shading
+  kernel records into a standard mask and an Uber mask by material layout hash.
+  Each pass records indirect dispatches only for the kernels in its mask.
+- When the Uber kernel is ready, the standard pass runs first. A
+  compute-to-compute barrier follows, then the Uber pass with its own repair
+  dispatch.
+- Until the Uber kernel is ready, the standard pass also owns the Uber kernels
+  and sets the Uber fallback push flag. The fallback shades the material base
+  color and base texture (UV0) as a rough dielectric with the world ambient and
+  the directional lights. It never writes the magenta error color.
+- Multisample visibility resolves all samples of a pixel in one pass. A scene
+  with Uber kernels uses the combined multisample kernel (no family define) when
+  it is ready, and the standard multisample kernel with the fallback before
+  that. Only the kernel for the current visibility mode is requested.
+
 ### Scene registration identity reuse
 
 Native Uber material reuse retains the result of strict shader validation.

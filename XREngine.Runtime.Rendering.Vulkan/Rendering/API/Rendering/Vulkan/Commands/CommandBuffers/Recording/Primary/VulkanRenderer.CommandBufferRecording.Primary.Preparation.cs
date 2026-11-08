@@ -1539,6 +1539,23 @@ namespace XREngine.Rendering.Vulkan
                                 : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                         return false;
                     }
+                    // The standard family is ready. A scene with Uber kernels also gets the
+                    // Uber kernels; their first request starts the compile in the background.
+                    // Until they are ready, the standard kernel shades Uber pixels with its
+                    // lit base-color fallback, so admission never waits for them.
+                    if (familySceneState.KernelFamilies.HasUber ||
+                        VulkanAdvancedVisibilityPipelineRuntime.PrewarmUberShadingKernels)
+                    {
+                        ResourceRuntime.AdvancedVisibilityPipelines.TryGetUberShadingPipelines(
+                            nativeClosure.UsesMultisampleVisibility,
+                            out VulkanAdvancedComputePipeline uberShade,
+                            out VulkanAdvancedComputePipeline combinedMultisampleShade);
+                        nativePipelines = nativePipelines with
+                        {
+                            ShadeUber = uberShade,
+                            ShadeMultisampleCombined = combinedMultisampleShade,
+                        };
+                    }
                     S13aPublicationTelemetry.StepProbe nativeAssociationProbe =
                         S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                     if (nativePipelines.Shade.UsesAddressRoot &&

@@ -114,6 +114,27 @@ void main()
     }
     if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount) return;
 
+#if defined(XR_ADV_NATIVE_SHADING_FAMILY)
+    // A family kernel writes only the pixels of its own family. The standard kernel
+    // also owns uncovered and unresolved pixels. The ownership test comes before the
+    // first store, so the standard and Uber passes never overwrite each other.
+    uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
+    bool covered = identity.x != 0u && identity.x != XR_ADV_VIS_INVALID;
+    uint metadata = 0u;
+    uint materialDense = 0u, kernelDense = 0u;
+    bool resolved = false;
+    if (covered)
+    {
+        metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
+        resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
+    }
+    bool owned = resolved
+        ? XR_ADV_KernelShadesMaterialFamily(materialDense)
+        : XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_STANDARD;
+    if (!owned) return;
+    XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
+    if (!covered) return;
+#else
     XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
     uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
     if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID) return;
@@ -121,6 +142,7 @@ void main()
     uint metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
     uint materialDense, kernelDense;
     bool resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
+#endif
     if (!repair && resolved && kernelDense != u_Push.kernelIndex) return;
     if (!repair && resolved)
     {

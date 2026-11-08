@@ -1139,7 +1139,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             encodedSamplerSlice,
             lookupSlice,
             fallbackTableSlice,
-            lookupSegments);
+            lookupSegments,
+            VulkanAdvancedNativeShadingKernelFamilies.Create(snapshot.MaterialPayloads.Kernels));
         // The sealed preflight is charged only once the complete publication,
         // including both descriptor updates, is visible. Failed retries cannot
         // leak logical capacity even though the arena itself remains monotonic.

@@ -205,6 +205,12 @@ public static class XREngineEnvironmentVariables
     public const string AdvancedExtractionSubStageTimers = "XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS";
     /// <summary>Set to 1 to run the full committed-binding check also when the material source witness is unchanged, and to log each mismatch.</summary>
     public const string AdvancedPublisherWitnessValidate = "XRE_ADVANCED_PUBLISHER_WITNESS_VALIDATE";
+    /// <summary>
+    /// Set to 1 to compile the Vulkan Advanced native Uber shading kernel after the standard kernel
+    /// is ready, also in a scene without Uber materials. An Uber model that loads later then shades
+    /// at once instead of with the standard-kernel fallback. Default: off.
+    /// </summary>
+    public const string AdvancedUberKernelPrewarm = "XRE_ADVANCED_UBER_KERNEL_PREWARM";
     /// <summary>Set to 1 to record frame pacing marks for <c>FramePacingTimeline.Dump</c>.</summary>
     public const string FramePacingTimeline = "XRE_FRAME_PACING_TIMELINE";
     /// <summary>
