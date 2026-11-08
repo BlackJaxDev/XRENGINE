@@ -155,6 +155,7 @@ public sealed partial class EditorMcpActions
                 residency = residency is not null,
                 pendingT0Loads = residency?.PendingProxyCount ?? 0,
                 pendingPrograms = sequence?.PendingProgramCount ?? 0,
+                firstPendingReason = sequence?.FirstPendingReason,
                 notStartedPrograms = sequence?.NotStartedProgramCount ?? 0,
                 compilingPrograms = sequence?.CompilingProgramCount ?? 0,
                 readyPrograms = sequence?.ReadyProgramCount ?? 0,

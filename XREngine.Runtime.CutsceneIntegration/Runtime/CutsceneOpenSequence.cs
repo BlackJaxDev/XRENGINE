@@ -95,6 +95,9 @@ public sealed class CutsceneOpenSequence
     /// <summary>The number of T0 draws whose program work did not start, or whose state the backend cannot know yet.</summary>
     public int NotStartedProgramCount { get; private set; }
 
+    /// <summary>The reason of the first T0 draw that was not started or compiling at the last frame, or null. For diagnostics.</summary>
+    public string? FirstPendingReason { get; private set; }
+
     /// <summary>The number of T0 draws whose variant build, program link, or pipeline compile ran at the last frame.</summary>
     public int CompilingProgramCount { get; private set; }
 
@@ -247,6 +250,7 @@ public sealed class CutsceneOpenSequence
         int pendingProxies = residency is { IsClosed: false } ? residency.PendingProxyCount : 0;
         PendingProxyCount = pendingProxies;
 
+        string? firstPendingReason = null;
         int notStarted = 0;
         int compiling = 0;
         int ready = 0;
@@ -256,6 +260,8 @@ public sealed class CutsceneOpenSequence
         {
             CutsceneProxyDraw draw = _proxyDraws[i];
             ECutsceneProgramState state = _prewarmer.GetState(draw.Material, draw.ResolveRenderer(), draw.RenderOptionsOverride, out string? reason);
+            if (firstPendingReason is null && state is ECutsceneProgramState.NotStarted or ECutsceneProgramState.Compiling)
+                firstPendingReason = reason ?? "no reason was given";
             TrackWait(i, draw, state, reason);
             switch (state)
             {
@@ -279,6 +285,7 @@ public sealed class CutsceneOpenSequence
             }
         }
         NotStartedProgramCount = notStarted;
+        FirstPendingReason = firstPendingReason;
         CompilingProgramCount = compiling;
         ReadyProgramCount = ready;
         FailedProgramCount = failed;
