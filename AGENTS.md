@@ -2,7 +2,9 @@
 
 ## Project And Working Agreement
 
-XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10, OpenGL 4.6 primary; Vulkan/DX12 are WIP. OpenXR and SteamVR/OpenVR exist; OpenVR is the tested path. Default to the ImGui editor unless explicitly targeting the unstable native UI.
+XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10. The default target is **Vulkan with the `AdvancedRenderPipeline` (ARP)**. OpenGL 4.6 and the `DefaultRenderPipeline` are secondary; DX12 is WIP. OpenXR and SteamVR/OpenVR exist; OpenVR is the tested path. Default to the ImGui editor unless explicitly targeting the unstable native UI.
+
+- Validate rendering, performance, and live-editor work on Vulkan + ARP first. In per-session settings, set the render backend to Vulkan and `RenderPipeline` to `AdvancedRenderPipeline`. Check copied settings files before a run, because older copies select `DefaultRenderPipeline`. Report OpenGL or `DefaultRenderPipeline` results only as secondary rows, unless the task targets them.
 
 - Favor clean, maintainable, high-performance v1 architecture and root-cause fixes. Breaking APIs, renames, and restructuring are acceptable; avoid speculative rewrites, unrelated churn, and drive-by formatting.
 - Identify the subsystem, run mode, nearby tests, and relevant docs/tasks/launch profiles before editing. Follow existing style and validate through the narrowest useful build, test, or runtime path.
@@ -26,7 +28,7 @@ These linked guides remain required instructions for their respective tasks; rea
 
 - **Broker/API workers or hierarchical swarms:** [broker policy](docs/developer-guides/ai/agent-broker-policy.md). Setup/trust/restarts: [broker user guide](docs/user-guide/ai/local-agent-broker.md); implementation/security: [broker developer guide](docs/developer-guides/ai/local-agent-broker.md).
 - **Editor/MCP/RenderDoc work or launch/settings/tooling changes:** relevant sections of [editor and tooling workflows](docs/developer-guides/ai/agent-editor-workflows.md). MCP: [setup](docs/user-guide/ai/mcp-server.md) and [protocol/tools](docs/developer-guides/ai/mcp-server.md).
-- **Rendering changes:** [DefaultRenderPipeline invariants](docs/architecture/rendering/default-render-pipeline-notes.md) and [mesh submission contracts](docs/architecture/rendering/mesh-submission-strategies.md).
+- **Rendering changes:** [AdvancedRenderPipeline](docs/architecture/rendering/advanced-render-pipeline.md) (the default pipeline), [DefaultRenderPipeline invariants](docs/architecture/rendering/default-render-pipeline-notes.md), and [mesh submission contracts](docs/architecture/rendering/mesh-submission-strategies.md).
 - **Licensing, dependencies, or contributions:** `LICENSE.md`, `LEGAL/README.md`, and relevant `LEGAL/` guidance.
 
 ## Model Routing And Delegation
