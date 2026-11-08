@@ -3,6 +3,7 @@ using System.Text;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 using XREngine.Editor;
 using XREngine.Editor.Publishing;
 using XREngine.UnitTests.Cutscenes;
@@ -161,6 +162,141 @@ public sealed class PublishedSettingsSecretTests
         finally
         {
             startup.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void OverridesTokenOverride_IsASecret_AndTheStripClearsIt()
+    {
+        typeof(EditorPreferencesOverrides).GetProperty(nameof(EditorPreferencesOverrides.McpServerAuthTokenOverride))!
+            .GetCustomAttribute<SecretAttribute>().ShouldNotBeNull();
+
+        EditorPreferencesOverrides overrides = new() { Name = "Overrides" };
+        try
+        {
+            overrides.McpServerAuthTokenOverride = new OverrideableSetting<string>(Sentinel + "override", true);
+
+            PublishedSecrets.Strip(overrides);
+
+            overrides.McpServerAuthTokenOverride.HasOverride.ShouldBeFalse();
+            overrides.McpServerAuthTokenOverride.Value.ShouldBeNullOrEmpty();
+        }
+        finally
+        {
+            overrides.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void NestedSecret_FailsTheStrip_AndTheContentCook_AndDoesNotShip()
+    {
+        NestedSecretHolderAsset holder = new() { Name = "Holder", Options = new NestedSecretOptions { Token = Sentinel + "nested", Label = "kept" } };
+        try
+        {
+            InvalidOperationException error = Should.Throw<InvalidOperationException>(() => PublishedSecrets.Strip(holder));
+            error.Message.ShouldContain("NestedSecretOptions.Token");
+            error.Message.ShouldContain("NestedSecretHolderAsset.Options");
+            holder.Options.Token.ShouldBe(Sentinel + "nested");
+
+            using IDisposable services = AssetSerializationServices.Install(new FakeAssetRootServices(_assets));
+            string source = Path.Combine(_assets, "Data", "Holder.asset");
+            Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+            string yaml = AssetManager.Serializer.Serialize(holder);
+            if (!yaml.Contains("__assetType:", StringComparison.Ordinal))
+                yaml = $"__assetType: {typeof(NestedSecretHolderAsset).AssemblyQualifiedName}{Environment.NewLine}{yaml}";
+            File.WriteAllText(source, yaml);
+            yaml.ShouldContain(Sentinel);
+
+            string intermediate = Path.Combine(_root, "Intermediate");
+            error = Should.Throw<InvalidOperationException>(() => ProjectBuilder.PrepareCookedContentDirectoryForTests(_assets, intermediate));
+            error.ToString().ShouldContain("NestedSecretOptions.Token");
+            string cooked = Path.Combine(intermediate, "Build", "CookedContent", "Data", "Holder.asset");
+            (File.Exists(cooked) && ContainsSentinel(File.ReadAllBytes(cooked))).ShouldBeFalse();
+
+            string destination = Path.Combine(_root, "Delta", "Data", "Holder.asset");
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            error = Should.Throw<InvalidOperationException>(() => ProjectBuilder.TransformIncrementalContentFile(source, destination));
+            error.ToString().ShouldContain("NestedSecretOptions.Token");
+        }
+        finally
+        {
+            holder.Destroy(now: true);
+        }
+    }
+
+    [Test]
+    public void EngineAssetTypes_ReachNoNestedSecret()
+    {
+        // A [Secret] member on a type that an engine asset type holds (for example a startup window) would ship, because the
+        // strip clears only top-level secrets. This test fails when such a member is added.
+        List<string> failures = [];
+        foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            string name = assembly.GetName().Name ?? string.Empty;
+            if (assembly.IsDynamic || !name.StartsWith("XREngine", StringComparison.Ordinal) || name == "XREngine.UnitTests")
+                continue;
+
+            foreach (Type type in GetLoadableTypes(assembly))
+            {
+                if (type.IsAbstract || !typeof(XRAsset).IsAssignableFrom(type))
+                    continue;
+                try
+                {
+                    PublishedSecrets.ThrowIfNestedSecret(type);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    failures.Add(ex.Message);
+                }
+            }
+        }
+
+        failures.ShouldBeEmpty();
+        foreach (Type type in ShippedSettingsTypes)
+            Should.NotThrow(() => PublishedSecrets.ThrowIfNestedSecret(type));
+    }
+
+    [Test]
+    public void ContentCookStrip_FailsForALiveAssetWithSecrets_AndKeepsItsSecrets()
+    {
+        GameStartupSettings live = Fill(new GameStartupSettings { Name = "Live" });
+        GameStartupSettings copy = Fill(new GameStartupSettings { Name = "Copy" });
+        UserSettings liveWithoutSecrets = new() { Name = "User" };
+        try
+        {
+            FakeAssetRootServices fake = new(_assets);
+            fake.LiveAssets[live.ID] = live;
+            fake.LiveAssets[liveWithoutSecrets.ID] = liveWithoutSecrets;
+            using IDisposable services = AssetSerializationServices.Install(fake);
+
+            InvalidOperationException error = Should.Throw<InvalidOperationException>(
+                () => ProjectBuilder.StripCookedCopySecrets(live, "Data/Live.asset"));
+            error.Message.ShouldContain("Data/Live.asset");
+            AssertStillFilled(live);
+
+            Should.NotThrow(() => ProjectBuilder.StripCookedCopySecrets(liveWithoutSecrets, "Data/User.asset"));
+
+            ProjectBuilder.StripCookedCopySecrets(copy, "Data/Copy.asset");
+            foreach ((PropertyInfo secret, _) in PublishedSecrets.GetSecretMembers(typeof(GameStartupSettings)))
+                secret.GetValue(copy).ShouldBeNull(secret.Name);
+        }
+        finally
+        {
+            live.Destroy(now: true);
+            copy.Destroy(now: true);
+            liveWithoutSecrets.Destroy(now: true);
+        }
+    }
+
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            return ex.Types.Where(static type => type is not null)!;
         }
     }
 

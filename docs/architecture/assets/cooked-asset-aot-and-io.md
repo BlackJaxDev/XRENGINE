@@ -408,7 +408,21 @@ source paths of cooked assets at write time, without changing any object:
   `[Password]` for the UI), and `MultiplayerSessionToken`,
   `MultiplayerAdmissionSecret`, `MultiplayerAccountId`,
   `MultiplayerReservationId`, and `MultiplayerClientId` of
-  `GameStartupSettings`. Mark each new secret member with `[Secret]`.
+  `GameStartupSettings`. `EditorPreferencesOverrides.McpServerAuthTokenOverride`
+  is marked too; no route ships the overrides asset today. Mark each new secret
+  member with `[Secret]`.
+- The strip clears only top-level secrets. `PublishedSecrets.ThrowIfNestedSecret`
+  walks the declared types of the serialized members of the asset type (YAML
+  members, and MemoryPack members of a MemoryPack type). If it reaches a
+  `[Secret]` member of a nested type, the publish fails and names the member
+  and the path to it. The walk follows declared types only: a secret on a
+  derived type that a base-typed member holds at run time is not found.
+- The content cook strips only a copy. If the YAML load gives the live editor
+  instance of an asset whose type has secrets, the cook fails, because a strip
+  would clear the live secrets and a write without the strip would ship them.
+- `MultiplayerAdmissionSecret` also has `[YamlIgnore]`: it stays in memory only.
+  A launched game gets it from the realtime join handoff (see the networking
+  guide).
 
 ## Mesh LOD Payloads
 

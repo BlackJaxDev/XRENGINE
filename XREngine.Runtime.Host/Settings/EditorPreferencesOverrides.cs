@@ -188,6 +188,7 @@ namespace XREngine
 
         [Category("MCP Server Overrides")]
         [Description("Override for MCP bearer auth token.")]
+        [Secret]
         public OverrideableSetting<string> McpServerAuthTokenOverride
         {
             get => _mcpServerAuthTokenOverride;

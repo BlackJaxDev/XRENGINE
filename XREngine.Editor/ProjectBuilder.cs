@@ -1382,8 +1382,7 @@ internal static partial class ProjectBuilder
         if (asset is XRAsset xrAsset)
             CookedCopyGraph.ReleaseLiveAssets(xrAsset);
 
-        // The deserialized copy is not a live asset, so the cook clears its secrets before the write.
-        PublishedSecrets.Strip(asset);
+        StripCookedCopySecrets(asset, sourcePath);
 
         // The cooked build runs from another folder, so the asset headers get portable source paths and no file paths.
         CookedAssetBlob blob;
@@ -1393,6 +1392,29 @@ internal static partial class ProjectBuilder
             ThrowIfSourcePathsNotPortable(sourcePaths, sourcePath);
         }
         return blob;
+    }
+
+    /// <summary>
+    /// Clears the secrets of the copy that the content cook deserialized. If the load gave a live asset (an instance that the
+    /// asset services track) and its type has secrets, the cook fails: a strip would clear the secrets of the live editor
+    /// asset, and a write without the strip would ship them.
+    /// </summary>
+    /// <param name="asset">The deserialized asset.</param>
+    /// <param name="sourcePath">The asset file, for the error.</param>
+    /// <exception cref="InvalidOperationException">The asset is live and has secrets, or its type reaches a nested secret.</exception>
+    internal static void StripCookedCopySecrets(object asset, string sourcePath)
+    {
+        if (asset is XRAsset xrAsset && CookedCopyGraph.IsLiveInstance(xrAsset))
+        {
+            PublishedSecrets.ThrowIfNestedSecret(asset.GetType());
+            if (PublishedSecrets.HasSecretMembers(asset.GetType()))
+                throw new InvalidOperationException(
+                    $"Asset '{sourcePath}' loaded as the live editor instance of '{asset.GetType().Name}', which has secret members. " +
+                    "The cook clears secrets only on a copy, so it cannot write this asset.");
+            return;
+        }
+
+        PublishedSecrets.Strip(asset);
     }
 
     /// <summary>Fails the cook of an asset file if a source path in it is outside every asset root.</summary>

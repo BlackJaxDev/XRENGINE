@@ -28,6 +28,8 @@ public static class CookedCopyGraph
     }
 
     /// <summary>True if the asset services track this instance, so it is a live asset and not part of the cooked copy.</summary>
-    private static bool IsLiveInstance(XRAsset asset)
+    /// <param name="asset">The asset.</param>
+    /// <returns>True for a live asset.</returns>
+    public static bool IsLiveInstance(XRAsset asset)
         => AssetSerializationServices.Current.TryGetAssetById(asset.ID, out XRAsset? live) && ReferenceEquals(live, asset);
 }
