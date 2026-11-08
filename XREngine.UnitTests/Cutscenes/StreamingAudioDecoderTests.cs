@@ -193,22 +193,37 @@ public sealed class StreamingAudioDecoderTests
 
     [Test]
     [CancelAfter(30000)]
-    public void Vorbis_BackwardSeekCost_IsReported()
+    public void Vorbis_BackwardSeekToTheEnd_LandsOnTheFrame_AndReportsItsCost()
     {
-        (double seekMs, double realTimeFactor) = RunGuarded(() =>
+        (long position, long decodedFrames, long total, int read, double error, double seekMs) = RunGuarded(() =>
         {
+            float[] whole = LinearVorbis();
             using VorbisStreamingDecoder decoder = OpenVorbis();
             decoder.SeekToFrame(decoder.TotalFrames);
+            long before = decoder.DecodedFrames;
             System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
             decoder.SeekToFrame(decoder.TotalFrames - 1);
             watch.Stop();
-            double fileSeconds = (double)decoder.TotalFrames / decoder.SampleRate;
-            return (watch.Elapsed.TotalMilliseconds, fileSeconds / watch.Elapsed.TotalSeconds);
+            long seekPosition = decoder.FramePosition;
+            long decoded = decoder.DecodedFrames - before;
+
+            float[] buffer = new float[16 * decoder.Channels];
+            int count = decoder.Read(buffer);
+            double maxError = 0.0;
+            long last = decoder.TotalFrames - 1;
+            for (int c = 0; c < decoder.Channels * count; c++)
+                maxError = Math.Max(maxError, Math.Abs(buffer[c] - whole[last * decoder.Channels + c]));
+            return (seekPosition, decoded, decoder.TotalFrames, count, maxError, watch.Elapsed.TotalMilliseconds);
         });
-        // The test reports the cost only. A timing assert would depend on the machine load.
-        TestContext.Out.WriteLine($"Vorbis backward seek to the end: {seekMs:F2} ms, decode speed {realTimeFactor:F0}x real time.");
-        seekMs.ShouldBeGreaterThanOrEqualTo(0.0);
+
+        // The wall time is reported only, because it depends on the machine load. The checks use the decoded frames.
+        TestContext.Out.WriteLine($"Vorbis backward seek to the end: {decodedFrames} decoded frames of {total}, {seekMs:F2} ms.");
+        position.ShouldBe(total - 1);
+        read.ShouldBe(1);
+        error.ShouldBe(0.0);
+        decodedFrames.ShouldBeLessThan(total);
     }
+
     [Test]
     public void Wav16BitStereo_SeekToFrame_MatchesTheWholeFileDecode()
     {
