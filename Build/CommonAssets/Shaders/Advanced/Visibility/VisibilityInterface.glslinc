@@ -654,14 +654,15 @@ bool XR_ADV_TryResolveTextureReference(
         XR_ADV_LoadEncodedSampler(encodedSamplerIndex);
     if ((encodedSampler.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
         return false;
-    encodedReference =
+    // A texture that is still loading has encoded index 0, the generic fallback row.
+    // Check residency before the assignment, so a failed resolve keeps the fallback
+    // of this binding (for example white base color) and not the generic zero.
+    XRAdvancedEncodedTextureReference resolvedReference =
         XR_ADV_LoadEncodedTexture(textureRecord.encodedReferenceIndex);
-#endif
-    if ((encodedReference.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
+    if ((resolvedReference.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
         return false;
-
-#if !defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
-    encodedReference.payload1 = encodedSampler.payload0;
+    resolvedReference.payload1 = encodedSampler.payload0;
+    encodedReference = resolvedReference;
 #endif
     return true;
 }
