@@ -346,16 +346,35 @@ source paths of cooked assets at write time, without changing any object:
   asset folder before you publish. A relative value (not a machine path) is
   written as it is.
 - After the cook, `CookedOutputPathGuard` checks each cooked asset file and
-  each separate `lod/` entry for the asset roots of the cook process, for
-  drive-letter paths, and for UNC paths, as UTF-8 and UTF-16 text. A hit fails
-  the cook with `CookedSourcePathException`, which names the asset and the
-  path. The drive-letter and UNC patterns need at least three path parts, so
-  random binary data does not match. A path part can hold non-ASCII characters
-  (for example a non-ASCII user profile name): in UTF-8 each must be a complete
-  UTF-8 sequence, and in UTF-16 any character except a control character, a
-  reserved path character, or a lone surrogate counts. The incremental archive build checks each
-  cooked asset file that it writes. Files that the cook copies as they are
-  (not asset files) are not checked.
+  each separate `lod/` entry for the asset roots and the user profile folder of
+  the cook process, for drive-letter paths, and for UNC paths, as UTF-8 and
+  UTF-16 text. A hit fails the cook with `CookedSourcePathException`, which
+  names the asset and the path. The drive-letter and UNC patterns need at least
+  three path parts, so random binary data does not match. A separator can be a
+  slash, a backslash, or an escaped backslash (two backslashes, as in JSON). A
+  path part can hold non-ASCII characters (for example a non-ASCII user profile
+  name): in UTF-8 each must be a complete UTF-8 sequence, and in UTF-16 any
+  character except a control character, a reserved path character, or a lone
+  surrogate counts. The incremental archive build checks each cooked asset file
+  that it writes.
+- The guard also checks every file that a publish copies as it is
+  (`ThrowIfMachinePathInCopiedFile`): the non-asset files of the full and the
+  incremental content cook (text, JSON, media, and other files), every file of
+  `CommonAssets.pak` (the full pack checks all files of the engine asset folder,
+  the incremental repack checks each changed file, and the runtime shader pack
+  checks its staged files), and on the browser route the staged content sources,
+  the font license notices, and the native world of a shared world package. The
+  archives are compressed, so the guard reads the source files. The error names
+  the file.
+- A copied file is text when it starts with a byte order mark, or when its
+  first 8 KiB hold no zero byte and are valid UTF-8. Text uses the general
+  patterns. Other files (binary media) use only exact matches: the asset roots,
+  the user profile folder of the cook process, and any path in a Windows user
+  profile folder (`X:\Users\<name>` or `X:\Documents and Settings\<name>`). Raw
+  pixel and sample data holds long runs of printable bytes with many
+  backslashes, so the general patterns give false hits in it. As a result, a
+  drive path outside a user profile folder in binary media (for example an
+  authoring path such as `E:\Art\model.blend` in an FBX file) is not found.
 - The guard reads each file in 4 MiB chunks that overlap by 4 KiB, so a file of
   any size is checked with a fixed buffer.
 - A cook does not ship YAML sources. An asset file with no `__assetType` or

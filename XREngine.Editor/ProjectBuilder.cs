@@ -611,22 +611,46 @@ internal static partial class ProjectBuilder
             return;
         }
 
-        if (!ShouldUseIncrementalArchives(context))
+        PackFullCommonAssets(engineAssetsPath, commonAssetsArchivePath, context.IntermediateDirectory, ShouldUseIncrementalArchives(context));
+    }
+
+    /// <summary>
+    /// Packs the full engine asset folder as it is. Each packed file is checked for machine paths: every file in a full
+    /// pack, and each changed file in an incremental repack.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static void PackFullCommonAssets(string engineAssetsPath, string commonAssetsArchivePath, string intermediateDirectory, bool incremental)
+    {
+        if (!incremental)
         {
             if (File.Exists(commonAssetsArchivePath))
                 File.Delete(commonAssetsArchivePath);
 
-            AssetPacker.Pack(engineAssetsPath, commonAssetsArchivePath);
+            PackGuardedSourceDirectory(engineAssetsPath, commonAssetsArchivePath);
             return;
         }
 
         RepackArchiveFromSourceIncremental(
             sourceDirectory: engineAssetsPath,
             archivePath: commonAssetsArchivePath,
-            intermediateDirectory: context.IntermediateDirectory,
+            intermediateDirectory: intermediateDirectory,
             deltaFolderName: "CommonAssetsDelta",
-            transformFile: static (source, destination) => File.Copy(source, destination, true),
+            transformFile: CopyGuardedFile,
             packFullSourceDirectly: true);
+    }
+
+    /// <summary>Packs the full engine asset folder into a common-assets archive in the output folder.</summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    internal static string PackFullCommonAssetsForTests(
+        string engineAssetsDirectory,
+        string intermediateDirectory,
+        string contentOutputDirectory,
+        bool incremental)
+    {
+        string archivePath = Path.Combine(contentOutputDirectory, CommonAssetsArchiveName);
+        Directory.CreateDirectory(contentOutputDirectory);
+        PackFullCommonAssets(engineAssetsDirectory, archivePath, intermediateDirectory, incremental);
+        return archivePath;
     }
 
     private static void PackageRuntimeShaderAssets(
@@ -652,7 +676,31 @@ internal static partial class ProjectBuilder
         if (File.Exists(commonAssetsArchivePath))
             File.Delete(commonAssetsArchivePath);
 
-        AssetPacker.Pack(stagingDirectory, commonAssetsArchivePath);
+        PackGuardedSourceDirectory(stagingDirectory, commonAssetsArchivePath);
+    }
+
+    /// <summary>
+    /// Packs a folder as it is, after a check of each file for machine paths. The archive is compressed, so the check reads
+    /// the source files.
+    /// </summary>
+    private static void PackGuardedSourceDirectory(string sourceDirectory, string archivePath)
+    {
+        GuardCopiedDirectory(sourceDirectory);
+        AssetPacker.Pack(sourceDirectory, archivePath);
+    }
+
+    /// <summary>Fails the publish if a file in a folder that the publish ships as it is holds a machine path.</summary>
+    internal static void GuardCopiedDirectory(string directory)
+    {
+        foreach (string file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+            CookedOutputPathGuard.ThrowIfMachinePathInCopiedFile(file, NormalizePath(Path.GetRelativePath(directory, file)));
+    }
+
+    /// <summary>Copies a file that the publish ships as it is, then fails the publish if the file holds a machine path.</summary>
+    internal static void CopyGuardedFile(string source, string destination)
+    {
+        File.Copy(source, destination, true);
+        CookedOutputPathGuard.ThrowIfMachinePathInCopiedFile(destination, source);
     }
 
     internal static string PackageRuntimeShaderAssetsForTests(
@@ -827,7 +875,8 @@ internal static partial class ProjectBuilder
     }
 
     /// <summary>
-    /// Cooks one file of the incremental content archive, then checks a cooked asset file for machine paths.
+    /// Cooks one file of the incremental content archive, then checks the cooked asset file, or the copied file, for
+    /// machine paths.
     /// </summary>
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
     internal static void TransformIncrementalContentFile(string source, string destination)
@@ -835,6 +884,8 @@ internal static partial class ProjectBuilder
         WritePublishedCookedFile(source, destination);
         if (string.Equals(Path.GetExtension(source), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
             CookedOutputPathGuard.ThrowIfMachinePath(destination, source);
+        else
+            CookedOutputPathGuard.ThrowIfMachinePathInCopiedFile(destination, source);
     }
 
     private static void RepackConfigArchiveIncremental(BuildContext context, string stagingDirectory)
@@ -921,7 +972,7 @@ internal static partial class ProjectBuilder
             if (packFullSourceDirectly)
             {
                 SubMeshLodEntryLedger.Delete(ledgerPath);
-                AssetPacker.Pack(sourceDirectory, archivePath);
+                PackGuardedSourceDirectory(sourceDirectory, archivePath);
                 return;
             }
 
@@ -945,7 +996,7 @@ internal static partial class ProjectBuilder
                 if (File.Exists(archivePath))
                     File.Delete(archivePath);
 
-                AssetPacker.Pack(sourceDirectory, archivePath);
+                PackGuardedSourceDirectory(sourceDirectory, archivePath);
                 return;
             }
 
@@ -1229,18 +1280,19 @@ internal static partial class ProjectBuilder
     }
 
     /// <summary>
-    /// Fails the cook if a cooked asset file, or a separate LOD entry, holds a machine path. Files that the cook copies as
-    /// they are (not asset files) are not checked.
+    /// Fails the cook if a cooked asset file, a file that the cook copies as it is (text, JSON, media, and other files), or a
+    /// separate LOD entry holds a machine path.
     /// </summary>
     private static void GuardCookedContent(string assetsDirectory, string cookedRoot, string[] sourceFiles)
     {
         foreach (string sourceFile in sourceFiles)
         {
-            if (!string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
-                continue;
-
             string relative = Path.GetRelativePath(assetsDirectory, sourceFile);
-            CookedOutputPathGuard.ThrowIfMachinePath(Path.Combine(cookedRoot, relative), NormalizePath(relative));
+            string cookedFile = Path.Combine(cookedRoot, relative);
+            if (string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                CookedOutputPathGuard.ThrowIfMachinePath(cookedFile, NormalizePath(relative));
+            else
+                CookedOutputPathGuard.ThrowIfMachinePathInCopiedFile(cookedFile, NormalizePath(relative));
         }
 
         string lodDirectory = Path.Combine(cookedRoot, "lod");

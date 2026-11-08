@@ -115,6 +115,9 @@ internal static partial class ProjectBuilder
                 string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
                 string configuration = _configuration ?? throw new InvalidOperationException("Browser publish configuration was not recorded.");
                 WriteBrowserRuntimeMetadata(configuration, context.IntermediateDirectory, SourceRoot, site);
+                // The package compresses its payloads, so check the staged sources: cooked payloads, generated shader
+                // text, and the metadata.
+                GuardCopiedDirectory(SourceRoot);
                 BrowserContentPackageBuilder.Build(recipe, Path.Combine(site, "content"), Cancellation);
                 PublishBrowserSharedWorldPackage(_sharedWorldPackage, Path.Combine(site, "content"), Cancellation);
             }
@@ -135,6 +138,9 @@ internal static partial class ProjectBuilder
                 if (_includesDefaultUiFont)
                     InstallDefaultUiFontLicense(site);
                 InstallAuthoredFontLicenses(site, context.AssetsDirectory, _authoredFonts);
+                string licenses = Path.Combine(site, "licenses");
+                if (Directory.Exists(licenses))
+                    GuardCopiedDirectory(licenses);
                 byte[] json = JsonSerializer.SerializeToUtf8Bytes(new
                 {
                     schema = 2,
