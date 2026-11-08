@@ -4,9 +4,13 @@ namespace XREngine.UnitTests.Cutscenes;
 /// A libvorbis Ogg Vorbis file with two block sizes for the page index tests: 3 seconds of stereo at 44100 Hz, about 23 KB.
 /// The block sizes are 256 and 2048, and the setup header has two modes (short and long). Decaying tones with short noise
 /// clicks make the encoder switch between short and long blocks.
-/// The file was made one time with the libvorbis encoder of FFmpeg (quality 4, bit-exact flags, no metadata):
-/// <c>ffmpeg -f lavfi -i "aevalsrc=...:s=44100:d=3" -c:a libvorbis -q:a 4</c>. The data is inline so the test needs no
-/// binary file and no encoder.
+/// The file was made one time with the libvorbis encoder of FFmpeg (quality 4, bit-exact flags, no metadata). The full command:
+/// <code>
+/// ffmpeg -hide_banner -loglevel error -y -f lavfi -i "aevalsrc=0.25*sin(2*PI*(220+110*floor(t*4))*t)*exp(-6*mod(t\,0.25))+0.6*lt(mod(t\,0.31)\,0.003)*(random(0)*2-1)|0.2*sin(2*PI*330*t)*lt(mod(t\,0.5)\,0.2)+0.5*lt(mod(t\,0.43)\,0.002)*(random(1)*2-1):s=44100:d=3" -map_metadata -1 -fflags +bitexact -flags:a +bitexact -c:a libvorbis -q:a 4 fixture.ogg
+/// </code>
+/// The FFmpeg build was 2021-04-18-git-d43b26b30d (gyan.dev full build); another libvorbis build can give other bytes.
+/// The tests make a file that starts with a long and then a short packet from this file with VorbisTestFileBuilder, so that
+/// file needs no command. The data is inline so the test needs no binary file and no encoder.
 /// </summary>
 internal static class VorbisTwoBlockTestData
 {

@@ -66,7 +66,11 @@ internal static class VorbisTestFileBuilder
     /// <param name="repeat">The number of extra copies of the repeated run of audio packets.</param>
     /// <param name="maxBodyBytes">The largest body of an audio page in bytes.</param>
     /// <param name="pages">Receives each page of the new file.</param>
-    public static byte[] Build(byte[] source, int repeat, int maxBodyBytes, out List<Page> pages)
+    /// <param name="firstPacket">
+    /// The index of the source audio packet that becomes the first audio packet of the new file. The packets before it
+    /// are left out, so a test can make a file that starts with a chosen pair of block sizes.
+    /// </param>
+    public static byte[] Build(byte[] source, int repeat, int maxBodyBytes, out List<Page> pages, int firstPacket = 0)
     {
         List<byte[]> packets = ReadPackets(source, out long sourceFinalGranule, out uint serial);
         byte[] id = packets[0];
@@ -82,6 +86,10 @@ internal static class VorbisTestFileBuilder
         int modeMask = (1 << VorbisSetupHeader.BitCount(modeCount - 1)) - 1;
         int BlockOf(byte[] packet) => modeFlags[(packet[0] >> 1) & modeMask] ? longBlock : shortBlock;
 
+        // The end trim of the source stays the same. It comes from the full source before the packets are left out.
+        long sourceEnd = EndPositions(audio, BlockOf)[^1];
+        audio = audio.GetRange(firstPacket, audio.Count - firstPacket);
+
         // The run from packet 1 to packet end - 1 repeats. Find an end whose block flags match the edges of the run.
         int runStart = 1;
         int runEnd = audio.Count - 1;
@@ -93,7 +101,6 @@ internal static class VorbisTestFileBuilder
             sequence.AddRange(audio.GetRange(runStart, runEnd - runStart));
         sequence.AddRange(audio.GetRange(runEnd, audio.Count - runEnd));
 
-        long sourceEnd = EndPositions(audio, BlockOf)[^1];
         long[] ends = EndPositions(sequence, BlockOf);
         long finalGranule = ends[^1] - (sourceEnd - sourceFinalGranule);
 

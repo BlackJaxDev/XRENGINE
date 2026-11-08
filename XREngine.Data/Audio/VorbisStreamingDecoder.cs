@@ -65,18 +65,31 @@ public sealed class VorbisStreamingDecoder : IStreamingAudioDecoder
     /// <summary>Opens a file. The page index builds on a job thread from a second read-only stream of the file.</summary>
     /// <param name="filePath">The path of the Ogg Vorbis file.</param>
     public VorbisStreamingDecoder(string filePath)
-        : this(File.OpenRead(filePath), leaveOpen: false, OpenFileForIndex(filePath), null)
+        : this(filePath, buildSeekIndex: true)
+    {
+    }
+
+    /// <summary>Opens a file, with or without the page index.</summary>
+    /// <param name="filePath">The path of the Ogg Vorbis file.</param>
+    /// <param name="buildSeekIndex">
+    /// False for a decoder that only decodes forward (for example the proxy bake). It starts no index build, and a backward
+    /// seek decodes from the start of the file (<see cref="EVorbisSeekIndexState.Disabled"/>, with no diagnostic).
+    /// </param>
+    public VorbisStreamingDecoder(string filePath, bool buildSeekIndex)
+        : this(File.OpenRead(filePath), leaveOpen: false, buildSeekIndex ? OpenFileForIndex(filePath) : null, null, null)
     {
     }
 
     /// <summary>
     /// Reads from a stream. The page index builds on a job thread from a second stream: the same file for a
-    /// <see cref="FileStream"/>, or the same buffer for a <see cref="MemoryStream"/> with a visible buffer. Any other stream has no index.
+    /// <see cref="FileStream"/>, or the same buffer for a <see cref="MemoryStream"/> with a visible buffer. Any other stream
+    /// cannot be opened a second time, so it has no index: <see cref="SeekIndexState"/> is <see cref="EVorbisSeekIndexState.Failed"/>
+    /// and <see cref="SeekIndexFailure"/> gives the reason, so the audio track reports it one time.
     /// </summary>
     /// <param name="stream">A readable and seekable stream that holds an Ogg Vorbis file. A backward seek moves it.</param>
     /// <param name="leaveOpen">True to keep the stream open when the decoder is disposed.</param>
     public VorbisStreamingDecoder(Stream stream, bool leaveOpen)
-        : this(stream, leaveOpen, GetIndexStreamSource(stream), null)
+        : this(stream, leaveOpen, GetIndexStreamSource(stream), null, NoSecondStreamReason)
     {
     }
 
@@ -85,10 +98,10 @@ public sealed class VorbisStreamingDecoder : IStreamingAudioDecoder
     /// <param name="leaveOpen">True to keep the stream open when the decoder is disposed.</param>
     /// <param name="openIndexStream">
     /// Opens a new readable and seekable stream with the same data. The build calls it one time on a job thread and
-    /// disposes the stream. Null gives no index.
+    /// disposes the stream. Null gives no index, with no diagnostic, for a decoder that only decodes forward.
     /// </param>
     public VorbisStreamingDecoder(Stream stream, bool leaveOpen, Func<Stream>? openIndexStream)
-        : this(stream, leaveOpen, openIndexStream, null)
+        : this(stream, leaveOpen, openIndexStream, null, null)
     {
     }
 
@@ -97,7 +110,10 @@ public sealed class VorbisStreamingDecoder : IStreamingAudioDecoder
     /// <param name="leaveOpen">True to keep the stream open when the decoder is disposed.</param>
     /// <param name="openIndexStream">Opens a second stream of the same data for the index build, or null for no index.</param>
     /// <param name="indexScheduler">The scheduler of the index build, or null for the shared one-at-a-time scheduler.</param>
-    internal VorbisStreamingDecoder(Stream stream, bool leaveOpen, Func<Stream>? openIndexStream, TaskScheduler? indexScheduler)
+    /// <param name="noIndexReason">
+    /// The reason to report when <paramref name="openIndexStream"/> is null, or null for a decoder that chose to have no index.
+    /// </param>
+    internal VorbisStreamingDecoder(Stream stream, bool leaveOpen, Func<Stream>? openIndexStream, TaskScheduler? indexScheduler, string? noIndexReason = null)
     {
         ArgumentNullException.ThrowIfNull(stream);
         _stream = stream;
@@ -113,7 +129,12 @@ public sealed class VorbisStreamingDecoder : IStreamingAudioDecoder
 
             Channels = _reader.Channels;
             SampleRate = _reader.SampleRate;
-            TotalFrames = _reader.TotalSamples;
+            // NVorbis drops the start of a decode when its first packet is long and the next packet short. The frame-zero
+            // decode is the timeline, so the frame count is the last granule position minus that dropped start.
+            long totalSamples = _reader.TotalSamples;
+            _stream.Position = 0;
+            StartDrop = VorbisPageIndex.ReadStartDrop(_stream);
+            TotalFrames = Math.Max(0L, totalSamples - StartDrop);
 
             // The length query can read pages, so a new reader starts the decode at a known state.
             _reader.Dispose();
@@ -131,13 +152,17 @@ public sealed class VorbisStreamingDecoder : IStreamingAudioDecoder
         if (openIndexStream is null)
         {
             SeekIndexState = EVorbisSeekIndexState.Disabled;
+            if (noIndexReason is not null)
+                FailIndex(noIndexReason);
             return;
         }
 
         SeekIndexState = EVorbisSeekIndexState.Building;
         _openIndexStream = openIndexStream;
         _indexCancel = new CancellationTokenSource();
-        _indexBuild = Task.Factory.StartNew(RunIndexBuildAction, this, CancellationToken.None, TaskCreationOptions.DenyChildAttach, indexScheduler ?? DefaultIndexScheduler);
+
+        // A build that still waits in the queue when the decoder closes never starts.
+        _indexBuild = Task.Factory.StartNew(RunIndexBuildAction, this, _indexCancel.Token, TaskCreationOptions.DenyChildAttach, indexScheduler ?? DefaultIndexScheduler);
     }
 
     /// <inheritdoc/>
@@ -148,6 +173,16 @@ public sealed class VorbisStreamingDecoder : IStreamingAudioDecoder
 
     /// <inheritdoc/>
     public long TotalFrames { get; }
+
+    /// <summary>
+    /// The frames at the start of the granule timeline that the frame-zero decode does not give: a quarter of the long
+    /// block minus a quarter of the short block when the first audio packet is long and the second short, else zero.
+    /// Frame zero of the decoder is granule frame <see cref="StartDrop"/>.
+    /// </summary>
+    internal int StartDrop { get; }
+
+    /// <summary>True if the index build task ran its work. A cancelled build that never started is false.</summary>
+    internal bool IndexBuildStarted => IndexBuildThreadId != 0;
 
     /// <summary>The frame that the next <see cref="Read"/> starts at.</summary>
     public long FramePosition => _frame;
@@ -337,9 +372,9 @@ public sealed class VorbisStreamingDecoder : IStreamingAudioDecoder
         {
             using Stream stream = _openIndexStream!();
             index = VorbisPageIndex.TryBuild(stream, token, out failure);
-            if (index is not null && index.FinalGranule != TotalFrames)
+            if (index is not null && (index.StartDrop != StartDrop || index.FinalGranule - index.StartDrop != TotalFrames))
             {
-                failure = $"the index ends at frame {index.FinalGranule}, but the decoder reports {TotalFrames} frames.";
+                failure = $"the index ends at frame {index.FinalGranule - index.StartDrop} after a start drop of {index.StartDrop}, but the decoder reports {TotalFrames} frames after a start drop of {StartDrop}.";
                 index = null;
             }
         }
@@ -375,6 +410,8 @@ public sealed class VorbisStreamingDecoder : IStreamingAudioDecoder
 
     private static Func<Stream> OpenFileForIndex(string filePath)
         => () => new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 64 * 1024, FileOptions.SequentialScan);
+
+    private const string NoSecondStreamReason = "The stream cannot be opened a second time, so the decoder has no Ogg page index.";
 
     private static Func<Stream>? GetIndexStreamSource(Stream stream)
     {

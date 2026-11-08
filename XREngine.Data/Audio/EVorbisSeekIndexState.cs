@@ -4,7 +4,8 @@ namespace XREngine.Data;
 public enum EVorbisSeekIndexState
 {
     /// <summary>
-    /// The decoder has no index, because its stream cannot be opened a second time. A backward seek decodes from the start of the file.
+    /// The decoder has no index because its owner chose a forward-only decoder. A backward seek decodes from the start of
+    /// the file. A stream that cannot be opened a second time is <see cref="Failed"/>, not this state, so it is reported.
     /// </summary>
     Disabled,
 

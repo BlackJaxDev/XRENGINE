@@ -64,8 +64,10 @@ internal sealed class VorbisPageIndex
         uint serial,
         long finalGranule,
         int pageCount,
-        int pageStride)
+        int pageStride,
+        int startDrop)
     {
+        StartDrop = startDrop;
         _entries = entries;
         _prefix = prefix;
         _headerLength = headerLength;
@@ -80,7 +82,13 @@ internal sealed class VorbisPageIndex
     /// <summary>The serial number of the logical stream.</summary>
     public uint Serial { get; }
 
-    /// <summary>The granule position of the last page, which is the frame count of the stream.</summary>
+    /// <summary>
+    /// The frames at the start of the granule timeline that the frame-zero decode drops (see <see cref="ReadStartDrop"/>).
+    /// Every <see cref="VorbisPageIndexEntry.RestartFrame"/> is in frame-zero decode frames, so it is the granule frame minus this value.
+    /// </summary>
+    public int StartDrop { get; }
+
+    /// <summary>The granule position of the last page. The frame count of the decode is this minus <see cref="StartDrop"/>.</summary>
     public long FinalGranule { get; }
 
     /// <summary>The number of pages in the file.</summary>
@@ -248,6 +256,11 @@ internal sealed class VorbisPageIndex
         bool nextLong = false;
         bool freshLong = false;
 
+        // The block sizes of the first two audio packets give the start drop of the frame-zero decode.
+        int audioPacketsStarted = 0;
+        bool firstAudioLong = false;
+        int startDrop = 0;
+
         long offset = 0;
         int pageNumber = 0;
         uint serial = 0;
@@ -378,6 +391,12 @@ internal sealed class VorbisPageIndex
                         return FailBuild(out failure, $"A packet on the page at byte {offset} uses mode {mode}, but the setup header has {modeCount} modes.");
 
                     currentLong = modeFlags[mode];
+                    if (audioPacketsStarted == 0)
+                        firstAudioLong = currentLong;
+                    else if (audioPacketsStarted == 1)
+                        startDrop = DropOf(firstAudioLong, currentLong, shortBlock, longBlock);
+                    audioPacketsStarted++;
+
                     if (awaitingNext)
                     {
                         awaitingNext = false;
@@ -385,7 +404,7 @@ internal sealed class VorbisPageIndex
                         nextLong = currentLong;
                         if (pending)
                         {
-                            AddEntry(entries, ref count, ref stride, Shifted(pendingEntry, pendingFirstLong, nextLong, shortBlock, longBlock));
+                            AddEntry(entries, ref count, ref stride, Shifted(pendingEntry, pendingFirstLong, nextLong, shortBlock, longBlock, startDrop));
                             pending = false;
                         }
                     }
@@ -453,7 +472,7 @@ internal sealed class VorbisPageIndex
             {
                 VorbisPageIndexEntry candidate = new(offset, granule, restartFrame, (int)sequence, freshSegment);
                 if (nextKnown)
-                    AddEntry(entries, ref count, ref stride, Shifted(candidate, freshLong, nextLong, shortBlock, longBlock));
+                    AddEntry(entries, ref count, ref stride, Shifted(candidate, freshLong, nextLong, shortBlock, longBlock, startDrop));
                 else
                 {
                     pending = true;
@@ -475,7 +494,7 @@ internal sealed class VorbisPageIndex
         // The restart area holds the largest audio page of the file, not the largest possible page.
         Array.Resize(ref entries, count);
         Array.Resize(ref prefix, headerLength + largestPage);
-        return new VorbisPageIndex(entries, prefix, headerLength, headerPageStarts, headerPageLengths, serial, finalGranule, pageNumber, stride);
+        return new VorbisPageIndex(entries, prefix, headerLength, headerPageStarts, headerPageLengths, serial, finalGranule, pageNumber, stride, startDrop);
     }
 
     private static int Block(bool isLong, int shortBlock, int longBlock)
@@ -484,10 +503,103 @@ internal sealed class VorbisPageIndex
     // NVorbis gives no samples for the first packet of a decode. When that packet has a long block and the next packet a
     // short block, NVorbis also drops the flat part of the right half of the long window, before the short overlap starts.
     // That part is a quarter of the long block minus a quarter of the short block, so the first sample comes that much later.
-    private static VorbisPageIndexEntry Shifted(in VorbisPageIndexEntry entry, bool firstLong, bool nextLong, int shortBlock, int longBlock)
+    private static int DropOf(bool firstLong, bool nextLong, int shortBlock, int longBlock)
+        => Math.Max(0, (Block(firstLong, shortBlock, longBlock) - Block(nextLong, shortBlock, longBlock)) / 4);
+
+    // Moves a restart frame from granule frames to frame-zero decode frames: it adds the drop of the restart and removes the
+    // drop of the frame-zero decode, which has the same cause at the start of the file.
+    private static VorbisPageIndexEntry Shifted(in VorbisPageIndexEntry entry, bool firstLong, bool nextLong, int shortBlock, int longBlock, int startDrop)
+        => entry with { RestartFrame = entry.RestartFrame + DropOf(firstLong, nextLong, shortBlock, longBlock) - startDrop };
+
+    /// <summary>
+    /// Reads the stream headers and the first byte of the first two audio packets, and gives the frames that the
+    /// frame-zero decode drops at the start: a quarter of the long block minus a quarter of the short block when the
+    /// first audio packet is long and the second short, else zero. It reads only the first pages, and it gives zero for
+    /// a stream that it cannot read (the index build then fails its check against the decoder).
+    /// </summary>
+    /// <param name="stream">A readable and seekable stream at the start of an Ogg Vorbis file. The position moves.</param>
+    public static int ReadStartDrop(Stream stream)
     {
-        int shift = Math.Max(0, (Block(firstLong, shortBlock, longBlock) - Block(nextLong, shortBlock, longBlock)) / 4);
-        return entry with { RestartFrame = entry.RestartFrame + shift };
+        byte[] page = new byte[MaxPageBytes];
+        byte[] idPacket = new byte[64];
+        int idLength = 0;
+        byte[] setup = new byte[4096];
+        int setupLength = 0;
+        int headerPackets = 0;
+        bool inPacket = false;
+        int shortBlock = 0;
+        int longBlock = 0;
+        int modeMask = 0;
+        int modeCount = 0;
+        Span<bool> modeFlags = stackalloc bool[VorbisSetupHeader.MaxModes];
+        int audioStarted = 0;
+        bool firstLong = false;
+        for (int pageNumber = 0; pageNumber < 64; pageNumber++)
+        {
+            if (ReadFully(stream, page.AsSpan(0, PageHeaderBytes)) < PageHeaderBytes || !IsPageStart(page))
+                return 0;
+            int segments = page[26];
+            if (ReadFully(stream, page.AsSpan(PageHeaderBytes, segments)) < segments)
+                return 0;
+            int bodyLength = SumLacing(page.AsSpan(PageHeaderBytes, segments));
+            if (ReadFully(stream, page.AsSpan(PageHeaderBytes + segments, bodyLength)) < bodyLength)
+                return 0;
+
+            int bodyPosition = PageHeaderBytes + segments;
+            for (int s = 0; s < segments; s++)
+            {
+                int lacing = page[PageHeaderBytes + s];
+                ReadOnlySpan<byte> segment = page.AsSpan(bodyPosition, lacing);
+                bodyPosition += lacing;
+                if (headerPackets < 3)
+                {
+                    if (headerPackets == 0)
+                    {
+                        if (idLength + lacing > idPacket.Length)
+                            return 0;
+                        segment.CopyTo(idPacket.AsSpan(idLength));
+                        idLength += lacing;
+                    }
+                    else if (headerPackets == 2)
+                    {
+                        if (setupLength + lacing > MaxSetupBytes)
+                            return 0;
+                        if (setupLength + lacing > setup.Length)
+                            Array.Resize(ref setup, Math.Max(setup.Length * 2, setupLength + lacing));
+                        segment.CopyTo(setup.AsSpan(setupLength));
+                        setupLength += lacing;
+                    }
+
+                    if (lacing == 255)
+                        continue;
+                    headerPackets++;
+                    if (headerPackets == 1 && !VorbisSetupHeader.TryReadIdentification(idPacket.AsSpan(0, idLength), out _, out _, out shortBlock, out longBlock))
+                        return 0;
+                    if (headerPackets == 3)
+                    {
+                        if (!VorbisSetupHeader.TryReadModeBlockFlags(setup.AsSpan(0, setupLength), modeFlags, out modeCount))
+                            return 0;
+                        modeMask = (1 << VorbisSetupHeader.BitCount(modeCount - 1)) - 1;
+                    }
+                    continue;
+                }
+
+                if (!inPacket)
+                {
+                    if (lacing == 0)
+                        return 0;
+                    int mode = (segment[0] >> 1) & modeMask;
+                    if ((segment[0] & 1) != 0 || mode >= modeCount)
+                        return 0;
+                    if (audioStarted == 1)
+                        return DropOf(firstLong, modeFlags[mode], shortBlock, longBlock);
+                    firstLong = modeFlags[mode];
+                    audioStarted++;
+                }
+                inPacket = lacing == 255;
+            }
+        }
+        return 0;
     }
 
     // Adds an entry. When the array is full, it keeps every second entry and doubles the stride first.

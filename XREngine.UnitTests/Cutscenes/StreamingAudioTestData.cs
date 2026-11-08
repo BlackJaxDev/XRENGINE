@@ -3,7 +3,9 @@ namespace XREngine.UnitTests.Cutscenes;
 /// <summary>
 /// A short Ogg Vorbis file for the decoder tests: 1.2 seconds of stereo at 22050 Hz.
 /// The left channel is a rising tone and the right channel is a mix of two tones.
-/// The data is inline so that the test does not need a binary file.
+/// The data is inline so that the test does not need a binary file. It was made with FFmpeg and libvorbis (the comment header
+/// gives Lavf58.78.100 and Lavc58.136.101); the exact command was not recorded when the file was added. Its block sizes are
+/// both 1024 and it has one mode.
 /// </summary>
 internal static class StreamingAudioTestData
 {
