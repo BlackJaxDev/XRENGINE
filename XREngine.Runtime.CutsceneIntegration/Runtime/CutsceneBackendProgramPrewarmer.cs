@@ -166,13 +166,26 @@ public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
             _ => ECutsceneProgramState.NotSupported,
         };
 
-    private static ERenderDrawReadiness DefaultProbe(
+    private static bool DefaultProbe(
         XRMeshRenderer renderer,
         XRMaterial material,
         RenderingParameters? renderOptionsOverride,
         XRRenderPipelineInstance? view,
+        out ERenderDrawReadiness state,
         out string reason)
-        => renderer.QueryDrawReadiness(material, renderOptionsOverride, view, out reason);
+    {
+        // A render-thread job drain outside a window frame has no current renderer. Asking then would store a
+        // not-started result over a measured one, so the step keeps the last result.
+        if (!XRMeshRenderer.CanQueryDrawReadinessNow)
+        {
+            state = default;
+            reason = string.Empty;
+            return false;
+        }
+
+        state = renderer.QueryDrawReadiness(material, renderOptionsOverride, view, out reason);
+        return true;
+    }
 
     private static bool DefaultIsVariantReady(XRMaterial material)
         => material.IsUberVariantReadyForRendering();
@@ -335,7 +348,8 @@ public sealed class CutsceneBackendProgramPrewarmer : ICutsceneProgramPrewarmer
             }
             else
             {
-                state = _probe(entry.Renderer, entry.Material, Volatile.Read(ref entry.RenderOptionsOverride), view, out reason);
+                if (!_probe(entry.Renderer, entry.Material, Volatile.Read(ref entry.RenderOptionsOverride), view, out state, out reason))
+                    return;
             }
         }
         catch (Exception ex)

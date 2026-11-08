@@ -1583,6 +1583,16 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// True when <see cref="QueryDrawReadiness"/> can ask the backend now: no render host is installed, or the caller
+        /// is on the render thread inside a scope with a current renderer that accepts backend work. A render-thread job
+        /// drain outside a window frame has no current renderer, so a caller that polls must keep its last result then.
+        /// </summary>
+        public static bool CanQueryDrawReadinessNow
+            => !RuntimeRenderingHostServices.HasConcreteHost ||
+               (RuntimeRenderingHostServices.FrameTiming.IsRenderThread &&
+                AbstractRenderer.Current is { AcceptsBackendWork: true });
+
+        /// <summary>
         /// Starts the non-blocking backend preparation of a draw of this renderer with <paramref name="material"/> and gives
         /// the state of the program link and, on backends that use them, the graphics pipelines of the passes of
         /// <paramref name="view"/> (see <see cref="IRenderPreparationState.QueryDrawReadiness"/>). Call it on the render

@@ -31,21 +31,39 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         public void End(XRMeshRenderer renderer)
             => Ended.Add(renderer);
 
-        public ERenderDrawReadiness Probe(XRMeshRenderer renderer, XRMaterial material, XREngine.Rendering.Models.Materials.RenderingParameters? renderOptionsOverride, XRRenderPipelineInstance? view, out string reason)
+        /// <summary>When true, the probe cannot ask now (as in a render-thread job drain with no current renderer).</summary>
+        public bool CannotAsk { get; set; }
+
+        public bool Probe(
+            XRMeshRenderer renderer,
+            XRMaterial material,
+            XREngine.Rendering.Models.Materials.RenderingParameters? renderOptionsOverride,
+            XRRenderPipelineInstance? view,
+            out ERenderDrawReadiness state,
+            out string reason)
         {
             ProbeCount++;
             LastView = view;
             LastRenderOptionsOverride = renderOptionsOverride;
+            if (CannotAsk)
+            {
+                state = default;
+                reason = string.Empty;
+                return false;
+            }
+
             if (Throwing.Contains(renderer))
                 throw new InvalidOperationException("wrapper publication is not ready");
 
             if (States.TryGetValue(renderer, out (ERenderDrawReadiness State, string Reason) value))
             {
                 reason = value.Reason;
-                return value.State;
+                state = value.State;
+                return true;
             }
             reason = "not started";
-            return ERenderDrawReadiness.NotStarted;
+            state = ERenderDrawReadiness.NotStarted;
+            return true;
         }
     }
 
@@ -335,6 +353,27 @@ public sealed class CutsceneBackendProgramPrewarmerTests
         scheduler.RunFrame();
 
         backend.Ended.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void AStepThatCannotAsk_KeepsTheLastMeasuredState()
+    {
+        FakeBackend backend = new();
+        ManualScheduler scheduler = new();
+        CutsceneBackendProgramPrewarmer prewarmer = Make(backend, scheduler);
+        XRMaterial material = new() { Name = "Proxy" };
+        XRMeshRenderer renderer = MakeRenderer(material);
+        backend.States[renderer] = (ERenderDrawReadiness.Ready, "Ready");
+        prewarmer.Request(material, renderer, null);
+        scheduler.RunFrame();
+        prewarmer.GetState(material, renderer, null, out _).ShouldBe(ECutsceneProgramState.Ready);
+
+        // A job drain with no current renderer must not store a not-started result over the measured one.
+        backend.CannotAsk = true;
+        scheduler.RunFrame();
+
+        prewarmer.GetState(material, renderer, null, out string? reason).ShouldBe(ECutsceneProgramState.Ready);
+        reason.ShouldBe("Ready");
     }
 
     [Test]
