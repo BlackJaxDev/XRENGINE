@@ -44,8 +44,9 @@ internal sealed class CutsceneAudioChannel
     private const int MaxTierLeadChunks = 256;
 
     /// <summary>
-    /// The estimated wall time of an Ogg Vorbis seek for each second of the target time. A backward seek decodes the file
-    /// from its start, and the measured cost is about 1.1 to 1.6 ms for each second of 48 kHz stereo audio.
+    /// The estimated wall time of an Ogg Vorbis seek for each second of the target time. It is the cost of a decode from
+    /// the start of the file, about 1.1 to 1.6 ms for each second of 48 kHz stereo audio. A backward seek with the page index
+    /// costs less, but a long forward seek and a seek after an index failure still cost this much, so the estimate stays an upper bound.
     /// </summary>
     internal const double VorbisSeekSecondsPerSecond = 0.002;
 
@@ -77,6 +78,7 @@ internal sealed class CutsceneAudioChannel
     private bool[] _sourceRestarted = [];
     private readonly Action<CutsceneAudioChannel, ListenerContext> _sourceLost;
     private readonly Action<CutsceneAudioChannel, Exception> _seekFailed;
+    private readonly Action<CutsceneAudioChannel, string> _seekIndexFailed;
     private readonly TaskScheduler _seekScheduler;
     private readonly AudioTierCrossfader _crossfader = new();
     private readonly AudioScrubGrainPlayer _grains = new();
@@ -95,6 +97,7 @@ internal sealed class CutsceneAudioChannel
     private int _crossfadeDone = int.MaxValue;
     private int _tierLeadChunks = InitialTierLeadChunks;
     private bool _seekFailureReported;
+    private bool _seekIndexFailureReported;
 
     // The frame of the last service or scrub, a grain request that waits for the end of the grain before it, and a playing grain.
     private long _lastFrame = -1;
@@ -133,6 +136,10 @@ internal sealed class CutsceneAudioChannel
     /// <param name="seekFailed">
     /// Called once for each clip when a background seek of the full decoder fails. The clip then plays the proxy to its end.
     /// </param>
+    /// <param name="seekIndexFailed">
+    /// Called once for each clip when the Ogg page index of the full decoder fails. Backward seeks of the clip then decode
+    /// from the start of the file. The argument is the reason.
+    /// </param>
     /// <param name="seekScheduler">The scheduler of the background seeks of the full decoder.</param>
     public CutsceneAudioChannel(
         int trackIndex,
@@ -140,6 +147,7 @@ internal sealed class CutsceneAudioChannel
         TimeProvider time,
         Action<CutsceneAudioChannel, ListenerContext> sourceLost,
         Action<CutsceneAudioChannel, Exception> seekFailed,
+        Action<CutsceneAudioChannel, string> seekIndexFailed,
         TaskScheduler seekScheduler)
     {
         TrackIndex = trackIndex;
@@ -147,6 +155,7 @@ internal sealed class CutsceneAudioChannel
         _time = time;
         _sourceLost = sourceLost;
         _seekFailed = seekFailed;
+        _seekIndexFailed = seekIndexFailed;
         _seekScheduler = seekScheduler;
     }
 
@@ -231,6 +240,7 @@ internal sealed class CutsceneAudioChannel
         _lastFrame = -1;
         _grainPending = false;
         _seekFailureReported = false;
+        _seekIndexFailureReported = false;
 
         // A new decoder is at frame zero, so the full tier is ready there with no crossfade.
         _waitingForFull = false;
@@ -598,7 +608,10 @@ internal sealed class CutsceneAudioChannel
             if (_seeker is not null)
                 BeginTierChange(frame);
             else
+            {
                 _decoder!.SeekToFrame(frame);
+                CheckSeekIndex();
+            }
             _producedFrame = frame;
             _historyCount = 0;
         }
@@ -896,6 +909,8 @@ internal sealed class CutsceneAudioChannel
         if (!_seeker!.TryGetIdle(out long frame, out Exception? failure))
             return;
 
+        // The worker is idle, so the update thread can read the decoder.
+        CheckSeekIndex();
         if (failure is not null)
         {
             // The decoder state is not known after a failed seek, so the clip plays the proxy to its end.
@@ -918,6 +933,15 @@ internal sealed class CutsceneAudioChannel
             _tierLeadChunks = Math.Min(_tierLeadChunks * 2, MaxTierLeadChunks);
             _seeker.Request(_producedFrame + (long)_tierLeadChunks * ChunkFrames);
         }
+    }
+
+    // Reports one time for each clip that the Ogg page index of the full decoder failed. The seek itself stays exact.
+    private void CheckSeekIndex()
+    {
+        if (_seekIndexFailureReported || _decoder is not VorbisStreamingDecoder { SeekIndexFailure: { } reason })
+            return;
+        _seekIndexFailureReported = true;
+        _seekIndexFailed(this, reason);
     }
 
     private void StoreHistory(ReadOnlySpan<float> samples, int channels)

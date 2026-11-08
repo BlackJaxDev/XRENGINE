@@ -4,8 +4,8 @@ using XREngine.Data;
 namespace XREngine.Cutscenes;
 
 /// <summary>
-/// Seeks the full decoder of an audio track on a background task, so a slow seek (an Ogg Vorbis seek backward reads from
-/// the start of the file) does not stop the update thread. The worker owns the decoder until <see cref="Close"/>.
+/// Seeks the full decoder of an audio track on a background task, so a slow seek (a long Ogg Vorbis seek, or the first
+/// backward seek that builds the page index) does not stop the update thread. The worker owns the decoder until <see cref="Close"/>.
 /// </summary>
 /// <remarks>
 /// <para>

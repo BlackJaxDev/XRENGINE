@@ -52,6 +52,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     private const int CodeProxyStale = 8;
     private const int CodeProxyInvalid = 9;
     private const int CodeSeekFailed = 10;
+    private const int CodeSeekIndexFailed = 11;
 
     private readonly CutsceneClock _clock;
     private readonly List<CutsceneCompileDiagnostic> _diagnostics;
@@ -124,6 +125,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
 
         Action<CutsceneAudioChannel, ListenerContext> sourceLost = ReportLostSource;
         Action<CutsceneAudioChannel, Exception> seekFailed = ReportSeekFailure;
+        Action<CutsceneAudioChannel, string> seekIndexFailed = ReportSeekIndexFailure;
         TaskScheduler scheduler = seekScheduler ?? TaskScheduler.Default;
         List<CutsceneTrack> tracks = compiled.Asset.Tracks;
         _channelOfTrack = new CutsceneAudioChannel?[tracks.Count];
@@ -132,7 +134,7 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         {
             if (tracks[i] is not AudioTrack track)
                 continue;
-            CutsceneAudioChannel channel = new(i, track, time, sourceLost, seekFailed, scheduler);
+            CutsceneAudioChannel channel = new(i, track, time, sourceLost, seekFailed, seekIndexFailed, scheduler);
             _channelOfTrack[i] = channel;
             channels.Add(channel);
         }
@@ -568,6 +570,14 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
         if (!MarkReported(channel.TrackIndex, channel.ClipIndex, CodeSeekFailed))
             return;
         Report(channel.TrackIndex, channel.ClipIndex, $"The full decoder of clip {channel.ClipIndex} on audio track '{channel.Track.Name}' failed to seek in the background: {failure.Message} The clip plays its audio proxy to its end.");
+    }
+
+    // The channel reports a failed Ogg page index one time for each clip. The seeks stay exact but decode from the start of the file.
+    private void ReportSeekIndexFailure(CutsceneAudioChannel channel, string reason)
+    {
+        if (!MarkReported(channel.TrackIndex, channel.ClipIndex, CodeSeekIndexFailed))
+            return;
+        Report(channel.TrackIndex, channel.ClipIndex, $"The Ogg page index of clip {channel.ClipIndex} on audio track '{channel.Track.Name}' is not used: {reason} Backward seeks of the clip decode from the start of the file.");
     }
 
     private bool MarkReported(int trackIndex, int clipIndex, int code)
