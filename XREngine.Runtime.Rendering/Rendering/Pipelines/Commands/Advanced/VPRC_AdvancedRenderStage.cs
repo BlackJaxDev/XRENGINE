@@ -24,6 +24,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         "Advanced.LateVisibilityRaster";
     internal const string MultisampleVisibilityResolvePassName =
         "Advanced.MultisampleVisibilityResolve";
+    internal const string DecalBufferPassName =
+        "Advanced.DecalBuffer";
 
     private EAdvancedRenderStage _stage;
 
@@ -159,6 +161,23 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     SelectionTargetName = AdvancedVisibilityResourceNames.Selection,
                     DepthTargetName = AdvancedVisibilityResourceNames.DepthStencil,
                 }, MultisampleVisibilityResolvePassName);
+            }
+            // Mesh surface decals draw against the final single-sample depth. Only a
+            // backend with the decal lane receives the phase; others keep decals masked.
+            if (request.DecalBufferEnabled &&
+                ActivePipelineInstance.Resources.TryGetFrameBuffer(
+                    AdvancedDecalBufferResourceNames.FrameBuffer, out XRFrameBuffer? decalTarget) &&
+                decalTarget is not null)
+            {
+                EnqueueLatePhase(visibility, request with
+                {
+                    Phase = EAdvancedVisibilityStageBackendPhase.DecalBuffer,
+                    Target = decalTarget,
+                    IdentityTargetName = AdvancedVisibilityResourceNames.Identity,
+                    MetadataTargetName = AdvancedVisibilityResourceNames.Metadata,
+                    SelectionTargetName = AdvancedVisibilityResourceNames.Selection,
+                    DepthTargetName = AdvancedVisibilityResourceNames.DepthStencil,
+                }, DecalBufferPassName);
             }
             return;
         }
@@ -413,6 +432,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcShadeletTelemetryEnabled: true },
             RvcFoveatedQuadShading = requiresNativeOpaqueShading && samples <= 1u &&
                 ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcFoveatedQuadShadingEnabled: true },
+            DecalBufferEnabled = stageBackend.SupportsAdvancedSurfaceDecalBuffer &&
+                ActivePipelineInstance.Resources.TryGetFrameBuffer(
+                    AdvancedDecalBufferResourceNames.FrameBuffer, out XRFrameBuffer? decalBuffer) &&
+                decalBuffer is not null,
         };
         if (request.RecordRvcShadeletTelemetry)
             RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryRequest();
@@ -686,9 +709,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             // Reserve the optional node even when this generation is not MSAA so the
             // following synthetic passes retain their stable execution identities.
             context.ReserveSyntheticPassIndex(MultisampleVisibilityResolvePassName);
+            context.ReserveSyntheticPassIndex(DecalBufferPassName);
             DescribeLateRasterPass(context, builder.PassIndex, usesMultisampleVisibility, packedSamples);
             if (usesMultisampleVisibility)
                 DescribeMultisampleResolvePass(context, packedSamples);
+            if (context.HasResource(AdvancedDecalBufferResourceNames.Albedo))
+                DescribeDecalBufferPass(context, usesMultisampleVisibility);
         }
         else if (descriptor.Stage == EAdvancedRenderStage.AmbientOcclusion)
         {
@@ -730,6 +756,15 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             builder.DependsOn(context.GetOrCreateSyntheticPass(
                 shadowStage.PassName,
                 shadowStage.RenderGraphStage).PassIndex);
+            // Native shading blends the mesh surface decal buffer before lighting.
+            if (context.HasResource(AdvancedDecalBufferResourceNames.Albedo))
+            {
+                builder.DependsOn(context.GetOrCreateSyntheticPass(
+                        DecalBufferPassName,
+                        ERenderGraphPassStage.Graphics).PassIndex)
+                    .SampleTexture(Tex(AdvancedDecalBufferResourceNames.Albedo))
+                    .SampleTexture(Tex(AdvancedDecalBufferResourceNames.Surface));
+            }
         }
         else if (stageIndex > 0)
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
@@ -764,6 +799,35 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Load, packedSamples);
         else
             DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Load);
+    }
+
+    /// <summary>
+    /// The decal buffer pass draws the mesh surface decal bins of the early and late segments.
+    /// It clears and writes both decal targets and only tests the final single-sample depth.
+    /// </summary>
+    private static void DescribeDecalBufferPass(RenderGraphDescribeContext context, bool usesMultisampleVisibility)
+    {
+        RenderPassBuilder builder = context.GetOrCreateSyntheticPass(DecalBufferPassName, ERenderGraphPassStage.Graphics)
+            .UseEngineDescriptors()
+            .DependsOn(context.GetOrCreateSyntheticPass(
+                usesMultisampleVisibility ? MultisampleVisibilityResolvePassName : LateVisibilityRasterPassName,
+                ERenderGraphPassStage.Graphics).PassIndex)
+            .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
+            .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
+        for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; slot++)
+        {
+            builder
+                .ReadBuffer(AdvancedVisibilityResourceNames.EarlyArguments(slot), ERenderPassResourceType.IndirectBuffer)
+                .ReadBuffer(AdvancedVisibilityResourceNames.EarlyVisiblePayloads(slot));
+        }
+        DescribeLateRasterSlotResources(builder);
+        for (int attachment = 0; attachment < 2; attachment++)
+            builder.UseColorAttachment(RenderGraphResourceNames.MakeFboColor(AdvancedDecalBufferResourceNames.FrameBuffer, attachment),
+                ERenderGraphAccess.Write, ERenderPassLoadOp.Clear, ERenderPassStoreOp.Store);
+        builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedDecalBufferResourceNames.FrameBuffer),
+            ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(RenderGraphResourceNames.MakeFboStencil(AdvancedDecalBufferResourceNames.FrameBuffer),
+            ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
     }
 
     private static void DescribeMultisampleResolvePass(RenderGraphDescribeContext context, bool packedSamples)

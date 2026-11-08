@@ -357,7 +357,7 @@ bool XR_ADV_KernelShadesMaterialFamily(uint materialDense)
 /// directional lights.
 /// It uses the scene lighting, so it follows exposure like other surfaces. It is never
 /// magenta, so an Uber material that is still loading does not flash the frame.
-void XR_ADV_ShadeUberFallback(XRAdvancedMaterialRecord material, XRAdvancedSurface surface,
+void XR_ADV_ShadeUberFallback(uvec2 pixel, XRAdvancedMaterialRecord material, XRAdvancedSurface surface,
     XRAdvancedViewRecord view, uint viewIndex, float ambientOcclusion,
     inout XRAdvancedOpaqueSampleResult result)
 {
@@ -371,6 +371,9 @@ void XR_ADV_ShadeUberFallback(XRAdvancedMaterialRecord material, XRAdvancedSurfa
     baseColor *= XR_ADV_StandardTexture(material, XR_UBER_TEX_MainTex, surface.texCoord0,
         surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0)).rgb;
 #endif
+    float fallbackRoughness = 0.8;
+    float fallbackMetallic = 0.0;
+    XR_ADV_ApplyDecalBuffer(pixel, baseColor, fallbackRoughness, fallbackMetallic);
     vec3 N = normalize(surface.shadingNormal);
     vec3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
     vec3 color = XR_ADV_WorldAmbient(viewIndex) * baseColor *
@@ -378,7 +381,7 @@ void XR_ADV_ShadeUberFallback(XRAdvancedMaterialRecord material, XRAdvancedSurfa
     uint lightCount = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
     for (uint i = 0u; i < lightCount; ++i)
         if (XR_ADV_Lights.records[i].type == 0u)
-            color += XR_ADV_EvaluateLight(i, surface, N, V, baseColor, 0.8, 0.0);
+            color += XR_ADV_EvaluateLight(i, surface, N, V, baseColor, fallbackRoughness, fallbackMetallic);
     result.radiance = color;
     result.opacity = 1.0;
     result.reactive = 1.0;
@@ -460,7 +463,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
 #if !defined(XR_ADV_NATIVE_SHADING_FAMILY) || XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_UBER
         XR_UBER_Shade(pixel, surface, view, material, ambientOcclusion, result);
 #else
-        XR_ADV_ShadeUberFallback(material, surface, view, viewIndex, ambientOcclusion, result);
+        XR_ADV_ShadeUberFallback(pixel, material, surface, view, viewIndex, ambientOcclusion, result);
 #endif
         return;
     }
@@ -528,6 +531,8 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     vec3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
     float roughness = clamp(rmse.x, 0.04, 1.0);
     float metallic = clamp(rmse.y, 0.0, 1.0);
+    // Mesh surface decals belong to the surface. Projected decals apply over them below.
+    XR_ADV_ApplyDecalBuffer(pixel, base.rgb, roughness, metallic);
     float linearDepth = -XR_ADV_TransformRowVector(vec4(surface.worldPosition, 1.0), view.view).z;
     uint slice = XR_ADV_CalculateDepthSlice(linearDepth,
         max(view.cameraPositionAndNear.w, 0.0001),

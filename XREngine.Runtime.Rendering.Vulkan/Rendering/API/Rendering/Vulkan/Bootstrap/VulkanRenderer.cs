@@ -179,6 +179,9 @@ public sealed partial class VulkanRenderer :
         : base(hostContext)
     {
         VulkanNativeOwnershipQuarantine.ThrowIfOccupied();
+        // The Advanced visibility family records the mesh surface decal buffer phase.
+        // Enable the lane before any scene publication routes decal draws.
+        AdvancedSurfaceDecalLane.EnableBackendSupport();
         IVulkanRendererTargetDriver targetDriver = VulkanRendererTargetDriverFactory.Create(hostContext);
         int frameSlotCount = targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget
             ? checked((int)explicitTarget.OutputProperties.FrameSlotCount)
@@ -582,6 +585,7 @@ public sealed partial class VulkanRenderer :
     bool ISceneDatabaseDeviceAddressBackendCapability.TryBindSceneDatabaseDeviceAddressUniforms(XRRenderProgram program, XRDataBuffer drawMetadataBuffer, XRDataBuffer? instanceTransformBuffer, bool useInstanceTransformBuffer, string consumer) => _resourceRuntime.TryBindSceneDatabaseDeviceAddressUniforms(program, drawMetadataBuffer, instanceTransformBuffer, useInstanceTransformBuffer, consumer);
     bool IAdvancedVisibilityStageBackendCapability.SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage)
         => _frameLoop.SupportsAdvancedVisibilityStage(stage);
+    bool IAdvancedVisibilityStageBackendCapability.SupportsAdvancedSurfaceDecalBuffer => true;
     bool IAdvancedVisibilityStageBackendCapability.TryEnqueueAdvancedVisibilityStage(
         in AdvancedVisibilityStageBackendRequest request,
         out string failureReason)

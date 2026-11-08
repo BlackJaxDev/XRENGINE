@@ -835,7 +835,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeSelectionMultisampleBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeSamplePositionMultisampleBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeRvcIdentityArrayBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeRvcDepthArrayBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcDepthArrayBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDecalBufferAlbedoBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDecalBufferSurfaceBinding];
         ReadOnlySpan<uint> nativeStorageImageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeHdrBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeVelocityBinding,
@@ -1673,6 +1675,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         }
         if (closure.HasRvcTelemetry && !TryUpdateRvcTelemetryDescriptors(descriptorSet, in closure, out reason))
             return false;
+        if (!TryUpdateDecalBufferDescriptors(descriptorSet, in closure, out reason))
+            return false;
         _resources.RecordDescriptorTableGeneration();
         reason = "Ready";
         return true;
@@ -1724,6 +1728,47 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             },
         };
         return _resources.DescriptorLifetime.TryUpdateDescriptorSets(3u, writes, out reason);
+    }
+
+    /// <summary>
+    /// Writes the mesh surface decal buffer bindings. Every shading kernel declares them, so
+    /// they are always written: a family without the decal buffer binds the AO texture in their
+    /// place, and its shading push flags never read them.
+    /// </summary>
+    private unsafe bool TryUpdateDecalBufferDescriptors(
+        DescriptorSet descriptorSet,
+        in VulkanAdvancedNativeComputeClosure closure,
+        out string reason)
+    {
+        DescriptorImageInfo* images = stackalloc DescriptorImageInfo[2]
+        {
+            closure.HasDecalBuffer ? closure.DecalBufferAlbedoDescriptor : closure.AmbientOcclusionSampledDescriptor,
+            closure.HasDecalBuffer ? closure.DecalBufferSurfaceDescriptor : closure.AmbientOcclusionSampledDescriptor,
+        };
+        if (images[0].ImageView.Handle == 0 || images[0].Sampler.Handle == 0 ||
+            images[1].ImageView.Handle == 0 || images[1].Sampler.Handle == 0)
+        {
+            reason = "A frozen native-compute decal buffer descriptor is unavailable.";
+            return false;
+        }
+        WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[2]
+        {
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeDecalBufferAlbedoBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.CombinedImageSampler,
+                PImageInfo = images,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeDecalBufferSurfaceBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.CombinedImageSampler,
+                PImageInfo = images + 1,
+            },
+        };
+        return _resources.DescriptorLifetime.TryUpdateDescriptorSets(2u, writes, out reason);
     }
 
     private readonly record struct VulkanNativeComputeDescriptorSignature(
@@ -1900,6 +1945,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         uint msaaSampleCount,
         string ambientOcclusionTargetName,
         bool requireMaterialSurfaceExports,
+        bool requireDecalBuffer,
         VulkanAdvancedNativeComputeClosureStorage storage,
         out VulkanAdvancedNativeComputeClosure closure,
         out string reason)
@@ -2090,6 +2136,32 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 }
             }
 
+            // The mesh surface decal buffer is read per view layer before lighting.
+            VulkanAdvancedNativeImageClosure decalAlbedoResource = default;
+            VulkanAdvancedNativeImageClosure decalSurfaceResource = default;
+            ImageView decalAlbedoView = default;
+            ImageView decalSurfaceView = default;
+            VulkanPhysicalImageGroup? decalAlbedo = null;
+            VulkanPhysicalImageGroup? decalSurface = null;
+            if (requireDecalBuffer)
+            {
+                if (!generation.State.ResourceAllocator.TryGetPhysicalGroupForResource(
+                        AdvancedDecalBufferResourceNames.Albedo, out decalAlbedo) ||
+                    !generation.State.ResourceAllocator.TryGetPhysicalGroupForResource(
+                        AdvancedDecalBufferResourceNames.Surface, out decalSurface) ||
+                    decalAlbedo is not { IsAllocated: true } || decalSurface is not { IsAllocated: true } ||
+                    viewIndex >= Math.Max(1u, decalAlbedo.Template.Layers) ||
+                    viewIndex >= Math.Max(1u, decalSurface.Template.Layers) ||
+                    !TryAcquireNativeComputeView(context, storage, decalAlbedo, ImageAspectFlags.ColorBit, viewIndex, out decalAlbedoView) ||
+                    !TryAcquireNativeComputeView(context, storage, decalSurface, ImageAspectFlags.ColorBit, viewIndex, out decalSurfaceView) ||
+                    !TryCaptureNativeComputeImageClosure(decalAlbedo, decalAlbedoView, out decalAlbedoResource) ||
+                    !TryCaptureNativeComputeImageClosure(decalSurface, decalSurfaceView, out decalSurfaceResource))
+                {
+                    reason = "The frozen graph is missing the mesh surface decal buffer images or their view layer.";
+                    return false;
+                }
+            }
+
             closure = new VulkanAdvancedNativeComputeClosure(
                 graphPlan.Revision, identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics, ambientOcclusion,
                 identityMultisample, metadataMultisample, depthMultisample, selectionMultisample, samplePositionMultisample,
@@ -2130,9 +2202,20 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 RvcDepthArrayDescriptor = rvcDepthArrayView.Handle == 0
                     ? default
                     : new DescriptorImageInfo { Sampler = sampler, ImageView = rvcDepthArrayView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
+                DecalBufferAlbedo = decalAlbedo,
+                DecalBufferSurface = decalSurface,
+                DecalBufferAlbedoResource = decalAlbedoResource,
+                DecalBufferSurfaceResource = decalSurfaceResource,
+                DecalBufferAlbedoDescriptor = decalAlbedoView.Handle == 0
+                    ? default
+                    : new DescriptorImageInfo { Sampler = sampler, ImageView = decalAlbedoView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
+                DecalBufferSurfaceDescriptor = decalSurfaceView.Handle == 0
+                    ? default
+                    : new DescriptorImageInfo { Sampler = sampler, ImageView = decalSurfaceView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
             };
             captured = closure.IsValid &&
-                (rvcTelemetry.NativeBuffer.Handle == 0 || closure.HasRvcTelemetry);
+                (rvcTelemetry.NativeBuffer.Handle == 0 || closure.HasRvcTelemetry) &&
+                (!requireDecalBuffer || closure.HasDecalBuffer);
             reason = captured ? "Ready" : "The advanced native compute closure is incomplete.";
             return captured;
         }

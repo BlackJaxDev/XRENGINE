@@ -123,7 +123,8 @@ internal static class VulkanFrameOperationSemantics
             TransformFeedbackOp transformFeedback => transformFeedback.Target ?? transformFeedback.Context.OutputFrameBuffer,
             AdvancedVisibilityOp visibility
                 when visibility.Request.Stage is EAdvancedRenderStage.VisibilityRaster or
-                    EAdvancedRenderStage.DirectionalShadowRaster
+                    EAdvancedRenderStage.DirectionalShadowRaster ||
+                    visibility.Request.Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer
                 => visibility.Target,
             _ => null,
         };
@@ -206,6 +207,16 @@ internal static class VulkanFrameOperationSemantics
                         output,
                         version,
                         EFrameOpResourceAccess.Write);
+                    break;
+                }
+                if (visibility.Request.Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer)
+                {
+                    // The decal buffer writes its two color targets and only tests
+                    // the resolved visibility depth.
+                    AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write,
+                        includeColor: true, includeDepth: false, includeStencil: false);
+                    AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Read,
+                        includeColor: false, includeDepth: true, includeStencil: true);
                     break;
                 }
                 if (visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster ||

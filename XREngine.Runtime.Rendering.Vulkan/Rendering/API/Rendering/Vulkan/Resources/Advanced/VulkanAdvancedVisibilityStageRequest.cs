@@ -52,8 +52,14 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// <summary>Shades one pixel per peripheral block of the same primitive, then fills the rest.</summary>
     internal bool RvcFoveatedQuadShading { get; init; }
 
+    /// <summary>True when the family records the decal buffer phase and native shading reads the decal buffer.</summary>
+    internal bool DecalBufferEnabled { get; init; }
+
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
     internal bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
+
+    /// <summary>True for the mesh surface decal buffer phase, which draws the family's decal bins into the decal buffer.</summary>
+    internal bool IsDecalBufferPhase => Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer;
 
     /// <summary>
     /// Native-compute closure capture is required only by stages that consume
@@ -79,6 +85,8 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
                 EAdvancedVisibilityStageBackendPhase.LateRaster) or
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.MultisampleResolve) or
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.DecalBuffer) or
             (EAdvancedRenderStage.WorkClassification,
                 EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.AmbientOcclusion,
@@ -126,6 +134,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            AmbientOcclusionMultiBounce == other.AmbientOcclusionMultiBounce &&
            AmbientOcclusionSpecularUsesVisibility == other.AmbientOcclusionSpecularUsesVisibility &&
            MsaaSampleCount == other.MsaaSampleCount &&
+           DecalBufferEnabled == other.DecalBufferEnabled &&
            HasAuthoredBackground == other.HasAuthoredBackground &&
            IsMinimalVisibilityOutput == other.IsMinimalVisibilityOutput &&
            ShadingDebugView == other.ShadingDebugView &&
@@ -167,6 +176,8 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
             return $"{nameof(MsaaSampleCount)} ({MsaaSampleCount} vs {other.MsaaSampleCount})";
         if (HasAuthoredBackground != other.HasAuthoredBackground)
             return nameof(HasAuthoredBackground);
+        if (DecalBufferEnabled != other.DecalBufferEnabled)
+            return nameof(DecalBufferEnabled);
         if (IsMinimalVisibilityOutput != other.IsMinimalVisibilityOutput)
             return nameof(IsMinimalVisibilityOutput);
         if (ShadingDebugView != other.ShadingDebugView)
@@ -200,6 +211,14 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
         // the family's publication and views, never its visibility targets.
         if (IsDirectionalShadowStage || other.IsDirectionalShadowStage)
             return true;
+        // The decal buffer targets its own framebuffer. It shares the resolved
+        // visibility depth, and its request carries the resolved target names.
+        if (IsDecalBufferPhase || other.IsDecalBufferPhase)
+        {
+            return IsDecalBufferPhase
+                ? HasExpectedVisibilityTargetNames(raw: false)
+                : other.HasExpectedVisibilityTargetNames(raw: false);
+        }
         bool raw = UsesRawMultisampleTargets;
         bool otherRaw = other.UsesRawMultisampleTargets;
         if (!HasExpectedVisibilityTargetNames(raw) || !other.HasExpectedVisibilityTargetNames(otherRaw))
@@ -219,7 +238,8 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            (Stage is EAdvancedRenderStage.VisibilityPreparation or
                EAdvancedRenderStage.VisibilityRaster ||
             Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility &&
-            Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve);
+            Phase is not (EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
+                EAdvancedVisibilityStageBackendPhase.DecalBuffer));
 
     private bool HasExpectedVisibilityTargetNames(bool raw)
         => string.Equals(IdentityTargetName, raw ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity, StringComparison.Ordinal) &&

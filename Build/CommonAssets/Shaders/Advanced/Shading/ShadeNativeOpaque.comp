@@ -40,6 +40,7 @@ XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
 #define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
 #endif
 
+#include "NativeDecalBuffer.glslinc"
 #include "ShadeNativeOpaqueEvaluator.glslinc"
 #include "FoveatedQuadShading.glslinc"
 

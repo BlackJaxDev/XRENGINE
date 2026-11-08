@@ -674,6 +674,7 @@ namespace XREngine.Rendering.Vulkan
             int classificationStageCount = 0;
             int nativeOpaqueStageCount = 0;
             int directionalShadowStageCount = 0;
+            int decalBufferStageCount = 0;
             bool observe = S13aPublicationTelemetry.Enabled;
             int observedStages = 0;
             int observedPrepareCalls = 0;
@@ -716,7 +717,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
                 if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
-                    classificationStageCount + nativeOpaqueStageCount + directionalShadowStageCount == 0)
+                    classificationStageCount + nativeOpaqueStageCount + directionalShadowStageCount + decalBufferStageCount == 0)
                 {
                     familyRequest = request;
                     familyInput = input;
@@ -759,6 +760,9 @@ namespace XREngine.Rendering.Vulkan
                     case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.MultisampleResolve):
                         multisampleResolveStageCount++;
                         break;
+                    case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.DecalBuffer):
+                        decalBufferStageCount++;
+                        break;
                     case (EAdvancedRenderStage.AmbientOcclusion, EAdvancedVisibilityStageBackendPhase.Complete):
                         ambientOcclusionStageCount++;
                         break;
@@ -774,7 +778,7 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (preparationStageCount > 1 || rasterStageCount > 1 ||
                     lateComputeStageCount > 1 || lateRasterStageCount > 1 ||
-                    multisampleResolveStageCount > 1 ||
+                    multisampleResolveStageCount > 1 || decalBufferStageCount > 1 ||
                     ambientOcclusionStageCount > request.Views.ViewCount ||
                     classificationStageCount > request.Views.ViewCount ||
                     nativeOpaqueStageCount > request.Views.ViewCount ||
@@ -808,11 +812,13 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.Ops.GetHeader(operationIndex).PassIndex;
                 bool directionalShadowStage =
                     request.Stage == EAdvancedRenderStage.DirectionalShadowRaster;
+                bool decalBufferPhase = request.IsDecalBufferPhase;
                 bool requiresGraphicsTargetClosure =
                     request.Stage == EAdvancedRenderStage.VisibilityRaster ||
                     directionalShadowStage ||
                     request.Phase is EAdvancedVisibilityStageBackendPhase.LateRaster or
-                        EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
+                        EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
+                        EAdvancedVisibilityStageBackendPhase.DecalBuffer;
                 VkFrameBuffer? targetWrapper = null;
                 if (requiresGraphicsTargetClosure &&
                     (targetWrapper = ResourceRuntime.BackendObjects.Get(request.Target)
@@ -828,7 +834,9 @@ namespace XREngine.Rendering.Vulkan
                 bool targetShapeValid = !requiresGraphicsTargetClosure ||
                     (directionalShadowStage
                         ? TryValidateAdvancedDirectionalShadowTarget(in request, targetWrapper!, out targetShapeReason)
-                        : TryValidateAdvancedVisibilityTarget(in request, targetWrapper!, out targetShapeReason));
+                        : decalBufferPhase
+                            ? TryValidateAdvancedDecalBufferTarget(in request, targetWrapper!, out targetShapeReason)
+                            : TryValidateAdvancedVisibilityTarget(in request, targetWrapper!, out targetShapeReason));
                 if (!targetShapeValid)
                 {
                     recordingState.RecordingDeferredReason =
@@ -877,7 +885,9 @@ namespace XREngine.Rendering.Vulkan
                 string targetFormatReason = string.Empty;
                 bool targetFormatsValid = directionalShadowStage
                     ? TryValidateAdvancedDirectionalShadowTargetFormats(in targetFormats, rasterizationSamples, out targetFormatReason)
-                    : TryValidateAdvancedVisibilityTargetFormats(in request, in targetFormats, rasterizationSamples, out targetFormatReason);
+                    : decalBufferPhase
+                        ? TryValidateAdvancedDecalBufferTargetFormats(in targetFormats, rasterizationSamples, depthStencilReadOnly, out targetFormatReason)
+                        : TryValidateAdvancedVisibilityTargetFormats(in request, in targetFormats, rasterizationSamples, out targetFormatReason);
                 if (!targetFormatsValid)
                 {
                     recordingState.RecordingDeferredReason =
@@ -921,7 +931,9 @@ namespace XREngine.Rendering.Vulkan
                     clearPolicy,
                     directionalShadowStage
                         ? EVulkanAdvancedVisibilityTargetKind.DirectionalShadow
-                        : EVulkanAdvancedVisibilityTargetKind.Visibility);
+                        : decalBufferPhase
+                            ? EVulkanAdvancedVisibilityTargetKind.DecalBuffer
+                            : EVulkanAdvancedVisibilityTargetKind.Visibility);
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster)
                     rasterTargetClosure = targetClosure;
                 else if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)
@@ -1098,6 +1110,9 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (directionalShadowStage &&
                     !TryPrepareDirectionalShadowLane(ref recordingState, familyBins, input, in request, in targetClosure))
+                    return false;
+                if (decalBufferPhase &&
+                    !TryPrepareDecalBufferLane(ref recordingState, familyBins, input, in targetClosure))
                     return false;
                 S13aPublicationTelemetry.StepProbe associationProbe =
                     S13aPublicationTelemetry.BeginAdvancedFamilyStep();
@@ -1488,6 +1503,7 @@ namespace XREngine.Rendering.Vulkan
                                 request.MsaaSampleCount,
                                 request.AmbientOcclusionTargetName,
                                 request.RequiresMaterialSurfaceExports,
+                                request.DecalBufferEnabled,
                                 nativeStorage,
                                 out nativeClosure,
                                 out nativeClosureReason);
@@ -2230,6 +2246,88 @@ namespace XREngine.Rendering.Vulkan
             }
 
             reason = "Ready";
+            return true;
+        }
+
+        private static bool TryValidateAdvancedDecalBufferTarget(
+            in VulkanAdvancedVisibilityStageRequest request,
+            VkFrameBuffer target,
+            out string reason)
+        {
+            if (request.Target.Targets is not { Length: 3 } attachments ||
+                attachments[0].Attachment != EFrameBufferAttachment.ColorAttachment0 ||
+                attachments[0].Target is not GenericRenderObject { Name: AdvancedDecalBufferResourceNames.Albedo } ||
+                attachments[1].Attachment != EFrameBufferAttachment.ColorAttachment1 ||
+                attachments[1].Target is not GenericRenderObject { Name: AdvancedDecalBufferResourceNames.Surface } ||
+                attachments[2].Attachment != EFrameBufferAttachment.DepthStencilAttachment ||
+                attachments[2].Target is not GenericRenderObject depthObject ||
+                !string.Equals(depthObject.Name, request.DepthTargetName, StringComparison.Ordinal))
+            {
+                reason = "the decal buffer framebuffer must hold the albedo and surface targets and the resolved visibility depth-stencil";
+                return false;
+            }
+            if (target.FramebufferWidth == 0u || target.FramebufferHeight == 0u)
+            {
+                reason = "the native framebuffer extent is empty";
+                return false;
+            }
+            reason = string.Empty;
+            return true;
+        }
+
+        private static bool TryValidateAdvancedDecalBufferTargetFormats(
+            in DynamicRenderingFormatSignature formats,
+            SampleCountFlags samples,
+            bool depthStencilReadOnly,
+            out string reason)
+        {
+            bool valid = samples == SampleCountFlags.Count1Bit &&
+                depthStencilReadOnly &&
+                formats.ColorAttachmentCount == 2u &&
+                formats.GetColorAttachmentFormat(0u) == Format.R8G8B8A8Unorm &&
+                formats.GetColorAttachmentFormat(1u) == Format.R8G8B8A8Unorm &&
+                formats.DepthAttachmentFormat == Format.D32SfloatS8Uint;
+            if (!valid)
+            {
+                reason = $"expected single-sample R8G8B8A8Unorm x2 with a read-only D32SfloatS8Uint depth; received samples={samples}, colors={formats.DescribeColorFormats()}, depth={formats.DepthAttachmentFormat}, readOnly={depthStencilReadOnly}";
+                return false;
+            }
+            reason = "Ready";
+            return true;
+        }
+
+        /// <summary>
+        /// Prepares the decal buffer pipelines for the family's sealed decal bins. A program that
+        /// still compiles, or a failed pipeline, leaves its bins without a decal pipeline: the pass
+        /// then clears the decal buffer and skips those draws, so the frame is never blocked.
+        /// </summary>
+        private bool TryPrepareDecalBufferLane(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            VulkanPreparedStableBinStream familyBins,
+            VulkanAdvancedVisibilityInputStorage input,
+            in VulkanAdvancedVisibilityTargetClosure targetClosure)
+        {
+            if (!familyBins.HasSealedSubmissionPlans)
+            {
+                recordingState.RecordingDeferredReason =
+                    "Advanced decal buffer preparation found no sealed visibility bins.";
+                recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                return false;
+            }
+            VulkanAdvancedVisibilityPipelineReadiness readiness =
+                familyBins.TryPrepareDecalBufferPipelines(
+                    ResourceRuntime.AdvancedVisibilityPipelines,
+                    input.Payloads,
+                    in targetClosure,
+                    out string reason);
+            if (readiness == VulkanAdvancedVisibilityPipelineReadiness.Failed)
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.AdvancedDecalBuffer.PipelineFailed",
+                    TimeSpan.FromSeconds(5),
+                    "[Vulkan] Advanced decal buffer pipelines failed; surface decals are not drawn: {0}",
+                    reason);
+            }
             return true;
         }
 

@@ -214,6 +214,8 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     float roughness, metallic, specularMask, reflectionMask, packedSmoothness;
     vec3 specularColor, specularTint;
     XR_UBER_Pbr(c, base.rgb, roughness, metallic, specularColor, specularTint, specularMask, reflectionMask, packedSmoothness);
+    // Mesh surface decals belong to the surface: blend them before any lighting term.
+    XR_ADV_ApplyDecalBuffer(pixel, base.rgb, roughness, metallic);
     float materialAo = XR_UBER_MaterialAo(c);
     vec3 sourceDiffuseBase = base.rgb;
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR) &&

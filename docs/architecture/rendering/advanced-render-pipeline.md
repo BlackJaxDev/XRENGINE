@@ -40,6 +40,44 @@ FrameBegin
 - Native opaque shading reconstructs surface attributes from visibility identity, evaluates material lighting, and writes HDR scene color.
 - Late passes hold transparent, refractive, volumetric, particle, editor-overlay, gizmo, and other special work.
 
+### Mesh surface decal buffer
+
+Imported mesh decals (for example dirt sheets on walls and columns) blend over the surface
+below them. They do not enter the visibility buffer.
+
+- **Classification.** The importer marks a material as a surface decal
+  (`XRMaterial.AdvancedSurfaceDecal`) when it has an opacity map and "decal" in its name.
+  `ModelImportOptions.DecalMaterialMode = Disabled` turns this off for one model. The material
+  keeps `ETransparencyMode.Masked` as the fallback for renderers without the lane.
+- **Lane support.** The Vulkan backend enables `AdvancedSurfaceDecalLane` at startup. The
+  lane is on by default; `XRE_ADVANCED_SURFACE_DECALS=0` (or `false`) selects the masked path.
+  Without support (OpenGL, WebGPU, or the variable set to 0), surface decals draw as masked
+  materials, and each material reports one diagnostic.
+- **Routing.** `AdvancedGpuScenePublisher` sets `GPUIndirectRenderFlags.SurfaceDecal` on the
+  draws, and `AdvancedPreparationExtractor` gives them `EAdvancedMaterialCoverageMode.Decal`.
+  Decal bins are excluded from the visibility raster (early and late), Hi-Z, and both
+  directional shadow recorders. Decals never occlude and never cast shadows. They use the
+  traditional indexed raster, not meshlets.
+- **Decal buffer phase.** `DepthPyramidAndLateVisibility` enqueues the
+  `EAdvancedVisibilityStageBackendPhase.DecalBuffer` phase after late raster (and after the MSAA
+  resolve). Its synthetic render-graph pass, `Advanced.DecalBuffer`, clears and writes two
+  single-sample RGBA8 targets (`AdvancedDecalBufferResourceNames.Albedo` and `.Surface`) to zero and
+  loads the resolved depth read-only. It draws the decal bins of the early and the late argument
+  segments.
+- **Pipeline.** `VulkanDecalBufferPipelineFactory` creates the decal pipeline:
+  - The depth test uses `LessOrEqual` (`GreaterOrEqual` with reversed Z), with no depth write.
+  - A slope-scaled depth bias pulls the decal toward the camera.
+  - Both targets use premultiplied "over" blending. Alpha accumulates coverage, so a cleared
+    texel means "no decal".
+- **Shading.** The native shading kernels (standard, Uber, Uber fallback, and both MSAA
+  kernels) read the targets through set-1 bindings 69 and 70 when push flag bit 16 is set.
+  They resolve `value = surface * (1 - coverage) + decal` for albedo, roughness, and metallic
+  before lighting. The standard path applies the decal buffer before the projected decals
+  (`XR_ADV_ApplyDecalToSurface`). Emission comes from the surface before decals. MSAA kernels
+  apply the pixel value to every sample.
+- **Readiness.** The decal programs compile on first use. They are not part of the visibility
+  family readiness. While they compile, the pass clears the targets and draws no decals.
+
 ### Native opaque shading kernel families
 
 On Vulkan, `ShadeNativeOpaque.comp` compiles as two kernel families. The

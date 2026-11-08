@@ -127,6 +127,9 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint NativeRvcIdentityArrayBinding = 66u;
     internal const uint NativeRvcDepthArrayBinding = 67u;
     internal const uint NativeRvcTelemetryCountersBinding = 68u;
+    // Mesh surface decal buffer: premultiplied albedo/transmittance and roughness/metallic/transmittance.
+    internal const uint NativeDecalBufferAlbedoBinding = 69u;
+    internal const uint NativeDecalBufferSurfaceBinding = 70u;
     internal const uint ExternallyOwnedSetMask =
         (1u << (int)GlobalSetIndex) |
         (1u << (int)VisibilitySetIndex) |
@@ -362,7 +365,8 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
             NativeIdentityMultisampleBinding or NativeMetadataMultisampleBinding or
             NativeSelectionMultisampleBinding or NativeDepthMultisampleBinding or
             NativeSamplePositionMultisampleBinding or
-            NativeRvcIdentityArrayBinding or NativeRvcDepthArrayBinding;
+            NativeRvcIdentityArrayBinding or NativeRvcDepthArrayBinding or
+            NativeDecalBufferAlbedoBinding or NativeDecalBufferSurfaceBinding;
 
     private static bool ContainsNativeStorageImageBinding(uint binding)
         => binding is NativeHdrBinding or NativeVelocityBinding or NativeReactiveBinding or

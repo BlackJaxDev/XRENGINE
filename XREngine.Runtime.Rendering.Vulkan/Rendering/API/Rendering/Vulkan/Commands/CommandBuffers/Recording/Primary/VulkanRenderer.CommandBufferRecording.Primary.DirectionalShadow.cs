@@ -148,6 +148,9 @@ internal sealed partial class VulkanCommandRuntime
             for (int headerIndex = 0; headerIndex < headers.Length; headerIndex++)
             {
                 ref readonly VulkanPreparedStableBinHeader header = ref headers[headerIndex];
+                // Mesh surface decals never cast shadows.
+                if (header.IsSurfaceDecal)
+                    continue;
                 if (!header.IsRasterReady)
                 {
                     throw new VulkanPlanPreconditionException(

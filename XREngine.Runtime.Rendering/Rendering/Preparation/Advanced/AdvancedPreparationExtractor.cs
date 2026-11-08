@@ -947,7 +947,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                         : 1u,
                 PrimitiveTopology: checked((uint)canonicalGeometry.PrimitiveTopology),
                 Skinned: skinned,
-                MeshletsResident: meshletsResident && !WritesFragmentDepth(command),
+                // Fragment-depth and surface decal draws use the traditional raster only.
+                MeshletsResident: meshletsResident && !WritesFragmentDepth(command) && !IsSurfaceDecal(command),
                 ForceCpuDiagnostic:
                     snapshot.ForceCpuRendering ||
                     mesh is null ||
@@ -1692,7 +1693,13 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     private static bool WritesFragmentDepth(in DrawMetadata command)
         => (command.Flags & (uint)GPUIndirectRenderFlags.FragmentDepth) != 0u;
 
-    private static EAdvancedMaterialCoverageMode ResolveCoverage(
+    /// <summary>
+    /// True when the publisher routed the draw to the mesh surface decal lane.
+    /// </summary>
+    private static bool IsSurfaceDecal(in DrawMetadata command)
+        => (command.Flags & (uint)GPUIndirectRenderFlags.SurfaceDecal) != 0u;
+
+    internal static EAdvancedMaterialCoverageMode ResolveCoverage(
         in DrawMetadata command)
     {
         if ((command.Flags &
@@ -1700,6 +1707,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         {
             return EAdvancedMaterialCoverageMode.Transparent;
         }
+        if (IsSurfaceDecal(command))
+            return EAdvancedMaterialCoverageMode.Decal;
         if (WritesFragmentDepth(command))
             return EAdvancedMaterialCoverageMode.Masked;
         return command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested

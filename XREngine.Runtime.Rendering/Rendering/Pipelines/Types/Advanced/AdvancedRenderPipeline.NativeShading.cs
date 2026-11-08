@@ -299,5 +299,72 @@ public partial class AdvancedRenderPipeline
                 AdvancedVisibilityResourceNames.Metadata)
             .DebugLabel("Advanced native shading debug visualization")
             .Add();
+
+        DeclareDecalBufferResources(builder, internalSize, layers);
     }
+
+    /// <summary>
+    /// Mesh surface decal buffer: two single-sample RGBA8 targets and their framebuffer with the
+    /// resolved visibility depth (read-only during the decal pass).
+    /// </summary>
+    private void DeclareDecalBufferResources(
+        RenderPipelineResourceLayoutBuilder builder,
+        RenderResourceSizePolicy internalSize,
+        uint layers)
+    {
+        VisibilityTexture(
+                builder,
+                AdvancedDecalBufferResourceNames.Albedo,
+                internalSize,
+                RenderPipelineResourceUsage.ColorAttachment |
+                RenderPipelineResourceUsage.SampledTexture,
+                EPixelInternalFormat.Rgba8,
+                EPixelFormat.Rgba,
+                EPixelType.UnsignedByte,
+                ESizedInternalFormat.Rgba8,
+                EFrameBufferAttachment.ColorAttachment0,
+                storage: false)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .DependsOn(AdvancedVisibilityResourceNames.DepthStencil)
+            .DebugLabel("Advanced surface decal buffer albedo")
+            .Add();
+
+        VisibilityTexture(
+                builder,
+                AdvancedDecalBufferResourceNames.Surface,
+                internalSize,
+                RenderPipelineResourceUsage.ColorAttachment |
+                RenderPipelineResourceUsage.SampledTexture,
+                EPixelInternalFormat.Rgba8,
+                EPixelFormat.Rgba,
+                EPixelType.UnsignedByte,
+                ESizedInternalFormat.Rgba8,
+                EFrameBufferAttachment.ColorAttachment1,
+                storage: false)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .DependsOn(AdvancedDecalBufferResourceNames.Albedo)
+            .DebugLabel("Advanced surface decal buffer roughness/metallic")
+            .Add();
+
+        builder.FrameBuffer(AdvancedDecalBufferResourceNames.FrameBuffer)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Size(internalSize)
+            .Color(0, AdvancedDecalBufferResourceNames.Albedo, layerIndex: -1)
+            .Color(1, AdvancedDecalBufferResourceNames.Surface, layerIndex: -1)
+            .DepthStencil(AdvancedVisibilityResourceNames.DepthStencil, layerIndex: -1)
+            .Factory(CreateDecalBufferFrameBuffer)
+            .DebugLabel("Advanced surface decal buffer FBO")
+            .Add();
+    }
+
+    private XRFrameBuffer CreateDecalBufferFrameBuffer()
+        => new(
+            (RequireVisibilityAttachment(AdvancedDecalBufferResourceNames.Albedo), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (RequireVisibilityAttachment(AdvancedDecalBufferResourceNames.Surface), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = AdvancedDecalBufferResourceNames.FrameBuffer,
+        };
 }

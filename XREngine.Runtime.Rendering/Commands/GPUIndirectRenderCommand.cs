@@ -207,6 +207,8 @@ namespace XREngine.Rendering.Commands
         SharedOpaqueShadow = 1u << 25,
         /// <summary>The material writes fragment depth (parallax occlusion). Advanced visibility routes it to the depth-writing masked raster.</summary>
         FragmentDepth = 1u << 26,
+        /// <summary>The material is a mesh surface decal. Advanced visibility routes it to the decal buffer pass.</summary>
+        SurfaceDecal = 1u << 27,
     }
 
     public enum GPUSortAlgorithm

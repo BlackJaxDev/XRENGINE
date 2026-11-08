@@ -10,7 +10,9 @@ internal readonly record struct VulkanPreparedStableBinHeader(
     AdvancedIndirectRange IndirectRange = default,
     VulkanVisibilityRasterPipeline RasterPipeline = default,
     VulkanResidentDrawTemplateNativeState NativeState = default,
-    VulkanVisibilityRasterPipeline ShadowRasterPipeline = default)
+    VulkanVisibilityRasterPipeline ShadowRasterPipeline = default,
+    VulkanVisibilityRasterPipeline DecalRasterPipeline = default,
+    VulkanResidentDrawTemplateNativeState DecalNativeState = default)
 {
     /// <summary>
     /// A bin is recordable by the advanced visibility raster lane only after
@@ -26,4 +28,14 @@ internal readonly record struct VulkanPreparedStableBinHeader(
     /// depth-only pipeline for the atlas-page closure.
     /// </summary>
     internal bool IsDirectionalShadowReady => IsRasterReady && ShadowRasterPipeline.IsValid;
+
+    /// <summary>
+    /// A mesh surface decal bin. Only the decal buffer lane draws it; the visibility
+    /// raster and the shadow lanes skip it.
+    /// </summary>
+    internal bool IsSurfaceDecal => IndirectRange.Key.Coverage == EAdvancedMaterialCoverageMode.Decal;
+
+    /// <summary>The decal buffer lane can draw this bin with its blended pipeline.</summary>
+    internal bool IsDecalBufferReady => HasSealedSubmission && IsSurfaceDecal &&
+        DecalRasterPipeline.IsValid && DecalNativeState.IsValid;
 }

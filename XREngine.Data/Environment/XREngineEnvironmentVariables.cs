@@ -212,6 +212,12 @@ public static class XREngineEnvironmentVariables
     /// the Uber kernel only when the scene has Uber materials.
     /// </summary>
     public const string AdvancedUberKernelPrewarm = "XRE_ADVANCED_UBER_KERNEL_PREWARM";
+    /// <summary>
+    /// Set to 0 to draw imported surface decal materials as masked materials. This turns off
+    /// the Advanced decal buffer lane for a before/after check. Default: on where the backend
+    /// supports the lane.
+    /// </summary>
+    public const string AdvancedSurfaceDecals = "XRE_ADVANCED_SURFACE_DECALS";
     /// <summary>Set to 1 to record frame pacing marks for <c>FramePacingTimeline.Dump</c>.</summary>
     public const string FramePacingTimeline = "XRE_FRAME_PACING_TIMELINE";
     /// <summary>

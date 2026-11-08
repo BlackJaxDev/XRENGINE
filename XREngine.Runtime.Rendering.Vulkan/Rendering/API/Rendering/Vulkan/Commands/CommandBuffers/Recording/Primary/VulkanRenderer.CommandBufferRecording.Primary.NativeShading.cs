@@ -18,6 +18,8 @@ internal sealed partial class VulkanCommandRuntime
     private static readonly string[] NativeOpaqueUberGpuProfilerPath = ["Advanced", "Shading", "NativeOpaqueUber"];
     // Matches XR_ADV_SHADING_UBER_FALLBACK in ShadeNativeOpaqueEvaluator.glslinc.
     private const uint NativeUberFallbackShadingFlag = 1u << 29;
+    // Matches XR_ADV_SHADING_DECAL_BUFFER in ShadeNativeOpaqueEvaluator.glslinc.
+    private const uint NativeDecalBufferShadingFlag = 1u << 16;
 
     /// <summary>
     /// Records one indirect dispatch for each dense shading kernel in <paramref name="kernels"/>.
@@ -75,7 +77,8 @@ internal sealed partial class VulkanCommandRuntime
             (payload.Request.AmbientOcclusionSpecularUsesVisibility ? 128u : 0u) |
             (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8) |
             ((Math.Min(closure.MsaaSampleCount, 16u) & 0xFu) << 24) |
-            (payload.Request.RvcFoveatedQuadShading && !closure.UsesMultisampleVisibility ? FoveatedQuadShadingFlag : 0u), depthSlices,
+            (payload.Request.RvcFoveatedQuadShading && !closure.UsesMultisampleVisibility ? FoveatedQuadShadingFlag : 0u) |
+            (payload.Request.DecalBufferEnabled && closure.HasDecalBuffer ? NativeDecalBufferShadingFlag : 0u), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
             checked((uint)(closure.KernelTiles.NativeSize / 16u)),
@@ -135,6 +138,7 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         TransitionNativeInput(state.CommandBuffer, closure.AmbientOcclusion, closure.ViewIndex);
+        TransitionNativeDecalBufferInputs(state.CommandBuffer, in closure);
         TransitionNativeOutput(state.CommandBuffer, closure.Hdr, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);
@@ -179,6 +183,7 @@ internal sealed partial class VulkanCommandRuntime
             TransitionNativeSharedInput(state.CommandBuffer, closure.Metadata, closure.ViewIndex);
             TransitionNativeInput(state.CommandBuffer, closure.Depth, closure.ViewIndex);
             TransitionNativeInput(state.CommandBuffer, closure.AmbientOcclusion, closure.ViewIndex);
+            TransitionNativeDecalBufferInputs(state.CommandBuffer, in closure);
             TransitionNativeOutput(state.CommandBuffer, closure.Hdr, closure.ViewIndex);
             TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
             TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);
@@ -201,7 +206,8 @@ internal sealed partial class VulkanCommandRuntime
         UInt128 standardKernels = families.Standard | (uberFallback ? families.Uber : UInt128.Zero);
         // A publication without family masks keeps the full kernel range.
         if ((families.Standard | families.Uber) == UInt128.Zero)
-            standardKernels = UInt128.MaxValue;        VulkanAdvancedComputePipeline shade = closure.UsesMultisampleVisibility
+            standardKernels = UInt128.MaxValue;
+        VulkanAdvancedComputePipeline shade = closure.UsesMultisampleVisibility
             ? combinedMultisample ? combinedMultisampleShade : payload.NativeComputePipelines.ShadeMultisample
             : payload.NativeComputePipelines.Shade;
         ulong parameterAddress = shade.UsesAddressRoot
@@ -383,6 +389,15 @@ internal sealed partial class VulkanCommandRuntime
     private void TransitionNativeSharedInput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)
         => EmitAdvancedVisibilityImageBarrier(commandBuffer, group, 0, view,
             ImageLayout.General, AccessFlags.ShaderReadBit, PipelineStageFlags.ComputeShaderBit, false);
+
+    /// <summary>Makes the mesh surface decal buffer layer of this view readable by shading.</summary>
+    private void TransitionNativeDecalBufferInputs(CommandBuffer commandBuffer, in VulkanAdvancedNativeComputeClosure closure)
+    {
+        if (!closure.HasDecalBuffer)
+            return;
+        TransitionNativeInput(commandBuffer, closure.DecalBufferAlbedo!, closure.ViewIndex);
+        TransitionNativeInput(commandBuffer, closure.DecalBufferSurface!, closure.ViewIndex);
+    }
 
     private void TransitionNativeOutput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)
         => EmitAdvancedVisibilityImageBarrier(commandBuffer, group, 0, view,

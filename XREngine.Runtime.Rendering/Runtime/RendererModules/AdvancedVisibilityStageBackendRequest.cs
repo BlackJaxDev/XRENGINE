@@ -62,6 +62,13 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// </summary>
     public bool RvcFoveatedQuadShading { get; init; }
 
+    /// <summary>
+    /// True when this family records the mesh surface decal buffer phase. Native opaque
+    /// shading then blends the decal buffer before lighting. Every stage of one family
+    /// carries the same value.
+    /// </summary>
+    public bool DecalBufferEnabled { get; init; }
+
     public bool IsValid => GetInvalidReason() is null;
 
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
@@ -127,7 +134,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
             EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
                 Phase is EAdvancedVisibilityStageBackendPhase.LateCompute or
                     EAdvancedVisibilityStageBackendPhase.LateRaster or
-                    EAdvancedVisibilityStageBackendPhase.MultisampleResolve,
+                    EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
+                    EAdvancedVisibilityStageBackendPhase.DecalBuffer,
             // These stages are compute-only.  Their Vulkan implementation
             // seals a per-stage descriptor closure from the frozen graph
             // generation before recording; they do not participate in the

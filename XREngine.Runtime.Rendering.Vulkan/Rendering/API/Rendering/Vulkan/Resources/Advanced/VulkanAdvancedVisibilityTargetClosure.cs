@@ -25,6 +25,10 @@ internal readonly record struct VulkanAdvancedVisibilityTargetClosure(
                ? UsesDynamicRendering &&
                  DynamicRenderingFormats.ColorAttachmentCount == 0u &&
                  DynamicRenderingFormats.DepthAttachmentFormat != Format.Undefined
+               : Kind == EVulkanAdvancedVisibilityTargetKind.DecalBuffer
+               ? UsesDynamicRendering && DepthStencilReadOnly &&
+                 DynamicRenderingFormats.ColorAttachmentCount == 2u &&
+                 DynamicRenderingFormats.DepthAttachmentFormat != Format.Undefined
                : UsesDynamicRendering
                    ? DynamicRenderingFormats.ColorAttachmentCount is 3u or 4u
                    : RenderPass.Handle != 0);

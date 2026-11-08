@@ -31,6 +31,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     // visibility family readiness: while one compiles, its ranges use the masked program.
     private XRRenderProgram? _fragmentDepthRasterProgram;
     private XRRenderProgram? _fragmentDepthMultiviewRasterProgram;
+    // Mesh surface decal buffer programs. They are not part of the visibility family readiness:
+    // while one compiles, the decal buffer pass clears its targets and skips the decal draws.
+    private XRRenderProgram? _decalBufferProgram;
+    private XRRenderProgram? _decalBufferMultiviewProgram;
     private XRRenderProgram? _directionalShadowOpaqueProgram;
     private XRRenderProgram? _directionalShadowMaskedProgram;
     private XRRenderProgram? _directionalShadowCullProgram;
@@ -406,6 +410,43 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 out program,
                 out reason,
                 "fragment-depth visibility raster program did not link a Vulkan pipeline layout");
+        }
+        catch (Exception exception)
+        {
+            reason = exception.Message;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+    }
+
+    /// <summary>
+    /// Returns the linked mesh surface decal program. The first call creates it and starts its
+    /// compile; it reports Pending until the program links, and never blocks visibility.
+    /// </summary>
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetDecalBufferProgram(
+        bool multiview,
+        out VkRenderProgram program,
+        out string reason)
+    {
+        program = null!;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        try
+        {
+            ref XRRenderProgram? retainedProgram = ref multiview
+                ? ref _decalBufferMultiviewProgram
+                : ref _decalBufferProgram;
+            retainedProgram ??= CreateRasterProgram(
+                AdvancedVisibilityShaderLibrary.DecalBufferFragment,
+                multiview
+                    ? "VulkanAdvancedDecalBufferMultiview"
+                    : "VulkanAdvancedDecalBuffer",
+                multiview);
+            return TryPrepareProgram(
+                retainedProgram,
+                out program,
+                out reason,
+                "decal buffer program did not link a Vulkan pipeline layout");
         }
         catch (Exception exception)
         {

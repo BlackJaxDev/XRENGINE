@@ -453,9 +453,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                         PrimitiveIndex = checked((uint)Math.Max(0, plan.PrimitiveIndex)),
                         PassIndex = plan.Command.RenderPass,
                         InstanceCount = Math.Max(1u, plan.Command.InstanceCount),
-                        Flags = RequiresFragmentDepth(plan.MaterialSource)
-                            ? plan.Command.Flags | (uint)GPUIndirectRenderFlags.FragmentDepth
-                            : plan.Command.Flags,
+                        Flags = ResolveSubmissionDrawFlags(in plan.Command, plan.MaterialSource),
                         StateClass = plan.Command.StateClassID,
                         CompatibilityReason = plan.CompatibilityReason,
                         TemporalEventReason = plan.TemporalEventReason,
@@ -1593,6 +1591,20 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             // Shadow participation belongs to the draw, not immutable geometry.
             Flags = StructuralDrawFlags(command.Flags),
         };
+    }
+
+    /// <summary>
+    /// Adds the material-derived Advanced routing bits to the draw flags of one submission:
+    /// parallax fragment depth, and the surface decal lane when the backend supports it.
+    /// </summary>
+    private static uint ResolveSubmissionDrawFlags(in DrawMetadata command, XRMaterial? material)
+    {
+        uint flags = command.Flags;
+        if (AdvancedSurfaceDecalLane.UsesDecalLane(material))
+            return flags | (uint)GPUIndirectRenderFlags.SurfaceDecal;
+        if (RequiresFragmentDepth(material))
+            flags |= (uint)GPUIndirectRenderFlags.FragmentDepth;
+        return flags;
     }
 
     private static AdvancedRenderStateRecord CreateRenderState(
