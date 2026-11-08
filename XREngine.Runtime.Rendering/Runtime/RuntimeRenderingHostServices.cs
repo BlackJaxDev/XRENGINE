@@ -138,7 +138,8 @@ public static class RuntimeRenderingHostServices
 
     /// <summary>
     /// True if a host installed concrete rendering services. False in a headless process or a test with no render host,
-    /// where no renderer backend exists and no render-thread coroutine runs.
+    /// where no renderer backend exists and no render-thread coroutine runs. The value changes when a host installs or
+    /// removes its services, normally one time at startup. Any thread can read it. It does not throw.
     /// </summary>
     public static bool HasConcreteHost => _current is not UninstalledRuntimeRenderingHostServices;
 

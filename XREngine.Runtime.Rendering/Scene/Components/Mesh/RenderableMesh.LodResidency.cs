@@ -83,6 +83,11 @@ namespace XREngine.Components.Scene.Mesh
         /// The renderer of the lowest LOD while it is resident, or null. This is the renderer of the T0 draw. A renderable
         /// with no LOD table gives the renderer of its last LOD.
         /// </summary>
+        /// <remarks>
+        /// Any thread can read it; the read takes the LOD lock. The value can change in any frame when a LOD is published
+        /// or removed, so read it again in each frame and do not keep it. Use the renderer only on the thread that owns
+        /// rendering work for it.
+        /// </remarks>
         public XRMeshRenderer? LowestLodRenderer
         {
             get
