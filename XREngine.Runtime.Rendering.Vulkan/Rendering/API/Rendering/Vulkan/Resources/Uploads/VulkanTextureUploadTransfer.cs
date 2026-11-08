@@ -42,19 +42,11 @@ internal sealed partial class VulkanTextureUploadService
         long drainStart = Stopwatch.GetTimestamp();
         DrainTerminalFailedTransferRetirement(context);
 
-        bool submittedReadyBatch;
-        bool gatherDeferred;
-        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.SubmitReadyBatch"))
-            submittedReadyBatch = TrySubmitReadyTransferBatch(context, requiredManifest, out gatherDeferred);
-        long submitEnd = Stopwatch.GetTimestamp();
-        if (submittedReadyBatch)
-        {
-            LogSlowTransferDrain(drainStart, submitEnd, submitEnd, submitEnd, 0);
-            return false;
-        }
-        if (gatherDeferred)
-            return true;
-
+        // Retire every finished batch first, within the per-frame completion budget.
+        // Completion releases staging leases and queues the next chunk of each texture,
+        // so the submission below can send those chunks in the same step. Submitting
+        // first and completing one batch per later step left the transfer queue idle
+        // for most frames and limited streaming to about one chunk per frame.
         while (TryPeekSubmittedTransfer(requiredManifest, out VulkanSubmittedImportedTextureUploadBatch? submitted) && submitted is not null)
         {
             if (!context.Commands.TryPollImportedTextureTransfer(submitted, out bool complete, out string? pollFailure))
@@ -70,11 +62,9 @@ internal sealed partial class VulkanTextureUploadService
                 continue;
             }
 
-            if (!complete)
-                return false;
-
-            if (!TryReserveCompletedBatchBudget(submitted, requiredManifest))
-                return false;
+            // Batches complete in submission order, so the first unfinished batch ends the scan.
+            if (!complete || !TryReserveCompletedBatchBudget(submitted, requiredManifest))
+                break;
 
             Volatile.Write(ref s_lastTransferWaitMilliseconds, TextureRuntimeDiagnostics.ElapsedMilliseconds(submitted.SubmitTimestamp));
             long completeStart = Stopwatch.GetTimestamp();
@@ -95,16 +85,29 @@ internal sealed partial class VulkanTextureUploadService
                 continue;
             }
             if (!RemoveSubmittedTransfer(submitted))
-                return false;
+                break;
             long childrenStart = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.CompleteChildren"))
             {
                 for (int child = 0; child < submitted.Uploads.Length; child++)
                     CompleteSubmittedBatchChild(context, submitted.Uploads[child], requiredManifest);
             }
-            LogSlowTransferDrain(drainStart, submitEnd, completeStart, childrenStart, submitted.Uploads.Length);
-            return HasSubmittedTransfersOrCompleteDrain(requiredManifest);
+            LogSlowTransferDrain(drainStart, drainStart, completeStart, childrenStart, submitted.Uploads.Length);
         }
+
+        long submitStart = Stopwatch.GetTimestamp();
+        bool submittedReadyBatch;
+        bool gatherDeferred;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.SubmitReadyBatch"))
+            submittedReadyBatch = TrySubmitReadyTransferBatch(context, requiredManifest, out gatherDeferred);
+        if (submittedReadyBatch)
+        {
+            long submitEnd = Stopwatch.GetTimestamp();
+            LogSlowTransferDrain(submitStart, submitEnd, submitEnd, submitEnd, 0);
+            return false;
+        }
+        if (gatherDeferred)
+            return true;
 
         return HasSubmittedTransfersOrCompleteDrain(requiredManifest);
     }

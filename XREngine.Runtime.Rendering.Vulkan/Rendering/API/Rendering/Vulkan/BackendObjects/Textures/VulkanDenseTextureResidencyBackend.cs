@@ -8,7 +8,14 @@ namespace XREngine.Rendering;
 
 internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBackend
 {
-    private const int MaxConcurrentStreamingDecodes = 2;
+    /// <summary>
+    /// Concurrent decodes and cache reads. A 4096 PNG decode with its mip chain takes
+    /// seconds of CPU time, so two slots kept a cold scene decode-bound for minutes. Scale
+    /// with the logical processors, but keep cores for the render and update threads and
+    /// bound the transient resident-data memory (one 4096 RGBA8 chain is about 90 MB).
+    /// </summary>
+    private static readonly int MaxConcurrentStreamingDecodes =
+        Math.Clamp(Environment.ProcessorCount / 4, 2, 8);
 
     private static readonly uint[] ResidentCandidates =
     [
