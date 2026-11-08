@@ -57,6 +57,14 @@ namespace XREngine
         /// published reader, which performs no reflection. A development build that reads the archives uses the
         /// authoring reader, which also reads the reflective formats of a non-AOT cook.
         /// </summary>
+        /// <remarks>
+        /// A published build logs a failed read as a warning and returns false. A development build that reads the archives
+        /// must not use a loose file in place of an archive entry, because that hides cooked content that does not load. So
+        /// when at least one archive root is configured for the request, a failed read, a stale contract, or a missing entry
+        /// throws an error that names the asset and the archive.
+        /// </remarks>
+        /// <exception cref="InvalidDataException">A development archive build cannot read the archive entry.</exception>
+        /// <exception cref="FileNotFoundException">A development archive build finds no entry for the asset in the configured archives.</exception>
         internal static bool TryLoadPublishedAssetFromArchive(
             string filePath,
             Type expectedType,
@@ -77,11 +85,16 @@ namespace XREngine
 
             using AotParityPlayerPathScope parityScope = AotParityDiagnostics.EnterPlayerPath(EAotParityPlayerPathKind.PublishedContentLoad);
 
+            bool failLoudly = !XRRuntimeEnvironment.IsPublishedBuild;
+            List<string>? searchedArchives = null;
             List<string> assetPathCandidates = CollectArchiveAssetPathCandidates(filePath);
             for (int rootIndex = 0; rootIndex < rootCount; rootIndex++)
             {
                 if (!PublishedArchiveRegistry.TryGetRoot(rootOrder[rootIndex], out PublishedArchiveHandle handle))
                     continue;
+
+                if (failLoudly)
+                    (searchedArchives ??= new List<string>(rootCount)).Add(handle.FilePath);
 
                 for (int candidateIndex = 0; candidateIndex < assetPathCandidates.Count; candidateIndex++)
                 {
@@ -104,11 +117,30 @@ namespace XREngine
                         if (asset is not null)
                             return true;
                     }
+                    catch (Exception ex) when (failLoudly)
+                    {
+                        throw new InvalidDataException(
+                            $"Development archive build: asset '{candidateAssetPath}' in archive '{handle.FilePath}' did not load: {ex.Message} The loose file is not used in place of the archive entry. Re-cook the content.",
+                            ex);
+                    }
                     catch (Exception ex)
                     {
                         Debug.LogWarning($"Failed to load published asset '{candidateAssetPath}' from '{handle.FilePath}': {ex.Message}");
                     }
+
+                    if (failLoudly)
+                    {
+                        throw new InvalidDataException(
+                            $"Development archive build: asset '{candidateAssetPath}' in archive '{handle.FilePath}' did not deserialize as '{expectedType}'. The loose file is not used in place of the archive entry.");
+                    }
                 }
+            }
+
+            if (failLoudly && searchedArchives is not null)
+            {
+                throw new FileNotFoundException(
+                    $"Development archive build: asset '{filePath}' has no entry in the configured archives ({string.Join(", ", searchedArchives)}). The loose file is not used in place of the archive entry. Cook the asset into the archives.",
+                    filePath);
             }
 
             return false;

@@ -94,11 +94,111 @@ public sealed class PublishedArchiveDevelopmentLauncherTests
         loaded.ShouldBeNull();
     }
 
+    [Test]
+    public void DevelopmentArchiveBuild_FailsLoudly_ForAnEntryThatDoesNotRead()
+    {
+        string archivePath = PackSplitModelArchive(out _, cookedRoot =>
+            WriteEntry(cookedRoot, "Broken/Bad.asset", [1, 2, 3, 4, 5, 6, 7, 8]));
+        ConfigureDevelopmentArchives(archivePath);
+        string requestPath = WriteLooseFile("Broken", "Bad.asset");
+
+        InvalidDataException error = Should.Throw<InvalidDataException>(
+            () => AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out _));
+
+        error.Message.ShouldContain("Broken/Bad.asset");
+        error.Message.ShouldContain(archivePath);
+        error.Message.ShouldContain("loose file is not used");
+    }
+
+    [Test]
+    public void DevelopmentArchiveBuild_FailsLoudly_ForAStaleContractVersion()
+    {
+        // The current contract of BuildSettings has a later schema version than the one in this entry.
+        byte[] stale = CookedAssetEnvelope.Serialize(new CookedAssetBlob(
+            "contract:xre.settings.build:1", CookedAssetFormat.BinaryV2, [1]));
+        string archivePath = PackSplitModelArchive(out _, cookedRoot => WriteEntry(cookedRoot, "Stale/Old.asset", stale));
+        ConfigureDevelopmentArchives(archivePath);
+        string requestPath = WriteLooseFile("Stale", "Old.asset");
+
+        InvalidDataException error = Should.Throw<InvalidDataException>(
+            () => AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(BuildSettings), out _));
+
+        error.Message.ShouldContain("Stale/Old.asset");
+        error.Message.ShouldContain(archivePath);
+        error.InnerException.ShouldNotBeNull().Message.ShouldContain("schema version");
+    }
+
+    [Test]
+    public void DevelopmentArchiveBuild_FailsLoudly_ForAMissingEntry_AlsoWhenTheLooseFileExists()
+    {
+        string archivePath = PackSplitModelArchive(out _);
+        ConfigureDevelopmentArchives(archivePath);
+        string requestPath = WriteLooseFile("Models", "Missing.asset");
+
+        FileNotFoundException error = Should.Throw<FileNotFoundException>(
+            () => AssetManager.TryLoadPublishedAssetFromArchive(requestPath, typeof(Model), out _));
+
+        error.Message.ShouldContain(requestPath);
+        error.Message.ShouldContain(archivePath);
+        error.Message.ShouldContain("loose file is not used");
+    }
+
+    [Test]
+    public void PublishedBuild_KeepsTheWarning_ForAnEntryThatDoesNotRead()
+    {
+        string archivePath = PackSplitModelArchive(out _, cookedRoot =>
+            WriteEntry(cookedRoot, "Broken/Bad.asset", [1, 2, 3, 4, 5, 6, 7, 8]));
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Published);
+        AssetManager.ConfigurePublishedArchives(null, archivePath, null);
+
+        AssetManager.TryLoadPublishedAssetFromArchive(
+            Path.Combine(_root, "Assets", "Broken", "Bad.asset"), typeof(Model), out XRAsset? loaded).ShouldBeFalse();
+        loaded.ShouldBeNull();
+    }
+
+    [TestCase(EXRRuntimeBuildKind.Development, false, false, true)]
+    [TestCase(EXRRuntimeBuildKind.DevelopmentArchives, true, false, true)]
+    [TestCase(EXRRuntimeBuildKind.Published, true, true, false)]
+    [TestCase(EXRRuntimeBuildKind.PublishedAot, true, true, false)]
+    public void BuildKind_SetsTheArchiveAndPublishedFlags(
+        EXRRuntimeBuildKind kind, bool readsArchives, bool published, bool development)
+    {
+        XRRuntimeEnvironment.ConfigureBuildKind(kind);
+
+        XRRuntimeEnvironment.ReadsPublishedArchives.ShouldBe(readsArchives);
+        XRRuntimeEnvironment.IsPublishedBuild.ShouldBe(published);
+        XRRuntimeEnvironment.IsDevelopmentBuild.ShouldBe(development);
+        XRRuntimeEnvironment.IsAotRuntimeBuild.ShouldBe(kind == EXRRuntimeBuildKind.PublishedAot);
+    }
+
+    private static void ConfigureDevelopmentArchives(string archivePath)
+    {
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.DevelopmentArchives);
+        AssetManager.ConfigurePublishedArchives(null, archivePath, null);
+    }
+
+    /// <summary>Writes a loose file at the request path, so a test can show that the loader does not use it.</summary>
+    private string WriteLooseFile(string folder, string fileName)
+    {
+        string path = Path.Combine(_root, "Assets", folder, fileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "__assetType: XREngine.Rendering.Models.Model");
+        return path;
+    }
+
+    private static void WriteEntry(string cookedRoot, string entry, byte[] bytes)
+    {
+        string path = Path.Combine(cookedRoot, entry);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, bytes);
+    }
+
     /// <summary>Cooks a model with split LOD payloads, as a non-AOT content cook does, and packs it into one archive.</summary>
-    private string PackSplitModelArchive(out int lodEntryCount)
+    private string PackSplitModelArchive(out int lodEntryCount, Action<string>? addEntries = null)
     {
         string cookedRoot = Path.Combine(_root, "Cooked");
         Directory.CreateDirectory(Path.Combine(cookedRoot, "Models"));
+        addEntries?.Invoke(cookedRoot);
 
         Model model = new(CreateSubMesh());
         using (SubMeshLodPayloadCookSink sink = SubMeshLodPayloadCookSink.Begin(cookedRoot))

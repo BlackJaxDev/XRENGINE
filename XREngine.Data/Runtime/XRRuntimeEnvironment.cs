@@ -30,7 +30,7 @@ public static partial class XRRuntimeEnvironment
     public static bool IsDevelopmentBuild => BuildKind is EXRRuntimeBuildKind.Development or EXRRuntimeBuildKind.DevelopmentArchives;
 
     /// <summary>True when asset loads read the configured published archives.</summary>
-    public static bool ReadsPublishedArchives => BuildKind != EXRRuntimeBuildKind.Development;
+    public static bool ReadsPublishedArchives => BuildKind is EXRRuntimeBuildKind.Published or EXRRuntimeBuildKind.PublishedAot or EXRRuntimeBuildKind.DevelopmentArchives;
 
     public static bool SupportsDynamicCode => RuntimeFeature.IsDynamicCodeSupported;
 
