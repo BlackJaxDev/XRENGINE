@@ -335,10 +335,22 @@ public sealed class AudioTrackEvaluator : ICutsceneTrackEvaluator
     /// <param name="path">The full path of the file.</param>
     /// <exception cref="NotSupportedException">The file has another extension.</exception>
     public static IStreamingAudioDecoder OpenDefaultDecoder(string path)
+        => OpenDecoder(path, buildSeekIndex: true);
+
+    /// <summary>
+    /// Opens an Ogg Vorbis or WAV file for a decode that only goes forward, such as the proxy bake or a residency load.
+    /// An Ogg Vorbis decoder from here starts no page index build.
+    /// </summary>
+    /// <param name="path">The full path of the file.</param>
+    /// <exception cref="NotSupportedException">The file has another extension.</exception>
+    public static IStreamingAudioDecoder OpenLinearDecoder(string path)
+        => OpenDecoder(path, buildSeekIndex: false);
+
+    private static IStreamingAudioDecoder OpenDecoder(string path, bool buildSeekIndex)
     {
         string extension = Path.GetExtension(path);
         if (extension.Equals(".ogg", StringComparison.OrdinalIgnoreCase))
-            return new VorbisStreamingDecoder(path);
+            return new VorbisStreamingDecoder(path, buildSeekIndex);
         if (extension.Equals(".wav", StringComparison.OrdinalIgnoreCase))
             return new WavStreamingDecoder(path);
         throw new NotSupportedException($"No streaming decoder supports the extension '{extension}'. Use an Ogg Vorbis or WAV file.");

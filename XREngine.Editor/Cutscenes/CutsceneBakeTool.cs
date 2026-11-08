@@ -130,7 +130,7 @@ public static class CutsceneBakeTool
     /// A source that does not open also gives one diagnostic.
     /// </remarks>
     /// <param name="asset">The cutscene asset. A relative source path starts at the folder of its file.</param>
-    /// <param name="openDecoder">Opens the decoder of a full file path, or null for <see cref="AudioTrackEvaluator.OpenDefaultDecoder"/>.</param>
+    /// <param name="openDecoder">Opens the decoder of a full file path, or null for <see cref="AudioTrackEvaluator.OpenLinearDecoder"/> (the bake decodes forward only, so it builds no page index).</param>
     /// <param name="diagnostics">The list that receives the problems.</param>
     /// <returns>The proxies, in the order of the first clip of each source.</returns>
     public static List<AudioProxyAsset> BakeAudioProxies(
@@ -140,7 +140,7 @@ public static class CutsceneBakeTool
     {
         ArgumentNullException.ThrowIfNull(asset);
         ArgumentNullException.ThrowIfNull(diagnostics);
-        openDecoder ??= AudioTrackEvaluator.OpenDefaultDecoder;
+        openDecoder ??= AudioTrackEvaluator.OpenLinearDecoder;
 
         string? assetDirectory = Path.GetDirectoryName(asset.FilePath);
         List<AudioProxyAsset> proxies = [];

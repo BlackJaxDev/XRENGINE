@@ -46,7 +46,7 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
 
     /// <summary>Creates a backend for the audio clip sources of a cutscene that have a proxy.</summary>
     /// <param name="compiled">The compiled cutscene.</param>
-    /// <param name="openDecoder">Opens a decoder for a full file path, or null for <see cref="AudioTrackEvaluator.OpenDefaultDecoder"/>.</param>
+    /// <param name="openDecoder">Opens a decoder for a full file path, or null for <see cref="AudioTrackEvaluator.OpenLinearDecoder"/> (a load seeks forward one time, so it builds no page index).</param>
     public AudioResidencyBackend(CompiledCutscene compiled, Func<string, IStreamingAudioDecoder>? openDecoder = null)
         : this(compiled, openDecoder, TaskScheduler.Default)
     {
@@ -60,7 +60,7 @@ public sealed class AudioResidencyBackend : IResidencyBackend, IDisposable
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(scheduler);
-        _openDecoder = openDecoder ?? AudioTrackEvaluator.OpenDefaultDecoder;
+        _openDecoder = openDecoder ?? AudioTrackEvaluator.OpenLinearDecoder;
         _scheduler = scheduler;
         _duration = compiled.Asset.Duration;
         CollectSources(compiled.Asset);

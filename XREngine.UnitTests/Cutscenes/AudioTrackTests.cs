@@ -507,6 +507,30 @@ public sealed class AudioTrackTests
     }
 
     [Test]
+    [CancelAfter(60000)]
+    public void VorbisStreamWithNoSecondOpen_AddsExactlyOneDiagnostic()
+    {
+        // A buffered stream cannot be opened a second time, so the decoder has no page index. The track reports it one time.
+        byte[] file = Convert.FromBase64String(VorbisTwoBlockTestData.Base64);
+        using Rig rig = MakeRig(null, musicFirst: false, ECutsceneEventSeekPolicy.Skip, [], extend: null,
+            openDecoder: _ => new VorbisStreamingDecoder(new BufferedStream(new MemoryStream(file, writable: false)), leaveOpen: false));
+
+        rig.Player.Seek(T(1.0), ESeekIntent.Jump);
+        rig.Player.Play();
+        rig.Player.Tick(0.0);
+        rig.Player.Seek(T(0.5), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+
+        int count = 0;
+        foreach (CutsceneCompileDiagnostic diagnostic in rig.Player.Diagnostics)
+        {
+            if (diagnostic.Message.Contains("cannot be opened a second time", StringComparison.Ordinal))
+                count++;
+        }
+        count.ShouldBe(1);
+    }
+
+    [Test]
     public void Play_StreamsTheClipFromTheTimeIntoEverySource()
     {
         using Rig rig = MakeRig();
