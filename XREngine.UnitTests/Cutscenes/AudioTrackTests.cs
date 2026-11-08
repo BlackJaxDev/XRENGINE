@@ -362,13 +362,17 @@ public sealed class AudioTrackTests
     private static Rig MakeRig((double Start, double Duration, double Offset)? music, bool musicFirst, ECutsceneEventSeekPolicy policy, double[] eventTimes)
         => MakeRig(music, musicFirst, policy, eventTimes, extend: null);
 
-    /// <summary>Makes the rig. <paramref name="extend"/> can add tracks and bindings to the asset and returns the nodes it binds.</summary>
+    /// <summary>
+    /// Makes the rig. <paramref name="extend"/> can add tracks and bindings to the asset and returns the nodes it binds.
+    /// <paramref name="openDecoder"/> replaces the counting WAV decoder of each clip; the rig then records no decoders.
+    /// </summary>
     private static Rig MakeRig(
         (double Start, double Duration, double Offset)? music,
         bool musicFirst,
         ECutsceneEventSeekPolicy policy,
         double[] eventTimes,
-        Func<CutsceneAsset, SceneNode[]>? extend)
+        Func<CutsceneAsset, SceneNode[]>? extend,
+        Func<string, IStreamingAudioDecoder>? openDecoder = null)
     {
         string path = WriteRampWav(SampleRate * 3);
         SceneNode node = new("Speaker");
@@ -413,12 +417,12 @@ public sealed class AudioTrackTests
         table.Diagnostics.ShouldBeEmpty();
         List<CountingDecoder> decoders = [];
         FakeWallClock wallClock = new();
-        CutscenePlayer player = new(compiled, table, new CutsceneStateSnapshot(table), file =>
+        CutscenePlayer player = new(compiled, table, new CutsceneStateSnapshot(table), openDecoder ?? (file =>
         {
             CountingDecoder decoder = new(AudioTrackEvaluator.OpenDefaultDecoder(file), wallClock) { SeekTime = wallClock.NewDecoderSeekTime };
             decoders.Add(decoder);
             return decoder;
-        }, wallClock);
+        }), wallClock);
         List<string> fired = [];
         List<CutsceneDiscontinuity> discontinuities = [];
         player.EventFired += e => fired.Add($"{e.Event.Time.ToSeconds():0.###}{(e.FromSeek ? " seek" : "")}");
@@ -448,6 +452,58 @@ public sealed class AudioTrackTests
             if (entry.StartsWith("queue ", StringComparison.Ordinal))
                 return int.Parse(entry["queue ".Length..]);
         throw new ShouldAssertException("The source queued no buffer.");
+    }
+
+    [Test]
+    [CancelAfter(60000)]
+    public void VorbisIndexFailureInARead_AddsExactlyOneDiagnostic()
+    {
+        // The two-block Vorbis file is 3 s at 44100 Hz. The decoder builds its index before the clip opens.
+        byte[] file = Convert.FromBase64String(VorbisTwoBlockTestData.Base64);
+        const int Rate = 44100;
+        const long Shift = 17640;
+        VorbisStreamingDecoder? vorbis = null;
+        using Rig rig = MakeRig(null, musicFirst: false, ECutsceneEventSeekPolicy.Skip, [], extend: null, openDecoder: _ =>
+        {
+            vorbis = new VorbisStreamingDecoder(new MemoryStream(file, writable: false), leaveOpen: false, () => new MemoryStream(file, writable: false));
+            vorbis.WaitForSeekIndex(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+            return vorbis;
+        });
+
+        rig.Player.Seek(T(2.9), ESeekIntent.Jump);
+        rig.Player.Play();
+        rig.Player.Tick(0.0);
+        vorbis.ShouldNotBeNull();
+        vorbis.SeekIndexState.ShouldBe(EVorbisSeekIndexState.Ready);
+
+        // Move the restart frame of the entry for 2.5 s back by 0.4 s, as if the entry were wrong. The backward seek then
+        // ends at the right frame by count, but the decode reaches the end of the file 0.4 s early, in a read.
+        long target = (long)(2.5 * Rate);
+        vorbis.PageIndex!.TryFind(target, out VorbisPageIndexEntry entry, out int index).ShouldBeTrue();
+        index.ShouldBeGreaterThan(0);
+        vorbis.PageIndex.Entries[index] = entry with { RestartFrame = entry.RestartFrame - Shift };
+
+        int indexedBefore = vorbis.IndexedSeekCount;
+        rig.Player.Seek(T(2.5), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+        vorbis.IndexedSeekCount.ShouldBe(indexedBefore + 1);
+        vorbis.SeekIndexState.ShouldBe(EVorbisSeekIndexState.Failed);
+
+        // More seeks and reads do not add a second diagnostic.
+        rig.Player.Seek(T(1.0), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+        rig.Player.Seek(T(0.5), ESeekIntent.Jump);
+        rig.Player.Tick(0.0);
+
+        int count = 0;
+        foreach (CutsceneCompileDiagnostic diagnostic in rig.Player.Diagnostics)
+        {
+            if (diagnostic.Message.Contains("Ogg page index", StringComparison.Ordinal))
+                count++;
+        }
+        TestContext.Out.WriteLine(vorbis.SeekIndexFailure);
+        count.ShouldBe(1);
+        vorbis.SeekIndexFailure!.ShouldContain("before the end of the file");
     }
 
     [Test]

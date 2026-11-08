@@ -854,6 +854,9 @@ internal sealed class CutsceneAudioChannel
         if (!_waitingForFull)
         {
             int read = _decoder!.Read(destination);
+
+            // A read can also fail an index restart and fall back, and the build result arrives in a read.
+            CheckSeekIndex();
             if (read > 0 && _crossfadeDone < _crossfader.CrossfadeFrames)
                 _crossfader.Crossfade(destination, _producedFrame, read, ref _crossfadeDone, _fadeFromSilence);
             return read;
@@ -935,7 +938,8 @@ internal sealed class CutsceneAudioChannel
         }
     }
 
-    // Reports one time for each clip that the Ogg page index of the full decoder failed. The seek itself stays exact.
+    // Reports one time for each clip that the Ogg page index of the full decoder failed, after a seek or a read.
+    // The samples stay exact. The check reads two fields and does not allocate.
     private void CheckSeekIndex()
     {
         if (_seekIndexFailureReported || _decoder is not VorbisStreamingDecoder { SeekIndexFailure: { } reason })
