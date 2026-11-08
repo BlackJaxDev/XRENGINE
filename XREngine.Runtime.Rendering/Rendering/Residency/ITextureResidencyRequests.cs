@@ -24,9 +24,11 @@ public interface ITextureResidencyRequests
     /// </summary>
     /// <remarks>
     /// The event runs on the streaming evaluation thread, outside the streaming locks. Keep handlers short. A handler can
-    /// receive an event for a handle that it disposed already, and it must ignore such tickets. A handler must not throw:
-    /// an exception goes to the evaluation and stops the events of the other requests of that evaluation. Any thread can
-    /// add or remove a handler; a handler that is removed while the event runs can still receive that event.
+    /// receive an event for a handle that it disposed already, and it must ignore such tickets. Streaming calls each handler
+    /// in its own try/catch: a handler that throws does not stop the evaluation, the other handlers, or the events of the
+    /// other tickets. Streaming writes each exception, with the handler and the texture named, to the
+    /// <c>texture-residency-handler-failures.log</c> auxiliary log, which Release builds keep. Any thread can add or remove a
+    /// handler; a handler that is removed while the event runs can still receive that event.
     /// </remarks>
     event Action<TextureResidencyTicket>? ResidencyRequestCompleted;
 

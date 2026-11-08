@@ -219,6 +219,42 @@ public sealed class TextureResidencyRequestTests
     }
 
     [Test]
+    public void ThrowingCompletionHandler_DoesNotStopEvaluationOrOtherEvents()
+    {
+        ImportedTextureStreamingManager manager = _host.Manager;
+        (XRTexture2D texture, _) = _host.AddTexture("throwing-handler");
+        TextureResidencyTicket first = manager.RequestResidency(texture, 0, long.MaxValue, JobPriority.Normal, 1);
+        TextureResidencyTicket second = manager.RequestResidency(texture, 0, long.MaxValue, JobPriority.Normal, 2);
+        manager.Evaluate(102);
+        _host.Backend.CompleteLast().ShouldBeTrue();
+
+        int throwCount = 0;
+        List<TextureResidencyTicket> completed = [];
+        Action<TextureResidencyTicket> throwing = _ =>
+        {
+            throwCount++;
+            throw new InvalidOperationException("handler failure");
+        };
+        manager.ResidencyRequestCompleted += throwing;
+        manager.ResidencyRequestCompleted += completed.Add;
+
+        // A request that the same evaluation must still admit after the handlers throw.
+        (XRTexture2D later, _) = _host.AddTexture("admitted-after-throw");
+        manager.RequestResidency(later, 0, long.MaxValue, JobPriority.Normal, 1);
+
+        Should.NotThrow(() => manager.Evaluate(103));
+
+        throwCount.ShouldBe(2);
+        completed.ShouldBe([first, second], ignoreOrder: true);
+        manager.GetResidencyRequestState(first).ShouldBe(ETextureResidencyRequestState.Resident);
+        manager.GetResidencyRequestState(second).ShouldBe(ETextureResidencyRequestState.Resident);
+        _host.Backend.Loads.Count.ShouldBe(2);
+
+        manager.ResidencyRequestCompleted -= throwing;
+        manager.ResidencyRequestCompleted -= completed.Add;
+    }
+
+    [Test]
     public void Request_RejectsUntrackedTexture()
     {
         XRTexture2D texture = new() { Name = "untracked" };

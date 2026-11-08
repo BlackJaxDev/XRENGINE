@@ -16,7 +16,9 @@ internal sealed partial class ImportedTextureStreamingManager
     private readonly Dictionary<long, TextureResidencyRequest> _residencyRequestsById = [];
     private readonly List<TextureResidencyRequest> _activeResidencyRequests = [];
     private readonly List<ImportedTextureStreamingRecord> _requestedRecords = [];
-    private readonly List<long> _completedResidencyRequestScratch = [];
+    private readonly List<TextureResidencyRequest> _completedResidencyRequestScratch = [];
+    private readonly Lock _completionHandlerSync = new();
+    private Action<TextureResidencyTicket>[] _completionHandlers = [];
     private readonly List<TextureResidencyRequest> _droppedResidencyRequestScratch = [];
     private long _nextResidencyTicketId;
     private long _residencyRefreshSequence;
@@ -29,7 +31,50 @@ internal sealed partial class ImportedTextureStreamingManager
     /// A cancel can occur between the state change and the event, so a handler can receive one
     /// event for a ticket that it already cancelled. Handlers must ignore such tickets.
     /// </summary>
-    internal event Action<TextureResidencyTicket>? ResidencyRequestCompleted;
+    /// <remarks>
+    /// The manager calls each subscribed handler for each ticket in its own try/catch. A handler that throws does not stop
+    /// the evaluation, the other handlers, or the events of the other tickets. Each exception goes to the
+    /// <see cref="CompletionHandlerFailureLogName"/> auxiliary log, which Release builds keep, with the handler and the
+    /// texture named. The handlers are a copy-on-write array: add and remove allocate, and the raise allocates nothing.
+    /// </remarks>
+    internal event Action<TextureResidencyTicket>? ResidencyRequestCompleted
+    {
+        add
+        {
+            if (value is null)
+                return;
+
+            lock (_completionHandlerSync)
+            {
+                Action<TextureResidencyTicket>[] current = _completionHandlers;
+                Action<TextureResidencyTicket>[] next = new Action<TextureResidencyTicket>[current.Length + 1];
+                Array.Copy(current, next, current.Length);
+                next[^1] = value;
+                Volatile.Write(ref _completionHandlers, next);
+            }
+        }
+        remove
+        {
+            if (value is null)
+                return;
+
+            lock (_completionHandlerSync)
+            {
+                Action<TextureResidencyTicket>[] current = _completionHandlers;
+                int index = Array.LastIndexOf(current, value);
+                if (index < 0)
+                    return;
+
+                Action<TextureResidencyTicket>[] next = new Action<TextureResidencyTicket>[current.Length - 1];
+                Array.Copy(current, 0, next, 0, index);
+                Array.Copy(current, index + 1, next, index, current.Length - index - 1);
+                Volatile.Write(ref _completionHandlers, next);
+            }
+        }
+    }
+
+    /// <summary>The auxiliary log file that records exceptions of completion handlers.</summary>
+    internal const string CompletionHandlerFailureLogName = "texture-residency-handler-failures.log";
 
     /// <summary>The current collect frame. Use it to compute the deadline frame of a request.</summary>
     internal long CurrentFrameId => Volatile.Read(ref _collectFrameId);
@@ -208,7 +253,7 @@ internal sealed partial class ImportedTextureStreamingManager
     /// </summary>
     private void RefreshResidencyRequests(long frameId)
     {
-        List<long> completed = _completedResidencyRequestScratch;
+        List<TextureResidencyRequest> completed = _completedResidencyRequestScratch;
         completed.Clear();
         lock (_residencyRequestSync)
         {
@@ -255,7 +300,7 @@ internal sealed partial class ImportedTextureStreamingManager
                 if (resident && request.State == ETextureResidencyRequestState.Pending)
                 {
                     request.State = ETextureResidencyRequestState.Resident;
-                    completed.Add(request.Id);
+                    completed.Add(request);
                 }
                 else if (!resident && request.State == ETextureResidencyRequestState.Resident)
                 {
@@ -268,13 +313,56 @@ internal sealed partial class ImportedTextureStreamingManager
             DropResidencyRequestsNoLock(_droppedResidencyRequestScratch);
         }
 
-        Action<TextureResidencyTicket>? handler = ResidencyRequestCompleted;
-        if (handler is null)
-            return;
+        RaiseResidencyRequestsCompleted(completed);
+    }
 
-        for (int i = 0; i < completed.Count; i++)
-            handler(new TextureResidencyTicket(completed[i]));
+    /// <summary>
+    /// Calls each completion handler for each completed request. A handler exception is logged and the loop goes on,
+    /// so the evaluation and the events of the other tickets still occur. It clears the list.
+    /// </summary>
+    private void RaiseResidencyRequestsCompleted(List<TextureResidencyRequest> completed)
+    {
+        Action<TextureResidencyTicket>[] handlers = Volatile.Read(ref _completionHandlers);
+        for (int i = 0; i < completed.Count && handlers.Length > 0; i++)
+        {
+            TextureResidencyRequest request = completed[i];
+            TextureResidencyTicket ticket = new(request.Id);
+            for (int h = 0; h < handlers.Length; h++)
+            {
+                try
+                {
+                    handlers[h](ticket);
+                }
+                catch (Exception ex)
+                {
+                    ReportCompletionHandlerFailure(handlers[h], request, ex);
+                }
+            }
+        }
+
         completed.Clear();
+    }
+
+    /// <summary>
+    /// Writes one completion handler exception to the auxiliary log, which Release builds keep, and to the texture log of
+    /// Debug builds. A logging failure is ignored, so it cannot stop the evaluation.
+    /// </summary>
+    private static void ReportCompletionHandlerFailure(Action<TextureResidencyTicket> handler, TextureResidencyRequest request, Exception exception)
+    {
+        string handlerName = $"{handler.Method.DeclaringType?.FullName ?? "<unknown>"}.{handler.Method.Name}";
+        string textureName = request.Record.Texture.TryGetTarget(out XRTexture2D? texture)
+            ? texture.Name ?? request.Record.FilePath ?? "<unnamed>"
+            : request.Record.FilePath ?? "<collected>";
+        string message = $"[TextureStreaming] Residency completion handler '{handlerName}' threw for ticket {request.Id} of texture '{textureName}'. The evaluation goes on.{Environment.NewLine}{exception}";
+        try
+        {
+            Debug.WriteAuxiliaryLog(CompletionHandlerFailureLogName, message);
+            Debug.LogException(ELogCategory.Textures, exception, message);
+        }
+        catch
+        {
+            // A missing log backend must not stop texture streaming.
+        }
     }
 
     /// <summary>
