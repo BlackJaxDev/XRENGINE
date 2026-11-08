@@ -275,6 +275,18 @@ internal static class TextureResidencyPolicy
         bool isPromotion = targetResidentSize > currentResidentSize || targetCommittedBytes > currentCommittedBytes;
         bool visibleThisFrame = snapshot.LastVisibleFrameId == frameId;
         bool recentlyBound = IsRecentlyBound(snapshot, frameId);
+
+        // A texture on screen without its preview shows the filler image. Its preview load
+        // is small, so it must not wait behind full-size promotions in the decode gate,
+        // which is a strict priority queue with few slots.
+        if (isPromotion
+            && !snapshot.PreviewReady
+            && targetResidentSize <= snapshot.Backend.PreviewMaxDimension
+            && (visibleThisFrame || recentlyBound))
+        {
+            return JobPriority.Highest;
+        }
+
         if (visibleThisFrame)
         {
             if (isPromotion
