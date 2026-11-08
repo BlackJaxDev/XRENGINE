@@ -136,7 +136,11 @@ public static class RuntimeRenderingHostServices
     public static IRuntimeRenderBackendInteropServices BackendInterop
         => _backendInterop ?? ThrowMissingCapability<IRuntimeRenderBackendInteropServices>("renderer backend interop");
 
-    internal static bool HasConcreteHost => _current is not UninstalledRuntimeRenderingHostServices;
+    /// <summary>
+    /// True if a host installed concrete rendering services. False in a headless process or a test with no render host,
+    /// where no renderer backend exists and no render-thread coroutine runs.
+    /// </summary>
+    public static bool HasConcreteHost => _current is not UninstalledRuntimeRenderingHostServices;
 
     /// <summary>
     /// Explicitly installs inactive desktop/XR presentation policy for offscreen composition.

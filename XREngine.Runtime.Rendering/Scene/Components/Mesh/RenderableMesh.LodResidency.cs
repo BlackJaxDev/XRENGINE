@@ -68,7 +68,7 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         /// <summary>The sub-mesh that this renderable draws, or null for a renderable made without one.</summary>
-        internal SubMesh? SourceSubMesh => _sourceSubMesh;
+        public SubMesh? SourceSubMesh => _sourceSubMesh;
 
         /// <summary>The number of LODs in the LOD table of the source sub-mesh, resident or not.</summary>
         public int LodTableCount => _lodSlots.Length;
@@ -77,13 +77,13 @@ namespace XREngine.Components.Scene.Mesh
         /// The render options override of the primary render command, or null. The draw uses it in place of the render
         /// options of the material, so the draw readiness check uses it too.
         /// </summary>
-        internal XREngine.Rendering.Models.Materials.RenderingParameters? PrimaryRenderOptionsOverride => _rc.RenderOptionsOverride;
+        public XREngine.Rendering.Models.Materials.RenderingParameters? PrimaryRenderOptionsOverride => _rc.RenderOptionsOverride;
 
         /// <summary>
         /// The renderer of the lowest LOD while it is resident, or null. This is the renderer of the T0 draw. A renderable
         /// with no LOD table gives the renderer of its last LOD.
         /// </summary>
-        internal XRMeshRenderer? LowestLodRenderer
+        public XRMeshRenderer? LowestLodRenderer
         {
             get
             {
