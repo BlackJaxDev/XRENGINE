@@ -8,4 +8,3 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("XREngine.Runtime.Rendering.WebGPU")]
 [assembly: InternalsVisibleTo("XREngine.Runtime.XR.OpenXR")]
 [assembly: InternalsVisibleTo("XREngine.Runtime.Rendering.ImGui")]
-[assembly: InternalsVisibleTo("XREngine.Runtime.CutsceneIntegration")]

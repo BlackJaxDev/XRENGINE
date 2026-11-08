@@ -21,6 +21,7 @@ These projects target `net10.0` and compile their full source set for desktop an
 | `XREngine.Runtime.Host` | Shared `Engine` facade, `EngineTimer`, world hosting, startup settings, snapshots, and managed host-service implementations. Platform startup policy, backend catalogs, and default pipeline creation are supplied by application composition. |
 | `XREngine.Runtime.AnimationIntegration` | Scene/component integration for animation. |
 | `XREngine.Runtime.AudioIntegration` | Scene/component integration for portable audio services. |
+| `XREngine.Runtime.CutsceneIntegration` | Cutscene assets, playback, residency, and scene integration. It uses only public seams of the runtime libraries; no runtime library grants it internal access. See [Cutscene System](../animation/cutscene-system.md#engine-seams). |
 | `XREngine.Runtime.InputIntegration` | Player, pawn, and scene integration for input. |
 | `XREngine.Runtime.ModelingIntegration` | Runtime scene integration for modeling. |
 
