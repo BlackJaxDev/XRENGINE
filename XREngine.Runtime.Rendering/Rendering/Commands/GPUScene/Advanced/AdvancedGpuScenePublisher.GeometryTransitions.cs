@@ -209,9 +209,11 @@ public sealed partial class AdvancedGpuScenePublisher
                     return false;
                 }
 
-                for (uint vertexIndex = 0; vertexIndex < (uint)vertexCount; ++vertexIndex)
-                    _packedGeometryVertices[vertexCursor + checked((int)vertexIndex)] = AdvancedPackedVertexCodec.Pack(
-                        mesh, vertexIndex, vertexIndex);
+                AdvancedPackedVertexCodec.Pack(
+                    mesh,
+                    firstVertex: 0u,
+                    _packedGeometryVertices.AsSpan(vertexCursor, vertexCount),
+                    firstSourceVertex: 0u);
 
                 int destinationIndex = indexCursor;
                 for (int triangleIndex = 0; triangleIndex < triangles.Count; ++triangleIndex)
