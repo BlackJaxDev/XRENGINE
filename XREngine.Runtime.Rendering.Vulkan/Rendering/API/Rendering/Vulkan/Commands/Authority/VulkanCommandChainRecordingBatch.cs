@@ -32,7 +32,7 @@ internal sealed class VulkanCommandChainRecordingBatch : IRenderWorkExecutor
     public int DrawCount;
     public int CommandChainColdDataCount;
     public int JobCount;
-    public uint ActiveWorkerMask;
+    public ulong ActiveWorkerMask;
     public Exception? Error;
     public long DispatchTimestamp;
     public int CancelRequested;
@@ -89,7 +89,7 @@ internal sealed class VulkanCommandChainRecordingBatch : IRenderWorkExecutor
             _laneEstimatedCosts[entry.WorkerIndex] = AddSaturating(
                 _laneEstimatedCosts[entry.WorkerIndex],
                 chain.SourceCount);
-            ActiveWorkerMask |= 1u << entry.WorkerIndex;
+            ActiveWorkerMask |= 1UL << entry.WorkerIndex;
         }
 
         int workOffset = 0;

@@ -126,7 +126,11 @@ void main()
     if (material.normalTextureID < 32u)
     {
         // Sample normal map and transform to world space
-        vec3 normalMap = texture(textures[material.normalTextureID], IN.texCoord).rgb * 2.0 - 1.0;
+        vec4 normalSample = texture(textures[material.normalTextureID], IN.texCoord);
+        vec3 normalMap = normalSample.rgb * 2.0 - 1.0;
+        // A BC5 normal map samples with alpha 0 and stores only X and Y: rebuild Z.
+        if (normalSample.a < 0.5)
+            normalMap.z = sqrt(clamp(1.0 - dot(normalMap.xy, normalMap.xy), 0.0, 1.0));
             
         vec3 T = normalize(IN.tangent.xyz);
         vec3 N = normal;

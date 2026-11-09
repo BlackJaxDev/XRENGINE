@@ -66,6 +66,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Animation API](developer-guides/animation/animation-api.md)
 - [Cutscenes](developer-guides/animation/cutscenes.md)
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
+- [Unity Conversion](developer-guides/assets/unity-conversion-integrations.md): package startup imports, scene and prefab roots, source dependencies, and Poiyomi materials.
+- [Editor Notifications](user-guide/editor/notifications.md): asset alerts and panel close controls in the ImGui editor.
 - [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)
 - [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)
 - [Component API](developer-guides/components/component-api.md)
@@ -114,6 +116,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [VR Development](user-guide/vr-development.md)
 - [Full-body VR calibration](user-guide/vr/full-body-calibration.md)
 - [Shader Editor](user-guide/editor/shader-editor.md)
+- [Model Inspector](user-guide/editor/model-inspector.md)
 - [Prefab Workflow](user-guide/prefab-workflow.md)
 - [Job System](user-guide/job-system.md)
 

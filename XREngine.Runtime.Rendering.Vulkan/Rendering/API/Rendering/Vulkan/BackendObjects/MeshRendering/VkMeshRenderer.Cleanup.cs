@@ -31,6 +31,7 @@ internal unsafe partial class VkMeshRenderer
 				DestroyEngineUniformBufferArray(toDestroy);
 
 			_engineUniformBuffers.Remove(singleName);
+			_engineUniformBufferCertificates.Remove(singleName);
 			return;
 		}
 
@@ -38,6 +39,7 @@ internal unsafe partial class VkMeshRenderer
 			DestroyEngineUniformBufferArray(buffers);
 
 		_engineUniformBuffers.Clear();
+		_engineUniformBufferCertificates.Clear();
 	}
 
 	/// <summary>
@@ -52,7 +54,9 @@ internal unsafe partial class VkMeshRenderer
 				DestroyAutoUniformBufferArray(toDestroy);
 
 			_autoUniformBuffers.Remove(singleName);
+			_autoUniformBufferCertificates.Remove(singleName);
 			_autoUniformOwnerSlotTables.Remove(singleName);
+			_autoUniformOwnerSlotTablesByNameIdentity.Clear();
 			_publishedAutoUniformMaterialWritePlans.Remove(singleName);
 			return;
 		}
@@ -61,7 +65,9 @@ internal unsafe partial class VkMeshRenderer
 			DestroyAutoUniformBufferArray(buffers);
 
 		_autoUniformBuffers.Clear();
+		_autoUniformBufferCertificates.Clear();
 		_autoUniformOwnerSlotTables.Clear();
+		_autoUniformOwnerSlotTablesByNameIdentity.Clear();
 		_publishedAutoUniformMaterialWritePlans.Clear();
 	}
 
@@ -280,7 +286,11 @@ internal unsafe partial class VkMeshRenderer
         _descriptorAllocations.Clear();
         _descriptorAllocationsByDrawSlot.Clear();
         _descriptorAllocationsByOwner.Clear();
-		Array.Clear(_localDescriptorFingerprintMemo);
+        _frameDescriptorAllocations.Clear();
+        _artifactFrameSourceBindingIndices.Clear();
+        _activeDescriptorSetMasks.Clear();
+        _drawSlotInvariance.Clear();
+        _frameSourceDescriptorRefreshes.Clear();		Array.Clear(_localDescriptorFingerprintMemo);
 		_nextLocalDescriptorFingerprintMemoSlot = 0;
 
 		if (!activePoolReleased && _descriptorPool.Handle != 0)

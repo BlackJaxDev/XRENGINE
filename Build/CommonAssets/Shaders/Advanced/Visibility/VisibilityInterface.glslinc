@@ -23,6 +23,8 @@
 #define XR_ADV_VIS_VERSION_SHIFT 16u
 #define XR_ADV_VIS_SELECTION_VALID_SHIFT 24u
 #define XR_ADV_VERTEX_HAS_TEXCOORD1 0x00000001u
+#define XR_ADV_VERTEX_HAS_TEXCOORD2 0x00000002u
+#define XR_ADV_VERTEX_HAS_TEXCOORD3 0x00000004u
 
 bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
 {
@@ -286,8 +288,8 @@ struct XRAdvancedVisibilityPackedVertex
     uint custom0;
     uint sourceVertex;
     uint flags;
-    uint reserved0;
-    uint reserved1;
+    uint texCoord2Half;
+    uint texCoord3Half;
     uint reserved2;
     uint reserved3;
 };
@@ -652,14 +654,15 @@ bool XR_ADV_TryResolveTextureReference(
         XR_ADV_LoadEncodedSampler(encodedSamplerIndex);
     if ((encodedSampler.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
         return false;
-    encodedReference =
+    // A texture that is still loading has encoded index 0, the generic fallback row.
+    // Check residency before the assignment, so a failed resolve keeps the fallback
+    // of this binding (for example white base color) and not the generic zero.
+    XRAdvancedEncodedTextureReference resolvedReference =
         XR_ADV_LoadEncodedTexture(textureRecord.encodedReferenceIndex);
-#endif
-    if ((encodedReference.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
+    if ((resolvedReference.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
         return false;
-
-#if !defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
-    encodedReference.payload1 = encodedSampler.payload0;
+    resolvedReference.payload1 = encodedSampler.payload0;
+    encodedReference = resolvedReference;
 #endif
     return true;
 }

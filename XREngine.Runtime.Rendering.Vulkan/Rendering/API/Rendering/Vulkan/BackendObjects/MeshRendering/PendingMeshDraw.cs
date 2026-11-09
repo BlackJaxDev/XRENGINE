@@ -19,8 +19,8 @@ internal readonly record struct PendingMeshDraw(
     bool DepthWriteEnabled,
     CompareOp DepthCompareOp,
     bool StencilTestEnabled,
-    StencilOpState FrontStencilState,
-    StencilOpState BackStencilState,
+    VulkanStencilFaceState FrontStencilState,
+    VulkanStencilFaceState BackStencilState,
     uint StencilWriteMask,
     ColorComponentFlags ColorWriteMask,
     CullModeFlags CullMode,
@@ -48,6 +48,13 @@ internal readonly record struct PendingMeshDraw(
     AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
+    /// <summary>An empty draw that a by-reference reader can point to when an operation has no draw.</summary>
+    internal static readonly PendingMeshDraw Empty;
+
+    internal Vector4 SourceFlatDirection { get; init; }
+    /// <summary>Pass state that the queuing pass had when it queued this draw.</summary>
+    internal EVulkanMeshDrawPassStateFlags PassStateFlags { get; init; }
+    internal RenderCaptureOwnerToken? CaptureOwnerToken { get; init; }
     internal EPrimitiveType IndirectTopology { get; init; } = EPrimitiveType.Triangles;
     internal IRenderResourceLeaseOwner? IndexedIndirectAuthoringLease { get; init; }
 
@@ -79,6 +86,8 @@ internal readonly record struct PendingMeshDraw(
     internal Matrix4x4 PreviousViewProjectionMatrixUnjittered
         => ViewSnapshot?.PreviousViewProjectionMatrixUnjittered ??
            Matrix4x4.Identity;
+    internal bool LeftEyeHistoryReady => ViewSnapshot?.LeftEyeHistoryReady == true;
+    internal bool RightEyeHistoryReady => ViewSnapshot?.RightEyeHistoryReady == true;
     internal Matrix4x4 RightEyeViewMatrix
         => ViewSnapshot?.RightEyeViewMatrix ?? Matrix4x4.Identity;
     internal Matrix4x4 RightEyeInverseViewMatrix

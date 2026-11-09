@@ -57,6 +57,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     private int _animationScheduleCount;
     private bool _hasDeformationUpload;
     private bool _meshPreparationPending;
+    private bool _deformationArenaPending;
     private uint _feedbackLookupGeneration;
     private uint _scheduleLookupGeneration;
     private ulong _publicationGeneration;
@@ -264,6 +265,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
 
         ResetTemporalStateForSceneEpoch(world.GpuScene, frameId);
         uint submissionCount = checked((uint)publicationSnapshot.Submission.Records.Length);
+        ulong deformationSourceGeneration = CaptureDeformationSourceGeneration(world.GpuScene,
+            publicationSnapshot, checked((int)Math.Min(submissionCount, (uint)_options.MaximumDraws)));
         ulong completedValue = frameId == 0UL ? 0UL : frameId - 1UL;
         if (!_frameUploadArena.TryBeginFrame(frameId, completedValue))
         {
@@ -294,7 +297,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 _deformedArena.VertexCapacity,
                 world.GpuScene,
                 world.GpuScene.AdvancedScenePublication.Publication.DatabaseEpoch,
-                world.GpuScene.AdvancedScenePublication.Publication.TopologyGeneration))
+                deformationSourceGeneration))
         {
             _deformedArena.EndFrame(frameId);
             _frameUploadArena.EndFrame(frameId);
@@ -343,6 +346,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
 
         long extractionStarted = Stopwatch.GetTimestamp();
         _meshPreparationPending = false;
+        _deformationArenaPending = false;
         _physicsOutputMismatch = false;
         _materialBoundsContracts.Clear();
         AdvancedExtractionSubStageTimers.CountBuild();
@@ -356,6 +360,9 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 frameId,
                 world.GpuScene.AdvancedScenePublication.Publication.FrameGeneration);
         }
+        if (_deformationArenaPending)
+            return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
+                "The deformation output arena must grow before this scene can be prepared.");
         if (_physicsOutputMismatch)
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
                 "The covered draw palette or authored envelope does not match its retained bounds page.");
@@ -929,7 +936,9 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                     ? canonicalGeometry.IndexCount
                     : 0u,
                 VertexCount: hasCanonicalGeometry ? canonicalGeometry.VertexCount : 0u,
-                RasterStateClass: command.StateClassID,
+                RasterStateClass: WritesFragmentDepth(command)
+                    ? command.StateClassID | AdvancedVisibilityRasterStateBits.FragmentDepth
+                    : command.StateClassID,
                 Coverage: ResolveCoverage(command),
                 CullMode:
                     (command.Flags &
@@ -938,7 +947,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                         : 1u,
                 PrimitiveTopology: checked((uint)canonicalGeometry.PrimitiveTopology),
                 Skinned: skinned,
-                MeshletsResident: meshletsResident,
+                // Fragment-depth and surface decal draws use the traditional raster only.
+                MeshletsResident: meshletsResident && !WritesFragmentDepth(command) && !IsSurfaceDecal(command),
                 ForceCpuDiagnostic:
                     snapshot.ForceCpuRendering ||
                     mesh is null ||
@@ -1064,6 +1074,9 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 newlyVisible,
                 out slice))
         {
+            // A diagnostic slice has no GPU output. Retry after boundary growth
+            // instead of publishing canonical vertex offsets as deformed data.
+            _deformationArenaPending = true;
             return false;
         }
         AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.HistoryAndArena);
@@ -1174,10 +1187,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     }
 
     private bool RequiresAggregateDeformation(uint flags)
-        => _gpuDeformation.UsesPackedAggregateInputs
-            ? ((flags & (uint)GPUIndirectRenderFlags.Skinned) != 0 && RuntimeEngine.Rendering.Settings.AllowSkinning) ||
-              ((flags & (uint)GPUIndirectRenderFlags.BlendShapes) != 0 && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
-            : (flags & (uint)GPUIndirectRenderFlags.Skinned) != 0;
+        => RequiresAggregateDeformation(flags, AdvancedGpuDeformationResources.ResolveMeshPreparationPolicy());
 
     private void ApplyDeformationAdmissionVerdicts()
     {
@@ -1624,6 +1634,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
 
     public void Dispose()
     {
+        _deformationSourceSets.Clear();
         ReleaseGpuBoundsPublication();
         _preparedSceneIdentity = 0u;
         _preparedScenePublication = default;
@@ -1675,7 +1686,20 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             MeshletCount: geometry.MeshletCount);
     }
 
-    private static EAdvancedMaterialCoverageMode ResolveCoverage(
+    /// <summary>
+    /// True for a parallax occlusion draw. The traditional depth-writing masked raster draws it;
+    /// the meshlet raster has no depth-writing variant.
+    /// </summary>
+    private static bool WritesFragmentDepth(in DrawMetadata command)
+        => (command.Flags & (uint)GPUIndirectRenderFlags.FragmentDepth) != 0u;
+
+    /// <summary>
+    /// True when the publisher routed the draw to the mesh surface decal lane.
+    /// </summary>
+    private static bool IsSurfaceDecal(in DrawMetadata command)
+        => (command.Flags & (uint)GPUIndirectRenderFlags.SurfaceDecal) != 0u;
+
+    internal static EAdvancedMaterialCoverageMode ResolveCoverage(
         in DrawMetadata command)
     {
         if ((command.Flags &
@@ -1683,6 +1707,10 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         {
             return EAdvancedMaterialCoverageMode.Transparent;
         }
+        if (IsSurfaceDecal(command))
+            return EAdvancedMaterialCoverageMode.Decal;
+        if (WritesFragmentDepth(command))
+            return EAdvancedMaterialCoverageMode.Masked;
         return command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested
             ? EAdvancedMaterialCoverageMode.Masked
             : EAdvancedMaterialCoverageMode.Opaque;

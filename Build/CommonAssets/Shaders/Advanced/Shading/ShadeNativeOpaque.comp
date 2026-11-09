@@ -40,7 +40,13 @@ XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
 #define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
 #endif
 
+#include "NativeDecalBuffer.glslinc"
 #include "ShadeNativeOpaqueEvaluator.glslinc"
+#include "FoveatedQuadShading.glslinc"
+
+// Compacted pixel list for foveated quad shading (one entry per invocation).
+shared uint s_foveatedShadeCount;
+shared uint s_foveatedShadePixels[256];
 
 void main()
 {
@@ -82,8 +88,54 @@ void main()
         pixel = uvec2(tile.packedTileCoord & 0xFFFFu,
             tile.packedTileCoord >> 16u) * 16u + gl_LocalInvocationID.xy;
     }
+    // Foveated quad shading: a peripheral follower takes its block
+    // representative's result in the fill pass, so it does not shade here.
+    // The pixels that still shade are packed into the first invocations of the
+    // group, so whole subgroups of followers idle instead of leaving one active
+    // lane per block. Every return above is uniform for the work group, so all
+    // invocations reach these barriers.
+    if (XR_ADV_FoveatedQuadsEnabled())
+    {
+        if (gl_LocalInvocationIndex == 0u)
+            s_foveatedShadeCount = 0u;
+        barrier();
+        bool shades = false;
+        if (all(lessThan(pixel, u_Push.screenExtent)) && viewIndex < u_Push.viewCount)
+        {
+            uvec2 candidateIdentity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
+            uvec2 representative;
+            shades = !XR_ADV_TryGetFoveatedRepresentative(pixel, viewIndex, candidateIdentity, representative);
+        }
+        if (shades)
+            s_foveatedShadePixels[atomicAdd(s_foveatedShadeCount, 1u)] = pixel.x | (pixel.y << 16u);
+        barrier();
+        if (gl_LocalInvocationIndex >= s_foveatedShadeCount) return;
+        uint packedPixel = s_foveatedShadePixels[gl_LocalInvocationIndex];
+        pixel = uvec2(packedPixel & 0xFFFFu, packedPixel >> 16u);
+    }
     if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount) return;
 
+#if defined(XR_ADV_NATIVE_SHADING_FAMILY)
+    // A family kernel writes only the pixels of its own family. The standard kernel
+    // also owns uncovered and unresolved pixels. The ownership test comes before the
+    // first store, so the standard and Uber passes never overwrite each other.
+    uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
+    bool covered = identity.x != 0u && identity.x != XR_ADV_VIS_INVALID;
+    uint metadata = 0u;
+    uint materialDense = 0u, kernelDense = 0u;
+    bool resolved = false;
+    if (covered)
+    {
+        metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
+        resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
+    }
+    bool owned = resolved
+        ? XR_ADV_KernelShadesMaterialFamily(materialDense)
+        : XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_STANDARD;
+    if (!owned) return;
+    XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
+    if (!covered) return;
+#else
     XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
     uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
     if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID) return;
@@ -91,6 +143,7 @@ void main()
     uint metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
     uint materialDense, kernelDense;
     bool resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
+#endif
     if (!repair && resolved && kernelDense != u_Push.kernelIndex) return;
     if (!repair && resolved)
     {

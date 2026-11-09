@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Models.Materials.Textures;
 
 namespace XREngine.Rendering.Commands;
 
@@ -48,14 +49,17 @@ public static class AdvancedGpuResourceSourceEncoder
             record.MipCount = automaticArrayMips
                 ? checked((uint)(1 + System.Numerics.BitOperations.Log2(Math.Max(textureArray.Width, textureArray.Height))))
                 : checked((uint)textureArray.Mipmaps!.Length);
-            source = new(textureArray, record, layer.SamplerRecord, fallback, 0u);
+            source = new(textureArray, record, layer.SamplerRecord, fallback, textureArray.CanonicalLayerContentWitness);
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
             reason = string.Empty;
             return true;
         }
         if (texture is XRTextureCube cube)
         {
-            if (cube.Extent == 0u || cube.Mipmaps.Length == 0)
+            bool cpuBacked = cube.TryGetCanonicalCpuSourceGeneration(out ulong cubeGeneration);
+            CubeMipmap[] cubeMipmaps = cube.Mipmaps;
+            uint cubeExtent = cube.Extent;
+            if (cubeExtent == 0u || cubeMipmaps.Length == 0)
             {
                 source = default;
                 compatibilityReason = EAdvancedCanonicalCompatibilityReason.EmptyResourceTexture;
@@ -74,9 +78,19 @@ public static class AdvancedGpuResourceSourceEncoder
             EAdvancedTextureRecordFlags flags = (cube.ImportedColorSpace == ETextureColorSpace.Srgb ? EAdvancedTextureRecordFlags.Srgb : EAdvancedTextureRecordFlags.None) |
                 (cube.RequiresStorageUsage ? EAdvancedTextureRecordFlags.Storage : EAdvancedTextureRecordFlags.None) |
                 (cubeIsDepth ? EAdvancedTextureRecordFlags.Depth : EAdvancedTextureRecordFlags.None);
-            uint cubeMipCount = checked((uint)cube.Mipmaps.Length);
+            uint cubeMipCount = checked((uint)cubeMipmaps.Length);
             AdvancedSamplerRecord sampler = CreateCubeSamplerRecord(cube, cubeAddressU, cubeAddressV, cubeAddressW, cubeMipCount);
-            source = new(cube, new AdvancedTextureRecord { Dimension = EAdvancedTextureDimension.Cube, Flags = flags, Width = cube.Extent, Height = cube.Extent, DepthOrLayers = 6u, MipCount = cubeMipCount, FormatClass = (uint)cubeFormatClass, DefaultSampler = AdvancedGpuHandle.Invalid, UvScaleBias = new Vector4(1f, 1f, 0f, 0f) }, sampler, fallback, 0u);
+            System.Threading.Thread.MemoryBarrier();
+            if (cpuBacked && (!cube.TryGetCanonicalCpuSourceGeneration(out ulong completedGeneration) ||
+                completedGeneration != cubeGeneration ||
+                !ReferenceEquals(cubeMipmaps, cube.Mipmaps) || cubeExtent != cube.Extent))
+            {
+                source = default;
+                compatibilityReason = EAdvancedCanonicalCompatibilityReason.EmptyResourceTexture;
+                reason = "The cube source changed while canonical metadata was being captured.";
+                return false;
+            }
+            source = new(cube, new AdvancedTextureRecord { Dimension = EAdvancedTextureDimension.Cube, Flags = flags, Width = cubeExtent, Height = cubeExtent, DepthOrLayers = 6u, MipCount = cubeMipCount, FormatClass = (uint)cubeFormatClass, DefaultSampler = AdvancedGpuHandle.Invalid, UvScaleBias = new Vector4(1f, 1f, 0f, 0f) }, sampler, fallback, cpuBacked ? cubeGeneration : 0u);
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
             reason = string.Empty;
             return true;
@@ -422,6 +436,10 @@ public static class AdvancedGpuResourceSourceEncoder
             ESizedInternalFormat.Depth24Stencil8 => EAdvancedTextureFormatClass.Depth24Stencil8,
             ESizedInternalFormat.Depth32fStencil8 => EAdvancedTextureFormatClass.Depth32FloatStencil8,
             ESizedInternalFormat.StencilIndex8 => EAdvancedTextureFormatClass.Stencil8,
+            ESizedInternalFormat.Bc7Unorm => EAdvancedTextureFormatClass.Bc7Unorm,
+            ESizedInternalFormat.Bc7Srgb => EAdvancedTextureFormatClass.Bc7Srgb,
+            ESizedInternalFormat.Bc5Unorm => EAdvancedTextureFormatClass.Bc5Unorm,
+            ESizedInternalFormat.Bc4Unorm => EAdvancedTextureFormatClass.Bc4Unorm,
             _ => EAdvancedTextureFormatClass.Unknown,
         };
         isDepth = format is ESizedInternalFormat.DepthComponent16 or

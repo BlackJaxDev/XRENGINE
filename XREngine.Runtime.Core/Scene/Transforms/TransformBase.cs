@@ -66,17 +66,52 @@ namespace XREngine.Scene.Transforms
             remove { lock (MatrixSubscriptionGate) { _renderMatrixChanged -= value; RefreshMatrixSubscribers(); } }
         }
 
+        /// <summary>Notification bit for a local matrix change.</summary>
+        protected internal const int LocalMatrixNotification = 1;
+        /// <summary>Notification bit for an inverse local matrix change.</summary>
+        protected internal const int InverseLocalMatrixNotification = 2;
+        /// <summary>Notification bit for a world matrix change.</summary>
+        protected internal const int WorldMatrixNotification = 4;
+        /// <summary>Notification bit for an inverse world matrix change.</summary>
+        protected internal const int InverseWorldMatrixNotification = 8;
+        /// <summary>Notification bit for a render matrix change.</summary>
+        protected internal const int RenderMatrixNotification = 16;
+
         private static readonly object MatrixSubscriptionGate = new();
-        internal int MatrixSubscriberCount { get; private set; }
+        private int _matrixHandlerMask;
+
+        /// <summary>
+        /// Gets the notification bits that have an effect on this transform: the bit of each event with handlers,
+        /// plus <see cref="OverriddenMatrixChangeNotifications"/>. <see cref="DispatchMatrixNotifications"/> does
+        /// nothing for the other bits, so the hierarchy store does not queue them.
+        /// </summary>
+        internal int MatrixNotificationInterest
+            => Volatile.Read(ref _matrixHandlerMask) | (OverriddenMatrixChangeNotifications
+                & (LocalMatrixNotification | WorldMatrixNotification));
+
+        /// <summary>
+        /// Gets the notification bits of the change methods that this type overrides:
+        /// <see cref="LocalMatrixNotification"/> for <see cref="OnLocalMatrixChanged"/> and
+        /// <see cref="WorldMatrixNotification"/> for <see cref="OnWorldMatrixChanged"/>.
+        /// </summary>
+        /// <remarks>
+        /// A type that overrides one of these methods must return its bit. Otherwise the hierarchy store drops a
+        /// queued notification when the event has no handlers, and the override does not run. The other change
+        /// methods run only when their event has handlers, so they need no bit.
+        /// </remarks>
+        protected virtual int OverriddenMatrixChangeNotifications => 0;
+
         private void RefreshMatrixSubscribers()
         {
-            MatrixSubscriberCount = (_localMatrixChanged?.GetInvocationList().Length ?? 0)
-                + (_inverseLocalMatrixChanged?.GetInvocationList().Length ?? 0)
-                + (_worldMatrixChanged?.GetInvocationList().Length ?? 0)
-                + (_inverseWorldMatrixChanged?.GetInvocationList().Length ?? 0)
-                + (_renderMatrixChanged?.GetInvocationList().Length ?? 0);
-            HierarchyStore?.SetSubscribers(HierarchyHandle, MatrixSubscriberCount);
+            int mask = (_localMatrixChanged is null ? 0 : LocalMatrixNotification)
+                | (_inverseLocalMatrixChanged is null ? 0 : InverseLocalMatrixNotification)
+                | (_worldMatrixChanged is null ? 0 : WorldMatrixNotification)
+                | (_inverseWorldMatrixChanged is null ? 0 : InverseWorldMatrixNotification)
+                | (_renderMatrixChanged is null ? 0 : RenderMatrixNotification);
+            Volatile.Write(ref _matrixHandlerMask, mask);
+            HierarchyStore?.SetNotificationInterest(HierarchyHandle, MatrixNotificationInterest);
         }
+
 
         #endregion
 

@@ -390,7 +390,7 @@ internal static partial class SerializedSceneImporter
         {
             if (TryParseArrayIndex(modification.PropertyPath, "m_Materials.Array.data[", out int materialIndex))
             {
-                ApplyMaterialSlotOverride(component, materialIndex, modification.ObjectReference, state);
+                ApplyMaterialSlotOverride(component, materialIndex, modification.ObjectReference, modification.TargetFileId, state);
                 continue;
             }
 
@@ -458,29 +458,74 @@ internal static partial class SerializedSceneImporter
         ModelComponent component,
         int materialIndex,
         SourceReference materialReference,
+        long sourceComponentFileId,
         ImportState state)
     {
-        if (component.Model is null || materialIndex < 0 || materialIndex >= component.Model.Meshes.Count)
+        if (component.Model is null || materialIndex < 0)
         {
             state.Context.AddDiagnostic(
                 "UNITYOVERRIDE0003",
                 SourceImportDiagnosticSeverity.Error,
                 SourceImportDiagnosticCategory.PrefabOverride,
-                $"Material override slot '{materialIndex}' is outside the imported renderer's " +
-                $"{component.Model?.Meshes.Count ?? 0} slots.",
+                $"Material override slot '{materialIndex}' has no imported renderer.",
                 state.EntryFilePath);
             return;
         }
 
-        XRMaterial? material = ResolveSerializedMaterial(materialReference, state);
-        if (material is null)
+        bool isNullMaterial = materialReference.FileId == 0 && string.IsNullOrWhiteSpace(materialReference.Guid);
+        SortedDictionary<int, int> sourceSlots = GetDrawableSourceMaterialSlots(component.Model);
+        if (!sourceSlots.TryGetValue(materialIndex, out int sourceSlot))
         {
+            if (isNullMaterial)
+                return;
+            if (state.Context.AllowPartialImport)
+            {
+                state.Context.ReportPartialImport(
+                    "UNITYPARTIAL0005",
+                    $"Renderer '{component.SceneNode.Name}' has no drawable FBX slot for Unity material index {materialIndex}. Its available material slots are preserved.",
+                    state.EntryFilePath,
+                    $"m_Materials.Array.data[{materialIndex}]",
+                    ToIdentity(materialReference, SourceAssetObjectKind.Material));
+                return;
+            }
             throw new SourceVisualImportException(
-                $"Required prefab material override '{materialReference.Guid}:{materialReference.FileId}' could not be imported.");
+                $"Unity renderer material index '{materialIndex}' on renderer '{component.SceneNode.Name}' " +
+                $"(source fileID {sourceComponentFileId}, model '{component.Model.Name}') has no drawable FBX material slot. " +
+                $"Renderer index to FBX source slot: [{string.Join(", ", sourceSlots.Select(
+                    static pair => $"{pair.Key}->{pair.Value}"))}]. " +
+                $"Imported slots: [{string.Join(", ", component.Model.Meshes.Select(
+                    static subMesh => $"{subMesh.ImportedSourceMaterialSlot?.ToString() ?? "<none>"}:{subMesh.ImportedSourceMaterialName ?? subMesh.Name}"))}].");
         }
 
-        foreach (SubMeshLOD lod in component.Model.Meshes[materialIndex].LODs)
-            lod.Material = material;
+        XRMaterial? material = isNullMaterial ? null : ResolveSerializedMaterial(materialReference, state)
+            ?? throw new SourceVisualImportException(
+                $"Required prefab material override '{materialReference.Guid}:{materialReference.FileId}' could not be imported.");
+        foreach (SubMesh subMesh in component.Model.Meshes)
+        {
+            if (subMesh.ImportedSourceMaterialSlot != sourceSlot)
+                continue;
+            foreach (SubMeshLOD lod in subMesh.LODs)
+                lod.Material = material;
+        }
+    }
+
+    private static SortedDictionary<int, int> GetDrawableSourceMaterialSlots(Model model)
+    {
+        SortedDictionary<int, int> sourceSlots = [];
+        foreach (SubMesh subMesh in model.Meshes)
+        {
+            if (subMesh.ImportedSourceMaterialSlot is int sourceSlot &&
+                subMesh.LODs.Any(static lod => lod.Mesh is not null))
+            {
+                int rendererSlot = subMesh.ImportedRendererMaterialSlot ?? sourceSlot;
+                if (sourceSlots.TryGetValue(rendererSlot, out int existingSourceSlot) && existingSourceSlot != sourceSlot)
+                    throw new SourceVisualImportException(
+                        $"Renderer '{model.Name}' maps material index {rendererSlot} to multiple FBX source slots.");
+                sourceSlots[rendererSlot] = sourceSlot;
+            }
+        }
+
+        return sourceSlots;
     }
 
     private static bool TryParseArrayIndex(string propertyPath, string prefix, out int index)
@@ -700,18 +745,45 @@ internal static partial class SerializedSceneImporter
         string? assetPath = ResolveAssetPath(state, meshReference.Guid);
         if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
         {
-            Debug.MeshesWarning($"Unity mesh reference '{meshReference.Guid ?? meshReference.FileId.ToString(CultureInfo.InvariantCulture)}' on '{node.Name}' could not be resolved.");
+            string message = $"Unity mesh reference '{meshReference.Guid ?? meshReference.FileId.ToString(CultureInfo.InvariantCulture)}' on '{node.Name}' could not be resolved.";
+            if (state.Context.AllowPartialImport &&
+                (meshReference.FileId != 0 || !string.IsNullOrWhiteSpace(meshReference.Guid)))
+            {
+                state.Context.ReportPartialImport("UNITYPARTIAL0006", message,
+                    state.EntryFilePath, "m_Mesh", ToIdentity(meshReference, SourceAssetObjectKind.Mesh));
+            }
+            else
+            {
+                Debug.MeshesWarning(message);
+            }
             return null;
         }
 
         if (string.Equals(Path.GetExtension(assetPath), ".asset", StringComparison.OrdinalIgnoreCase))
-            return LoadSerializedSourceMeshModel(assetPath, node, hierarchy, materialReferences, skinnedMeshRenderer, state);
+        {
+            Model? model = LoadSerializedSourceMeshModel(assetPath, node, hierarchy, materialReferences, skinnedMeshRenderer, state);
+            if (model is null && state.Context.AllowPartialImport)
+                ReportSkippedMesh(assetPath, meshReference, state);
+            return model;
+        }
 
         if (SupportedExternalModelExtensions.Contains(Path.GetExtension(assetPath)))
-            return LoadExternalModelForNode(assetPath, node, materialReferences, state);
+        {
+            Model? model = LoadExternalModelForNode(assetPath, node, materialReferences, state);
+            if (model is null && state.Context.AllowPartialImport)
+                ReportSkippedMesh(assetPath, meshReference, state);
+            return model;
+        }
 
+        if (state.Context.AllowPartialImport)
+            ReportSkippedMesh(assetPath, meshReference, state);
         return null;
     }
+
+    private static void ReportSkippedMesh(string assetPath, SourceReference meshReference, ImportState state)
+        => state.Context.ReportPartialImport("UNITYPARTIAL0006",
+            $"Unity mesh '{assetPath}' could not produce a model. Its renderer has no mesh.",
+            state.EntryFilePath, "m_Mesh", ToIdentity(meshReference, SourceAssetObjectKind.Mesh));
 
     private static bool TryResolveBuiltInPrimitiveModel(
         SourceReference meshReference,
@@ -736,9 +808,13 @@ internal static partial class SerializedSceneImporter
             return false;
         }
 
-        XRMaterial material = ResolveMaterialForSubMesh(materialReferences, 0, state, fallbackMaterial: null);
+        XRMaterial? material = ResolveMaterialForSubMesh(materialReferences, 0, state, fallbackMaterial: null);
         LogSourceToonMeshDiagnostics(material, mesh);
-        model = new Model(new SubMesh(new SubMeshLOD(material, mesh, 0.0f)))
+        model = new Model(new SubMesh(new SubMeshLOD(material, mesh, 0.0f))
+        {
+            ImportedSourceMaterialSlot = 0,
+            ImportedRendererMaterialSlot = 0,
+        })
         {
             Name = $"UnityBuiltIn_{meshReference.FileId}",
         };
@@ -760,6 +836,10 @@ internal static partial class SerializedSceneImporter
         if (sourceRoot is null)
             return null;
 
+        bool isFbx = string.Equals(Path.GetExtension(assetPath), ".fbx", StringComparison.OrdinalIgnoreCase);
+        if (isFbx)
+            ResolveFbxMaterialSlots(sourceRoot, assetPath, state);
+
         string targetNodeName = targetNode.Name ?? string.Empty;
         if (targetNodeName.Length == 0)
             return null;
@@ -772,7 +852,7 @@ internal static partial class SerializedSceneImporter
             sourceModelComponent.Model is null)
             return null;
 
-        return CloneModelForTarget(sourceRoot, sourceNode, sourceModelComponent.Model, targetNode, materialReferences, state);
+        return CloneModelForTarget(sourceRoot, sourceNode, sourceModelComponent.Model, targetNode, materialReferences, isFbx, state);
     }
 
     private static Model? LoadSerializedSourceMeshModel(
@@ -808,13 +888,15 @@ internal static partial class SerializedSceneImporter
                 Name = $"{meshName}_{subMeshIndex}",
             };
 
-            XRMaterial material = ResolveMaterialForSubMesh(materialReferences, subMeshIndex, state, fallbackMaterial: null);
+            XRMaterial? material = ResolveMaterialForSubMesh(materialReferences, subMeshIndex, state, fallbackMaterial: null);
             LogSourceToonMeshDiagnostics(material, xrMesh);
             var lod = new SubMeshLOD(material, xrMesh, 0.0f);
             var subMesh = new SubMesh(lod)
             {
                 Name = sourceSubMesh.Name ?? $"{meshName}_{subMeshIndex}",
                 RootTransform = node.Transform,
+                ImportedSourceMaterialSlot = subMeshIndex,
+                ImportedRendererMaterialSlot = subMeshIndex,
             };
 
             ApplySkinnedRendererBindings(subMesh, xrMesh, hierarchy, skinnedMeshRenderer);
@@ -832,6 +914,7 @@ internal static partial class SerializedSceneImporter
         Model sourceModel,
         SceneNode targetNode,
         IReadOnlyList<SourceReference> materialReferences,
+        bool requireSourceMaterialSlots,
         ImportState state)
     {
         SceneNode targetRoot = GetHierarchyRoot(targetNode);
@@ -840,6 +923,14 @@ internal static partial class SerializedSceneImporter
         for (int subMeshIndex = 0; subMeshIndex < sourceModel.Meshes.Count; subMeshIndex++)
         {
             SubMesh sourceSubMesh = sourceModel.Meshes[subMeshIndex];
+            int sourceSlot = sourceSubMesh.ImportedSourceMaterialSlot ??
+                (requireSourceMaterialSlots
+                    ? throw new SourceVisualImportException($"Source mesh '{sourceSubMesh.Name}' has no FBX material slot identity.")
+                    : subMeshIndex);
+            int rendererSlot = sourceSubMesh.ImportedRendererMaterialSlot ??
+                (requireSourceMaterialSlots
+                    ? throw new SourceVisualImportException($"Source mesh '{sourceSubMesh.Name}' has no Unity renderer material slot.")
+                    : sourceSlot);
             var clonedLods = new List<SubMeshLOD>(sourceSubMesh.LODs.Count);
 
             foreach (SubMeshLOD sourceLod in sourceSubMesh.LODs)
@@ -848,7 +939,7 @@ internal static partial class SerializedSceneImporter
                 if (clonedMesh is not null)
                     RemapMeshBonesToTarget(clonedMesh, sourceRoot, targetRoot);
 
-                XRMaterial material = ResolveMaterialForSubMesh(materialReferences, subMeshIndex, state, sourceLod.Material);
+                XRMaterial? material = ResolveMaterialForSubMesh(materialReferences, rendererSlot, state, sourceLod.Material);
                 LogSourceToonMeshDiagnostics(material, clonedMesh);
                 var clonedLod = new SubMeshLOD(material, clonedMesh, sourceLod.MaxVisibleDistance)
                 {
@@ -865,6 +956,9 @@ internal static partial class SerializedSceneImporter
             var clonedSubMesh = new SubMesh(clonedLods)
             {
                 Name = sourceSubMesh.Name,
+                ImportedSourceMaterialSlot = sourceSlot,
+                ImportedRendererMaterialSlot = rendererSlot,
+                ImportedSourceMaterialName = sourceSubMesh.ImportedSourceMaterialName,
                 Bounds = sourceSubMesh.Bounds,
                 CullingBounds = sourceSubMesh.CullingBounds,
                 RootTransform = MapSourceTransformToTarget(sourceSubMesh.RootTransform, sourceRoot, targetRoot) ?? targetNode.Transform,
@@ -924,7 +1018,7 @@ internal static partial class SerializedSceneImporter
 
         // Packed influences index UtilizedBones by position, so rebinding the
         // bone table retargets every vertex without repacking.
-        mesh.UtilizedBones = reboundBones;
+        mesh.ReplaceSkinningBoneBindings(reboundBones);
     }
 
     private static void RemapMeshBonesToTarget(XRMesh mesh, SceneNode sourceRoot, SceneNode targetRoot)
@@ -954,7 +1048,7 @@ internal static partial class SerializedSceneImporter
 
         // Packed influences index UtilizedBones by position, so rebinding the
         // bone table retargets every vertex without repacking.
-        mesh.UtilizedBones = reboundBones;
+        mesh.ReplaceSkinningBoneBindings(reboundBones);
     }
 
     private static TransformBase? MapSourceTransformToTarget(TransformBase? sourceTransform, SceneNode sourceRoot, SceneNode targetRoot)
@@ -1004,7 +1098,7 @@ internal static partial class SerializedSceneImporter
         return current;
     }
 
-    private static XRMaterial ResolveMaterialForSubMesh(
+    private static XRMaterial? ResolveMaterialForSubMesh(
         IReadOnlyList<SourceReference> materialReferences,
         int subMeshIndex,
         ImportState state,
@@ -1013,6 +1107,8 @@ internal static partial class SerializedSceneImporter
         if (materialReferences.Count > 0)
         {
             SourceReference reference = materialReferences[Math.Min(subMeshIndex, materialReferences.Count - 1)];
+            if (reference.FileId == 0 && string.IsNullOrWhiteSpace(reference.Guid))
+                return null;
             XRMaterial? resolved = ResolveSerializedMaterial(reference, state);
             if (resolved is not null)
                 return resolved;
@@ -1029,6 +1125,8 @@ internal static partial class SerializedSceneImporter
         string? assetPath = ResolveAssetPath(state, materialReference.Guid);
         if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
         {
+            if (state.Context.AllowPartialImport)
+                return GetMissingMaterial(materialReference, state);
             throw new SourceVisualImportException(
                 $"Required Unity material reference '{materialReference.Guid}:{materialReference.FileId}' could not be resolved.");
         }
@@ -1040,9 +1138,9 @@ internal static partial class SerializedSceneImporter
         return assets?.Load<XRMaterial>(assetPath);
     }
 
-    private static void LogSourceToonMeshDiagnostics(XRMaterial material, XRMesh? mesh)
+    private static void LogSourceToonMeshDiagnostics(XRMaterial? material, XRMesh? mesh)
     {
-        if (mesh is null)
+        if (mesh is null || material is null)
             return;
 
         foreach (MaterialConversionDiagnostic diagnostic in
@@ -1054,32 +1152,50 @@ internal static partial class SerializedSceneImporter
 
     private static XRMaterial? LoadSerializedMaterial(string materialPath, ImportState state)
     {
-        try
-        {
-            return state.Context.GetOrAddCached(
-                materialPath,
-                () =>
+        return state.Context.GetOrAddCached(
+            materialPath,
+            () =>
+            {
+                try
                 {
                     SerializedMaterialImportResult result = SerializedMaterialImporter.ImportWithReport(materialPath, state.Context);
                     foreach (string warning in result.Warnings)
                         Debug.LogWarning(warning);
                     return result.Material
                         ?? throw new SourceVisualImportException($"Unity material importer returned no material for '{materialPath}'.");
-                });
-        }
-        catch (Exception ex)
-        {
-            string materialName = Path.GetFileNameWithoutExtension(materialPath);
-            state.Context.AddDiagnostic(
-                "UNITYMAT0001",
-                SourceImportDiagnosticSeverity.Error,
-                SourceImportDiagnosticCategory.MaterialDowngrade,
-                $"Required Unity material '{materialName}' could not be imported: {ex.Message}",
-                materialPath);
-            throw new SourceVisualImportException(
-                $"Required Unity material '{materialName}' could not be imported: {ex.Message}");
-        }
+                }
+                catch (Exception ex) when (IsRecoverableMaterialImportFailure(ex))
+                {
+                    string materialName = Path.GetFileNameWithoutExtension(materialPath);
+                    if (state.Context.AllowPartialImport)
+                    {
+                        state.Context.MarkOutcome(materialPath, SourceImportConversionOutcome.Failed);
+                        state.Context.ReportPartialImport("UNITYPARTIAL0003",
+                            $"Material '{materialName}' could not be converted. A fallback material is used: {ex.Message}",
+                            materialPath);
+                        return CreateFallbackSerializedMaterial($"Missing {materialName}", new ColorF4(1f, 0f, 1f, 1f));
+                    }
+
+                    state.Context.AddDiagnostic(
+                        "UNITYMAT0001",
+                        SourceImportDiagnosticSeverity.Error,
+                        SourceImportDiagnosticCategory.MaterialDowngrade,
+                        $"Required Unity material '{materialName}' could not be imported: {ex.Message}",
+                        materialPath);
+                    throw new SourceVisualImportException(
+                        $"Required Unity material '{materialName}' could not be imported: {ex.Message}");
+                }
+            });
     }
+
+    private static bool IsRecoverableMaterialImportFailure(Exception exception)
+        => exception switch
+        {
+            SourceVisualImportException or InvalidDataException or IOException or UnauthorizedAccessException or NotSupportedException => true,
+            AggregateException aggregate => aggregate.InnerExceptions.Count > 0 &&
+                aggregate.InnerExceptions.All(IsRecoverableMaterialImportFailure),
+            _ => false,
+        };
 
     private static void ApplyAnimatorModifications(
         SerializedAnimatorRecord record,
@@ -1154,11 +1270,25 @@ internal static partial class SerializedSceneImporter
     }
 
     private static XRMaterial CreateFallbackSerializedMaterial(string materialName, ColorF4 baseColor)
-        => new()
-        {
-            Name = materialName,
-            RenderPass = (int)EDefaultRenderPass.OpaqueDeferred,
-        };
+    {
+        XRMaterial material = XRMaterial.CreateLitColorMaterial(baseColor);
+        material.Name = materialName;
+        return material;
+    }
+
+    private static XRMaterial GetMissingMaterial(SourceReference reference, ImportState state)
+    {
+        string key = $"{reference.Guid}:{reference.FileId}";
+        if (state.MissingMaterials.TryGetValue(key, out XRMaterial? material))
+            return material;
+
+        material = CreateFallbackSerializedMaterial($"Missing Unity material {key}", new ColorF4(1f, 0f, 1f, 1f));
+        state.MissingMaterials.Add(key, material);
+        state.Context.ReportPartialImport("UNITYPARTIAL0002",
+            $"Material '{key}' is missing. A magenta fallback preserves its renderer slot.",
+            state.EntryFilePath, "m_Materials", ToIdentity(reference, SourceAssetObjectKind.Material));
+        return material;
+    }
 
     private static ColorF4 ResolveMaterialColor(YamlMappingNode materialMapping)
     {

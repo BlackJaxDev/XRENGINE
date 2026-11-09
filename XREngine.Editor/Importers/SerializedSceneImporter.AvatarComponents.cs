@@ -102,6 +102,7 @@ internal static partial class SerializedSceneImporter
             ? PhysicsChainColliderBase.EBound.Inside
             : PhysicsChainColliderBase.EBound.Outside;
         collider._direction = PhysicsChainColliderBase.Direction.Y;
+        collider.ParticleContactOnly = (GetScalarInt(fields, "bonesAsSpheres") ?? 0) != 0;
 
         if (collider is PhysicsChainCollider volumeCollider)
         {
@@ -115,8 +116,7 @@ internal static partial class SerializedSceneImporter
         hierarchy.ComponentsByFileId[behaviour.FileId] = collider;
         MarkAdaptedScriptDependency(behaviour, state);
 
-        if ((GetScalarInt(fields, "bonesAsSpheres") ?? 0) != 0 ||
-            (GetScalarInt(fields, "globalCollisionFlags") ?? 0) != 0)
+        if ((GetScalarInt(fields, "globalCollisionFlags") ?? 0) != 0)
         {
             AddAvatarDiagnostic(
                 state,
@@ -124,7 +124,7 @@ internal static partial class SerializedSceneImporter
                 hierarchy,
                 "UNITYVRC0002",
                 SourceImportDiagnosticSeverity.Warning,
-                "VRChat collider bones-as-spheres/global collision filtering has no native equivalent and was not applied.");
+                "VRChat collider global collision filtering has no native equivalent and was not applied.");
         }
     }
 
@@ -146,47 +146,84 @@ internal static partial class SerializedSceneImporter
         component.Roots = root is null ? null : [root];
         component.IsActive = behaviour.Enabled;
         component.EndOffset = ConvertPosition(GetVector3(fields, "endpointPosition", Vector3.Zero));
+        component.EndOffsetInBoneSpace = true;
         component.Elasticity = Clamp01(GetScalarFloat(fields, "pull") ?? 0.0f);
-        component.Damping = Clamp01(1.0f - (GetScalarFloat(fields, "spring") ?? 0.0f));
-        component.Stiffness = Clamp01(GetScalarFloat(fields, "stiffness") ?? 0.0f);
+        float spring = GetScalarFloat(fields, "spring") ?? 0.0f;
+        // Damping is one minus the curved spring value, so a spring curve sets the damping directly.
+        component.Damping = HasCurveKeys(fields, "springCurve") ? 1.0f : Clamp01(1.0f - spring);
+        int integrationType = GetScalarInt(fields, "integrationType") ?? 0;
+        // Stiffness exists only in Advanced integration. Spring and Momentum share the serialized "spring" field.
+        component.Stiffness = integrationType == 1 ? Clamp01(GetScalarFloat(fields, "stiffness") ?? 0.0f) : 0.0f;
         component.Inert = Clamp01(GetScalarFloat(fields, "immobile") ?? 0.0f);
+        component.InertFollowsRootParent = true;
+        // Multi-Child Type Ignore keeps the children of a branching bone at their rest offsets.
+        component.PinBranchChildren = (GetScalarInt(fields, "multiChildType") ?? 0) == 0;
+        // Measured PhysBone behavior: bones aim relative to their simulated parents, stiffness holds the
+        // offset from the parent without resisting gravity, and the settled gravity angle does not depend on bone size.
+        component.RestFollowsParent = true;
+        component.StiffnessMode = EPhysicsChainStiffnessMode.HoldParentOffset;
+        component.GravityMode = EPhysicsChainGravityMode.SegmentRatio;
+        component.CarryParticlesBetweenSteps = false;
+        component.CollisionMode = EPhysicsChainCollisionMode.Segment;
         component.Radius = MathF.Max(GetScalarFloat(fields, "radius") ?? 0.0f, 0.0f);
         component.Gravity = ConvertDirection(new Vector3(0.0f, -(GetScalarFloat(fields, "gravity") ?? 0.0f), 0.0f));
+        component.GravityFalloff = Clamp01(GetScalarFloat(fields, "gravityFalloff") ?? 0.0f);
+        component.LimitType = (GetScalarInt(fields, "limitType") ?? 0) switch
+        {
+            1 => EPhysicsChainLimitType.Angle,
+            2 => EPhysicsChainLimitType.Hinge,
+            3 => EPhysicsChainLimitType.Polar,
+            _ => EPhysicsChainLimitType.None,
+        };
+        component.MaxAngle = GetScalarFloat(fields, "maxAngleX") ?? 45.0f;
+        component.MaxYaw = GetScalarFloat(fields, "maxAngleZ") ?? 45.0f;
+        component.MaxAngleDistrib = ParseSourceCurve(fields, "maxAngleXCurve");
+        component.MaxYawDistrib = ParseSourceCurve(fields, "maxAngleZCurve");
+        Vector3 limitEuler = GetVector3(fields, "limitRotation", Vector3.Zero);
+        component.LimitRotation = ConvertRotation(Quaternion.CreateFromYawPitchRoll(
+            float.DegreesToRadians(limitEuler.Y),
+            float.DegreesToRadians(limitEuler.X),
+            float.DegreesToRadians(limitEuler.Z)));
+        component.MaxStretch = GetScalarFloat(fields, "maxStretch") ?? 0.0f;
+        component.MaxSquish = GetScalarFloat(fields, "maxSquish") ?? 0.0f;
+        component.StretchMotion = GetScalarFloat(fields, "stretchMotion") ?? 0.0f;
         component.Exclusions = ResolveTransformSequence(GetNode(fields, "ignoreTransforms"), hierarchy);
         component.Colliders = (GetScalarInt(fields, "allowCollision") ?? 1) == 0
             ? []
             : ResolveColliderSequence(GetNode(fields, "colliders"), hierarchy);
         component.ElasticityDistrib = ParseSourceCurve(fields, "pullCurve");
-        component.DampingDistrib = ParseSourceCurve(fields, "springCurve", static value => 1.0f - value, invertTangents: true);
+        component.DampingDistrib = ParseSourceCurve(fields, "springCurve", value => 1.0f - spring * value, tangentScale: -spring);
         component.StiffnessDistrib = ParseSourceCurve(fields, "stiffnessCurve");
         component.InertDistrib = ParseSourceCurve(fields, "immobileCurve");
         component.RadiusDistrib = ParseSourceCurve(fields, "radiusCurve");
 
-        int integrationType = GetScalarInt(fields, "integrationType") ?? 0;
-        component.UpdateMode = integrationType switch
-        {
-            1 => PhysicsChainComponent.EUpdateMode.FixedUpdate,
-            _ => PhysicsChainComponent.EUpdateMode.Normal,
-        };
+        // Integration Type selects a force model. It does not select update timing.
+        component.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
 
         hierarchy.ComponentsByFileId[behaviour.FileId] = component;
         MarkAdaptedScriptDependency(behaviour, state);
 
         var approximated = new List<string>(8);
-        if ((GetScalarFloat(fields, "gravityFalloff") ?? 0.0f) != 0.0f ||
-            HasCurveKeys(fields, "gravityFalloffCurve") ||
-            HasCurveKeys(fields, "gravityCurve"))
+        if (HasCurveKeys(fields, "gravityFalloffCurve") || HasCurveKeys(fields, "gravityCurve"))
+            approximated.Add("gravity curves");
+        if (HasCurveKeys(fields, "limitRotationXCurve") ||
+            HasCurveKeys(fields, "limitRotationYCurve") ||
+            HasCurveKeys(fields, "limitRotationZCurve"))
         {
-            approximated.Add("gravity curves/falloff");
+            approximated.Add("limit rotation curves");
         }
 
-        if ((GetScalarInt(fields, "limitType") ?? 0) != 0)
-            approximated.Add("angular limits");
-        if ((GetScalarFloat(fields, "maxStretch") ?? 0.0f) != 0.0f ||
-            (GetScalarFloat(fields, "maxSquish") ?? 0.0f) != 0.0f)
+        if (HasCurveKeys(fields, "maxStretchCurve") ||
+            HasCurveKeys(fields, "maxSquishCurve") ||
+            HasCurveKeys(fields, "stretchMotionCurve"))
         {
-            approximated.Add("stretch/squish");
+            approximated.Add("stretch and squish curves");
         }
+
+        if ((GetScalarInt(fields, "immobileType") ?? 0) != 0)
+            approximated.Add("world immobile type");
+        if (integrationType == 1)
+            approximated.Add("Momentum read as Spring");
 
         bool allowsGrabbing = (GetScalarInt(fields, "allowGrabbing") ?? 0) != 0;
         bool allowsPosing = (GetScalarInt(fields, "allowPosing") ?? 0) != 0;
@@ -209,8 +246,8 @@ internal static partial class SerializedSceneImporter
             approximated.Add("multi-child averaging");
 
         string mappedSummary =
-            "Mapped root, ignored transforms, endpoint, radius/curve, gravity, pull/curve, spring/curve, " +
-            "stiffness/curve, immobility/curve, collision list, enabled state, and update mode.";
+            "Mapped root, ignored transforms, endpoint, radius/curve, gravity/falloff, pull/curve, spring/curve, " +
+            "stiffness/curve, immobility/curve, angle limits, stretch, squish, collision list, and enabled state.";
         string approximationSummary = approximated.Count == 0
             ? " No active parameters required an unsupported approximation."
             : $" Unsupported active semantics: {string.Join(", ", approximated)}.";
@@ -609,7 +646,7 @@ internal static partial class SerializedSceneImporter
         YamlMappingNode fields,
         string key,
         Func<float, float>? valueTransform = null,
-        bool invertTangents = false)
+        float tangentScale = 1.0f)
     {
         if (GetNode(fields, key) is not YamlMappingNode curveDocument ||
             GetNode(curveDocument, "m_Curve") is not YamlSequenceNode keyframes ||
@@ -630,11 +667,8 @@ internal static partial class SerializedSceneImporter
             float outSlope = GetScalarFloat(keyframe, "outSlope") ?? 0.0f;
             if (valueTransform is not null)
                 value = valueTransform(value);
-            if (invertTangents)
-            {
-                inSlope = -inSlope;
-                outSlope = -outSlope;
-            }
+            inSlope *= tangentScale;
+            outSlope *= tangentScale;
 
             parsedKeyframes.Add(new PhysicsChainCoefficientKeyframe(
                 time,

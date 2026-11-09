@@ -353,6 +353,8 @@ internal sealed partial class VulkanFrameLoop
         => DesktopSwapchainService.CreateDepthResources();
     internal VulkanSwapchainDepthResources? DetachDesktopDepthResources()
         => DesktopSwapchainService.DetachDepthResources();
+    internal VulkanDesktopOffscreenColorResources EnsureDesktopOffscreenColorResources()
+        => DesktopSwapchainService.EnsureOffscreenColorResources(FrameSlotCount);
     internal bool IsDesktopSurfacePresentable(out string reason)
         => DesktopSwapchainService.IsSurfacePresentable(out reason);
     internal SwapChainSupportDetails QueryDesktopSwapchainSupport(PhysicalDevice physicalDevice)

@@ -813,13 +813,25 @@ public partial class HumanoidComponent
                 bodyAxes,
                 SceneNode,
                 _humanoidBindLocalPoses,
-                roleNodes);
+                roleNodes,
+                FindAuthoredTPose());
         }
         HumanoidCanonicalPoseAuthoring.ApplyGeneratedCorrections(
             bindings,
             bodyAxes,
             preservesAuthoredCorrections);
         return bindings;
+    }
+
+    private HumanoidAuthoredTPoseBone[]? FindAuthoredTPose()
+    {
+        HumanoidAuthoredTPoseBone[]? bones = null;
+        SceneNode.IterateComponents<HumanoidAuthoredTPoseComponent>(component =>
+        {
+            if (bones is null && component.Bones.Length > 0)
+                bones = component.Bones;
+        }, iterateChildHierarchy: true);
+        return bones;
     }
 
     /// <summary>

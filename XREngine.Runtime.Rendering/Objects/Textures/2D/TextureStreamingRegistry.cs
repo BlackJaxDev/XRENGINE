@@ -149,8 +149,8 @@ internal sealed class TextureStreamingRegistry
                 {
                     record.FilePath = filePath;
                     record.Source = deferAuthorityResolution
-                        ? TextureStreamingSourceFactory.CreateDeferred(filePath)
-                        : TextureStreamingSourceFactory.Create(filePath);
+                        ? TextureStreamingSourceFactory.CreateDeferred(filePath, texture)
+                        : TextureStreamingSourceFactory.Create(filePath, texture.ImportedUsage);
                 }
 
                 record.Backend ??= resolvePreviewBackend(record.Format);
@@ -299,6 +299,23 @@ internal sealed class TextureStreamingRegistry
         return snapshots;
     }
 
+
+    /// <summary>
+    /// Returns the fairness group key of a record, computing it again only when
+    /// the file path changes. The caller holds <see cref="ImportedTextureStreamingRecord.Sync"/>.
+    /// </summary>
+    private static string ResolveCachedFairnessGroupKey(ImportedTextureStreamingRecord record)
+    {
+        string? filePath = record.FilePath;
+        if (!ReferenceEquals(record.FairnessGroupKeySourcePath, filePath))
+        {
+            record.FairnessGroupKey = TextureResidencyPolicy.ResolveFairnessGroupKey(filePath);
+            record.FairnessGroupKeySourcePath = filePath;
+        }
+
+        return record.FairnessGroupKey;
+    }
+
     public void CollectSnapshots(
         Func<uint, uint, ESizedInternalFormat, ITextureResidencyBackend> resolveBackend,
         List<ImportedTextureStreamingSnapshot> snapshots)
@@ -340,7 +357,7 @@ internal sealed class TextureStreamingRegistry
                     texture.Name,
                     record.FilePath,
                     texture.SamplerName,
-                    TextureResidencyPolicy.ResolveFairnessGroupKey(record.FilePath),
+                    ResolveCachedFairnessGroupKey(record),
                     record.Format,
                     record.SourceWidth,
                     record.SourceHeight,

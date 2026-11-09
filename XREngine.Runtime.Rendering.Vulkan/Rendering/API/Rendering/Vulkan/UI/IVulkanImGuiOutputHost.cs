@@ -31,6 +31,36 @@ internal unsafe interface IVulkanImGuiOutputHost
         SwapchainKHR oldSwapchain,
         out VulkanImGuiPlatformSwapchainGeneration generation);
     VulkanWsiPresentCompletion CreatePlatformPresentCompletion(int imageCount);
+
+    /// <summary>
+    /// The shared Direct3D device when the desktop window presents through the DXGI
+    /// flip-model path; otherwise null. Detached windows use DXGI only while this is set.
+    /// </summary>
+    VulkanDxgiDevice? PlatformDxgiDevice { get; }
+    bool TryCreatePlatformDxgiPresenter(
+        VulkanDxgiDevice sharedDevice,
+        nint windowHandle,
+        out VulkanDxgiPresenter? presenter,
+        out string reason);
+    bool TryCreatePlatformDxgiGeneration(
+        VulkanDxgiPresenter presenter,
+        Vector2D<int> framebufferSize,
+        uint viewportId,
+        ulong generationNumber,
+        out VulkanDxgiImageRing? ring,
+        out VulkanImGuiPlatformSwapchainGeneration generation,
+        out string reason);
+    VulkanWsiPresentCompletion CreatePlatformDxgiPresentCompletion(int imageCount);
+    Result AcquirePlatformDxgiImage(
+        VulkanDxgiImageRing ring,
+        Semaphore imageAvailable,
+        Fence acquireFence,
+        out uint imageIndex);
+    Result PresentPlatformDxgiViewport(
+        VulkanDxgiImageRing ring,
+        uint imageIndex,
+        Semaphore renderFinished,
+        in VulkanWsiPresentReservation reservation);
     VulkanImGuiPlatformWindowCommandResources CreatePlatformCommandResources(
         int frameCount,
         int imageCount,

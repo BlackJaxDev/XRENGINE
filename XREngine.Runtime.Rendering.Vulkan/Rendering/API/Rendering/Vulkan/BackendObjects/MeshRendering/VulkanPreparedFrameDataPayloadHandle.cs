@@ -18,7 +18,8 @@ internal readonly record struct VulkanPreparedFrameDataPayloadHandle(
     ulong ArenaGeneration,
     EVulkanBindingFrequencyMask FrequencyMask,
     VulkanAutoUniformPublicationSnapshot Publication,
-    ulong MaterialGeneration)
+    ulong MaterialGeneration,
+    VulkanMappedFrameAllocation? Allocation = null)
 {
     internal bool IsValidFor(
         int frameIndex,
@@ -29,6 +30,7 @@ internal readonly record struct VulkanPreparedFrameDataPayloadHandle(
             FrameIndex == frameIndex &&
             DrawUniformSlot == drawUniformSlot &&
             ArenaGeneration == arenaGeneration &&
+            (Allocation is null || Allocation.IsOpen) &&
             FrequencyMask != EVulkanBindingFrequencyMask.None;
 
     internal bool ReferencesFrequency(EVulkanBindingFrequency frequency)

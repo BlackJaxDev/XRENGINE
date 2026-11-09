@@ -141,7 +141,8 @@ public partial class XRMesh
             out ReadOnlySpan<Vector3> tangents);
         int start = destination.Count;
         for (int i = 0; i < shapes.Length; i++)
-            destination.Add(new BlendshapeVertexDelta(shapes[i], positions[i], normals[i], tangents[i]));
+            destination.Add(new BlendshapeVertexDelta(shapes[i], positions[i], normals[i],
+                tangents.IsEmpty ? Vector3.Zero : tangents[i]));
         // The packer expects ascending shape order per vertex.
         destination.Sort(start, destination.Count - start, BlendshapeVertexDeltaShapeComparer.Instance);
     }

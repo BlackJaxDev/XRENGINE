@@ -12,8 +12,16 @@ internal readonly record struct BlitPayload(XRFrameBuffer? InFbo, XRFrameBuffer?
 internal readonly record struct ClearPayload(bool ClearColor, bool ClearDepth, bool ClearStencil, ColorF4 Color, float Depth, uint Stencil, Rect2D Rect);
 internal readonly record struct TransformFeedbackPayload(VkTransformFeedback TransformFeedback, EXRTransformFeedbackOperation Operation, XRDataBuffer? CounterBuffer, ulong FeedbackBufferOffset, ulong? FeedbackBufferSize, ulong CounterBufferOffset, uint CounterOffset, uint VertexStride, uint InstanceCount, uint FirstInstance);
 internal readonly record struct QueryPayload(VkRenderQuery Query, RenderQueryDescriptor Descriptor, ERenderQueryOperation Operation, PipelineStageFlags2 TimestampStage, uint PointIndex, ReadOnlyMemory<ulong> SourceHandles, Buffer ResultDestination, ulong ResultDestinationOffset, ulong ResultStride, bool IncludeAvailability);
-internal readonly record struct MeshDrawPayload(PendingMeshDraw Draw);
-internal readonly record struct IndirectDrawPayload(VkDataBuffer IndirectBuffer, VkDataBuffer? ParameterBuffer, VkMeshRenderer MeshRenderer, PendingMeshDraw Draw, uint DrawCount, uint Stride, nuint ByteOffset, nuint CountByteOffset, bool UseCount, VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures, VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract);
+// The draw payloads keep the large draw record in a field, so a reader can take
+// it by reference (`ref readonly ... = ref payload.Draw`) instead of copying it.
+internal readonly record struct MeshDrawPayload(PendingMeshDraw Draw)
+{
+    public readonly PendingMeshDraw Draw = Draw;
+}
+internal readonly record struct IndirectDrawPayload(VkDataBuffer IndirectBuffer, VkDataBuffer? ParameterBuffer, VkMeshRenderer MeshRenderer, PendingMeshDraw Draw, uint DrawCount, uint Stride, nuint ByteOffset, nuint CountByteOffset, bool UseCount, VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures, VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract)
+{
+    public readonly PendingMeshDraw Draw = Draw;
+}
 internal readonly record struct MeshTaskDispatchIndirectCountPayload(VkRenderProgram Program, ulong ProgramLinkGeneration, ComputeDispatchSnapshot ProgramBindingSnapshot, VulkanMeshProducerSnapshot ProducerSnapshot, Pipeline Pipeline, VkDataBuffer IndirectBuffer, VkDataBuffer CountBuffer, uint MaxDrawCount, uint Stride, nuint ByteOffset, nuint CountByteOffset, VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures);
 internal readonly record struct ComputeDispatchPayload(VkRenderProgram Program, uint GroupsX, uint GroupsY, uint GroupsZ, ComputeDispatchSnapshot Snapshot);
 internal readonly record struct ComputeDispatchIndirectPayload(VkRenderProgram Program, ComputeDispatchSnapshot Snapshot, VkDataBuffer ArgumentOwner, Buffer ArgumentBuffer, ulong ArgumentOffset, string Label);
@@ -222,6 +230,8 @@ internal sealed class FrameOperationPayloadStore
         AdvancedVisibilityInputs = new VulkanAdvancedVisibilityInputStorage?[VulkanAdvancedVisibilityOutputCapacity.Maximum];
     }
 
+    private readonly ComputeDispatchSnapshot?[]?[] _artifactLeases = new ComputeDispatchSnapshot?[5][];
+
     /// <summary>
     /// Seals an authoring binding snapshot into the reusable snapshot owned by
     /// one payload row, so lowering does not allocate a new snapshot and its
@@ -234,7 +244,10 @@ internal sealed class FrameOperationPayloadStore
         ComputeDispatchSnapshot source)
     {
         if (source.IsImmutableBindingArtifact)
+        {
+            ReplaceArtifactLease(kind, row, source);
             return source;
+        }
 
         ComputeDispatchSnapshot sealedSnapshot = kind switch
         {
@@ -252,6 +265,62 @@ internal sealed class FrameOperationPayloadStore
         };
         sealedSnapshot.CopySealedFrom(source);
         return sealedSnapshot;
+    }
+
+    /// <summary>
+    /// Holds one lease on a shared artifact for as long as this payload row can record
+    /// it, so replacing the artifact in its slot cannot release resources in use.
+    /// </summary>
+    private void ReplaceArtifactLease(
+        EVulkanPrimaryPlanNodeKind kind,
+        int row,
+        ComputeDispatchSnapshot artifact)
+    {
+        ref ComputeDispatchSnapshot?[]? leases = ref _artifactLeases[GetArtifactLeaseColumn(kind)];
+        leases ??= new ComputeDispatchSnapshot?[GetArtifactLeaseRowCount(kind)];
+        if (!artifact.TryAcquireArtifactLease())
+            throw new InvalidOperationException(
+                "A frame operation sealed a binding artifact whose last lease already ended.");
+        ComputeDispatchSnapshot? previous = leases[row];
+        leases[row] = artifact;
+        previous?.ReleaseArtifactLease();
+    }
+
+    private static int GetArtifactLeaseColumn(EVulkanPrimaryPlanNodeKind kind)
+        => kind switch
+        {
+            EVulkanPrimaryPlanNodeKind.MeshDraw => 0,
+            EVulkanPrimaryPlanNodeKind.IndirectDraw => 1,
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount => 2,
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch => 3,
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => 4,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "The opcode has no binding snapshot column."),
+        };
+
+    private int GetArtifactLeaseRowCount(EVulkanPrimaryPlanNodeKind kind)
+        => kind switch
+        {
+            EVulkanPrimaryPlanNodeKind.MeshDraw => MeshDraws.Length,
+            EVulkanPrimaryPlanNodeKind.IndirectDraw => IndirectDraws.Length,
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount => MeshTasks.Length,
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch => ComputeDispatches.Length,
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => ComputeDispatchIndirects.Length,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "The opcode has no binding snapshot column."),
+        };
+
+    private void ReleaseArtifactLeases()
+    {
+        foreach (ComputeDispatchSnapshot?[]? leases in _artifactLeases)
+        {
+            if (leases is null)
+                continue;
+            for (int row = 0; row < leases.Length; ++row)
+            {
+                ComputeDispatchSnapshot? artifact = leases[row];
+                leases[row] = null;
+                artifact?.ReleaseArtifactLease();
+            }
+        }
     }
 
     /// <summary>Detaches a draw for this store's payload row, sealing its binding snapshot into the row.</summary>
@@ -506,6 +575,7 @@ internal sealed class FrameOperationPayloadStore
         ReleaseInterfaces(_meshDrawInterfaces);
         ReleaseInterfaces(_indirectDrawInterfaces);
         ReleaseInterfaces(_meshTaskInterfaces);
+        ReleaseArtifactLeases();
         for (int index = 0; index < MeshDraws.Length; ++index)
             MeshDraws[index].Draw.ProgramBindingSnapshot?.ReleaseReadOnlyStorageBindings();
         for (int index = 0; index < IndirectDraws.Length; ++index)

@@ -145,6 +145,7 @@ public unsafe partial class OpenXRAPI
         _smokePendingFrameTiming.BeginStartQpc = beginStart;
         Result nativeResult = (Result)binding.BeginFrame(GraphicsBindingHost);
         _smokePendingFrameTiming.BeginEndQpc = Stopwatch.GetTimestamp();
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrBeginFrameEnd);
         Result result = CheckResult(nativeResult, "xrBeginFrame");
         if (result != Result.Success)
         {
@@ -162,6 +163,11 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     /// <param name="frameState">Returns the frame state information.</param>
     /// <returns>True if successfully waited for the frame, false otherwise.</returns>
+    private long _lastFrameWakeTicks;
+    private long _lastFrameWorkTicks;
+    private int _frameWorkOpen;
+    private long _lastFramePeriodNanoseconds;
+
     private bool WaitFrame(out FrameState frameState)
     {
         AssertOpenXrRenderThread(nameof(WaitFrame));
@@ -169,9 +175,13 @@ public unsafe partial class OpenXRAPI
         frameState = new FrameState { Type = StructureType.FrameState };
         long waitStart = Stopwatch.GetTimestamp();
         _smokePendingFrameTiming.WaitStartQpc = waitStart;
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrWaitFrameStart);
         Result nativeResult = Api.WaitFrame(_session, in frameWaitInfo, ref frameState);
         long waitEnd = Stopwatch.GetTimestamp();
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrWaitFrameEnd);
         _smokePendingFrameTiming.WaitEndQpc = waitEnd;
+        Volatile.Write(ref _lastFrameWakeTicks, waitEnd);
+        Volatile.Write(ref _frameWorkOpen, 1);
         Result result = CheckResult(nativeResult, "xrWaitFrame");
         if (result != Result.Success)
         {
@@ -187,6 +197,8 @@ public unsafe partial class OpenXRAPI
         RuntimeEngine.Rendering.Stats.Vr.RecordVrXrWaitFrameBlockTime(TimeSpan.FromSeconds(waitTicks / (double)Stopwatch.Frequency));
 
         _frameState = frameState;
+        Volatile.Write(ref _lastFramePeriodNanoseconds, frameState.PredictedDisplayPeriod);
+        RuntimeEngine.Rendering.Stats.VrHeadroom.RecordDisplayPeriod(frameState.PredictedDisplayPeriod);
         _smokePendingFrameTiming.PredictedDisplayTimeXr = frameState.PredictedDisplayTime;
         _smokePendingFrameTiming.PredictedDisplayPeriodXr = frameState.PredictedDisplayPeriod;
         _smokePendingFrameTiming.ShouldRender = frameState.ShouldRender;
@@ -202,6 +214,32 @@ public unsafe partial class OpenXRAPI
             return double.NaN;
 
         return (frameState.PredictedDisplayTime - nowXrTime) / 1_000_000.0;
+    }
+
+    /// <summary>
+    /// Estimates the time until the next XR frame needs the render thread. The estimate uses
+    /// the eye work time and the runtime period. It does not use the measured frame interval,
+    /// because a desktop frame that delays the eyes would then enlarge its own slack.
+    /// </summary>
+    internal double NextFrameSlackMs
+    {
+        get
+        {
+            long wakeTicks = Volatile.Read(ref _lastFrameWakeTicks);
+            // Read the stored period, because the frame state is empty while xrWaitFrame blocks.
+            double periodMs = Volatile.Read(ref _lastFramePeriodNanoseconds) / 1_000_000.0;
+            if (wakeTicks == 0 || periodMs <= 0.0)
+                return -1.0;
+
+            if (Volatile.Read(ref _frameWorkOpen) != 0)
+                return 0.0;
+
+            double ticksPerMs = Stopwatch.Frequency / 1000.0;
+            double workMs = Volatile.Read(ref _lastFrameWorkTicks) / ticksPerMs;
+            double nextWakeMs = Math.Max(1.0, Math.Ceiling(workMs / periodMs)) * periodMs;
+            double elapsedMs = (Stopwatch.GetTimestamp() - wakeTicks) / ticksPerMs;
+            return Math.Max(0.0, nextWakeMs - elapsedMs);
+        }
     }
 
     /// <summary>
@@ -345,9 +383,17 @@ public unsafe partial class OpenXRAPI
             endFrameAttempted = true;
             start = Stopwatch.GetTimestamp();
             _smokePendingFrameTiming.EndStartQpc = start;
+            global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrEndFrameStart);
             result = (Result)binding.EndFrame(GraphicsBindingHost, frameEndInfo.LayerCount != 0);
             end = Stopwatch.GetTimestamp();
+            global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrEndFrameEnd);
         }
+        long frameWorkTicks = end - Volatile.Read(ref _lastFrameWakeTicks);
+        Volatile.Write(ref _lastFrameWorkTicks, frameWorkTicks);
+        // Record headroom only for a frame that a completed xrWaitFrame opened. The
+        // runtime does not pace this time, so it shows the rate the engine could reach.
+        if (Interlocked.Exchange(ref _frameWorkOpen, 0) != 0)
+            RuntimeEngine.Rendering.Stats.VrHeadroom.RecordCpuFrameWork(frameWorkTicks);
         result = CheckResult(result, "xrEndFrame");
         _smokePendingFrameTiming.EndEndQpc = end;
         _smokePendingFrameTiming.EndStartXrAvailable = TryConvertPerformanceCounterToXrTime(start, out long endStartXr);

@@ -269,6 +269,10 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
         FrameOpSignatureHasher hash = new();
         AddMatrix(ref hash, draw.ModelMatrix);
         AddMatrix(ref hash, draw.PreviousModelMatrix);
+        hash.Add(draw.SourceFlatDirection.X);
+        hash.Add(draw.SourceFlatDirection.Y);
+        hash.Add(draw.SourceFlatDirection.Z);
+        hash.Add(draw.SourceFlatDirection.W);
         hash.Add(draw.TransformId);
         hash.Add((uint)draw.BillboardMode);
         hash.Add(skinPaletteBase);

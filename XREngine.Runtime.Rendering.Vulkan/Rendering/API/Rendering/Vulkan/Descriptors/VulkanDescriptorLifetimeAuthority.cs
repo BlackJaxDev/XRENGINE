@@ -217,13 +217,56 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             out failureReason);
     }
 
+    /// <summary>
+    /// Updates descriptor sets after prevalidation. <paramref name="referenceRetired"/> is true
+    /// when the update was rejected only because a referenced resource is retiring. Nothing was
+    /// written then, so the caller can retry with the current resource.
+    /// </summary>
+    internal bool TryUpdateDescriptorSets(
+        uint descriptorWriteCount,
+        WriteDescriptorSet* descriptorWrites,
+        out string failureReason,
+        out bool referenceRetired)
+    {
+        referenceRetired = false;
+        if (_deviceContext is not { IsOperational: true } device)
+        {
+            failureReason = $"Cannot update Vulkan descriptors while device state is {_deviceContext?.State}.";
+            return false;
+        }
+
+        return ApplyDescriptorWrites(
+            device,
+            descriptorWriteCount,
+            descriptorWrites,
+            prevalidate: true,
+            out failureReason,
+            out referenceRetired);
+    }
+
     private bool ApplyDescriptorWrites(
         VulkanDeviceContext device,
         uint descriptorWriteCount,
         WriteDescriptorSet* descriptorWrites,
         bool prevalidate,
         out string failureReason)
+        => ApplyDescriptorWrites(
+            device,
+            descriptorWriteCount,
+            descriptorWrites,
+            prevalidate,
+            out failureReason,
+            out _);
+
+    private bool ApplyDescriptorWrites(
+        VulkanDeviceContext device,
+        uint descriptorWriteCount,
+        WriteDescriptorSet* descriptorWrites,
+        bool prevalidate,
+        out string failureReason,
+        out bool referenceRetired)
     {
+        referenceRetired = false;
         ulong[]? dependentCommandBuffers;
         int dependentCommandBufferCount;
         bool invalidatesRecordedCommandBuffers;
@@ -240,7 +283,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
                 if (!TryPrevalidateWritesNoLock(
                         descriptorWriteCount,
                         descriptorWrites,
-                        out failureReason))
+                        out failureReason,
+                        out referenceRetired))
                 {
                     if (prevalidate)
                         return false;
@@ -337,8 +381,15 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             return false;
         }
 
-        DescriptorUpdateTemplateEntry[] entries = new DescriptorUpdateTemplateEntry[writes.Length];
-        DescriptorUpdateTemplateSignature[] signature = new DescriptorUpdateTemplateSignature[writes.Length];
+        // Compute descriptor refreshes run every eye frame. Keep the entry and
+        // signature scratch off the heap; only a new cache entry copies the signature.
+        const int StackTemplateEntries = 16;
+        Span<DescriptorUpdateTemplateEntry> entries = writes.Length <= StackTemplateEntries
+            ? stackalloc DescriptorUpdateTemplateEntry[writes.Length]
+            : new DescriptorUpdateTemplateEntry[writes.Length];
+        Span<DescriptorUpdateTemplateSignature> signature = writes.Length <= StackTemplateEntries
+            ? stackalloc DescriptorUpdateTemplateSignature[writes.Length]
+            : new DescriptorUpdateTemplateSignature[writes.Length];
         nuint totalSize = 0;
         for (int index = 0; index < writes.Length; index++)
         {
@@ -413,6 +464,7 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
                             if (!TryPrevalidateWritesNoLock(
                                     unchecked((uint)writes.Length),
                                     writePointer,
+                                    out _,
                                     out _))
                             {
                                 return false;
@@ -1571,8 +1623,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
         PipelineBindPoint bindPoint,
         PipelineLayout pipelineLayout,
         uint setIndex,
-        DescriptorUpdateTemplateEntry[] entries,
-        DescriptorUpdateTemplateSignature[] signature,
+        ReadOnlySpan<DescriptorUpdateTemplateEntry> entries,
+        ReadOnlySpan<DescriptorUpdateTemplateSignature> signature,
         out DescriptorUpdateTemplate updateTemplate)
     {
         updateTemplate = default;
@@ -1621,7 +1673,7 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             CachedDescriptorUpdateTemplate created = new()
             {
                 Template = updateTemplate,
-                Signature = signature,
+                Signature = signature.ToArray(),
                 Hash = hash,
             };
             if (bucket is null)
@@ -2388,9 +2440,11 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
     private bool TryPrevalidateWritesNoLock(
         uint writeCount,
         WriteDescriptorSet* writes,
-        out string failureReason)
+        out string failureReason,
+        out bool referenceRetired)
     {
         failureReason = string.Empty;
+        referenceRetired = false;
         if (writeCount == 0 || writes is null)
             return true;
 
@@ -2443,9 +2497,16 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             for (uint descriptorIndex = 0; descriptorIndex < write.DescriptorCount; descriptorIndex++)
             {
                 VulkanDescriptorReferencePair references = ResolveReferences(write, descriptorIndex);
-                if (!TryPrevalidateReferenceNoLock(tracker, setKey, references.First, out failureReason) ||
-                    !TryPrevalidateReferenceNoLock(tracker, setKey, references.Second, out failureReason))
+                if (!TryPrevalidateReferenceNoLock(
+                        tracker, setKey, references.First, write.DstBinding,
+                        write.DescriptorType, write.DstArrayElement + descriptorIndex,
+                        out failureReason) ||
+                    !TryPrevalidateReferenceNoLock(
+                        tracker, setKey, references.Second, write.DstBinding,
+                        write.DescriptorType, write.DstArrayElement + descriptorIndex,
+                        out failureReason))
                 {
+                    referenceRetired = true;
                     return false;
                 }
             }
@@ -2604,6 +2665,9 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
         VulkanResourceLifetimeTracker tracker,
         VulkanResourceLifetimeKey setKey,
         VulkanResourceLifetimeKey referenceKey,
+        uint binding,
+        DescriptorType descriptorType,
+        uint arrayElement,
         out string failureReason)
     {
         failureReason = string.Empty;
@@ -2620,7 +2684,9 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
         }
 
         failureReason =
-            $"Cannot update descriptor set {setKey} with retired Vulkan resource {referenceKey} generation {reference.Generation}.";
+            $"Cannot update descriptor set {setKey} binding={binding} type={descriptorType} arrayElement={arrayElement} " +
+            $"with retired Vulkan resource {referenceKey} owner='{reference.Owner}' " +
+            $"retirementOwner='{reference.RetirementOwner}' generation={reference.Generation} state={reference.State}.";
         return false;
     }
 
@@ -3212,8 +3278,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
     }
 
     private static bool TemplateSignaturesEqual(
-        DescriptorUpdateTemplateSignature[] left,
-        DescriptorUpdateTemplateSignature[] right)
+        ReadOnlySpan<DescriptorUpdateTemplateSignature> left,
+        ReadOnlySpan<DescriptorUpdateTemplateSignature> right)
     {
         if (left.Length != right.Length)
             return false;

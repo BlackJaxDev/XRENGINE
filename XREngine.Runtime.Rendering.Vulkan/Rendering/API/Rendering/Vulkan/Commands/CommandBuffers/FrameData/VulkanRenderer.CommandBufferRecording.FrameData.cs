@@ -53,9 +53,10 @@ namespace XREngine.Rendering.Vulkan
                     ref operations.GetHeader(index);
                 ref readonly FrameOpContext context =
                     ref operations.GetContext(index);
+                // The generic name lookup returns the cached enum name without boxing.
                 int resolvedPassIndex = VulkanCommandRuntime.EnsureValidPassIndex(
                     header.PassIndex,
-                    header.OpCode.ToString(),
+                    Enum.GetName(header.OpCode) ?? string.Empty,
                     context.PassMetadata);
                 if (resolvedPassIndex != header.PassIndex)
                 {

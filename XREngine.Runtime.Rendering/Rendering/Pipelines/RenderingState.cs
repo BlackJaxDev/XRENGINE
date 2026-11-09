@@ -97,6 +97,8 @@ public sealed partial class XRRenderPipelineInstance
         /// <summary>Pipeline and resource-generation identity paired with temporal history.</summary>
         public ulong ViewHistoryPipelineIdentity { get; private set; }
         public bool ViewHistoryAuthoring { get; private set; }
+        /// <summary>Render time frozen when this invocation begins.</summary>
+        public float RenderTimeSeconds { get; private set; }
         internal bool ViewHistoryCaptureAccepted { get; private set; } = true;
         internal RenderFrameViewHistoryCandidateToken ViewHistoryCandidate { get; private set; }
         public ulong OutputCompletionReceiptId { get; private set; }
@@ -312,6 +314,7 @@ public sealed partial class XRRenderPipelineInstance
             ViewHistoryOutputRequest = viewHistoryOutputRequest;
             ViewHistoryPipelineIdentity = viewHistoryPipelineIdentity;
             ViewHistoryAuthoring = viewHistoryAuthoring;
+            RenderTimeSeconds = RuntimeEngine.ElapsedTime;
             ViewHistoryCaptureAccepted = true;
             ViewHistoryCandidate = default;
             OutputCompletionReceiptId = 0UL;
@@ -335,6 +338,7 @@ public sealed partial class XRRenderPipelineInstance
                 RenderFrameViewSet? capturedViews = camera is null
                     ? null
                     : stereoPass && RenderFrameViewSetPublication.TryGetLatest(
+                        viewport?.OpenXrViewPair ?? RenderFrameViewSetPublication.AllViews,
                         out RenderFrameViewSet openXrViews)
                         ? openXrViews
                         : RenderFrameViewSetCapture.Capture(
@@ -385,6 +389,7 @@ public sealed partial class XRRenderPipelineInstance
             }
             catch
             {
+                RenderTimeSeconds = 0.0f;
                 RenderingWorld = previousRenderingWorld;
                 // Capture can mint a resolved candidate before snapshot acquisition
                 // or native viewport setup fails. It has not transferred to a
@@ -392,6 +397,7 @@ public sealed partial class XRRenderPipelineInstance
                 ViewHistoryCandidate.Discard();
                 ViewHistoryCandidate = default;
                 ViewHistoryCaptureAccepted = false;
+                RenderTimeSeconds = 0f;
                 WorldSnapshot = null;
                 FrameViewSet = null;
                 TemporalAuthoringViewSet = null;
@@ -432,12 +438,14 @@ public sealed partial class XRRenderPipelineInstance
             OutputFBO = null;
             ShadowPass = false;
             StereoPass = false;
+            RenderTimeSeconds = 0.0f;
             ViewHistorySequenceId = 0UL;
             ViewHistorySourceFrame = 0UL;
             ViewHistoryOutputRequest = default;
             ViewHistoryPipelineIdentity = 0UL;
             ViewHistoryAuthoring = false;
             ViewHistoryCaptureAccepted = true;
+            RenderTimeSeconds = 0f;
             ViewHistoryCandidate = default;
             OutputCompletionReceiptId = 0UL;
             OutputCompletionRequest = default;
@@ -569,6 +577,7 @@ public sealed partial class XRRenderPipelineInstance
             // per-frame binding snapshot can be reused inside this exact
             // shadow scope, but never across a different cascade publication.
             IncrementScopedBindingRevision();
+            IncrementLayeredShadowRevision();
             return StateObject.New(PopDirectionalCascadeLayeredShadowPassAction, this);
         }
 
@@ -604,6 +613,7 @@ public sealed partial class XRRenderPipelineInstance
                 _pointLightShadowFaceIndices[i] = i < faceIndices.Length ? faceIndices[i] : i;
             }
             IncrementScopedBindingRevision();
+            IncrementLayeredShadowRevision();
             return StateObject.New(PopPointLightLayeredShadowPassAction, this);
         }
 
@@ -669,6 +679,7 @@ public sealed partial class XRRenderPipelineInstance
 
             RestoreLayeredShadowScope(snapshot);
             IncrementScopedBindingRevision();
+            IncrementLayeredShadowRevision();
         }
 
         private void RestoreLayeredShadowScope(
@@ -976,6 +987,26 @@ public sealed partial class XRRenderPipelineInstance
                 _bufferBindings.Count != 0 ||
                 _shaderGlobals.Count != 0 ||
                 _programBindings.Count != 0;
+
+        /// <summary>
+        /// Gets a revision that changes only when a layered shadow scope is pushed
+        /// or popped. View-level snapshots depend on the layered shadow matrices,
+        /// but not on per-draw texture, buffer, or program bindings, so they key
+        /// on this revision instead of <see cref="ScopedBindingRevision"/>.
+        /// </summary>
+        public ulong LayeredShadowRevision
+            => _layeredShadowRevision;
+
+        private ulong _layeredShadowRevision;
+
+        private void IncrementLayeredShadowRevision()
+        {
+            unchecked
+            {
+                ulong next = _layeredShadowRevision + 1;
+                _layeredShadowRevision = next == 0 ? 1 : next;
+            }
+        }
 
         private void IncrementScopedBindingRevision()
         {

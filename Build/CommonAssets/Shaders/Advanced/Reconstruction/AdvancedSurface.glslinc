@@ -18,6 +18,8 @@
 #define XR_ADV_ATTRIBUTE_DEFORMED_POSITION 0x00000400u
 #define XR_ADV_ATTRIBUTE_ANALYTICAL_DERIVATIVES 0x00000800u
 #define XR_ADV_ATTRIBUTE_COLOR1 0x00001000u
+#define XR_ADV_ATTRIBUTE_TEXCOORD2 0x00002000u
+#define XR_ADV_ATTRIBUTE_TEXCOORD3 0x00004000u
 
 #ifndef XR_ADV_REQUIRED_ATTRIBUTE_MASK
 #define XR_ADV_REQUIRED_ATTRIBUTE_MASK 0xFFFFFFFFu
@@ -65,12 +67,21 @@ struct XRAdvancedSurface
     uint layerMask;
     uint requiredAttributeMask;
     vec3 worldPosition;
+    vec3 localPosition;
+    vec3 worldPositionDx;
+    vec3 worldPositionDy;
+    vec3 shadingNormalDx;
+    vec3 shadingNormalDy;
+    vec3 tangentDx;
+    vec3 tangentDy;
     vec3 geometricNormal;
     vec3 shadingNormal;
     vec3 tangent;
     vec3 bitangent;
     vec2 texCoord0;
     vec2 texCoord1;
+    vec2 texCoord2;
+    vec2 texCoord3;
     vec4 color0;
     vec4 color1;
     uint custom0;
@@ -81,6 +92,10 @@ struct XRAdvancedSurface
     vec2 texCoord0Dy;
     vec2 texCoord1Dx;
     vec2 texCoord1Dy;
+    vec2 texCoord2Dx;
+    vec2 texCoord2Dy;
+    vec2 texCoord3Dx;
+    vec2 texCoord3Dy;
     vec4 currentUnjitteredClip;
     vec4 previousUnjitteredClip;
     vec2 motionNdc;
@@ -104,12 +119,21 @@ XRAdvancedSurface XR_ADV_InvalidSurface(
     surface.layerMask = 0u;
     surface.requiredAttributeMask = 0u;
     surface.worldPosition = vec3(0.0);
+    surface.localPosition = vec3(0.0);
+    surface.worldPositionDx = vec3(0.0);
+    surface.worldPositionDy = vec3(0.0);
+    surface.shadingNormalDx = vec3(0.0);
+    surface.shadingNormalDy = vec3(0.0);
+    surface.tangentDx = vec3(0.0);
+    surface.tangentDy = vec3(0.0);
     surface.geometricNormal = vec3(0.0, 1.0, 0.0);
     surface.shadingNormal = surface.geometricNormal;
     surface.tangent = vec3(1.0, 0.0, 0.0);
     surface.bitangent = vec3(0.0, 0.0, 1.0);
     surface.texCoord0 = vec2(0.0);
     surface.texCoord1 = vec2(0.0);
+    surface.texCoord2 = vec2(0.0);
+    surface.texCoord3 = vec2(0.0);
     surface.color0 = vec4(1.0);
     surface.color1 = vec4(1.0);
     surface.custom0 = 0u;
@@ -120,6 +144,10 @@ XRAdvancedSurface XR_ADV_InvalidSurface(
     surface.texCoord0Dy = vec2(0.0);
     surface.texCoord1Dx = vec2(0.0);
     surface.texCoord1Dy = vec2(0.0);
+    surface.texCoord2Dx = vec2(0.0);
+    surface.texCoord2Dy = vec2(0.0);
+    surface.texCoord3Dx = vec2(0.0);
+    surface.texCoord3Dy = vec2(0.0);
     surface.currentUnjitteredClip = vec4(0.0);
     surface.previousUnjitteredClip = vec4(0.0);
     surface.motionNdc = vec2(0.0);

@@ -37,6 +37,12 @@ public interface IOpenXrGraphicsHost
     XRViewport? LeftViewport { get; }
     XRViewport? RightViewport { get; }
     XRViewport? StereoViewport { get; }
+    /// <summary>True when the quad-view configuration renders a wide pair (views 0, 1) and an inset pair (views 2, 3).</summary>
+    bool InsetPairActive { get; }
+    /// <summary>Layered stereo viewport of the inset pair, or null without quad view.</summary>
+    XRViewport? InsetStereoViewport { get; }
+    XRCamera? LeftInsetEyeCamera { get; }
+    XRCamera? RightInsetEyeCamera { get; }
     int PendingFrameNumber { get; }
     ulong PendingFrameId { get; }
     long PendingPredictedDisplayTime { get; }

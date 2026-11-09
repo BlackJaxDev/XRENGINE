@@ -43,6 +43,12 @@ public partial class AdvancedRenderPipeline
         }
     }
 
+    /// <summary>
+    /// True when this family declares the RVC shadelet telemetry counters. Only
+    /// <see cref="RvcRenderPipeline"/> sets it, before the family builds resources.
+    /// </summary>
+    internal bool DeclaresRvcShadeletTelemetry { get; set; }
+
     private void InvalidateNativeShadingResourceProfile()
         => InvalidateOwnedInstancePhysicalResources("NativeShadingProfileChanged");
 
@@ -60,8 +66,9 @@ public partial class AdvancedRenderPipeline
     private bool _enableBuiltInAmbientOcclusion = true;
 
     /// <summary>
-    /// Enables the built-in depth-derived GTAO dispatch. Disabled browser outputs
-    /// use the shared neutral binding; desktop outputs retain their neutral target.
+    /// Enables the built-in depth-derived GTAO dispatch on browser outputs. Disabled browser
+    /// outputs use the shared neutral binding. Desktop outputs write neutral AO in this stage,
+    /// and the AO mode from the camera's schema then replaces it.
     /// </summary>
     public bool EnableBuiltInAmbientOcclusion
     {
@@ -162,6 +169,18 @@ public partial class AdvancedRenderPipeline
                 .Lifetime(RenderResourceLifetime.Transient)
                 .DebugLabel($"Advanced light/decal-index allocation and overflow counters slot {slot}")
                 .Add();
+
+            if (DeclaresRvcShadeletTelemetry)
+            {
+                VisibilityBuffer<uint>(builder,
+                        RvcShadeletTelemetryResourceNames.Counters(slot),
+                        (uint)RvcShadeletTelemetryCounters.GpuWordCount,
+                        EBufferTarget.ShaderStorageBuffer,
+                        EBufferUsage.DynamicRead)
+                    .Lifetime(RenderResourceLifetime.Transient)
+                    .DebugLabel($"RVC shadelet telemetry counters slot {slot}")
+                    .Add();
+            }
         }
 
         // 5. Native HDR Scene Output Texture
@@ -255,6 +274,8 @@ public partial class AdvancedRenderPipeline
                 ESizedInternalFormat.R8)
             .Layers(layers)
             .StereoCompatible(layers > 1u)
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage |
+                RenderPipelineResourceUsage.ColorAttachment)
             .When(static profile => (profile.FeatureMask & WebAmbientOcclusionDisabledFeatureBit) == 0)
             .DependsOn(
                 AdvancedVisibilityResourceNames.DepthStencil)
@@ -278,5 +299,72 @@ public partial class AdvancedRenderPipeline
                 AdvancedVisibilityResourceNames.Metadata)
             .DebugLabel("Advanced native shading debug visualization")
             .Add();
+
+        DeclareDecalBufferResources(builder, internalSize, layers);
     }
+
+    /// <summary>
+    /// Mesh surface decal buffer: two single-sample RGBA8 targets and their framebuffer with the
+    /// resolved visibility depth (read-only during the decal pass).
+    /// </summary>
+    private void DeclareDecalBufferResources(
+        RenderPipelineResourceLayoutBuilder builder,
+        RenderResourceSizePolicy internalSize,
+        uint layers)
+    {
+        VisibilityTexture(
+                builder,
+                AdvancedDecalBufferResourceNames.Albedo,
+                internalSize,
+                RenderPipelineResourceUsage.ColorAttachment |
+                RenderPipelineResourceUsage.SampledTexture,
+                EPixelInternalFormat.Rgba8,
+                EPixelFormat.Rgba,
+                EPixelType.UnsignedByte,
+                ESizedInternalFormat.Rgba8,
+                EFrameBufferAttachment.ColorAttachment0,
+                storage: false)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .DependsOn(AdvancedVisibilityResourceNames.DepthStencil)
+            .DebugLabel("Advanced surface decal buffer albedo")
+            .Add();
+
+        VisibilityTexture(
+                builder,
+                AdvancedDecalBufferResourceNames.Surface,
+                internalSize,
+                RenderPipelineResourceUsage.ColorAttachment |
+                RenderPipelineResourceUsage.SampledTexture,
+                EPixelInternalFormat.Rgba8,
+                EPixelFormat.Rgba,
+                EPixelType.UnsignedByte,
+                ESizedInternalFormat.Rgba8,
+                EFrameBufferAttachment.ColorAttachment1,
+                storage: false)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .DependsOn(AdvancedDecalBufferResourceNames.Albedo)
+            .DebugLabel("Advanced surface decal buffer roughness/metallic")
+            .Add();
+
+        builder.FrameBuffer(AdvancedDecalBufferResourceNames.FrameBuffer)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Size(internalSize)
+            .Color(0, AdvancedDecalBufferResourceNames.Albedo, layerIndex: -1)
+            .Color(1, AdvancedDecalBufferResourceNames.Surface, layerIndex: -1)
+            .DepthStencil(AdvancedVisibilityResourceNames.DepthStencil, layerIndex: -1)
+            .Factory(CreateDecalBufferFrameBuffer)
+            .DebugLabel("Advanced surface decal buffer FBO")
+            .Add();
+    }
+
+    private XRFrameBuffer CreateDecalBufferFrameBuffer()
+        => new(
+            (RequireVisibilityAttachment(AdvancedDecalBufferResourceNames.Albedo), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (RequireVisibilityAttachment(AdvancedDecalBufferResourceNames.Surface), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = AdvancedDecalBufferResourceNames.FrameBuffer,
+        };
 }

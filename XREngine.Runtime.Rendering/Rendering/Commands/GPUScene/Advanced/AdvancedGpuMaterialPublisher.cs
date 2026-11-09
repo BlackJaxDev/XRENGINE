@@ -94,6 +94,18 @@ public sealed class AdvancedGpuMaterialPublisher
             reason = string.Empty;
             return true;
         }
+        if (ReferenceEquals(layout, NativeUberMaterialSchema.Opaque))
+        {
+            translation = new(layout, EAdvancedMaterialCoverageMode.Opaque);
+            reason = string.Empty;
+            return true;
+        }
+        if (ReferenceEquals(layout, NativeUberMaterialSchema.Masked))
+        {
+            translation = new(layout, EAdvancedMaterialCoverageMode.Masked);
+            reason = string.Empty;
+            return true;
+        }
         translation = default;
         reason = "Only OpaqueDeferred, ForwardOpaque, MaskedForward, and ProjectiveMirror have a canonical advanced-material translation.";
         return false;
@@ -118,6 +130,13 @@ public sealed class AdvancedGpuMaterialPublisher
         }
         if (!HasSupportedEmissiveTexCoord(material, out reason))
             return false;
+        if (NativeUberMaterialSchema.IsLayout(layout) &&
+            (material is null || material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 ||
+             !material.TryGetUberMaterialState(out _, out _)))
+        {
+            reason = "The native Uber layout requires an authored Uber material source.";
+            return false;
+        }
         if (constantWords.Length > _database.MaximumConstantWordsPerMaterial || textureBindings.Length > _database.MaximumTextureBindingsPerMaterial)
         {
             reason = "The material payload exceeds the configured fixed logical-slot stride.";
@@ -160,9 +179,9 @@ public sealed class AdvancedGpuMaterialPublisher
         int missingLayoutCount = 0;
         int missingKernelCount = 0;
         uint missingLayoutMemberCount = 0u;
-        Span<byte> missingLayouts = stackalloc byte[4];
+        Span<byte> missingLayouts = stackalloc byte[6];
         missingLayouts.Clear();
-        Span<byte> missingKernels = stackalloc byte[28];
+        Span<byte> missingKernels = stackalloc byte[42];
         missingKernels.Clear();
         int maximumMemberCount = GetMaximumSupportedLayoutMemberCount();
         Span<AdvancedMaterialLayoutMember> memberScratch =
@@ -172,6 +191,7 @@ public sealed class AdvancedGpuMaterialPublisher
         {
             ref AdvancedGpuMaterialTransitionRequest request = ref requests[requestIndex];
             request.MaterialHandle = AdvancedGpuHandle.Invalid;
+            request.StrictUberValidationStamp = default;
             if (!TryTranslateLayout(request.Layout, out AdvancedMaterialLayoutTranslation translation, out reason))
                 return false;
             if (request.Coverage != translation.RequiredCoverage)
@@ -181,6 +201,21 @@ public sealed class AdvancedGpuMaterialPublisher
             }
             if (!HasSupportedEmissiveTexCoord(request.Material, out reason))
                 return false;
+            int existingIndex = FindVariant(
+                request.Material,
+                Hash(request.Layout.LayoutHash),
+                request.Coverage,
+                request.State);
+            if (NativeUberMaterialSchema.IsLayout(request.Layout) &&
+                (request.Material is null || request.Material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 ||
+                 !(existingIndex >= 0 && request.AcquireCount == 0u && !request.RequiresPayloadUpdate &&
+                   request.HasCurrentRetainedValidation(_variants[existingIndex].Material) &&
+                   _variants[existingIndex].UberValidationStamp.IsCurrent) &&
+                 !AdvancedUberValidationStamp.TryValidate(request.Material, out request.StrictUberValidationStamp)))
+            {
+                reason = "The native Uber layout requires an authored Uber material source.";
+                return false;
+            }
             if (request.State is <= EAdvancedMaterialRenderStateClass.Invalid or > EAdvancedMaterialRenderStateClass.Refractive)
             {
                 reason = "The requested render-state class is not a canonical material state.";
@@ -195,11 +230,6 @@ public sealed class AdvancedGpuMaterialPublisher
                 return false;
             }
 
-            int existingIndex = FindVariant(
-                request.Material,
-                Hash(request.Layout.LayoutHash),
-                request.Coverage,
-                request.State);
             if (existingIndex >= 0)
             {
                 ref readonly MaterialVariantEntry existing = ref _variants[existingIndex];
@@ -308,6 +338,30 @@ public sealed class AdvancedGpuMaterialPublisher
         return true;
     }
 
+    /// <summary>Keeps strict Uber proof for unchanged rows after scene preflight.</summary>
+    internal void RetainPreflightedStrictUberValidation(
+        ReadOnlySpan<AdvancedGpuMaterialTransitionRequest> requests)
+    {
+        for (int requestIndex = 0; requestIndex < requests.Length; ++requestIndex)
+        {
+            ref readonly AdvancedGpuMaterialTransitionRequest request = ref requests[requestIndex];
+            if (!NativeUberMaterialSchema.IsLayout(request.Layout) ||
+                !request.MaterialHandle.IsValid || request.AcquireCount != 0u ||
+                request.RequiresPayloadUpdate || !request.HasCurrentPlannedIdentity() ||
+                !request.StrictUberValidationStamp.IsCurrent)
+                continue;
+
+            int variantIndex = FindVariant(
+                request.Material,
+                Hash(request.Layout.LayoutHash),
+                request.Coverage,
+                request.State);
+            if (variantIndex >= 0 &&
+                _variants[variantIndex].Material == request.MaterialHandle)
+                _variants[variantIndex].UberValidationStamp = request.StrictUberValidationStamp;
+        }
+    }
+
     /// <summary>Applies one request from the most recently successful whole-scene preflight.</summary>
     internal void ApplyPreflightedRequest(
         ref AdvancedGpuMaterialTransitionRequest request,
@@ -334,6 +388,12 @@ public sealed class AdvancedGpuMaterialPublisher
 
             RetainAfterPreflight(request.MaterialHandle, request.AcquireCount);
             _database.SetNativeVertex(request.MaterialHandle, request.NativeVertex);
+            if (NativeUberMaterialSchema.IsLayout(request.Layout) &&
+                request.StrictUberValidationStamp.IsCurrent)
+            {
+                int variantIndex = FindVariantByMaterial(request.MaterialHandle);
+                _variants[variantIndex].UberValidationStamp = request.StrictUberValidationStamp;
+            }
             return;
         }
 
@@ -355,6 +415,12 @@ public sealed class AdvancedGpuMaterialPublisher
 
         request.MaterialHandle = materialHandle;
         _database.SetNativeVertex(materialHandle, request.NativeVertex);
+        if (NativeUberMaterialSchema.IsLayout(request.Layout) &&
+            request.StrictUberValidationStamp.IsCurrent)
+        {
+            int variantIndex = FindVariantByMaterial(materialHandle);
+            _variants[variantIndex].UberValidationStamp = request.StrictUberValidationStamp;
+        }
         RetainAfterPreflight(materialHandle, request.AcquireCount - 1u);
     }
 
@@ -396,6 +462,12 @@ public sealed class AdvancedGpuMaterialPublisher
         int index = FindVariant(material, Hash(layout.LayoutHash), coverage, state);
         materialHandle = index < 0 ? AdvancedGpuHandle.Invalid : _variants[index].Material;
         return index >= 0;
+    }
+
+    internal bool HasCurrentStrictUberValidation(AdvancedGpuHandle materialHandle)
+    {
+        int index = FindVariantByMaterial(materialHandle);
+        return index >= 0 && _variants[index].UberValidationStamp.IsCurrent;
     }
 
     internal bool TryGetReferenceCount(AdvancedGpuHandle materialHandle, out uint referenceCount)
@@ -620,6 +692,10 @@ public sealed class AdvancedGpuMaterialPublisher
             return 2;
         if (ReferenceEquals(layout, MaterialBindingLayouts.ProjectiveMirror))
             return 3;
+        if (ReferenceEquals(layout, NativeUberMaterialSchema.Opaque))
+            return 4;
+        if (ReferenceEquals(layout, NativeUberMaterialSchema.Masked))
+            return 5;
         throw new ArgumentOutOfRangeException(nameof(layout), "The layout is not part of the bounded canonical bridge.");
     }
 
@@ -632,8 +708,11 @@ public sealed class AdvancedGpuMaterialPublisher
                     MaterialBindingLayouts.ForwardOpaque.Textures.Count,
                 Math.Max(MaterialBindingLayouts.MaskedForward.PackedMembers.Count +
                     MaterialBindingLayouts.MaskedForward.Textures.Count,
-                    MaterialBindingLayouts.ProjectiveMirror.PackedMembers.Count +
-                    MaterialBindingLayouts.ProjectiveMirror.Textures.Count)));
+                    Math.Max(
+                        MaterialBindingLayouts.ProjectiveMirror.PackedMembers.Count +
+                            MaterialBindingLayouts.ProjectiveMirror.Textures.Count,
+                        NativeUberMaterialSchema.Opaque.PackedMembers.Count +
+                            NativeUberMaterialSchema.Opaque.Textures.Count))));
 
     private static AdvancedShadingKernelRecord CreateKernelRecord(
         MaterialBindingLayout layout,
@@ -669,7 +748,17 @@ public sealed class AdvancedGpuMaterialPublisher
         EAdvancedMaterialFeatureFlags features = EAdvancedMaterialFeatureFlags.None;
         if (AdvancedNativeVertexMaterialSource.TryCapture(material, out _, out _))
             features |= EAdvancedMaterialFeatureFlags.VertexDeformation;
-        if (!isProjectiveMirror)
+        if (NativeUberMaterialSchema.IsLayout(layout))
+        {
+            if (textureBindings.Length > 0 && textureBindings[0].Texture.Handle.IsValid)
+                features |= EAdvancedMaterialFeatureFlags.BaseColorTexture;
+            if (textureBindings.Length > 1 && textureBindings[1].Texture.Handle.IsValid)
+                features |= EAdvancedMaterialFeatureFlags.NormalTexture;
+            int emissionRole = NativeUberMaterialSchema.TextureIndex("_EmissionMap");
+            if (textureBindings.Length > emissionRole && textureBindings[emissionRole].Texture.Handle.IsValid)
+                features |= EAdvancedMaterialFeatureFlags.Emissive;
+        }
+        else if (!isProjectiveMirror)
         {
             if (textureBindings.Length > 0 && textureBindings[0].Texture.Handle.IsValid)
                 features |= EAdvancedMaterialFeatureFlags.BaseColorTexture;
@@ -714,7 +803,9 @@ public sealed class AdvancedGpuMaterialPublisher
             RequiredAttributeMask = requiredAttributes,
             FeatureFlags = features,
             EligibilityFlags = eligibility,
-            SourceContract = AdvancedMaterialSourceContract.Classify(material),
+            SourceContract = NativeUberMaterialSchema.IsLayout(layout)
+                ? EAdvancedMaterialSourceContract.NativeUberSurface
+                : AdvancedMaterialSourceContract.Classify(material),
         };
     }
 
@@ -722,13 +813,23 @@ public sealed class AdvancedGpuMaterialPublisher
         => ReferenceEquals(layout, MaterialBindingLayouts.ProjectiveMirror);
 
     private static EAdvancedMaterialRequiredAttributeMask GetRequiredAttributes(MaterialBindingLayout layout)
-        => IsProjectiveMirrorLayout(layout)
+        => NativeUberMaterialSchema.IsLayout(layout)
+            ? StandardRequiredAttributes |
+              EAdvancedMaterialRequiredAttributeMask.TexCoord1 |
+              EAdvancedMaterialRequiredAttributeMask.TexCoord2 |
+              EAdvancedMaterialRequiredAttributeMask.TexCoord3
+            : IsProjectiveMirrorLayout(layout)
             ? ProjectiveMirrorRequiredAttributes
             : StandardRequiredAttributes;
 
     private static EAdvancedMaterialRequiredAttributeMask GetKernelRequiredAttributes(MaterialBindingLayout layout)
         => IsProjectiveMirrorLayout(layout)
             ? ProjectiveMirrorRequiredAttributes
+            : NativeUberMaterialSchema.IsLayout(layout)
+            ? StandardRequiredAttributes |
+              EAdvancedMaterialRequiredAttributeMask.TexCoord1 |
+              EAdvancedMaterialRequiredAttributeMask.TexCoord2 |
+              EAdvancedMaterialRequiredAttributeMask.TexCoord3
             : StandardRequiredAttributes | EAdvancedMaterialRequiredAttributeMask.TexCoord1;
 
     private static bool HasSupportedEmissiveTexCoord(XRMaterial? material, out string reason)
@@ -883,6 +984,7 @@ public sealed class AdvancedGpuMaterialPublisher
         public EAdvancedMaterialRenderStateClass State;
         public AdvancedGpuHandle Material;
         public uint ReferenceCount;
+        public AdvancedUberValidationStamp UberValidationStamp;
     }
 }
 

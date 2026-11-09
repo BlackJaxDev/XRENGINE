@@ -39,6 +39,7 @@ public unsafe partial class OpenXRAPI
     {
         AssertOpenXrRenderThread(nameof(RenderFrame));
         long submitStart = Stopwatch.GetTimestamp();
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrRenderStart);
         // Render thread: only submit if the CollectVisible thread prepared a frame.
         if (!_sessionBegun)
             return;
@@ -705,6 +706,9 @@ public unsafe partial class OpenXRAPI
             }
         }
 
+        if (TryRunOpenXrSpeculativeCollect())
+            return;
+
         if (Volatile.Read(ref _pendingXrFrame) == 0)
             return;
 
@@ -971,12 +975,18 @@ public unsafe partial class OpenXRAPI
 
             if (useTrueSinglePassStereo)
             {
+                _openXrStereoUpdatingBufferFree = false;
+                // With quad view, the wide stereo viewport renders views 0 and 1 only.
+                collectViewport.OpenXrViewPair = IsOpenXrInsetPairActive
+                    ? 0
+                    : RenderFrameViewSetPublication.AllViews;
                 if (!CollectOpenXrStereoVisible(
                         resolvedWorld,
                         _openXrLeftEyeCamera,
                         _openXrRightEyeCamera,
                         collectViewport,
                         leftMeshCommands,
+                        cullProjectionScale: 1.0f,
                         out int collectedAdded,
                         out long collectedBuildTicks))
                 {
@@ -987,6 +997,17 @@ public unsafe partial class OpenXRAPI
                 rightAdded = collectedAdded;
                 leftBuildTicks = collectedBuildTicks;
                 rightBuildTicks = collectedBuildTicks;
+
+                // Quad view renders the inset pair as a second layered stereo batch.
+                if (IsOpenXrInsetPairActive &&
+                    !TryCollectOpenXrInsetPair(resolvedWorld, baseCamera, sourcePipeline, leftEyePipeline, out _))
+                {
+                    Debug.RenderingWarningEvery(
+                        "OpenXR.CollectVisible.InsetPairFailed",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] CollectVisible skipped: the quad-view inset pair could not be prepared.");
+                    return;
+                }
             }
             else
             {
@@ -1138,6 +1159,7 @@ public unsafe partial class OpenXRAPI
         XRCamera rightCamera,
         XRViewport collectViewport,
         RenderCommandCollection meshCommands,
+        float cullProjectionScale,
         out int commandsAdded,
         out long buildTicks)
     {
@@ -1181,6 +1203,8 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
+        combinedProjection.M11 *= cullProjectionScale;
+        combinedProjection.M22 *= cullProjectionScale;
         _openXrCombinedProjectionMatrix = combinedProjection;
         if (!Matrix4x4.Invert(combinedProjection, out Matrix4x4 inverseCombinedProjection))
         {
@@ -1595,6 +1619,8 @@ public unsafe partial class OpenXRAPI
             return;
         }
 
+        TryPromoteOpenXrSpeculativeCollect();
+
         // If we didn't successfully collect this frame, don't try to render stale buffers.
         if (Volatile.Read(ref _pendingXrFrameCollected) != 1)
             return;
@@ -1636,6 +1662,8 @@ public unsafe partial class OpenXRAPI
             else
             {
                 stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
+                _openXrStereoUpdatingBufferFree = true;
+                SwapOpenXrInsetPairCommands();
                 Debug.RenderingEvery(
                     $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),

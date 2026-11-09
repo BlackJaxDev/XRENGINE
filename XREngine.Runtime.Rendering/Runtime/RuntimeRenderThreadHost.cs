@@ -23,6 +23,7 @@ public sealed class RuntimeRenderThreadHost
     private readonly Action _stopTimer;
     private Thread? _dedicatedThread;
     private Exception? _dedicatedThreadException;
+    private readonly RuntimeAsynchronousRenderWorkService _asynchronousRenderWork = new();
 
     public RuntimeRenderThreadHost(
         Func<bool> isExternalWindowPumpRunning,
@@ -34,7 +35,11 @@ public sealed class RuntimeRenderThreadHost
         _blockForTimerRendering = blockForTimerRendering;
         _waitToRender = waitToRender;
         _stopTimer = stopTimer;
+        RuntimeAsynchronousRenderWorkService.Install(_asynchronousRenderWork);
     }
+
+    /// <summary>The asynchronous render-work service that this host's render loop owns.</summary>
+    public RuntimeAsynchronousRenderWorkService AsynchronousRenderWork => _asynchronousRenderWork;
 
     public RuntimeRenderThreadHostMode Mode
         => _isExternalWindowPumpRunning()
@@ -134,11 +139,25 @@ public sealed class RuntimeRenderThreadHost
             RuntimeEngine.RenderThreadId,
             RuntimeEngine.WindowThreadId);
 
+        _asynchronousRenderWork.BindOwnerThread(CurrentRenderThreadId);
         started?.Set();
-        if (mode == RuntimeRenderThreadHostMode.CollapsedWindowRenderThread)
-            BlockForCollapsedWindowRendering(runUntilPredicate);
-        else
-            _blockForTimerRendering(runUntilPredicate);
+        try
+        {
+            if (mode == RuntimeRenderThreadHostMode.CollapsedWindowRenderThread)
+                BlockForCollapsedWindowRendering(runUntilPredicate);
+            else
+                _blockForTimerRendering(runUntilPredicate);
+        }
+        finally
+        {
+            // Settle asynchronous work on the owner thread for a normal exit and for a
+            // failure. A failed drain keeps resources retained and is reported.
+            if (!_asynchronousRenderWork.DrainOnOwnerExit())
+            {
+                Debug.RenderingWarning(
+                    "[RenderThreadHost] Asynchronous render work did not drain at render loop exit; its resources stay retained.");
+            }
+        }
 
         Debug.Rendering(
             "[RenderThreadHost] Exited render loop mode={0} renderThread={1} windowThread={2}.",

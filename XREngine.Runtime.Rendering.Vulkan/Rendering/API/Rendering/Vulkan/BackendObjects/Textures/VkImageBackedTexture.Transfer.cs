@@ -44,6 +44,20 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return;
 
         // Validate staging buffer size against what the GPU will actually read.
+        if (VkFormatConversions.IsBlockCompressed(ResolvedFormat))
+        {
+            ulong requiredBlockBytes = VkFormatConversions.GetBlockCompressedBytes(ResolvedFormat, extent.Width, extent.Height)
+                * extent.Depth * layerCount;
+            if (stagingSlice.Length != requiredBlockBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Vulkan staging buffer size mismatch for '{Data.Name ?? GetDescribingName()}': " +
+                    $"buffer={stagingSlice.Length} bytes but block format {ResolvedFormat} requires {requiredBlockBytes} bytes " +
+                    $"({extent.Width}x{extent.Height}x{extent.Depth} * {layerCount} layers). " +
+                    "The upload was rejected to prevent publishing incomplete texture data.");
+            }
+        }
+
         uint bpt = VkFormatConversions.GetBytesPerTexel(ResolvedFormat);
         if (bpt > 0)
         {

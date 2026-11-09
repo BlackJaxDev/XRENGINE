@@ -12,24 +12,53 @@ internal unsafe partial class VkRenderProgram
 
     internal sealed class BindingCaptureWorkspace
     {
+        private readonly BindingCaptureState _immediate = new();
         internal BindingCaptureState? Active;
         internal BindingCaptureState? Free;
 
+        internal ComputeDispatchSnapshot? RentImmediateFrameSnapshot()
+            => _immediate.RentFrameSnapshot();
+
         public void Reset()
         {
-            Drain(Active);
-            Drain(Free);
+            Exception? firstFailure = null;
+            try
+            {
+                _immediate.ReleaseFrameSnapshots();
+            }
+            catch (Exception exception)
+            {
+                firstFailure = exception;
+            }
+            Drain(Active, ref firstFailure);
+            Drain(Free, ref firstFailure);
             Active = null;
             Free = null;
+            if (firstFailure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
         }
 
-        private static void Drain(BindingCaptureState? state)
+        private static void Drain(BindingCaptureState? state, ref Exception? firstFailure)
         {
             while (state is not null)
             {
                 BindingCaptureState? next = state.NextFree ?? state.Parent;
-                state.Clear();
-                state.ReleaseFrameSnapshots();
+                try
+                {
+                    state.Clear();
+                }
+                catch (Exception exception)
+                {
+                    firstFailure ??= exception;
+                }
+                try
+                {
+                    state.ReleaseFrameSnapshots();
+                }
+                catch (Exception exception)
+                {
+                    firstFailure ??= exception;
+                }
                 state.Owner = null;
                 state.Parent = null;
                 state.NextFree = null;
@@ -64,6 +93,8 @@ internal unsafe partial class VkRenderProgram
             new(StringComparer.Ordinal);
         internal Dictionary<uint, ProgramImageBinding> ImagesByUnit = [];
         internal Dictionary<uint, XRDataBuffer> BuffersByBinding { get; } = [];
+        internal Dictionary<uint, XRDataBuffer> RetainedBufferSources { get; } = [];
+        private readonly VulkanTextureArrayBindingUseSet _textureArrayUses = new();
         internal ReadOnlyStorageBindingSet? ReadOnlyStorageBindings;
         internal int TypedPublicationDepth;
         internal int TypedResourcePublicationDepth;
@@ -83,22 +114,93 @@ internal unsafe partial class VkRenderProgram
             RequiredSamplerNames.Clear();
             ImagesByUnit.Clear();
             BuffersByBinding.Clear();
-            ReadOnlyStorageBindings?.Dispose();
+            Exception? firstFailure = null;
+            foreach (XRDataBuffer buffer in RetainedBufferSources.Values)
+            {
+                try
+                {
+                    buffer.ReleaseBindingUse();
+                }
+                catch (Exception exception)
+                {
+                    firstFailure ??= exception;
+                }
+            }
+            RetainedBufferSources.Clear();
+            try
+            {
+                _textureArrayUses.ReleaseAll();
+            }
+            catch (Exception exception)
+            {
+                firstFailure ??= exception;
+            }
+            ReadOnlyStorageBindingSet? readOnlyBindings = ReadOnlyStorageBindings;
             ReadOnlyStorageBindings = null;
+            try
+            {
+                readOnlyBindings?.Dispose();
+            }
+            catch (Exception exception)
+            {
+                firstFailure ??= exception;
+            }
             TypedPublicationDepth = 0;
             TypedResourcePublicationDepth = 0;
             TypedResourcePublicationRequiresReadyResources = false;
             TypedPublicationFrequency = default;
             TypedPublicationGeneration = 0;
             MutableLegacyPublicationDepth = 0;
+            if (firstFailure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
+        }
+
+        internal void MergeBuffer(uint binding, XRDataBuffer buffer)
+        {
+            buffer.RetainBindingUse();
+            RetainedBufferSources.TryGetValue(binding, out XRDataBuffer? previous);
+            try
+            {
+                RetainedBufferSources[binding] = buffer;
+                BuffersByBinding[binding] = buffer;
+            }
+            catch
+            {
+                if (previous is null)
+                    RetainedBufferSources.Remove(binding);
+                else
+                    RetainedBufferSources[binding] = previous;
+                buffer.ReleaseBindingUse();
+                throw;
+            }
+            previous?.ReleaseBindingUse();
+        }
+
+        internal void BindFreshBuffer(uint binding, XRDataBuffer buffer)
+        {
+            BuffersByBinding[binding] = buffer;
+            if (RetainedBufferSources.Remove(binding, out XRDataBuffer? previous))
+                previous.ReleaseBindingUse();
         }
 
         internal void ReleaseFrameSnapshots()
         {
+            Exception? firstFailure = null;
             foreach (ComputeDispatchSnapshot snapshot in _frameSnapshots)
-                snapshot.ReleaseReadOnlyStorageBindings();
+            {
+                try
+                {
+                    snapshot.ReleaseReadOnlyStorageBindings();
+                }
+                catch (Exception exception)
+                {
+                    firstFailure ??= exception;
+                }
+            }
             _frameSnapshotFrame = 0;
             _frameSnapshotCursor = 0;
+            if (firstFailure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
         }
 
         internal void RecordUniform(string name)
@@ -133,11 +235,11 @@ internal unsafe partial class VkRenderProgram
 
         internal void SetSampler(string name, XRTexture texture, uint unit)
         {
-            SamplersByUnit[unit] = texture;
+            _textureArrayUses.ReplaceSampler(SamplersByUnit, unit, texture, transfer: false);
             if (!string.IsNullOrWhiteSpace(name))
             {
                 SamplerNamesByUnit[unit] = name;
-                SamplersByName[name] = texture;
+                _textureArrayUses.ReplaceSampler(SamplersByName, name, texture, transfer: false);
                 if (TypedResourcePublicationDepth != 0 &&
                     TypedResourcePublicationRequiresReadyResources)
                 {
@@ -153,6 +255,18 @@ internal unsafe partial class VkRenderProgram
                 SamplerNamesByUnit.Remove(unit);
             }
         }
+
+        internal void MergeSampler(uint unit, XRTexture texture)
+            => _textureArrayUses.ReplaceSampler(SamplersByUnit, unit, texture, transfer: true);
+
+        internal void MergeNamedSampler(string name, XRTexture texture)
+            => _textureArrayUses.ReplaceSampler(SamplersByName, name, texture, transfer: true);
+
+        internal void SetImage(uint unit, ProgramImageBinding binding)
+            => _textureArrayUses.ReplaceImage(ImagesByUnit, unit, binding, transfer: false);
+
+        internal void MergeImage(uint unit, ProgramImageBinding binding)
+            => _textureArrayUses.ReplaceImage(ImagesByUnit, unit, binding, transfer: true);
 
         internal ComputeDispatchSnapshot? RentFrameSnapshot()
         {
@@ -174,7 +288,7 @@ internal unsafe partial class VkRenderProgram
             if (index < _frameSnapshots.Count)
                 return _frameSnapshots[index];
 
-            ComputeDispatchSnapshot snapshot = new();
+            ComputeDispatchSnapshot snapshot = new() { IsFramePoolOwned = true };
             _frameSnapshots.Add(snapshot);
             return snapshot;
         }

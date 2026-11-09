@@ -66,6 +66,24 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             RenderInfo3D.New(this, _renderHighlightRC)
         ];
         Selection.SelectionChanged += Selection_SelectionChanged;
+        _prewarmTransformToolTick = PrewarmTransformToolTick;
+    }
+
+    private readonly WorldTick _prewarmTransformToolTick;
+
+    protected override void OnComponentActivated()
+    {
+        base.OnComponentActivated();
+        // Build the transform tool one tick after activation, outside the activation pass,
+        // so the first selection does not pay the one-time creation cost.
+        RegisterTick(ETickGroup.Late, ETickOrder.Logic, _prewarmTransformToolTick);
+    }
+
+    private void PrewarmTransformToolTick()
+    {
+        UnregisterTick(ETickGroup.Late, ETickOrder.Logic, _prewarmTransformToolTick);
+        if (SceneNode?.World is RuntimeWorld runtimeWorld)
+            TransformTool3D.Prewarm(runtimeWorld);
     }
 
     private void Selection_SelectionChanged(SceneNode[] selection)
@@ -74,14 +92,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (transformToolTarget is null)
         {
             TransformToolUndoAdapter.Attach(null);
-            TransformTool3D.DestroyInstance();
+            TransformTool3D.HideInstance();
         }
         else
         {
             var tool = TransformTool3D.GetInstance(transformToolTarget.Transform);
             TransformToolUndoAdapter.Attach(tool);
             if (tool is null)
-                TransformTool3D.DestroyInstance();
+                TransformTool3D.HideInstance();
         }
         UpdateSelectionHighlight();
         InvalidateView();
@@ -1290,9 +1308,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         else
             ClearLastViewportMouseSegment();
 
-        SceneNode? tfmTool = TransformTool3D.InstanceNode;
-        if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
-            comp?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
+        if (TransformTool3D.GetActiveInstance(out TransformTool3D? tfmTool))
+            tfmTool?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
 
         UpdateSelectionDrag(vp);
 

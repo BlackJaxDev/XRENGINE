@@ -13,6 +13,10 @@ internal sealed record AdvancedVisibilityOp(
     : FrameOp(PassIndex, Request.Target, Context)
 {
     private int _inputLeaseReleased;
+    // Accepted frame plans that still reference this operation. A plan can release
+    // its operations after lowering already released them, so the pool must not
+    // give this operation a new lease while a plan can still release it.
+    private int _acceptedPlanPins;
 
     private AdvancedVisibilityOp(AdvancedVisibilityOp original)
         : base(original)
@@ -26,6 +30,55 @@ internal sealed record AdvancedVisibilityOp(
     internal VulkanAdvancedVisibilityInputLease InputLease { get; private set; } =
         InputLease;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.AdvancedVisibility;
+
+    /// <summary>
+    /// A pooled visibility operation is reused only after its input lease is
+    /// released and no accepted frame plan references it, so a recycled operation
+    /// never drops a lease that is still held.
+    /// </summary>
+    internal override bool CanReuseFromPool
+        => base.CanReuseFromPool &&
+           Volatile.Read(ref _inputLeaseReleased) == 1 &&
+           Volatile.Read(ref _acceptedPlanPins) == 0;
+
+    /// <summary>Keeps the operation out of the pool while an accepted plan references it.</summary>
+    internal void PinForAcceptedPlan()
+        => Interlocked.Increment(ref _acceptedPlanPins);
+
+    /// <summary>Ends one accepted-plan reference taken by <see cref="PinForAcceptedPlan"/>.</summary>
+    internal void UnpinFromAcceptedPlan()
+    {
+        if (Interlocked.Decrement(ref _acceptedPlanPins) < 0)
+            throw new InvalidOperationException(
+                "An advanced visibility operation was unpinned from an accepted plan more than once.");
+    }
+
+    /// <summary>
+    /// Rents an operation from <paramref name="workspace"/>, or creates one. The
+    /// workspace must keep operations for the frames in flight, because recorded
+    /// streams read <see cref="InputLease"/> after the operation is lowered.
+    /// </summary>
+    internal static AdvancedVisibilityOp Rent(
+        VulkanFrameOpWorkspace workspace,
+        ulong frameId,
+        int passIndex,
+        in VulkanAdvancedVisibilityStageRequest request,
+        VulkanAdvancedVisibilityInputLease inputLease,
+        in FrameOpContext context)
+    {
+        if (workspace.TryRent(frameId, out AdvancedVisibilityOp? reusable) && reusable is not null)
+        {
+            reusable.PassIndex = passIndex;
+            reusable.Target = request.Target;
+            reusable.Context = context;
+            reusable.Request = request;
+            reusable.InputLease = inputLease;
+            Volatile.Write(ref reusable._inputLeaseReleased, 0);
+            return reusable;
+        }
+
+        return workspace.Retain(new AdvancedVisibilityOp(passIndex, request, inputLease, context));
+    }
 
     internal void ReleaseInputLease()
     {

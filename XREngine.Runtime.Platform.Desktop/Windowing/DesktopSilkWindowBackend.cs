@@ -65,7 +65,9 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     public RuntimeWindowCreateOptions Options => _options;
     public int OwnerThreadId { get; }
     public long LifetimeGeneration { get; }
-    internal long SharedParentGeneration => _options.SharedContext?.OwnerGeneration ?? 0;
+    internal long EventPumpParentGeneration => _options.EventPumpParentGeneration != 0
+        ? _options.EventPumpParentGeneration
+        : _options.SharedContext?.OwnerGeneration ?? 0;
     public WindowSurfaceSnapshot Surface { get { lock (_snapshotSync) return _surface; } }
     public WindowEventSnapshot Events { get { lock (_snapshotSync) return _events; } }
     public WindowInputSnapshot Input => _inputAccumulator.Latest;
@@ -591,7 +593,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
 
     private bool QueryNativeFocusState()
     {
-        if (!_options.Visible || _disposed)
+        if (_disposed || !_window.IsVisible)
             return false;
 
         if (OperatingSystem.IsWindows() && _operatingSystemWindowHandle != 0)

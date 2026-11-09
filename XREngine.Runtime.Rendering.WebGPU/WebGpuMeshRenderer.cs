@@ -132,7 +132,8 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
 
     public void Render(Matrix4x4 modelMatrix, Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
         RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode,
-        bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+        bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
+        Vector4 sourceFlatDirection)
     {
         if (instances == 0) return;
         RetireUnusedDirectDraws();
@@ -147,7 +148,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
             RenderCore(mesh, modelMatrix, previousModelMatrix,
                 materialOverride ?? (Data.Parent.Submeshes.Count == 0 ? null : material), renderOptionsOverride,
                 instances, Data.Parent.Submeshes.Count == 0 ? billboardMode : material?.BillboardMode ?? billboardMode,
-                forceNoStereo, null, out _);
+                forceNoStereo, null, sourceFlatDirection, out _);
         }
     }
 
@@ -156,12 +157,13 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         GpuMeshSubmissionRecord record = request.Record;
         return RenderCore(record.Mesh, record.CurrentWorld, record.PreviousWorld, record.MaterialOverride ?? record.Material,
             record.RenderOptionsOverride, record.InstanceCount, record.BillboardMode, record.ForceNoStereo,
-            request, out unbounded);
+            request, default, out unbounded);
     }
 
     private bool RenderCore(XRMesh mesh, Matrix4x4 modelMatrix, Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
         RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode,
-        bool forceNoStereo, WebGpuAuthoredIndexedDrawRequest? indexed, out bool unbounded)
+        bool forceNoStereo, WebGpuAuthoredIndexedDrawRequest? indexed, Vector4 sourceFlatDirection,
+        out bool unbounded)
     {
         unbounded = false;
         ValidateOwnerGeneration();
@@ -172,6 +174,9 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         XRCamera? camera = indexed?.Camera ?? RuntimeEngine.Rendering.State.RenderingCamera;
         using var frozenView = Renderer.PushFrozenView(camera);
         ResolvedMeshRenderMaterial resolved = MeshRenderMaterialResolver.Resolve(Data.Parent, materialOverride, instances);
+        if (SourceMultilayerFlatDirection.IsRequired(resolved.Material) &&
+            !SourceMultilayerFlatDirection.IsValid(sourceFlatDirection))
+            throw Unsupported("the active flat multilayer draw has no valid source direction");
         RequireNativeVertexRasterSource(mesh, materialOverride ?? Data.Parent.Material);
         RequireNativeVertexRasterSource(mesh, resolved.Material);
         ValidateOutlineDrawBindings(Data.Parent, resolved.Material, RuntimeEngine.Rendering.State.RenderingPipelineState,
@@ -264,6 +269,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
             Renderer.SetMaterialUniforms(resolved.Material, program.Data);
             material.PublishSurface(program);
             Data.Parent.OnSettingUniforms(program.Data, program.Data);
+            program.SetVector4("u_SourceFlatDirection", sourceFlatDirection);
             if (!ReferenceEquals(resolved.Material, Data.Parent.Material))
                 resolved.Material.OnSettingVertexUniforms(program.Data);
             if (resolved.IsShadowVariant)

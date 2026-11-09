@@ -23,9 +23,7 @@ public static class OpenXrEyeRenderPipelineFactory
         => family switch
         {
             EVrRenderPipeline.Default => new DefaultRenderPipeline(stereo),
-            EVrRenderPipeline.Advanced when !stereo => AdvancedRenderPipeline.CreateOpenXrEyePipeline(),
-            EVrRenderPipeline.Advanced => throw new NotSupportedException(
-                "VR.RenderPipeline=Advanced has no layered stereo eye pipeline. No other pipeline is substituted."),
+            EVrRenderPipeline.Advanced => AdvancedRenderPipeline.CreateOpenXrEyePipeline(stereo),
             EVrRenderPipeline.Rvc => new RvcRenderPipeline(stereo, rvcMode),
             _ => throw new ArgumentOutOfRangeException(nameof(family), family, "Unknown VR render pipeline family."),
         };
@@ -35,7 +33,7 @@ public static class OpenXrEyeRenderPipelineFactory
     /// topology and family.
     /// </summary>
     public static bool CanCreate(bool stereo, EVrRenderPipeline family)
-        => Enum.IsDefined(family) && !(stereo && family == EVrRenderPipeline.Advanced);
+        => Enum.IsDefined(family);
 
     /// <summary>
     /// Returns true when <paramref name="pipeline"/> is exactly the pipeline

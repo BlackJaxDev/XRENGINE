@@ -31,6 +31,8 @@ The engine resolves one `EngineExecutionTopology` and constructs one
 `EngineWorkScheduler` before creating windows or a render backend. The default
 policy reserves up to four foreground engine loops, selects general workers
 automatically with a cap of 16, and creates no background render workers.
+General workers run at below-normal thread priority, so heavy background work,
+such as startup asset loads, does not make the rest of the PC slow.
 Logical render lane 0 still exists and runs on the participating render thread.
 
 Execution settings follow the normal engine, project, user, then environment
@@ -92,6 +94,9 @@ domain and retains the batch instead of silently recycling partial output.
   or `1..32`).
 - `XRE_ALLOW_CPU_OVERSUBSCRIPTION`: diagnostic opt-in (`true`, `false`, `1`, or
   `0`).
+- `XRE_PREFER_LARGEST_CACHE_CORES`: `0` keeps the full process affinity on a CPU
+  whose L3 caches have different sizes. Overrides the `PreferLargestCacheCores`
+  engine setting (on by default).
 - `XRE_RENDER_WORKER_QOS`: render-domain background-lane policy (`OsDefault`
   or diagnostic `High`).
 - `XR_JOB_QUEUE_LIMIT`: bounded queue capacity.

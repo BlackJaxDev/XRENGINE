@@ -17,6 +17,9 @@ public static class AdvancedMaterialSourceContract
         if (material.BillboardMode != EMeshBillboardMode.None || material.HasSettingVertexUniformHandlers)
             return EAdvancedMaterialSourceContract.CustomVertexProgram;
         if (material is AdvancedProjectiveMirrorMaterial) return EAdvancedMaterialSourceContract.ProjectiveMirror;
+        if (material.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
+            material.TryGetUberMaterialState(out _, out _))
+            return EAdvancedMaterialSourceContract.NativeUberSurface;
         foreach (MaterialPassDefinition pass in material.PassSet.Passes)
         {
             if (!pass.Enabled) continue;

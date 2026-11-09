@@ -143,83 +143,51 @@ namespace XREngine.Rendering.OpenGL
                 IsLinked = false;
             }
 
-            private void DeferRetryAfterSharedContextSourceTimeout(uint abandonedProgramId)
+            /// <summary>
+            /// Stops an unfinished native build without submitting a second compile job.
+            /// The driver still owns the abandoned handles until process shutdown.
+            /// </summary>
+            private void AbandonSharedContextSourceBuild(uint abandonedProgramId)
             {
-                bool retrySynchronously = AllowSynchronousSourceRetryAfterAsyncTimeout;
-                bool retryDriverParallel = !retrySynchronously &&
-                    Renderer.UseDriverParallelShaderCompile &&
-                    !IsKnownAsyncLinkHazard;
-                if (Hash != 0)
+                MarkHashFailed("Shared-context source compilation did not complete. Restart required.");
+                ReleaseCompletedCompilationClaim(Hash, abandonedProgramId);
+                SynchronousSourceRetryHashes.TryRemove(Hash, out _);
+                ClearCompletedBuildPendingState();
+
+                if (_replacementProgramPending && _replacementProgramId == abandonedProgramId)
                 {
-                    SharedContextLargeSourceTimeouts.TryAdd(Hash, 0);
-                    if (retrySynchronously)
-                        SynchronousSourceRetryHashes.TryAdd(Hash, 0);
-                    else if (retryDriverParallel)
-                        DriverParallelSourceTimeouts.TryRemove(Hash, out _);
-                    else
-                        MarkHashFailed("Shared-context source link timed out.");
-                    InFlightCompilations.TryRemove(Hash, out _);
+                    _replacementProgramId = 0;
+                    _replacementProgramPending = false;
+                    _replacementSourceRevisionKey = 0;
                 }
-
-                _asyncBinaryUploadQueueWaitPending = false;
-                _asyncCompileDuplicateHashWaitPending = false;
-                _asyncCompileLinkQueueWaitPending = false;
-                _asyncCompileLinkPending = false;
-                IsLinked = false;
-
-                if (abandonedProgramId != 0)
+                else if (TryGetBindingId(out uint currentProgramId) && currentProgramId == abandonedProgramId)
                 {
-                    bool abandonedReplacement = _replacementProgramPending && _replacementProgramId == abandonedProgramId;
-                    if (abandonedReplacement)
-                    {
-                        _replacementProgramId = 0;
-                        _replacementProgramPending = false;
-                    }
-                    else if (TryGetBindingId(out uint currentProgramId) && currentProgramId == abandonedProgramId)
-                    {
-                        OrphanForDeferredDelete();
-                    }
-
-                    Debug.OpenGLWarning(
-                        $"Abandoning shared-context source link for program '{GetProgramDebugName()}' hash={Hash}: " +
-                        $"programId={abandonedProgramId} leaked to avoid blocking GL cleanup calls.");
-                }
-
-                if (retrySynchronously)
-                {
-                    _hashComputed = false;
-                    InvalidatePreparedLinkData();
-                    PublishBackendStatus(
-                        EShaderProgramBackendStage.SynchronousFallback,
-                        "SharedContextSource",
-                        "shared-context source link stalled; retrying with synchronous source link",
-                        "Shared-context source link timed out.");
-                    BeginPrepareLinkData();
-                    RegisterPendingAsyncProgram();
-                    return;
-                }
-
-                if (retryDriverParallel)
-                {
-                    _hashComputed = false;
-                    InvalidatePreparedLinkData();
-                    PublishBackendStatus(
-                        EShaderProgramBackendStage.DriverParallelPending,
-                        "SharedContextSource",
-                        "shared-context source link stalled; retrying driver-parallel source lane",
-                        "Shared-context source link timed out.");
-                    BeginPrepareLinkData();
-                    RegisterPendingAsyncProgram();
-                    return;
+                    IsLinked = false;
+                    OrphanForDeferredDelete();
                 }
 
                 PublishBackendStatus(
-                    EShaderProgramBackendStage.Failed,
+                    EShaderProgramBackendStage.Abandoned,
                     "SharedContextSource",
-                    "shared-context source link stalled; leaving fallback material active",
-                    "Shared-context source link timed out.");
+                    "native compilation did not complete; source compilation stopped until process restart",
+                    "No retry or GL cleanup was submitted for the unfinished build.");
+            }
+
+            /// <summary>
+            /// Ends a source request after the process source compiler stops accepting work.
+            /// </summary>
+            private bool StopSourceBuildAfterCompilerFault(uint programId)
+            {
+                if (!GLProgramCompileLinkQueue.SourceCompilationFaulted)
+                    return false;
+
+                const string reason = "Native source compilation did not complete. Restart the process before compiling more shaders.";
+                MarkHashFailed(reason);
+                ReleaseCompletedCompilationClaim(Hash, programId);
+                ClearCompletedBuildPendingState();
+                PublishBackendStatus(EShaderProgramBackendStage.Failed, "Source", reason, reason);
                 MarkBuildFailed();
-                UnregisterPendingAsyncProgram();
+                return true;
             }
 
             /// <summary>

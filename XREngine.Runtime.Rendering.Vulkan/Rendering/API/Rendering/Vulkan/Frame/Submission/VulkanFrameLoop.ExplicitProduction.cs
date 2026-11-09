@@ -314,6 +314,7 @@ internal sealed partial class VulkanFrameLoop
                 // profiling-scope disposal or diagnostics can throw, and never
                 // reopen these slots through the unsubmitted cancellation path.
                 submitted = receipt.SubmissionAccepted;
+                SettlePrimaryDiagnosticSubmission(submittedCommandBuffer, submitted ? graphicsSignalValue : 0UL);
                 if (submitted)
                 {
                     acceptedPlan?.CommitRecordedAdvancedPickingSources();
@@ -579,6 +580,7 @@ internal sealed partial class VulkanFrameLoop
                     requestCount,
                     allowPreparedCohort: true,
                     out string meshFailure,
+                    out _,
                     out _,
                     ref watchdog,
                     sourceFrameId: frameNumber,

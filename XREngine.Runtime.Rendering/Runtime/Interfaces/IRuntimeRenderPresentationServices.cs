@@ -83,6 +83,19 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     /// Gets whether desktop-facing VR outputs may be skipped to protect the active XR budget band.
     /// </summary>
     bool VrDesktopAutoSkipWhenOverBudget => RuntimeRenderingHostServiceDefaults.VrDesktopAutoSkipWhenOverBudget;
+    EVrDesktopFrameExecutionMode VrDesktopFrameExecutionMode => EVrDesktopFrameExecutionMode.Inline;
+
+    /// <summary>
+    /// Gets whether the split VR desktop frame starts its next desktop frame only when
+    /// the XR slack can hold it. False lets the desktop run at its own rate.
+    /// </summary>
+    bool VrDesktopSplitSlackGate => false;
+
+    /// <summary>
+    /// Gets which output gets render-thread time first while VR is active. The
+    /// priority output also owns the per-frame mesh deformation.
+    /// </summary>
+    EVrRenderPriority VrRenderPriority => EVrRenderPriority.Vr;
 
     /// <summary>
     /// Evaluates whether an output is due for this frame according to host pacing policy.

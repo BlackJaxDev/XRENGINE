@@ -357,6 +357,8 @@ internal sealed partial class VulkanFrameLoop
                     rightDestinationExtent,
                     rightDestinationLabel,
                     flipY,
+                    leftPreviewTexture: null,
+                    rightPreviewTexture: null,
                     out OpenXrStereoLayerBlitPlan plan))
             {
                 return false;
@@ -456,6 +458,22 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    // Resource names for the runtime swapchain images, keyed by label instance. The
+    // labels are cached by the caller, so the per-frame blit formats no strings.
+    private readonly Dictionary<string, string> _openXrSwapchainResourceNames = new(ReferenceEqualityComparer.Instance);
+
+    private string GetOpenXrSwapchainResourceName(string destinationLabel)
+    {
+        if (!_openXrSwapchainResourceNames.TryGetValue(destinationLabel, out string? name))
+        {
+            name = $"OpenXR.SwapchainImage.{destinationLabel}";
+            // A caller that formats a new label each frame must not grow this cache.
+            if (_openXrSwapchainResourceNames.Count < 64)
+                _openXrSwapchainResourceNames.Add(destinationLabel, name);
+        }
+        return name;
+    }
+
     private bool TryPrepareStereoLayerBlit(
         XRTexture2DArray? sourceTexture,
         CommandBuffer recordedSourceCommandBuffer,
@@ -468,6 +486,8 @@ internal sealed partial class VulkanFrameLoop
         Extent2D rightDestinationExtent,
         string rightDestinationLabel,
         bool flipY,
+        XRTexture2D? leftPreviewTexture,
+        XRTexture2D? rightPreviewTexture,
         out OpenXrStereoLayerBlitPlan plan)
     {
         plan = default;
@@ -489,12 +509,12 @@ internal sealed partial class VulkanFrameLoop
         _resourceRuntime.RegisterResource(
             ObjectType.Image,
             leftDestinationImage.Handle,
-            $"OpenXR.SwapchainImage.{leftDestinationLabel}",
+            GetOpenXrSwapchainResourceName(leftDestinationLabel),
             externallyOwned: true);
         _resourceRuntime.RegisterResource(
             ObjectType.Image,
             rightDestinationImage.Handle,
-            $"OpenXR.SwapchainImage.{rightDestinationLabel}",
+            GetOpenXrSwapchainResourceName(rightDestinationLabel),
             externallyOwned: true);
 
         if (GetOrCreateAPIRenderObject(sourceTexture, generateNow: true) is not IVkImageDescriptorSource source)
@@ -550,7 +570,9 @@ internal sealed partial class VulkanFrameLoop
             rightDestinationImage,
             rightDestinationFormat,
             rightDestinationExtent,
-            flipY);
+            flipY,
+            ResolveStereoPreviewCopy(leftPreviewTexture),
+            ResolveStereoPreviewCopy(rightPreviewTexture));
         return true;
 
         bool TryResolveStereoBlitLayer(
@@ -612,6 +634,35 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    /// <summary>
+    /// Resolves an eye preview texture for the stereo publish command buffer. A preview
+    /// that is not ready gets no copy in this frame; the eye swapchain publish still runs.
+    /// </summary>
+    private OpenXrStereoPreviewCopy ResolveStereoPreviewCopy(XRTexture2D? previewTexture)
+    {
+        if (previewTexture is null ||
+            GetOrCreateAPIRenderObject(previewTexture, generateNow: true) is not IVkImageDescriptorSource destination ||
+            !destination.TryEnsureDescriptorReadyForUse(
+                "OpenXR Vulkan stereo eye preview copy",
+                AllowSynchronousResourceUploads))
+        {
+            return default;
+        }
+
+        Image image = destination.DescriptorImage;
+        Extent2D extent = ResolveOpenXrMirrorDestinationExtent(previewTexture, destination);
+        if (image.Handle == 0 || extent.Width == 0 || extent.Height == 0)
+            return default;
+
+        return new OpenXrStereoPreviewCopy(
+            destination,
+            image,
+            destination.DescriptorFormat,
+            extent,
+            ResolveOpenXrMirrorDestinationLayout(destination),
+            NormalizeOpenXrMirrorAspect(destination.DescriptorFormat, destination.DescriptorAspect));
+    }
+
     private void RecordStereoLayerBlits(
         CommandBuffer commandBuffer,
         in OpenXrStereoLayerBlitPlan plan)
@@ -624,7 +675,8 @@ internal sealed partial class VulkanFrameLoop
             plan.LeftSourceOldLayout,
             plan.LeftDestinationImage,
             plan.LeftDestinationFormat,
-            plan.LeftDestinationExtent);
+            plan.LeftDestinationExtent,
+            plan.LeftPreview);
         EmitStereoLayerBlit(
             commandBuffer,
             plan,
@@ -633,7 +685,8 @@ internal sealed partial class VulkanFrameLoop
             plan.RightSourceOldLayout,
             plan.RightDestinationImage,
             plan.RightDestinationFormat,
-            plan.RightDestinationExtent);
+            plan.RightDestinationExtent,
+            plan.RightPreview);
     }
 
     private void EmitStereoLayerBlit(
@@ -644,7 +697,8 @@ internal sealed partial class VulkanFrameLoop
         ImageLayout sourceOldLayout,
         Image destinationImage,
         Format destinationFormat,
-        Extent2D destinationExtent)
+        Extent2D destinationExtent,
+        in OpenXrStereoPreviewCopy preview)
     {
         TransitionOpenXrMirrorImage(
             commandBuffer,
@@ -713,6 +767,11 @@ internal sealed partial class VulkanFrameLoop
             ref blit,
             Filter.Nearest);
 
+        // The source layer is already in transfer-source layout, so the eye preview
+        // copy joins this command buffer instead of a separate tracked submission.
+        if (preview.IsValid)
+            EmitStereoPreviewBlit(commandBuffer, in plan, sourceLayer, sourceExtent, in preview);
+
         TransitionOpenXrMirrorImage(
             commandBuffer,
             plan.SourceImage,
@@ -732,8 +791,54 @@ internal sealed partial class VulkanFrameLoop
             ImageAspectFlags.ColorBit);
     }
 
+    private void EmitStereoPreviewBlit(
+        CommandBuffer commandBuffer,
+        in OpenXrStereoLayerBlitPlan plan,
+        uint sourceLayer,
+        Extent2D sourceExtent,
+        in OpenXrStereoPreviewCopy preview)
+    {
+        TransitionOpenXrMirrorImage(
+            commandBuffer,
+            preview.Image,
+            preview.Format,
+            preview.OldLayout,
+            ImageLayout.TransferDstOptimal,
+            preview.Aspect);
+
+        ImageBlit blit = VulkanCommandRuntime.CreateOpenXrMirrorBlit(
+            plan.SourceAspect,
+            preview.Aspect,
+            sourceExtent,
+            preview.Extent,
+            flipDestinationY: false);
+        blit.SrcSubresource.BaseArrayLayer = sourceLayer;
+        _commandRuntime.BlitImageTracked(
+            commandBuffer,
+            plan.SourceImage,
+            ImageLayout.TransferSrcOptimal,
+            preview.Image,
+            ImageLayout.TransferDstOptimal,
+            1,
+            ref blit,
+            Filter.Nearest);
+
+        TransitionOpenXrMirrorImage(
+            commandBuffer,
+            preview.Image,
+            preview.Format,
+            ImageLayout.TransferDstOptimal,
+            ImageLayout.ShaderReadOnlyOptimal,
+            preview.Aspect);
+    }
+
     private static void UpdateStereoLayerBlitTrackedLayouts(in OpenXrStereoLayerBlitPlan plan)
     {
+        if (plan.LeftPreview.Destination is IVkFrameBufferAttachmentSource leftPreview)
+            leftPreview.UpdateAttachmentTrackedLayout(ImageLayout.ShaderReadOnlyOptimal, 0, 0);
+        if (plan.RightPreview.Destination is IVkFrameBufferAttachmentSource rightPreview)
+            rightPreview.UpdateAttachmentTrackedLayout(ImageLayout.ShaderReadOnlyOptimal, 0, 0);
+
         if (plan.Source is not IVkFrameBufferAttachmentSource attachmentSource)
             return;
 

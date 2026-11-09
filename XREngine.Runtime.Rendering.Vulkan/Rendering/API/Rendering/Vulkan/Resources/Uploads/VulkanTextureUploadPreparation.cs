@@ -140,7 +140,8 @@ internal sealed partial class VulkanTextureUploadService
             // Reap completed workers independently of the selected manifest or
             // priority. This releases bounded worker admission without allowing
             // background results to submit during a foreground-only drain.
-            ObserveCompletedPreparationWorkers();
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Prep.ObserveWorkers"))
+                ObserveCompletedPreparationWorkers();
 
             while (TryDequeueBestPrepJob(out VulkanImportedTextureUploadJob job, foregroundRequired, requiredManifest))
             {
@@ -200,12 +201,15 @@ internal sealed partial class VulkanTextureUploadService
                 VulkanImportedTextureUploadPrepResult prepResult;
                 try
                 {
-                    prepResult = TryPrepareAndEnqueueImportedTextureUpload(
-                        context,
-                        job,
-                        drainStart,
-                        prepBudgetMilliseconds,
-                        requiredManifest);
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Prep.PrepareAndEnqueue"))
+                    {
+                        prepResult = TryPrepareAndEnqueueImportedTextureUpload(
+                            context,
+                            job,
+                            drainStart,
+                            prepBudgetMilliseconds,
+                            requiredManifest);
+                    }
                 }
                 finally
                 {
@@ -405,7 +409,10 @@ internal sealed partial class VulkanTextureUploadService
         // identity wrapper before worker preparation begins; workers never call
         // this factory.
         using var creationOwner = GenericRenderObject.PushApiWrapperCreationOwner(context.Owner);
-        if (context.Resources.CreateAPIRenderObject(texture) is not VkTexture2D vkTexture)
+        object? createdWrapper;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Prep.CreateWrapper"))
+            createdWrapper = context.Resources.CreateAPIRenderObject(texture);
+        if (createdWrapper is not VkTexture2D vkTexture)
         {
             failureReason = "Vulkan texture wrapper could not be resolved for imported texture upload.";
             return false;

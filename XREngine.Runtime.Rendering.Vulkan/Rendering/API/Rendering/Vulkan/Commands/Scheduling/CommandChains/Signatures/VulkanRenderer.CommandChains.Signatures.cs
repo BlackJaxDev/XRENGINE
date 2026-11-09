@@ -91,10 +91,10 @@ internal sealed partial class VulkanCommandRuntime
                 continue;
             }
 
-            PendingMeshDraw draw = header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
-                ? operations.GetMeshDraw(i).Draw
-                : header.OpCode == EVulkanPrimaryPlanNodeKind.IndirectDraw
-                    ? operations.GetIndirectDraw(i).Draw : default;
+            ref readonly PendingMeshDraw draw = ref header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                ? ref operations.GetMeshDraw(i).Draw
+                : ref header.OpCode == EVulkanPrimaryPlanNodeKind.IndirectDraw
+                    ? ref operations.GetIndirectDraw(i).Draw : ref PendingMeshDraw.Empty;
             if (draw.Renderer is null)
                 continue;
 

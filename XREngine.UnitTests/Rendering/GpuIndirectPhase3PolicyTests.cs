@@ -280,16 +280,16 @@ public sealed class GpuIndirectPhase3PolicyTests
         string ensureMethod = SliceMethod(
             source,
             "private XRRenderProgram? EnsureCombinedProgram",
-            "private bool TryGetReadyCombinedProgramFromUseCache");
+            "private bool TryGetPendingCombinedProgramFromUseCache");
 
-        ensureMethod.ShouldContain("TryGetReadyCombinedProgramFromUseCache(useKey, shaderStateRevision, material, out XRRenderProgram? cachedProgram)");
-        ensureMethod.IndexOf("TryGetReadyCombinedProgramFromUseCache", StringComparison.Ordinal)
+        ensureMethod.ShouldContain("TryGetCombinedProgramFromUseCache(useKey, shaderStateRevision, material, out XRRenderProgram? cachedProgram)");
+        ensureMethod.IndexOf("TryGetCombinedProgramFromUseCache", StringComparison.Ordinal)
             .ShouldBeLessThan(ensureMethod.IndexOf("new List<XRShader>", StringComparison.Ordinal));
 
         string cacheMethod = SliceMethod(
             source,
-            "private bool TryGetReadyCombinedProgramFromUseCache",
-            "private bool EnsureZeroReadbackMaterialSlotProgramsReady");
+            "private bool TryGetCombinedProgramFromUseCache",
+            "private static XRRenderProgramDescriptor BuildGpuDrivenCombinedProgramDescriptor");
 
         cacheMethod.ShouldContain("_materialProgramUseDescriptors.TryGetValue(useKey, out XRRenderProgramDescriptor descriptor)");
         cacheMethod.ShouldContain("descriptor.RenderSettingsVersion != RuntimeEngine.Rendering.Settings.ShaderConfigVersion");

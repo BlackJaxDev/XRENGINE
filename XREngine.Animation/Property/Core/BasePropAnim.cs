@@ -36,5 +36,11 @@
         /// <param name="slot">The store slot. Its type must agree with the value type of this animation.</param>
         public virtual void WriteSampleToStore(float second, AnimationValueStore store, in AnimSlot slot)
             => store.SetValue(slot, GetValueGeneric(ResolveSampleSecond(second)));
+
+        /// <summary>
+        /// Create an independent runtime track. Derived runtime tracks can provide a copy contract.
+        /// </summary>
+        protected internal virtual BasePropAnim CreatePlaybackCopy()
+            => throw new NotSupportedException($"Animation track type '{GetType().FullName}' does not support independent playback.");
     }
 }

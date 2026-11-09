@@ -511,6 +511,7 @@ namespace XREngine.Rendering.Commands
             _updatingBackendReadyIdentity = BackendReadyFramePackageIdentity.Unspecified;
             _updatingRevision++;
             _updatingBackendReadyPackage.Reset();
+            ClearPreparedImportedResourceGeneration();
             _renderingBackendReadyPackage.Reset();
         }
 
@@ -890,6 +891,7 @@ namespace XREngine.Rendering.Commands
                 _updatingPasses,
                 passMetadata,
                 nativeAuthoredDecals);
+            CapturePreparedImportedResourceGeneration(ownerPipeline);
             PrepareMeshOrderPublicationNoLock(scene, camera);
 
             XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
@@ -913,7 +915,8 @@ namespace XREngine.Rendering.Commands
                 viewportWidth,
                 viewportHeight,
                 _updatingExcludeProjectiveMirrors,
-                _updatingMeshSubmissionStrategy);
+                _updatingMeshSubmissionStrategy,
+                submissionViewport?.OpenXrViewPair ?? RenderFrameViewSetPublication.AllViews);
         }
 
         /// <summary>
@@ -949,7 +952,9 @@ namespace XREngine.Rendering.Commands
                     viewportWidth,
                     viewportHeight,
                     _updatingExcludeProjectiveMirrors,
-                    _updatingMeshSubmissionStrategy);
+                    _updatingMeshSubmissionStrategy,
+                    (ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport)?.OpenXrViewPair
+                        ?? RenderFrameViewSetPublication.AllViews);
                 return _updatingBackendReadyPackage.TryGetCanonicalPublication(
                            out _, out _) &&
                        !_updatingBackendReadyPackage.CanonicalViews.IsEmpty;
@@ -966,6 +971,7 @@ namespace XREngine.Rendering.Commands
             {
                 using var renderingBufferScope = EnterRenderingBufferWriteScope();
                 _updatingBackendReadyPackage.Cancel();
+                ClearPreparedImportedResourceGeneration();
                 _renderingBackendReadyPackage.Cancel();
                 ResetMeshOrderCollectionNoLock();
                 CancelCollectedResourcesNoLock();
@@ -997,6 +1003,39 @@ namespace XREngine.Rendering.Commands
                     _renderingBackendReadyPackage.ResetCanonical();
             }
         }
+
+        /// <summary>
+        /// Releases the canonical scene pin of the rendering package when that package
+        /// lags more than <see cref="IdleCanonicalPinMaxPublicationLag"/> publications
+        /// behind the newest sealed one. A viewport whose scene is not due skips its swap,
+        /// for example a desktop view with the VR mirror off. Its last rendering package
+        /// then keeps one old publication pinned, the table journals cannot reclaim it,
+        /// and the database rejects every later publication. The next swap prepares a
+        /// new pin before this viewport renders its scene again.
+        /// </summary>
+        internal void ReleaseLaggingRenderingCanonicalPin()
+        {
+            using (_lock.EnterScope())
+            {
+                if (!_renderingBackendReadyPackage.TryGetCanonicalPublication(
+                        out AdvancedSharedGpuSceneDatabase database,
+                        out AdvancedGpuScenePublicationReference publication) ||
+                    database.LastSealedPublicationSequence <=
+                        publication.Sequence + IdleCanonicalPinMaxPublicationLag)
+                {
+                    return;
+                }
+
+                using var renderingBufferScope = EnterRenderingBufferWriteScope();
+                _renderingBackendReadyPackage.ResetCanonical();
+            }
+        }
+
+        /// <summary>
+        /// Publications that an idle rendering package may lag behind the newest one
+        /// before it drops its pin. It stays well inside the table journal capacity.
+        /// </summary>
+        private const ulong IdleCanonicalPinMaxPublicationLag = 16UL;
 
         public int GetRenderingPassCommandCount(int renderPass)
         {
@@ -1871,7 +1910,9 @@ namespace XREngine.Rendering.Commands
             return AdvancedLatePassEligibilityValidator.TryValidateLatePass(
                 material,
                 renderPass,
-                out rejectionReason);
+                out rejectionReason,
+                AbstractRenderer.Current is IAuthoredUdimTriangleCoverageBackendCapability
+                    { SupportsUdimTriangleCoverage: true });
         }
 
         private static void ReportAdvancedLatePassRejection(
@@ -2039,6 +2080,7 @@ namespace XREngine.Rendering.Commands
             if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
                 return;
 
+            bool shadowPass = RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true;
             bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
             for (int commandIndex = 0; commandIndex < list.Count; commandIndex++)
             {
@@ -2051,10 +2093,10 @@ namespace XREngine.Rendering.Commands
 
                 if (cmd is IRenderCommandMesh meshCmd)
                 {
-                    bool excludedFromGpuIndirect =
-                        !_renderingBackendReadyPackage.IsTraditionalGpuOwned(
-                            renderPass,
-                            meshCmd.StableQueryKey);
+                    bool excludedFromGpuIndirect = shadowPass
+                        ? cmd is not RenderCommandMesh3D shadowCommand || !shadowCommand.RenderSharedOpaqueShadow
+                        : !_renderingBackendReadyPackage.IsTraditionalGpuOwned(
+                            renderPass, meshCmd.StableQueryKey);
                     if (!excludedFromGpuIndirect)
                         continue;
                 }
@@ -2708,6 +2750,8 @@ namespace XREngine.Rendering.Commands
                 if (preparedLate)
                     PrepareBackendReadyFramePackageNoLock();
 
+                FinalizePreparedImportedResourcesNoLock();
+
                 (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
                 SwapCollectedResourcesNoLock();
                 (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
@@ -2805,6 +2849,7 @@ namespace XREngine.Rendering.Commands
                 _numCommandsRecentlyAddedToUpdate = 0;
                 _updatingRevision++;
                 _updatingBackendReadyPackage.Reset();
+                ClearPreparedImportedResourceGeneration();
                 ResetMeshOrderCollectionNoLock();
             }
         }
@@ -2896,6 +2941,21 @@ namespace XREngine.Rendering.Commands
             AddShadowState(ref hash, meshCommand.MaterialOverride is null ? 0 : RuntimeHelpers.GetHashCode(meshCommand.MaterialOverride));
             AddShadowState(ref hash, meshCommand.RenderOptionsOverride is null ? 0 : RuntimeHelpers.GetHashCode(meshCommand.RenderOptionsOverride));
 
+            XRMeshRenderer? renderer = meshCommand.Mesh;
+            if (renderer is not null)
+            {
+                int primitiveCount = renderer.Submeshes.Count == 0 ? 1 : renderer.Submeshes.Count;
+                AddShadowState(ref hash, primitiveCount);
+                for (int primitiveIndex = 0; primitiveIndex < primitiveCount; primitiveIndex++)
+                {
+                    renderer.TryGetMesh(primitiveIndex, out XRMesh? sourceMesh, out XRMaterial? sourceMaterial);
+                    AddShadowState(ref hash, sourceMesh is null ? 0 : RuntimeHelpers.GetHashCode(sourceMesh));
+                    AddShadowState(ref hash, sourceMesh?.GeometryRevision ?? 0L);
+                    XRMaterial? material = meshCommand.MaterialOverride ?? sourceMaterial ?? renderer.Material;
+                    AddShadowMaterialState(ref hash, material);
+                }
+            }
+
             // Non-model/skinned commands commonly publish identity as WorldMatrix and
             // carry their animated world extent through the culling-volume override.
             if (command.CullingVolume is AABB bounds)
@@ -2905,6 +2965,18 @@ namespace XREngine.Rendering.Commands
             }
 
             return MixOcclusionCommandKey(hash);
+        }
+
+        private static void AddShadowMaterialState(ref ulong hash, XRMaterial? material)
+        {
+            AddShadowState(ref hash, material is null ? 0 : RuntimeHelpers.GetHashCode(material));
+            if (material is null)
+                return;
+            AddShadowState(ref hash, material.BindingLayoutVersion);
+            AddShadowState(ref hash, material.BindingValueVersion);
+            AddShadowState(ref hash, material.BindingResourceVersion);
+            AddShadowState(ref hash, material.ShaderStateRevision);
+            AddShadowState(ref hash, material.UberStateRevision);
         }
 
         private static void AddShadowState(ref ulong hash, Matrix4x4 value)
@@ -2927,6 +2999,15 @@ namespace XREngine.Rendering.Commands
 
         private static void AddShadowState(ref ulong hash, int value)
             => AddShadowState(ref hash, unchecked((uint)value));
+
+        private static void AddShadowState(ref ulong hash, long value)
+            => AddShadowState(ref hash, unchecked((ulong)value));
+
+        private static void AddShadowState(ref ulong hash, ulong value)
+        {
+            AddShadowState(ref hash, unchecked((uint)value));
+            AddShadowState(ref hash, unchecked((uint)(value >> 32)));
+        }
 
         private static void AddShadowState(ref ulong hash, uint value)
         {
@@ -2972,7 +3053,9 @@ namespace XREngine.Rendering.Commands
                         AdvancedLatePassEligibilityValidator.TryValidateLatePass(
                             material,
                             meshCommand.RenderPass,
-                            out _))
+                            out _,
+                            AbstractRenderer.Current is IAuthoredUdimTriangleCoverageBackendCapability
+                                { SupportsUdimTriangleCoverage: true }))
                     {
                         sceneColorSnapshotConsumerCount = checked(sceneColorSnapshotConsumerCount + 1u);
                     }

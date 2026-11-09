@@ -35,6 +35,12 @@ layout(location = 7) flat out uint VisibilityPrimitiveBase[];
 layout(location = 8) flat out uint VisibilityMeshletIndex[];
 layout(location = 9) flat out uint VisibilityMaterialDenseIndex[];
 layout(location = 10) flat out uint VisibilityEditorFlags[];
+layout(location = 11) out vec2 VisibilityCoverageUv1[];
+layout(location = 12) out vec4 VisibilityCoverageColor[];
+layout(location = 13) out vec3 VisibilityCoverageWorldPosition[];
+layout(location = 14) out vec3 VisibilityCoverageLocalPosition[];
+layout(location = 15) out vec2 VisibilityCoverageUv2[];
+layout(location = 16) out vec2 VisibilityCoverageUv3[];
 
 const uint XR_ADV_MESH_GROUP_SIZE = 32u;
 const uint XR_ADV_MESH_MAX_VERTICES = 64u;
@@ -263,6 +269,21 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
                 ? 1u
                 : 0u;
         VisibilityCoverageUv[vertex] = unpackHalf2x16(statik.texCoord0Half);
+        VisibilityCoverageUv1[vertex] =
+            (statik.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u
+                ? unpackHalf2x16(statik.texCoord1Half)
+                : unpackHalf2x16(statik.texCoord0Half);
+        VisibilityCoverageUv2[vertex] =
+            (statik.flags & XR_ADV_VERTEX_HAS_TEXCOORD2) != 0u
+                ? unpackHalf2x16(statik.texCoord2Half)
+                : vec2(0.0);
+        VisibilityCoverageUv3[vertex] =
+            (statik.flags & XR_ADV_VERTEX_HAS_TEXCOORD3) != 0u
+                ? unpackHalf2x16(statik.texCoord3Half)
+                : vec2(0.0);
+        VisibilityCoverageColor[vertex] = unpackUnorm4x8(statik.color0Rgba8);
+        VisibilityCoverageWorldPosition[vertex] = worldPosition.xyz;
+        VisibilityCoverageLocalPosition[vertex] = current.position;
         VisibilityPrimitiveBase[vertex] = 0u;
         VisibilityMeshletIndex[vertex] = meshletIndex;
         VisibilityMaterialDenseIndex[vertex] = materialDense;

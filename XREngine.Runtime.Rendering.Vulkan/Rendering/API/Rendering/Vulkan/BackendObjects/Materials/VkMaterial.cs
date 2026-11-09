@@ -559,6 +559,7 @@ namespace XREngine.Rendering.Vulkan
                 Program = program,
                 ProgramLinkGeneration = program.LinkGeneration,
                 Bindings = bindings,
+                BindingStructureFingerprint = ComputeBindingStructureFingerprint(bindings),
                 DescriptorSets = descriptorSets,
                 MaterialSetLifetimeSlots = materialSetLifetimeSlots,
                 DescriptorHeapPushData = descriptorHeapPushData,
@@ -765,6 +766,29 @@ namespace XREngine.Rendering.Vulkan
 				return unchecked((ulong)hash.ToHashCode());
 			}
 
+        /// <summary>
+        /// Hashes the immutable binding metadata of a descriptor state once, at creation.
+        /// The per-draw resource fingerprint then hashes only resolved texture resources.
+        /// </summary>
+        private static ulong ComputeBindingStructureFingerprint(DescriptorBindingInfo[] bindings)
+        {
+            HashCode hash = new();
+            hash.Add(bindings.Length);
+            for (int bindingIndex = 0; bindingIndex < bindings.Length; bindingIndex++)
+            {
+                DescriptorBindingInfo binding = bindings[bindingIndex];
+                hash.Add(binding.Binding);
+                hash.Add((int)binding.DescriptorType);
+                hash.Add(binding.Count);
+                hash.Add(binding.Name);
+                hash.Add(binding.ExpectedImageViewType);
+                if (IsMaterialTextureDescriptor(binding.DescriptorType))
+                    hash.Add(VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding));
+            }
+
+            return unchecked((ulong)hash.ToHashCode());
+        }
+
         private ulong ComputeResourceFingerprint(ProgramDescriptorState state)
         {
             HashCode hash = new();
@@ -773,17 +797,11 @@ namespace XREngine.Rendering.Vulkan
             // bindings invalidate an otherwise unchanged material descriptor set.
             hash.Add(RuntimeHelpers.GetHashCode(BackendContext.Resources.Lifetime.Tracker));
             hash.Add(state.ProgramLinkGeneration);
-            hash.Add(state.Bindings.Length);
+            hash.Add(state.BindingStructureFingerprint);
 
             for (int bindingIndex = 0; bindingIndex < state.Bindings.Length; bindingIndex++)
             {
                 DescriptorBindingInfo binding = state.Bindings[bindingIndex];
-                hash.Add(binding.Binding);
-                hash.Add((int)binding.DescriptorType);
-                hash.Add(binding.Count);
-                hash.Add(binding.Name);
-                hash.Add(binding.ExpectedImageViewType);
-
                 if (!IsMaterialTextureDescriptor(binding.DescriptorType))
                     continue;
 
@@ -791,7 +809,8 @@ namespace XREngine.Rendering.Vulkan
                 uint populatedCount = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding)
                     ? Math.Min(descriptorCount, unchecked((uint)Data.Textures.Count))
                     : descriptorCount;
-                hash.Add(descriptorCount);
+                hash.Add(bindingIndex);
+                hash.Add(populatedCount);
 
                 for (uint descriptorIndex = 0; descriptorIndex < populatedCount; descriptorIndex++)
                     AddResolvedDescriptorResourceFingerprint(
@@ -1398,6 +1417,14 @@ namespace XREngine.Rendering.Vulkan
             bool includeSampler = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
 
             bool allowSynchronousTextureUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
+            if (!texture.IsApiWrapperPublicationReady)
+            {
+                // A texture still in CPU construction has no wrapper yet; the lookup would throw.
+                WarnOnce(
+                    $"Material '{Data.Name ?? "<unnamed>"}' texture '{texture.Name ?? "<unnamed>"}' ({texture.GetType().Name}) " +
+                    $"on binding '{binding.Name}' is not published yet.");
+                return false;
+            }
             if (WrapperLookup.GetOrCreate(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
             {
                 WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' does not have a Vulkan image wrapper.");

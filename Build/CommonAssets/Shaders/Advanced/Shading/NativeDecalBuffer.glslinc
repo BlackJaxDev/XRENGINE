@@ -1,0 +1,32 @@
+#ifndef XR_ADVANCED_NATIVE_DECAL_BUFFER_GLSLINC
+#define XR_ADVANCED_NATIVE_DECAL_BUFFER_GLSLINC
+
+// Mesh surface decal buffer. The decal buffer pass writes premultiplied albedo and
+// roughness/metallic with their accumulated coverage in alpha (a cleared texel is "no decal").
+// Native shading blends them into the surface before lighting:
+// value = surface * (1 - coverage) + decal. Only the Vulkan per-view
+// kernels bind the decal buffer; other backends compile the helper as a no-op.
+
+// Matches NativeDecalBufferShadingFlag in VulkanRenderer.CommandBufferRecording.Primary.NativeShading.cs.
+#define XR_ADV_SHADING_DECAL_BUFFER (1u << 16u)
+
+#if defined(XR_ADV_BACKEND_VULKAN) && !defined(XR_ADV_VISIBILITY_ARRAY)
+#define XR_ADV_HAS_DECAL_BUFFER 1
+XR_ADV_SHADING_LAYOUT(69) uniform sampler2D DecalBufferAlbedo;
+XR_ADV_SHADING_LAYOUT(70) uniform sampler2D DecalBufferSurface;
+#endif
+
+void XR_ADV_ApplyDecalBuffer(uvec2 pixel, inout vec3 albedo, inout float roughness, inout float metallic)
+{
+#if defined(XR_ADV_HAS_DECAL_BUFFER)
+    if ((u_Push.flags & XR_ADV_SHADING_DECAL_BUFFER) == 0u)
+        return;
+    vec4 decalAlbedo = texelFetch(DecalBufferAlbedo, ivec2(pixel), 0);
+    vec4 decalSurface = texelFetch(DecalBufferSurface, ivec2(pixel), 0);
+    albedo = albedo * (1.0 - decalAlbedo.a) + decalAlbedo.rgb;
+    roughness = clamp(roughness * (1.0 - decalSurface.a) + decalSurface.r, 0.04, 1.0);
+    metallic = clamp(metallic * (1.0 - decalSurface.a) + decalSurface.g, 0.0, 1.0);
+#endif
+}
+
+#endif

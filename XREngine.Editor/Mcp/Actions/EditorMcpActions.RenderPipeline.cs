@@ -263,7 +263,7 @@ namespace XREngine.Editor.Mcp
             XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
             AdvancedRenderPipelineOutputBinding binding = instance.AdvancedOutputBinding;
             AdvancedRenderPipeline? pipeline = instance.Pipeline as AdvancedRenderPipeline
-                ?? (binding.IsBound && instance.Pipeline is IAdvancedRenderStageFamilyHost host
+                ?? (binding.IsBound && instance.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } host
                     ? host.AdvancedStageFamilyDefinition : null);
             IRuntimeRendererHost? renderer = viewport.Window?.Renderer ??
                 RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as IRuntimeRendererHost;

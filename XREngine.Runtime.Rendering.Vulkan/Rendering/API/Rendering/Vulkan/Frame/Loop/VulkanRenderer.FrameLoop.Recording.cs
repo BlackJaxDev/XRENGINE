@@ -105,7 +105,11 @@ namespace XREngine.Rendering.Vulkan
                             recordingResult.OutputExecutionPlan;
                         attempt.HasAuthoredSwapchainWrite =
                             recordingResult.HasAuthoredSwapchainWrite;
-                        if (attempt.OutputExecutionPlan is { } sealedPlan &&
+                        // A modal resize keeps its non-blocking policy for the
+                        // whole attempt. A foreground dependency in the plan
+                        // must not turn a recording deferral into a terminal failure.
+                        if (!attempt.InteractiveResize &&
+                            attempt.OutputExecutionPlan is { } sealedPlan &&
                             sealedPlan.TryGetPresentNowContract(
                                 out RenderOutputRequest outputContract))
                         {
@@ -232,6 +236,8 @@ namespace XREngine.Rendering.Vulkan
 
                 attempt.ScenePrimaryRecordedThisFrame =
                     _lastEnsureCommandBufferRecordedPrimary;
+                if (attempt.UsesDesktopOffscreenTarget)
+                    RecordDesktopOffscreenCopy(ref attempt);
                 int presentationDescriptorSlot = attempt.FrameSlot;
                 VulkanPresentationSourceTuple presentationSource =
                     _windowPresentSource.CaptureForDescriptorSlot(
@@ -610,7 +616,7 @@ namespace XREngine.Rendering.Vulkan
                             attempt.ImageIndex,
                             snapshot,
                             attempt.SwapchainLayoutAfterScene,
-                            attempt.SceneCommandBuffer,
+                            ResolveDesktopSwapchainPredecessor(in attempt),
                             clearSwapchain: false,
                             out attempt.ImGuiOverlayCommandBuffer);
                     if (attempt.PreserveSwapchainForImGuiOverlay &&
@@ -672,7 +678,7 @@ namespace XREngine.Rendering.Vulkan
                                 : attempt.SwapchainLayoutAfterScene,
                             attempt.HasImGuiOverlayCommandBuffer
                                 ? attempt.ImGuiOverlayCommandBuffer
-                                : attempt.SceneCommandBuffer,
+                                : ResolveDesktopSwapchainPredecessor(in attempt),
                             out attempt.DynamicTextOverlayCommandBuffer);
                 }
             }

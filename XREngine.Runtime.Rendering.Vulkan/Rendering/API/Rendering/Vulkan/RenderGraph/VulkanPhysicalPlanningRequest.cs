@@ -20,4 +20,6 @@ internal readonly record struct VulkanPhysicalPlanningRequest(
     bool SupportsTransformFeedback,
     bool IsDeviceLost,
     bool IsOpenXrOrVr,
-    bool DeferReusedImageMetadataCommit);
+    bool DeferReusedImageMetadataCommit,
+    VulkanPhysicalImageReuseDonor? CompatibleImageDonor,
+    bool IsDesktopWsiTarget);

@@ -76,6 +76,9 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
     /// <summary>Canonical Uber base color, normal, selected-channel PBR, opacity and emission.</summary>
     public static EngineMaterialSemanticIdentity UberBaseV1 => new(EngineMaterialSemantic.UberBase, 1);
 
+    /// <summary>Recognized authored Uber source with a fixed native material row.</summary>
+    public static EngineMaterialSemanticIdentity NativeUberV1 => new(EngineMaterialSemantic.NativeUber, 1);
+
     /// <summary>Canonical uniform RGBA with no light evaluation.</summary>
     public static EngineMaterialSemanticIdentity UnlitColorV1 => new(EngineMaterialSemantic.Unlit, 1);
 
@@ -130,6 +133,8 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
         if (Semantic == EngineMaterialSemantic.UberOutline && Version == 1)
             return;
         if (Semantic == EngineMaterialSemantic.UberBase && Version == 1)
+            return;
+        if (Semantic == EngineMaterialSemantic.NativeUber && Version == 1)
             return;
         if (IsUnlit())
             return;

@@ -34,7 +34,10 @@ internal static unsafe class VulkanOrderedComputeProducer
 
         ComputeDispatchSnapshot snapshot = program.CaptureComputeSnapshot();
         if (!program.ValidateComputeSnapshot(snapshot, out _))
+        {
+            snapshot.ReleaseIfUnpooled();
             return ERendererComputeEnqueueStatus.DescriptorInvalid;
+        }
 
         // The sealed frame-plan preparation authority owns native pipeline
         // readiness. Preserve this immutable operation while compilation is
@@ -49,6 +52,8 @@ internal static unsafe class VulkanOrderedComputeProducer
             byteOffset,
             label,
             context);
+        if (!snapshot.IsFramePoolOwned)
+            operation.OwnAuthoringSnapshot(snapshot);
         return ERendererComputeEnqueueStatus.Enqueued;
     }
 

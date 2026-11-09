@@ -22,7 +22,7 @@ public sealed class VPRC_SMAA : ViewportRenderCommand
         requirements.RequireOperation("framebuffer");
         if (requirements.Backend != RendererBackendId.WebGPU)
             return;
-        bool advanced = ParentPipeline is AdvancedRenderPipeline;
+        bool advanced = ParentPipeline?.ResolveAdvancedStageFamily() is not null;
         requirements.RequireRasterProgram(advanced ? "advanced::smaa-edge" : "smaa-edge");
         requirements.RequireRasterProgram(advanced ? "advanced::smaa-blend" : "smaa-blend");
         requirements.RequireRasterProgram(advanced ? "advanced::smaa-neighborhood" : "smaa-neighborhood");
@@ -371,7 +371,7 @@ void main()
         => _webResources
             ? WebPipelineRasterProgram.CreateShaders(
                 instance.Pipeline ?? throw new InvalidOperationException("WebGPU.SMAA.PipelineMissing: the selected SMAA chain requires an owning pipeline."),
-                instance.Pipeline is AdvancedRenderPipeline ? $"advanced::{pass}" : pass)
+                instance.Pipeline?.ResolveAdvancedStageFamily() is not null ? $"advanced::{pass}" : pass)
             : [new XRShader(EShaderType.Fragment, ResolveShaderCode(shaderCode, Stereo))];
 
     internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)

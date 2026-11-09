@@ -8,7 +8,7 @@ public class UnitTestingOpenGLShaderLinkingSettings
     public bool AsyncProgramCompilation { get; set; } = true;
     public int ProgramCompileLinkWorkerCount { get; set; } = 1;
     public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16;
-    public int DriverCompilerThreadCount { get; set; } = -1;
+    public int DriverCompilerThreadCount { get; set; } = 1;
     public bool DriverParallelProbeEnabled { get; set; } = true;
     public int DriverParallelProbeTimeoutMs { get; set; } = 25;
 }

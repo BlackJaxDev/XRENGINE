@@ -617,6 +617,8 @@ get => _previewOctrees;
             // Lighting
             AmbientLightColor = AmbientLightColor,
             AmbientLightIntensity = AmbientLightIntensity,
+            AmbientSphericalHarmonicsEnabled = AmbientSphericalHarmonicsEnabled,
+            AmbientSphericalHarmonics = AmbientSphericalHarmonics,
             EnvironmentLightingIntensity = EnvironmentLightingIntensity,
             ReflectionIntensity = ReflectionIntensity,
             LightProbeResolution = LightProbeResolution,
@@ -676,6 +678,9 @@ get => _previewOctrees;
      // Lighting
                 AmbientLightColor = LerpColor3(from.AmbientLightColor, to.AmbientLightColor, t),
              AmbientLightIntensity = XREngine.Data.Interp.Lerp(from.AmbientLightIntensity, to.AmbientLightIntensity, t),
+                AmbientSphericalHarmonicsEnabled = from.AmbientSphericalHarmonicsEnabled || to.AmbientSphericalHarmonicsEnabled,
+                AmbientSphericalHarmonics = AmbientSphericalHarmonics.Lerp(
+                    from.GetEffectiveAmbientSphericalHarmonics(), to.GetEffectiveAmbientSphericalHarmonics(), t),
                 EnvironmentLightingIntensity = XREngine.Data.Interp.Lerp(from.EnvironmentLightingIntensity, to.EnvironmentLightingIntensity, t),
      ReflectionIntensity = XREngine.Data.Interp.Lerp(from.ReflectionIntensity, to.ReflectionIntensity, t),
 

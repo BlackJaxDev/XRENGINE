@@ -225,10 +225,6 @@ public sealed partial class GPUPhysicsChainDispatcher
     private int _colliderArenaUploadedHighWater;
     private int _arenaLayoutResetRequested;
     private int _arenaResourceGeneration;
-    private readonly List<PhysicsChainDynamicHeaderLayoutEntry> _dynamicHeaderLayout = [];
-    private readonly List<PhysicsChainDynamicHeaderLayoutEntry> _activeWorkLayout = [];
-    private int _activeWorkResourceGeneration = -1;
-    private int _dynamicHeaderResourceGeneration = -1;
     private long _deferredArenaBytes;
     private PhysicsChainComputeBindings _mainPassBindings;
     private bool _mainPassBindingsValid;
@@ -419,16 +415,16 @@ public sealed partial class GPUPhysicsChainDispatcher
         public Vector3 PrevPosition;
         public float _pad1;
         public int IsColliding;
-        public Vector3 _pad2;
+        public Vector3 SegmentTurnXyz;
         public Vector3 PreviousPhysicsPosition;
-        public float _pad3;
+        public float SegmentTurnW;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUParticleStaticData
     {
         public Vector3 TransformLocalPosition;
-        public float _pad0;
+        public float MaxAngleRadians;
         public int ParentIndex;
         public float Damping;
         public float Elasticity;
@@ -438,8 +434,8 @@ public sealed partial class GPUPhysicsChainDispatcher
         public float Radius;
         public float BoneLength;
         public int TreeIndex;
-        public int _pad1;
-        public int _pad2;
+        public int IsBranchChild;
+        public float MaxYawRadians;
         public int _pad3;
     }
 
@@ -466,6 +462,18 @@ public sealed partial class GPUPhysicsChainDispatcher
         public int LoopCount;
         public int DepthRangeOffset;
         public int DepthRangeCount;
+        public float GravityFalloff;
+        public int SolverFlags;
+        public int LimitType;
+        public float MaxStretch;
+        public float MaxSquish;
+        public float StretchMotion;
+        public float _pad1;
+        public float _pad2;
+        public Vector4 LimitRotation;
+        public Vector4 RootParentMotionX;
+        public Vector4 RootParentMotionY;
+        public Vector4 RootParentMotionZ;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -474,6 +482,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         public Vector3 RestGravity;
         public int ParticleOffset;
         public int ParticleCount;
+        public Matrix4x4 RootParentMotion;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -483,9 +492,9 @@ public sealed partial class GPUPhysicsChainDispatcher
         public Vector4 Params;
         public Vector4 Orientation;
         public int Type;
-        public int _pad0;
-        public int _pad1;
-        public int _pad2;
+        public int ParticleContactOnly;
+        public int Inside;
+        public float EndRadius;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -518,6 +527,10 @@ public sealed partial class GPUPhysicsChainDispatcher
         [XREngine.Rendering.Shaders.GpuPaddedVector3(nameof(_pad0))]
         public Vector3 RestLocalDirection;
         public float _pad0;
+        public int RootParticleIndex;
+        public int _pad1;
+        public int _pad2;
+        public int _pad3;
     }
 
     public readonly record struct GpuDrivenRendererPaletteBinding(
@@ -754,6 +767,9 @@ public sealed partial class GPUPhysicsChainDispatcher
                 Radius = value.Radius,
                 BoneLength = value.BoneLength,
                 TreeIndex = value.TreeIndex,
+                MaxAngleRadians = value.MaxAngleRadians,
+                MaxYawRadians = value.MaxYawRadians,
+                IsBranchChild = value.IsBranchChild,
             };
         }
     }
@@ -770,6 +786,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 RestGravity = value.RestGravity,
                 ParticleOffset = value.ParticleOffset,
                 ParticleCount = value.ParticleCount,
+                RootParentMotion = value.RootParentMotion,
             };
         }
     }
@@ -787,6 +804,9 @@ public sealed partial class GPUPhysicsChainDispatcher
                 Params = value.Params,
                 Orientation = value.Orientation,
                 Type = value.Type,
+                ParticleContactOnly = value.ParticleContactOnly,
+                Inside = value.Inside,
+                EndRadius = value.EndRadius,
             };
         }
     }
@@ -816,6 +836,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             if (input.BoneStructureSignature != snapshot.BoneStructureSignature || input.Bones.Length != snapshot.Bones.Length)
                 input.Bones = SnapshotInto(snapshot.Bones, ref input.Bones);
 
+            input.Solver = snapshot.Solver;
             CompleteSubmittedInput(component, request, input, snapshot.DeltaTime, snapshot.ObjectScale,
                 snapshot.Weight, snapshot.Force, snapshot.Gravity, snapshot.ObjectMove,
                 snapshot.FreezeAxis, snapshot.LoopCount, snapshot.TimeVar,
@@ -1486,9 +1507,11 @@ public sealed partial class GPUPhysicsChainDispatcher
             // frame, and accepted inputs do not change during the pass.
             System.Diagnostics.Debug.Assert(request.ParticleOffset >= 0, "PrepareFrameArenaCapacity allocates every active request.");
             request.TreeOffset = _allPerTreeParams.Count;
-            for (int treeIndex = 0; treeIndex < request.Trees.Count; ++treeIndex)
+            ReadOnlySpan<GPUParticleTreeData> trees = request.GetTreeSpan();
+            for (int treeIndex = 0; treeIndex < trees.Length; ++treeIndex)
             {
-                GPUParticleTreeData tree = request.Trees[treeIndex];
+                ref readonly GPUParticleTreeData tree = ref trees[treeIndex];
+                ref readonly Matrix4x4 motion = ref tree.RootParentMotion;
                 _allPerTreeParams.Add(new GPUPerTreeParams
                 {
                     DeltaTime = request.TimeVar,
@@ -1504,6 +1527,16 @@ public sealed partial class GPUPhysicsChainDispatcher
                     ParticleOffset = request.ParticleOffset + tree.ParticleOffset,
                     ParticleCount = tree.ParticleCount,
                     LoopCount = request.LoopCount,
+                    GravityFalloff = request.Solver.GravityFalloff,
+                    SolverFlags = request.Solver.Flags,
+                    LimitType = request.Solver.LimitType,
+                    MaxStretch = request.Solver.MaxStretch,
+                    MaxSquish = request.Solver.MaxSquish,
+                    StretchMotion = request.Solver.StretchMotion,
+                    LimitRotation = new Vector4(request.Solver.LimitRotation.X, request.Solver.LimitRotation.Y, request.Solver.LimitRotation.Z, request.Solver.LimitRotation.W),
+                    RootParentMotionX = new Vector4(motion.M11, motion.M21, motion.M31, motion.M41),
+                    RootParentMotionY = new Vector4(motion.M12, motion.M22, motion.M32, motion.M42),
+                    RootParentMotionZ = new Vector4(motion.M13, motion.M23, motion.M33, motion.M43),
                 });
             }
         }
@@ -1536,8 +1569,8 @@ public sealed partial class GPUPhysicsChainDispatcher
 
         stageStart = Stopwatch.GetTimestamp();
         if (!UploadInputPageTransforms()
-            || !UploadDynamicTreeHeaders(requests)
-            || !UploadActiveWorkInputs(requests)
+            || !UploadDynamicTreeHeaders()
+            || !UploadActiveWorkInputs()
             || !TryCompletePass(backend, InputPublicationPass))
             return false;
         AddStageTime(DispatcherStage.SimUploadOther, stageStart);
@@ -1571,10 +1604,12 @@ public sealed partial class GPUPhysicsChainDispatcher
                 FeatureMask = request.FeatureMask,
             });
 
-            for (int treeIndex = 0; treeIndex < request.Trees.Count; ++treeIndex)
+            ReadOnlySpan<GPUParticleTreeData> trees = request.GetTreeSpan();
+            ReadOnlySpan<PhysicsChainKernelBucket> buckets = request.GetKernelBuckets();
+            for (int treeIndex = 0; treeIndex < trees.Length; ++treeIndex)
             {
-                GPUParticleTreeData tree = request.Trees[treeIndex];
-                PhysicsChainKernelBucket bucket = ClassifyKernelBucket(request.ParticleStaticData, tree);
+                ref readonly GPUParticleTreeData tree = ref trees[treeIndex];
+                PhysicsChainKernelBucket bucket = buckets[treeIndex];
                 _treeWorkItems.Add(new PhysicsChainGpuTreeWorkItem
                 {
                     InstanceIndex = (uint)requestIndex,
@@ -1641,88 +1676,21 @@ public sealed partial class GPUPhysicsChainDispatcher
     internal static int CalculateActiveListCapacityPerBucket(int candidateCount)
         => checked((int)XRMath.NextPowerOfTwo((uint)Math.Max(candidateCount, 1)));
 
-    private bool UploadActiveWorkInputs(IReadOnlyList<GPUPhysicsChainRequest> requests)
+    /// <summary>
+    /// Writes the instance metadata and tree work items of this dispatch group into the current
+    /// input page. Each dispatch group acquires an input page that holds data of an older frame,
+    /// so the whole ranges are always written.
+    /// </summary>
+    private bool UploadActiveWorkInputs()
     {
-        bool fullUpload = !IsActiveWorkLayoutCurrent(requests)
-            || _activeWorkResourceGeneration != _arenaResourceGeneration;
-        int metadataDirtyStart = fullUpload ? 0 : -1;
-        int metadataDirtyEndExclusive = fullUpload ? _instanceMetadata.Count : -1;
-        int treeDirtyStart = fullUpload ? 0 : -1;
-        int treeDirtyEndExclusive = fullUpload ? _treeWorkItems.Count : -1;
-
-        if (!fullUpload)
-        {
-            for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
-            {
-                GPUPhysicsChainRequest request = requests[requestIndex];
-                if (request.UploadedSchedulingMetadataVersion != request.SchedulingMetadataVersion)
-                {
-                    if (metadataDirtyStart < 0)
-                        metadataDirtyStart = requestIndex;
-                    metadataDirtyEndExclusive = requestIndex + 1;
-                }
-
-                bool treeWorkDirty = request.UploadedTreeWorkStaticVersion != request.StaticDataVersion
-                    || request.UploadedTreeWorkArenaGeneration != request.ArenaAllocationGeneration
-                    || request.UploadedTreeWorkCount != request.Trees.Count;
-                if (!treeWorkDirty || request.Trees.Count == 0)
-                    continue;
-
-                if (treeDirtyStart < 0)
-                    treeDirtyStart = request.TreeOffset;
-                treeDirtyEndExclusive = request.TreeOffset + request.Trees.Count;
-            }
-        }
-
-        if (_instanceMetadataBuffer is not null && metadataDirtyStart >= 0)
-        {
-            int dirtyCount = metadataDirtyEndExclusive - metadataDirtyStart;
-            Span<PhysicsChainGpuInstanceMetadata> dirtyMetadata =
-                CollectionsMarshal.AsSpan(_instanceMetadata).Slice(metadataDirtyStart, dirtyCount);
-            if (!TryWriteInputPage(_instanceMetadataBuffer, dirtyMetadata, metadataDirtyStart))
-                return false;
-        }
-
-        if (_treeWorkItemBuffer is not null && treeDirtyStart >= 0 && treeDirtyEndExclusive > treeDirtyStart)
-        {
-            int dirtyCount = treeDirtyEndExclusive - treeDirtyStart;
-            Span<PhysicsChainGpuTreeWorkItem> dirtyTreeWork =
-                CollectionsMarshal.AsSpan(_treeWorkItems).Slice(treeDirtyStart, dirtyCount);
-            if (!TryWriteInputPage(_treeWorkItemBuffer, dirtyTreeWork, treeDirtyStart))
-                return false;
-        }
-
-        if (metadataDirtyStart < 0 && treeDirtyStart < 0)
-            return true;
-
-        _activeWorkResourceGeneration = _arenaResourceGeneration;
-        _activeWorkLayout.Clear();
-        _activeWorkLayout.EnsureCapacity(requests.Count);
-        for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
-        {
-            GPUPhysicsChainRequest request = requests[requestIndex];
-            _activeWorkLayout.Add(new PhysicsChainDynamicHeaderLayoutEntry(request.RequestId, request.Trees.Count));
-            request.UploadedSchedulingMetadataVersion = request.SchedulingMetadataVersion;
-            request.UploadedTreeWorkStaticVersion = request.StaticDataVersion;
-            request.UploadedTreeWorkArenaGeneration = request.ArenaAllocationGeneration;
-            request.UploadedTreeWorkCount = request.Trees.Count;
-        }
-        return true;
-    }
-
-    private bool IsActiveWorkLayoutCurrent(IReadOnlyList<GPUPhysicsChainRequest> requests)
-    {
-        if (_activeWorkLayout.Count != requests.Count)
+        if (_instanceMetadataBuffer is not null && _instanceMetadata.Count > 0 &&
+            !TryWriteInputPage(_instanceMetadataBuffer,
+                (ReadOnlySpan<PhysicsChainGpuInstanceMetadata>)CollectionsMarshal.AsSpan(_instanceMetadata), 0))
             return false;
-
-        for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
-        {
-            GPUPhysicsChainRequest request = requests[requestIndex];
-            PhysicsChainDynamicHeaderLayoutEntry entry = _activeWorkLayout[requestIndex];
-            if (entry.RequestId != request.RequestId || entry.TreeCount != request.Trees.Count)
-                return false;
-        }
-
+        if (_treeWorkItemBuffer is not null && _treeWorkItems.Count > 0 &&
+            !TryWriteInputPage(_treeWorkItemBuffer,
+                (ReadOnlySpan<PhysicsChainGpuTreeWorkItem>)CollectionsMarshal.AsSpan(_treeWorkItems), 0))
+            return false;
         return true;
     }
 
@@ -1965,77 +1933,16 @@ public sealed partial class GPUPhysicsChainDispatcher
         request.PendingArenaAllocationChange = false;
     }
 
-    private bool UploadDynamicTreeHeaders(IReadOnlyList<GPUPhysicsChainRequest> requests)
+    /// <summary>
+    /// Writes the tree parameter rows of this dispatch group into the current input page. The page
+    /// holds data of an older frame, so the whole range is always written.
+    /// </summary>
+    private bool UploadDynamicTreeHeaders()
     {
         if (_perTreeParamsBuffer is null || _allPerTreeParams.Count == 0)
             return true;
-
-        bool fullUpload = !IsDynamicHeaderLayoutCurrent(requests)
-            || _dynamicHeaderResourceGeneration != _arenaResourceGeneration;
-        int dirtyStart = fullUpload ? 0 : -1;
-        int dirtyEndExclusive = fullUpload ? _allPerTreeParams.Count : -1;
-        if (!fullUpload)
-        {
-            for (int i = 0; i < requests.Count; ++i)
-            {
-                GPUPhysicsChainRequest request = requests[i];
-                if (!IsDynamicHeaderDirty(request) || request.Trees.Count == 0)
-                    continue;
-
-                if (dirtyStart < 0 || request.TreeOffset < dirtyStart)
-                    dirtyStart = request.TreeOffset;
-                dirtyEndExclusive = Math.Max(dirtyEndExclusive, request.TreeOffset + request.Trees.Count);
-            }
-        }
-
-        if (dirtyStart < 0)
-            return true;
-
-        int dirtyCount = dirtyEndExclusive - dirtyStart;
-        Span<GPUPerTreeParams> dirtyHeaders = CollectionsMarshal.AsSpan(_allPerTreeParams).Slice(dirtyStart, dirtyCount);
-        if (!TryWriteInputPage(_perTreeParamsBuffer, dirtyHeaders, dirtyStart))
-            return false;
-        _dynamicHeaderResourceGeneration = _arenaResourceGeneration;
-
-        _dynamicHeaderLayout.Clear();
-        _dynamicHeaderLayout.EnsureCapacity(requests.Count);
-        for (int i = 0; i < requests.Count; ++i)
-        {
-            GPUPhysicsChainRequest request = requests[i];
-            _dynamicHeaderLayout.Add(new PhysicsChainDynamicHeaderLayoutEntry(request.RequestId, request.Trees.Count));
-            MarkDynamicHeaderUploaded(request);
-        }
-        return true;
-    }
-
-    private bool IsDynamicHeaderLayoutCurrent(IReadOnlyList<GPUPhysicsChainRequest> requests)
-    {
-        if (_dynamicHeaderLayout.Count != requests.Count)
-            return false;
-
-        for (int i = 0; i < requests.Count; ++i)
-        {
-            GPUPhysicsChainRequest request = requests[i];
-            PhysicsChainDynamicHeaderLayoutEntry entry = _dynamicHeaderLayout[i];
-            if (entry.RequestId != request.RequestId || entry.TreeCount != request.Trees.Count)
-                return false;
-        }
-
-        return true;
-    }
-
-    private static bool IsDynamicHeaderDirty(GPUPhysicsChainRequest request)
-        => request.UploadedDynamicHeaderVersion != request.DynamicHeaderVersion
-            || request.UploadedHeaderTreeVersion != request.TreeDataVersion
-            || request.UploadedHeaderArenaGeneration != request.ArenaAllocationGeneration
-            || request.UploadedHeaderColliderCount != request.Colliders.Count;
-
-    private static void MarkDynamicHeaderUploaded(GPUPhysicsChainRequest request)
-    {
-        request.UploadedDynamicHeaderVersion = request.DynamicHeaderVersion;
-        request.UploadedHeaderTreeVersion = request.TreeDataVersion;
-        request.UploadedHeaderArenaGeneration = request.ArenaAllocationGeneration;
-        request.UploadedHeaderColliderCount = request.Colliders.Count;
+        return TryWriteInputPage(_perTreeParamsBuffer,
+            (ReadOnlySpan<GPUPerTreeParams>)CollectionsMarshal.AsSpan(_allPerTreeParams), 0);
     }
 
     private void RecordArenaUpload(uint bytes, bool isStatic)
@@ -2365,14 +2272,17 @@ public sealed partial class GPUPhysicsChainDispatcher
             uint baseElement = _gpuDrivenPaletteSliceBases[bindingIndex];
             uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
 
-            // Compatible complete palettes share one slice and one mapping generation.
-            if (!_gpuDrivenPaletteSlicesSeeded.Add(baseElement))
+            if (_gpuDrivenPaletteSlicesSeeded.Add(baseElement))
+            {
+                XRMeshRenderer.BoneResourceSnapshot rendererResources =
+                    binding.Renderer.CaptureBoneResources();
+                CopySkinPaletteRange(rendererResources.SkinPalette, _gpuDrivenSkinPalette, baseElement, elementCount);
+                CopyMatrixRange(rendererResources.InverseBindMatrices, _gpuDrivenBoneInvBindMatrices, baseElement, elementCount);
+            }
+            // Compatible complete palettes share one mapping generation. The chains of one
+            // renderer share a slice, and each chain writes its own bones.
+            else if (SharesPaletteSliceByMesh(in binding))
                 continue;
-
-            XRMeshRenderer.BoneResourceSnapshot rendererResources =
-                binding.Renderer.CaptureBoneResources();
-            CopySkinPaletteRange(rendererResources.SkinPalette, _gpuDrivenSkinPalette, baseElement, elementCount);
-            CopyMatrixRange(rendererResources.InverseBindMatrices, _gpuDrivenBoneInvBindMatrices, baseElement, elementCount);
 
             for (int mappingIndex = 0; mappingIndex < binding.Mappings.Length; ++mappingIndex)
             {
@@ -2380,6 +2290,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 mapping.ParticleIndex += binding.ParticleBaseOffset;
                 if (mapping.ChildParticleIndex >= 0)
                     mapping.ChildParticleIndex += binding.ParticleBaseOffset;
+                mapping.RootParticleIndex += binding.ParticleBaseOffset;
                 mapping.BoneMatrixIndex += (int)baseElement;
                 _gpuDrivenBoneMappings.Add(mapping);
             }
@@ -2415,36 +2326,6 @@ public sealed partial class GPUPhysicsChainDispatcher
         PushBufferUpdate(_gpuDrivenBoneInvBindMatricesBuffer, invBindMatricesResized, invBindBytes);
 
         _gpuDrivenBonePaletteSignature = signature;
-    }
-
-    private void PublishBatchedGpuDrivenBonePaletteSources()
-    {
-        if (_gpuDrivenSkinPaletteBuffer is null || _gpuDrivenPreviousSkinPaletteBuffer is null)
-            return;
-
-        lock (_registrationTransitionSync)
-        {
-            for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
-            {
-                GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-                if (binding.Request is not { } captured
-                    || !_registeredComponents.TryGetValue(binding.Component, out GPUPhysicsChainRequest? current)
-                    || !ReferenceEquals(captured, current))
-                    continue;
-                uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
-                if (!binding.Renderer.SetGpuDrivenSkinPaletteSource(
-                    binding.Component,
-                    _gpuDrivenSkinPaletteBuffer!,
-                    _gpuDrivenPreviousSkinPaletteBuffer,
-                    _gpuDrivenPaletteSliceBases[bindingIndex],
-                    elementCount,
-                    binding.RendererBoneBufferGeneration,
-                    binding.DrivesCompleteBonePalette,
-                    _publishedOutputPageIndex < 0
-                        || !_outputPages[_publishedOutputPageIndex].PaletteHistoryResetRenderers.Contains(binding.Renderer)))
-                    XREngine.Debug.LogWarning("A physics-chain palette binding used an old renderer bone set.");
-            }
-        }
     }
 
     private static unsafe void CopyMatrixRange(XRDataBuffer? source, List<Matrix4x4> destination, uint baseElement, uint elementCount)
@@ -2569,8 +2450,6 @@ public sealed partial class GPUPhysicsChainDispatcher
                                 RollbackTransformCatalogGroup();
                                 for (int requestIndex = 0; requestIndex < _dispatchGroup.Count; ++requestIndex)
                                     _dispatchGroup[requestIndex].InvalidateUploadedInputs();
-                                _dynamicHeaderResourceGeneration = -1;
-                                _activeWorkResourceGeneration = -1;
                             }
                         }
                     }
@@ -2653,6 +2532,8 @@ public sealed partial class GPUPhysicsChainDispatcher
             stageStart = Stopwatch.GetTimestamp();
             if (!PublishBatchedGpuDrivenBoneMatrices(backend, _outputPublicationRequests))
                 return RecordDispatchFailure("BatchedPalettePublication");
+            if (!RefreshPaletteLayout())
+                return RecordDispatchFailure("PaletteLayout");
             if (!TryCompletePass(backend, BonePaletteCompletionPass))
                 return RecordDispatchFailure("BonePaletteCompletionBarrier");
             AddStageTime(DispatcherStage.PaletteMatrices, stageStart);
@@ -2791,10 +2672,6 @@ public sealed partial class GPUPhysicsChainDispatcher
         _transformInputCatalog.Clear();
         _instanceMetadata.Clear();
         _treeWorkItems.Clear();
-        _dynamicHeaderLayout.Clear();
-        _dynamicHeaderResourceGeneration = -1;
-        _activeWorkLayout.Clear();
-        _activeWorkResourceGeneration = -1;
         _gpuDrivenPaletteBindings.Clear();
         _gpuDrivenBoneMappings.Clear();
         _gpuDrivenSkinPalette.Clear();
@@ -3643,10 +3520,6 @@ public sealed partial class GPUPhysicsChainDispatcher
         _colliderArenaUploadedHighWater = 0;
         _arenaLayoutResetRequested = 0;
         _arenaResourceGeneration = 0;
-        _dynamicHeaderLayout.Clear();
-        _dynamicHeaderResourceGeneration = -1;
-        _activeWorkLayout.Clear();
-        _activeWorkResourceGeneration = -1;
         _mainPassBindings = default;
         _mainPassBindingsValid = false;
         _gpuDrivenBonePaletteSignature = int.MinValue;
@@ -3776,21 +3649,6 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
     private void ApplyAcceptedInput()
     {
         PhysicsChainRenderInputPacket input = AcceptedInput;
-        bool headerChanged = !DynamicHeaderInitialized ||
-            DeltaTime != input.DeltaTime || ObjectScale != input.ObjectScale || Weight != input.Weight ||
-            Force != input.Force || Gravity != input.Gravity || ObjectMove != input.ObjectMove ||
-            FreezeAxis != input.FreezeAxis || LoopCount != input.LoopCount || TimeVar != input.TimeVar ||
-            Colliders.Count != input.Colliders.Length || Trees.Count != input.Trees.Length;
-        if (headerChanged)
-            ++DynamicHeaderVersion;
-
-        bool schedulingChanged = !SchedulingMetadataInitialized ||
-            Enabled != input.Enabled || Relevant != input.Relevant || SleepState != input.SleepState ||
-            QualityTier != input.QualityTier || Cadence != input.Cadence || Phase != input.Phase ||
-            FeatureMask != input.FeatureMask || LoopCount != input.LoopCount;
-        if (schedulingChanged)
-            ++SchedulingMetadataVersion;
-
         Particles = input.Particles;
         ParticleStaticData = input.ParticleStaticData;
         Trees = input.Trees;
@@ -3804,6 +3662,7 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
         ObjectMove = input.ObjectMove;
         FreezeAxis = input.FreezeAxis;
         LoopCount = input.LoopCount;
+        Solver = input.Solver;
         TimeVar = input.TimeVar;
         UpdateMode = input.UpdateMode;
         DispatchIsolationKey = input.DispatchIsolationKey;
@@ -3825,8 +3684,6 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
         Cadence = input.Cadence;
         Phase = input.Phase;
         FeatureMask = input.FeatureMask;
-        SchedulingMetadataInitialized = true;
-        DynamicHeaderInitialized = true;
     }
 
     // These views point only to the accepted bank during a render dispatch.
@@ -3847,6 +3704,7 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
     public Vector3 ObjectMove;
     public int FreezeAxis;
     public int LoopCount;
+    public PhysicsChainGpuSolverSettings Solver = PhysicsChainGpuSolverSettings.Default;
     public float TimeVar;
     public int UpdateMode;
     public int DispatchIsolationKey;
@@ -3868,7 +3726,6 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
     public uint Cadence = 1u;
     public uint Phase;
     public uint FeatureMask;
-    public bool SchedulingMetadataInitialized;
 
     // Stable grow-only arena slices and their uploaded versions.
     public int ParticleOffset = -1;
@@ -3886,17 +3743,12 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
     // The collider rows that the dispatcher collider catalog holds for this request.
     internal PhysicsChainColliderCatalogStamp ColliderCatalogStamp;
     public bool PendingArenaAllocationChange;
-    public bool DynamicHeaderInitialized;
-    public int DynamicHeaderVersion;
-    public int UploadedDynamicHeaderVersion = int.MinValue;
-    public int SchedulingMetadataVersion;
-    public int UploadedSchedulingMetadataVersion = int.MinValue;
-    public int UploadedTreeWorkStaticVersion = int.MinValue;
-    public int UploadedTreeWorkArenaGeneration = int.MinValue;
-    public int UploadedTreeWorkCount = int.MinValue;
-    public int UploadedHeaderTreeVersion = int.MinValue;
-    public int UploadedHeaderArenaGeneration = int.MinValue;
-    public int UploadedHeaderColliderCount = int.MinValue;
+
+    // The kernel bucket of each tree, valid for the static data and tree versions below.
+    private PhysicsChainKernelBucket[] _kernelBuckets = [];
+    private int _kernelBucketStaticVersion = int.MinValue;
+    private int _kernelBucketTreeVersion = int.MinValue;
+    private int _kernelBucketParticleCount = -1;
 
     /// <summary>
     /// Preserves resident suballocation ownership when snapshot deserialization replaces a
@@ -3928,14 +3780,46 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
         UploadedTransformDataVersion = int.MinValue;
         UploadedColliderDataVersion = int.MinValue;
         ColliderCatalogStamp = default;
-        UploadedDynamicHeaderVersion = int.MinValue;
-        UploadedSchedulingMetadataVersion = int.MinValue;
-        UploadedTreeWorkStaticVersion = int.MinValue;
-        UploadedTreeWorkArenaGeneration = int.MinValue;
-        UploadedTreeWorkCount = int.MinValue;
-        UploadedHeaderTreeVersion = int.MinValue;
-        UploadedHeaderArenaGeneration = int.MinValue;
-        UploadedHeaderColliderCount = int.MinValue;
+    }
+
+    /// <summary>
+    /// Gets the accepted trees as a span. The accepted input stores arrays, so this reads no
+    /// element through the list interface.
+    /// </summary>
+    internal ReadOnlySpan<GPUPhysicsChainDispatcher.GPUParticleTreeData> GetTreeSpan()
+        => Trees is GPUPhysicsChainDispatcher.GPUParticleTreeData[] array ? array : CopyTrees();
+
+    private GPUPhysicsChainDispatcher.GPUParticleTreeData[] CopyTrees()
+    {
+        var copy = new GPUPhysicsChainDispatcher.GPUParticleTreeData[Trees.Count];
+        for (int index = 0; index < copy.Length; ++index)
+            copy[index] = Trees[index];
+        return copy;
+    }
+
+    /// <summary>
+    /// Gets the kernel bucket of each tree. The buckets depend only on the static particle data
+    /// and the tree layout, so they are classified again only when the static data version, the
+    /// tree version, or a count changes.
+    /// </summary>
+    internal ReadOnlySpan<PhysicsChainKernelBucket> GetKernelBuckets()
+    {
+        int treeCount = Trees.Count;
+        if (_kernelBuckets.Length == treeCount &&
+            _kernelBucketStaticVersion == StaticDataVersion &&
+            _kernelBucketTreeVersion == TreeDataVersion &&
+            _kernelBucketParticleCount == ParticleStaticData.Count)
+            return _kernelBuckets;
+
+        if (_kernelBuckets.Length != treeCount)
+            _kernelBuckets = new PhysicsChainKernelBucket[treeCount];
+        ReadOnlySpan<GPUPhysicsChainDispatcher.GPUParticleTreeData> trees = GetTreeSpan();
+        for (int treeIndex = 0; treeIndex < trees.Length; ++treeIndex)
+            _kernelBuckets[treeIndex] = GPUPhysicsChainDispatcher.ClassifyKernelBucket(ParticleStaticData, trees[treeIndex]);
+        _kernelBucketStaticVersion = StaticDataVersion;
+        _kernelBucketTreeVersion = TreeDataVersion;
+        _kernelBucketParticleCount = ParticleStaticData.Count;
+        return _kernelBuckets;
     }
 
     internal Span<GPUPhysicsChainDispatcher.GPUParticleStaticData> GetAdjustedStaticData()

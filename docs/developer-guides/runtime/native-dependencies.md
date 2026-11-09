@@ -74,6 +74,21 @@ pwsh Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
 
 The script skips the build when the output already holds the pinned version. Pass `-ForceBuild` to build again.
 
+### bc7enc_rdo (texture block compression)
+
+Used by `XREngine.Runtime.Imaging.Bc7Enc` to encode cooked textures as BC7 (and BC4 and BC5) at cook time. The repository and commit are pinned in `Tools/Dependencies/Bc7Enc.lock.json`. The build compiles only `bc7enc.cpp` and `rgbcx.cpp`, which are MIT or Unlicense, together with the small C shim in `Tools/Dependencies/Bc7Enc/`. It does not compile `bc7e.ispc` (Apache 2.0) or LodePNG.
+
+- Script: `Tools/Dependencies/Build-Bc7Enc.ps1 -Rid win-x64` (also in the `Deps` group of `ExecTool.bat`, so `ExecTool --bootstrap` runs it)
+- Requirements: `git`, `cmake`, and a C++ compiler toolchain
+- Output location: `Build/Dependencies/Bc7Enc/<rid>/` (`xre_bcn.dll` or `libxre_bcn.so`, `xre_bcn.version`, and the upstream license; ignored by Git, never committed)
+- Build behavior: the build does not stop when the library is missing. The texture cook then stores uncompressed RGBA8 and logs the reason.
+
+```powershell
+pwsh Tools/Dependencies/Build-Bc7Enc.ps1 -Rid win-x64
+```
+
+The script skips the build when the output already holds the pinned commit and the current shim. Pass `-ForceBuild` to build again.
+
 ### FastGltfBridge
 
 Used for the native `.gltf` and `.glb` import path.

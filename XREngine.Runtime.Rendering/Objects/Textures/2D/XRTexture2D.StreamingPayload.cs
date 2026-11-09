@@ -42,7 +42,7 @@ public partial class XRTexture2D
 
     internal static byte[] CreateTextureStreamingPayload(string sourceFilePath, RuntimeImage image)
     {
-        XRTexture2D texture = CreateTextureStreamingCacheTexture(sourceFilePath, image);
+        XRTexture2D texture = CreateTextureStreamingCacheTexture(sourceFilePath, image, usage: null);
         return CreateTextureStreamingPayloadFromTexture(texture);
     }
 
@@ -141,12 +141,14 @@ public partial class XRTexture2D
         }
     }
 
+    /// <param name="usage">The texture role for the block format choice, or null when it is unknown.</param>
     internal static bool TryCreateTextureStreamingCacheAsset(
         XRTexture2D sourceTexture,
         string sourceFilePath,
         string cacheFilePath,
         DateTime sourceLastWriteTimeUtc,
-        out XRTexture2D texture)
+        out XRTexture2D texture,
+        ETextureImportUsage? usage = null)
     {
         RuntimeTextureSourceAccess.RequireHostFiles();
         texture = new XRTexture2D();
@@ -158,6 +160,7 @@ public partial class XRTexture2D
                 sourceFilePath,
                 cacheFilePath,
                 sourceLastWriteTimeUtc,
+                usage,
                 out texture))
         {
             return true;
@@ -167,14 +170,17 @@ public partial class XRTexture2D
             sourceFilePath,
             cacheFilePath,
             sourceLastWriteTimeUtc,
-            out texture);
+            out texture,
+            usage);
     }
 
+    /// <param name="usage">The texture role for the block format choice, or null when it is unknown.</param>
     internal static bool TryCreateTextureStreamingCacheAsset(
         string sourceFilePath,
         string cacheFilePath,
         DateTime sourceLastWriteTimeUtc,
-        out XRTexture2D texture)
+        out XRTexture2D texture,
+        ETextureImportUsage? usage = null)
     {
         RuntimeTextureSourceAccess.RequireHostFiles();
         texture = new XRTexture2D();
@@ -186,7 +192,7 @@ public partial class XRTexture2D
             // The encoded source is read through an owner so the file bytes never become a managed array.
             using XREngine.Core.Files.CookedPayloadOwner fileBytes = RuntimeRenderingHostServices.Assets.ReadAllBytesOwned(sourceFilePath);
             using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileBytes.ReadOnlyMemory);
-            texture = CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(sourceImage));
+            texture = CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(sourceImage), usage);
             texture.FilePath = cacheFilePath;
             texture.OriginalPath = sourceFilePath;
             texture.OriginalLastWriteTimeUtc = sourceLastWriteTimeUtc;
@@ -199,11 +205,15 @@ public partial class XRTexture2D
         }
     }
 
-    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, RuntimeImage image)
-        => CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(image));
+    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, RuntimeImage image, ETextureImportUsage? usage)
+        => CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(image), usage);
 
-    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, Mipmap2D[] mipmaps)
-        => new()
+    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, Mipmap2D[] sourceMipmaps, ETextureImportUsage? usage)
+    {
+        // The cook converts the RGBA8 chain to block-compressed mips when the effective
+        // cook compression asks for it; the cache key records that mode.
+        Mipmap2D[] mipmaps = TextureCookBlockCompressor.CompressForCache(sourceFilePath, sourceMipmaps, usage);
+        return new()
         {
             Name = Path.GetFileNameWithoutExtension(sourceFilePath),
             FilePath = sourceFilePath,
@@ -219,12 +229,14 @@ public partial class XRTexture2D
                 : ESizedInternalFormat.Rgba8,
             Mipmaps = mipmaps
         };
+    }
 
     private static bool TryCreateTextureStreamingCacheAssetGpu(
         XRTexture2D sourceTexture,
         string sourceFilePath,
         string cacheFilePath,
         DateTime sourceLastWriteTimeUtc,
+        ETextureImportUsage? usage,
         out XRTexture2D texture)
     {
         texture = new XRTexture2D();
@@ -294,7 +306,7 @@ public partial class XRTexture2D
             return false;
         }
 
-        texture = CreateTextureStreamingCacheTexture(sourceFilePath, gpuMipmaps);
+        texture = CreateTextureStreamingCacheTexture(sourceFilePath, gpuMipmaps, usage);
         texture.FilePath = cacheFilePath;
         texture.OriginalPath = sourceFilePath;
         texture.OriginalLastWriteTimeUtc = sourceLastWriteTimeUtc;

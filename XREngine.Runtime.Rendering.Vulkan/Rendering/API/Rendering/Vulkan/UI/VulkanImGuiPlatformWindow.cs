@@ -27,6 +27,20 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
         private bool _disposeStarted;
         private bool _disposed;
 
+        // DXGI flip-model output. The presenter lives as long as the surface, because a
+        // window can have only one flip-model swapchain; each generation has its own ring.
+        private VulkanDxgiPresenter? _dxgiPresenter;
+        private VulkanDxgiImageRing? _dxgiRing;
+        private ulong _dxgiGeneration;
+        private bool _dxgiUnavailable;
+
+        // Set when a teardown step failed. The objects that were not released stay
+        // retained: the window never retries them and never creates new output.
+        private bool _outputFaulted;
+
+        /// <summary>Auxiliary log for detached-window output faults, written in every build configuration.</summary>
+        private const string OutputFaultLogFileName = "imgui-platform-windows.log";
+
         public VulkanImGuiPlatformWindow(
             VulkanImGuiMultiViewportController owner,
             IVulkanImGuiOutputHost outputHost,
@@ -55,7 +69,10 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 EInteractiveWindowResizeStrategy.Default, RuntimeWindowPurpose.EditorViewport,
                 position, size, false, false,
                 (viewport.Flags & ImGuiViewportFlags.TopMost) != 0,
-                false, false, 24, 24, 8, 4, 6, false, false, false);
+                false, false, 24, 24, 8, 4, 6, false, false, false)
+            {
+                EventPumpParentGeneration = outputHost.MainWindow.LifetimeGeneration,
+            };
             IRuntimeWindowBackend? created = null;
             try
             {
@@ -113,8 +130,6 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
         public void ProcessEvents(ImGuiViewportPtr viewport)
         {
             UpdateViewportFlags(viewport.Flags);
-            if (Window.IsClosing)
-                viewport.PlatformRequestClose = true;
 
             IVector2 position = Window.ClientScreenPosition;
             if (position != _lastPosition)
@@ -147,7 +162,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         public void CreateRendererResources()
         {
-            if (_rendererReady || _disposed)
+            if (_rendererReady || _disposed || _outputFaulted)
                 return;
 
             _outputHost.ThrowIfDeviceOperationNotAdmitted("ImGuiViewport.CreateRendererResources");
@@ -176,6 +191,9 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
             try
             {
+                if (_outputFaulted)
+                    return;
+
                 if (!_rendererReady)
                     CreateRendererResources();
 
@@ -236,13 +254,22 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
             _disposed = true;
             _drawBuffers.RetireAll();
-            try
+            if (_outputFaulted)
             {
-                Window.Dispose();
-            }
-            catch
-            {
+                // A retained swapchain still refers to the native window, so the
+                // window must stay alive with it.
                 Window.RetainAbandonedResources();
+            }
+            else
+            {
+                try
+                {
+                    Window.Dispose();
+                }
+                catch
+                {
+                    Window.RetainAbandonedResources();
+                }
             }
 
             if (_handle.IsAllocated)
@@ -318,7 +345,16 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         private void ReleasePlatformSurface()
         {
-            _outputHost.DestroyPlatformSurface(ref _surface);
+            ReleaseDxgiPresenter();
+            if (_outputFaulted)
+            {
+                // A swapchain that could not be released may still use the surface.
+                _surface = default;
+            }
+            else
+            {
+                _outputHost.DestroyPlatformSurface(ref _surface);
+            }
             _rendererReady = false;
             _resizeRequested = false;
             _drawData.Clear();
@@ -331,15 +367,20 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         private bool TryCreateSwapchainResources(SwapchainKHR oldSwapchain = default)
         {
+            if (_outputFaulted)
+                return false;
+
             if (!_outputHost.TryAdmitDeviceOperation("ImGuiViewport.CreateSwapchainResources"))
                 return false;
 
-            if (!_outputHost.TryCreatePlatformSwapchain(
+            Vector2D<int> framebufferSize = new(Window.Surface.FramebufferWidth, Window.Surface.FramebufferHeight);
+            bool dxgi = TryCreateDxgiGeneration(framebufferSize, out VulkanImGuiPlatformSwapchainGeneration generation);
+            if (!dxgi && !_outputHost.TryCreatePlatformSwapchain(
                     _surface,
-                    new Vector2D<int>(Window.Surface.FramebufferWidth, Window.Surface.FramebufferHeight),
+                    framebufferSize,
                     ViewportId,
                     oldSwapchain,
-                    out VulkanImGuiPlatformSwapchainGeneration generation))
+                    out generation))
             {
                 return false;
             }
@@ -351,7 +392,9 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _images = generation.Images;
             _imageViews = generation.ImageViews;
             _imagePresented = new bool[_images.Length];
-            _presentCompletion = _outputHost.CreatePlatformPresentCompletion(_images.Length);
+            _presentCompletion = dxgi
+                ? _outputHost.CreatePlatformDxgiPresentCompletion(_images.Length)
+                : _outputHost.CreatePlatformPresentCompletion(_images.Length);
 
             VulkanImGuiPlatformWindowCommandResources commandResources =
                 _outputHost.CreatePlatformCommandResources(
@@ -369,6 +412,93 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _frameSlot = 0;
             _resizeRequested = false;
             return true;
+        }
+
+        /// <summary>
+        /// Creates the generation on the DXGI flip-model path while the desktop window
+        /// uses that path. Returns false when the native swapchain must be used. A failure
+        /// logs one warning, and the window keeps the native swapchain after that.
+        /// </summary>
+        private bool TryCreateDxgiGeneration(
+            Vector2D<int> framebufferSize,
+            out VulkanImGuiPlatformSwapchainGeneration generation)
+        {
+            generation = default;
+            if (_dxgiUnavailable || framebufferSize.X <= 0 || framebufferSize.Y <= 0)
+                return false;
+
+            VulkanDxgiDevice? sharedDevice = _outputHost.PlatformDxgiDevice;
+            if (sharedDevice is null)
+            {
+                // The desktop presents natively. A native swapchain can own this
+                // window only after its DXGI swapchain is gone.
+                ReleaseDxgiPresenter();
+                return false;
+            }
+
+            if (_dxgiPresenter is { Faulted: true } faulted)
+            {
+                FailDxgi($"the DXGI presenter failed earlier: {faulted.FaultReason}");
+                return false;
+            }
+
+            if (_dxgiPresenter is null &&
+                !_outputHost.TryCreatePlatformDxgiPresenter(
+                    sharedDevice,
+                    Window.OperatingSystemWindowHandle,
+                    out _dxgiPresenter,
+                    out string createFailure))
+            {
+                FailDxgi(createFailure);
+                return false;
+            }
+
+            if (!_outputHost.TryCreatePlatformDxgiGeneration(
+                    _dxgiPresenter!,
+                    framebufferSize,
+                    ViewportId,
+                    ++_dxgiGeneration,
+                    out VulkanDxgiImageRing? ring,
+                    out generation,
+                    out string failure))
+            {
+                FailDxgi(failure);
+                return false;
+            }
+
+            _dxgiRing = ring;
+            Debug.WriteAuxiliaryLog(
+                VulkanDxgiPresenter.LogFileName,
+                $"imgui viewport 0x{ViewportId:X8} present path=DxgiFlipModel format={ring!.SurfaceFormat.Name} " +
+                $"extent={ring.Extent.Width}x{ring.Extent.Height} images={ring.Images.Length}");
+            return true;
+        }
+
+        private void FailDxgi(string reason)
+        {
+            _dxgiUnavailable = true;
+            ReleaseDxgiPresenter();
+            Debug.VulkanWarning(
+                "[Vulkan][DxgiPresent] The detached ImGui window 0x{0:X8} cannot use the DXGI flip-model present path; it uses its native Vulkan swapchain. Reason={1}",
+                ViewportId,
+                reason);
+            Debug.WriteAuxiliaryLog(
+                VulkanDxgiPresenter.LogFileName,
+                $"imgui viewport 0x{ViewportId:X8} fallback to VulkanSwapchain: {reason}");
+        }
+
+        /// <summary>
+        /// Releases the DXGI presenter. The ring must already be disposed, because ring
+        /// disposal waits on the presenter's copy fence.
+        /// </summary>
+        private void ReleaseDxgiPresenter()
+        {
+            VulkanDxgiPresenter? presenter = _dxgiPresenter;
+            if (presenter is null)
+                return;
+
+            _dxgiPresenter = null;
+            presenter.Dispose();
         }
 
         private PresentModeKHR ChoosePresentMode()
@@ -474,8 +604,11 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 _resizeRequested = true;
                 ThrowIfFailed(resetAcquireFenceResult, "reset detached-window acquire fence");
             }
-            Result acquireResult = _outputHost.AcquirePlatformImage(
-                _swapchain, _imageAvailableSemaphores[frameSlot], _acquireFences[frameSlot], out imageIndex);
+            Result acquireResult = _dxgiRing is { } acquireRing
+                ? _outputHost.AcquirePlatformDxgiImage(
+                    acquireRing, _imageAvailableSemaphores[frameSlot], _acquireFences[frameSlot], out imageIndex)
+                : _outputHost.AcquirePlatformImage(
+                    _swapchain, _imageAvailableSemaphores[frameSlot], _acquireFences[frameSlot], out imageIndex);
             if (acquireResult == Result.ErrorOutOfDateKhr)
             {
                 presentCompletion.Cancel(in reservation);
@@ -565,7 +698,9 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 };
                 SwapchainKHR swapchain = _swapchain;
                 presentInfo.PSwapchains = &swapchain;
-                Result presentResult = _outputHost.PresentPlatformViewport(ref presentInfo, in reservation);
+                Result presentResult = _dxgiRing is { } presentRing
+                    ? _outputHost.PresentPlatformDxgiViewport(presentRing, imageIndex, renderFinished, in reservation)
+                    : _outputHost.PresentPlatformViewport(ref presentInfo, in reservation);
                 if (presentResult is Result.ErrorOutOfDateKhr or Result.SuboptimalKhr)
                     _resizeRequested = true;
                 else if (presentResult != Result.Success)
@@ -632,28 +767,81 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             return _presentCompletion is null || _presentCompletion.PollRetirement();
         }
 
+        /// <summary>
+        /// Releases the present completion, the command resources, the swapchain (or the
+        /// DXGI ring), and their views, in that order. The method is idempotent: it takes
+        /// every handle out of the fields before it releases anything, so a later call
+        /// never releases the same object again. When a step fails, the method stops,
+        /// keeps the objects that remain, marks the window output as faulted, and logs once.
+        /// </summary>
         private void DestroySwapchainResources(bool deviceLost = false)
         {
-            _presentCompletion?.Destroy(deviceLost);
+            VulkanWsiPresentCompletion? presentCompletion = _presentCompletion;
+            VulkanImGuiPlatformWindowCommandResources commandResources = new(
+                _commandPool,
+                _commandBuffers,
+                _frameFences,
+                _frameFenceSubmitted,
+                _acquireFences,
+                _acquireFenceSubmitted,
+                _imageAvailableSemaphores,
+                _renderFinishedSemaphores);
+            bool hasCommandResources = _commandPool.Handle != 0 || _commandBuffers.Length != 0 ||
+                _frameFences.Length != 0 || _acquireFences.Length != 0 ||
+                _imageAvailableSemaphores.Length != 0 || _renderFinishedSemaphores.Length != 0;
+            SwapchainKHR swapchain = _swapchain;
+            Image[] images = _images;
+            ImageView[] imageViews = _imageViews;
+            VulkanDxgiImageRing? ring = _dxgiRing;
+            ClearSwapchainFields();
+
+            string step = "present completion";
+            try
+            {
+                presentCompletion?.Destroy(deviceLost);
+
+                step = "command resources";
+                if (hasCommandResources)
+                    _outputHost.DestroyPlatformCommandResources(commandResources, ViewportId);
+
+                step = ring is null ? "swapchain" : "DXGI image ring";
+                if (swapchain.Handle != 0 || images.Length != 0 || imageViews.Length != 0)
+                    _outputHost.DestroyPlatformSwapchain(swapchain, images, imageViews, ViewportId);
+
+                // Retirement proved that Vulkan no longer uses the ring images; ring
+                // disposal also waits for the last Direct3D copy.
+                ring?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                MarkOutputFaulted(step, ex);
+            }
+        }
+
+        /// <summary>
+        /// Stops all output work for this window after a failed teardown step. The objects
+        /// that were not released stay retained, because a second release attempt could
+        /// act on objects that are already gone or still in use.
+        /// </summary>
+        private void MarkOutputFaulted(string step, Exception ex)
+        {
+            if (_outputFaulted)
+                return;
+
+            _outputFaulted = true;
+            _rendererReady = false;
+            _resizeRequested = false;
+            string message =
+                $"Detached ImGui window 0x{ViewportId:X8} failed to release its {step}; the window stops " +
+                $"rendering and keeps the remaining output objects. {ex.GetType().Name}: {ex.Message}";
+            Debug.RenderingWarning("[Vulkan.ImGuiPlatformWindow] {0}", message);
+            Debug.WriteAuxiliaryLog(OutputFaultLogFileName, message);
+        }
+
+        private void ClearSwapchainFields()
+        {
             _presentCompletion = null;
-            _outputHost.DestroyPlatformCommandResources(
-                new VulkanImGuiPlatformWindowCommandResources(
-                    _commandPool,
-                    _commandBuffers,
-                    _frameFences,
-                    _frameFenceSubmitted,
-                    _acquireFences,
-                    _acquireFenceSubmitted,
-                    _imageAvailableSemaphores,
-                    _renderFinishedSemaphores),
-                ViewportId);
-
-            _outputHost.DestroyPlatformSwapchain(
-                _swapchain,
-                _images,
-                _imageViews,
-                ViewportId);
-
+            _dxgiRing = null;
             _swapchain = default;
             _format = default;
             _colorSpace = default;
@@ -676,8 +864,8 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
         {
             if (_disposeStarted)
                 return;
-            WindowInputSnapshot input = Window.ConsumeUiInput(_uiEvents);
-            _owner.ReplayViewportInput(ViewportId, Window.ClientScreenPosition, input,
+            Window.ConsumeUiInput(_uiEvents);
+            _owner.ReplayViewportInput(ViewportId, Window.ClientScreenPosition,
                 CollectionsMarshal.AsSpan(_uiEvents));
         }
 

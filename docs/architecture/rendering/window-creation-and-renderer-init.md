@@ -215,7 +215,8 @@ Key points:
 1. **`GetWindowOptions()`** translates `ERenderLibrary` into `RuntimeGraphicsApiKind` and packages neutral `RuntimeWindowCreateOptions`; the desktop leaf translates that request into Silk.NET options.
 2. **Explicit Vulkan fallback**: If `XRWindow` construction fails in Vulkan mode, `CreateWindowInstance` retries with OpenGL 4.6 only when `RenderBackendFallbackPolicy` permits fallback. The split window-pump path requires Vulkan and does not retry. Required Vulkan startup fails with a visible diagnostic.
 3. **HDR surface**: For OpenGL, a 64-bit preferred bit depth is requested when HDR is enabled. Vulkan handles HDR through swapchain format negotiation instead.
-4. After the window is created, viewports are created for local players and the target world is assigned.
+4. **Desktop present path**: `FinishWindowCreation` sets `XRWindow.DesktopPresentPath` from `windowSettings.DesktopPresentPath ?? Rendering.Settings.DesktopPresentPath`. Only the Vulkan renderer on Windows reads it. See [Desktop Present Path (DXGI Flip Model)](vulkan-renderer.md#desktop-present-path-dxgi-flip-model).
+5. After the window is created, viewports are created for local players and the target world is assigned.
 
 ### `GetWindowOptions()` Details
 

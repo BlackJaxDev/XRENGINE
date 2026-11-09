@@ -12,7 +12,9 @@ public sealed partial class GPUPhysicsChainDispatcher
     /// <summary>
     /// Seeds non-chain bones for partial renderer palettes directly on the GPU.
     /// Chain-owned mappings then overwrite their elements in the single global
-    /// palette dispatch. Complete palettes need no seed copy.
+    /// palette dispatch. Complete palettes need no seed copy. Each slice gets one copy, and
+    /// its renderer uploads its CPU-written rows first, because a renderer with an external
+    /// palette source does not upload them for itself.
     /// </summary>
     private bool SeedPartialGpuDrivenBonePalettes(IPhysicsChainComputeBackend backend)
     {
@@ -20,12 +22,17 @@ public sealed partial class GPUPhysicsChainDispatcher
             return false;
 
         bool copiedAny = false;
+        _gpuDrivenPaletteSlicesSeeded.Clear();
         for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
         {
             GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
             uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
             if (!binding.DrivesCompleteBonePalette)
             {
+                if (!_gpuDrivenPaletteSlicesSeeded.Add(_gpuDrivenPaletteSliceBases[bindingIndex]))
+                    continue;
+
+                binding.Renderer.PushBoneMatricesToGPU();
                 XRMeshRenderer.BoneResourceSnapshot rendererResources =
                     binding.Renderer.CaptureBoneResources();
                 XRDataBuffer? source = rendererResources.SkinPalette;

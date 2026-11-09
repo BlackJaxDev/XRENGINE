@@ -15,6 +15,37 @@ internal sealed partial class VulkanCommandRuntime
     private static readonly string[] NativeBackgroundGpuProfilerPath = ["Advanced", "Shading", "Background"];
     private static readonly string[] NativeOpaqueGpuProfilerPath = ["Advanced", "Shading", "NativeOpaque"];
     private static readonly string[] NativeOpaqueRepairGpuProfilerPath = ["Advanced", "Shading", "GpuOverflowRepair"];
+    private static readonly string[] NativeOpaqueUberGpuProfilerPath = ["Advanced", "Shading", "NativeOpaqueUber"];
+    // Matches XR_ADV_SHADING_UBER_FALLBACK in ShadeNativeOpaqueEvaluator.glslinc.
+    private const uint NativeUberFallbackShadingFlag = 1u << 29;
+    // Matches XR_ADV_SHADING_DECAL_BUFFER in ShadeNativeOpaqueEvaluator.glslinc.
+    private const uint NativeDecalBufferShadingFlag = 1u << 16;
+
+    /// <summary>
+    /// Records one indirect dispatch for each dense shading kernel in <paramref name="kernels"/>.
+    /// The other family's kernels are not dispatched.
+    /// </summary>
+    private void RecordNativeKernelDispatches(CommandBuffer commandBuffer, in VulkanAdvancedNativeComputeClosure closure,
+        in VulkanAdvancedComputePipeline shade, ref VulkanAdvancedNativeShadingPushConstants push, ulong parameterAddress,
+        UInt128 kernels)
+    {
+        for (uint kernel = 0; kernel < AdvancedRenderPipeline.DefaultMaxShadingKernels; ++kernel)
+        {
+            if (!VulkanAdvancedNativeShadingKernelFamilies.Contains(kernels, kernel))
+                continue;
+            push = push with { KernelIndex = kernel };
+            PushNativeConstants(commandBuffer, shade, in push, parameterAddress);
+            Api.CmdDispatchIndirect(commandBuffer, closure.DispatchArguments.NativeBuffer,
+                closure.DispatchArguments.NativeOffset + kernel * 16UL);
+        }
+    }
+    // Nest under the Advanced root: a separate root scope measured from the start of the frame.
+    private static readonly string[] RvcShadeletTelemetryGpuProfilerPath = ["Advanced", "Rvc", "ShadeletTelemetry"];
+    private static readonly string[] FoveatedQuadFillGpuProfilerPath = ["Advanced", "Rvc", "FoveatedQuadFill"];
+    // Matches XR_ADV_SHADING_FOVEATED_QUADS in FoveatedQuadShading.glslinc.
+    private const uint FoveatedQuadShadingFlag = 1u << 28;
+    private const string RvcTelemetryMissingClosureReason = "The native closure has no RVC telemetry counters or whole-array views.";
+    private const string RvcTelemetryMissingKernelReason = "The RVC telemetry kernel is not current.";
     private int RecordAdvancedNativeComputePayload(
         scoped ref PrimaryCommandBufferRecordingState state,
         in VulkanAdvancedVisibilityOperationPayload payload,
@@ -42,8 +73,12 @@ internal sealed partial class VulkanCommandRuntime
             (payload.Request.EnableLightProbesAndIbl ? 8u : 0u) |
             (payload.Request.RequiresMaterialSurfaceExports ? 16u : 0u) |
             (payload.Request.SuppressBaselineDiffuse ? 32u : 0u) |
+            (payload.Request.AmbientOcclusionMultiBounce ? 64u : 0u) |
+            (payload.Request.AmbientOcclusionSpecularUsesVisibility ? 128u : 0u) |
             (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8) |
-            ((Math.Min(closure.MsaaSampleCount, 16u) & 0xFu) << 24), depthSlices,
+            ((Math.Min(closure.MsaaSampleCount, 16u) & 0xFu) << 24) |
+            (payload.Request.RvcFoveatedQuadShading && !closure.UsesMultisampleVisibility ? FoveatedQuadShadingFlag : 0u) |
+            (payload.Request.DecalBufferEnabled && closure.HasDecalBuffer ? NativeDecalBufferShadingFlag : 0u), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
             checked((uint)(closure.KernelTiles.NativeSize / 16u)),
@@ -103,6 +138,7 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         TransitionNativeInput(state.CommandBuffer, closure.AmbientOcclusion, closure.ViewIndex);
+        TransitionNativeDecalBufferInputs(state.CommandBuffer, in closure);
         TransitionNativeOutput(state.CommandBuffer, closure.Hdr, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);
@@ -147,14 +183,32 @@ internal sealed partial class VulkanCommandRuntime
             TransitionNativeSharedInput(state.CommandBuffer, closure.Metadata, closure.ViewIndex);
             TransitionNativeInput(state.CommandBuffer, closure.Depth, closure.ViewIndex);
             TransitionNativeInput(state.CommandBuffer, closure.AmbientOcclusion, closure.ViewIndex);
+            TransitionNativeDecalBufferInputs(state.CommandBuffer, in closure);
             TransitionNativeOutput(state.CommandBuffer, closure.Hdr, closure.ViewIndex);
             TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
             TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);
             TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
             TransitionNativeDdgiOutputs(state.CommandBuffer, in closure);
         }
+        // Native shading families. The standard kernel shades standard materials and,
+        // while the Uber kernel is not ready, Uber materials with a base-color fallback.
+        // The Uber kernel then shades only Uber materials in its own pass. Multisample
+        // shading resolves every sample of a pixel in one pass, so a scene with Uber
+        // materials uses the combined multisample kernel when it is ready.
+        VulkanAdvancedNativeShadingKernelFamilies families = payload.SceneState.KernelFamilies;
+        VulkanAdvancedComputePipeline uberShade = payload.NativeComputePipelines.ShadeUber;
+        VulkanAdvancedComputePipeline combinedMultisampleShade = payload.NativeComputePipelines.ShadeMultisampleCombined;
+        bool uberPass = !closure.UsesMultisampleVisibility && families.HasUber && uberShade.IsCurrent;
+        bool combinedMultisample = closure.UsesMultisampleVisibility && families.HasUber && combinedMultisampleShade.IsCurrent;
+        bool uberFallback = families.HasUber && !uberPass && !combinedMultisample;
+        if (uberFallback)
+            push = push with { Flags = push.Flags | NativeUberFallbackShadingFlag };
+        UInt128 standardKernels = families.Standard | (uberFallback ? families.Uber : UInt128.Zero);
+        // A publication without family masks keeps the full kernel range.
+        if ((families.Standard | families.Uber) == UInt128.Zero)
+            standardKernels = UInt128.MaxValue;
         VulkanAdvancedComputePipeline shade = closure.UsesMultisampleVisibility
-            ? payload.NativeComputePipelines.ShadeMultisample
+            ? combinedMultisample ? combinedMultisampleShade : payload.NativeComputePipelines.ShadeMultisample
             : payload.NativeComputePipelines.Shade;
         ulong parameterAddress = shade.UsesAddressRoot
             ? WriteNativeShadingAddressRoot(ref state, closure.ShadingAddressRoot, in push)
@@ -177,35 +231,109 @@ internal sealed partial class VulkanCommandRuntime
                 Api.CmdDispatch(state.CommandBuffer, tilesX, tilesY, 1u);
             }
             else
-            {
-                for (uint kernel = 0; kernel < AdvancedRenderPipeline.DefaultMaxShadingKernels; ++kernel)
-                {
-                    push = push with { KernelIndex = kernel };
-                    PushNativeConstants(state.CommandBuffer, shade, in push, parameterAddress);
-                    Api.CmdDispatchIndirect(state.CommandBuffer, closure.DispatchArguments.NativeBuffer,
-                        closure.DispatchArguments.NativeOffset + kernel * 16UL);
-                }
-            }
+                RecordNativeKernelDispatches(state.CommandBuffer, in closure, shade, ref push, parameterAddress, standardKernels);
             CmdEndLabel(state.CommandBuffer);
         }
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
-        push = push with { Flags = push.Flags | 1u };
+        VulkanAdvancedNativeShadingPushConstants repairPush = push with { Flags = push.Flags | 1u };
         if (!closure.UsesMultisampleVisibility)
         {
             RecordNativeDispatch(state.CommandBuffer, in payload, shade,
-                in push, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, parameterAddress);
+                in repairPush, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, parameterAddress);
             RecordNativeShadingRootUse(shade.UsesAddressRoot, checked((int)AdvancedRenderPipeline.DefaultMaxShadingKernels + 1));
         }
         else
             RecordNativeShadingRootUse(shade.UsesAddressRoot, 1);
+        if (uberPass)
+        {
+            // One compute-to-compute dependency orders the Uber pass after the standard
+            // pass. The two passes write disjoint pixels of the same images.
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
+            ulong uberParameterAddress = uberShade.UsesAddressRoot
+                ? WriteNativeShadingAddressRoot(ref state, closure.ShadingAddressRoot, in push)
+                : 0UL;
+            using (TryBeginVulkanGpuProfilerScope(state.CommandBuffer, NativeOpaqueUberGpuProfilerPath))
+            {
+                CmdBeginLabel(state.CommandBuffer, "Advanced.NativeOpaque.Uber");
+                BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute, uberShade.Pipeline);
+                BindAdvancedVisibilityDescriptorSets(state.CommandBuffer, PipelineBindPoint.Compute,
+                    uberShade.Program.PipelineLayout, in payload, payload.NativeComputeDescriptorSet);
+                RecordNativeKernelDispatches(state.CommandBuffer, in closure, uberShade, ref push, uberParameterAddress, families.Uber);
+                CmdEndLabel(state.CommandBuffer);
+            }
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
+            RecordNativeDispatch(state.CommandBuffer, in payload, uberShade,
+                in repairPush, tilesX, tilesY, 1, "Advanced.NativeOpaque.Uber.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, uberParameterAddress);
+            RecordNativeShadingRootUse(uberShade.UsesAddressRoot, checked((int)AdvancedRenderPipeline.DefaultMaxShadingKernels + 1));
+        }
+        push = repairPush;
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
+        if ((push.Flags & FoveatedQuadShadingFlag) != 0u)
+        {
+            // Followers skipped shading; copy each block representative to them.
+            RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.FoveatedQuadFill,
+                in push, tilesX, tilesY, 1, "Rvc.FoveatedQuadFill", FoveatedQuadFillGpuProfilerPath);
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
+        }
         VulkanFrozenBufferBarrier lightingCounters = closure.LightingCounters;
         VulkanAdvancedVisibilityStageRequest lightingRequest = payload.Request;
         _ = AdvancedCounterDiagnosticCopy?.Invoke(
             state.CommandBuffer, in lightingCounters, in lightingRequest,
             checked((int)lightingRequest.BackendPackage.CanonicalFrame.FrameGeneration),
             closure.ViewIndex, EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters);
+        if (payload.Request.RecordRvcShadeletTelemetry && closure.ViewIndex + 1u == payload.State.ViewCount)
+            RecordRvcShadeletTelemetry(ref state, in payload, in closure, in push);
         return info.OperationIndex;
+    }
+
+    /// <summary>
+    /// Runs the RVC shadelet telemetry kernel once, after the last view of the
+    /// family has shaded. It reads every view layer and only writes its counters.
+    /// </summary>
+    private void RecordRvcShadeletTelemetry(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        in VulkanAdvancedNativeComputeClosure closure,
+        in VulkanAdvancedNativeShadingPushConstants push)
+    {
+        if (!closure.HasRvcTelemetry || !payload.NativeComputePipelines.RvcShadeletTelemetry.IsCurrent)
+        {
+            RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetrySkipped(!closure.HasRvcTelemetry
+                ? RvcTelemetryMissingClosureReason
+                : RvcTelemetryMissingKernelReason);
+            Debug.VulkanWarningEvery(
+                "Vulkan.Rvc.ShadeletTelemetry.Unavailable",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] RVC shadelet telemetry was requested, but the family has no telemetry counters or kernel (closure={0}, kernel={1}).",
+                closure.HasRvcTelemetry,
+                payload.NativeComputePipelines.RvcShadeletTelemetry.IsCurrent);
+            return;
+        }
+
+        uint viewCount = payload.State.ViewCount;
+        for (uint view = 0u; view < viewCount; ++view)
+        {
+            TransitionNativeSharedInput(state.CommandBuffer, closure.Identity, view);
+            TransitionNativeInput(state.CommandBuffer, closure.Depth, view);
+        }
+        TrackAdvancedNativeImageClosure(state.CommandBuffer, closure.RvcIdentityArrayResource);
+        TrackAdvancedNativeImageClosure(state.CommandBuffer, closure.RvcDepthArrayResource);
+        TrackAdvancedNativeBufferClosure(state.CommandBuffer, closure.RvcTelemetryCounters);
+        FillNativeCounters(state.CommandBuffer, closure.RvcTelemetryCounters);
+        VulkanAdvancedNativeShadingPushConstants telemetryPush = push with { ViewIndex = 0u, KernelIndex = 0u };
+        RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.RvcShadeletTelemetry,
+            in telemetryPush, DivideRoundUp(push.Width, 8), DivideRoundUp(push.Height, 8), viewCount,
+            "Rvc.ShadeletTelemetry", RvcShadeletTelemetryGpuProfilerPath);
+        VulkanFrozenBufferBarrier counters = closure.RvcTelemetryCounters;
+        EmitNativeBufferDependency(state.CommandBuffer, in counters,
+            AccessFlags.ShaderWriteBit, AccessFlags.TransferReadBit,
+            PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.TransferBit);
+        VulkanAdvancedVisibilityStageRequest request = payload.Request;
+        bool readbackAttached = AdvancedCounterDiagnosticCopy?.Invoke(
+            state.CommandBuffer, in counters, in request,
+            checked((int)request.BackendPackage.CanonicalFrame.FrameGeneration),
+            uint.MaxValue, EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry) == true;
+        RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryDispatch(readbackAttached);
     }
 
     private void RecordNativeDispatch(CommandBuffer commandBuffer,
@@ -261,6 +389,15 @@ internal sealed partial class VulkanCommandRuntime
     private void TransitionNativeSharedInput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)
         => EmitAdvancedVisibilityImageBarrier(commandBuffer, group, 0, view,
             ImageLayout.General, AccessFlags.ShaderReadBit, PipelineStageFlags.ComputeShaderBit, false);
+
+    /// <summary>Makes the mesh surface decal buffer layer of this view readable by shading.</summary>
+    private void TransitionNativeDecalBufferInputs(CommandBuffer commandBuffer, in VulkanAdvancedNativeComputeClosure closure)
+    {
+        if (!closure.HasDecalBuffer)
+            return;
+        TransitionNativeInput(commandBuffer, closure.DecalBufferAlbedo!, closure.ViewIndex);
+        TransitionNativeInput(commandBuffer, closure.DecalBufferSurface!, closure.ViewIndex);
+    }
 
     private void TransitionNativeOutput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)
         => EmitAdvancedVisibilityImageBarrier(commandBuffer, group, 0, view,

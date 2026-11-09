@@ -112,8 +112,196 @@ vec4 XR_ADV_FetchShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord t
     return XR_ADV_SampleTexture2DLod(textureReference, uv, 0.0);
 }
 
+// Directional soft-shadow filtering. The record carries the light's filter mode,
+// sample counts and radii in tile-local UV, like the forward cascade receivers.
+// All modes share one tap loop: the mode only selects the tap pattern, count and
+// radius, so the native kernels compile a single filter loop.
+#define XR_ADV_MAX_SHADOW_TAPS 32
+#define XR_ADV_SHADOW_TAPS_GRID3 0u
+#define XR_ADV_SHADOW_TAPS_TENT4 1u
+#define XR_ADV_SHADOW_TAPS_POISSON 2u
+#define XR_ADV_SHADOW_TAPS_VOGEL 3u
+
+const vec2 XR_ADV_ShadowPoissonDisk[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+    vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
+    vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
+    vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+    vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
+    vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790)
+);
+
+// The tap rotation and the contact ray jitter use one fixed value. Native shading has
+// no stable pixel coordinate, and any hash of the reconstructed receiver position
+// changes from frame to frame while the camera moves, which made the filtered
+// penumbra boil. A hash of the shadow texel is stable but shows each texel's own
+// rotation as square blocks. A fixed rotation keeps the filter locked to the world.
+float XR_ADV_ShadowNoise()
+{
+    return 0.5;
+}
+
+vec2 XR_ADV_ShadowTapOffset(uint pattern, int index, int count, float rotation)
+{
+    if (pattern == XR_ADV_SHADOW_TAPS_GRID3)
+        return vec2(float(index % 3 - 1), float(index / 3 - 1));
+    if (pattern == XR_ADV_SHADOW_TAPS_TENT4)
+        return vec2((index & 1) == 0 ? -0.5 : 0.5, index < 2 ? -0.5 : 0.5);
+    if (pattern == XR_ADV_SHADOW_TAPS_POISSON)
+        return XR_ADV_ShadowPoissonDisk[index & 15];
+    float sampleIndex = float(index) + 0.5;
+    float radius = sqrt(sampleIndex / float(max(count, 1)));
+    float angle = sampleIndex * 2.39996323 + rotation;
+    return vec2(cos(angle), sin(angle)) * radius;
+}
+
+float XR_ADV_DirectionalTapDepth(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
+    XRAdvancedEncodedTextureReference textureReference, vec2 localUv, vec2 lower, vec2 upper)
+{
+    vec2 uv = clamp(localUv * record.uvScaleBias.xy + record.uvScaleBias.zw, lower, upper);
+    return XR_ADV_FetchShadow(record, textureRecord, textureReference, uv, vec3(0.0)).r;
+}
+
+float XR_ADV_DirectionalTapLit(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
+    XRAdvancedEncodedTextureReference textureReference, vec2 localUv, vec2 lower, vec2 upper, float receiver)
+{
+    vec2 uv = clamp(localUv * record.uvScaleBias.xy + record.uvScaleBias.zw, lower, upper);
+    return XR_ADV_CompareShadow(record,
+        XR_ADV_FetchShadow(record, textureRecord, textureReference, uv, vec3(0.0)), receiver);
+}
+
+// Contact-hardening penumbra in tile-local UV, or -1 when no blocker is found.
+// The receiver is already biased. Only depth pages hold raw blocker depths.
+float XR_ADV_DirectionalPenumbra(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
+    XRAdvancedEncodedTextureReference textureReference, vec2 localUv, vec2 lower, vec2 upper,
+    float receiver, float localTexel, float rotation)
+{
+    int samples = clamp(int(record.blockerSamples), 1, XR_ADV_MAX_SHADOW_TAPS);
+    float searchRadius = max(record.softShadowParameters.y, localTexel);
+    float blockerSum = 0.0;
+    int blockerCount = 0;
+    for (int i = 0; i < XR_ADV_MAX_SHADOW_TAPS; ++i)
+    {
+        if (i >= samples) break;
+        float depth = XR_ADV_DirectionalTapDepth(record, textureRecord, textureReference,
+            localUv + XR_ADV_ShadowTapOffset(XR_ADV_SHADOW_TAPS_VOGEL, i, samples, rotation) * searchRadius,
+            lower, upper);
+        if (depth < receiver)
+        {
+            blockerSum += depth;
+            ++blockerCount;
+        }
+    }
+    if (blockerCount == 0) return -1.0;
+    float blocker = blockerSum / float(blockerCount);
+    float penumbra = abs(receiver - blocker) / max(abs(blocker), 0.0001) *
+        max(record.contactParameters.x, 0.0);
+    float minRadius = max(record.softShadowParameters.z, localTexel);
+    return clamp(penumbra, minRadius, max(record.softShadowParameters.w, minRadius));
+}
+
+// Mirrors the forward atlas filter selection: Hard uses one tap, a 4-tap tent or a
+// 3x3 texel grid by sample count; FixedPoisson uses up to 16 Poisson taps; VogelDisk
+// uses its own tap count; ContactHardeningPcss widens a Vogel disk by the blocker
+// estimate. Moment pages have no raw blocker depth, so PCSS keeps the fixed radius.
+float XR_ADV_SampleDirectionalFiltered(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
+    XRAdvancedEncodedTextureReference textureReference, vec2 localUv, vec2 lower, vec2 upper,
+    float receiver, float localTexel, float noise)
+{
+    uint mode = record.softShadowMode;
+    int tapCount = clamp(int(record.vogelTapCount), 1, XR_ADV_MAX_SHADOW_TAPS);
+    float radius = record.softShadowParameters.x;
+    uint pattern = XR_ADV_SHADOW_TAPS_VOGEL;
+    float rotation = noise * 6.28318531;
+    if (mode != 3u)
+    {
+        tapCount = clamp(int(record.filterSamples), 1, XR_ADV_MAX_SHADOW_TAPS);
+        if (tapCount <= 1)
+            return XR_ADV_DirectionalTapLit(record, textureRecord, textureReference, localUv, lower, upper, receiver);
+        if (mode == 2u)
+        {
+            if (record.encoding == 0u)
+            {
+                radius = XR_ADV_DirectionalPenumbra(record, textureRecord, textureReference,
+                    localUv, lower, upper, receiver, localTexel, rotation);
+                if (radius < 0.0) return 1.0;
+            }
+        }
+        else if (mode == 1u)
+        {
+            pattern = XR_ADV_SHADOW_TAPS_POISSON;
+            tapCount = min(tapCount, 16);
+        }
+        else if (tapCount <= 4)
+        {
+            pattern = XR_ADV_SHADOW_TAPS_TENT4;
+            tapCount = 4;
+        }
+        else
+        {
+            pattern = XR_ADV_SHADOW_TAPS_GRID3;
+            tapCount = 9;
+            radius = localTexel;
+        }
+    }
+    radius = max(radius, localTexel);
+    float lit = 0.0;
+    for (int i = 0; i < XR_ADV_MAX_SHADOW_TAPS; ++i)
+    {
+        if (i >= tapCount) break;
+        lit += XR_ADV_DirectionalTapLit(record, textureRecord, textureReference,
+            localUv + XR_ADV_ShadowTapOffset(pattern, i, tapCount, rotation) * radius,
+            lower, upper, receiver);
+    }
+    return lit / float(tapCount);
+}
+
+// Short-range contact shadows: march toward the light in the cascade's own depth
+// page and darken where a thin occluder lies just above the ray. Mirrors the
+// forward shadow-map contact march, including its view-depth sample scaling.
+float XR_ADV_DirectionalContactShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
+    XRAdvancedEncodedTextureReference textureReference, vec3 position, vec3 N, vec3 L,
+    vec2 lower, vec2 upper, float compareBias, float viewDepth, float noise)
+{
+    float distance = record.contactParameters.y;
+    if (record.contactSamples == 0u || distance <= 0.0 || record.encoding > 1u)
+        return 1.0;
+    float fadeStart = record.contactFadeAndTexel.x;
+    float fadeEnd = record.contactFadeAndTexel.y;
+    float fade = fadeEnd > fadeStart ? 1.0 - smoothstep(fadeStart, fadeEnd, viewDepth) : 1.0;
+    fade *= smoothstep(0.05, 0.35, max(dot(N, L), 0.0));
+    if (fade <= 0.0) return 1.0;
+
+    int requested = clamp(int(record.contactSamples), 1, 32);
+    float depthScale = clamp((distance * 24.0) / max(viewDepth, distance), 0.35, 1.0);
+    int samples = max(1, int(ceil(float(requested) * depthScale)));
+    float stepSize = distance / float(samples);
+    vec3 origin = position + N * max(max(record.depthBiasAndFilter.z, record.contactParameters.w), compareBias * 2.0);
+    float jitter = record.contactFadeAndTexel.z;
+    float thicknessScale = record.contactParameters.z;
+    float occlusion = 0.0;
+    for (int i = 0; i < 32; ++i)
+    {
+        if (i >= samples) break;
+        float travel = (float(i) + 0.5 + (noise - 0.5) * jitter) * stepSize;
+        vec3 coordinate;
+        if (!XR_ADV_ProjectShadow(record, origin + L * travel, coordinate)) continue;
+        float depth = XR_ADV_DirectionalTapDepth(record, textureRecord, textureReference,
+            coordinate.xy, lower, upper);
+        float blockerDelta = coordinate.z - depth;
+        if (blockerDelta <= compareBias) continue;
+        float thickness = max(travel * thicknessScale, compareBias * 4.0);
+        if (blockerDelta > thickness) continue;
+        float depthWeight = 1.0 - smoothstep(compareBias, thickness, blockerDelta);
+        occlusion = max(occlusion, depthWeight * (1.0 - travel / distance));
+    }
+    return 1.0 - occlusion * fade;
+}
+
 float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, vec3 position, vec3 N, vec3 planeNormal, vec3 L,
-    out uint reason)
+    float viewDepth, out uint reason)
 {
     reason = XR_ADV_SHADOW_OK;
     if ((record.flags & 1u) == 0u || (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u)
@@ -171,13 +359,20 @@ float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, vec3 position, ve
             receiver = (linearZ - nearZ) / (farZ - nearZ);
         }
     }
-    float radius = clamp(record.depthBiasAndFilter.w, 0.0, 8.0);
-    // The 3x3 kernel compares one receiver depth against taps up to sqrt(2) * radius
+    vec2 texelSize = 1.0 / vec2(textureRecord.width, textureRecord.height);
+    // Directional cascades filter in tile-local UV with the light's own radius;
+    // other types keep the 3x3 kernel with a radius in texels.
+    float localTexel = record.contactFadeAndTexel.w > 0.0
+        ? record.contactFadeAndTexel.w
+        : texelSize.x / max(record.uvScaleBias.x, 0.000001);
+    float radius = record.type == 0u
+        ? clamp(record.softShadowParameters.x / max(localTexel, 0.0000001), 0.0, 8.0)
+        : clamp(record.depthBiasAndFilter.w, 0.0, 8.0);
+    // The kernel compares one receiver depth against taps up to sqrt(2) * radius
     // texels away, and the receiver lies up to half a texel from the stored texel center.
     float bias = XR_ADV_ShadowCompareBias(record, N, planeNormal, L, 1.41421356 * (radius + 0.5));
     bool reversed = record.type < 2u && record.encoding == 0u && (record.flags & 128u) != 0u;
     receiver += reversed ? bias : -bias;
-    vec2 texelSize = 1.0 / vec2(textureRecord.width, textureRecord.height);
     vec2 uv = coordinate.xy * record.uvScaleBias.xy + record.uvScaleBias.zw;
     vec2 lower = record.uvScaleBias.zw + texelSize * 0.5;
     vec2 upper = max(lower, record.uvScaleBias.zw + record.uvScaleBias.xy - texelSize * 0.5);
@@ -194,6 +389,16 @@ float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, vec3 position, ve
                 visibility += XR_ADV_CompareShadow(record,
                     XR_ADV_FetchShadow(record, textureRecord, textureReference, vec2(0.0),
                         normalize(direction + angularRadius * (tangent * float(x) + bitangent * float(y)))), receiver);
+    }
+    else if (record.type == 0u)
+    {
+        float noise = XR_ADV_ShadowNoise();
+        visibility = XR_ADV_SampleDirectionalFiltered(record, textureRecord, textureReference,
+            coordinate.xy, lower, upper, receiver, max(localTexel, 0.0000001), noise);
+        visibility *= XR_ADV_DirectionalContactShadow(record, textureRecord, textureReference,
+            position, N, L, lower, upper, bias, viewDepth, noise);
+        if ((record.flags & 4u) != 0u) reason = XR_ADV_SHADOW_STALE_TILE;
+        return visibility;
     }
     else
     {
@@ -247,7 +452,7 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
         if (record.type == 0u && linearDepth > record.depthRangeAndCascade.z) continue;
         vec3 unusedCoordinate;
         if (!XR_ADV_ProjectShadow(record, surface.worldPosition, unusedCoordinate)) continue;
-        float visibility = XR_ADV_SampleShadowRecord(record, surface.worldPosition, N, planeNormal, L, reason);
+        float visibility = XR_ADV_SampleShadowRecord(record, surface.worldPosition, N, planeNormal, L, linearDepth, reason);
         if (record.type != 0u) return visibility;
         float blendWidth = max(record.depthRangeAndCascade.w, 0.0);
         if (blendWidth <= 0.0 || linearDepth < record.depthRangeAndCascade.z - blendWidth) return visibility;
@@ -257,7 +462,7 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
             if (adjacent.type != 0u || !XR_ADV_ShadowAffectsView(adjacent, view, surface.viewIndex)) continue;
             if (!XR_ADV_ProjectShadow(adjacent, surface.worldPosition, unusedCoordinate)) continue;
             uint adjacentReason;
-            float adjacentVisibility = XR_ADV_SampleShadowRecord(adjacent, surface.worldPosition, N, planeNormal, L, adjacentReason);
+            float adjacentVisibility = XR_ADV_SampleShadowRecord(adjacent, surface.worldPosition, N, planeNormal, L, linearDepth, adjacentReason);
             reason = max(reason, adjacentReason);
             return mix(visibility, adjacentVisibility,
                 clamp((linearDepth - record.depthRangeAndCascade.z + blendWidth) / blendWidth, 0.0, 1.0));

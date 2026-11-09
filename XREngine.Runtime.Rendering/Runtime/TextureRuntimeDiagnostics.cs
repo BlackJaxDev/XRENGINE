@@ -843,6 +843,13 @@ internal static class TextureRuntimeDiagnostics
         LogPooled("Texture.VramSummary", builder);
     }
 
+    /// <summary>
+    /// Gets whether <see cref="LogSummary"/> writes anything without force. The
+    /// caller checks it before building the summary inputs, which allocate a
+    /// snapshot list and a telemetry list for every streamed texture.
+    /// </summary>
+    internal static bool IsSummaryLogEnabled => ShouldLog(TextureRuntimeEventImportance.Summary);
+
     private static bool ShouldLog(TextureRuntimeEventImportance importance)
     {
         TextureRuntimeLogMode mode = RuntimeRenderingHostServices.Diagnostics.TextureLogMode;

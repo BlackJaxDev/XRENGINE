@@ -302,6 +302,7 @@ internal sealed partial class SkinningPrepassDispatcher
                 outputResources.Interleaved?.Destroy();
                 if (_ownsSkinnedBoundsBuffer)
                     _skinnedBounds?.Destroy();
+                DestroySkinPaletteSnapshots();
                 _renderer.InstallSkinnedOutputResources(null, null, null, null);
                 _skinnedBounds = null;
                 _ownsSkinnedBoundsBuffer = false;

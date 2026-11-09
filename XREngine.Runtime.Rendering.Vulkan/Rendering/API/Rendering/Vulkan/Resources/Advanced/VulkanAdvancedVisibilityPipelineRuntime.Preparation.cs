@@ -511,8 +511,11 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         AddProgramIdentity(ref hash, _maskedMultiviewRasterProgram);
         AddProgramIdentity(ref hash, _opaqueMultiviewMeshRasterProgram);
         AddProgramIdentity(ref hash, _maskedMultiviewMeshRasterProgram);
+        // The optional Uber kernels are created after admission, only for scenes that need
+        // them. Their lazy creation must not invalidate the admitted family.
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
-            AddProgramIdentity(ref hash, _nativeComputePrograms[i]);
+            if (!IsOptionalNativeShadingProgram(i))
+                AddProgramIdentity(ref hash, _nativeComputePrograms[i]);
         return hash.ToHashCode();
     }
 
@@ -555,7 +558,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             return false;
         }
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
-            if (!IsProgramCurrent(_nativeComputePrograms[i], compute: true))
+            if (!IsOptionalNativeShadingProgram(i) && !IsProgramCurrent(_nativeComputePrograms[i], compute: true))
                 return false;
         if (!IsProgramCurrent(_opaqueRasterProgram, compute: false) ||
             !IsProgramCurrent(_maskedRasterProgram, compute: false))

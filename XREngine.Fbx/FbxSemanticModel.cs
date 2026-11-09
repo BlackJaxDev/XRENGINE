@@ -266,21 +266,23 @@ public sealed record FbxTransformSemantics(
         if (pivotPolicy == FbxPivotImportPolicy.BakeIntoLocalTransform || !HasPivotData)
             return scale * rotation * translation;
 
-        Matrix4x4 preRotation = CreateRotationMatrix(PreRotationDegrees, RotationOrder);
-        Matrix4x4 postRotation = CreateRotationMatrix(PostRotationDegrees, RotationOrder);
+        Matrix4x4 preRotation = CreateRotationMatrix(PreRotationDegrees, FbxRotationOrder.XYZ);
+        Matrix4x4 postRotation = CreateRotationMatrix(PostRotationDegrees, FbxRotationOrder.XYZ);
         Matrix4x4.Invert(postRotation, out Matrix4x4 inversePostRotation);
 
-        return translation
-            * Matrix4x4.CreateTranslation(RotationOffset)
-            * Matrix4x4.CreateTranslation(RotationPivot)
-            * preRotation
-            * rotation
-            * inversePostRotation
-            * Matrix4x4.CreateTranslation(-RotationPivot)
-            * Matrix4x4.CreateTranslation(ScalingOffset)
-            * Matrix4x4.CreateTranslation(ScalingPivot)
+        // Reverse the FBX column-vector factors for the engine's row vectors.
+        // Pre/post rotations use XYZ independently of the local rotation order.
+        return Matrix4x4.CreateTranslation(-ScalingPivot)
             * scale
-            * Matrix4x4.CreateTranslation(-ScalingPivot);
+            * Matrix4x4.CreateTranslation(ScalingPivot)
+            * Matrix4x4.CreateTranslation(ScalingOffset)
+            * Matrix4x4.CreateTranslation(-RotationPivot)
+            * inversePostRotation
+            * rotation
+            * preRotation
+            * Matrix4x4.CreateTranslation(RotationPivot)
+            * Matrix4x4.CreateTranslation(RotationOffset)
+            * translation;
     }
 
     public Matrix4x4 CreateGeometryTransform()

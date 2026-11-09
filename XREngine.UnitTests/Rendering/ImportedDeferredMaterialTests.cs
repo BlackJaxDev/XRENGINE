@@ -226,6 +226,37 @@ public sealed class ImportedDeferredMaterialTests
     }
 
     [Test]
+    public void MakeMaterialDeferred_OpacityMappedDecalMaterial_IsMaskedSurfaceDecal()
+    {
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
+            [new XRTexture2D(), new XRTexture2D()],
+            [
+                CreateSlot("dirt_decal.png", TextureType.Diffuse),
+                CreateSlot("dirt_decal_mask.png", TextureType.Opacity),
+            ],
+            "dirt_decal");
+
+        // The masked mode stays as the fallback for renderers without the decal lane.
+        material.TransparencyMode.ShouldBe(ETransparencyMode.Masked);
+        material.AdvancedSurfaceDecal.ShouldBeTrue();
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_OpacityMappedNonDecalMaterial_IsNotSurfaceDecal()
+    {
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
+            [new XRTexture2D(), new XRTexture2D()],
+            [
+                CreateSlot("leaf.png", TextureType.Diffuse),
+                CreateSlot("leaf_mask.png", TextureType.Opacity),
+            ],
+            "leaf");
+
+        material.TransparencyMode.ShouldBe(ETransparencyMode.Masked);
+        material.AdvancedSurfaceDecal.ShouldBeFalse();
+    }
+
+    [Test]
     public void MakeMaterialDeferred_NormalSpecularOpacityTexturesSelectDeferredLegacyMaskedShader()
     {
         XRTexture2D albedo = new();
@@ -377,7 +408,7 @@ public sealed class ImportedDeferredMaterialTests
     }
 
     [Test]
-    public void MakeMaterialForwardPlusUberShader_BlendHint_RoutesToWeightedBlendedOit()
+    public void MakeMaterialForwardPlusUberShader_BlendHint_RoutesToSortedAlpha()
     {
         XRTexture2D albedo = new()
         {
@@ -389,10 +420,11 @@ public sealed class ImportedDeferredMaterialTests
             [CreateSlot(albedo.FilePath!, TextureType.Diffuse, flags: 0x2)],
             "UberTransparentMaterial");
 
-        material.TransparencyMode.ShouldBe(ETransparencyMode.WeightedBlendedOit);
-        material.RenderPass.ShouldBe((int)EDefaultRenderPass.WeightedBlendedOitForward);
+        // Imported blended materials use sorted alpha unless the import options ask for OIT.
+        material.TransparencyMode.ShouldBe(ETransparencyMode.AlphaBlend);
+        material.RenderPass.ShouldBe((int)EDefaultRenderPass.TransparentForward);
         material.RenderOptions.ShouldNotBeNull();
-        material.RenderOptions!.BlendModesPerDrawBuffer.ShouldNotBeNull();
+        material.RenderOptions!.BlendModeAllDrawBuffers.ShouldNotBeNull();
         material.RenderOptions.DepthTest.ShouldNotBeNull();
         material.RenderOptions.DepthTest!.UpdateDepth.ShouldBeFalse();
         material.Parameter<ShaderInt>("_Mode")?.Value.ShouldBe(3);
@@ -400,7 +432,77 @@ public sealed class ImportedDeferredMaterialTests
 
         string source = material.FragmentShaders[0].Source?.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
         source.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
-        material.ActiveUberVariant.PipelineMacros.ShouldContain("XRENGINE_FORWARD_WEIGHTED_OIT");
+        material.ActiveUberVariant.PipelineMacros.ShouldNotContain("XRENGINE_FORWARD_WEIGHTED_OIT");
+    }
+
+    [Test]
+    public void ResolveImportedOpacity_FollowsFbxTransparencyRules()
+    {
+        ModelAssetImporter.ResolveImportedOpacity(null, null, null).ShouldBe(1.0f);
+        ModelAssetImporter.ResolveImportedOpacity(0.25f, 0.9f, Vector3.One).ShouldBe(0.25f);
+        ModelAssetImporter.ResolveImportedOpacity(null, 0.6f, null).ShouldBe(0.4f, 1e-5f);
+        ModelAssetImporter.ResolveImportedOpacity(null, 0.5f, new Vector3(0.2f, 0.4f, 0.2f)).ShouldBe(0.8f, 1e-5f);
+        // A transparent color with a zero factor is opaque.
+        ModelAssetImporter.ResolveImportedOpacity(null, 0.0f, Vector3.One).ShouldBe(1.0f);
+        ModelAssetImporter.ResolveImportedOpacity(null, 2.0f, null).ShouldBe(0.0f);
+    }
+
+    [Test]
+    public void ApplyImportedOpacity_UntexturedColorBelowOpaque_BecomesSortedAlphaGlass()
+    {
+        XRMaterial material = ModelAssetImporter.MakeMaterialDefault([], [], "glass");
+
+        ModelAssetImporter.ApplyImportedOpacity(material, 0.4f, new Vector3(0.2f, 0.3f, 0.4f));
+
+        material.TransparencyMode.ShouldBe(ETransparencyMode.AlphaBlend);
+        material.RenderPass.ShouldBe((int)EDefaultRenderPass.TransparentForward);
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("LitColoredForward.fs");
+        material.Parameter<ShaderVector4>("MatColor")!.Value.ShouldBe(new Vector4(0.2f, 0.3f, 0.4f, 0.4f));
+        material.RenderOptions!.DepthTest!.UpdateDepth.ShouldBeFalse();
+        material.ResolveAdvancedLatePassMetadata()!.Kind.ShouldBe(EAdvancedLatePassKind.SortedAlpha);
+        AdvancedLatePassEligibilityValidator.TryValidateLatePass(
+            material, (int)EDefaultRenderPass.TransparentForward, out string? reason).ShouldBeTrue(reason);
+    }
+
+    [Test]
+    public void ApplyImportedOpacity_OpaqueColor_StaysDeferred()
+    {
+        XRMaterial material = ModelAssetImporter.MakeMaterialDefault([], [], "stone");
+
+        ModelAssetImporter.ApplyImportedOpacity(material, 1.0f, Vector3.One);
+
+        material.RenderPass.ShouldBe((int)EDefaultRenderPass.OpaqueDeferred);
+        material.ResolveAdvancedLatePassMetadata().ShouldBeNull();
+    }
+
+    [Test]
+    public void ApplyImportedOpacity_TexturedBlendHint_SetsMaterialTransparency()
+    {
+        XRTexture2D albedo = new();
+        XRMaterial material = ModelAssetImporter.MakeMaterialDefault(
+            [albedo],
+            [CreateSlot("window.png", TextureType.Diffuse, flags: 0x2)],
+            "window");
+
+        ModelAssetImporter.ApplyImportedOpacity(material, 0.3f, Vector3.One);
+
+        material.TransparencyMode.ShouldBe(ETransparencyMode.AlphaBlend);
+        material.RenderPass.ShouldBe((int)EDefaultRenderPass.TransparentForward);
+        material.Parameter<ShaderFloat>(ModelAssetImporter.MaterialTransparencyParameterName)!.Value.ShouldBe(0.7f, 1e-5f);
+        material.ResolveAdvancedLatePassMetadata()!.Kind.ShouldBe(EAdvancedLatePassKind.SortedAlpha);
+    }
+
+    [Test]
+    public void ResolveAdvancedLatePassMetadata_ExplicitMetadataWins()
+    {
+        XRMaterial material = ModelAssetImporter.MakeMaterialDefault([], [], "glass");
+        ModelAssetImporter.ApplyImportedOpacity(material, 0.4f, Vector3.One);
+        AdvancedLatePassMetadata authored = new(EAdvancedLatePassKind.Refraction, requiresSceneColorSnapshot: true);
+
+        material.AdvancedLatePassMetadata = authored;
+
+        material.ResolveAdvancedLatePassMetadata().ShouldBeSameAs(authored);
     }
 
     [Test]

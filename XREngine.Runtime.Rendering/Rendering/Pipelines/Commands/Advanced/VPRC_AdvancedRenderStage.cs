@@ -24,6 +24,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         "Advanced.LateVisibilityRaster";
     internal const string MultisampleVisibilityResolvePassName =
         "Advanced.MultisampleVisibilityResolve";
+    internal const string DecalBufferPassName =
+        "Advanced.DecalBuffer";
 
     private EAdvancedRenderStage _stage;
 
@@ -160,6 +162,23 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     DepthTargetName = AdvancedVisibilityResourceNames.DepthStencil,
                 }, MultisampleVisibilityResolvePassName);
             }
+            // Mesh surface decals draw against the final single-sample depth. Only a
+            // backend with the decal lane receives the phase; others keep decals masked.
+            if (request.DecalBufferEnabled &&
+                ActivePipelineInstance.Resources.TryGetFrameBuffer(
+                    AdvancedDecalBufferResourceNames.FrameBuffer, out XRFrameBuffer? decalTarget) &&
+                decalTarget is not null)
+            {
+                EnqueueLatePhase(visibility, request with
+                {
+                    Phase = EAdvancedVisibilityStageBackendPhase.DecalBuffer,
+                    Target = decalTarget,
+                    IdentityTargetName = AdvancedVisibilityResourceNames.Identity,
+                    MetadataTargetName = AdvancedVisibilityResourceNames.Metadata,
+                    SelectionTargetName = AdvancedVisibilityResourceNames.Selection,
+                    DepthTargetName = AdvancedVisibilityResourceNames.DepthStencil,
+                }, DecalBufferPassName);
+            }
             return;
         }
 
@@ -227,7 +246,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return false;
         }
         renderer = rendererHost;
-        if (ActivePipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost familyHost)
+        if (ActivePipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } familyHost)
         {
             string pipelineType = ActivePipelineInstance.Pipeline?.GetType().FullName ?? "null";
             failureReason = $"The active pipeline does not host the Advanced stage family (actual: {pipelineType}).";
@@ -261,10 +280,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             pipeline.IsMinimalVisibilityOutput;
         IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
         bool enableBuiltInAmbientOcclusion =
+            rendererHost.BackendId == RendererBackendId.WebGPU &&
             !isMinimalVisibilityOutput &&
             !useNeutralWebAmbientOcclusion &&
             pipeline.EnableBuiltInAmbientOcclusion &&
             ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true };
+        (bool ambientOcclusionMultiBounce, bool ambientOcclusionSpecularOcclusion) =
+            pipeline.ResolveAmbientOcclusionShadingOptions(ActivePipelineInstance, null);
         if (requiresAmbientOcclusion && !isMinimalVisibilityOutput &&
             ambientOcclusionProvider is not null &&
             ambientOcclusionProvider is not AdvancedDepthGtaoProvider)
@@ -386,6 +408,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             enableLightProbesAndIbl,
             RequiresMaterialSurfaceExports: requiresMaterialSurfaceExports,
             SuppressBaselineDiffuse: suppressBaselineDiffuse,
+            AmbientOcclusionMultiBounce: ambientOcclusionMultiBounce,
+            AmbientOcclusionSpecularUsesVisibility: !isMinimalVisibilityOutput &&
+                rendererHost.BackendId != RendererBackendId.WebGPU && !ambientOcclusionSpecularOcclusion,
             IsMinimalVisibilityOutput: isMinimalVisibilityOutput,
             SceneDatabase: world.GpuScene.AdvancedSharedDatabase);
 
@@ -401,7 +426,19 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             SampleEncoding = sampleEncoding,
             HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
             EnableAuthoredDecals = frozenAuthoredDecals,
+            RenderTimeSeconds = state.RenderTimeSeconds,
+            RecordRvcShadeletTelemetry = requiresNativeOpaqueShading &&
+                pipeline.DeclaresRvcShadeletTelemetry &&
+                ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcShadeletTelemetryEnabled: true },
+            RvcFoveatedQuadShading = requiresNativeOpaqueShading && samples <= 1u &&
+                ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcFoveatedQuadShadingEnabled: true },
+            DecalBufferEnabled = stageBackend.SupportsAdvancedSurfaceDecalBuffer &&
+                ActivePipelineInstance.Resources.TryGetFrameBuffer(
+                    AdvancedDecalBufferResourceNames.FrameBuffer, out XRFrameBuffer? decalBuffer) &&
+                decalBuffer is not null,
         };
+        if (request.RecordRvcShadeletTelemetry)
+            RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryRequest();
         return true;
     }
 
@@ -635,7 +672,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         AdvancedRenderStageDescriptor descriptor = Descriptor;
         bool hasAmbientOcclusion = context.ResourceLayout is null
             ? !Shaders.Compilation.WebPipelineRasterProgram.IsActive ||
-                ParentPipeline is not IAdvancedRenderStageFamilyHost familyHost ||
+                ParentPipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } familyHost ||
                 familyHost.AdvancedStageFamilyDefinition.UsesWebAmbientOcclusion
             : context.HasResource(AdvancedAmbientOcclusionContract.ResourceName);
         if (descriptor.Stage == EAdvancedRenderStage.AmbientOcclusion && !hasAmbientOcclusion)
@@ -657,6 +694,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true,
             usesMultisampleVisibility, packedSamples,
             hasAmbientOcclusion ? AdvancedAmbientOcclusionContract.ResourceName : AdvancedRenderPipeline.WebPostProcessNeutralTextureName);
+        // RVC telemetry runs after native shading and reads every view layer.
+        if (descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
+            context.HasResource(RvcShadeletTelemetryResourceNames.Counters(0u)))
+        {
+            for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; ++slot)
+                builder.ReadWriteBuffer(RvcShadeletTelemetryResourceNames.Counters(slot));
+        }
 
         int stageIndex = (int)descriptor.Stage;
         if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
@@ -665,9 +709,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             // Reserve the optional node even when this generation is not MSAA so the
             // following synthetic passes retain their stable execution identities.
             context.ReserveSyntheticPassIndex(MultisampleVisibilityResolvePassName);
+            context.ReserveSyntheticPassIndex(DecalBufferPassName);
             DescribeLateRasterPass(context, builder.PassIndex, usesMultisampleVisibility, packedSamples);
             if (usesMultisampleVisibility)
                 DescribeMultisampleResolvePass(context, packedSamples);
+            if (context.HasResource(AdvancedDecalBufferResourceNames.Albedo))
+                DescribeDecalBufferPass(context, usesMultisampleVisibility);
         }
         else if (descriptor.Stage == EAdvancedRenderStage.AmbientOcclusion)
         {
@@ -709,6 +756,15 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             builder.DependsOn(context.GetOrCreateSyntheticPass(
                 shadowStage.PassName,
                 shadowStage.RenderGraphStage).PassIndex);
+            // Native shading blends the mesh surface decal buffer before lighting.
+            if (context.HasResource(AdvancedDecalBufferResourceNames.Albedo))
+            {
+                builder.DependsOn(context.GetOrCreateSyntheticPass(
+                        DecalBufferPassName,
+                        ERenderGraphPassStage.Graphics).PassIndex)
+                    .SampleTexture(Tex(AdvancedDecalBufferResourceNames.Albedo))
+                    .SampleTexture(Tex(AdvancedDecalBufferResourceNames.Surface));
+            }
         }
         else if (stageIndex > 0)
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
@@ -745,6 +801,35 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Load);
     }
 
+    /// <summary>
+    /// The decal buffer pass draws the mesh surface decal bins of the early and late segments.
+    /// It clears and writes both decal targets and only tests the final single-sample depth.
+    /// </summary>
+    private static void DescribeDecalBufferPass(RenderGraphDescribeContext context, bool usesMultisampleVisibility)
+    {
+        RenderPassBuilder builder = context.GetOrCreateSyntheticPass(DecalBufferPassName, ERenderGraphPassStage.Graphics)
+            .UseEngineDescriptors()
+            .DependsOn(context.GetOrCreateSyntheticPass(
+                usesMultisampleVisibility ? MultisampleVisibilityResolvePassName : LateVisibilityRasterPassName,
+                ERenderGraphPassStage.Graphics).PassIndex)
+            .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
+            .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
+        for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; slot++)
+        {
+            builder
+                .ReadBuffer(AdvancedVisibilityResourceNames.EarlyArguments(slot), ERenderPassResourceType.IndirectBuffer)
+                .ReadBuffer(AdvancedVisibilityResourceNames.EarlyVisiblePayloads(slot));
+        }
+        DescribeLateRasterSlotResources(builder);
+        for (int attachment = 0; attachment < 2; attachment++)
+            builder.UseColorAttachment(RenderGraphResourceNames.MakeFboColor(AdvancedDecalBufferResourceNames.FrameBuffer, attachment),
+                ERenderGraphAccess.Write, ERenderPassLoadOp.Clear, ERenderPassStoreOp.Store);
+        builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedDecalBufferResourceNames.FrameBuffer),
+            ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(RenderGraphResourceNames.MakeFboStencil(AdvancedDecalBufferResourceNames.FrameBuffer),
+            ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+    }
+
     private static void DescribeMultisampleResolvePass(RenderGraphDescribeContext context, bool packedSamples)
     {
         RenderPassBuilder builder = context.GetOrCreateSyntheticPass(MultisampleVisibilityResolvePassName, ERenderGraphPassStage.Graphics)
@@ -759,6 +844,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
         builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
             ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(RenderGraphResourceNames.MakeFboStencil(AdvancedVisibilityResourceNames.FrameBuffer),
+            ERenderGraphAccess.Write, ERenderPassLoadOp.Clear, ERenderPassStoreOp.Store);
     }
 
     private static void DescribeMultisampleRasterAttachments(RenderPassBuilder builder, ERenderPassLoadOp load, bool packedSamples)
@@ -767,6 +854,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             builder.UseColorAttachment(RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBufferMultisample, attachment),
                 ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
         builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBufferMultisample),
+            ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(RenderGraphResourceNames.MakeFboStencil(AdvancedVisibilityResourceNames.FrameBufferMultisample),
             ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
     }
 
@@ -993,6 +1082,11 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
         builder.UseDepthAttachment(
             RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
+            ERenderGraphAccess.ReadWrite,
+            load,
+            ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(
+            RenderGraphResourceNames.MakeFboStencil(AdvancedVisibilityResourceNames.FrameBuffer),
             ERenderGraphAccess.ReadWrite,
             load,
             ERenderPassStoreOp.Store);

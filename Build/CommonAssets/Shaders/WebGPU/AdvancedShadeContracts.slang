@@ -247,6 +247,17 @@ struct XRAdvancedShadowRecord
     float4 momentParameters;
     float4 depthRangeAndCascade;
     float4 renderedLightPositionAndFar;
+    float4 softShadowParameters;
+    float4 contactParameters;
+    float4 contactFadeAndTexel;
+    uint softShadowMode;
+    uint filterSamples;
+    uint blockerSamples;
+    uint vogelTapCount;
+    uint contactSamples;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
 
 };
 struct XRAdvancedTextureRecord
@@ -312,7 +323,7 @@ struct XRAdvancedViewRecord
     uint sourceCameraIdentityLo;
     uint sourceCameraIdentityHi;
     uint sourceCameraIdentityPadding0;
-    uint sourceCameraIdentityPadding1;
+    uint renderTimeBits;
 
 };
 struct XRAdvancedVisibilityPackedVertex
@@ -327,8 +338,8 @@ struct XRAdvancedVisibilityPackedVertex
     uint custom0;
     uint sourceVertex;
     uint flags;
-    uint reserved0;
-    uint reserved1;
+    uint texCoord2Half;
+    uint texCoord3Half;
     uint reserved2;
     uint reserved3;
 
@@ -828,8 +839,8 @@ XRAdvancedVisibilityPackedVertex ReadXRAdvancedVisibilityPackedVertex(uint word)
     result.custom0 = GeometryArena[word + 9u];
     result.sourceVertex = GeometryArena[word + 10u];
     result.flags = GeometryArena[word + 11u];
-    result.reserved0 = GeometryArena[word + 12u];
-    result.reserved1 = GeometryArena[word + 13u];
+    result.texCoord2Half = GeometryArena[word + 12u];
+    result.texCoord3Half = GeometryArena[word + 13u];
     result.reserved2 = GeometryArena[word + 14u];
     result.reserved3 = GeometryArena[word + 15u];
     return result;

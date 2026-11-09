@@ -8,6 +8,8 @@ internal sealed class VulkanProgramBindingSchema
 {
     private readonly Dictionary<string, VulkanAutoUniformBindingSchema> _autoUniformBlocks;
     private readonly ulong[] _frequencyPublicationLayoutSignatures;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<object, ulong> _publicationLayoutSignaturesByBlock =
+        new(ReferenceEqualityComparer.Instance);
     private readonly bool[] _frequencyDependsOnMaterialOrRuntime;
 
     private VulkanProgramBindingSchema(
@@ -109,6 +111,24 @@ internal sealed class VulkanProgramBindingSchema
         string instanceName,
         out VulkanAutoUniformBindingSchema schema)
         => _autoUniformBlocks.TryGetValue(instanceName, out schema!);
+
+    /// <summary>
+    /// Returns the publication layout of a reflected block. Each draw asks for each
+    /// block, so the result stays by block identity, which avoids hashing the name.
+    /// </summary>
+    internal bool TryGetPublicationLayoutSignature(
+        AutoUniformBlockInfo block,
+        out ulong signature)
+    {
+        if (_publicationLayoutSignaturesByBlock.TryGetValue(block, out signature))
+            return true;
+        if (!TryGetAutoUniformBlock(block.InstanceName, out VulkanAutoUniformBindingSchema schema))
+            return false;
+
+        signature = schema.PublicationLayoutSignature;
+        _publicationLayoutSignaturesByBlock[block] = signature;
+        return true;
+    }
 
     internal ulong GetFrequencyPublicationLayoutSignature(
         EVulkanBindingFrequency frequency)

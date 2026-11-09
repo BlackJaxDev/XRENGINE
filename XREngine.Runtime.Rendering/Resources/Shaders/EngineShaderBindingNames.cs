@@ -13,6 +13,14 @@ public static class EngineShaderBindingNames
         public const string PointLightCount = "PointLightCount";
         public const string SpotLightCount = "SpotLightCount";
         public const string GlobalAmbient = "GlobalAmbient";
+        public const string SourceSHEnabled = "SourceSHEnabled";
+        public const string SourceSHAr = "SourceSHAr";
+        public const string SourceSHAg = "SourceSHAg";
+        public const string SourceSHAb = "SourceSHAb";
+        public const string SourceSHBr = "SourceSHBr";
+        public const string SourceSHBg = "SourceSHBg";
+        public const string SourceSHBb = "SourceSHBb";
+        public const string SourceSHC = "SourceSHC";
         public const string ForwardPlusEnabled = "ForwardPlusEnabled";
         public const string ForwardPlusScreenSize = "ForwardPlusScreenSize";
         public const string ForwardPlusTileSize = "ForwardPlusTileSize";

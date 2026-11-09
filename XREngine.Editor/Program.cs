@@ -210,6 +210,7 @@ internal partial class Program
         UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
         UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
         UnitTestingWorldSettingsStore.PublishVrLaunchModeForBootstrap(settings);
+        InstallEditorGpuSchedulingPriorityPolicy();
         EditorOpenXrPawnSwitcher.Configure(settings);
         UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
         ConfigureOpenXrRuntimeServiceRecovery(settings);
@@ -778,6 +779,29 @@ internal partial class Program
             || value.Equals("true", StringComparison.OrdinalIgnoreCase)
             || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
             || value.Equals("on", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Keeps the desktop editor at the BelowNormal Windows GPU scheduling class, so that a heavy
+    /// editor frame does not make the rest of the PC slow. XR uses the Normal class: a VR compositor
+    /// at Normal would otherwise get the GPU ahead of the editor's XR frames.
+    /// </summary>
+    private static void InstallEditorGpuSchedulingPriorityPolicy()
+    {
+        if (IsEnabledEnvironmentFlag(XREngineEnvironmentVariables.EditorNormalGpuPriority))
+            return;
+
+        string? vrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        bool xrRequested = !string.IsNullOrWhiteSpace(vrMode)
+            && !vrMode.Trim().Equals("Desktop", StringComparison.OrdinalIgnoreCase);
+        ApplyEditorGpuSchedulingPriority(belowNormal: !xrRequested && !RuntimeEngine.VRState.IsInVR);
+        RuntimeEngine.VRState.IsInVRChanged += static isInVR => ApplyEditorGpuSchedulingPriority(belowNormal: !isInVR);
+    }
+
+    private static void ApplyEditorGpuSchedulingPriority(bool belowNormal)
+    {
+        XREngine.Runtime.Platform.Desktop.WindowsGpuSchedulingPriority.TrySetForCurrentProcess(belowNormal, out string message);
+        WriteBootstrapTrace(message);
     }
 
     private static bool IsEnabledEnvironmentFlag(string name)

@@ -313,7 +313,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     RequireTexture(instance, RawIntensityTextureName),
                     RequireTexture(instance, DepthViewTextureName),
                     RequireTexture(instance, NormalTextureName)], blurShader) { RenderOptions = renderParams };
-                XRQuadFrameBuffer frameBuffer = new(material, true, true, Stereo,
+                XRQuadFrameBuffer frameBuffer = new(material, true, false, Stereo,
                     (RequireAttachment(instance, RawIntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
                 {
                     Name = BlurFBOName
@@ -331,7 +331,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     RequireTexture(instance, IntermediateIntensityTextureName),
                     RequireTexture(instance, DepthViewTextureName),
                     RequireTexture(instance, NormalTextureName)], blurShader) { RenderOptions = renderParams };
-                XRQuadFrameBuffer frameBuffer = new(material, true, true, Stereo,
+                XRQuadFrameBuffer frameBuffer = new(material, true, false, Stereo,
                     (RequireAttachment(instance, IntermediateIntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
                 {
                     Name = BlurIntermediateFBOName

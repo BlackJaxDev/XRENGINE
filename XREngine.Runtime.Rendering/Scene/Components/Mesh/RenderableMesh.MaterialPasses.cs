@@ -11,6 +11,7 @@ public partial class RenderableMesh
     {
         Enabled = false,
         ForceCpuRendering = true,
+        SupplementalMaterialPass = EMaterialPassIdentity.Outline,
         GpuProfilingLabel = "MaterialOutline",
     };
 

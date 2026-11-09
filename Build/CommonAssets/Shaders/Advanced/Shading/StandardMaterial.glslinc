@@ -33,6 +33,44 @@ vec4 XR_ADV_StandardTexture(XRAdvancedMaterialRecord material, uint slot,
     return XR_ADV_SampleTexture2DGrad(textureReference, uv, dx, dy);
 }
 
+// Tangent-space normal from a grayscale height or bump map in texture slot 1.
+// Forward differences over one texel, scaled to match the Default Sobel path
+// (Snippets/SurfaceDetailNormalMapping.glsl), which spans two texels per axis.
+// tapCount must come from material data: it keeps the loop rolled, so the large
+// texture-sampling code is emitted once in the native shading kernel.
+// Decodes a tangent-space normal-map sample to [-1, 1]. A BC5 normal map samples with
+// alpha 0 (view swizzle R, G, 0, 0) and stores only X and Y, so Z is rebuilt from them.
+// Other samples keep their stored Z.
+vec3 XR_ADV_DecodeTangentNormal(vec4 packedNormal)
+{
+    vec3 normal = packedNormal.xyz * 2.0 - 1.0;
+    if (packedNormal.a < 0.5)
+        normal.z = sqrt(clamp(1.0 - dot(normal.xy, normal.xy), 0.0, 1.0));
+    return normal;
+}
+
+vec3 XR_ADV_StandardHeightTangentNormal(XRAdvancedMaterialRecord material,
+    vec2 uv, vec2 dx, vec2 dy, float heightScale, uint tapCount)
+{
+    if (1u >= material.textureReferenceCount ||
+        material.textureReferenceOffset >= uint(XR_ADV_MaterialTextureBindings.records.length()) ||
+        1u >= uint(XR_ADV_MaterialTextureBindings.records.length()) - material.textureReferenceOffset)
+        return vec3(0.0, 0.0, 1.0);
+    XRAdvancedEncodedTextureReference textureReference;
+    XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(material, 1u), textureReference);
+    vec2 texel = 1.0 / vec2(max(XR_ADV_Texture2DSize(textureReference), ivec2(1)));
+
+    float heights[3] = float[3](0.0, 0.0, 0.0);
+    for (uint tap = 0u; tap < min(tapCount, 3u); ++tap)
+    {
+        vec2 offset = tap == 1u ? vec2(texel.x, 0.0) : (tap == 2u ? vec2(0.0, texel.y) : vec2(0.0));
+        heights[tap] = XR_ADV_SampleTexture2DGrad(textureReference, uv + offset, dx, dy).r;
+    }
+
+    vec2 slope = 2.0 * vec2(heights[0] - heights[1], heights[0] - heights[2]);
+    return normalize(vec3(slope * heightScale, 1.0));
+}
+
 vec3 XR_ADV_ResolveStandardEmission(
     XRAdvancedMaterialRecord material,
     vec2 uv0,

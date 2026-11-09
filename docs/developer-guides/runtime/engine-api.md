@@ -303,6 +303,7 @@ public class UserSettings : XRBase
     public EPhysicsLibrary PhysicsLibrary { get; set; }
     public float? TargetFramesPerSecond { get; set; }
     public float? UnfocusedTargetFramesPerSecond { get; set; }
+    public float? VrTargetFramesPerSecond { get; set; } // null: no engine limit in VR
     public IVector2 WindowedResolution { get; set; }
     public bool DisableAudioOnDefocus { get; set; }
     public double DebugOutputRecencySeconds { get; set; }

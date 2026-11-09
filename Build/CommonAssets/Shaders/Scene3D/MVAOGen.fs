@@ -20,7 +20,6 @@ uniform vec2 NoiseScale;
 uniform float Radius = 0.9f;
 uniform float SecondaryRadius = 1.6f;
 uniform float Bias = 0.03f;
-uniform float Power = 1.4f;
 uniform float MultiViewBlend = 0.6f;
 uniform float MultiViewSpread = 0.5f;
 
@@ -79,12 +78,15 @@ void main()
     {
         if (i >= KernelSize)
             break;
-        vec3 sampleDir = normalize(Samples[i]);
-        vec3 viewSample = normalize(TBN * sampleDir);
+        // The kernel length places samples near the surface first, so nearby creases contribute.
+        float sampleLength = length(Samples[i]);
+        if (sampleLength <= 0.0f)
+            continue;
+        vec3 viewSample = normalize(TBN * (Samples[i] / sampleLength));
 
         float alignment = max(dot(viewNormal, viewSample), 0.05f);
-        float primary = SampleAO(fragPosVS, fragPosVS + viewSample * Radius);
-        float secondary = SampleAO(fragPosVS, fragPosVS + viewSample * SecondaryRadius);
+        float primary = SampleAO(fragPosVS, fragPosVS + viewSample * Radius * sampleLength);
+        float secondary = SampleAO(fragPosVS, fragPosVS + viewSample * SecondaryRadius * sampleLength);
 
         vec3 tangentDir = viewSample - viewNormal * dot(viewSample, viewNormal);
         float tangentLength = length(tangentDir);
@@ -92,7 +94,7 @@ void main()
         if (tangentLength > 0.0001f)
         {
             tangentDir /= tangentLength;
-            float tangentRadius = mix(Radius, SecondaryRadius, clamp(MultiViewSpread, 0.0f, 1.0f));
+            float tangentRadius = mix(Radius, SecondaryRadius, clamp(MultiViewSpread, 0.0f, 1.0f)) * sampleLength;
             multiView = 0.5f * (
                 SampleAO(fragPosVS, fragPosVS + tangentDir * tangentRadius) +
                 SampleAO(fragPosVS, fragPosVS - tangentDir * tangentRadius));
@@ -106,5 +108,5 @@ void main()
     }
 
     float ao = weightAccum > 0.0f ? occlusionAccum / weightAccum : 0.0f;
-    OutIntensity = pow(clamp(1.0f - ao, 0.0f, 1.0f), Power);
+    OutIntensity = clamp(1.0f - ao, 0.0f, 1.0f);
 }

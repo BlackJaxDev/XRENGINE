@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine;
+using XREngine.Animation;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -438,8 +439,6 @@ public partial class PhysicsChainComponent : XRComponent
     {
         bool observeGpuPrepare = UseGPU && RuntimeWorldTickTelemetry.Enabled;
         long restPoseTicks = 0L;
-        long hierarchyTicks = 0L;
-        long particleReadTicks = 0L;
         _deltaTime = RuntimeTimingServices.Current.UpdateDeltaSeconds;
         switch (UpdateMode)
         {
@@ -502,52 +501,24 @@ public partial class PhysicsChainComponent : XRComponent
                 pt.RestGravity = Vector3.TransformNormal(
                     pt.LocalGravity, gpuRestMatrices[gpuRestOffset]);
                 gpuRestOffset += pt.Particles.Count;
+                UpdateRootParentMotion(pt);
                 continue;
             }
 
-            // Restore rest-pose rotations before reading matrices. ApplyParticlesToTransforms()
-            // writes simulation rotation deltas back to the hierarchy each frame; without this
-            // reset the matrices we read below would include the previous frame's deformation,
-            // causing the rest reference to drift.
+            // The rest pose is composed from the initial local poses and is never written to the
+            // live bones. The collect thread publishes render matrices while this thread
+            // prepares and solves, so a rest pose in the live bones can render for one frame.
             long restPoseStart = observeGpuPrepare ? Stopwatch.GetTimestamp() : 0L;
-            InitTransforms(pt);
+            ReadRestPose(pt);
             if (observeGpuPrepare)
                 restPoseTicks += Stopwatch.GetTimestamp() - restPoseStart;
 
-            // Ensure we sample the current (post-InitTransforms / post-animation) pose.
-            // Without this, we can end up using stale world matrices from the prior frame,
-            // effectively allowing the simulated pose to slowly become the new "rest".
-            long hierarchyStart = RuntimeWorldTickTelemetry.Enabled
-                ? Stopwatch.GetTimestamp()
-                : 0L;
-            RefreshPreparedParticleTree(pt);
-            if (RuntimeWorldTickTelemetry.Enabled)
-            {
-                long hierarchyElapsed = Stopwatch.GetTimestamp() - hierarchyStart;
-                RuntimePhysicsChainRendering.Current.RecordHierarchyRecalculationTicks(hierarchyElapsed);
-                if (observeGpuPrepare)
-                    hierarchyTicks += hierarchyElapsed;
-            }
-
-            pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
-
-            long particleReadStart = observeGpuPrepare ? Stopwatch.GetTimestamp() : 0L;
-            for (int j = 0; j < pt.Particles.Count; ++j)
-            {
-                Particle p = pt.Particles[j];
-                if (p.Transform is not null)
-                {
-                    p.TransformPosition = p.Transform.WorldTranslation;
-                    p.TransformLocalPosition = p.ParentIndex < 0 ? p.Transform.LocalTranslation : p.InitLocalPosition;
-                    p.TransformLocalToWorldMatrix = p.Transform.WorldMatrix;
-                }
-            }
-            if (observeGpuPrepare)
-                particleReadTicks += Stopwatch.GetTimestamp() - particleReadStart;
+            UpdateRootParentMotion(pt);
         }
 
+        // The rest-pose read composes matrices and reads no hierarchy, so it owns all of the time.
         if (observeGpuPrepare)
-            PhysicsChainWorld.RecordGpuPrepareDetails(restPoseTicks, hierarchyTicks, particleReadTicks);
+            PhysicsChainWorld.RecordGpuPrepareDetails(restPoseTicks, 0L, 0L);
 
         _effectiveColliders?.Clear();
 
@@ -622,6 +593,7 @@ public partial class PhysicsChainComponent : XRComponent
                 snapshot = new PhysicsChainColliderSnapshot
                 {
                     Kind = PhysicsChainColliderKind.Sphere,
+                    ParticleContactOnly = sphere.ParticleContactOnly,
                     Center = transform.WorldTranslation,
                     Radius = MathF.Max(sphere.Radius, 0.0f),
                 };
@@ -641,6 +613,7 @@ public partial class PhysicsChainComponent : XRComponent
                 snapshot = new PhysicsChainColliderSnapshot
                 {
                     Kind = PhysicsChainColliderKind.Capsule,
+                    ParticleContactOnly = capsule.ParticleContactOnly,
                     Center = start,
                     End = end,
                     Radius = MathF.Max(capsule.Radius, 0.0f),
@@ -658,6 +631,7 @@ public partial class PhysicsChainComponent : XRComponent
                 snapshot = new PhysicsChainColliderSnapshot
                 {
                     Kind = PhysicsChainColliderKind.Box,
+                    ParticleContactOnly = box.ParticleContactOnly,
                     Center = transform.WorldTranslation,
                     AxisX = Vector3.Normalize(transform.WorldRight),
                     AxisY = Vector3.Normalize(transform.WorldUp),
@@ -672,6 +646,7 @@ public partial class PhysicsChainComponent : XRComponent
             snapshot = new PhysicsChainColliderSnapshot
             {
                 Kind = PhysicsChainColliderKind.Plane,
+                ParticleContactOnly = plane.ParticleContactOnly,
                 PlaneNormal = plane._plane.Normal,
                 PlaneDistance = plane._plane.D,
                 Inside = plane._bound == PhysicsChainColliderBase.EBound.Inside,
@@ -1078,7 +1053,14 @@ public partial class PhysicsChainComponent : XRComponent
                 or nameof(Inert) or nameof(InertDistrib)
                 or nameof(Friction) or nameof(FrictionDistrib)
                 or nameof(Radius) or nameof(RadiusDistrib)
-                or nameof(EndLength) or nameof(EndOffset)
+                or nameof(EndLength) or nameof(EndOffset) or nameof(EndOffsetInBoneSpace)
+                or nameof(GravityFalloff) or nameof(InertFollowsRootParent)
+                or nameof(RestFollowsParent) or nameof(PinBranchChildren)
+                or nameof(StiffnessMode) or nameof(GravityMode)
+                or nameof(CollisionMode) or nameof(CarryParticlesBetweenSteps)
+                or nameof(LimitType) or nameof(MaxAngle) or nameof(MaxAngleDistrib)
+                or nameof(MaxYaw) or nameof(MaxYawDistrib) or nameof(LimitRotation)
+                or nameof(MaxStretch) or nameof(MaxSquish) or nameof(StretchMotion)
                 or nameof(Gravity) or nameof(BlendWeight)
                 or nameof(Exclusions) or nameof(FreezeAxis)
                 or nameof(RootInertia) or nameof(VelocitySmoothing)
@@ -1120,7 +1102,11 @@ public partial class PhysicsChainComponent : XRComponent
         }
     }
 
-    private static void RefreshPreparedParticleTree(ParticleTree pt)
+    /// <summary>
+    /// Reads the rest pose of each particle from its initial local pose and the current parent
+    /// world matrix. The root keeps its current local translation. No transform changes.
+    /// </summary>
+    private static void ReadRestPose(ParticleTree pt)
     {
         List<Particle> particles = pt.Particles;
         int particleCount = particles.Count;
@@ -1129,17 +1115,23 @@ public partial class PhysicsChainComponent : XRComponent
             Particle particle = particles[i];
             Transform? transform = particle.Transform;
             if (transform is null)
-            {
-                particle.PreparedWorldChanged = particle.ParentIndex >= 0
-                    && particle.ParentIndex < particleCount
-                    && particles[particle.ParentIndex].PreparedWorldChanged;
                 continue;
-            }
 
-            bool forceWorldRecalc = particle.ParentIndex >= 0
-                && particle.ParentIndex < particleCount
-                && particles[particle.ParentIndex].PreparedWorldChanged;
-            particle.PreparedWorldChanged = transform.RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow: false);
+            bool isRoot = particle.ParentIndex < 0 || particle.ParentIndex >= particleCount;
+            TransformState state = transform.FrameState;
+            Vector3 localTranslation = isRoot ? state.Translation : particle.InitLocalPosition;
+            // Particles are in parent-first order, so the parent rest matrix is ready.
+            Matrix4x4 parentWorld = !isRoot && particles[particle.ParentIndex].Transform is not null
+                ? particles[particle.ParentIndex].TransformLocalToWorldMatrix
+                : transform.Parent?.WorldMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 world = PhysicsChainRestTransformMatrix.Compose(
+                localTranslation, particle.InitLocalRotation, state.Scale, state.Order).ToMatrix4x4() * parentWorld;
+
+            particle.TransformPosition = world.Translation;
+            particle.TransformLocalPosition = localTranslation;
+            particle.TransformLocalToWorldMatrix = world;
+            if (i == 0)
+                pt.RestGravity = Vector3.TransformNormal(pt.LocalGravity, world);
         }
     }
 
@@ -1385,6 +1377,8 @@ public partial class PhysicsChainComponent : XRComponent
                         : new Vector3(EndLength, 0.0f, 0.0f);
                     ptcl.EndOffset = endOffset;
                 }
+                else if (EndOffsetInBoneSpace)
+                    ptcl.EndOffset = EndOffset;
                 else
                     ptcl.EndOffset = parent.InverseTransformPoint(Transform.TransformDirection(EndOffset) + parent.WorldTranslation);
                                 
@@ -1453,6 +1447,8 @@ public partial class PhysicsChainComponent : XRComponent
             p.Inert = Inert;
             p.Friction = Friction;
             p.Radius = Radius;
+            float maxAngle = MaxAngle;
+            float maxYaw = MaxYaw;
 
             if (pt.BoneTotalLength > 0)
             {
@@ -1469,7 +1465,14 @@ public partial class PhysicsChainComponent : XRComponent
                     p.Friction *= FrictionDistrib.Evaluate(a);
                 if (RadiusDistrib != null && RadiusDistrib.Keyframes.Count > 0)
                     p.Radius *= RadiusDistrib.Evaluate(a);
+                if (MaxAngleDistrib != null && MaxAngleDistrib.Keyframes.Count > 0)
+                    maxAngle *= MaxAngleDistrib.Evaluate(a);
+                if (MaxYawDistrib != null && MaxYawDistrib.Keyframes.Count > 0)
+                    maxYaw *= MaxYawDistrib.Evaluate(a);
             }
+
+            p.MaxAngleRadians = float.DegreesToRadians(Math.Clamp(maxAngle, 0.0f, 180.0f));
+            p.MaxYawRadians = float.DegreesToRadians(Math.Clamp(maxYaw, 0.0f, 180.0f));
 
             p.Damping = p.Damping.Clamp(0, 1);
             p.Elasticity = p.Elasticity.Clamp(0, 1);
@@ -1477,6 +1480,30 @@ public partial class PhysicsChainComponent : XRComponent
             p.Inert = p.Inert.Clamp(0, 1);
             p.Friction = p.Friction.Clamp(0, 1);
             p.Radius = MathF.Max(p.Radius, 0);
+        }
+    }
+
+    private void UpdateRootParentMotion(ParticleTree pt)
+    {
+        if (!InertFollowsRootParent)
+            return;
+
+        TransformBase? parent = pt.Root.Parent;
+        if (parent is null)
+        {
+            pt.RootParentMotion = Matrix4x4.Identity;
+            return;
+        }
+
+        Matrix4x4 current = parent.WorldMatrix;
+        pt.RootParentMotion = pt.HasPreviousRootParentWorld && Matrix4x4.Invert(pt.PreviousRootParentWorld, out Matrix4x4 inverse)
+            ? inverse * current
+            : Matrix4x4.Identity;
+        pt.LatestRootParentWorld = current;
+        if (!pt.HasPreviousRootParentWorld)
+        {
+            pt.PreviousRootParentWorld = current;
+            pt.HasPreviousRootParentWorld = true;
         }
     }
 
@@ -1565,11 +1592,23 @@ public partial class PhysicsChainComponent : XRComponent
                 continue;
 
             InitTransforms(pt);
-            RefreshPreparedParticleTree(pt);
+            RecalculateResetPoseMatrices(pt);
         }
 
         ResetParticlesPosition();
         return true;
+    }
+
+    /// <summary>
+    /// Recalculates the world matrices of the chain bones after a pose reset wrote their rest poses, so that
+    /// <see cref="ResetParticlesPosition(ParticleTree)"/> reads the new pose. Particles are in parent-first order,
+    /// so each parent is current before its children. The reset wrote every bone, so every bone recalculates.
+    /// </summary>
+    private static void RecalculateResetPoseMatrices(ParticleTree pt)
+    {
+        List<Particle> particles = pt.Particles;
+        for (int i = 0; i < particles.Count; ++i)
+            particles[i].Transform?.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
     }
 
     private void InitializeRootBoneTracking()
@@ -1721,17 +1760,21 @@ public partial class PhysicsChainComponent : XRComponent
             return;
         }
 
-        Vector3 force = Gravity;
-        float gravityLengthSquared = Gravity.LengthSquared();
+        // Segment ratio gravity is applied per segment after the pull.
+        Vector3 force = GravityMode == EPhysicsChainGravityMode.Force ? Gravity : Vector3.Zero;
+        float gravityLengthSquared = force.LengthSquared();
         if (gravityLengthSquared > 1e-8f)
         {
             Vector3 fdir = Gravity / MathF.Sqrt(gravityLengthSquared);
             Vector3 pf = fdir * MathF.Max(Vector3.Dot(pt.RestGravity, fdir), 0.0f); // project current gravity to rest gravity
-            force -= pf; // remove projected gravity
+            force -= pf * GravityFalloff; // remove projected gravity
         }
         force = (force + Force) * (_objectScale * timeVar);
 
         Vector3 objectMove = loopIndex == 0 ? _objectMove : Vector3.Zero; // only first loop consider object move
+        bool followRootParent = InertFollowsRootParent && loopIndex == 0;
+        pt.PresentationOffset = Vector3.Zero;
+        Matrix4x4 rootParentMotion = pt.RootParentMotion;
 
         List<Particle> particles = pt.Particles;
         int particleCount = particles.Count;
@@ -1742,7 +1785,9 @@ public partial class PhysicsChainComponent : XRComponent
             {
                 // verlet integration
                 Vector3 v = p.Position - p.PrevPosition;
-                Vector3 rmove = objectMove * p.Inert;
+                Vector3 rmove = followRootParent
+                    ? (Vector3.Transform(p.Position, rootParentMotion) - p.Position) * p.Inert
+                    : InertFollowsRootParent ? Vector3.Zero : objectMove * p.Inert;
                 p.PrevPosition = p.Position + rmove;
                 float damping = p.Damping;
                 if (p.IsColliding)
@@ -1760,6 +1805,10 @@ public partial class PhysicsChainComponent : XRComponent
                 p.Position = p.TransformPosition;
             }
         }
+
+        // The motion of frames without a step accumulates until a step applies it.
+        if (followRootParent)
+            pt.PreviousRootParentWorld = pt.LatestRootParentWorld;
     }
 
     private void ApplyParticleTransforms(float timeVar)
@@ -1793,47 +1842,30 @@ public partial class PhysicsChainComponent : XRComponent
 
             Particle parentPtcl = particles[childPtcl.ParentIndex];
 
+            if (TryPinBranchChild(particles, childPtcl, parentPtcl))
+                continue;
+
             float restLen = childPtcl.SegmentLength;
 
             // keep shape
             float stiffness = Interp.Lerp(1.0f, childPtcl.Stiffness, _weight);
-            if (stiffness > 0 || childPtcl.Elasticity > 0)
-            {
-                Matrix4x4 m0 = parentPtcl.TransformLocalToWorldMatrix;
-                m0.Translation = parentPtcl.Position;
-                Vector3 restPos = childPtcl.Transform is not null 
-                    ? Vector3.Transform(childPtcl.TransformLocalPosition, m0)
-                    : Vector3.Transform(childPtcl.EndOffset, m0);
-                Vector3 d = restPos - childPtcl.Position;
-                childPtcl.Position += d * (childPtcl.Elasticity * timeVar);
-
-                if (stiffness > 0)
-                {
-                    d = restPos - childPtcl.Position;
-                    float len = d.Length();
-                    float maxlen = restLen * (1.0f - stiffness) * 2.0f;
-                    if (len > maxlen)
-                        childPtcl.Position += d * ((len - maxlen) / len);
-                }
-            }
+            ApplyKeepShape(pt, childPtcl, parentPtcl, stiffness, restLen, timeVar);
 
             // collide
             PhysicsChainColliderSnapshot[]? colliderSnapshots = _colliderSnapshotsForJob;
             int colliderSnapshotCount = _colliderSnapshotsForJobCount;
             if (collisionEnabled && colliderSnapshots is not null && colliderSnapshotCount > 0)
             {
-                float particleRadius = childPtcl.Radius * _objectScale;
                 for (int j = 0; j < colliderSnapshotCount; ++j)
-                    childPtcl.IsColliding |= colliderSnapshots[j].Collide(ref childPtcl._position, particleRadius);
+                    childPtcl.IsColliding |= CollideSnapshot(in colliderSnapshots[j], childPtcl, parentPtcl);
             }
 
             PhysicsChainColliderBase[]? fallbackColliders = _fallbackCollidersForJob;
             int fallbackColliderCount = _fallbackCollidersForJobCount;
             if (collisionEnabled && fallbackColliders is not null && fallbackColliderCount > 0)
             {
-                float particleRadius = childPtcl.Radius * _objectScale;
                 for (int j = 0; j < fallbackColliderCount; ++j)
-                    childPtcl.IsColliding |= fallbackColliders[j].Collide(ref childPtcl._position, particleRadius);
+                    childPtcl.IsColliding |= CollideComponent(fallbackColliders[j], childPtcl, parentPtcl);
             }
 
             // freeze axis, project to plane 
@@ -1851,11 +1883,21 @@ public partial class PhysicsChainComponent : XRComponent
                 childPtcl.Position -= movePlane.Normal * GeoUtil.DistanceFrom.PlaneToPoint(movePlane, childPtcl.Position);
             }
 
+            if (LimitType != EPhysicsChainLimitType.None)
+            {
+                Matrix4x4 limitParent = parentPtcl.TransformLocalToWorldMatrix;
+                limitParent.Translation = parentPtcl.Position;
+                Vector3 limitRest = childPtcl.Transform is not null
+                    ? Vector3.Transform(childPtcl.TransformLocalPosition, limitParent)
+                    : Vector3.Transform(childPtcl.EndOffset, limitParent);
+                ApplyAngleLimit(particles, childPtcl, parentPtcl, limitRest);
+            }
+
             // keep length
-            Vector3 dd = parentPtcl.Position - childPtcl.Position;
-            float leng = dd.Length();
-            if (leng > 0)
-                childPtcl.Position += dd * ((leng - restLen) / leng);
+            ApplySegmentLength(childPtcl, parentPtcl, restLen);
+
+            if (TracksSegmentTurn)
+                UpdateSegmentTurn(childPtcl, parentPtcl);
         }
     }
 
@@ -1878,6 +1920,15 @@ public partial class PhysicsChainComponent : XRComponent
 
         List<Particle> particles = pt.Particles;
         int particleCount = particles.Count;
+
+        // Particles keep their state until the next step. The presented pose moves rigidly with the root.
+        if (!CarryParticlesBetweenSteps)
+        {
+            Particle root = particles[0];
+            pt.PresentationOffset = root.TransformPosition - root.Position;
+            return;
+        }
+
         for (int i = 0; i < particleCount; ++i)
         {
             Particle childPtcl = particles[i];
@@ -1895,29 +1946,24 @@ public partial class PhysicsChainComponent : XRComponent
 
                 Particle parentPtcl = particles[childPtcl.ParentIndex];
 
+                if (TryPinBranchChild(particles, childPtcl, parentPtcl))
+                    continue;
+
                 float restLen = childPtcl.SegmentLength;
 
                 //Keep shape
                 float stiffness = Interp.Lerp(1.0f, childPtcl.Stiffness, _weight);
-                if (stiffness > 0)
-                {
-                    Matrix4x4 m0 = parentPtcl.TransformLocalToWorldMatrix;
-                    m0.Translation = parentPtcl.Position;
-                    Vector3 restPos = childPtcl.Transform is not null 
-                        ? Vector3.Transform(childPtcl.TransformLocalPosition, m0)
-                        : Vector3.Transform(childPtcl.EndOffset, m0);
-                    Vector3 d = restPos - childPtcl.Position;
-                    float len = d.Length();
-                    float maxlen = restLen * (1 - stiffness) * 2;
-                    if (len > maxlen)
-                        childPtcl.Position += d * ((len - maxlen) / len);
-                }
+                if (stiffness > 0 && StiffnessMode == EPhysicsChainStiffnessMode.DistanceLimit)
+                    ApplyStiffnessDistanceLimit(childPtcl, parentPtcl.Position + ComputeShapeRestOffset(childPtcl, parentPtcl), stiffness, restLen);
 
                 // keep length
                 Vector3 dd = parentPtcl.Position - childPtcl.Position;
                 float leng = dd.Length();
                 if (leng > 0)
                     childPtcl.Position += dd * ((leng - restLen) / leng);
+
+                if (TracksSegmentTurn)
+                    UpdateSegmentTurn(childPtcl, parentPtcl);
             }
             else
             {
@@ -1933,19 +1979,18 @@ public partial class PhysicsChainComponent : XRComponent
     private void ApplyParticlesToTransforms()
     {
         for (int i = 0; i < _particleTrees.Count; ++i)
-            ApplyParticlesToTransforms(_particleTrees[i]);
+            ApplyParticlesToTransforms(_particleTrees[i], EInterpolationMode.Discrete, 1.0f, PinBranchChildren);
     }
 
     private void ApplyParticlesToTransforms(EInterpolationMode mode, float alpha)
     {
         for (int i = 0; i < _particleTrees.Count; ++i)
-            ApplyParticlesToTransforms(_particleTrees[i], mode, alpha);
+            ApplyParticlesToTransforms(_particleTrees[i], mode, alpha, PinBranchChildren);
     }
 
-    private static void ApplyParticlesToTransforms(ParticleTree pt)
-        => ApplyParticlesToTransforms(pt, EInterpolationMode.Discrete, 1.0f);
+    private const float MinimumSegmentDirectionLengthSquared = 1e-10f;
 
-    private static void ApplyParticlesToTransforms(ParticleTree pt, EInterpolationMode mode, float alpha)
+    private static void ApplyParticlesToTransforms(ParticleTree pt, EInterpolationMode mode, float alpha, bool pinBranchChildren)
     {
         if (pt.Particles is null || pt.Particles.Count <= 1)
         {
@@ -1953,9 +1998,17 @@ public partial class PhysicsChainComponent : XRComponent
             return;
         }
 
+        // Each bone receives only its final local value, computed from its rest pose. A
+        // render-matrix publish on the collect thread can run at any time during this loop,
+        // so the loop never writes the rest pose itself to a bone.
         var particles = pt.Particles;
         using TransformHierarchyMutationBatch hierarchyBatch = pt.Root.BeginHierarchyMutationBatch();
         int particleCount = particles.Count;
+        // The loop below does not aim a bone without children, so it keeps its rest rotation.
+        for (int i = 0; i < particleCount; ++i)
+            if (particles[i] is { ChildCount: 0, Transform: { } leafTfm } leaf)
+                hierarchyBatch.SetLocalRotation(leafTfm, leaf.InitLocalRotation);
+
         for (int i = 1; i < particleCount; ++i)
         {
             Particle child = particles[i];
@@ -1970,30 +2023,59 @@ public partial class PhysicsChainComponent : XRComponent
 
             Transform? pTfm = parent.Transform;
             Transform? cTfm = child.Transform;
-            Vector3 parentPosition = ResolveFixedUpdateRenderPosition(parent.PreviousPhysicsPosition, parent.Position, mode, alpha);
-            Vector3 childPosition = ResolveFixedUpdateRenderPosition(child.PreviousPhysicsPosition, child.Position, mode, alpha);
+            Vector3 parentPosition = ResolveFixedUpdateRenderPosition(parent.PreviousPhysicsPosition, parent.Position, mode, alpha) + pt.PresentationOffset;
+            Vector3 childPosition = ResolveFixedUpdateRenderPosition(child.PreviousPhysicsPosition, child.Position, mode, alpha) + pt.PresentationOffset;
 
-            if (parent.ChildCount <= 1 && pTfm is not null) // do not modify bone orientation if has more then one child
+            if (pTfm is not null)
             {
-                Vector3 localPos = cTfm is not null
-                    ? child.InitLocalPosition
-                    : child.EndOffset;
+                // A bone with more than one child keeps its rest rotation.
+                Quaternion localRotation = parent.ChildCount <= 1
+                    ? AimRestRotation(pTfm, parent.InitLocalRotation,
+                        cTfm is not null ? child.InitLocalPosition : child.EndOffset,
+                        childPosition - parentPosition)
+                    : parent.InitLocalRotation;
+                hierarchyBatch.SetLocalRotation(pTfm, localRotation);
 
-                Vector3 v0 = pTfm.TransformDirection(localPos);
-                Vector3 v1 = childPosition - parentPosition;
-                Quaternion rot = Quaternion.Normalize(XRMath.RotationBetweenVectors(v0, v1));
-
-                hierarchyBatch.AddWorldRotationDelta(pTfm, rot);
-
-                // Refresh the parent's world + inverse-world matrices so that the
-                // child's SetWorldTranslation (which uses ParentInverseWorldMatrix)
-                // computes the correct local translation.
-                hierarchyBatch.RecalculateMatrices(pTfm, forceWorldRecalc: false);
+                // The parent's own parent can have rotated earlier in this loop. The parent's
+                // world and inverse-world matrices must include that rotation and this one
+                // before the child's SetWorldTranslation, which uses ParentInverseWorldMatrix.
+                hierarchyBatch.RecalculateMatrices(pTfm, forceWorldRecalc: true);
             }
 
-            if (cTfm is not null)
+            if (cTfm is null)
+                continue;
+            if (pinBranchChildren && parent.ChildCount > 1)
+                hierarchyBatch.SetLocalTranslation(cTfm, child.InitLocalPosition);
+            else
                 hierarchyBatch.SetWorldTranslation(cTfm, childPosition);
         }
+    }
+
+    /// <summary>
+    /// Returns the local rotation that turns a bone from its rest rotation so that its rest
+    /// segment direction points along <paramref name="segment"/>. The parent world matrix of
+    /// <paramref name="bone"/> must be current, and the local translation of the bone must be final.
+    /// </summary>
+    private static Quaternion AimRestRotation(Transform bone, Quaternion restLocalRotation,
+        Vector3 restSegmentLocal, Vector3 segment)
+    {
+        TransformState state = bone.FrameState;
+        Matrix4x4 restWorld = PhysicsChainRestTransformMatrix.Compose(
+            state.Translation, restLocalRotation, state.Scale, state.Order).ToMatrix4x4()
+            * (bone.Parent?.WorldMatrix ?? Matrix4x4.Identity);
+        Vector3 restSegment = Vector3.TransformNormal(restSegmentLocal, restWorld);
+
+        // A zero-length segment has no direction, so it cannot define a rotation.
+        if (restSegment.LengthSquared() <= MinimumSegmentDirectionLengthSquared ||
+            segment.LengthSquared() <= MinimumSegmentDirectionLengthSquared)
+            return restLocalRotation;
+
+        // The same world-to-local conversion as Transform.AddWorldRotationDelta, applied to the rest rotation.
+        Quaternion worldDelta = Quaternion.Normalize(XRMath.RotationBetweenVectors(restSegment, segment));
+        Quaternion parentWorldRotation = bone.ParentWorldRotation;
+        Quaternion localDelta = Quaternion.Normalize(
+            Quaternion.Inverse(parentWorldRotation) * worldDelta * parentWorldRotation);
+        return Quaternion.Normalize(localDelta * restLocalRotation);
     }
 
 }

@@ -71,8 +71,11 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
         var io = ImGui.GetIO();
         io.DeltaTime = deltaSeconds > 0f ? deltaSeconds : 1f / 60f;
 
-        _input.FlushPendingInputEvents(io);
-        _viewports?.PrepareForNewFrame(io);
+        // Publish group focus before input so a detached click cannot be split
+        // between conflicting focus events from separate native windows.
+        io.AddFocusEvent(_viewports?.IsAnyWindowFocused() ?? _outputHost.MainWindowFocused);
+        bool mainButtonActivity = _input.FlushPendingInputEvents(io);
+        _viewports?.PrepareForNewFrame(io, mainButtonActivity);
 
         ImGui.NewFrame();
     }

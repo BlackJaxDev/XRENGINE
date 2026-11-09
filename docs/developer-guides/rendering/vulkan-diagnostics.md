@@ -17,6 +17,7 @@ The constants for all variables are in `XREngine.Data/Environment/XREngineEnviro
 | `XRE_VULKAN_CRASH_BREADCRUMBS`, `XRE_VULKAN_DEVICE_FAULT` | Enable crash breadcrumbs and `VK_EXT_device_fault`/`VK_KHR_device_fault` reports on device loss. |
 | `XRE_VULKAN_RENDERDOC_FRIENDLY` | Selects a capture-friendly device configuration. |
 | `XRE_FORCE_SWAPCHAIN_MAGENTA=1` | Clears the swapchain to magenta after main composition. If magenta shows, presentation works and scene output is the suspect. |
+| `XRE_DEBUG_RETRY_RECOVERY_CLEAR=1` | Shows a dark purple recovery clear, with only the editor overlay, for each retried desktop frame. By default a retried frame shows the last completed frame again. |
 | `XRE_SKIP_IMGUI=1` | Removes the ImGui overlay from the frame. |
 | `XRE_SKIP_UI_PIPELINE=1` | Removes screen-space UI pipeline operations from the frame. |
 | `XRE_VK_TRACE_DRAW=1` | Logs every Vulkan draw, including FBO-targeted UI batches. Very heavy. |
@@ -31,6 +32,9 @@ The constants for all variables are in `XREngine.Data/Environment/XREngineEnviro
 | `XRE_VK_RENDER_TARGET_MODE=Auto\|DynamicRendering\|LegacyRenderPass` | Overrides the persisted render-target mode for the process. |
 | `XRE_VK_OBS_HOOK=Auto\|Disable\|Require` | Controls OBS Vulkan hook compatibility. See [Vulkan OBS Hook Compatibility](vulkan-obs-hook-compatibility.md). |
 | `XRE_VK_CAPABILITY_TIER`, `XRE_VK_DESCRIPTOR_BACKEND`, `XRE_VK_PROGRAM_BINDING_BACKEND`, `XRE_VK_FOVEATION_BACKEND`, `XRE_VK_RAY_TRACING_BACKEND` | Request a capability tier or backend explicitly. An unsupported explicit request fails startup with a diagnostic. |
+| `XRE_VK_DESCRIPTOR_SIGNATURE_EPOCH=0\|1\|witness` | Texture binding signature cache. `0` (default) keeps a signature for one render frame. `1` keeps it while the descriptor generation and the texture readiness epoch stay the same. `witness` also computes each signature again, uses the new value, and writes mismatches to `descriptor-signature-witness.log`. |
+| `XRE_OPENXR_MESH_COHORT=0\|1\|witness` | OpenXR eye mesh-operation reuse. `1` (default) keeps the materialized mesh operations of each eye capture and, when the next frame's requests match, rebuilds them from the kept recipes with the current per-frame values. Each reuse reacquires the persistent binding artifact and requires the same object. `0` materializes every eye request each frame. `witness` materializes each reused request again, draws the fresh operation, and writes structural differences to `openxr-mesh-cohort-witness.log`. |
+| `XRE_ADVANCED_TYPED_POSTPROCESS_PUBLISHERS=0` | Publishes the Advanced pipeline AO finalize, post-process and final post-process values with uniform callbacks instead of typed binding publishers. For A/B checks only. |
 | `XRE_VULKAN_BINDLESS_MATERIAL_MODE` | Selects the bindless material mode. |
 
 ## Swapchain And Overlay Isolation Flags
@@ -40,6 +44,7 @@ Use these flags when the final image is black, stale, or different from the scen
 | Variable | Code owner | Behavior | Use when |
 |---|---|---|---|
 | `XRE_FORCE_SWAPCHAIN_MAGENTA=1` | `RenderDiagnosticsFlags.ForceSwapchainMagenta`, `VulkanRenderer.CommandBufferRecording.Primary.Finalization` | Clears the Vulkan swapchain to magenta after main composition. The log records the forced clear. | Confirm that acquire, final layout, submit, and present reach the swapchain. |
+| `XRE_DEBUG_RETRY_RECOVERY_CLEAR=1` | `RenderDiagnosticsFlags.DebugRetryRecoveryClear`, `EditorPreferences.DebugRetryRecoveryClear`, `VulkanFrameLoop.ResolveRejectedDesktopRecoveryPolicy` | When a desktop frame must retry, the recovery frame clears to dark purple (0.06, 0.015, 0.08) and draws only the overlay. When it is off, the recovery frame shows the last completed scene again. When no valid completed scene exists, it clears to the startup presentation color instead of purple. | Count or see the retried desktop frames while you remove their causes. |
 | `XRE_SKIP_IMGUI=1` | `RenderDiagnosticsFlags.SkipImGui`, `EditorPreferences.Vulkan.SkipImGui` | Skips Vulkan ImGui overlay recording. | Isolate overlay command recording from scene output faults. |
 | `XRE_SKIP_UI_PIPELINE=1` | `RenderDiagnosticsFlags.SkipUiPipeline`, `EditorPreferences.Vulkan.SkipUiPipeline` | Skips screen-space UI pipeline operations on the Vulkan command buffer. | Isolate UI pipeline commands from scene and ImGui commands. |
 

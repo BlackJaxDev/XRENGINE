@@ -16,8 +16,9 @@ internal sealed partial class FramePlan
     // OpenXR can freeze two eye inputs concurrently. Keep fixed filtered
     // headers for each eye while both workers share the physical source
     // columns without a per-eye heap allocation.
-    private readonly FrameOperationStream[] _logicalViewOperations;
-    private readonly ulong[] _logicalViewIds;
+    // Two slices cover stereo. Quad view grows these to four on the publishing thread.
+    private FrameOperationStream[] _logicalViewOperations;
+    private ulong[] _logicalViewIds;
     private OutputRequest[] _outputs = Array.Empty<OutputRequest>();
     private RenderOutputRequest[] _outputRequests = Array.Empty<RenderOutputRequest>();
     private RenderOutputSchedulingDecision[] _outputDecisions =
@@ -425,6 +426,24 @@ internal sealed partial class FramePlan
     }
 
     /// <summary>
+    /// Grows the logical view slices to <see cref="RenderFrameViewSet.MaxViewCount"/>
+    /// once, when a quad-view frame first needs more than the two stereo slices.
+    /// Runs on the publishing thread only, before any eye worker reads a slice.
+    /// </summary>
+    private void GrowLogicalViewSlices()
+    {
+        int previous = _logicalViewOperations.Length;
+        FrameOperationStream[] operations = new FrameOperationStream[RenderFrameViewSet.MaxViewCount];
+        ulong[] ids = new ulong[RenderFrameViewSet.MaxViewCount];
+        Array.Copy(_logicalViewOperations, operations, previous);
+        Array.Copy(_logicalViewIds, ids, previous);
+        for (int index = previous; index < operations.Length; index++)
+            operations[index] = _operations.CreateLogicalViewStorage(_operations.Capacity);
+        _logicalViewOperations = operations;
+        _logicalViewIds = ids;
+    }
+
+    /// <summary>
     /// Materializes every OpenXR eye slice on the single publishing thread. Eye
     /// workers subsequently perform immutable lookup only, so two workers can
     /// never claim or populate the same slot concurrently.
@@ -447,10 +466,14 @@ internal sealed partial class FramePlan
 
             if (sliceIndex >= _logicalViewOperations.Length)
             {
-                throw new VulkanAcceptedFramePlanCapacityException(
-                    EVulkanAcceptedFrameLane.Terminal,
-                    _logicalViewOperations.Length,
-                    sliceIndex + 1);
+                if (_logicalViewOperations.Length >= RenderFrameViewSet.MaxViewCount)
+                {
+                    throw new VulkanAcceptedFramePlanCapacityException(
+                        EVulkanAcceptedFrameLane.Terminal,
+                        _logicalViewOperations.Length,
+                        sliceIndex + 1);
+                }
+                GrowLogicalViewSlices();
             }
 
             _operations.CopyLogicalViewSliceTo(

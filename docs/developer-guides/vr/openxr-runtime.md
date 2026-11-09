@@ -121,6 +121,8 @@ The repo-local Monado test runtime lives at `Build/Submodules/monado` and is sou
 
 Use `Tools/OpenXR/Build-Monado.ps1` to initialize or update that submodule and build Monado in place. Use `Tools/OpenXR/Install-Monado.ps1` when you also want the runtime staged under the build dependency folder, an environment helper written, and `openxr_loader.dll` copied into the editor output when available.
 
+When the unit-testing bootstrap starts `monado-service.exe`, it sets `U_PACING_APP_USE_MIN_FRAME_PERIOD=true` unless the variable already has a value. Monado's default app period can hold a frame over 16.7 ms at three display periods when two are enough, so the XR rate does not show the engine's frame time. Set the variable to `false` to measure default Monado pacing.
+
 The visible simulated-HMD preview is the `monado-service.exe` windowed compositor target, not `monado-gui.exe`. When an OpenXR session is active, the staged Windows build titles that window with the requested headset preset, internal per-eye resolution, current window size, and preview-eye scale. Leave `XRT_WINDOW_PEEK` unset for the default editor path. It enables Monado separate experimental peek target.
 
 ### No-HMD test lanes

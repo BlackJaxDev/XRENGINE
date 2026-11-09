@@ -10,7 +10,7 @@ public partial class UnitTestingWorldSettings
         public bool Enabled { get; set; } = true;
         public UnitTestModelImportKind Kind { get; set; } = UnitTestModelImportKind.Static;
         /// <summary>
-        /// Selects the generic model material factory. Unity prefabs use their source-aware
+        /// Selects the generic model material factory. Unity scenes and prefabs use their source-aware
         /// material converter instead; recognized Poiyomi materials are always converted to
         /// XRENGINE's forward-plus Uber shader.
         /// </summary>
@@ -34,13 +34,28 @@ public partial class UnitTestingWorldSettings
         /// path exists for FBX and glTF.
         /// </summary>
         public ModelImportBackendPreference ImporterBackend { get; set; } = ModelImportBackendPreference.PreferNativeThenAssimp;
+        /// <summary>
+        /// Model, .prefab, .unity, or .unitypackage path. Packages import each scene and prefab as a separate root.
+        /// </summary>
         public string Path { get; set; } = string.Empty;
         /// <summary>
-        /// Optional Unity project root (or its Assets directory) for <c>.prefab</c> imports.
-        /// When omitted, the importer locates the owning project from the prefab path.
+        /// Optional Unity project root (or its Assets directory) for loose scenes and prefabs.
+        /// When omitted, the importer locates the owning project from the source path.
         /// Relative paths are resolved from the process working directory.
+        /// Package imports always use their extracted project and ignore this setting.
         /// </summary>
         public string? SourceProjectRoot { get; set; }
+        /// <summary>
+        /// Companion sources for a Unity package import. Each source is a local package,
+        /// package folder, HTTPS archive, or VCC repository URL. Repository entries can
+        /// select a package ID and exact version. Only the main package creates startup roots.
+        /// </summary>
+        public List<UnityPackageDependencySettings> Dependencies { get; set; } = [];
+        /// <summary>
+        /// Imports available Unity content when dependencies are missing. Missing materials use
+        /// a visible fallback, missing prefab instances are skipped, and diagnostics report the loss.
+        /// </summary>
+        public bool AllowPartialImport { get; set; }
         public ModelImportSteps ImportFlags { get; set; } = ModelImportSteps.None;
         public float Scale { get; set; } = 1.0f;
         public bool ZUp { get; set; } = false;

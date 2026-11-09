@@ -5,59 +5,7 @@
 
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
-// --- Struct Definitions ---
-
-struct ParticleState
-{
-    vec3 Position;
-    float _pad0;
-    vec3 PrevPosition;
-    float _pad1;
-    int IsColliding;
-    float _pad2a;
-    float _pad2b;
-    float _pad2c;
-    vec3 PreviousPhysicsPosition;
-    float _pad3;
-};
-
-struct ParticleStatic
-{
-    vec3 TransformLocalPosition;
-    float _pad0;
-    int ParentIndex;
-    float Damping;
-    float Elasticity;
-    float Stiffness;
-    float Inert;
-    float Friction;
-    float Radius;
-    float BoneLength;
-    int TreeIndex;
-    int _pad1;
-    int _pad2;
-    int _pad3;
-};
-
-struct PerTreeParams
-{
-    float DeltaTime;
-    float ObjectScale;
-    float Weight;
-    int FreezeAxis;
-    vec3 Force;
-    int ColliderCount;
-    vec3 Gravity;
-    int ColliderOffset;
-    vec3 ObjectMove;
-    float _pad0;
-    vec3 RestGravity;
-    int ParticleOffset;
-    int TreeParticleCount;
-    int LoopCount;
-    int _pad1;
-    int _pad2;
-};
+#include "Compute/PhysicsChain/PhysicsChainSolverData.glslinc"
 
 // --- Buffers ---
 

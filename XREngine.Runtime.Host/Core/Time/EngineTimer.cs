@@ -356,11 +356,68 @@ namespace XREngine.Timers
         {
             if (_targetRenderPeriodTicks <= 0L)
             {
+                ServiceAsynchronousRenderWork();
                 Thread.Yield();
                 return;
             }
 
-            WaitUntilTimestamp(Render.LastTimestampTicks + _targetRenderPeriodTicks);
+            long target = Render.LastTimestampTicks + _targetRenderPeriodTicks;
+            RuntimeAsynchronousRenderWorkService? service = RuntimeAsynchronousRenderWorkService.Installed;
+            if (service is null || !service.HasUnresolvedWork)
+            {
+                WaitUntilTimestamp(target);
+                return;
+            }
+
+            // Wait in short slices while asynchronous work is unresolved, so completion
+            // and CPU deadlines are serviced. The original target stays the limit.
+            while (IsRunning)
+            {
+                service.Service();
+                long now = TimeTicks();
+                if (now >= target)
+                    return;
+
+                WaitUntilTimestamp(Math.Min(target, now + RuntimeAsynchronousRenderWorkService.ServiceSliceTicks));
+            }
+        }
+
+        private static void ServiceAsynchronousRenderWork()
+            => RuntimeAsynchronousRenderWorkService.Installed?.Service();
+
+        /// <summary>
+        /// Waits for a visibility publication. While asynchronous work is unresolved the
+        /// wait runs in 1 ms slices with a service pass between slices, and the caller's
+        /// absolute limit is kept across slices.
+        /// </summary>
+        private bool WaitForPublicationWithService(int publicationWaitMilliseconds)
+        {
+            RuntimeAsynchronousRenderWorkService? service = RuntimeAsynchronousRenderWorkService.Installed;
+            if (service is null || !service.HasUnresolvedWork)
+                return _visibilityGenerationGate.WaitForPublication(publicationWaitMilliseconds);
+
+            long limit = publicationWaitMilliseconds == Timeout.Infinite
+                ? long.MaxValue
+                : System.Diagnostics.Stopwatch.GetTimestamp() +
+                    publicationWaitMilliseconds * System.Diagnostics.Stopwatch.Frequency / 1000L;
+            while (IsRunning)
+            {
+                service.Service();
+                if (_visibilityGenerationGate.WaitForPublication(1))
+                    return true;
+                if (System.Diagnostics.Stopwatch.GetTimestamp() >= limit)
+                    return false;
+                if (!service.HasUnresolvedWork)
+                {
+                    long remaining = limit == long.MaxValue
+                        ? Timeout.Infinite
+                        : Math.Max(0L, (limit - System.Diagnostics.Stopwatch.GetTimestamp()) * 1000L /
+                            System.Diagnostics.Stopwatch.Frequency);
+                    return _visibilityGenerationGate.WaitForPublication((int)Math.Min(int.MaxValue, remaining));
+                }
+            }
+
+            return false;
         }
 
         public void BlockForRendering(Func<bool> runUntilPredicate)
@@ -431,6 +488,7 @@ namespace XREngine.Timers
                     //Collects visible object and generates render commands for the game's current state
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
+                        XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.CollectStart);
                         Volatile.Write(ref _collectVisiblePhase, "DispatchCollectVisible");
                         if (!TryCollectVisibleGeneration(out collectGeneration))
                         {
@@ -446,7 +504,9 @@ namespace XREngine.Timers
                         // A release that is already set means that the collect phase was the slower side of this frame.
                         XREngine.Rendering.CollectVisibleStageTimings.CountCollectHandoff(_renderDone.IsSet);
                         long waitStartTicks = TimeTicks();
+                        XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.CollectWaitRenderStart);
                         _renderDone.Wait(-1);
+                        XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.CollectWaitRenderEnd);
                         RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordCollectWaitForRender(TimeTicks() - waitStartTicks);
                     }
 
@@ -471,6 +531,7 @@ namespace XREngine.Timers
                         Stop();
                         return;
                     }
+                    XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.CollectPublished);
                     // The stage total and the phase total share one end timestamp, so they agree exactly.
                     long swapPhaseEndTicks = Stopwatch.GetTimestamp();
                     RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordSwapPhase(swapPhaseEndTicks - swapPhaseStartTicks);
@@ -546,6 +607,7 @@ namespace XREngine.Timers
         public void WaitToRender(int publicationWaitMilliseconds = Timeout.Infinite)
         {
             RejectCallerThreadWait();
+            ServiceAsynchronousRenderWork();
             bool reusedPreviousVisibility = false;
             while (IsRunning)
             {
@@ -575,14 +637,19 @@ namespace XREngine.Timers
                 }
 
                 long waitStartTicks = TimeTicks();
-                bool publicationAvailable = _visibilityGenerationGate.WaitForPublication(publicationWaitMilliseconds);
+                XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.RenderWaitCollectStart);
+                bool publicationAvailable = WaitForPublicationWithService(publicationWaitMilliseconds);
+                XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.RenderWaitCollectEnd);
                 RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(TimeTicks() - waitStartTicks);
                 if (!publicationAvailable)
                     return;
             }
 
             if (!IsRunning)
+            {
+                ServiceAsynchronousRenderWork();
                 return;
+            }
 
             if (!reusedPreviousVisibility)
             {

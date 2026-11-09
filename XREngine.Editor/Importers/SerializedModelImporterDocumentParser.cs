@@ -30,11 +30,13 @@ public static class SerializedModelImporterDocumentParser
         YamlMappingNode materials = GetNode(importer, "materials") as YamlMappingNode ?? [];
         YamlMappingNode meshes = GetNode(importer, "meshes") as YamlMappingNode ?? [];
         YamlMappingNode animations = GetNode(importer, "animations") as YamlMappingNode ?? [];
+        YamlMappingNode tangentSpace = GetNode(importer, "tangentSpace") as YamlMappingNode ?? [];
         return new SerializedModelImporterDocument
         {
             SourceMetaPath = normalized,
             FileIdsGeneration = GetInt(meshes, "fileIdsGeneration") ?? GetInt(importer, "fileIdsGeneration") ?? 2,
             ImportBlendShapes = (GetInt(meshes, "importBlendShapes") ?? GetInt(importer, "importBlendShapes") ?? 1) != 0,
+            BlendShapeNormalImportMode = GetInt(tangentSpace, "blendShapeNormalImportMode") ?? 0,
             ImportAnimation = (GetInt(animations, "importAnimation") ?? GetInt(importer, "importAnimation") ?? 1) != 0,
             AnimationType = GetInt(importer, "animationType") ?? 0,
             GlobalScale = GetFloat(meshes, "globalScale") ?? GetFloat(importer, "globalScale") ?? 1.0f,

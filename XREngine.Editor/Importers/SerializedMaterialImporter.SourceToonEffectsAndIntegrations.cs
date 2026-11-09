@@ -37,7 +37,7 @@ public static partial class SerializedMaterialImporter
         material.EnsureUberStateInitialized();
 
         MapOutlineAndDissolve(material, document);
-        MapSpecialEffects(material, document);
+        MapSpecialEffects(material, document, diagnostics);
         MapVertexEffects(material, document);
         BindEffectTextures(material, document, resolver, diagnostics, warnings);
 
@@ -92,6 +92,27 @@ public static partial class SerializedMaterialImporter
 
     private static void MapOutlineAndDissolve(XRMaterial material, SerializedMaterialDocument document)
     {
+        MapFloat(document, material, "_OutlineWidth", "_LineWidth", "_OutlineWidth");
+        string? lockedLineColor = null;
+        foreach (string propertyName in document.Vectors.Keys)
+        {
+            if (!propertyName.StartsWith("_LineColor_", StringComparison.Ordinal))
+                continue;
+
+            if (lockedLineColor is not null)
+            {
+                lockedLineColor = null;
+                break;
+            }
+
+            lockedLineColor = propertyName;
+        }
+
+        if (lockedLineColor is not null)
+            MapVector4(document, material, "_OutlineColor", lockedLineColor);
+        else
+            MapVector4(document, material, "_OutlineColor", "_LineColor", "_OutlineColor");
+
         MapInt(document, material, "_OutlineExpansionMode", "_OutlineExpansionMode");
         MapInt(document, material, "_OutlineSpace", "_OutlineSpace");
         MapVector3(document, material, "_OutlinePersonaDirection", "_OutlinePersonaDirection");
@@ -113,11 +134,42 @@ public static partial class SerializedMaterialImporter
         MapFloat(document, material, "_DissolveHueShift", "_DissolveHueShift", "_DissolveEdgeHueShift");
     }
 
-    private static void MapSpecialEffects(XRMaterial material, SerializedMaterialDocument document)
+    private static void MapSpecialEffects(
+        XRMaterial material,
+        SerializedMaterialDocument document,
+        ICollection<MaterialConversionDiagnostic> diagnostics)
     {
         MapFloat(document, material, "_UvTileDiscard", "_EnableUDIMDiscardOptions", "_UVTileDiscardEnabled");
-        MapVector2(document, material, "_UvTileDiscardGrid", "_UDIMDiscardGrid", "_UVTileDiscardGrid");
-        MapVector2(document, material, "_UvTileDiscardRange", "_UDIMDiscardRange", "_UVTileDiscardRange");
+        MapInt(document, material, "_UDIMDiscardMode", "_UDIMDiscardMode");
+        MapInt(document, material, "_UDIMDiscardUV", "_UDIMDiscardUV");
+        bool activeUdimCell = false;
+        for (int row = 0; row < 4; ++row)
+        {
+            for (int column = 0; column < 4; ++column)
+            {
+                string name = $"_UDIMDiscardRow{row}_{column}";
+                MapFloat(document, material, name, name, name + "_BraSplit");
+                activeUdimCell |= material.Parameter<ShaderFloat>(name)?.Value > 0.001f;
+            }
+        }
+        if (document.TryGetPositive("_EnableUDIMDiscardOptions") && activeUdimCell)
+        {
+            int mode = material.Parameter<ShaderInt>("_UDIMDiscardMode")?.Value ?? 0;
+            int uv = material.Parameter<ShaderInt>("_UDIMDiscardUV")?.Value ?? 0;
+            string? unsupported = mode is not (0 or 1)
+                ? "The active UDIM discard selects an unsupported discard mode."
+                : uv is < 0 or > 1
+                    ? "The active UDIM discard selects a UV channel outside native UV0 and UV1."
+                    : mode == 0
+                        ? "Vertex-mode UDIM discard requires native Advanced triangle coverage. Authored late passes do not support this mode."
+                        : null;
+            if (unsupported is not null)
+                diagnostics.Add(new MaterialConversionDiagnostic(
+                    MaterialConversionDiagnosticCodes.RenderStateDifference,
+                    MaterialConversionDiagnosticSeverity.Warning,
+                    unsupported,
+                    "_EnableUDIMDiscardOptions"));
+        }
         MapInt(document, material, "_FaceDiscard", "_UDIMDiscardFace", "_FaceDiscard");
 
         MapFloat(document, material, "_PathingStrength", "_PathingEnabled", "_EnablePathing");

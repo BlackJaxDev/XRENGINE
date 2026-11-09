@@ -30,10 +30,12 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		DescriptorType descriptorType,
 		out DescriptorImageInfo imageInfo,
+		out XRTexture? retainedTexture,
 		int arrayIndex = 0,
 		ComputeDispatchSnapshot? snapshot = null)
 	{
 		imageInfo = default;
+		retainedTexture = null;
 		bool requiresReadyDescriptor =
 			binding.Requirement == EVulkanDescriptorBindingRequirement.Required ||
 			snapshot?.IsSamplerReadyRequired(binding.Name) == true;
@@ -62,6 +64,17 @@ internal unsafe partial class VkMeshRenderer
 						? namedTexture
 						: null);
 		XRTexture? texture = textureBinding.Texture;
+		if (texture is XRTexture2DArray)
+		{
+			if (snapshot?.HasTextureArrayBindingUse(texture) == true)
+				texture.RetainBindingUse();
+			else if (!texture.TryRetainActiveBindingUse())
+			{
+				RecordDescriptorFailure(binding, "texture array retired before descriptor capture");
+				return false;
+			}
+			retainedTexture = texture;
+		}
 		if (VulkanMeshRenderingConventions.DescriptorTraceEnabled &&
 			string.Equals(binding.Name, "SourceTexture", StringComparison.Ordinal))
 		{
@@ -326,7 +339,10 @@ internal unsafe partial class VkMeshRenderer
 		if (imageInfo.ImageView.Handle == 0)
 			return false;
 
-		WarnOnce($"Texture for descriptor binding '{binding.Name}' is not ready for Vulkan descriptor use ({reason}). Using placeholder.");
+		// A texture that stays unready reaches this path on every preparation, so the
+		// warning key avoids building the message string after the first report.
+		if (_placeholderDescriptorWarnings.Add((binding.Name, reason)))
+			WarnOnce($"Texture for descriptor binding '{binding.Name}' is not ready for Vulkan descriptor use ({reason}). Using placeholder.");
 		if (VulkanMeshRenderingConventions.DescriptorTraceEnabled)
 		{
 			Debug.VulkanWarningEvery(

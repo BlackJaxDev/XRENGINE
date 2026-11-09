@@ -285,6 +285,15 @@ internal sealed partial class VulkanCommandRuntime
             }
             long submitEnd = Stopwatch.GetTimestamp();
 
+            // Diagnostic copies recorded into eye command buffers complete on
+            // the same timeline value; a rejected batch returns their slots.
+            ulong diagnosticCompletionValue = nativeSubmitAccepted ? timelineValue : 0UL;
+            PrimaryDiagnosticSubmissionSettled?.Invoke(input.FirstCommandBuffer, diagnosticCompletionValue);
+            if (input.CommandBufferCount > 1u)
+                PrimaryDiagnosticSubmissionSettled?.Invoke(input.SecondCommandBuffer, diagnosticCompletionValue);
+            if (input.CommandBufferCount > 2u)
+                PrimaryDiagnosticSubmissionSettled?.Invoke(input.ThirdCommandBuffer, diagnosticCompletionValue);
+
             PublishAcceptedTemporalHistoryCandidate(in input);
 
             if (input.AdmissionTicket is { } receiptTicket)

@@ -30,6 +30,7 @@ internal static class DesktopRuntimeBackendBootstrap
             Runtime.Media.FFmpeg.FfmpegMediaBackend.Register();
             Runtime.Platform.Desktop.DesktopPlatformBackend.Register();
             Runtime.Imaging.Magick.MagickImagingBackend.Register();
+            Runtime.Imaging.Bc7Enc.Bc7EncBackend.Register();
             Runtime.Text.FreeType.FreeTypeFontBackend.Register();
             Runtime.UI.Skia.SkiaFontBackend.Register();
             Runtime.UI.Ultralight.UltralightUiBackend.Register();

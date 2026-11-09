@@ -26,7 +26,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// from sampler type mismatch on the default texture unit.
         /// </summary>
         private static XRTexture2DArray? _dummyShadowMapArray;
-        private static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= CreateDummyShadowMapArray();
+        private static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= GenericRenderObject.CreateProcessShared(CreateDummyShadowMapArray);
 
         private static XRTexture2DArray CreateDummyShadowMapArray()
         {
@@ -1095,7 +1095,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static bool IsTextureReadyForShadowSampling(XRTexture? texture)
         {
-            if (texture is null)
+            // A shadow page still in CPU construction has no backend wrapper to sample.
+            if (texture is null || !texture.IsApiWrapperPublicationReady)
                 return false;
 
             AbstractRenderer? renderer = AbstractRenderer.Current;

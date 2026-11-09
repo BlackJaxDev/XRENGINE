@@ -16,6 +16,12 @@ internal sealed class VulkanAdvancedSceneResidentTable<T> where T : unmanaged
     internal ulong AppliedPublicationSequence { get; private set; }
     internal ulong DatabaseEpoch { get; private set; }
     internal AdvancedGpuOwnerGenerations OwnerGenerations { get; private set; }
+
+    /// <summary>
+    /// Generation of backend-derived row content that the canonical generations do not
+    /// cover, for example texture readiness. Tables without such content use zero.
+    /// </summary>
+    internal ulong BackendContentGeneration { get; private set; }
     internal int Capacity => Slice.IsValid && Slice.Length % ElementSize == 0u
         ? checked((int)(Slice.Length / ElementSize))
         : 0;
@@ -54,10 +60,14 @@ internal sealed class VulkanAdvancedSceneResidentTable<T> where T : unmanaged
         ulong publicationSequence,
         ulong retainedJournalFloor,
         bool hasRetainedJournal,
-        ReadOnlySpan<T> source)
+        ReadOnlySpan<T> source,
+        ulong backendContentGeneration = 0u)
     {
+        // The journal holds canonical deltas only. A backend content change has no delta,
+        // so it needs a full rewrite.
         if (!MatchesCapacity(source) || DatabaseEpoch == 0u ||
-            DatabaseEpoch != databaseEpoch || publicationSequence < AppliedPublicationSequence)
+            DatabaseEpoch != databaseEpoch || publicationSequence < AppliedPublicationSequence ||
+            BackendContentGeneration != backendContentGeneration)
         {
             return false;
         }
@@ -73,10 +83,12 @@ internal sealed class VulkanAdvancedSceneResidentTable<T> where T : unmanaged
     internal bool CanReuseUnchanged(
         ulong databaseEpoch,
         in AdvancedGpuOwnerGenerations generations,
-        ReadOnlySpan<T> source)
+        ReadOnlySpan<T> source,
+        ulong backendContentGeneration = 0u)
         => MatchesCapacity(source) && DatabaseEpoch == databaseEpoch &&
            OwnerGenerations.Topology == generations.Topology &&
-           OwnerGenerations.Content == generations.Content;
+           OwnerGenerations.Content == generations.Content &&
+           BackendContentGeneration == backendContentGeneration;
 
     internal void Commit(ReadOnlySpan<T> source)
         => Count = source.Length;
@@ -105,11 +117,13 @@ internal sealed class VulkanAdvancedSceneResidentTable<T> where T : unmanaged
     internal void StampPublication(
         ulong databaseEpoch,
         ulong publicationSequence,
-        in AdvancedGpuOwnerGenerations ownerGenerations)
+        in AdvancedGpuOwnerGenerations ownerGenerations,
+        ulong backendContentGeneration = 0u)
     {
         DatabaseEpoch = databaseEpoch;
         AppliedPublicationSequence = publicationSequence;
         OwnerGenerations = ownerGenerations;
+        BackendContentGeneration = backendContentGeneration;
     }
 
     internal VulkanFrameDataSlice CreateCurrentSlice(int count)
@@ -132,5 +146,6 @@ internal sealed class VulkanAdvancedSceneResidentTable<T> where T : unmanaged
         AppliedPublicationSequence = 0u;
         DatabaseEpoch = 0u;
         OwnerGenerations = default;
+        BackendContentGeneration = 0u;
     }
 }

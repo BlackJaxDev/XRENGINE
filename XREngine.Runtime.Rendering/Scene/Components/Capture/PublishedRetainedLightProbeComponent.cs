@@ -49,7 +49,7 @@ public sealed class PublishedRetainedLightProbeComponent : LightProbeComponent, 
         // These setters normally start an environment convolution while reflection
         // hydration is still attaching borrowed references. The target carrier
         // adopts its complete retained profile only in the post-deserialize hook.
-        if (propName is nameof(EnvironmentTextureEquirect) or nameof(IrradianceResolution) or
+        if (propName is nameof(EnvironmentTextureEquirect) or nameof(IrradianceResolution) or nameof(ReflectionFilter) or
             nameof(UseDirectCubemapIblGeneration) or nameof(HdrEncoding) or nameof(RealtimeCapture) or nameof(AutoCaptureOnActivate))
         {
             if (_decoded && (propName is not (nameof(RealtimeCapture) or nameof(AutoCaptureOnActivate)) || RealtimeCapture || AutoCaptureOnActivate))

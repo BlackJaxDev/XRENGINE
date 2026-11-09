@@ -46,6 +46,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     private readonly List<PhysicalImageViewCacheEntry> _physicalImageViewCache = [];
 
     private readonly object _imageStateLock = new();
+    // Signature recording reads this cache for every bound texture of every draw,
+    // so it takes no lock. The sequence is odd while one writer changes the three
+    // values; a reader accepts its reads only when the sequence is even and the
+    // same before and after them.
+    private long _frameBindingSignatureSequence;
+    private ulong _frameBindingSignatureFrameId;
+    private ulong _frameBindingSignatureGeneration;
+    private ulong _frameBindingSignature;
 
     object IVkImageDescriptorSource.DescriptorSnapshotSyncRoot
         => _imageStateLock;
@@ -81,6 +89,50 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     /// <summary>Primary image view used for shader sampling.</summary>
     private VulkanOwnedImageView _view;
+
+    /// <summary>
+    /// Replaces the primary view. A change advances the descriptor generation and the
+    /// readiness epoch, and advances the texture's advanced source version, so no cache
+    /// keyed by them can return a view that was replaced or retired, even when the
+    /// texture's data did not change.
+    /// </summary>
+    private void SetCurrentView(VulkanOwnedImageView view)
+    {
+        if (_view == view)
+            return;
+
+        _view = view;
+        AdvanceDescriptorGenerationForViewChange();
+        Data.NotifyBackendDescriptorSourceChanged();
+    }
+
+    /// <summary>
+    /// Replaces the primary view during an upload publication that advances the
+    /// descriptor generation itself, exactly once, through <c>MarkUploaded</c>. The
+    /// generation it published to the global descriptor table assumes that single
+    /// advance, so this method advances only the readiness epoch and the texture's
+    /// advanced source version.
+    /// </summary>
+    private void SetCurrentViewForUploadPublication(VulkanOwnedImageView view)
+    {
+        if (_view == view)
+            return;
+
+        _view = view;
+        AdvanceReadinessEpoch();
+        Data.NotifyBackendDescriptorSourceChanged();
+    }
+
+    /// <summary>Retires the primary view and advances the descriptor generation.</summary>
+    private void DestroyCurrentView()
+    {
+        if (_view.Handle == 0)
+            return;
+
+        DestroyView(ref _view);
+        AdvanceDescriptorGenerationForViewChange();
+        Data.NotifyBackendDescriptorSourceChanged();
+    }
 
     /// <summary>Sampler object (created when <see cref="CreateSampler"/> is <c>true</c>).</summary>
     private Sampler _sampler;
@@ -557,6 +609,32 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 return ResolvedArrayLayers;
             }
         }
+    }
+
+    ulong? IVkImageDescriptorSource.DescriptorReadinessEpoch => ReadinessEpoch;
+
+    bool IVkImageDescriptorSource.TryGetFrameBindingSignature(ulong frameId, ulong generation, out ulong signature)
+    {
+        long sequence = Volatile.Read(ref _frameBindingSignatureSequence);
+        signature = Volatile.Read(ref _frameBindingSignature);
+        bool matches = Volatile.Read(ref _frameBindingSignatureFrameId) == frameId &&
+            Volatile.Read(ref _frameBindingSignatureGeneration) == generation;
+        return matches &&
+            (sequence & 1L) == 0L &&
+            Volatile.Read(ref _frameBindingSignatureSequence) == sequence;
+    }
+
+    void IVkImageDescriptorSource.StoreFrameBindingSignature(ulong frameId, ulong generation, ulong signature)
+    {
+        // The cache is optional, so a store that races another store is skipped.
+        long sequence = Volatile.Read(ref _frameBindingSignatureSequence);
+        if ((sequence & 1L) != 0L ||
+            Interlocked.CompareExchange(ref _frameBindingSignatureSequence, sequence + 1L, sequence) != sequence)
+            return;
+        Volatile.Write(ref _frameBindingSignatureFrameId, frameId);
+        Volatile.Write(ref _frameBindingSignatureGeneration, generation);
+        Volatile.Write(ref _frameBindingSignature, signature);
+        Volatile.Write(ref _frameBindingSignatureSequence, sequence + 2L);
     }
 
     bool IVkImageDescriptorSource.TryGetDescriptorSnapshot(

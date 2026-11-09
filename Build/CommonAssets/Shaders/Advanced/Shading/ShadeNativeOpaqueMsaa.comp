@@ -48,6 +48,7 @@ XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
 #define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
 #endif
 
+#include "NativeDecalBuffer.glslinc"
 #include "ShadeNativeOpaqueEvaluator.glslinc"
 
 const uint XR_ADV_VIEW_FLAG_REVERSED_DEPTH = 1u << 1u;

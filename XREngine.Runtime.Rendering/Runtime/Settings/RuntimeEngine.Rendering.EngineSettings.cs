@@ -169,6 +169,7 @@ public static partial class RuntimeEngine
                 private bool _enableGpuMeshBvhPickLogging = false;
                 private bool _enableZeroReadbackMaterialScatter = false;
                 private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
+                private bool _zeroReadbackUberMaterialsUseMaterialTable;
                 private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy = null;
                 private TextureRuntimeLogMode _textureLogMode = TextureRuntimeLogMode.Summary;
                 private double _textureSlowCpuDecodeResizeMilliseconds = 5.0;
@@ -471,6 +472,21 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// When true, zero-readback material-table passes also draw converted uber
+                /// materials through the shared table program. The table shades the base map,
+                /// tint, normal map and emission; uber-only effects such as matcap, rim and
+                /// glitter are not drawn. When false, a scene with any uber material draws every
+                /// material with its own program.
+                /// </summary>
+                [Category("GPU Rendering")]
+                [Description("Draw converted uber materials through the shared zero-readback material table. Faster, but shades only base color, tint, normal map and emission; matcap, rim, glitter and other uber effects are not drawn.")]
+                public bool ZeroReadbackUberMaterialsUseMaterialTable
+                {
+                    get => _zeroReadbackUberMaterialsUseMaterialTable;
+                    set => SetField(ref _zeroReadbackUberMaterialsUseMaterialTable, value);
+                }
+
+                /// <summary>
                 /// Optional diagnostic override for the resolved mesh submission strategy.
                 /// Leave null for profile and capability based resolution.
                 /// </summary>
@@ -583,6 +599,17 @@ public static partial class RuntimeEngine
                 {
                     get => Execution.AllowCpuOversubscription;
                     set => Execution.AllowCpuOversubscription = value;
+                }
+
+                /// <summary>
+                /// Restricts the process to the cores of the largest L3 cache on CPUs with unequal L3 caches.
+                /// </summary>
+                [Category("Execution")]
+                [Description("Restricts the process to the cores that share the largest L3 cache when the CPU's L3 caches have different sizes. Enabled by default and requires restart.")]
+                public bool PreferLargestCacheCores
+                {
+                    get => Execution.PreferLargestCacheCores;
+                    set => Execution.PreferLargestCacheCores = value;
                 }
 
                 /// <summary>
@@ -768,6 +795,7 @@ public static partial class RuntimeEngine
                 private float _vrDesktopEditorTargetRateHz = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrOutputTargetRateHz;
                 private float _vrCyclopeanDesktopTargetRateHz = 60.0f;
                 private bool _vrDesktopAutoSkipWhenOverBudget = true;
+                private EVrDesktopFrameExecutionMode _vrDesktopFrameExecutionMode = EVrDesktopFrameExecutionMode.Inline;
                 private bool _enableVrFoveatedViewSet = false;
                 private EVrFoveationMode _vrFoveationMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationMode;
                 private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
@@ -781,6 +809,8 @@ public static partial class RuntimeEngine
                 private bool _rvcPeripheralLightAggregationEnabled = false;
                 private bool _rvcDiagnosticOverlayEnabled = false;
                 private ERvcDebugViewMode _rvcDebugViewMode = ERvcDebugViewMode.Disabled;
+                private bool _rvcShadeletTelemetryEnabled = false;
+                private bool _rvcFoveatedQuadShadingEnabled = false;
                 private ERvcLightGridSpace _rvcLightGridSpace = ERvcLightGridSpace.WorldAlignedCameraRelative;
                 private float _rvcFovealRadiusDegrees = RvcQualitySettings.Defaults.FovealRadiusDegrees;
                 private float _rvcGuardBandDegrees = RvcQualitySettings.Defaults.GuardBandDegrees;
@@ -803,6 +833,7 @@ public static partial class RuntimeEngine
                 private bool _openXrDebugRenderRightThenLeft = false;
                 private bool _openXrPrepareFrameAfterDesktopRender = true;
                 private float _openXrDeadlineSafetyMarginMs = 1.0f;
+                private uint _openXrStereoSubmissionWaitMs = 50u;
                 private float _openXrPoseTimeOffsetMs = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
                 private OpenXrCollectVisiblePosePolicy _openXrCollectVisiblePosePolicy = OpenXrCollectVisiblePosePolicy.Predicted;
                 private float _openXrCollectVisibleFrustumPaddingDegrees = 2.0f;
@@ -839,6 +870,7 @@ public static partial class RuntimeEngine
                 private int _maxShadowTilesRenderedPerFrame = 16;
                 private float _maxShadowRenderMilliseconds = 2.0f;
                 private int _maxDirectionalCascadeAtlasStaleFrames = 4;
+                private bool _holdDirectionalCascadesWhileCameraMoves;
                 private uint _minShadowAtlasTileResolution = 128u;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
@@ -1046,6 +1078,14 @@ public static partial class RuntimeEngine
                 }
 
                 [Category("Shadows")]
+                [Description("Keeps directional cascade tiles while the source camera moves and refreshes them after the camera settles or the stale limit. Shading reprojects held tiles with the matrix they were rendered with. Off by default: cascades refresh every frame, so shadows keep their full resolution and coverage while the camera moves.")]
+                public bool HoldDirectionalCascadesWhileCameraMoves
+                {
+                    get => _holdDirectionalCascadesWhileCameraMoves;
+                    set => SetField(ref _holdDirectionalCascadesWhileCameraMoves, value);
+                }
+
+                [Category("Shadows")]
                 [Description("Minimum dynamic shadow atlas tile resolution in texels.")]
                 public uint MinShadowAtlasTileResolution
                 {
@@ -1094,6 +1134,35 @@ public static partial class RuntimeEngine
                 {
                     get => _outputHDR;
                     set => SetField(ref _outputHDR, value);
+                }
+
+                private EDesktopPresentPath _desktopPresentPath = EDesktopPresentPath.VulkanSwapchain;
+
+                /// <summary>
+                /// Selects how the Vulkan renderer presents a desktop window on Windows. Windows can
+                /// override this value. The environment variable XRE_DESKTOP_PRESENT_PATH overrides both.
+                /// </summary>
+                [Category("Performance")]
+                [Description("How the Vulkan renderer presents desktop windows on Windows. DxgiFlipModel avoids a high desktop compositor CPU cost on some drivers.")]
+                public EDesktopPresentPath DesktopPresentPath
+                {
+                    get => _desktopPresentPath;
+                    set => SetField(ref _desktopPresentPath, value);
+                }
+
+                private ETextureCookCompression _cookedTextureCompression = ETextureCookCompression.Bcn;
+
+                /// <summary>
+                /// Selects the block compression that the texture cook uses for the streaming cache.
+                /// The environment variable XRE_TEXTURE_COOK_COMPRESSION (None, Bc7, or Bcn) overrides it.
+                /// A change takes effect for textures that are cooked after it; the cache key includes the mode.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Block compression for cooked streaming textures. Bcn selects BC7, BC5 (normal maps), or BC4 (single-channel data) by texture role; Bc7 uses BC7 for every role. BC7 and BC5 use a quarter of the memory of RGBA8, and BC4 an eighth.")]
+                public ETextureCookCompression CookedTextureCompression
+                {
+                    get => _cookedTextureCompression;
+                    set => SetField(ref _cookedTextureCompression, value);
                 }
 
                 /// <summary>
@@ -2436,6 +2505,18 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Selects how a recording desktop view executes while VR is active. The
+                /// desktop frame reads it once per attempt.
+                /// </summary>
+                [Category("VR")]
+                [Description("How a recording desktop view executes while VR is active. Inline records on the render thread after the eyes. WorkerRecord records on a background lane and presents one XR frame later. SeparateDomain is reserved.")]
+                public EVrDesktopFrameExecutionMode VrDesktopFrameExecutionMode
+                {
+                    get => _vrDesktopFrameExecutionMode;
+                    set => SetField(ref _vrDesktopFrameExecutionMode, value);
+                }
+
+                /// <summary>
                 /// If true, ViewSet generation adds per-eye foveated views in addition to full-resolution stereo views.
                 /// </summary>
                 [Category("VR")]
@@ -2546,6 +2627,19 @@ public static partial class RuntimeEngine
                 {
                     get => _openXrDeadlineSafetyMarginMs;
                     set => SetField(ref _openXrDeadlineSafetyMarginMs, MathF.Max(0.0f, value));
+                }
+
+                /// <summary>
+                /// Longest time, in milliseconds, that a Vulkan OpenXR stereo frame waits for a free
+                /// eye submission slot. When the wait ends without a slot, the frame goes to the
+                /// compositor without layers and the headset shows a black frame.
+                /// </summary>
+                [Category("VR")]
+                [Description("Longest time, in milliseconds, that a Vulkan OpenXR stereo frame waits for a free eye submission slot. A frame that gets no slot goes to the compositor without layers (a black frame). Range 1 to 1000.")]
+                public uint OpenXrStereoSubmissionWaitMs
+                {
+                    get => _openXrStereoSubmissionWaitMs;
+                    set => SetField(ref _openXrStereoSubmissionWaitMs, Math.Clamp(value, 1u, 1000u));
                 }
 
                 /// <summary>
@@ -2839,6 +2933,30 @@ public static partial class RuntimeEngine
                 {
                     get => _rvcDebugViewMode;
                     set => SetField(ref _rvcDebugViewMode, value);
+                }
+
+                /// <summary>
+                /// Runs the RVC shadelet telemetry kernel on Vulkan eye outputs and reads its counters back.
+                /// The kernel measures intra-view and cross-eye reuse ceilings and does not change shading.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Runs the RVC shadelet telemetry kernel on Vulkan eye outputs and reads its counters back. It measures intra-view and cross-eye reuse ceilings and does not change shading.")]
+                public bool RvcShadeletTelemetryEnabled
+                {
+                    get => _rvcShadeletTelemetryEnabled;
+                    set => SetField(ref _rvcShadeletTelemetryEnabled, value);
+                }
+
+                /// <summary>
+                /// Makes RVC eyes shade one pixel per peripheral 2x2 or 4x4 block of the same
+                /// triangle and copy it to the rest of the block. Vulkan eyes without MSAA only.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Makes RVC eyes shade one pixel per peripheral 2x2 or 4x4 block of the same triangle and copy it to the rest of the block. Vulkan eyes without MSAA only.")]
+                public bool RvcFoveatedQuadShadingEnabled
+                {
+                    get => _rvcFoveatedQuadShadingEnabled;
+                    set => SetField(ref _rvcFoveatedQuadShadingEnabled, value);
                 }
 
                 /// <summary>

@@ -1,5 +1,6 @@
 using XREngine.Core.Files;
 using XREngine.Core.Files.Caching;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
@@ -19,8 +20,15 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
 
     public string? ResolveDefaultVariantKey(string? explicitVariantKey)
     {
-        string payloadKey =
-            $"TextureStreaming_v3_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed_binary";
+        // The key includes the effective cook compression, so caches of different modes
+        // never mix. The role-dependent mode adds the texture role as a variant folder
+        // (see TextureCookUsageVariant).
+        string payloadKey = TextureCookBlockCompressor.EffectiveMode switch
+        {
+            ETextureCookCompression.Bcn => $"TextureStreaming_v5_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_bcn_binary",
+            ETextureCookCompression.Bc7 => $"TextureStreaming_v4_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_bc7_binary",
+            _ => $"TextureStreaming_v3_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed_binary",
+        };
         return string.IsNullOrWhiteSpace(explicitVariantKey)
             ? payloadKey
             : Path.Combine(payloadKey, explicitVariantKey);
@@ -132,13 +140,18 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
             return false;
 
         DateTime sourceTimestampUtc = texture.OriginalLastWriteTimeUtc ?? File.GetLastWriteTimeUtc(sourcePath);
+        // The texture role comes from the role folder of the cache path; without it, the cook uses BC7.
+        ETextureImportUsage? usage = TextureCookUsageVariant.TryParse(cachePath, out ETextureImportUsage parsedUsage)
+            ? parsedUsage
+            : null;
         if (sourceTimestampUtc == DateTime.MinValue
             || !XRTexture2D.TryCreateTextureStreamingCacheAsset(
                 texture,
                 sourcePath,
                 cachePath,
                 sourceTimestampUtc,
-                out XRTexture2D streamingTexture))
+                out XRTexture2D streamingTexture,
+                usage))
         {
             return false;
         }

@@ -83,15 +83,24 @@ internal sealed partial class VulkanTextureUploadService
         VulkanImportedTexturePendingUpload upload,
         string uploadSource,
         bool requireExactDescriptorPublication,
-        out string? failureDetail)
+        out string? failureDetail,
+        out EVulkanPresentNowFailureDisposition failureDisposition)
     {
+        failureDisposition = EVulkanPresentNowFailureDisposition.RendererTerminal;
         VulkanImportedTextureUploadRequest request = upload.Request;
-        if (!TryAcquireTexturePublicationAuthority(
+        bool acquiredPublicationAuthority;
+        IDisposable? acquiredAuthority;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Publish.AcquireAuthority"))
+        {
+            acquiredPublicationAuthority = TryAcquireTexturePublicationAuthority(
                 upload,
                 uploadSource,
-                out IDisposable? acquiredAuthority,
-                out failureDetail))
+                out acquiredAuthority,
+                out failureDetail);
+        }
+        if (!acquiredPublicationAuthority)
         {
+            failureDisposition = EVulkanPresentNowFailureDisposition.RetryFrame;
             upload.Texture.ReleasePreparedImportedUploadResources(upload);
             RecordState(
                 request,
@@ -104,6 +113,7 @@ internal sealed partial class VulkanTextureUploadService
         using IDisposable publicationAuthority = acquiredAuthority!;
         if (!upload.ShouldPublish())
         {
+            failureDisposition = EVulkanPresentNowFailureDisposition.RetryFrame;
             failureDetail =
                 $"Request became stale while acquiring {uploadSource} descriptor publication authority.";
             upload.Texture.ReleasePreparedImportedUploadResources(upload);
@@ -129,14 +139,19 @@ internal sealed partial class VulkanTextureUploadService
             EVulkanTextureDescriptorPublicationDisposition disposition;
             try
             {
-                disposition =
-                    upload.Texture.PublishSynchronizedImportedTextureUpload(
-                        upload,
-                        requireExactDescriptorPublication,
-                        out failureDetail);
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Publish.Descriptor"))
+                {
+                    disposition =
+                        upload.Texture.PublishSynchronizedImportedTextureUpload(
+                            upload,
+                            requireExactDescriptorPublication,
+                            out failureDetail);
+                }
             }
             catch (Exception exception)
             {
+                if (!upload.ShouldPublish())
+                    failureDisposition = EVulkanPresentNowFailureDisposition.RetryFrame;
                 failureDetail =
                     "Texture wrapper/descriptor publication raised " +
                     $"{exception.GetType().Name}: {exception.Message}";
@@ -152,11 +167,18 @@ internal sealed partial class VulkanTextureUploadService
                 InvokeTextureUploadError(upload, exception);
                 return false;
             }
+            if (disposition == EVulkanTextureDescriptorPublicationDisposition.StaleBeforePublication)
+            {
+                failureDisposition = RetryStaleImportedTextureUpload(upload, failureDetail);
+                return false;
+            }
             if (disposition ==
                     EVulkanTextureDescriptorPublicationDisposition.Failed ||
                 requireExactDescriptorPublication && disposition !=
                     EVulkanTextureDescriptorPublicationDisposition.ExactPublished)
             {
+                if (!upload.ShouldPublish())
+                    failureDisposition = EVulkanPresentNowFailureDisposition.RetryFrame;
                 failureDetail ??=
                     $"Descriptor publication ended with {disposition}.";
                 upload.Texture.ReleasePreparedImportedUploadResources(upload);
@@ -255,6 +277,11 @@ internal sealed partial class VulkanTextureUploadService
                 publicationFailure);
             Interlocked.Increment(ref s_failedUploads);
             InvokeTextureUploadError(upload, exception);
+            return;
+        }
+        if (disposition == EVulkanTextureDescriptorPublicationDisposition.StaleBeforePublication)
+        {
+            _ = RetryStaleImportedTextureUpload(upload, publicationFailure);
             return;
         }
         if (disposition == EVulkanTextureDescriptorPublicationDisposition.Failed)
@@ -390,7 +417,8 @@ internal sealed partial class VulkanTextureUploadService
 
         Interlocked.Increment(ref s_finalPublications);
 
-        InvokeTextureUploadFinished(upload);
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Publish.FinishedCallbacks"))
+            InvokeTextureUploadFinished(upload);
     }
 
     private static void RetireTextureUploadStagingResources(
@@ -509,6 +537,88 @@ internal sealed partial class VulkanTextureUploadService
 
         failureDetail = string.Empty;
         return true;
+    }
+
+    /// <summary>
+    /// Retires a stale native candidate and prepares the current authored state
+    /// with a new ticket. The original job owns the terminal callback.
+    /// </summary>
+    private EVulkanPresentNowFailureDisposition RetryStaleImportedTextureUpload(
+        VulkanImportedTexturePendingUpload upload,
+        string? reason)
+    {
+        upload.Texture.ReleasePreparedImportedUploadResources(upload);
+
+        if (upload.OwnerJob is not { } job)
+        {
+            RecordState(upload.Request, VulkanTextureUploadGenerationState.Canceled, reason);
+            Interlocked.Increment(ref s_canceledStaleUploads);
+            InvokeTextureUploadCanceled(upload);
+            return EVulkanPresentNowFailureDisposition.RetryFrame;
+        }
+
+        VulkanImportedTextureUploadJob callbackOwner = job.CallbackOwner;
+        if (!upload.ShouldPublish()
+            || !upload.TryGetTexture(out XRTexture2D? texture)
+            || texture is null)
+        {
+            RecordState(upload.Request, VulkanTextureUploadGenerationState.Canceled, reason);
+            Interlocked.Increment(ref s_canceledStaleUploads);
+            callbackOwner.InvokeCanceledOnce();
+            return EVulkanPresentNowFailureDisposition.RetryFrame;
+        }
+
+        VulkanTextureUploadTicket replacementTicket = default;
+        try
+        {
+            bool scheduled = TryScheduleImportedTextureUpload(
+                job.SchedulingContext,
+                texture,
+                upload.ResidentData,
+                upload.IncludeMipChain,
+                upload.Request.TargetResidentMaxDimension,
+                upload.Request.StreamingGeneration,
+                upload.Request.PriorityClass,
+                upload.ShouldAcceptResult,
+                callbackOwner.InvokeFinishedOnce,
+                callbackOwner.InvokeCanceledOnce,
+                callbackOwner.InvokeErrorOnce,
+                upload.Request.CancellationToken,
+                out replacementTicket,
+                callbackOwner);
+
+            bool replacementRegistered = replacementTicket.IsValid &&
+                TryGetUploadGeneration(texture, replacementTicket, out _, out _, out _);
+            if (!scheduled && !replacementRegistered && replacementTicket.IsValid)
+            {
+                RecordState(
+                    upload.Request,
+                    VulkanTextureUploadGenerationState.Failed,
+                    "Replacement upload admission failed before ticket registration.");
+                return EVulkanPresentNowFailureDisposition.RendererTerminal;
+            }
+
+            RecordState(upload.Request, VulkanTextureUploadGenerationState.Canceled, reason);
+            Interlocked.Increment(ref s_canceledStaleUploads);
+            return EVulkanPresentNowFailureDisposition.RetryFrame;
+        }
+        catch (Exception exception)
+        {
+            bool replacementRegistered = replacementTicket.IsValid &&
+                TryGetUploadGeneration(texture, replacementTicket, out _, out _, out _);
+            RecordState(
+                upload.Request,
+                replacementRegistered
+                    ? VulkanTextureUploadGenerationState.Canceled
+                    : VulkanTextureUploadGenerationState.Failed,
+                replacementRegistered
+                    ? reason
+                    : "Replacement upload scheduling failed before ticket registration.");
+            callbackOwner.InvokeErrorOnce(exception);
+            return replacementRegistered
+                ? EVulkanPresentNowFailureDisposition.RetryFrame
+                : EVulkanPresentNowFailureDisposition.RendererTerminal;
+        }
     }
 
 }

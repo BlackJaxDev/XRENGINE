@@ -316,6 +316,10 @@ public sealed partial class ShadowAtlasManager
                 MinFilter = ETexMinFilter.Nearest,
                 MagFilter = ETexMagFilter.Nearest,
                 FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
+                // Atlas passes write and sample raster depth at mip zero only.
+                LargestMipmapLevel = 0,
+                SmallestAllowedMipmapLevel = 0,
+                AutoGenerateMipmaps = false,
             };
 
             for (int i = 0; i < _pages.Count; i++)

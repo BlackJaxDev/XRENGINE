@@ -12,6 +12,22 @@ namespace XREngine.Rendering.Commands;
 /// </summary>
 public sealed class AdvancedGpuResourcePublisher
 {
+    private long _commitGeneration = 1L;
+
+    /// <summary>
+    /// Gets a generation that advances on every texture or sampler record add,
+    /// replace, or removal. A material witness includes it, because
+    /// <see cref="BindingMatches"/> compares against these records and they can
+    /// change without a material change.
+    /// </summary>
+    internal ulong CommitGeneration => unchecked((ulong)Volatile.Read(ref _commitGeneration));
+
+    private void AdvanceCommitGeneration()
+    {
+        if (Interlocked.Increment(ref _commitGeneration) == 0L)
+            Interlocked.Increment(ref _commitGeneration);
+    }
+
     private readonly AdvancedGlobalResourceDatabase _database;
     private TextureEntry[] _textures;
     private SamplerEntry[] _samplers;
@@ -679,7 +695,7 @@ public sealed class AdvancedGpuResourcePublisher
             (source.TextureRecord.Dimension == EAdvancedTextureDimension.Cube && source.TextureRecord.DepthOrLayers != 6u) ||
             source.TextureRecord.MipCount == 0u ||
             source.TextureRecord.FormatClass == (uint)EAdvancedTextureFormatClass.Unknown ||
-            source.TextureRecord.FormatClass > (uint)EAdvancedTextureFormatClass.Stencil8)
+            source.TextureRecord.FormatClass > (uint)EAdvancedTextureFormatClass.Bc4Unorm)
         {
             reason = "Logical textures must describe one supported, nonempty 2D, 2D-array, or cube resource.";
             return false;
@@ -835,6 +851,7 @@ public sealed class AdvancedGpuResourcePublisher
         ulong sourceContentGeneration,
         IAdvancedGpuPublicationSourceLifetime? lifetime)
     {
+        AdvanceCommitGeneration();
         if (!_database.TryAddTexture(record, out AdvancedGpuHandle handle))
             throw new InvalidOperationException("Preflighted logical texture insertion failed.");
         int index = _textureCount++;
@@ -846,6 +863,7 @@ public sealed class AdvancedGpuResourcePublisher
 
     private int AddSamplerAfterPreflight(AdvancedSamplerRecord record)
     {
+        AdvanceCommitGeneration();
         if (!_database.TryAddSampler(record, out AdvancedGpuHandle handle))
             throw new InvalidOperationException("Preflighted logical sampler insertion failed.");
         int index = _samplerCount++;
@@ -861,6 +879,7 @@ public sealed class AdvancedGpuResourcePublisher
         ulong sourceContentGeneration,
         IAdvancedGpuPublicationSourceLifetime? lifetime)
     {
+        AdvanceCommitGeneration();
         if (!_database.TryReplaceTexture(_textures[index].Handle, record))
             throw new InvalidOperationException("Preflighted logical texture replacement failed.");
         _textures[index].Record = record;
@@ -962,6 +981,7 @@ public sealed class AdvancedGpuResourcePublisher
 
     private void RemoveTextureEntry(int index)
     {
+        AdvanceCommitGeneration();
         ref TextureEntry entry = ref _textures[index];
         RemoveSlot(_textureSourceSlots, FindTextureSourceSlot(entry.Source), SlotKind.TextureSource);
         RemoveSlot(_textureHandleSlots, FindHandleSlot(_textureHandleSlots, entry.Handle, true), SlotKind.TextureHandle);
@@ -980,6 +1000,7 @@ public sealed class AdvancedGpuResourcePublisher
 
     private void RemoveSamplerEntry(int index)
     {
+        AdvanceCommitGeneration();
         ref SamplerEntry entry = ref _samplers[index];
         RemoveSlot(_samplerRecordSlots, FindSamplerRecordSlot(entry.Record), SlotKind.SamplerRecord);
         RemoveSlot(_samplerHandleSlots, FindHandleSlot(_samplerHandleSlots, entry.Handle, false), SlotKind.SamplerHandle);

@@ -25,7 +25,12 @@ internal unsafe partial class VkMeshRenderer
         /// successful activation past the frame that created the entry.
         /// </summary>
         public bool SupersededEntriesEvicted;
-        public required XRRenderProgram Data { get; init; }
-        public required VkRenderProgram Program { get; init; }
+        /// <summary>
+        /// Program shared with every renderer that has the same identity. This entry
+        /// holds one reference and releases it when the entry is evicted or destroyed.
+        /// </summary>
+        public required VulkanSharedGeneratedProgram Shared { get; init; }
+        public XRRenderProgram Data => Shared.Data;
+        public VkRenderProgram Program => Shared.Program;
     }
 }

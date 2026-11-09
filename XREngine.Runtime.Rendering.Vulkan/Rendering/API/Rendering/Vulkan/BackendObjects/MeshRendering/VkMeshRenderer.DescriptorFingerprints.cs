@@ -7,6 +7,7 @@
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -178,21 +179,30 @@ internal unsafe partial class VkMeshRenderer
 				case DescriptorType.StorageBuffer:
 					for (int frameIndex = 0; frameIndex < frameCount; frameIndex++)
 					{
-						bool resolved = TryResolveBuffer(
-							binding,
-							frameIndex,
-							drawUniformSlot,
-							out DescriptorBufferInfo info,
-							bindingSnapshot);
-						hash.Add(resolved);
-						if (!resolved)
-							continue;
-						hash.Add(info.Buffer.Handle);
-						hash.Add(GetResourceGeneration(
-							ObjectType.Buffer,
-							info.Buffer.Handle));
-						hash.Add(info.Offset);
-						hash.Add(info.Range);
+						XRDataBuffer? retainedPipelineBuffer = null;
+						try
+					{
+							bool resolved = TryResolveBuffer(
+								binding,
+								frameIndex,
+								drawUniformSlot,
+								out DescriptorBufferInfo info,
+								out retainedPipelineBuffer,
+								bindingSnapshot);
+							hash.Add(resolved);
+							if (!resolved)
+								continue;
+							hash.Add(info.Buffer.Handle);
+							hash.Add(GetResourceGeneration(
+								ObjectType.Buffer,
+								info.Buffer.Handle));
+							hash.Add(info.Offset);
+							hash.Add(info.Range);
+						}
+						finally
+						{
+							retainedPipelineBuffer?.ReleaseBindingUse();
+						}
 					}
 					break;
 
@@ -218,12 +228,15 @@ internal unsafe partial class VkMeshRenderer
 							material,
 							binding.DescriptorType,
 							out DescriptorImageInfo info,
+							out XRTexture? retainedTexture,
 							arrayIndex,
 							bindingSnapshot);
-						hash.Add(resolved);
-						if (!resolved)
-							continue;
-						hash.Add(info.ImageView.Handle);
+						try
+						{
+							hash.Add(resolved);
+							if (!resolved)
+								continue;
+							hash.Add(info.ImageView.Handle);
 						hash.Add(GetResourceGeneration(
 							ObjectType.ImageView,
 							info.ImageView.Handle));
@@ -246,6 +259,11 @@ internal unsafe partial class VkMeshRenderer
 							ObjectType.Sampler,
 							info.Sampler.Handle));
 						hash.Add((int)info.ImageLayout);
+						}
+						finally
+						{
+							retainedTexture?.ReleaseBindingUse();
+						}
 					}
 					break;
 
@@ -297,8 +315,11 @@ internal unsafe partial class VkMeshRenderer
 		out ulong fingerprint)
 	{
 		fingerprint = 0UL;
-		// Publication identity does not prove its lowered physical buffer/offset.
-		if (bindingSnapshot?.HasReadOnlyStorageBindings == true)
+		// Immutable storage is hashed below by its lowered slice. A material set outside the
+		// shared tier still needs the reflected walk, because that walk observes a texture
+		// that becomes ready after a placeholder was written.
+		bool hasReadOnlyStorage = bindingSnapshot?.HasReadOnlyStorageBindings == true;
+		if (hasReadOnlyStorage && !usesSharedMaterialTier)
 			return false;
 		if (bindingSnapshot is not
 			{ HasPublishedBindingLayoutSignatures: true } ||
@@ -344,6 +365,29 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add(ComputeCachedBufferResourceFingerprintCore());
 		hash.Add(frameArena.Identity);
 		hash.Add(frameArena.Generation);
+		if (hasReadOnlyStorage)
+		{
+			// Publication identity does not prove the lowered physical buffer or offset.
+			ReadOnlySpan<ReadOnlyStorageBinding> storageBindings =
+				bindingSnapshot.ReadOnlyStorageBindings!.Value.Bindings;
+			for (int index = 0; index < storageBindings.Length; index++)
+			{
+				uint storageBinding = storageBindings[index].Binding;
+				if (!BackendContext.Resources.TryResolvePreparedReadOnlyStorage(
+						bindingSnapshot,
+						storageBinding,
+						out VulkanFrameDataSlice storageSlice))
+				{
+					return false;
+				}
+
+				hash.Add(storageBinding);
+				hash.Add(storageSlice.Buffer.Handle);
+				hash.Add(GetResourceGeneration(ObjectType.Buffer, storageSlice.Buffer.Handle));
+				hash.Add(storageSlice.Offset);
+				hash.Add(storageSlice.Length);
+			}
+		}
 		fingerprint = hash.ToHash();
 		return true;
 	}
@@ -559,7 +603,24 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		return TryRefreshFrameSourceSamplerDescriptors(
+		// Prewarm and bind both refresh one draw. A descriptor cannot change while a recorded
+		// command uses it, so the first refresh in a render frame is the one that binds.
+		ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+		bool canSkipRepeat = _activeDescriptorAllocation is not null &&
+			snapshot is not null &&
+			!windowPresentationSourceMarker.HasSource;
+		(DescriptorAllocation, int, ComputeDispatchSnapshot) refreshKey = canSkipRepeat
+			? (_activeDescriptorAllocation!, descriptorSlotIndex, snapshot!)
+			: default;
+		if (canSkipRepeat &&
+			_frameSourceDescriptorRefreshes.TryGetValue(refreshKey, out ulong refreshedFrameId) &&
+			refreshedFrameId == renderFrameId)
+		{
+			reason = "frame-source sampler descriptors already refreshed this frame";
+			return true;
+		}
+
+		if (!TryRefreshFrameSourceSamplerDescriptors(
 			_activeDescriptorAllocation,
 			descriptorSlotIndex,
 			frameSets,
@@ -568,7 +629,19 @@ internal unsafe partial class VkMeshRenderer
 			snapshot,
 			descriptorCommandBuffer,
 			windowPresentationSourceMarker,
-			out reason);
+			out reason))
+		{
+			return false;
+		}
+
+		if (canSkipRepeat)
+		{
+			if (_frameSourceDescriptorRefreshes.Count >= MaxFrameDescriptorAllocations)
+				_frameSourceDescriptorRefreshes.Clear();
+			_frameSourceDescriptorRefreshes[refreshKey] = renderFrameId;
+		}
+
+		return true;
 	}
 
 	private static bool SnapshotHasFrameSourceSampler(ComputeDispatchSnapshot? snapshot, XRRenderPipelineInstance? pipeline)
@@ -594,6 +667,37 @@ internal unsafe partial class VkMeshRenderer
 				return true;
 
 		return false;
+	}
+
+	/// <summary>
+	/// Returns the bindings that sample a frame source for a shared binding artifact.
+	/// The artifact and its textures do not change, so the classification of every
+	/// reflected binding runs once. The native payload of each returned binding is
+	/// still resolved on every refresh. A frame-owned snapshot returns null.
+	/// </summary>
+	private int[]? ResolveArtifactFrameSourceBindingIndices(
+		XRMaterial material,
+		IReadOnlyList<DescriptorBindingInfo> bindings,
+		ComputeDispatchSnapshot? snapshot)
+	{
+		if (snapshot is not { IsImmutableBindingArtifact: true } || _program is not { } program)
+			return null;
+
+		XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+		var key = (snapshot, material, program, program.LinkGeneration, material.BindingLayoutVersion, pipeline);
+		if (_artifactFrameSourceBindingIndices.TryGetValue(key, out int[]? indices))
+			return indices;
+
+		List<int> matches = [];
+		for (int index = 0; index < bindings.Count; index++)
+			if (IsFrameSourceSamplerBinding(material, bindings[index], snapshot))
+				matches.Add(index);
+
+		if (_artifactFrameSourceBindingIndices.Count >= MaxFrameDescriptorAllocations)
+			_artifactFrameSourceBindingIndices.Clear();
+		indices = [.. matches];
+		_artifactFrameSourceBindingIndices[key] = indices;
+		return indices;
 	}
 
 	private bool TryRefreshFrameSourceSamplerDescriptors(
@@ -650,10 +754,13 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		Span<DescriptorImageInfo> imageInfos = stackalloc DescriptorImageInfo[8];
-		for (int i = 0; i < bindings.Count; i++)
+		int[]? frameSourceBindingIndices = ResolveArtifactFrameSourceBindingIndices(material, bindings, snapshot);
+		int bindingLoopCount = frameSourceBindingIndices?.Length ?? bindings.Count;
+		for (int i = 0; i < bindingLoopCount; i++)
 		{
-			DescriptorBindingInfo binding = bindings[i];
-			if (!IsFrameSourceSamplerBinding(material, binding, snapshot))
+			DescriptorBindingInfo binding = bindings[frameSourceBindingIndices is null ? i : frameSourceBindingIndices[i]];
+			if (frameSourceBindingIndices is null &&
+				!IsFrameSourceSamplerBinding(material, binding, snapshot))
 				continue;
 
 			if (!IsImageDescriptorBinding(binding.DescriptorType))
@@ -672,14 +779,24 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 
-			for (int arrayIndex = 0; arrayIndex < (int)descriptorCount; arrayIndex++)
+			XRTexture?[] retainedTextures = ArrayPool<XRTexture?>.Shared.Rent((int)descriptorCount);
+			int retainedTextureCount = 0;
+			try
 			{
-				if (!TryResolveImage(binding, material, binding.DescriptorType, out imageInfos[arrayIndex], arrayIndex, snapshot))
+				for (int arrayIndex = 0; arrayIndex < (int)descriptorCount; arrayIndex++)
 				{
-					reason = $"failed to resolve frame-source sampler '{binding.Name}'";
-					return false;
+					bool resolved = TryResolveImage(
+						binding, material, binding.DescriptorType,
+						out imageInfos[arrayIndex], out XRTexture? retainedTexture,
+						arrayIndex, snapshot);
+					if (retainedTexture is not null)
+						retainedTextures[retainedTextureCount++] = retainedTexture;
+					if (!resolved)
+					{
+						reason = $"failed to resolve frame-source sampler '{binding.Name}'";
+						return false;
+					}
 				}
-			}
 
 			ReadOnlySpan<DescriptorImageInfo> resolvedImageInfos = imageInfos[..(int)descriptorCount];
 			// The published sampler signature identifies the logical frame source,
@@ -737,6 +854,27 @@ internal unsafe partial class VkMeshRenderer
 				writeMatched: false,
 				writeSucceeded: true);
 			refreshed = true;
+			}
+			finally
+			{
+				Exception? firstFailure = null;
+				for (int index = 0; index < retainedTextureCount; index++)
+				{
+					XRTexture? retainedTexture = retainedTextures[index];
+					retainedTextures[index] = null;
+					try
+					{
+						retainedTexture?.ReleaseBindingUse();
+					}
+					catch (Exception exception)
+					{
+						firstFailure ??= exception;
+					}
+				}
+				ArrayPool<XRTexture?>.Shared.Return(retainedTextures);
+				if (firstFailure is not null)
+					System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
+			}
 		}
 
 		if (allocation is not null &&
@@ -981,12 +1119,12 @@ internal unsafe partial class VkMeshRenderer
 		if (pipeline is null)
 			return false;
 
-		if (TryResolvePipelineResourceDataBuffer(pipeline, binding.Name, binding.DescriptorType, out _))
+		if (BindingResolvesPipelineResourceDataBuffer(pipeline, binding.Name, binding.DescriptorType))
 			return true;
 
 		string trimmedName = TrimDescriptorBufferSuffix(binding.Name);
 		return !string.Equals(trimmedName, binding.Name, StringComparison.Ordinal) &&
-			TryResolvePipelineResourceDataBuffer(pipeline, trimmedName, binding.DescriptorType, out _);
+			BindingResolvesPipelineResourceDataBuffer(pipeline, trimmedName, binding.DescriptorType);
 	}
 
 	private static bool BindingResolvesPipelineResourceTexture(DescriptorBindingInfo binding)

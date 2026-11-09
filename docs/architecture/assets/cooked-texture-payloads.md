@@ -8,7 +8,7 @@ Related:
 
 ## Scope
 
-The current payload is a mip-addressable texture streaming cache. It is not page-addressable. It stores uncompressed `Rgba8` mip data for streaming use. GPU-native compressed payloads, page-addressable payloads, and KTX2/Basis interchange are planned but not implemented.
+The current payload is a mip-addressable texture streaming cache. It is not page-addressable. It stores BC7, BC5, or BC4 mip data when block compression is active (see [Block Compression](#block-compression)), and uncompressed `Rgba8` mip data otherwise. Page-addressable payloads and KTX2/Basis interchange are planned but not implemented.
 
 ## Authority And File Flow
 
@@ -42,7 +42,13 @@ Fallbacks must log why they happen. A missing, stale, unreadable, or incompatibl
 
 ## Cache Keys
 
-The current cache codec uses a v3 preview key. `TextureStreamingCacheCodec` contains the string pattern `TextureStreaming_v3_preview<preview-size>_rgba8_uncompressed_binary`.
+`TextureStreamingCacheCodec` selects the key from the effective cook compression:
+
+- Role-dependent (`Bcn`): `TextureStreaming_v5_preview<preview-size>_bcn_binary`, with the texture role as a variant folder below it (`usage-color`, `usage-data`, or `usage-normal`). A cache path without a role folder cooks as BC7.
+- BC7 only: `TextureStreaming_v4_preview<preview-size>_bc7_binary`.
+- Uncompressed: `TextureStreaming_v3_preview<preview-size>_rgba8_uncompressed_binary` (the earlier key, so existing RGBA8 caches stay valid).
+
+A cache cooked in one mode is never reused in the other mode.
 
 The next key must change when an import choice affects bytes, GPU format, or sampling. Include schema version, source dimensions or hash mode, role, color space, compression profile, backend profile, storage format, encoder id and version, encoder settings hash, mip policy, normal convention, and alpha mode.
 
@@ -52,7 +58,9 @@ Cache miss diagnostics must log one primary reason. Valid reasons include missin
 
 `EPixelInternalFormat` already contains constants for common compressed formats. The enum includes S3TC/BC1-BC3, RGTC/BC4-BC5, BPTC/BC6H-BC7, ETC2/EAC, and ASTC variants.
 
-Current runtime streaming still uses uncompressed `Rgba8` payloads. Dense compressed upload is not implemented for OpenGL or Vulkan. Sparse compressed residency must stay disabled until dense compressed upload is validated.
+`ESizedInternalFormat` has `Bc7Unorm`, `Bc7Srgb`, `Bc5Unorm`, and `Bc4Unorm`, appended after the older values so that stored ordinals do not change. `TextureBlockFormats` (in `XREngine.Data`) gives the block size, the byte counts, and the mapping to the `EPixelInternalFormat` constants.
+
+Dense compressed upload works on both renderers. Vulkan enables `textureCompressionBC`, maps the formats to `VK_FORMAT_BC*_BLOCK`, copies data in rows of 4x4 blocks, removes the attachment and storage usage bits, and never generates mips with blits. OpenGL allocates the BPTC and RGTC formats and uploads each mip with `glCompressedTexSubImage2D` (or `glCompressedTexImage2D`). Sparse residency stays disabled for compressed textures: OpenGL uses the dense backend, and the Vulkan sparse transition returns an unsupported result.
 
 Planned role defaults:
 
@@ -78,9 +86,28 @@ Editor loads can fall back to source import when a payload is missing or stale a
 
 The normal-map contract is not complete. The stable contract must record OpenGL/Y+ or DirectX/Y- convention, green-channel flip, XY-only storage, Z reconstruction, signedness, and normal scale policy. Normal maps are linear data. They must not use sRGB decode.
 
+## Block Compression
+
+The texture cook encodes the RGBA8 mip chain before the cache stores it (`TextureCookBlockCompressor`). The resident format then applies the texture color space: an sRGB texture resolves to `Bc7Srgb`, the same way `Rgba8` resolves to `Srgb8Alpha8`.
+
+- Setting: `RuntimeEngine.Rendering.Settings.CookedTextureCompression`: `Bcn` (the default), `Bc7`, or `None`. The environment variable `XRE_TEXTURE_COOK_COMPRESSION` overrides it.
+- `Bc7` stores BC7 UNORM bits for every texture role.
+- `Bcn` selects the format from the texture role (`ETextureImportUsage`) and the base mip pixels:
+  - BC5 for a normal-role texture whose pixels decode to unit vectors with Z above 0 (at least 90% of the sampled pixels) and whose alpha is opaque.
+  - BC4 for a data- or normal-role texture that is gray and opaque, such as height, bump, and mask maps.
+  - BC7 for everything else: color, unknown roles, multi-channel data, and textures that use alpha. Color never uses BC4, because BC4 has no sRGB variant.
+- The role reaches the cook through the cache path. `XRTexture2D` passes `ImportedUsage` when it resolves the authority path, `TextureCookUsageVariant` maps the role to the variant folder, and the cache codec reads the folder back when it cooks. `ModelAssetImporter` sets the role from the material slot (normal slots are `Normal`; slots other than base color and emissive are `Data`).
+- Sampling stays the same through the image-view swizzle that both renderers apply (Vulkan `VkComponentMapping`, OpenGL `GL_TEXTURE_SWIZZLE_*`):
+  - BC4 samples as (R, R, R, 1), so a gray texture reads the same RGB as before.
+  - BC5 samples as (R, G, 0, 0). The shared normal-unpack code (`XRENGINE_DecodeTangentNormal`, `XRENGINE_UnpackNormal`, `XR_ADV_DecodeTangentNormal`, the surface-detail, meshlet, and DDGI paths) rebuilds Z = sqrt(1 - x² - y²) when the sampled alpha is below 0.5. Other samples keep their stored Z. The Uber shaders already rebuild Z from X and Y.
+- Encoder: `ITextureBlockEncoder`, installed through `TextureBlockEncoderServices`. The desktop bootstrap installs the bc7enc_rdo encoder from `XREngine.Runtime.Imaging.Bc7Enc`. When no encoder is installed, the effective mode is `None`, and one warning says why.
+- Sources that are not tightly packed 8-bit RGBA stay RGBA8, and an encoder failure keeps the texture RGBA8. Both cases are logged.
+- The WebGPU format contract does not accept block-compressed formats, so browser builds do not use these caches.
+- A device without `textureCompressionBC` cannot show BC7 caches. The upload fails with a message that tells the user to set the compression to `None` and cook again; there is no silent decode.
+
 ## Compression Tooling
 
-No compression encoder is selected. If the project adds `texconv`, DirectXTex, `astcenc`, KTX2/Basis tooling, or another encoder, complete dependency and license review first. Then run the dependency report and update dependency documents.
+The cook uses bc7enc_rdo at a pinned commit (`Tools/Dependencies/Bc7Enc.lock.json`). `Tools/Dependencies/Build-Bc7Enc.ps1` builds the `xre_bcn` shim from `bc7enc.cpp` and `rgbcx.cpp` only (MIT or Unlicense); see [Native Dependencies](../../developer-guides/runtime/native-dependencies.md). Any other encoder needs dependency and license review first. Then run the dependency report and update dependency documents.
 
 Encoder configuration must include executable path or integration mode, quality preset, concurrency cap, timeout, and output directory policy. Compression must remain cancelable and bounded so the editor stays responsive.
 
@@ -92,10 +119,10 @@ Diagnostics must distinguish logical decoded bytes, cooked stored bytes, upload 
 
 ## Known Limits
 
-- `XRTS` v1 is uncompressed and mip-addressable only.
+- `XRTS` v1 is mip-addressable only. Each mip records its own format, so the same layout holds BC7 or RGBA8 data.
+- A source file that two roles use is cooked once per role. A texture without a known role cooks as BC7.
 - Texture role and color-space metadata are incomplete.
 - Normal map convention metadata is incomplete.
-- OpenGL compressed dense upload is not implemented.
-- Vulkan compressed dense upload is not implemented.
+- Compressed textures have no sparse residency and no CPU decode (for example, `Mipmap2D.GetImage` rejects BC data).
 - Page-addressable payloads are future SVT work.
 - KTX2/Basis, ASTC, and ETC2/EAC profiles are not implemented.

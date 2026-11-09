@@ -291,11 +291,70 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
     private sealed partial class RendererResources
     {
+        /// <summary>History sequence of the frame that last dispatched changed input, or zero when it is not tracked.</summary>
+        public ulong OutputChangeSequence { get; set; }
+
         public bool HasCurrentFrameOutput(ulong frameId)
             => LastComputePrepassFrameId == frameId && _hasValidOutput;
     }
 
-    private void Run(XRMeshRenderer renderer, bool forceSkinning, bool forceBlendshapes = false)
+    /// <summary>
+    /// Runs forced deformation for the mesh atlas. It does not refit bounds or refresh the pose
+    /// from render state. It reuses only an output dispatched earlier in the same render
+    /// frame, and never an output from an earlier frame.
+    /// </summary>
+    /// <remarks>
+    /// The deformation output buffer is shared by all render lanes. A lane can record a dispatch
+    /// and submit it one or more frames later, as the desktop worker lane does in VR. If another
+    /// lane reuses that output, it copies a pose that has not been written yet, or a pose from a
+    /// different frame, so the avatar holds a pose and then jumps. A recorded dispatch also does
+    /// not prove that it ran, because a backend can discard the frame that holds it. Each atlas
+    /// publish therefore writes the output in the same command stream that copies it.
+    /// </remarks>
+    /// <param name="renderer">The renderer to deform.</param>
+    /// <param name="currentSequence">The current frame's history sequence, or zero when it is not tracked.</param>
+    /// <param name="committedSequence">The last committed history sequence, or zero when none exists.</param>
+    /// <param name="positions">The deformed position buffer.</param>
+    internal bool TryRunForMeshAtlas(
+        XRMeshRenderer renderer,
+        ulong currentSequence,
+        ulong committedSequence,
+        out XRDataBuffer? positions)
+    {
+        ArgumentNullException.ThrowIfNull(renderer);
+        positions = null;
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
+            return false;
+
+        Run(
+            renderer,
+            forceSkinning: true,
+            forceBlendshapes: true,
+            requireLiveBounds: false,
+            requireCommittedOutput: true,
+            currentSequence,
+            committedSequence,
+            allowOutputReuse: false);
+        lock (_syncRoot)
+        {
+            if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
+                !resources.HasCurrentFrameOutput(State.RenderFrameId))
+                return false;
+
+            positions = renderer.CaptureSkinnedOutputResources().Positions;
+            return positions is not null;
+        }
+    }
+
+    private void Run(
+        XRMeshRenderer renderer,
+        bool forceSkinning,
+        bool forceBlendshapes = false,
+        bool requireLiveBounds = true,
+        bool requireCommittedOutput = false,
+        ulong currentSequence = 0UL,
+        ulong committedSequence = 0UL,
+        bool allowOutputReuse = true)
     {
         if (AbstractRenderer.Current is null)
             return;
@@ -312,40 +371,36 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
         bool computeSkinningEnabledForBackend =
             RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-            !RuntimeEngine.Rendering.State.IsVulkan;
+            MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
         bool computeBlendshapesEnabledForBackend =
             RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
-            !RuntimeEngine.Rendering.State.IsVulkan;
+            MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
+        bool computeDeformationRequested =
+            (RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+             mesh.HasSkinning &&
+             RuntimeEngine.Rendering.Settings.AllowSkinning) ||
+            (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
+             mesh.HasBlendshapeDeformation &&
+             RuntimeEngine.Rendering.Settings.AllowBlendshapes);
         if (!forceSkinning &&
-            RuntimeEngine.Rendering.State.IsVulkan &&
-            RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-            mesh.HasSkinning &&
-            RuntimeEngine.Rendering.Settings.AllowSkinning)
+            computeDeformationRequested &&
+            !MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh))
         {
-            Debug.VulkanWarningEvery(
-                $"Vulkan.ComputeSkinning.Disabled.{mesh.Name ?? "UnnamedMesh"}",
+            Debug.RenderingWarningEvery(
+                $"ComputeDeformation.Disabled.{mesh.Name ?? "UnnamedMesh"}",
                 TimeSpan.FromSeconds(5),
-                "[Vulkan] Compute skinning is disabled for mesh '{0}' because the Vulkan compute-output path is not yet stable; using GPU vertex skinning instead.",
-                mesh.Name ?? "<unnamed>");
-        }
-        if (RuntimeEngine.Rendering.State.IsVulkan &&
-            RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
-            mesh.BlendshapeCount > 0 &&
-            RuntimeEngine.Rendering.Settings.AllowBlendshapes)
-        {
-            Debug.VulkanWarningEvery(
-                $"Vulkan.ComputeBlendshapes.Disabled.{mesh.Name ?? "UnnamedMesh"}",
-                TimeSpan.FromSeconds(5),
-                "[Vulkan] Compute blendshapes are disabled for mesh '{0}' because the Vulkan compute-output path is not yet stable; using GPU vertex blendshapes instead.",
+                MeshDeformationBackendPolicy.AllowsComputeDeformation
+                    ? "Compute deformation is off for mesh '{0}' because it has no sparse blendshape data; using vertex-shader deformation instead."
+                    : "Compute deformation is off for mesh '{0}' because XRE_VULKAN_COMPUTE_DEFORMATION=0; using vertex-shader deformation instead.",
                 mesh.Name ?? "<unnamed>");
         }
 
         bool doSkinning = (forceSkinning || computeSkinningEnabledForBackend)
             && mesh.HasSkinning
             && RuntimeEngine.Rendering.Settings.AllowSkinning;
-        bool hasBlendshapePath = mesh.BlendshapeCount > 0
+        bool hasBlendshapePath = mesh.HasBlendshapeDeformation
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
-        bool blendshapePathRequested = mesh.BlendshapeCount > 0
+        bool blendshapePathRequested = mesh.HasBlendshapeDeformation
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
             && (computeBlendshapesEnabledForBackend || doSkinning || forceBlendshapes);
         bool precombinePathRequested = hasBlendshapePath
@@ -400,7 +455,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             && !renderer.HasGpuDrivenBoneSource;
         bool useSharedSkinPaletteBuffer = useExternalSkinPaletteSource || usePackedGlobalSkinPalette;
         bool useGlobalBlendWeights = false;
-        bool needsLiveSkinnedBounds = doSkinning &&
+        bool needsLiveSkinnedBounds = doSkinning && requireLiveBounds &&
             (forceSkinning || RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader);
 
         bool isInterleaved = mesh.Interleaved;
@@ -457,6 +512,9 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
             bool forceLivePoseRefresh = forceSkinning && needsLiveSkinnedBounds;
 
+            // A dispatch from this render frame belongs to the same output and the same
+            // submission, so even the atlas path reuses it. Only output from an earlier
+            // frame can come from another lane that has not submitted it yet.
             if (!forceLivePoseRefresh &&
                 resources.HasFrameOutput(frameId, doSkinning, doBlendshapes, usePrecombinedBlendshapes) &&
                 (!needsLiveSkinnedBounds || resources.HasValidSkinnedBounds))
@@ -467,8 +525,18 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             if (!resources.Validate(mesh, doSkinning, doBlendshapes, isInterleaved, usePrecombinedBlendshapes))
                 return;
 
-            if (!needsLiveSkinnedBounds &&
-                resources.CanReuseOutput(doSkinning, doBlendshapes, usePrecombinedBlendshapes))
+            bool canReuseOutput = allowOutputReuse &&
+                !needsLiveSkinnedBounds &&
+                resources.CanReuseOutput(doSkinning, doBlendshapes, usePrecombinedBlendshapes);
+            if (requireCommittedOutput)
+            {
+                if (!canReuseOutput)
+                    resources.OutputChangeSequence = currentSequence;
+                else if (resources.OutputChangeSequence == 0UL || committedSequence < resources.OutputChangeSequence)
+                    canReuseOutput = false;
+            }
+
+            if (canReuseOutput)
             {
                 resources.LastComputePrepassFrameId = frameId;
                 RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
@@ -525,6 +593,11 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 skinPaletteCount = packedCount;
                 activeSkinPalette = _globalInputs.GlobalSkinPalette;
             }
+
+            // The renderer palette is rewritten every frame. Give this dispatch its own copy so a
+            // later frame cannot change the pose before the queued dispatch runs on the GPU.
+            if (doSkinning && !useSharedSkinPaletteBuffer && activeSkinPalette is not null)
+                activeSkinPalette = resources.PublishSkinPaletteSnapshot(activeSkinPalette);
 
             uint blendBase = 0u;
             if (useGlobalBlendWeights && _globalInputs.TryGetBlendshapeWeightsSlice(renderer, out uint packedBlendBase, out _))
@@ -698,7 +771,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         {
             return false;
         }
-        if (!settings.AllowBlendshapes || mesh.BlendshapeCount == 0 || rendererBlendshapeState.ActiveCount <= 0)
+        if (!settings.AllowBlendshapes || !mesh.HasBlendshapeDeformation || rendererBlendshapeState.ActiveCount <= 0)
             return false;
         if (meshBlendshapeState.SparseShapeRanges is null
             || meshBlendshapeState.SparseRecords is null
@@ -724,7 +797,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         var settings = RuntimeEngine.Rendering.Settings;
         return settings.EnableBlendshapePcaBasisCompression
             && settings.AllowBlendshapes
-            && mesh.HasBlendshapes
+            && mesh.HasBlendshapeDeformation
             && mesh.HasBlendshapeBasisCompressionPayload
             && renderer.CaptureBlendshapeResources().ActiveCount > 0;
     }
@@ -901,6 +974,35 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
     }
 
+    /// <summary>
+    /// Returns whether the current render owns the per-frame mesh deformation.
+    /// </summary>
+    /// <param name="vrEyeRender">True for a VR eye render: the single-pass stereo render, or one
+    /// eye of a two-pass or parallel-recording frame.</param>
+    /// <param name="shadowPass">True for a shadow view.</param>
+    /// <remarks>
+    /// The eye and desktop outputs run at independent rates, and each submits its own
+    /// GPU work. Only one of them dispatches skinning and blendshapes, so that the
+    /// other never waits for it. The priority output in
+    /// <see cref="IRuntimeRenderPresentationServices.VrRenderPriority"/> is the owner.
+    /// The other output reads the results of the last owner submission. Both submit to
+    /// one queue, so queue order keeps a read from overlapping a write.
+    /// A shadow view only reads the results: it renders before the owning pipeline is
+    /// active, so work that it dispatched would belong to no output.
+    /// Without an active VR session every render owns the deformation.
+    /// </remarks>
+    internal static bool OwnsDeformation(bool vrEyeRender, bool shadowPass)
+    {
+        IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+        if (!presentation.IsInVR)
+            return true;
+        if (shadowPass)
+            return false;
+
+        bool vrOwnsDeformation = presentation.VrRenderPriority != EVrRenderPriority.Desktop;
+        return vrEyeRender == vrOwnsDeformation;
+    }
+
     public void RunVisible(RenderCommandCollection commands)
     {
         if (commands is null)
@@ -914,10 +1016,10 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
         bool computeSkinningEnabledForBackend =
             RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-            !RuntimeEngine.Rendering.State.IsVulkan;
+            MeshDeformationBackendPolicy.AllowsComputeDeformation;
         bool computeBlendshapesEnabledForBackend =
             RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
-            !RuntimeEngine.Rendering.State.IsVulkan;
+            MeshDeformationBackendPolicy.AllowsComputeDeformation;
         bool precombineEnabledForBackend =
             RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass &&
             !RuntimeEngine.Rendering.State.IsVulkan;
@@ -967,7 +1069,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                         && !renderer.HasExternalSkinPaletteSource
                         && !renderer.HasGpuDrivenBoneSource
                         && skinningInCompute;
-                    bool blendshapePathRequested = mesh.BlendshapeCount > 0
+                    bool blendshapePathRequested = mesh.HasBlendshapeDeformation
                         && RuntimeEngine.Rendering.Settings.AllowBlendshapes
                         && (computeBlendshapesEnabledForBackend
                             || skinningInCompute

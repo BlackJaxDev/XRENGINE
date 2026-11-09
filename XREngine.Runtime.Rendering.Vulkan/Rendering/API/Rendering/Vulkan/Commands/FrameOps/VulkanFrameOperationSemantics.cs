@@ -123,7 +123,8 @@ internal static class VulkanFrameOperationSemantics
             TransformFeedbackOp transformFeedback => transformFeedback.Target ?? transformFeedback.Context.OutputFrameBuffer,
             AdvancedVisibilityOp visibility
                 when visibility.Request.Stage is EAdvancedRenderStage.VisibilityRaster or
-                    EAdvancedRenderStage.DirectionalShadowRaster
+                    EAdvancedRenderStage.DirectionalShadowRaster ||
+                    visibility.Request.Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer
                 => visibility.Target,
             _ => null,
         };
@@ -206,6 +207,16 @@ internal static class VulkanFrameOperationSemantics
                         output,
                         version,
                         EFrameOpResourceAccess.Write);
+                    break;
+                }
+                if (visibility.Request.Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer)
+                {
+                    // The decal buffer writes its two color targets and only tests
+                    // the resolved visibility depth.
+                    AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write,
+                        includeColor: true, includeDepth: false, includeStencil: false);
+                    AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Read,
+                        includeColor: false, includeDepth: true, includeStencil: true);
                     break;
                 }
                 if (visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster ||
@@ -403,8 +414,7 @@ internal static class VulkanFrameOperationSemantics
         switch (op)
         {
             case MeshDrawOp meshDraw:
-                PendingMeshDraw draw = meshDraw.Draw;
-                PublishMeshDrawStats(meshDraw.PassIndex, in draw);
+                PublishMeshDrawStats(meshDraw.PassIndex, in meshDraw.DrawRef);
                 break;
             case IndirectDrawOp indirectDraw:
                 PublishFrameDrawStats(new VulkanFrameDrawStats(
@@ -426,7 +436,7 @@ internal static class VulkanFrameOperationSemantics
         in PendingMeshDraw draw)
     {
         if (passIndex != int.MinValue)
-            PublishFrameDrawStats(draw.Renderer.EstimateFrameDrawStats(draw));
+            PublishFrameDrawStats(draw.Renderer.EstimateFrameDrawStats(in draw));
     }
 
     private static void PublishFrameDrawStats(VulkanFrameDrawStats stats)

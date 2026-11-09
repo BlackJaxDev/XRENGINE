@@ -159,6 +159,9 @@ internal sealed partial class VulkanCommandRuntime
             {
                 ref readonly VulkanPreparedStableBinHeader header =
                     ref headers[headerIndex];
+                // Mesh surface decals never cast shadows.
+                if (header.IsSurfaceDecal)
+                    continue;
                 VulkanVisibilityRasterPipeline raster = header.ShadowRasterPipeline;
                 if (!header.IsRasterReady || !raster.IsValid ||
                     raster.TargetClosure != payload.TargetClosure ||

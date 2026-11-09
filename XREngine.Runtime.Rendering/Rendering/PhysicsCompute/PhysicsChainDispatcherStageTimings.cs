@@ -6,6 +6,14 @@ namespace XREngine.Rendering.Compute;
 /// <see cref="Calls"/> to get the cost of each stage per frame. Stages run in sequence;
 /// <see cref="TotalMilliseconds"/> includes all of them.
 /// </summary>
+/// <param name="PreviousPaletteSingleCopies">
+/// The number of previous palette publications that copied the whole palette layout with one
+/// range copy, because the layout and every row's history source were unchanged.
+/// </param>
+/// <param name="PaletteSourceRebinds">
+/// The number of palette source publications that bound the renderers to the shared palette
+/// view again. Other publications only write the new buffers into the view.
+/// </param>
 public readonly record struct PhysicsChainDispatcherStageTimings(
     long Calls,
     double TotalMilliseconds,
@@ -23,4 +31,6 @@ public readonly record struct PhysicsChainDispatcherStageTimings(
     double FinalizeOwnershipMilliseconds,
     double PaletteSourcesMilliseconds,
     double CompleteUpdatesMilliseconds,
+    long PreviousPaletteSingleCopies,
+    long PaletteSourceRebinds,
     PhysicsChainDispatcherSubStageTimings Detail);

@@ -279,13 +279,31 @@ internal sealed partial class WebGpuAdvancedVisibilityOutput : IDisposable
             return true;
         }
         uint flags = snapshot.MaterialPayloads.ConstantWords[checked((int)(material.ConstantWordOffset + WebGpuAdvancedStandardMaterialContract.FlagsWord))];
+        if ((flags & XREngine.Rendering.Materials.GPUMaterialEntry.OpacityTextureFlag) != 0 &&
+            !TryResolveStandardSlot(snapshot, in material, StandardOpacitySlot, out opacity, out opacityHandle, out opacitySampler, out reason))
+            return false;
         if ((flags & 1u) == 0) return true;
-        if (material.TextureReferenceCount == 0 || material.TextureReferenceOffset >= snapshot.MaterialPayloads.TextureBindings.Length)
+        return TryResolveStandardSlot(snapshot, in material, 0, out texture, out textureHandle, out samplerHandle, out reason);
+    }
+
+    /// <summary>The standard layout slot of the separate opacity texture (after albedo, normal, RM and emissive).</summary>
+    private const int StandardOpacitySlot = 4;
+
+    private static bool TryResolveStandardSlot(AdvancedGpuScenePublicationSnapshot snapshot, in AdvancedMaterialRecord material,
+        int slot, out XRTexture2D? texture, out AdvancedGpuHandle textureHandle, out AdvancedGpuHandle samplerHandle, out string reason)
+    {
+        texture = null;
+        textureHandle = samplerHandle = default;
+        if (material.TextureReferenceCount <= (uint)slot ||
+            material.TextureReferenceOffset >= snapshot.MaterialPayloads.TextureBindings.Length ||
+            (uint)slot >= (uint)snapshot.MaterialPayloads.TextureBindings.Length - material.TextureReferenceOffset)
         {
-            reason = "WebGPU.Advanced.CoverageTextureMissing: authored masked coverage has no retained base-color texture reference.";
+            reason = slot == 0
+                ? "WebGPU.Advanced.CoverageTextureMissing: authored masked coverage has no retained base-color texture reference."
+                : "WebGPU.Advanced.CoverageTextureMissing: masked coverage marks an opacity texture that has no retained reference.";
             return false;
         }
-        AdvancedMaterialTextureBinding binding = snapshot.MaterialPayloads.TextureBindings[checked((int)material.TextureReferenceOffset)];
+        AdvancedMaterialTextureBinding binding = snapshot.MaterialPayloads.TextureBindings[checked((int)material.TextureReferenceOffset + slot)];
         return TryResolveCoverageTexture(snapshot, in binding, out texture, out textureHandle, out samplerHandle, out reason);
     }
 

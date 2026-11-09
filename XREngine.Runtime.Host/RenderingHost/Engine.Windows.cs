@@ -62,7 +62,9 @@ namespace XREngine
                     "The active application profile does not install local window services.");
             }
 
-            bool preferHdrOutput = windowSettings.OutputHDR ?? RuntimeEngine.Rendering.Settings.OutputHDR;
+            bool preferHdrOutput = ResolveEnvironmentOutputHdr()
+                ?? windowSettings.OutputHDR
+                ?? RuntimeEngine.Rendering.Settings.OutputHDR;
             EInteractiveWindowResizeStrategy interactiveResizeStrategy = ResolveInteractiveResizeStrategy(windowSettings);
             var options = GetWindowOptions(windowSettings, preferHdrOutput, interactiveResizeStrategy);
 
@@ -167,12 +169,32 @@ namespace XREngine
         private static string SummarizeStartupException(Exception ex)
             => $"{ex.GetType().Name}: {ex.Message}";
 
+        /// <summary>
+        /// Reads the XRE_OUTPUT_HDR override ("1"/"true" or "0"/"false"). It takes priority over the
+        /// window and engine HDR settings, so test sessions can select HDR output without a settings file.
+        /// </summary>
+        private static bool? ResolveEnvironmentOutputHdr()
+        {
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OutputHdr);
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            string value = raw.Trim();
+            if (value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (value == "0" || value.Equals("false", StringComparison.OrdinalIgnoreCase))
+                return false;
+            return null;
+        }
+
         private static void FinishWindowCreation(
             GameWindowStartupSettings windowSettings,
             XRWindow window,
             bool preferHdrOutput)
         {
             window.PreferHDROutput = preferHdrOutput;
+            window.DesktopPresentPath =
+                windowSettings.DesktopPresentPath ?? RuntimeEngine.Rendering.Settings.DesktopPresentPath;
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
             RuntimeEngine.RegisterWindow(window);
@@ -191,10 +213,6 @@ namespace XREngine
                 window.RenderOwnerThreadId);
 
             window.SetWorld(windowSettings.TargetWorld is null ? null : GetOrCreateRenderWorld(windowSettings.TargetWorld));
-            // SetWorld links the window tick and initializes its renderer. Apply
-            // renderer-dependent pipeline selection only after that boundary so
-            // Required mode can evaluate live queues, timelines, and resources.
-            EngineRenderingSettingsApplication.ApplyRenderPipelinePreference();
 
             Debug.Rendering(
                 "[StartupWindow] Window world assigned hash={0} targetWorld={1} tickLinked={2}",
@@ -273,6 +291,18 @@ namespace XREngine
         {
             bool isFinalWindow = RuntimeEngine.Windows.Count == 1 && ReferenceEquals(RuntimeEngine.Windows[0], window);
             bool cleanupSuppressed = Volatile.Read(ref _suppressedCleanupRequests) > 0;
+            // Every renderer teardown settles the asynchronous render work of its own
+            // renderer first and closes admission for that renderer. Work of other
+            // renderers keeps running. The final window also closes global admission.
+            if (!DrainAsynchronousRenderWork(window.Renderer) ||
+                (isFinalWindow && !cleanupSuppressed && !DrainAsynchronousRenderWork(closeAdmission: true)))
+            {
+                Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
+                Debug.RenderingWarning(
+                    "[Shutdown] Asynchronous render work did not drain. Renderer teardown is abandoned so that live resources are not destroyed.");
+                return false;
+            }
+
             if (!isFinalWindow || cleanupSuppressed)
                 return true;
 
@@ -285,6 +315,46 @@ namespace XREngine
                 "[Shutdown] Core engine loops did not quiesce within 2 seconds. " +
                 "Renderer and process-exit resource teardown will be abandoned to avoid destroying live resources.");
             return false;
+        }
+
+        /// <summary>
+        /// Requests a drain of asynchronous render work from the render owner and waits
+        /// for its acknowledgement within a bounded budget. Returns true when no work was
+        /// unresolved or the owner drained it.
+        /// </summary>
+        internal static bool DrainAsynchronousRenderWork(AbstractRenderer renderer)
+        {
+            RuntimeAsynchronousRenderWorkService? service = RuntimeAsynchronousRenderWorkService.Installed;
+            if (service is null)
+                return true;
+            if (!service.HasUnresolvedWorkFor(renderer))
+            {
+                service.CloseAdmission(renderer);
+                return true;
+            }
+
+            long generation = service.RequestDrain(renderer);
+            return service.WaitForDrainAcknowledgement(generation, TimeSpan.FromSeconds(2));
+        }
+
+        /// <summary>
+        /// Requests a drain of every consumer of asynchronous render work and waits for
+        /// the owner's acknowledgement within a bounded budget.
+        /// </summary>
+        internal static bool DrainAsynchronousRenderWork(bool closeAdmission)
+        {
+            RuntimeAsynchronousRenderWorkService? service = RuntimeAsynchronousRenderWorkService.Installed;
+            if (service is null)
+                return true;
+            if (!service.HasUnresolvedWork)
+            {
+                if (closeAdmission)
+                    service.CloseAdmission();
+                return true;
+            }
+
+            long generation = service.RequestDrain(closeAdmission);
+            return service.WaitForDrainAcknowledgement(generation, TimeSpan.FromSeconds(2));
         }
 
         /// <summary>
@@ -463,7 +533,7 @@ namespace XREngine
             }
 
             // Set target FPS to unfocused value (VR headsets manage this independently)
-            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !RuntimeEngine.VRState.IsInVR)
+            if (!RuntimeEngine.VRState.IsInVR)
             {
                 float targetRenderFrequency = Time.ResolveRenderFrequency(false, EffectiveSettings.VSync);
                 Time.Timer.TargetRenderFrequency = targetRenderFrequency;
@@ -494,7 +564,7 @@ namespace XREngine
             }
 
             // Restore target FPS to focused value (VR headsets manage this independently)
-            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !RuntimeEngine.VRState.IsInVR)
+            if (!RuntimeEngine.VRState.IsInVR)
             {
                 float targetRenderFrequency = Time.ResolveRenderFrequency(true, EffectiveSettings.VSync);
                 Time.Timer.TargetRenderFrequency = targetRenderFrequency;

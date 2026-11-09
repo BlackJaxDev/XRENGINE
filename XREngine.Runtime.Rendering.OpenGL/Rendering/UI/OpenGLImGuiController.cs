@@ -69,7 +69,12 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
 
     public void MakeCurrent() => ImGui.SetCurrentContext(Context);
 
-    public void Update(float deltaSeconds, Action? queueAdditionalInput = null)
+    /// <summary>
+    /// Gets whether the main window reported mouse button or wheel input in the latest <see cref="Update"/>.
+    /// </summary>
+    public bool MainWindowButtonActivity { get; private set; }
+
+    public void Update(float deltaSeconds, Action? queueAdditionalInput = null, bool? applicationFocused = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         MakeCurrent();
@@ -89,6 +94,10 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
         bool multipleViewports = (io.ConfigFlags & ImGuiConfigFlags.ViewportsEnable) != 0;
         var origin = _window.DesktopWindowBackend?.ClientScreenPosition ?? default;
         WindowInputSnapshot input = _window.ConsumeUiInputSnapshot(_orderedInputScratch);
+        // One focus state must precede all window input. A false/true pair can
+        // clear a detached click when ImGui splits its press and release across frames.
+        io.AddFocusEvent(applicationFocused ?? input.IsFocused);
+        MainWindowButtonActivity = false;
         ReplayInput(io, input, CollectionsMarshal.AsSpan(_orderedInputScratch),
             multipleViewports ? origin.X : 0,
             multipleViewports ? origin.Y : 0,
@@ -130,29 +139,34 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
         _gl.BindTexture(GLEnum.Texture2D, (uint)previousTexture);
     }
 
-    public void ReplayViewportInput(IRuntimeWindowBackend window, int screenOriginX, int screenOriginY, uint viewportId)
+    /// <summary>
+    /// Replays the pending UI input of a platform viewport window into ImGui.
+    /// </summary>
+    /// <returns><see langword="true"/> when the window reported pointer, button, or wheel input.</returns>
+    public bool ReplayViewportInput(IRuntimeWindowBackend window, int screenOriginX, int screenOriginY, uint viewportId)
     {
         MakeCurrent();
         WindowInputSnapshot input = window.ConsumeUiInput(_orderedInputScratch);
-        ReplayInput(ImGui.GetIO(), input, CollectionsMarshal.AsSpan(_orderedInputScratch), screenOriginX, screenOriginY, viewportId);
+        return ReplayInput(ImGui.GetIO(), input, CollectionsMarshal.AsSpan(_orderedInputScratch), screenOriginX, screenOriginY, viewportId);
     }
 
-    private void ReplayInput(ImGuiIOPtr io, WindowInputSnapshot input, ReadOnlySpan<WindowInputEvent> events, int originX, int originY, uint viewportId)
+    private bool ReplayInput(ImGuiIOPtr io, WindowInputSnapshot input, ReadOnlySpan<WindowInputEvent> events, int originX, int originY, uint viewportId)
     {
         if (input.Sequence == 0)
-            return;
+            return false;
         if (viewportId == 0)
         {
             if (input.Sequence == _lastInputSequence)
-                return;
+                return false;
             _lastInputSequence = input.Sequence;
         }
         else
         {
             if (_viewportInputSequences.TryGetValue(viewportId, out ulong previous) && previous == input.Sequence)
-                return;
+                return false;
             _viewportInputSequences[viewportId] = input.Sequence;
         }
+        bool pointerActivity = false;
         for (int i = 0; i < events.Length; i++)
         {
             WindowInputEvent item = events[i];
@@ -167,6 +181,8 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
                 case WindowInputEventKind.MouseButton:
                     io.AddMouseButtonEvent((int)item.MouseButton, item.IsDown);
                     if (viewportId != 0) io.AddMouseViewportEvent(viewportId);
+                    else MainWindowButtonActivity = true;
+                    pointerActivity = true;
                     break;
                 case WindowInputEventKind.Text:
                     io.AddInputCharacter(item.Character);
@@ -174,16 +190,18 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
                 case WindowInputEventKind.Pointer:
                     io.AddMousePosEvent(originX + item.X, originY + item.Y);
                     if (viewportId != 0) io.AddMouseViewportEvent(viewportId);
+                    pointerActivity = true;
                     break;
                 case WindowInputEventKind.Scroll:
                     io.AddMouseWheelEvent(item.X, item.Y);
                     if (viewportId != 0) io.AddMouseViewportEvent(viewportId);
+                    else MainWindowButtonActivity = true;
+                    pointerActivity = true;
                     break;
             }
         }
 
-        if (viewportId == 0 || input.IsFocused)
-            io.AddFocusEvent(input.IsFocused);
+        return pointerActivity;
     }
 
     private void ReplayModifier(ImGuiIOPtr io, EKey key, bool down)

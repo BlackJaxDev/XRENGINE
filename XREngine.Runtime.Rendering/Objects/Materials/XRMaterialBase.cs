@@ -30,9 +30,55 @@ namespace XREngine.Rendering
             set => SetField(ref _renderPass, value);
         }
 
-        public event Action<XRMaterialBase, XRRenderProgram>? SettingUniforms;
+        private Action<XRMaterialBase, XRRenderProgram>? _settingUniforms;
+
+        public event Action<XRMaterialBase, XRRenderProgram>? SettingUniforms
+        {
+            add
+            {
+                _settingUniforms += value;
+                OnSettingUniformsHandlersChanged();
+            }
+            remove
+            {
+                _settingUniforms -= value;
+                OnSettingUniformsHandlersChanged();
+            }
+        }
+
+        /// <summary>
+        /// Runs after a handler is added to or removed from <see cref="SettingUniforms"/>.
+        /// Derived materials use it to rebuild variants that copied the handler set.
+        /// </summary>
+        protected virtual void OnSettingUniformsHandlersChanged()
+        {
+        }
+
+        /// <summary>
+        /// Runs after a publisher is added to or removed from <see cref="BindingPublishers"/>.
+        /// Derived materials use it to rebuild variants that copied the publisher set.
+        /// </summary>
+        protected virtual void OnBindingPublishersChanged()
+        {
+        }
+
+        /// <summary>
+        /// Names the methods attached to <see cref="SettingUniforms"/>, for diagnostics
+        /// only. It allocates, so call it only when a diagnostic switch is on.
+        /// </summary>
+        internal string DescribeSettingUniformsHandlers()
+        {
+            if (_settingUniforms is null)
+                return "<none>";
+
+            Delegate[] handlers = _settingUniforms.GetInvocationList();
+            string[] names = new string[handlers.Length];
+            for (int i = 0; i < handlers.Length; i++)
+                names[i] = $"{handlers[i].Method.DeclaringType?.FullName}.{handlers[i].Method.Name}";
+            return string.Join(", ", names);
+        }
         public virtual void OnSettingUniforms(XRRenderProgram program)
-            => SettingUniforms?.Invoke(this, program);
+            => _settingUniforms?.Invoke(this, program);
 
         /// <summary>
         /// Uploads material-owned deformation inputs to the active vertex
@@ -44,19 +90,19 @@ namespace XREngine.Rendering
             => SettingVertexUniforms?.Invoke(program);
         public bool HasSettingVertexUniformHandlers => SettingVertexUniforms is not null;
         public bool HasSettingUniformsHandlers
-            => SettingUniforms is not null;
+            => _settingUniforms is not null;
 
         /// <summary>Checks one engine-owned publisher without allocating a delegate invocation list.</summary>
         protected bool HasOnlySettingUniformsHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
-            => SettingUniforms == handler;
+            => _settingUniforms == handler;
 
         /// <summary>Checks a cold cook's explicitly recognized publishers without admitting arbitrary callbacks.</summary>
         protected bool HasOnlySettingUniformsHandlers(IReadOnlySet<Action<XRMaterialBase, XRRenderProgram>> handlers,
             Action<XRMaterialBase, XRRenderProgram>? additionalHandler = null)
         {
-            if (SettingUniforms is null)
+            if (_settingUniforms is null)
                 return true;
-            foreach (Delegate handler in SettingUniforms.GetInvocationList())
+            foreach (Delegate handler in _settingUniforms.GetInvocationList())
                 if (handler is not Action<XRMaterialBase, XRRenderProgram> typed ||
                     typed != additionalHandler && !handlers.Contains(typed))
                     return false;
@@ -107,10 +153,12 @@ namespace XREngine.Rendering
 
         public XRMaterialBase()
         {
+            BindingPublishers.Changed += OnBindingPublishersChanged;
             _ownedRenderOptions = _renderOptions;
             _ownedInitialTextures = _textures;
             AttachTextureListHandlers(_textures);
             _subscribedTextures = _textures;
+            ReconcileLegacyTextureBindings();
         }
         protected XRMaterialBase(ShaderVar[] parameters) : this()
         {
@@ -191,6 +239,21 @@ namespace XREngine.Rendering
         private EventList<XRTexture?>? _ownedConstructorTextures;
         private EventList<XRTexture?>? _subscribedTextures;
         private int _textureSetterDepth;
+        private LegacyTextureBinding[] _legacyTextureBindings = [];
+        private LegacyTextureBinding[] _legacyTextureBindingScratch = [];
+        private string[] _legacyIndexedSamplerNames = [];
+        private int _legacyTextureBindingCount;
+        private bool _reconcilingLegacyTextures;
+        private bool _legacyTextureReconcilePending;
+        private bool _unknownLegacyTextureLayoutDirty;
+        private bool _legacyTextureHandlersAttached;
+
+        private readonly record struct LegacyTextureBinding(
+            XRTexture? Texture,
+            XRTexture? ViewedTexture,
+            string SamplerName,
+            ETextureTarget Target,
+            Type? UnknownTextureType);
         /// <summary>
         /// These are the texture samplers that each shader in the program has requested.
         /// </summary>
@@ -205,7 +268,10 @@ namespace XREngine.Rendering
                 finally
                 {
                     if (--_textureSetterDepth == 0)
+                    {
                         ReconcileTextureListHandlers();
+                        ReconcileLegacyTextureBindings();
+                    }
                 }
             }
         }
@@ -289,10 +355,252 @@ namespace XREngine.Rendering
 
         private void TexturesModified()
         {
-            IncrementBindingLayoutVersion();
-            IncrementBindingValueVersion();
-            IncrementBindingResourceVersion();
+            if (_textureSetterDepth == 0)
+                ReconcileLegacyTextureBindings();
         }
+
+        private void LegacyTexturePropertyChanged(object? sender, IXRPropertyChangedEventArgs args)
+        {
+            if (sender is XRTexture texture && IsUnknownLegacyTexture(texture))
+            {
+                _unknownLegacyTextureLayoutDirty = true;
+                ReconcileLegacyTextureBindings();
+                return;
+            }
+            if (args.PropertyName is nameof(XRTexture.SamplerName) or
+                nameof(XRTexture2D.MultiSampleCount) or nameof(XRTexture2DArray.MultiSample) or
+                nameof(XRTexture2D.Rectangle) or nameof(XRTextureViewBase.TextureTarget) or
+                nameof(XRTextureViewBase.NumLayers) or "Array" or "View2D" or
+                "View1D" or "As2D" or "Multisample")
+                ReconcileLegacyTextureBindings();
+        }
+
+        private void LegacyViewedTextureChanged()
+            => ReconcileLegacyTextureBindings();
+
+        private bool IsUnknownLegacyTexture(XRTexture texture)
+        {
+            for (int index = 0; index < _legacyTextureBindingCount; index++)
+                if (ReferenceEquals(_legacyTextureBindings[index].Texture, texture) &&
+                    _legacyTextureBindings[index].UnknownTextureType is not null)
+                    return true;
+            return false;
+        }
+
+        private void ReconcileLegacyTextureBindings()
+        {
+            if (_materialTeardownRequested)
+                return;
+            if (_textureSetterDepth != 0)
+            {
+                _legacyTextureReconcilePending = true;
+                return;
+            }
+            if (_reconcilingLegacyTextures)
+            {
+                _legacyTextureReconcilePending = true;
+                return;
+            }
+
+            _reconcilingLegacyTextures = true;
+            try
+            {
+                do
+                {
+                    if (_materialTeardownRequested)
+                        break;
+                    _legacyTextureReconcilePending = false;
+                    EventList<XRTexture?> textures = _textures;
+                    int count = textures.Count;
+                    bool layoutChanged = count != _legacyTextureBindingCount ||
+                        _unknownLegacyTextureLayoutDirty;
+                    _unknownLegacyTextureLayoutDirty = false;
+                    bool resourceChanged = layoutChanged;
+                    if (_legacyTextureBindingScratch.Length < count)
+                        Array.Resize(ref _legacyTextureBindingScratch, count);
+                    LegacyTextureBinding[] next = _legacyTextureBindingScratch;
+                    for (int index = 0; index < count; index++)
+                    {
+                        XRTexture? texture = textures[index];
+                        ETextureTarget target = GetLegacyTextureTarget(texture);
+                        LegacyTextureBinding binding = new(
+                            texture,
+                            (texture as XRTextureViewBase)?.GetViewedTexture(),
+                            ResolveLegacySamplerName(texture, index),
+                            target,
+                            target == 0 ? texture?.GetType() : null);
+                        next[index] = binding;
+                        if (index >= _legacyTextureBindingCount)
+                            continue;
+
+                        LegacyTextureBinding previous = _legacyTextureBindings[index];
+                        if (previous.SamplerName != binding.SamplerName ||
+                            previous.Target != binding.Target ||
+                            previous.UnknownTextureType != binding.UnknownTextureType ||
+                            (previous.Texture is null) != (texture is null))
+                            layoutChanged = true;
+                        if (!ReferenceEquals(previous.Texture, texture) ||
+                            !ReferenceEquals(previous.ViewedTexture, binding.ViewedTexture))
+                        {
+                            resourceChanged = true;
+                            // An unknown subtype can change its target without a known target property.
+                            if (previous.UnknownTextureType is not null || binding.UnknownTextureType is not null)
+                                layoutChanged = true;
+                        }
+                    }
+
+                    bool bindingsChanged = layoutChanged || resourceChanged;
+                    if (bindingsChanged && _legacyTextureHandlersAttached)
+                    {
+                        // Keep existing subscriptions when a slot changes only its metadata.
+                        for (int index = 0; index < _legacyTextureBindingCount; index++)
+                        {
+                            XRTexture? texture = _legacyTextureBindings[index].Texture;
+                            if (texture is null || WasTextureSeenEarlier(_legacyTextureBindings, index, texture) ||
+                                ContainsTexture(next, count, texture))
+                                continue;
+                            DetachLegacyTextureHandlers(texture);
+                        }
+                    }
+                    if (bindingsChanged)
+                    {
+                        // A shorter list must not keep removed textures in spare slots.
+                        Array.Clear(next, count, next.Length - count);
+                        LegacyTextureBinding[] previousBindings = _legacyTextureBindings;
+                        int previousCount = _legacyTextureBindingCount;
+                        _legacyTextureBindings = next;
+                        _legacyTextureBindingScratch = previousBindings;
+                        _legacyTextureBindingCount = count;
+                        for (int index = 0; index < count; index++)
+                        {
+                            XRTexture? texture = next[index].Texture;
+                            if (texture is null || WasTextureSeenEarlier(next, index, texture) ||
+                                _legacyTextureHandlersAttached && ContainsTexture(previousBindings, previousCount, texture))
+                                continue;
+                            AttachLegacyTextureHandlers(texture);
+                        }
+                        Array.Clear(previousBindings, 0, previousBindings.Length);
+                    }
+                    else
+                    {
+                        if (!_legacyTextureHandlersAttached)
+                            for (int index = 0; index < count; index++)
+                            {
+                                XRTexture? texture = _legacyTextureBindings[index].Texture;
+                                if (texture is not null && !WasTextureSeenEarlier(_legacyTextureBindings, index, texture))
+                                    AttachLegacyTextureHandlers(texture);
+                            }
+                        Array.Clear(next, 0, count);
+                    }
+                    _legacyTextureHandlersAttached = true;
+
+                    if (layoutChanged)
+                        IncrementBindingLayoutVersion();
+                    if (_materialTeardownRequested)
+                        break;
+                    if (layoutChanged || resourceChanged)
+                    {
+                        IncrementBindingValueVersion();
+                        if (_materialTeardownRequested)
+                            break;
+                        IncrementBindingResourceVersion();
+                    }
+                    if (_materialTeardownRequested)
+                        break;
+                    if (_textureSetterDepth == 0 && !ReferenceEquals(_subscribedTextures, _textures))
+                        ReconcileTextureListHandlers();
+                }
+                while (_legacyTextureReconcilePending && _textureSetterDepth == 0);
+            }
+            finally
+            {
+                _reconcilingLegacyTextures = false;
+            }
+        }
+
+        private static bool WasTextureSeenEarlier(LegacyTextureBinding[] bindings, int index, XRTexture texture)
+        {
+            for (int earlier = 0; earlier < index; earlier++)
+                if (ReferenceEquals(bindings[earlier].Texture, texture))
+                    return true;
+            return false;
+        }
+
+        private static bool ContainsTexture(LegacyTextureBinding[] bindings, int count, XRTexture texture)
+        {
+            for (int index = 0; index < count; index++)
+                if (ReferenceEquals(bindings[index].Texture, texture))
+                    return true;
+            return false;
+        }
+
+        private string ResolveLegacySamplerName(XRTexture? texture, int index)
+        {
+            if (texture?.SamplerName is { } name)
+                return name;
+            if (index < 32)
+                return XRTexture.GetIndexedSamplerName(index);
+            if (_legacyIndexedSamplerNames.Length <= index)
+                Array.Resize(ref _legacyIndexedSamplerNames, index + 1);
+            return _legacyIndexedSamplerNames[index] ??= XRTexture.GetIndexedSamplerName(index);
+        }
+
+        private long _textureSourceVersion = 1L;
+
+        /// <summary>
+        /// Gets a version that advances when a bound texture reports an advanced
+        /// GPU source change (<see cref="XRTexture.AdvancedSourceVersion"/>). Texture
+        /// list changes advance <see cref="BindingResourceVersion"/> instead. The
+        /// advanced scene publisher compares both before it trusts a committed row.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        internal ulong TextureSourceVersion
+            => unchecked((ulong)Volatile.Read(ref _textureSourceVersion));
+
+        private void BoundTextureAdvancedSourceChanged(XRTexture texture)
+        {
+            if (Interlocked.Increment(ref _textureSourceVersion) == 0L)
+                Interlocked.Increment(ref _textureSourceVersion);
+        }
+
+        private void AttachLegacyTextureHandlers(XRTexture texture)
+        {
+            texture.AdvancedSourceChanged += BoundTextureAdvancedSourceChanged;
+            texture.PropertyChanged += LegacyTexturePropertyChanged;
+            if (texture is XRTextureViewBase view)
+                view.ViewedTextureChanged += LegacyViewedTextureChanged;
+        }
+
+        private void DetachLegacyTextureHandlers(XRTexture texture)
+        {
+            texture.AdvancedSourceChanged -= BoundTextureAdvancedSourceChanged;
+            texture.PropertyChanged -= LegacyTexturePropertyChanged;
+            if (texture is XRTextureViewBase view)
+                view.ViewedTextureChanged -= LegacyViewedTextureChanged;
+        }
+
+        private static ETextureTarget GetLegacyTextureTarget(XRTexture? texture)
+            => texture switch
+            {
+                XRTexture1DView or XRTexture1DArrayView or XRTexture2DView or
+                    XRTexture2DArrayView or XRTexture3DView or XRTextureCubeView or
+                    XRTextureCubeArrayView or XRTextureViewCubeArray or
+                    XRTextureViewRectangle or XRTextureBufferView
+                    => ((XRTextureViewBase)texture).TextureTarget,
+                XRTexture2D image when image.Rectangle => ETextureTarget.TextureRectangle,
+                XRTexture2D image when image.MultiSample => ETextureTarget.Texture2DMultisample,
+                XRTexture2D => ETextureTarget.Texture2D,
+                XRTexture2DArray array when array.MultiSample => ETextureTarget.Texture2DMultisampleArray,
+                XRTexture2DArray => ETextureTarget.Texture2DArray,
+                XRTexture1DArray => ETextureTarget.Texture1DArray,
+                XRTexture1D => ETextureTarget.Texture1D,
+                XRTexture3D => ETextureTarget.Texture3D,
+                XRTextureCubeArray => ETextureTarget.TextureCubeMapArray,
+                XRTextureCube => ETextureTarget.TextureCubeMap,
+                XRTextureBuffer => ETextureTarget.TextureBuffer,
+                _ => 0,
+            };
 
         protected void IncrementBindingLayoutVersion()
         {
@@ -370,9 +678,8 @@ namespace XREngine.Rendering
                     IncrementBindingValueVersion();
                     break;
                 case nameof(Textures):
-                    IncrementBindingLayoutVersion();
-                    IncrementBindingValueVersion();
-                    IncrementBindingResourceVersion();
+                    if (_textureSetterDepth == 0)
+                        ReconcileLegacyTextureBindings();
                     break;
             }
         }
@@ -393,6 +700,7 @@ namespace XREngine.Rendering
                 _ownedRenderOptions.Generate();
             _materialTeardownRequested = false;
             ReconcileTextureListHandlers();
+            ReconcileLegacyTextureBindings();
             DetachParameterHandlers(_parameters);
             AttachParameterHandlers(_parameters);
         }
@@ -405,6 +713,15 @@ namespace XREngine.Rendering
             catch (Exception ex) { (failures ??= []).Add(ex); }
             try { ReconcileTextureListHandlers(); }
             catch (Exception ex) { (failures ??= []).Add(ex); }
+            for (int index = 0; index < _legacyTextureBindingCount; index++)
+            {
+                XRTexture? texture = _legacyTextureBindings[index].Texture;
+                if (texture is null || WasTextureSeenEarlier(_legacyTextureBindings, index, texture))
+                    continue;
+                try { DetachLegacyTextureHandlers(texture); }
+                catch (Exception ex) { (failures ??= []).Add(ex); }
+            }
+            _legacyTextureHandlersAttached = false;
             try { DestroyOwnedContainer(_ownedConstructorTextures); }
             catch (Exception ex) { (failures ??= []).Add(ex); }
             try { DestroyOwnedContainer(_ownedInitialTextures); }

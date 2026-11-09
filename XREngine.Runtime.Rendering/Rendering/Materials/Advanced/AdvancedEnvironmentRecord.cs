@@ -27,4 +27,12 @@ public struct AdvancedEnvironmentRecord
     public uint ViewMaskHi;
     public uint Reserved0;
     public uint Reserved1;
+
+    public Vector4 SourceSHAr;
+    public Vector4 SourceSHAg;
+    public Vector4 SourceSHAb;
+    public Vector4 SourceSHBr;
+    public Vector4 SourceSHBg;
+    public Vector4 SourceSHBb;
+    public Vector4 SourceSHC;
 }

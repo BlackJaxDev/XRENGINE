@@ -105,12 +105,14 @@ The render thread never mutates planner-owned collections.
 - A completion carries the rendered sample. `DirectionalLightComponent` stores the latest rendered sample per cascade slot.
 - A sampleable stale atlas slot uses its rendered sample, not the current cascade slice. A slot's texture content and its uniform payload always come from the same generation.
 - If a resident stale tile has no rendered sample, the slot is not sampleable and the receiver uses a visible fallback.
+- The collect thread fits the cascade slices and records each request's matrix before the swap. While the render thread draws, the collect thread can already refit the slices for the next frame. So at the swap boundary, `PublishCascadeRenderCameras` copies the slice matrices into `RenderSliceMatrices` and the cascade cameras into `RenderCameras`. All tile draws (per tile, grouped, legacy layered, and the Advanced shadow lane) use these copies. Then a tile's content always matches the matrix that its atlas slot records for reprojection. `XRE_DIRECTIONAL_SHADOW_AUDIT=1` in a Debug build logs `[CascadeDrawMatrix]` with `liveRefitted=True` when a draw would otherwise have used the next frame's fit.
 - The receiver selects the cascade from the current view. For a rendered slot, it uses the rendered split and matrix from `DirectionalShadowRecords`. `XRENGINE_CanSampleRenderedCascade` rejects an invalid page or a `StaleTile` slot older than `DirectionalShadowAtlasMaxStaleFrames`. Sampling fades near the tile border.
 
 ### Cadence, stale age, and forced refresh
 
 - `MaxDirectionalCascadeAtlasStaleFrames` (default 4) limits stale reuse. A dirty cascade at this age gets `ShadowDirtyReason.StaleContentAgeLimitReached` and renders fresh. Local spot and point tiles use a fixed cap of 4 frames.
-- While the source camera moves, a content-changed cascade with a rendered sample keeps its coherent stale group (`SkipReason.StaleTileReused`). It refreshes after the source camera is stable for `Math.Clamp(cascadeCount, 2, 8)` frames.
+- By default a content-changed cascade refreshes in the same frame, so it keeps full resolution and coverage while the camera moves.
+- With `HoldDirectionalCascadesWhileCameraMoves` on, a content-changed cascade with a rendered sample keeps its coherent stale group while the source camera moves (`SkipReason.StaleTileReused`), and shading reprojects the held tile with the matrix it was rendered with. It refreshes after the source camera is stable for `Math.Clamp(cascadeCount, 2, 8)` frames, or at the stale limit. The hold avoids republishing shadow records, which today invalidates the persistent mesh binding artifacts, but a held tile fitted for an older camera has lower resolution or less coverage, so shadows can look scaled while the camera moves.
 - A cascade without a rendered sample, or at the stale-age limit, renders fresh and increments `DirectionalCascadeForcedFreshRender`.
 - A cascade jump larger than the linear or translation threshold (`ResolveDirectionalCascadeLinearJumpThreshold`, `ResolveDirectionalCascadeTranslationJumpThreshold`) cannot use stale reprojection.
 - Cadence-skipped and hash-stable cascades skip caster collection.
@@ -139,7 +141,8 @@ The render thread never mutates planner-owned collections.
 - `ShadowMomentEncoding.glsl` holds the VSM and EVSM encode and sample helpers, point radial moments, Chebyshev visibility, and the 2D, array, and cube moment receivers.
 - Point atlas receivers are cube-seam aware. A filter tap perturbs the direction, selects the owning face again, and samples that face's tile metadata.
 - Contact shadows (`XRENGINE_SampleContactShadowScreenSpace`) multiply on top of depth or moment visibility.
-- On Vulkan, `UsesDirectionalShadowAtlasForCurrentEncoding` accepts `Depth` only. Other backends accept `Depth`, `Variance2`, `ExponentialVariance2`, and `ExponentialVariance4` for directional atlases.
+- `UsesDirectionalShadowAtlasForCurrentEncoding` accepts `Depth`, `Variance2`, `ExponentialVariance2`, and `ExponentialVariance4` for directional atlases on every backend. Advanced native shading reads directional shadows only from atlas records, so a Vulkan moment encoding that fell back to the legacy cascade arrays rendered with no shadow.
+- Advanced native shading applies the light's soft-shadow mode, filter samples, filter radius (in tile-local UV, widened by 35% per cascade), PCSS blocker search and penumbra limits, and the short-range contact-shadow march from `AdvancedShadowRecord`, the same way as the forward receivers.
 
 ## Upscaler And Frame Generation Boundary
 
@@ -151,4 +154,3 @@ Shadow maps and atlas pages are engine-owned intermediate resources. DLSS Super 
 - No automatic fragmentation compaction exists.
 - No physical stale-tile reuse (scroll or reprojection) exists. Stale cascades use shader-side reprojection only.
 - Point-face groups form only when independently allocated faces land on the same page.
-- Vulkan directional moment-encoded atlases are not supported.

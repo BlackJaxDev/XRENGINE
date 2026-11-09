@@ -534,13 +534,22 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                EndActiveRenderPass(ref recordingState);
+                try
+                {
+                    EndActiveRenderPass(ref recordingState);
+                }
+                finally
+                {
+                    for (int i = 0; i < runCount; i++)
+                        if (recordingStatePrepared[i])
+                            recordingStates[i].ReleaseAuthoring();
 
-                Array.Clear(secondaryBuffers, 0, runCount);
-                Array.Clear(secondaryChains, 0, runCount);
-                Array.Clear(uniformSlots, 0, runCount);
-                Array.Clear(recordingStates, 0, runCount);
-                Array.Clear(recordingStatePrepared, 0, runCount);
+                    Array.Clear(secondaryBuffers, 0, runCount);
+                    Array.Clear(secondaryChains, 0, runCount);
+                    Array.Clear(uniformSlots, 0, runCount);
+                    Array.Clear(recordingStates, 0, runCount);
+                    Array.Clear(recordingStatePrepared, 0, runCount);
+                }
                 if (indirectLabelActive)
                     _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             }
@@ -963,6 +972,9 @@ namespace XREngine.Rendering.Vulkan
             int recordOperationCount = 0;
             int deferredRecordJobCount = 0;
             bool meshLabelActive = false;
+            // Lane-plan claim for worker recording. It holds from the first lane-arena
+            // allocation through dispatch.
+            XREngine.Execution.RenderWorkBatchLease commandChainLaneClaim = default;
 
             if (_deviceContext.CanRecordCommandBufferDebugLabels)
                 meshLabelActive = _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "ScheduledMeshCommandChainSecondary");
@@ -1418,6 +1430,11 @@ namespace XREngine.Rendering.Vulkan
                 bool useWorkers =
                     workerDomainEligibility ==
                     EVulkanCommandChainWorkerEligibility.Eligible;
+                int eligibleLaneCount = useWorkers
+                    ? CaptureEligibleCommandChainLanes(workerCount)
+                    : 0;
+                if (eligibleLaneCount > 0)
+                    commandChainLaneClaim = ClaimCommandChainLanes(eligibleLaneCount);
                 int schedulingConflictCount = 0;
                 for (int entryIndex = 0; entryIndex < secondaryCount; entryIndex++)
                 {
@@ -1432,7 +1449,10 @@ namespace XREngine.Rendering.Vulkan
                         chain,
                         EVulkanRecordedCommandArtifactInvalidationReason.InheritanceMismatch);
                     VulkanCommandChainWorkerEligibilityResult assignment = useWorkers
-                        ? AssignCommandChainRecordingWorker(batch, chain, workerCount)
+                        ? AssignCommandChainRecordingWorker(
+                            batch,
+                            chain,
+                            _commandChainEligibleLanes.AsSpan(0, eligibleLaneCount))
                         : new VulkanCommandChainWorkerEligibilityResult(
                             workerDomainEligibility);
                     chain.WorkerEligibility = assignment.Reason;
@@ -1450,7 +1470,7 @@ namespace XREngine.Rendering.Vulkan
                     entry.WorkerIndex = recordingWorkerIndex;
                     entry.DispatchToRenderDomain = useWorkers && assignment.IsEligible;
                     if (entry.DispatchToRenderDomain)
-                        batch.ActiveWorkerMask |= 1u << recordingWorkerIndex;
+                        batch.ActiveWorkerMask |= 1UL << recordingWorkerIndex;
 
                     VulkanLaneCommandFamilyArena laneArena =
                         GetRenderLaneAttachment(
@@ -1533,6 +1553,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     CommandChainWorkerTiming timing = DispatchCommandChainRecordingWorkers(
                         batch,
+                        ref commandChainLaneClaim,
                         workerCount,
                         workerFrameSlot);
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(
@@ -1687,6 +1708,9 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
+                if (commandChainLaneClaim.IsValid)
+                    commandChainLaneClaim.Dispose();
+
                 EndActiveRenderPass(ref recordingState);
 
                 if (!batch.Abandoned)

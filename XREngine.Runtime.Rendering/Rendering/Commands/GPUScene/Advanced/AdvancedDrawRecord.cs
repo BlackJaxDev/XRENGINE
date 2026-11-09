@@ -20,6 +20,6 @@ public struct AdvancedDrawRecord
     public AdvancedGpuHandle PreviousTransform;
     public uint PrimitiveSection;
     public uint Flags;
-    public uint Reserved0;
-    public uint Reserved1;
+    public uint SourceFlatDirectionOct;
+    public uint SourceFlatDirectionValid;
 }

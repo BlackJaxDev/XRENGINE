@@ -9,11 +9,18 @@ namespace XREngine.Scene.Importers;
 /// </summary>
 public sealed class SourceProjectImportContext
 {
+    private int? _minimumTextureAnisotropy;
+
     private readonly Dictionary<string, XRMaterial> _materialCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, XRTexture2D> _textureCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (long Length, long LastWriteTicks)> _validatedTextures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _modelTexturePathLock = new();
+    private Dictionary<string, string?>? _modelTexturePathsByName;
+    private readonly HashSet<string> _reportedModelTextureNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<SerializedAnimatorRecord, SceneNode> _animatorOwners = [];
     private readonly Dictionary<SerializedAvatarAnimationGraphRecord, SceneNode> _avatarAnimationGraphOwners = [];
     private readonly HashSet<string> _reportedIndexDiagnostics = new(StringComparer.Ordinal);
+    private bool _recoveredPartialContent;
 
     public SourceProjectImportContext(
         string entrySourcePath,
@@ -21,7 +28,8 @@ public sealed class SourceProjectImportContext
         string? explicitProjectOrAssetsRoot = null,
         CancellationToken cancellationToken = default,
         Action<float, string>? progress = null,
-        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp,
+        bool allowPartialImport = false)
     {
         EntrySourcePath = Path.GetFullPath(entrySourcePath);
         OutputDestination = string.IsNullOrWhiteSpace(outputDestination)
@@ -30,6 +38,7 @@ public sealed class SourceProjectImportContext
         ProjectLocation = SourceProjectLocator.Locate(EntrySourcePath, explicitProjectOrAssetsRoot);
         GuidIndex = SourceGuidIndex.GetOrCreate(ProjectLocation.ProjectRoot);
         FbxBackend = fbxBackend;
+        AllowPartialImport = allowPartialImport;
         Resolver = new SourceAssetResolver(ProjectLocation.ProjectRoot, this);
         CancellationToken = cancellationToken;
         Progress = progress;
@@ -39,6 +48,8 @@ public sealed class SourceProjectImportContext
 
     public string EntrySourcePath { get; }
     public string ProjectRoot => ProjectLocation.ProjectRoot;
+    /// <summary>The lowest texture anisotropy level that the source project quality settings allow.</summary>
+    public int MinimumTextureAnisotropy => _minimumTextureAnisotropy ??= SourceProjectQualitySettings.ReadMinimumAnisotropy(ProjectRoot);
     public string? OutputDestination { get; }
     public SourceProjectLocation ProjectLocation { get; }
     public SourceGuidIndex GuidIndex { get; }
@@ -50,11 +61,105 @@ public sealed class SourceProjectImportContext
     public List<UnsupportedSourceBehaviourMetadata> UnsupportedBehaviours { get; } = [];
     public HashSet<string> ActiveImports { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<SourceAssetIdentity, object> ImportCache { get; } = [];
+    /// <summary>Parsed source data for the active root import. Returned documents are read-only.</summary>
+    internal XREngine.Fbx.FbxSourceDocumentCache FbxSourceDocuments { get; } = new();
     public CancellationToken CancellationToken { get; }
     public Action<float, string>? Progress { get; }
     /// <summary>Selects the backend for FBX model bases resolved during Unity prefab composition.</summary>
     public FbxImportBackend FbxBackend { get; }
+    /// <summary>Allows available content to import when visual dependencies are missing.</summary>
+    public bool AllowPartialImport { get; }
+    /// <summary>Indicates that source content was omitted or replaced during conversion.</summary>
+    public bool HasPartialContent => _recoveredPartialContent ||
+        DependencyGraph?.UnresolvedEdges.Any(static edge => edge.Kind == SourceImportDependencyKind.RequiredVisual) == true;
     public DateTime ImportStartedAtUtc { get; }
+
+    /// <summary>Checks a missing texture proof made from this import's source material and shader.</summary>
+    internal bool IsInactiveMaterialTexture(string? materialPath, string slot, SourceAssetReference reference)
+        => materialPath is not null && DependencyGraph?.UnresolvedEdges.Any(edge =>
+            edge.InactiveTextureReason is not null &&
+            string.Equals(edge.SourcePath, materialPath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(edge.ReferringMaterialTextureSlot, slot, StringComparison.Ordinal) &&
+            edge.TargetFileId == reference.FileId &&
+            string.Equals(edge.TargetGuid, reference.Guid, StringComparison.OrdinalIgnoreCase) &&
+            SourceMaterialDependencyClassifier.IsProofCurrent(edge)) == true;
+
+    /// <summary>Checks whether this import already decoded the same texture revision.</summary>
+    internal bool IsTextureValidated(string sourcePath, long length, long lastWriteTicks)
+        => _validatedTextures.TryGetValue(sourcePath, out var revision) &&
+           revision == (length, lastWriteTicks);
+
+    /// <summary>Records successful decoding without retaining image pixels.</summary>
+    internal void RecordValidatedTexture(string sourcePath, long length, long lastWriteTicks)
+        => _validatedTextures[sourcePath] = (length, lastWriteTicks);
+
+    /// <summary>Finds one exact texture filename in the composed Unity source.</summary>
+    internal string? ResolveExactModelTexture(string modelPath, string rawPath)
+    {
+        string fileName = Path.GetFileName(rawPath.Trim().Trim('"').Replace('\\', '/'));
+        if (string.IsNullOrWhiteSpace(fileName))
+            return null;
+
+        lock (_modelTexturePathLock)
+        {
+            _modelTexturePathsByName ??= BuildModelTexturePathIndex();
+            if (!_modelTexturePathsByName.TryGetValue(fileName, out string? resolved))
+                return null;
+
+            if (_reportedModelTextureNames.Add(fileName))
+            {
+                AddDiagnostic(
+                    resolved is null ? "UNITYMODEL0012" : "UNITYMODEL0011",
+                    resolved is null ? SourceImportDiagnosticSeverity.Warning : SourceImportDiagnosticSeverity.Info,
+                    SourceImportDiagnosticCategory.TextureImport,
+                    resolved is null
+                        ? $"FBX texture '{fileName}' has more than one exact filename in the composed Unity source. The binding stays unresolved."
+                        : $"FBX texture '{fileName}' resolved to the exact composed Unity asset '{Path.GetRelativePath(ProjectRoot, resolved)}'.",
+                    modelPath,
+                    rawPath);
+            }
+
+            return resolved;
+        }
+    }
+
+    private Dictionary<string, string?> BuildModelTexturePathIndex()
+    {
+        Dictionary<string, string?> paths = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string sourceRootName in new[] { "Assets", "Packages" })
+        {
+            string sourceRoot = Path.Combine(ProjectRoot, sourceRootName);
+            if (!Directory.Exists(sourceRoot))
+                continue;
+
+            try
+            {
+                foreach (string candidate in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
+                {
+                    if (candidate.EndsWith(".meta", StringComparison.OrdinalIgnoreCase) ||
+                        !File.Exists(candidate + ".meta"))
+                        continue;
+
+                    string fileName = Path.GetFileName(candidate);
+                    if (!paths.TryAdd(fileName, candidate) &&
+                        paths[fileName] is { } existing &&
+                        !string.Equals(existing, candidate, StringComparison.OrdinalIgnoreCase))
+                        paths[fileName] = null;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AddDiagnostic(
+                    "UNITYMODEL0013",
+                    SourceImportDiagnosticSeverity.Warning,
+                    SourceImportDiagnosticCategory.TextureImport,
+                    $"Could not inspect composed Unity texture assets under '{sourceRootName}': {ex.Message}",
+                    sourceRoot);
+            }
+        }
+
+        return paths;
+    }
 
     public SourceDependencyGraph DiscoverDependencies()
     {
@@ -66,16 +171,27 @@ public sealed class SourceProjectImportContext
         [
             .. graph.UnresolvedEdges.Where(static edge => edge.Kind == SourceImportDependencyKind.RequiredVisual),
         ];
-        if (requiredMissing.Length > 0)
+        if (requiredMissing.Length > 0 && !AllowPartialImport)
         {
             string summary = string.Join(
                 "; ",
-                requiredMissing.Select(static edge => $"{edge.TargetGuid} ({edge.ReferringProperty})"));
+                requiredMissing.Select(static edge =>
+                    $"{Path.GetFileName(edge.SourcePath)}:{edge.ReferringPropertyPath} -> {edge.TargetGuid}/{edge.TargetFileId}"));
             throw new SourceVisualImportException(
                 $"Unity prefab import cannot continue because required visual dependencies are missing: {summary}");
         }
 
         return graph;
+    }
+
+    /// <summary>Records omitted or replaced source content without claiming complete conversion.</summary>
+    public void ReportPartialImport(string code, string message, string? sourcePath = null,
+        string? propertyPath = null, SourceAssetIdentity? identity = null)
+    {
+        _recoveredPartialContent = true;
+        AddDiagnostic(code, SourceImportDiagnosticSeverity.Warning,
+            SourceImportDiagnosticCategory.MaterialDowngrade, message, sourcePath, propertyPath, identity);
+        Debug.MeshesWarning(message);
     }
 
     public T GetOrAddCached<T>(string sourcePath, Func<T> factory) where T : class
@@ -204,7 +320,7 @@ public sealed class SourceProjectImportContext
                 LocalFileId = inboundEdge?.TargetFileId,
                 NormalizedPath = node.PortablePath,
                 Kind = node.Kind,
-                ReferringProperty = inboundEdge?.ReferringProperty,
+                ReferringProperty = inboundEdge?.ReferringPropertyPath,
                 LastWriteTimeUtcTicks = fileInfo.Exists ? fileInfo.LastWriteTimeUtc.Ticks : 0,
                 Length = fileInfo.Exists ? fileInfo.Length : 0,
                 Sha256 = fileInfo.Exists ? SourceDependencyGraphBuilder.ComputeSha256(node.SourcePath) : string.Empty,
@@ -225,8 +341,10 @@ public sealed class SourceProjectImportContext
                 LocalFileId = missing.TargetFileId,
                 NormalizedPath = $"missing://{missing.TargetGuid}/{missing.TargetFileId}",
                 Kind = missing.Kind,
-                ReferringProperty = missing.ReferringProperty,
-                Outcome = SourceImportConversionOutcome.Missing,
+                ReferringProperty = missing.ReferringPropertyPath,
+                Outcome = missing.InactiveTextureReason is null
+                    ? SourceImportConversionOutcome.Missing
+                    : SourceImportConversionOutcome.IgnoredOptional,
             });
         }
 

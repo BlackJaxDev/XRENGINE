@@ -1,0 +1,175 @@
+// Expands instanced debug primitives in the vertex stage. Each instance draws a small
+// scaffold mesh: a quad (corners -1/+1 in Position.xy) for points and lines, or a
+// three-vertex strip (Position.x = 0, 1, 2) for triangles. No geometry stage is used, so
+// the multiview stereo variants render both eyes with OVR_multiview2 alone.
+//
+// Before including, define exactly one of XR_DEBUG_POINT, XR_DEBUG_LINE or XR_DEBUG_TRIANGLE,
+// and optionally XR_DEBUG_COMPRESSED for the packed instance layout.
+
+layout(location = 0) in vec3 Position;
+
+const float kDebugEpsilon = 1e-6;
+
+#if defined(XR_DEBUG_POINT)
+layout(location = 0) flat out vec4 MatColor;
+layout(location = 1) out vec2 FragUV;
+uniform float PointSize = 0.01f;
+#if defined(XR_DEBUG_COMPRESSED)
+// 4 floats per point: position.xyz and packed RGBA8 color.
+layout(std430, binding = 0) buffer PointsBuffer { float PointData[]; };
+void LoadDebugPoint(int index, out vec3 center, out vec4 color)
+{
+    int i = index * 4;
+    center = vec3(PointData[i], PointData[i + 1], PointData[i + 2]);
+    color = unpackUnorm4x8(floatBitsToUint(PointData[i + 3]));
+}
+#else
+struct DebugPoint { vec4 position; vec4 color; };
+layout(std430, binding = 0) buffer PointsBuffer { DebugPoint Points[]; };
+void LoadDebugPoint(int index, out vec3 center, out vec4 color)
+{
+    center = Points[index].position.xyz;
+    color = Points[index].color;
+}
+#endif
+
+// Camera-facing quad scaled with the distance to the camera, as the former geometry stage did.
+vec4 ExpandDebugPoint(mat4 viewProjection, mat4 inverseView)
+{
+    vec3 center;
+    vec4 color;
+    LoadDebugPoint(gl_InstanceID, center, color);
+    float distanceToCamera = length(center - inverseView[3].xyz);
+    vec3 right = inverseView[0].xyz * distanceToCamera;
+    vec3 up = inverseView[1].xyz * distanceToCamera;
+    MatColor = color;
+    FragUV = Position.xy;
+    return viewProjection * vec4(center + (right * Position.x + up * Position.y) * PointSize, 1.0);
+}
+#endif
+
+#if defined(XR_DEBUG_LINE)
+layout(location = 0) flat out vec4 LineMatColor;
+layout(location = 1) noperspective out float LineEdgeCoord;
+layout(location = 2) flat out float LineHalfWidthPixels;
+uniform float LineWidth;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+#if defined(XR_DEBUG_COMPRESSED)
+// 7 floats per line: start.xyz, end.xyz and packed RGBA8 color.
+layout(std430, binding = 0) buffer LinesBuffer { float LineData[]; };
+void LoadDebugLine(int index, out vec3 start, out vec3 end, out vec4 color)
+{
+    int i = index * 7;
+    start = vec3(LineData[i], LineData[i + 1], LineData[i + 2]);
+    end = vec3(LineData[i + 3], LineData[i + 4], LineData[i + 5]);
+    color = unpackUnorm4x8(floatBitsToUint(LineData[i + 6]));
+}
+#else
+// 3 vec4 per line: start, end and color.
+layout(std430, binding = 0) buffer LinesBuffer { vec4 Lines[]; };
+void LoadDebugLine(int index, out vec3 start, out vec3 end, out vec4 color)
+{
+    int i = index * 3;
+    start = Lines[i].xyz;
+    end = Lines[i + 1].xyz;
+    color = Lines[i + 2];
+}
+#endif
+
+bool ClipDebugLineToNearPlane(inout vec4 a, inout vec4 b)
+{
+#ifdef XRENGINE_VULKAN
+    // Vulkan/D3D clip-space near plane: z >= 0.
+    float da = a.z;
+    float db = b.z;
+#else
+    // OpenGL clip-space near plane: z >= -w.
+    float da = a.z + a.w;
+    float db = b.z + b.w;
+#endif
+    if (da < 0.0 && db < 0.0)
+        return false;
+    if (da < 0.0 || db < 0.0)
+    {
+        float denominator = da - db;
+        float t = abs(denominator) < kDebugEpsilon ? 0.0 : da / denominator;
+        vec4 p = mix(a, b, clamp(t, 0.0, 1.0));
+        if (da < 0.0)
+            a = p;
+        else
+            b = p;
+    }
+    return a.w > kDebugEpsilon && b.w > kDebugEpsilon;
+}
+
+// Screen-space line quad with constant pixel width. Corner y selects the end point and
+// corner x the side, which matches the former strip order (start+, start-, end+, end-).
+vec4 ExpandDebugLine(mat4 viewProjection)
+{
+    vec3 startWorld;
+    vec3 endWorld;
+    vec4 color;
+    LoadDebugLine(gl_InstanceID, startWorld, endWorld, color);
+    vec4 start = viewProjection * vec4(startWorld, 1.0);
+    vec4 end = viewProjection * vec4(endWorld, 1.0);
+
+    float w = max(1.0, ScreenWidth);
+    float h = max(1.0, ScreenHeight);
+    vec2 viewport = vec2(w, h);
+    float halfWidthPixels = max(0.5, LineWidth * (min(w, h) * 0.5));
+    float rasterHalfWidthPixels = halfWidthPixels + 2.0;
+    float side = Position.x > 0.0 ? -1.0 : 1.0;
+
+    LineMatColor = color;
+    LineHalfWidthPixels = halfWidthPixels;
+    LineEdgeCoord = rasterHalfWidthPixels * side;
+
+    // A segment fully behind the near plane collapses outside the clip volume.
+    if (!ClipDebugLineToNearPlane(start, end))
+        return vec4(0.0, 0.0, 2.0, 1.0);
+
+    vec2 halfViewport = viewport * 0.5;
+    vec2 delta = end.xy / end.w * halfViewport - start.xy / start.w * halfViewport;
+    float len2 = dot(delta, delta);
+    vec2 direction = len2 < kDebugEpsilon ? vec2(1.0, 0.0) : delta * inversesqrt(len2);
+    vec2 perpendicular = vec2(-direction.y, direction.x);
+    vec2 offsetNdc = perpendicular * rasterHalfWidthPixels * (2.0 / viewport);
+
+    vec4 position = Position.y > 0.0 ? end : start;
+    position.xy += offsetNdc * position.w * side;
+    return position;
+}
+#endif
+
+#if defined(XR_DEBUG_TRIANGLE)
+layout(location = 0) flat out vec4 MatColor;
+#if defined(XR_DEBUG_COMPRESSED)
+// 10 floats per triangle: p0.xyz, p1.xyz, p2.xyz and packed RGBA8 color.
+layout(std430, binding = 0) buffer TrianglesBuffer { float TriangleData[]; };
+void LoadDebugTriangleVertex(int index, int corner, out vec3 position, out vec4 color)
+{
+    int i = index * 10;
+    position = vec3(TriangleData[i + corner * 3], TriangleData[i + corner * 3 + 1], TriangleData[i + corner * 3 + 2]);
+    color = unpackUnorm4x8(floatBitsToUint(TriangleData[i + 9]));
+}
+#else
+struct DebugTriangle { vec4 p0; vec4 p1; vec4 p2; vec4 color; };
+layout(std430, binding = 0) buffer TrianglesBuffer { DebugTriangle Triangles[]; };
+void LoadDebugTriangleVertex(int index, int corner, out vec3 position, out vec4 color)
+{
+    DebugTriangle triangle = Triangles[index];
+    position = corner == 0 ? triangle.p0.xyz : (corner == 1 ? triangle.p1.xyz : triangle.p2.xyz);
+    color = triangle.color;
+}
+#endif
+
+vec4 ExpandDebugTriangle(mat4 viewProjection)
+{
+    vec3 position;
+    vec4 color;
+    LoadDebugTriangleVertex(gl_InstanceID, clamp(int(Position.x + 0.5), 0, 2), position, color);
+    MatColor = color;
+    return viewProjection * vec4(position, 1.0);
+}
+#endif

@@ -302,12 +302,10 @@ namespace XREngine.Rendering.Vulkan
                     continue;
                 }
 
-                PendingMeshDraw draw = header.OpCode switch
-                {
-                    EVulkanPrimaryPlanNodeKind.MeshDraw => ops.Stream.GetMeshDraw(i).Draw,
-                    EVulkanPrimaryPlanNodeKind.IndirectDraw => ops.Stream.GetIndirectDraw(i).Draw,
-                    _ => default,
-                };
+                ref readonly PendingMeshDraw draw = ref header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                    ? ref ops.Stream.GetMeshDraw(i).Draw
+                    : ref header.OpCode == EVulkanPrimaryPlanNodeKind.IndirectDraw
+                        ? ref ops.Stream.GetIndirectDraw(i).Draw : ref PendingMeshDraw.Empty;
                 if (draw.Renderer is not { } renderer)
                     continue;
 

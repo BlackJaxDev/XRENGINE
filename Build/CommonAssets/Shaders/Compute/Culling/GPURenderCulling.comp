@@ -55,6 +55,7 @@ uniform int CurrentRenderPass;
 uniform int InputCommandCount;
 uniform int MaxCulledCommands;
 uniform uint DisabledFlagsMask;
+uniform uint RequiredFlagsMask;
 uniform vec3 CameraPosition;
 uniform int ActiveViewCount;
 
@@ -173,6 +174,7 @@ void main()
     if (instanceCount == 0u) return;
     if ((layerMask & CameraLayerMask) == 0u) return;
     if (DisabledFlagsMask != 0u && (flags & DisabledFlagsMask) != 0u) return;
+    if ((flags & RequiredFlagsMask) != RequiredFlagsMask) return;
     if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass) && renderPass != 0xFFFFFFFFu) return;
 
     vec3 center = sphere.xyz;

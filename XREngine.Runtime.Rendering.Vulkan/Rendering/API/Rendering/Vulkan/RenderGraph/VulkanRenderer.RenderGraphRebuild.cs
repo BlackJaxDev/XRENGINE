@@ -697,6 +697,7 @@ internal sealed partial class VulkanFramePlanner
             BufferResourceDescriptor descriptor = pair.Value.Descriptor;
             hash.Add(pair.Key, StringComparer.OrdinalIgnoreCase);
             hash.Add((int)descriptor.Lifetime);
+            hash.Add(descriptor.Lifetime != RenderResourceLifetime.External && pair.Value.Instance is null);
             hash.Add(descriptor.SizeInBytes);
             hash.Add((int)descriptor.Target);
             hash.Add((int)descriptor.Usage);

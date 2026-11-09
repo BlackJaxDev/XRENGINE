@@ -57,26 +57,42 @@ public unsafe partial class OpenXRAPI
                         "The Forward+ oracle fallback is forbidden for an explicit RVC selection.";
                     return false;
                 }
+                if (!TryValidateOpenXrEyeAdvancedBinding(viewport, eyeName, out diagnostic, ref pendingResources))
+                    return false;
                 break;
 
             case AdvancedRenderPipeline:
-                AdvancedRenderPipelineOutputBinding binding = viewport.RenderPipelineInstance.AdvancedOutputBinding;
-                if (!binding.IsBound)
-                {
-                    // The binding refresh is queued from other threads. Apply
-                    // it here once, as the Advanced preparation stage does.
-                    RuntimeEngine.Rendering.RefreshRenderPipelineOutputBinding(viewport);
-                    binding = viewport.RenderPipelineInstance.AdvancedOutputBinding;
-                }
-                if (!binding.IsBound)
-                {
-                    pendingResources = binding.State == EAdvancedRenderPipelineOutputBindingState.PendingResources;
-                    diagnostic =
-                        $"The Advanced {eyeName} eye output is not bound (state={binding.State}). " +
-                        $"{binding.FailureReason ?? "No reason was recorded."}";
+                if (!TryValidateOpenXrEyeAdvancedBinding(viewport, eyeName, out diagnostic, ref pendingResources))
                     return false;
-                }
                 break;
+        }
+
+        diagnostic = string.Empty;
+        return true;
+    }
+
+    /// <summary>Confirms that an eye that runs the Advanced stage family has a bound output.</summary>
+    private static bool TryValidateOpenXrEyeAdvancedBinding(
+        XRViewport viewport,
+        string eyeName,
+        out string diagnostic,
+        ref bool pendingResources)
+    {
+        AdvancedRenderPipelineOutputBinding binding = viewport.RenderPipelineInstance.AdvancedOutputBinding;
+        if (!binding.IsBound)
+        {
+            // The binding refresh is queued from other threads. Apply
+            // it here once, as the Advanced preparation stage does.
+            RuntimeEngine.Rendering.RefreshRenderPipelineOutputBinding(viewport);
+            binding = viewport.RenderPipelineInstance.AdvancedOutputBinding;
+        }
+        if (!binding.IsBound)
+        {
+            pendingResources = binding.State == EAdvancedRenderPipelineOutputBindingState.PendingResources;
+            diagnostic =
+                $"The Advanced {eyeName} eye output is not bound (state={binding.State}). " +
+                $"{binding.FailureReason ?? "No reason was recorded."}";
+            return false;
         }
 
         diagnostic = string.Empty;

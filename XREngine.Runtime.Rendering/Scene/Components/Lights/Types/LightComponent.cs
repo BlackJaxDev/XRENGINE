@@ -1291,6 +1291,13 @@ namespace XREngine.Components.Capture.Lights.Types
         public abstract void CollectVisibleItems();
         public abstract void RenderShadowMap(bool collectVisibleNow = false);
 
+        /// <summary>Gets the published caster state for one shadow view.</summary>
+        internal virtual ulong GetShadowCasterCommandSetSignature(
+            EShadowProjectionType projectionType,
+            ShadowRequestSource source,
+            int faceOrCascadeIndex)
+            => 0u;
+
         /// <summary>
         /// Populate a prepared-frustum list representing this light's shadow cameras.
         /// Point lights emit six frusta; directional/spot emit one.

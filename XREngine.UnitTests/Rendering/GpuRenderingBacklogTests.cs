@@ -749,7 +749,8 @@ public class GpuRenderingBacklogTests
         recording.ShouldContain("TryExecuteIndirectCommandChainSecondaryRun");
         workers.ShouldContain("DispatchCommandChainRecordingWorkers");
         workers.ShouldContain("RenderWorkDomain domain = GetRenderWorkDomain();");
-        workers.ShouldContain("RenderWorkBatchLease lease = domain.RentBatch(activeLaneCount);");
+        workers.ShouldContain("RenderWorkBatchLease lease = domain.RentBatch(eligibleLaneCount);");
+        workers.ShouldContain("lease.ShrinkItemCount(activeLaneCount);");
         workers.ShouldContain("result = domain.ExecuteAndWait(");
         laneArena.ShouldContain("Environment.CurrentManagedThreadId");
         laneArena.ShouldNotContain("new Thread");

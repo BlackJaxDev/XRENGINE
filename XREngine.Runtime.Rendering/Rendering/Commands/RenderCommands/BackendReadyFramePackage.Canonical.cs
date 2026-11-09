@@ -107,6 +107,47 @@ public sealed partial class BackendReadyFramePackage
     }
 
     /// <summary>
+    /// Resolves a resident exception against the commands collected for this
+    /// frame. A missing submission row is an identity error, not a cull result.
+    /// </summary>
+    public bool TryGetCollectedOrderedException(
+        in BackendReadyOrderedExceptionRecord exception,
+        out bool collected)
+    {
+        collected = false;
+        if (!TryGetCanonicalPublicationSnapshot(out AdvancedGpuScenePublicationSnapshot snapshot))
+            return false;
+
+        ReadOnlySpan<AdvancedDrawSubmissionRecord> submissions = snapshot.Submission.Records;
+        for (int submissionIndex = 0; submissionIndex < submissions.Length; ++submissionIndex)
+        {
+            AdvancedDrawSubmissionRecord submission = submissions[submissionIndex];
+            if (submission.Draw != exception.DrawHandle ||
+                submission.PassIndex != unchecked((uint)exception.PassIndex) ||
+                submission.SourceOrder != exception.OrderKey)
+                continue;
+
+            if (!TryGetPass(exception.PassIndex, out BackendReadyRenderPass pass))
+                return true;
+
+            for (int commandIndex = 0; commandIndex < pass.CommandCount; ++commandIndex)
+            {
+                RenderCommand command = GetPassCommand(in pass, commandIndex);
+                if (command is IRenderCommandMesh &&
+                    command.StableQueryKey == submission.StableQueryKey)
+                {
+                    collected = true;
+                    break;
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Returns whether a canonical row is owned by advanced GPU submission.
     /// Missing canonical data is deliberately fail-visible to CPU callers.
     /// </summary>
@@ -234,7 +275,8 @@ public sealed partial class BackendReadyFramePackage
         int viewportWidth,
         int viewportHeight,
         bool excludeProjectiveMirrors,
-        EMeshSubmissionStrategy submissionStrategy)
+        EMeshSubmissionStrategy submissionStrategy,
+        int viewPair = RenderFrameViewSetPublication.AllViews)
     {
         // A late package preparation only has command membership. It must not
         // discard the already captured canonical publication and its lease.
@@ -282,7 +324,7 @@ public sealed partial class BackendReadyFramePackage
             DependencySignature);
         SubmissionResolution = CreateCanonicalSubmissionResolution(submissionStrategy);
 
-        if (RenderFrameViewSetPublication.TryGetLatest(out RenderFrameViewSet viewSet))
+        if (RenderFrameViewSetPublication.TryGetLatest(viewPair, out RenderFrameViewSet viewSet))
         {
             EnsureCanonicalCapacity(ref _canonicalViews, viewSet.ViewCount);
             for (int viewIndex = 0; viewIndex < viewSet.ViewCount; ++viewIndex)

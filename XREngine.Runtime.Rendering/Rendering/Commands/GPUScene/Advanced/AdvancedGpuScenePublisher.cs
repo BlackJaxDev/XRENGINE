@@ -164,12 +164,14 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // publication stops before that point, or when the world swap section
         // is not open on this thread.
         long stageMark = 0L;
+        ulong previousWitnessEpoch = AdvancedSourceWitnessEpoch.Begin();
         try
         {
             PublishCore(scene, frameId, in globalResources, ref stageMark);
         }
         finally
         {
+            AdvancedSourceWitnessEpoch.End(previousWitnessEpoch);
             try
             {
                 ReleasePlannedMirrorSnapshots();
@@ -451,7 +453,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                         PrimitiveIndex = checked((uint)Math.Max(0, plan.PrimitiveIndex)),
                         PassIndex = plan.Command.RenderPass,
                         InstanceCount = Math.Max(1u, plan.Command.InstanceCount),
-                        Flags = plan.Command.Flags,
+                        Flags = ResolveSubmissionDrawFlags(in plan.Command, plan.MaterialSource),
                         StateClass = plan.Command.StateClassID,
                         CompatibilityReason = plan.CompatibilityReason,
                         TemporalEventReason = plan.TemporalEventReason,
@@ -899,6 +901,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             PreviousTransform = previousTransform,
             PrimitiveSection = checked((uint)Math.Max(0, primitiveIndex)),
             Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask,
+            SourceFlatDirectionOct = plan.SourceFlatDirectionOct,
+            SourceFlatDirectionValid = plan.SourceFlatDirectionValid,
         };
         if (!tables.Draws.TryAdd(drawRecord, out AdvancedGpuHandle draw))
         {
@@ -1025,6 +1029,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             draw.PrimitiveSection = checked((uint)Math.Max(0, primitiveIndex));
             draw.Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask;
             draw.Material = material;
+            draw.SourceFlatDirectionOct = plan.SourceFlatDirectionOct;
+            draw.SourceFlatDirectionValid = plan.SourceFlatDirectionValid;
             if (!Database.Scene.Draws.TryReplace(
                     registration.Draw,
                     draw,
@@ -1056,8 +1062,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             throw new InvalidOperationException("Canonical content draw is unavailable after successful preflight.");
         uint contentDrawFlags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask;
         bool drawFlagsChanged = contentDraw.Flags != contentDrawFlags;
+        bool flatDirectionChanged =
+            contentDraw.SourceFlatDirectionOct != plan.SourceFlatDirectionOct ||
+            contentDraw.SourceFlatDirectionValid != plan.SourceFlatDirectionValid;
         if (!CanUpdateRegistrationContent(registration) ||
-            (drawFlagsChanged && !Database.Scene.Draws.CanApply(0, 1, 0)) ||
+            ((drawFlagsChanged || flatDirectionChanged) && !Database.Scene.Draws.CanApply(0, 1, 0)) ||
             !Database.Scene.Transforms.TryReplace(
             registration.PreviousTransform,
             CreateTransform(previousWorld)) ||
@@ -1073,15 +1082,22 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         {
             throw new InvalidOperationException("Canonical content update failed after successful preflight.");
         }
-        if (drawFlagsChanged)
+        if (drawFlagsChanged || flatDirectionChanged)
         {
             contentDraw.Flags = contentDrawFlags;
+            contentDraw.SourceFlatDirectionOct = plan.SourceFlatDirectionOct;
+            contentDraw.SourceFlatDirectionValid = plan.SourceFlatDirectionValid;
             if (!Database.Scene.Draws.TryReplace(
                     registration.Draw, contentDraw,
-                    EAdvancedGpuMutationDomain.RecordingTopology))
+                    drawFlagsChanged
+                        ? EAdvancedGpuMutationDomain.RecordingTopology
+                        : EAdvancedGpuMutationDomain.Content))
                 throw new InvalidOperationException("Canonical draw flags update failed after successful preflight.");
-            ++_topologyDeltaCount;
-            AdvanceNonZero(ref _topologyGeneration);
+            if (drawFlagsChanged)
+            {
+                ++_topologyDeltaCount;
+                AdvanceNonZero(ref _topologyGeneration);
+            }
         }
         registration.World = world;
         registration.ContentSignature = content;
@@ -1319,6 +1335,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         in DrawMetadata command,
         out Matrix4x4 world,
         out Matrix4x4 previousWorld,
+        out Matrix4x4 sourceFlatBasis,
         out BoundsGpu bounds,
         out XRMeshRenderer? capturedRenderer,
         out XRMesh? mesh,
@@ -1333,6 +1350,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         previousWorld = snapshot.WorldMatrixIsModelMatrix
             ? snapshot.PreviousWorld
             : Matrix4x4.Identity;
+        sourceFlatBasis = snapshot.SourceFlatBasis;
         bounds = ReadCullBounds(scene, in command);
         capturedRenderer = snapshot.Renderer;
         sourcePrimitiveCount = Math.Max(1, snapshot.Renderer?.Submeshes.Count ?? 0);
@@ -1352,7 +1370,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 EAdvancedVelocityValidityReason.HistoryReset,
                 source.ForceCpuRendering,
                 source.MaterialOverride,
-                source.RenderOptionsOverride);
+                source.RenderOptionsOverride,
+                source.WorldMatrixIsModelMatrix ? source.WorldMatrix : Matrix4x4.Identity);
 
     /// <summary>Resolves the mesh, effective material, and raster options of one source primitive.</summary>
     private static void ResolveSourcePrimitive(
@@ -1574,6 +1593,20 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         };
     }
 
+    /// <summary>
+    /// Adds the material-derived Advanced routing bits to the draw flags of one submission:
+    /// parallax fragment depth, and the surface decal lane when the backend supports it.
+    /// </summary>
+    private static uint ResolveSubmissionDrawFlags(in DrawMetadata command, XRMaterial? material)
+    {
+        uint flags = command.Flags;
+        if (AdvancedSurfaceDecalLane.UsesDecalLane(material))
+            return flags | (uint)GPUIndirectRenderFlags.SurfaceDecal;
+        if (RequiresFragmentDepth(material))
+            flags |= (uint)GPUIndirectRenderFlags.FragmentDepth;
+        return flags;
+    }
+
     private static AdvancedRenderStateRecord CreateRenderState(
         XRMesh? mesh,
         RenderingParameters? renderOptions,
@@ -1669,7 +1702,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         in Matrix4x4 world,
         in Matrix4x4 previousWorld,
         XRMaterial? material,
-        bool gpuOwnedBounds)
+        bool gpuOwnedBounds,
+        uint sourceFlatDirectionOct,
+        uint sourceFlatDirectionValid)
     {
         ulong hash = Mix(command.TransformID, command.InstanceCount);
         hash = Mix(hash, command.Flags & ((uint)GPUIndirectRenderFlags.EditorHighlightMask |
@@ -1678,6 +1713,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             (uint)GPUIndirectRenderFlags.ReceiveShadows));
         hash = Mix(hash, command.LayerMask);
         hash = Mix(hash, gpuOwnedBounds ? 1u : 0u);
+        hash = Mix(hash, sourceFlatDirectionOct);
+        hash = Mix(hash, sourceFlatDirectionValid);
         if (!gpuOwnedBounds)
             hash = Mix(hash, bounds.BoundsVersion);
         hash = Mix(hash, material?.BindingValueVersion ?? 0u);
@@ -1691,6 +1728,15 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             hash = MixMatrix(hash, in previousWorld);
         }
         return hash;
+    }
+
+    private static bool TryEncodeSourceFlatDirection(XRMaterial? material,
+        in Matrix4x4 sourceBasis, out uint packed, out uint valid)
+    {
+        bool captured = SourceMultilayerFlatDirection.TryCapture(material,
+            sourceBasis, out Vector4 direction);
+        SourceMultilayerFlatDirection.Pack(direction, out packed, out valid);
+        return captured;
     }
 
     private static ulong MixMatrix(ulong hash, in Matrix4x4 value)
@@ -1711,7 +1757,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private static AdvancedSharedGpuSceneCapacityProfile CreateCapacityProfile(uint capacity)
     {
-        uint materialLayoutCapacity = 4u;
+        uint materialLayoutCapacity = 6u;
         uint materialLayoutMemberCapacity = checked((uint)(
             MaterialBindingLayouts.OpaqueDeferred.PackedMembers.Count +
             MaterialBindingLayouts.OpaqueDeferred.Textures.Count +
@@ -1720,24 +1766,31 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             MaterialBindingLayouts.MaskedForward.PackedMembers.Count +
             MaterialBindingLayouts.MaskedForward.Textures.Count +
             MaterialBindingLayouts.ProjectiveMirror.PackedMembers.Count +
-            MaterialBindingLayouts.ProjectiveMirror.Textures.Count));
+            MaterialBindingLayouts.ProjectiveMirror.Textures.Count +
+            NativeUberMaterialSchema.Opaque.PackedMembers.Count +
+            NativeUberMaterialSchema.Opaque.Textures.Count +
+            NativeUberMaterialSchema.Masked.PackedMembers.Count +
+            NativeUberMaterialSchema.Masked.Textures.Count));
         uint maximumConstantWords = Math.Max(
             MaterialBindingLayouts.OpaqueDeferred.RowWordCount,
             Math.Max(
                 MaterialBindingLayouts.ForwardOpaque.RowWordCount,
                 Math.Max(
                     MaterialBindingLayouts.MaskedForward.RowWordCount,
-                    MaterialBindingLayouts.ProjectiveMirror.RowWordCount)));
+                    Math.Max(MaterialBindingLayouts.ProjectiveMirror.RowWordCount,
+                        NativeUberMaterialSchema.Opaque.RowWordCount))));
         uint maximumTextureBindings = checked((uint)Math.Max(
             MaterialBindingLayouts.OpaqueDeferred.Textures.Count,
             Math.Max(
                 MaterialBindingLayouts.ForwardOpaque.Textures.Count,
                 Math.Max(
                     MaterialBindingLayouts.MaskedForward.Textures.Count,
-                    MaterialBindingLayouts.ProjectiveMirror.Textures.Count))));
+                    Math.Max(MaterialBindingLayouts.ProjectiveMirror.Textures.Count,
+                        NativeUberMaterialSchema.TextureRoleCount)))));
         uint materialConstantWords = checked(capacity * maximumConstantWords);
         uint materialTextureBindings = checked(capacity * maximumTextureBindings);
-        uint materialResourceReferences = checked(capacity * (maximumTextureBindings + AdvancedEngineSurfaceRecord.RoleCount));
+        uint materialResourceReferences = checked(capacity *
+            (maximumTextureBindings + AdvancedEngineSurfaceRecord.RoleCount + AdvancedUberBaseSurfaceRecord.RoleCount));
 
         return new(
             new AdvancedGpuSceneCapacityProfile(

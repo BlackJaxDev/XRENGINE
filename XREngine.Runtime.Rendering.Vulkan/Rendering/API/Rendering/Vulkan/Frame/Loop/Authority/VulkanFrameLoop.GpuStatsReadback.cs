@@ -401,13 +401,17 @@ internal sealed partial class VulkanFrameLoop
     {
         EMeshSubmissionStrategy strategy = request.BackendPackage.Package.SubmissionResolution.Resolved;
         if (_deviceLost || commandBuffer.Handle == 0 || source.NativeBuffer.Handle == 0 ||
-            source.NativeSize == 0u || !GpuDiagnosticReadbackPlan.IsInstrumented(strategy))
+            source.NativeSize == 0u ||
+            // RVC telemetry is an explicit setting, so it reads back under every strategy.
+            (decoder != EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry &&
+             !GpuDiagnosticReadbackPlan.IsInstrumented(strategy)))
             return false;
 
         uint byteCount = decoder switch
         {
             EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters => 32u,
             EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters => 16u,
+            EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry => RvcShadeletTelemetryCounters.GpuByteCount,
             _ => 0u,
         };
         if (byteCount == 0u || source.NativeSize < byteCount)
@@ -464,6 +468,22 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    /// <summary>
+    /// Settles the diagnostic copies of a primary command buffer that a path
+    /// other than the desktop frame submitted. A non-zero value marks them
+    /// submitted against the graphics timeline; zero cancels them.
+    /// </summary>
+    internal void SettlePrimaryDiagnosticSubmission(CommandBuffer commandBuffer, ulong graphicsTimelineValue)
+    {
+        VulkanGpuDiagnosticReadbackSidecar? sidecar = _gpuDiagnosticReadbackSidecar;
+        if (sidecar is null || commandBuffer.Handle == 0)
+            return;
+        if (graphicsTimelineValue != 0UL)
+            sidecar.MarkPrimarySubmissionAccepted(commandBuffer, graphicsTimelineValue);
+        else
+            sidecar.CancelPrimarySubmission(commandBuffer);
+    }
+
     private void ConsumePrimaryGpuDiagnosticReadback(
         in VulkanGpuDiagnosticReadbackReservation reservation,
         in VulkanFrameDataSlice slice,
@@ -495,7 +515,8 @@ internal sealed partial class VulkanFrameLoop
                 RuntimeRenderingHostServices.Work.ScheduleCompletedDiagnosticDecode(payload);
                 if (node.Decoder is EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters or
                     EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters or
-                    EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters)
+                    EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters or
+                    EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry)
                 {
                     PublishCompletedAdvancedCounterReadback(
                         node.DecoderKey,
@@ -556,6 +577,10 @@ internal sealed partial class VulkanFrameLoop
                         : checked((long)tasks));
                 break;
             }
+            case EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry:
+                if (RvcShadeletTelemetryCounters.TryDecode(words, payload.SourceFrameId, out RvcShadeletTelemetryCounters telemetry))
+                    RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetry(in telemetry);
+                break;
             case EGpuDiagnosticReadbackDecoder.SubmissionValidation:
             case EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters:
                 if (words.Length < 16)

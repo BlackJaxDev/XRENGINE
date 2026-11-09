@@ -1090,7 +1090,9 @@ public sealed partial class ShadowAtlasManager
         {
             ShadowMapRequest request = _requests[i];
             if (request.ProjectionType != EShadowProjectionType.PointFace ||
-                GetAtlasKind(request.ProjectionType) != EShadowAtlasKind.Point)
+                GetAtlasKind(request.ProjectionType) != EShadowAtlasKind.Point ||
+                request.Light is not PointLightComponent pointLight ||
+                !pointLight.ShouldPrepareAtlasGroupedFaceCollection())
             {
                 continue;
             }

@@ -10,6 +10,8 @@ internal struct ProbeParamData : IEquatable<ProbeParamData>
     public Vector4 ProxyCenterEnable;
     public Vector4 ProxyHalfExtents;
     public Vector4 ProxyRotation;
+    /// <summary>X is the stored mip convention; Y is its maximum mip. Z and W are reserved.</summary>
+    public Vector4 PrefilterSampling;
 
     public readonly bool Equals(ProbeParamData other)
         => InfluenceInner == other.InfluenceInner &&
@@ -17,7 +19,8 @@ internal struct ProbeParamData : IEquatable<ProbeParamData>
            InfluenceOffsetShape == other.InfluenceOffsetShape &&
            ProxyCenterEnable == other.ProxyCenterEnable &&
            ProxyHalfExtents == other.ProxyHalfExtents &&
-           ProxyRotation == other.ProxyRotation;
+           ProxyRotation == other.ProxyRotation &&
+           PrefilterSampling == other.PrefilterSampling;
 
     public override readonly bool Equals(object? obj)
         => obj is ProbeParamData other && Equals(other);
@@ -29,5 +32,6 @@ internal struct ProbeParamData : IEquatable<ProbeParamData>
             InfluenceOffsetShape,
             ProxyCenterEnable,
             ProxyHalfExtents,
-            ProxyRotation);
+            ProxyRotation,
+            PrefilterSampling);
 }

@@ -14,11 +14,12 @@ struct ParticleState
     vec3 PrevPosition;
     float _pad1;
     int IsColliding;
-    float _pad2a;
-    float _pad2b;
-    float _pad2c;
+    // The turn of the segment that ends at this particle. A zero quaternion means no turn.
+    float SegmentTurnX;
+    float SegmentTurnY;
+    float SegmentTurnZ;
     vec3 PreviousPhysicsPosition;
-    float _pad3;
+    float SegmentTurnW;
 };
 
 layout(std430, binding = 0) readonly buffer ParticlesBuffer
@@ -76,6 +77,24 @@ void main()
     bool hasChild = (mapping.Flags & ROTATE_WITH_CHILD) != 0 && mapping.ChildParticleIndex >= 0
         && childParticleIndex >= 0 && childParticleIndex < Particles.length();
     vec3 childPosition = hasChild ? Particles[childParticleIndex].Position : particlePosition;
+
+    // Particles keep their solved positions between solver steps, and the root follows its
+    // animated transform. The offset moves the whole chain with the root and changes no solver state.
+    int rootParticleIndex = particleBaseOffset + mapping.RootParticleIndex;
+    if (rootParticleIndex >= 0 && rootParticleIndex < Particles.length())
+    {
+        vec3 presentationOffset = physicsChainAffineTranslation(TransformMatrices[rootParticleIndex])
+            - Particles[rootParticleIndex].Position;
+        particlePosition += presentationOffset;
+        childPosition += presentationOffset;
+    }
+
+    // A bone inherits the simulated turn of its parents before it aims at its child, as a
+    // transform hierarchy does. A branching or last bone keeps only the inherited turn.
+    vec4 inheritedTurn = vec4(Particles[particleIndex].SegmentTurnX, Particles[particleIndex].SegmentTurnY,
+        Particles[particleIndex].SegmentTurnZ, Particles[particleIndex].SegmentTurnW);
+    if (dot(inheritedTurn, inheritedTurn) > 0.5)
+        baseWorld = mat4(chainQuaternionToMatrix(inheritedTurn)) * baseWorld;
 
     // The decoded matrix uses GLSL's column-vector form of the C# row-vector
     // matrix. Transpose it before composition with the row-major inverse bind.

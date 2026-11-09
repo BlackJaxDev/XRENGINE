@@ -1,5 +1,4 @@
 using XREngine.Data.Rendering;
-using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering;
 
@@ -45,6 +44,9 @@ public partial class XRMesh
         if (_lines != null) clone._lines = [.. _lines];
         if (_triangles != null) clone._triangles = [.. _triangles];
 
+        // The buffer assignment captures the palette. Fill it before publishing
+        // the copied buffers so snapshot consumers see the cloned bone table.
+        clone.UtilizedBones = [.. UtilizedBones];
         clone.Buffers = Buffers.Clone();
 
         clone.PositionsBuffer = clone.Buffers.GetValueOrDefault(ECommonBufferType.Position.ToString());
@@ -69,8 +71,6 @@ public partial class XRMesh
 
         if (HasSkinning)
         {
-            clone.UtilizedBones = new (TransformBase tfm, System.Numerics.Matrix4x4 invBindWorldMtx)[UtilizedBones.Length];
-            Array.Copy(UtilizedBones, clone.UtilizedBones, UtilizedBones.Length);
             clone.BoneInfluenceCoreIndices = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreIndices.ToString());
             clone.BoneInfluenceCoreWeights = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreWeights.ToString());
             clone.BoneInfluenceSpillHeaders = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
@@ -133,8 +133,7 @@ public partial class XRMesh
 
         if (HasSkinning)
         {
-            clone.UtilizedBones = new (TransformBase tfm, System.Numerics.Matrix4x4 invBindWorldMtx)[UtilizedBones.Length];
-            Array.Copy(UtilizedBones, clone.UtilizedBones, UtilizedBones.Length);
+            clone.UtilizedBones = [.. UtilizedBones];
         }
 
         clone.Buffers = Buffers.CloneShared();

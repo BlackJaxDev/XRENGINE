@@ -61,7 +61,7 @@ internal unsafe partial class VkMeshRenderer
 				BumpPreparationCompatibilityRevision();
 				_buffersDirty = true;
 				_descriptorDirty = true;
-				_vertexInputStateDirty = true;
+				InvalidateVertexInputStructureNoLock();
 				CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
 
@@ -90,7 +90,7 @@ internal unsafe partial class VkMeshRenderer
 		PublishCachedBufferResourceFingerprint();
 		BumpPreparationCompatibilityRevision();
 		_descriptorDirty = true;
-		_vertexInputStateDirty = true;
+		InvalidateVertexInputStructureNoLock();
 		CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 	}
 
@@ -140,15 +140,15 @@ internal unsafe partial class VkMeshRenderer
 		bool allowSkinning = RuntimeEngine.Rendering.Settings.AllowSkinning;
 		bool allowBlendshapes = RuntimeEngine.Rendering.Settings.AllowBlendshapes;
 		bool hasSkinning = skinningState?.UtilizedBones.Length > 0;
-		bool hasBlendshapes = mesh?.BlendshapeCount > 0;
+		bool hasBlendshapes = mesh?.HasBlendshapeDeformation == true;
 		bool useComputeSkinning = hasSkinning
 			&& allowSkinning
 			&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-			&& !RuntimeEngine.Rendering.State.IsVulkan;
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
 		bool useVertexSkinning = hasSkinning && allowSkinning && !useComputeSkinning;
 		bool useComputeBlendshapes = hasBlendshapes
 			&& allowBlendshapes
-			&& !RuntimeEngine.Rendering.State.IsVulkan
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh)
 			&& (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
 		bool useVertexBlendshapes = hasBlendshapes && allowBlendshapes && !useComputeBlendshapes;
 
@@ -215,10 +215,10 @@ internal unsafe partial class VkMeshRenderer
 		bool useComputeSkinning = mesh?.HasSkinning == true
 			&& RuntimeEngine.Rendering.Settings.AllowSkinning
 			&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-			&& !RuntimeEngine.Rendering.State.IsVulkan;
-		bool useComputeBlendshapes = mesh?.BlendshapeCount > 0
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
+		bool useComputeBlendshapes = mesh?.HasBlendshapeDeformation == true
 			&& RuntimeEngine.Rendering.Settings.AllowBlendshapes
-			&& !RuntimeEngine.Rendering.State.IsVulkan
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh)
 			&& (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
 
 		if (useComputeSkinning || useComputeBlendshapes)
@@ -230,7 +230,7 @@ internal unsafe partial class VkMeshRenderer
 			AddMeshDeformSourceBuffers();
 		}
 
-		bool directBlendshapePath = mesh?.BlendshapeCount > 0
+		bool directBlendshapePath = mesh?.HasBlendshapeDeformation == true
 			&& RuntimeEngine.Rendering.Settings.AllowBlendshapes
 			&& !useComputeBlendshapes;
 		if (directBlendshapePath
@@ -418,7 +418,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			_buffersDirty = false;
-			_vertexInputStateDirty = true;
+			InvalidateVertexInputStructureNoLock();
 			PublishBufferReadinessSnapshot();
 		}
 	}
@@ -598,7 +598,7 @@ internal unsafe partial class VkMeshRenderer
 		_buffersDirty = true;
 		_pipelineDirty = true;
 		_descriptorDirty = true;
-		_vertexInputStateDirty = true;
+		InvalidateVertexInputStructureNoLock();
 		_geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
 		CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 	}
@@ -618,7 +618,7 @@ internal unsafe partial class VkMeshRenderer
 			_triangleIndexBufferExternallyProvided = buffer is not null;
 			_indexBuffersSkippedForShaderGeneratedVertices = false;
 			if (changed)
-				_vertexInputStateDirty = true;
+				InvalidateVertexInputStructureNoLock();
 			_triangleIndexBuffer?.TryEnsureReadyForRendering(BackendContext.Resources.AllowSynchronousResourceUploads);
 			PublishBufferReadinessSnapshot();
 			return changed;

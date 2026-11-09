@@ -17,6 +17,9 @@ public partial class OpenGLRenderer
     private XRRenderProgram? _advancedLateVisibilityProgram;
     private XRRenderProgram? _advancedVisibilityRasterProgram;
     private XRRenderProgram? _advancedVisibilityMaskedRasterProgram;
+    // Depth-writing masked raster for parallax occlusion ranges. It is created with the masked
+    // program but is not part of stage readiness: while it links, those ranges use the masked program.
+    private XRRenderProgram? _advancedVisibilityFragmentDepthRasterProgram;
     private XRRenderProgram? _advancedGtaoProgram;
     private XRRenderProgram? _advancedClassifyTilesProgram;
     private XRRenderProgram? _advancedBuildClassificationIndirectProgram;
@@ -70,6 +73,7 @@ public partial class OpenGLRenderer
             DestroyAdvancedProgram(_advancedLateVisibilityProgram);
             DestroyAdvancedProgram(_advancedVisibilityRasterProgram);
             DestroyAdvancedProgram(_advancedVisibilityMaskedRasterProgram);
+            DestroyAdvancedProgram(_advancedVisibilityFragmentDepthRasterProgram);
             DestroyAdvancedProgram(_advancedGtaoProgram);
             DestroyAdvancedProgram(_advancedClassifyTilesProgram);
             DestroyAdvancedProgram(_advancedBuildClassificationIndirectProgram);
@@ -85,6 +89,7 @@ public partial class OpenGLRenderer
             DestroyAdvancedProgram(_advancedStereoFinalizeGroupsProgram);
             DestroyAdvancedProgram(_advancedStereoRasterProgram);
             DestroyAdvancedProgram(_advancedStereoMaskedRasterProgram);
+            DestroyAdvancedProgram(_advancedStereoFragmentDepthRasterProgram);
         }
 
         _advancedOutputRegistry = null;
@@ -102,6 +107,7 @@ public partial class OpenGLRenderer
         _advancedLateVisibilityProgram = null;
         _advancedVisibilityRasterProgram = null;
         _advancedVisibilityMaskedRasterProgram = null;
+        _advancedVisibilityFragmentDepthRasterProgram = null;
         _advancedGtaoProgram = null;
         _advancedClassifyTilesProgram = null;
         _advancedBuildClassificationIndirectProgram = null;
@@ -118,6 +124,7 @@ public partial class OpenGLRenderer
         _advancedStereoFinalizeGroupsProgram = null;
         _advancedStereoRasterProgram = null;
         _advancedStereoMaskedRasterProgram = null;
+        _advancedStereoFragmentDepthRasterProgram = null;
         _advancedStereoProgramFailure = null;
         _advancedStereoReady = false;
     }
@@ -174,7 +181,7 @@ public partial class OpenGLRenderer
         OpenGLAdvancedSceneTableUploader sceneUploader = slot.SceneUploader ??= new(this);
         _advancedSceneUploader = sceneUploader;
         if (!sceneUploader.TryUpload(sceneDatabase, in scenePublication, out reason) ||
-            !sceneUploader.TryUploadViews(backendPackage, request.Views, out reason))
+            !sceneUploader.TryUploadViews(backendPackage, request.Views, request.RenderTimeSeconds, out reason))
             return false;
         if (!_advancedOutputRegistry.TryBindPersistentState(
                 in reservation,
@@ -390,6 +397,7 @@ public partial class OpenGLRenderer
                 "Advanced.Preparation.LateVisibility", "Advanced/Preparation/LateVisibility.comp", textureMode);
             _advancedVisibilityRasterProgram ??= CreateAdvancedRasterProgram(textureMode);
             _advancedVisibilityMaskedRasterProgram ??= CreateAdvancedRasterProgram(textureMode, masked: true);
+            _advancedVisibilityFragmentDepthRasterProgram ??= CreateAdvancedRasterProgram(textureMode, masked: true, fragmentDepth: true);
             _advancedGtaoProgram ??= CreateAdvancedComputeProgram(
                 "Advanced.AO.Gtao", "Advanced/AO/Gtao.comp", textureMode);
             _advancedClassifyTilesProgram ??= CreateAdvancedComputeProgram(
@@ -565,7 +573,8 @@ public partial class OpenGLRenderer
     private XRRenderProgram CreateAdvancedRasterProgram(
         EAdvancedTextureIndirectionMode textureMode,
         bool masked = false,
-        bool stereo = false)
+        bool stereo = false,
+        bool fragmentDepth = false)
     {
         string preamble = AdvancedShaderAccessLibrary.BuildPreamble(
             RuntimeGraphicsApiKind.OpenGL, textureMode);
@@ -586,10 +595,12 @@ public partial class OpenGLRenderer
         XRShader fragment = CreateAdvancedSourceShader(
             fragmentTemplate,
             EShaderType.Fragment,
-            source => ConvertOpenGlPushConstants(InjectAdvancedPreamble(source, preamble), 2u));
+            source => ConvertOpenGlPushConstants(InjectAdvancedPreamble(source,
+                fragmentDepth ? "#define XR_ADV_VISIBILITY_FRAGMENT_DEPTH 1\n" + preamble : preamble), 2u));
         return new XRRenderProgram(true, false, vertex, fragment)
         {
-            Name = stereo ? (masked ? "Advanced.Visibility.StereoRasterMasked" : "Advanced.Visibility.StereoRaster") :
+            Name = fragmentDepth ? (stereo ? "Advanced.Visibility.StereoRasterFragmentDepth" : "Advanced.Visibility.RasterFragmentDepth") :
+                stereo ? (masked ? "Advanced.Visibility.StereoRasterMasked" : "Advanced.Visibility.StereoRaster") :
                 masked ? "Advanced.Visibility.RasterMasked" : "Advanced.Visibility.Raster"
         };
     }

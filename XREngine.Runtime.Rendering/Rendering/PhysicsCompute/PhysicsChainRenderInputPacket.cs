@@ -29,6 +29,7 @@ internal sealed class PhysicsChainRenderInputPacket
     internal Vector3 ObjectMove;
     internal int FreezeAxis;
     internal int LoopCount;
+    internal PhysicsChainGpuSolverSettings Solver = PhysicsChainGpuSolverSettings.Default;
     internal float TimeVar;
     internal int UpdateMode;
     internal int DispatchIsolationKey;
@@ -85,6 +86,7 @@ internal sealed class PhysicsChainRenderInputPacket
         ObjectMove = source.ObjectMove;
         FreezeAxis = source.FreezeAxis;
         LoopCount = source.LoopCount;
+        Solver = source.Solver;
         TimeVar = source.TimeVar;
         UpdateMode = source.UpdateMode;
         DispatchIsolationKey = source.DispatchIsolationKey;

@@ -1,0 +1,62 @@
+#ifndef XR_ADVANCED_FOVEATED_QUAD_SHADING_GLSLINC
+#define XR_ADVANCED_FOVEATED_QUAD_SHADING_GLSLINC
+
+// Foveated quad shading for RVC eyes. In the periphery one pixel shades a whole
+// 2x2 or 4x4 block of pixels that show the same draw and primitive; the other
+// pixels of the block (followers) skip shading, and a fill pass copies the
+// representative's outputs to them. The rule below is a pure function of the
+// visibility identity and the view record, so the shading kernel and the fill
+// pass always agree on who is a follower.
+//
+// The including kernel declares VisibilityIdentity and XR_ADV_PIXEL.
+
+const uint XR_ADV_SHADING_FOVEATED_QUADS = 1u << 28u;
+
+// Eccentricity radii used when the view record carries no foveation data
+// (foveationCenterAndBias.w == 0). Eccentricity is the distance from the
+// foveation center in [-1, 1] framebuffer units.
+const float XR_ADV_FOVEATED_QUAD_DEFAULT_MID_RADIUS = 0.55;
+const float XR_ADV_FOVEATED_QUAD_DEFAULT_OUTER_RADIUS = 0.85;
+
+bool XR_ADV_FoveatedQuadsEnabled()
+{
+    return (u_Push.flags & XR_ADV_SHADING_FOVEATED_QUADS) != 0u;
+}
+
+// Block edge (1, 2 or 4) for the 4x4 pixel block that holds pixel. The whole
+// 4x4 block uses its center, so every pixel of it gets the same answer.
+uint XR_ADV_FoveatedQuadBlockSize(uvec2 pixel, XRAdvancedViewRecord view)
+{
+    vec2 blockCenter = vec2((pixel & ~uvec2(3u)) + uvec2(2u));
+    vec2 uv = blockCenter / vec2(max(u_Push.screenExtent, uvec2(1u)));
+    bool hasFoveation = view.foveationCenterAndBias.w != 0.0;
+    vec2 center = hasFoveation ? view.foveationCenterAndBias.xy : vec2(0.5);
+    float midRadius = hasFoveation ? view.foveationRadii.y : XR_ADV_FOVEATED_QUAD_DEFAULT_MID_RADIUS;
+    float outerRadius = hasFoveation ? view.foveationRadii.w : XR_ADV_FOVEATED_QUAD_DEFAULT_OUTER_RADIUS;
+    float eccentricity = length((uv - center) * 2.0);
+    return eccentricity >= outerRadius ? 4u : eccentricity >= midRadius ? 2u : 1u;
+}
+
+// True when pixel is a follower: its block's top-left pixel (the
+// representative) shows the same draw and primitive and shades for it.
+bool XR_ADV_TryGetFoveatedRepresentative(
+    uvec2 pixel,
+    uint viewIndex,
+    uvec2 identity,
+    out uvec2 representative)
+{
+    representative = pixel;
+    if (!XR_ADV_FoveatedQuadsEnabled())
+        return false;
+    uint blockSize = XR_ADV_FoveatedQuadBlockSize(pixel, XR_ADV_LoadView(viewIndex));
+    if (blockSize <= 1u)
+        return false;
+    representative = pixel & ~uvec2(blockSize - 1u);
+    if (all(equal(representative, pixel)))
+        return false;
+    uvec2 representativeIdentity =
+        texelFetch(VisibilityIdentity, XR_ADV_PIXEL(representative, viewIndex), 0).rg;
+    return all(equal(representativeIdentity, identity));
+}
+
+#endif

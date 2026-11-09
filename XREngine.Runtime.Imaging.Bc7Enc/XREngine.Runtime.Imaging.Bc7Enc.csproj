@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+  <PropertyGroup>
+    <Bc7EncRid Condition="'$(Bc7EncRid)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">win-x64</Bc7EncRid>
+    <Bc7EncRid Condition="'$(Bc7EncRid)' == ''">linux-x64</Bc7EncRid>
+    <Bc7EncLibraryName Condition="'$(Bc7EncRid)' == 'win-x64'">xre_bcn.dll</Bc7EncLibraryName>
+    <Bc7EncLibraryName Condition="'$(Bc7EncLibraryName)' == ''">libxre_bcn.so</Bc7EncLibraryName>
+    <Bc7EncNativeDirectory>$(MSBuildThisFileDirectory)..\Build\Dependencies\Bc7Enc\$(Bc7EncRid)\</Bc7EncNativeDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="$(Bc7EncNativeDirectory)$(Bc7EncLibraryName)" Link="runtimes/$(Bc7EncRid)/native/$(Bc7EncLibraryName)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(Bc7EncNativeDirectory)$(Bc7EncLibraryName)')" />
+    <Content Include="$(Bc7EncNativeDirectory)xre_bcn.version" Link="runtimes/$(Bc7EncRid)/native/xre_bcn.version" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(Bc7EncNativeDirectory)xre_bcn.version')" />
+    <Content Include="$(Bc7EncNativeDirectory)bc7enc_rdo.LICENSE" Link="runtimes/$(Bc7EncRid)/native/bc7enc_rdo.LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(Bc7EncNativeDirectory)bc7enc_rdo.LICENSE')" />
+  </ItemGroup>
+  <!--
+    The native library is not in the repository. Tools/Dependencies/Build-Bc7Enc.ps1 builds it from the pinned
+    bc7enc_rdo source into Build/Dependencies/Bc7Enc/<rid>/, and ExecTool bootstrap runs that script. Without the
+    library the engine still builds and runs, but the texture cook stores uncompressed RGBA8 and logs the reason.
+  -->
+  <Target Name="ReportBc7EncNativeMissing" BeforeTargets="BeforeBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Message Importance="high" Condition="!Exists('$(Bc7EncNativeDirectory)$(Bc7EncLibraryName)')"
+             Text="The native block-compression library for $(Bc7EncRid) is missing from $(Bc7EncNativeDirectory), so cooked textures stay uncompressed. Run 'pwsh Tools/Dependencies/Build-Bc7Enc.ps1 -Rid $(Bc7EncRid)' (or 'ExecTool --bootstrap') one time. The script needs git, CMake, and a C++ compiler toolchain." />
+  </Target>
+</Project>

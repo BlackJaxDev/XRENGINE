@@ -733,7 +733,7 @@ namespace XREngine
                 };
                 VRStereoRenderTarget = new XRFrameBuffer((outputTextures, EFrameBufferAttachment.ColorAttachment0, 0, -1))
                 {
-                    ForceOvrMultiview = StereoViewport.RenderPipeline is IAdvancedRenderStageFamilyHost,
+                    ForceOvrMultiview = StereoViewport.RenderPipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true },
                 };
                 StereoLeftViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 0u, 1u, ESizedInternalFormat.Rgb8, false, false);
                 StereoRightViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 1u, 1u, ESizedInternalFormat.Rgb8, false, false);

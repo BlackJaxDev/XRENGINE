@@ -154,28 +154,38 @@ internal sealed partial class VulkanCommandRuntime
             descriptors.CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp();
         draw.ProgramBindingSnapshot?.SetMaterialTablePublication(
             bindlessMaterialTextures?.Publication);
-        operation = IndirectDrawOp.Rent(
-            passIndex,
-            target,
-            indirectBuffer,
-            parameterBuffer,
-            mesh,
-            draw,
-            drawCount,
-            stride,
-            byteOffset,
-            countByteOffset,
-            useCount,
-            bindlessMaterialTextures,
-            context,
-            CaptureIndirectSecondaryRecordingContract(
+        try
+        {
+            operation = IndirectDrawOp.Rent(
+                passIndex,
+                target,
                 indirectBuffer,
-                useCount ? parameterBuffer : null,
+                parameterBuffer,
+                mesh,
+                draw,
                 drawCount,
                 stride,
                 byteOffset,
                 countByteOffset,
-                useCount));
+                useCount,
+                bindlessMaterialTextures,
+                context,
+                CaptureIndirectSecondaryRecordingContract(
+                    indirectBuffer,
+                    useCount ? parameterBuffer : null,
+                    drawCount,
+                    stride,
+                    byteOffset,
+                    countByteOffset,
+                    useCount));
+            if (draw.ProgramBindingSnapshot is { IsFramePoolOwned: false } snapshot)
+                operation.OwnAuthoringSnapshot(snapshot);
+        }
+        catch
+        {
+            draw.ProgramBindingSnapshot?.ReleaseIfUnpooled();
+            throw;
+        }
         return true;
     }
 
@@ -205,6 +215,9 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         ComputeDispatchSnapshot bindings = program.CaptureComputeSnapshot();
+        // One indirect draw holds one material and one render scope. Without this flag, each
+        // draw writes every material member by name, and a large material pays for this per draw.
+        bindings.EnableMaterialBindingFastPath();
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         VulkanDescriptorResolutionDiagnostics.CaptureIndirectSnapshot(
             state.Program,
@@ -235,6 +248,7 @@ internal sealed partial class VulkanCommandRuntime
             return true;
         }
 
+        bindings.ReleaseIfUnpooled();
         Debug.VulkanWarningEvery(
             $"Vulkan.IndirectDrawSnapshotFailed.{contextName}.{reason}",
             TimeSpan.FromSeconds(2),
@@ -280,7 +294,15 @@ internal sealed partial class VulkanCommandRuntime
             return;
         }
 
-        EnqueueFrameOperation(queue, operation, passIndex);
+        try
+        {
+            EnqueueFrameOperation(queue, operation, passIndex);
+        }
+        catch
+        {
+            operation.ReleaseAuthoringSnapshot();
+            throw;
+        }
     }
 
     internal void EnqueueIndirectCountDraw(

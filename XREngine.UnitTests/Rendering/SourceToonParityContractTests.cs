@@ -76,17 +76,16 @@ public sealed class SourceToonParityContractTests
         methodEnd.ShouldBeGreaterThan(methodStart);
 
         string method = importerSource[methodStart..methodEnd];
-        method.ShouldContain("_uberSamplerTextureCache,\n                filePath,\n                samplerName,\n                schedulePreviewLoad: true);");
+        method.ShouldContain("_uberSamplerTextureCache,\n                filePath,\n                samplerName,\n                cachePartition,\n                schedulePreviewLoad: true);");
 
         // Only the deferred variant registers a placeholder. The preview branch must decode the real source.
-        int previewStart = method.IndexOf("if (preview)", StringComparison.Ordinal);
+        int previewStart = method.IndexOf("if (state.schedulePreviewLoad)", StringComparison.Ordinal);
         previewStart.ShouldBeGreaterThanOrEqualTo(0);
         int previewEnd = method.IndexOf("                else\n", previewStart, StringComparison.Ordinal);
         previewEnd.ShouldBeGreaterThan(previewStart);
         string previewBranch = method[previewStart..previewEnd];
         previewBranch.ShouldContain("ScheduleImportedTexturePreviewJob");
         previewBranch.ShouldNotContain("RegisterImportedTextureStreamingPlaceholder");
-        previewBranch.ShouldContain("loaded.SamplerName = key.samplerName");
         previewBranch.ShouldContain("onError:");
         method[previewEnd..].ShouldContain("XRTexture2D.RegisterImportedTextureStreamingPlaceholder(key.path, tex);");
     }

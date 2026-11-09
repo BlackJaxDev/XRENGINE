@@ -1059,11 +1059,11 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.Clear: { var p=(ClearOp)op; _payloads.Clears[i]=new(p.ClearColor,p.ClearDepth,p.ClearStencil,p.Color,p.Depth,p.Stencil,p.Rect); break; }
             case EVulkanPrimaryPlanNodeKind.TransformFeedback: { var p=(TransformFeedbackOp)op; _payloads.TransformFeedbacks[i]=new(p.TransformFeedback,p.Operation,p.CounterBuffer,p.FeedbackBufferOffset,p.FeedbackBufferSize,p.CounterBufferOffset,p.CounterOffset,p.VertexStride,p.InstanceCount,p.FirstInstance); break; }
             case EVulkanPrimaryPlanNodeKind.Query: { var p=(QueryOp)op; _payloads.Queries[i]=new(p.Query,p.Descriptor,p.Operation,p.TimestampStage,p.PointIndex,p.SourceHandles,p.ResultDestination,p.ResultDestinationOffset,p.ResultStride,p.IncludeAvailability); break; }
-            case EVulkanPrimaryPlanNodeKind.MeshDraw: _payloads.MeshDraws[i]=new(_payloads.SealDraw(kind, i, ((MeshDrawOp)op).Draw)); break;
+            case EVulkanPrimaryPlanNodeKind.MeshDraw: _payloads.MeshDraws[i]=new(_payloads.SealDraw(kind, i, in ((MeshDrawOp)op).DrawRef)); break;
             case EVulkanPrimaryPlanNodeKind.IndirectDraw:
             {
                 var p = (IndirectDrawOp)op;
-                PendingMeshDraw draw = _payloads.SealDraw(kind, i, p.Draw);
+                PendingMeshDraw draw = _payloads.SealDraw(kind, i, in p.DrawRef);
                 draw.ProgramBindingSnapshot?.SetMaterialTablePublication(p.BindlessMaterialTextures?.Publication);
                 _payloads.IndirectDraws[i] = new(p.IndirectBuffer, p.ParameterBuffer, p.MeshRenderer, draw, p.DrawCount, p.Stride, p.ByteOffset, p.CountByteOffset, p.UseCount, p.BindlessMaterialTextures, p.SecondaryRecordingContract);
                 break;

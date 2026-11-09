@@ -19,8 +19,90 @@ public partial class XRTexture2D
     // Imported-streaming metadata is written as one logical transaction. This is
     // deliberately separate from CanonicalSourceContentGeneration: capture outputs
     // also advance that generation, but their values do not carry seqlock parity.
-    private readonly object _importedSourceMetadataWriteSync = new();
     private long _importedSourceMetadataEpoch = 2L;
+
+    internal object ImportedSourceMetadataWriteSync => _importedSourceMetadataWriteSync;
+
+    private ImportedTextureResidentAuthoredSettings CaptureImportedResidentAuthoredSettings()
+        => new(
+            MinFilter, MagFilter, UWrap, VWrap, LodBias, MaxAnisotropy,
+            MinLOD, MaxLOD, EnableComparison, CompareFunc,
+            RequiresStorageUsage, MultiSampleCount, ImportedUsage,
+            ImportedNormalMapFlipGreen, SizedInternalFormat, Resizable,
+            AutoGenerateMipmaps, LargestMipmapLevel,
+            SmallestAllowedMipmapLevel, Rectangle);
+
+    internal ImportedTextureResidentPublicationPlan CreateImportedResidentPublicationPlan(
+        TextureStreamingResidentData residentData,
+        bool includeMipChain)
+    {
+        lock (_importedSourceMetadataWriteSync)
+        {
+            Mipmap2D[] previousMipmaps = Mipmaps;
+            int mipCount = residentData.Mipmaps.Length;
+            int lockMipLevel = includeMipChain && mipCount > previousMipmaps.Length
+                ? mipCount - previousMipmaps.Length
+                : -1;
+            return new ImportedTextureResidentPublicationPlan(
+                residentData,
+                previousMipmaps,
+                previousMipmaps.Length > 0 ? previousMipmaps[0].Width : 0u,
+                previousMipmaps.Length > 0 ? previousMipmaps[0].Height : 0u,
+                CanonicalSourceContentGeneration,
+                ImportedColorSpace,
+                CaptureImportedResidentAuthoredSettings(),
+                ResolveImportedResidentFormat(this, residentData.SizedInternalFormat),
+                lockMipLevel,
+                ResolveResidentSmallestAllowedMipLevel(residentData, includeMipChain));
+        }
+    }
+
+    private static int ResolveResidentSmallestAllowedMipLevel(
+        in TextureStreamingResidentData residentData,
+        bool includeMipChain)
+    {
+        if (residentData.GenerateMipChainOnGpu)
+            return Math.Max(residentData.ResidentMipLevelCount - 1, 0);
+
+        int mipCount = residentData.Mipmaps.Length;
+        return includeMipChain && mipCount > 0 ? mipCount - 1 : 0;
+    }
+
+    internal bool IsImportedResidentPublicationPlanCurrent(in ImportedTextureResidentPublicationPlan plan)
+        => ReferenceEquals(Mipmaps, plan.PreviousMipmaps)
+            && (Mipmaps.Length > 0 ? Mipmaps[0].Width : 0u) == plan.PreviousWidth
+            && (Mipmaps.Length > 0 ? Mipmaps[0].Height : 0u) == plan.PreviousHeight
+            && CanonicalSourceContentGeneration == plan.SourceGeneration
+            && ImportedColorSpace == plan.ColorSpace
+            && CaptureImportedResidentAuthoredSettings() == plan.AuthoredSettings
+            && ResolveImportedResidentFormat(this, plan.ResidentData.SizedInternalFormat) == plan.SizedFormat;
+
+    internal void BeginImportedResidentPublication() => BeginImportedSourceMetadataWrite();
+    internal void CompleteImportedResidentPublication() => CompleteImportedSourceMetadataWrite();
+
+    internal void CommitImportedResidentPublication(in ImportedTextureResidentPublicationPlan plan)
+    {
+        Mipmap2D[] mipmaps = plan.ResidentData.Mipmaps;
+        SetField(ref _streamingLockMipLevel, plan.LockMipLevel, publishNotifications: false);
+        SetField(ref _mipmaps, mipmaps, publishNotifications: false);
+        TrackStreamingResidentMipmaps(mipmaps);
+        SetField(ref _resizable, false, publishNotifications: false);
+        SetField(ref _sizedInternalFormat, plan.SizedFormat, publishNotifications: false);
+        CommitImportedTextureStreamingMipRangeMetadata(plan.SmallestAllowedMipmapLevel);
+        SetField(ref _residencyState.SparseEnabled, false, publishNotifications: false);
+        SetField(ref _residencyState.LogicalWidth, 0u, publishNotifications: false);
+        SetField(ref _residencyState.LogicalHeight, 0u, publishNotifications: false);
+        SetField(ref _residencyState.LogicalMipCount, 0, publishNotifications: false);
+        SetField(ref _residencyState.ResidentBaseMipLevel, int.MaxValue, publishNotifications: false);
+        SetField(ref _residencyState.CommittedBaseMipLevel, int.MaxValue, publishNotifications: false);
+        SetField(ref _residencyState.SparseLevelCount, 0, publishNotifications: false);
+        SetField(ref _residencyState.CommittedBytes, 0L, publishNotifications: false);
+        SetField(ref _residencyState.ResidentPageSelection, SparseTextureStreamingPageSelection.Full, publishNotifications: false);
+        // Clear the placeholder state before the source generation advances, so a publisher
+        // that sees the new generation also sees real resident data.
+        ClearAwaitingFirstResidency();
+        PublishCanonicalSourceContentMutation();
+    }
 
     internal ulong CanonicalSourceContentGeneration
         => unchecked((ulong)Volatile.Read(ref _canonicalSourceContentGeneration));
@@ -150,6 +232,14 @@ public partial class XRTexture2D
         => HasAssetExtension(filePath);
 
     internal static string ResolveTextureStreamingAuthorityPathInternal(string filePath, out string? originalSourcePath)
+        => ResolveTextureStreamingAuthorityPathInternal(filePath, usage: null, out originalSourcePath);
+
+    /// <summary>
+    /// Resolves the authority path for a texture role. With role-dependent block
+    /// compression, the role selects a cache variant folder, so the cook knows the role.
+    /// </summary>
+    /// <param name="usage">The texture role, or null when it is unknown.</param>
+    internal static string ResolveTextureStreamingAuthorityPathInternal(string filePath, ETextureImportUsage? usage, out string? originalSourcePath)
     {
         RuntimeTextureSourceAccess.RequireHostFiles();
         originalSourcePath = null;
@@ -160,7 +250,10 @@ public partial class XRTexture2D
         if (HasAssetExtension(normalizedPath))
             return normalizedPath;
 
-        string authorityPath = RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath);
+        string? variantKey = usage is { } role ? TextureCookUsageVariant.ResolveVariantKey(role) : null;
+        string authorityPath = variantKey is null
+            ? RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath)
+            : RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath, variantKey);
         if (string.IsNullOrWhiteSpace(authorityPath))
             return normalizedPath;
 
@@ -173,7 +266,7 @@ public partial class XRTexture2D
 
     internal static void ApplyTextureStreamingAuthorityPath(XRTexture2D texture, string requestedFilePath)
     {
-        string authorityPath = ResolveTextureStreamingAuthorityPathInternal(requestedFilePath, out string? originalSourcePath);
+        string authorityPath = ResolveTextureStreamingAuthorityPathInternal(requestedFilePath, texture.ImportedUsage, out string? originalSourcePath);
         texture.FilePath = authorityPath;
         if (!string.IsNullOrWhiteSpace(originalSourcePath))
             texture.OriginalPath ??= originalSourcePath;
@@ -391,15 +484,11 @@ public partial class XRTexture2D
         texture.TrackStreamingResidentMipmaps(residentData.Mipmaps);
         texture.AutoGenerateMipmaps = false;
         texture.Resizable = false;
-        texture.SizedInternalFormat = residentData.SizedInternalFormat;
+        texture.SizedInternalFormat = ResolveImportedResidentFormat(texture, residentData.SizedInternalFormat);
         texture.LargestMipmapLevel = 0;
         texture.SmallestAllowedMipmapLevel = includeMipChain && residentData.Mipmaps.Length > 0
             ? residentData.Mipmaps.Length - 1
             : 0;
-        texture.MinFilter = includeMipChain && residentData.Mipmaps.Length > 1
-            ? ETexMinFilter.LinearMipmapLinear
-            : ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
         texture.PublishCanonicalSourceContentMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
@@ -461,17 +550,13 @@ public partial class XRTexture2D
         texture.Mipmaps = residentData.Mipmaps;
         texture.TrackStreamingResidentMipmaps(residentData.Mipmaps);
         texture.Resizable = false;
-        texture.SizedInternalFormat = residentData.SizedInternalFormat;
+        texture.SizedInternalFormat = ResolveImportedResidentFormat(texture, residentData.SizedInternalFormat);
         texture.ApplyImportedTextureStreamingMipRangeMetadata(
             autoGenerateMipmaps: false,
             largestMipmapLevel: 0,
             smallestAllowedMipmapLevel: includeMipChain && residentData.Mipmaps.Length > 0
                 ? residentData.Mipmaps.Length - 1
                 : 0);
-        texture.MinFilter = includeMipChain && residentData.Mipmaps.Length > 1
-            ? ETexMinFilter.LinearMipmapLinear
-            : ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
         texture.PublishCanonicalSourceContentMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
@@ -488,6 +573,20 @@ public partial class XRTexture2D
             }
         }
     }
+
+    private static ESizedInternalFormat ResolveImportedResidentFormat(
+        XRTexture2D texture,
+        ESizedInternalFormat decodedFormat)
+        => (texture.ImportedColorSpace, decodedFormat) switch
+        {
+            (ETextureColorSpace.Srgb, ESizedInternalFormat.Rgb8) => ESizedInternalFormat.Srgb8,
+            (ETextureColorSpace.Srgb, ESizedInternalFormat.Rgba8) => ESizedInternalFormat.Srgb8Alpha8,
+            (ETextureColorSpace.Linear, ESizedInternalFormat.Srgb8) => ESizedInternalFormat.Rgb8,
+            (ETextureColorSpace.Linear, ESizedInternalFormat.Srgb8Alpha8) => ESizedInternalFormat.Rgba8,
+            (ETextureColorSpace.Srgb, ESizedInternalFormat.Bc7Unorm) => ESizedInternalFormat.Bc7Srgb,
+            (ETextureColorSpace.Linear, ESizedInternalFormat.Bc7Srgb) => ESizedInternalFormat.Bc7Unorm,
+            _ => decodedFormat,
+        };
 
     internal static uint GetPreviewResidentSize(uint sourceMaxDimension)
         => sourceMaxDimension == 0
@@ -516,14 +615,21 @@ public partial class XRTexture2D
         int mipCount = includeMipChain
             ? XRTexture.GetSmallestMipmapLevel(residentWidth, residentHeight) + 1
             : 1;
-        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(format));
+        // Block formats store less than one byte per pixel (BC4 stores half a byte), so an
+        // integer bytes-per-pixel value cannot express them. Count whole 4x4 blocks instead.
+        bool blockCompressed = TextureBlockFormats.IsBlockCompressed(format);
+        int bytesPerPixel = blockCompressed
+            ? 0
+            : Math.Max(1, RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(format));
 
         long totalBytes = 0L;
         for (int mipIndex = 0; mipIndex < mipCount; mipIndex++)
         {
             uint mipWidth = Math.Max(1u, residentWidth >> mipIndex);
             uint mipHeight = Math.Max(1u, residentHeight >> mipIndex);
-            totalBytes += (long)mipWidth * mipHeight * bytesPerPixel;
+            totalBytes += blockCompressed
+                ? TextureBlockFormats.GetImageBytes(format, mipWidth, mipHeight)
+                : (long)mipWidth * mipHeight * bytesPerPixel;
         }
 
         return totalBytes;

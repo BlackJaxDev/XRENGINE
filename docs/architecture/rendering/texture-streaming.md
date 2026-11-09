@@ -48,6 +48,7 @@ Backend implementations:
 - `AssetTextureStreamingSource` leases the cache bytes through a `CookedPayloadOwner` and copies out only the selected resident mips. It reads the `XRTS` payload (magic `0x58525453`) through `XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes`.
 - The source falls back to the original file when the cache asset is missing or when its binary payload is incompatible with the current format. The fallback is logged; it is not silent.
 - `TextureStreamingResidentDataReuseCache` keeps deep copies of recently decoded resident chains for a short time, so a canceled and requeued transition does not decode again.
+- The Vulkan dense backend runs decodes and cache reads on the thread pool behind a priority gate of `Math.Clamp(Environment.ProcessorCount / 4, 2, 8)` slots. A source PNG decode with its mip chain takes seconds of CPU time, so a cold scene is decode-bound below that limit.
 
 The `XRTS` payload stores a preview mip and per-mip offsets. Streamability checks read only the header and manifest. They do not hydrate mip blobs. See [Cooked Texture Payloads](../assets/cooked-texture-payloads.md) for payload layout, cache-key rules, compression plans, and known limits.
 
@@ -195,13 +196,60 @@ Vulkan imported textures never use one-shot layout transitions or copies for liv
 2. **Preparation.** Preparation is worker-only. A worker creates the destination image, memory, view, optional sampler, and staging resources in resumable steps (`VulkanImportedTextureUploadPreparationStep`). Device and allocator access from workers is serialized by `VulkanResourceRuntime.TextureUploadContextSync`. Workers never touch frame command buffers, descriptors, materials, or scene objects.
 3. **Staging.** Staging comes from `VulkanStagingManager` leases. Background chunks are bounded separately from a protected foreground reserve. A burst defers work; it does not allocate unbounded staging.
 4. **Transfer.** Prepared chunks are recorded into native batches and submitted with fence or timeline completion. The copy path records `Undefined` to `TransferDstOptimal`, the buffer-to-image copies for the resident mips, then `TransferDstOptimal` to `ShaderReadOnlyOptimal`. Imported uploads stay on the graphics queue; the transfer-queue switch only logs a compatibility message until an explicit semaphore release and acquire chain exists.
-5. **Completion.** The render owner polls completion without blocking. `VulkanTextureUploadCompletionBudget` reserves whole signaled batches, so no child of a batch publishes or retires ahead of its siblings.
+5. **Completion.** The render owner polls completion without blocking. `VulkanTextureUploadCompletionBudget` reserves whole signaled batches, so no child of a batch publishes or retires ahead of its siblings. One drain step first retires every signaled batch that fits the per-frame completion budget, which releases staging and queues the next chunk of each texture, and then submits the next ready batch in the same step.
 6. **Publication.** Publication occurs on the render thread only after the GPU receipt completes and the generation is still current. It swaps the descriptor-visible image, view, and sampler, advances the descriptor generation, and dirties only dependent descriptor or command state with a recorded reason.
 7. **Retirement.** Old images, views, samplers, memory, and staging enter the frame-slot retirement queues. They are freed only after every frame that could sample them completes. A failed or canceled demotion keeps the previously published image.
 
 Foreground readiness: when an accepted frame references an exact texture generation, the upload becomes foreground-required. The service drains `VisibleNow` preparation without background caps, but completion still follows the normal fence or timeline path. It never forces a device idle.
 
 `VulkanResidentRehydrationUploadScheduler` sends retained resident mips through the same service.
+
+### Coupled Metadata And Native Publication
+
+Imported upload preparation must not change the live `XRTexture2D`. A staged
+`ImportedTextureResidentPublicationPlan` retains the resident mip chain, resolved
+color format, mip range, source generation, and authored sampler inputs. Vulkan
+preparation uses that plan to create native resources. Sampler limits come from
+the pending mip chain, not the currently published preview. Workers consume the
+captured sampler values.
+
+Publication holds the streaming record authority, texture metadata writer lock,
+wrapper image lock, and descriptor lock in that order. It rechecks the staged
+source and authored inputs before committing. A stale candidate retires its native
+resources. The upload service keeps the resident data and schedules a fresh plan
+with a new ticket under the same logical streaming
+generation. It retains the original scheduling context and terminal callback
+owner. A stale attempt must not run the importer's cancellation callback. Actual
+cancellation, owner retirement, or scheduling failure settles the original owner
+once.
+
+Keep the old ticket pending until replacement admission returns. An admitted
+replacement or actual cancellation changes the old ticket to `Canceled` and
+retries the frame. Rejected admission before replacement registration changes the
+old ticket directly to `Failed` and reports `RendererTerminal`. Do not leave a
+canceled ticket that can hide the original owner's terminal failure.
+
+The metadata epoch stays odd across descriptor publication and the native and
+logical ownership transfers. A failed descriptor publication leaves the live
+metadata and source generation unchanged. After descriptor success, the wrapper
+and texture accept the same mip chain and format. Notification-free `SetField`
+updates set the logical metadata and clear sparse state. The source content
+generation advances once. The pending upload detaches its handles before cleanup
+can release them, and the epoch becomes even after the transfers finish.
+
+Do not replay a generic mipmap-change notification after this commit. It can
+destroy the new image. Retire old resources through their descriptor and frame
+owners after the commit. Keep canonical source validation active: a frame package
+captured before a completed publication is stale and must still retry.
+
+### Large Runtime Textures
+
+Runtime textures that are not imported, such as an HDR skybox loaded from an EXR file, also use the synchronized upload service on Vulkan when the base level is 8 MiB or larger. `XRTexture2D.ScheduleGpuUpload` makes the choice on the render thread, because the service binds to the renderer during renderer startup, which can be after an early asset load finishes.
+
+- The texture enters `ImportedTextureStreamingManager.TryScheduleRawResidentDataForVulkan` without a streaming source. The manager does not release its CPU pixels and does not stream it again from the source file.
+- When the texture requests `AutoGenerateMipmaps` and has only a base level, the resident data sets `GenerateMipChainOnGpu`. The service allocates the full mip chain, copies the base level in bounded staging chunks, and fills the other levels with linear blits in the final upload batch. The format must support linear blits; otherwise the upload fails.
+- If the service reports a failure, the texture uses the single render-thread upload and logs an `[UploadMipmaps]` warning.
+- Textures under the size limit, and textures with `PreferSynchronousGpuUpload`, keep the single render-thread upload.
 
 `VulkanTextureUploadFaultInjection` is a development-only diagnostic. When an editor MCP tool arms it, it fails or cancels a bounded number of upcoming upload schedules through the normal rejection and cancel paths. It is inert when not armed.
 
@@ -215,6 +263,7 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 | `XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS` | Render-thread time budget, in milliseconds, for upload preparation work. |
 | `XRE_VULKAN_TEXTURE_UPLOAD_TRACE=1` | Verbose upload lifecycle logs. |
 | `XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE` | Requests a dedicated transfer queue. Currently logs a `[Vulkan Compat]` message; uploads stay on the graphics queue. |
+| `XRE_TEXTURE_COOK_COMPRESSION` | `Bcn`, `Bc7`, or `None`. Overrides `CookedTextureCompression` for the texture cook. The cache key includes the effective mode (and the texture role for `Bcn`). |
 | `XRE_VULKAN_ASYNC_TEXTURE_UPLOAD`, `XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER` | Disabling either is ignored for imported uploads and logs a `[Vulkan Compat]` message. Preparation stays worker-only. |
 
 ## Diagnostics
@@ -223,6 +272,8 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 - Telemetry: `ImportedTextureStreamingTelemetry` and `ImportedTextureStreamingTextureTelemetry`. Vulkan rows add resident, published, upload, and retirement generations.
 - Editor: the ImGui texture streaming panel (`EditorImGuiUI.TextureStreamingPanel`).
 - MCP: `get_texture_streaming_summary` and `list_texture_streaming_textures`.
+- Vulkan upload timing (Debug and editor builds): `[VkTextureUpload.DrainSlow]` splits a transfer drain step of 4 ms or more into submit, poll, batch completion, and child completion. `[VkTextureUpload.Publish]` reports a publication of 4 ms or more, and every publication with GPU-generated mips, with its mip level count. `[UploadMipmaps] ... scheduling ... took` reports a large runtime texture whose scheduling took 4 ms or more.
+- Cook compression, in the `texture-compression.log` auxiliary log in every build configuration: one line per cooked texture with its format, size, mip count, role, the reason for the format, RGBA8 and compressed byte counts, and encode time, and one line for each texture that stays RGBA8 with the reason.
 
 ## Known Limits
 
@@ -234,7 +285,7 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 - On a scene with jitter larger than the tolerance, frames with work go over the rule a little more often than frames without work, and each such frame backs off. This lowers throughput on jittery machines, but it keeps the frame-time rule.
 
 - Partial sparse page residency is disabled by policy on OpenGL. Vulkan sparse images are not implemented.
-- Cooked payloads are not page-addressable. GPU-native compressed payloads and compressed uploads are not implemented.
+- Cooked payloads are not page-addressable. Compressed (BC7, BC5, BC4) payloads use dense residency only.
 - Vulkan per-mip progressive exposure is opt-in and uses the render-thread path, not the synchronized service.
 - Vulkan imported uploads do not use a dedicated transfer queue.
 - Color-space and texture-role metadata are incomplete.

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Assimp;
 using Assimp.Configs;
 using Assimp.Unmanaged;
@@ -36,7 +37,7 @@ namespace XREngine
     /// Returns a SceneNode hierarchy populated with model components and outputs generated materials and meshes.
     /// </summary>
     [XRTypeRedirect("XREngine.ModelImporter")]
-    public class ModelAssetImporter : IDisposable
+    public partial class ModelAssetImporter : IDisposable
     {
         private sealed class ImportOptionsScope(ModelImportOptions? previous) : IDisposable
         {
@@ -81,6 +82,9 @@ namespace XREngine
 
         public DelMakeMaterialAction MakeMaterialAction { get; set; } = MakeMaterialDefault;
         public ModelImportOptions? ImportOptions { get; set; }
+
+        /// <summary>Optional caller-owned parsed FBX cache. Runtime instance data is never cached here.</summary>
+        public FbxSourceDocumentCache? FbxSourceDocuments { get; set; }
 
         /// <summary>
         /// Gets the backend candidate snapshot resolved for the most recent import attempt.
@@ -209,6 +213,7 @@ namespace XREngine
         }
 
         private readonly ConcurrentDictionary<string, XRTexture2D> _texturePathCache = new();
+        private readonly ConcurrentDictionary<string, XRTexture2D> _missingNormalTexturePathCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, string> _recursiveTextureSearchCache = new(StringComparer.OrdinalIgnoreCase);
 
         private XRMaterial MakeMaterialInternal(XRTexture[] textureList, List<TextureSlot> textures, string name)
@@ -251,7 +256,9 @@ namespace XREngine
                     EDiffuseAlphaMode.Opaque => ETransparencyMode.Opaque,
                     EDiffuseAlphaMode.Masked => ETransparencyMode.Masked,
                     EDiffuseAlphaMode.Blended => ETransparencyMode.WeightedBlendedOit,
-                    _ => hasTransparentBlendHint ? ETransparencyMode.WeightedBlendedOit : ETransparencyMode.Opaque,
+                    // Imported glass draws as sorted alpha by default. Weighted blended OIT
+                    // needs an explicit Blended import option.
+                    _ => hasTransparentBlendHint ? ETransparencyMode.AlphaBlend : ETransparencyMode.Opaque,
                 };
             }
 
@@ -272,7 +279,28 @@ namespace XREngine
             }
 
             mat.TransparencyMode = mode;
+            mat.AdvancedSurfaceDecal = IsImportedSurfaceDecal(mat.Name, mode, textures);
         }
+
+        /// <summary>
+        /// A masked material with an opacity map and "decal" in its name is a mesh surface decal.
+        /// It keeps its masked mode as the fallback for renderers without the decal lane.
+        /// </summary>
+        private static bool IsImportedSurfaceDecal(string? materialName, ETransparencyMode mode, List<TextureSlot> textures)
+            => ClassifySurfaceDecal(materialName, mode, textures,
+                _currentImportOptions.Value?.DecalMaterialMode ?? EDecalMaterialMode.Auto);
+
+        /// <summary>Pure surface decal rule for one imported material and decal mode.</summary>
+        internal static bool ClassifySurfaceDecal(
+            string? materialName,
+            ETransparencyMode mode,
+            List<TextureSlot> textures,
+            EDecalMaterialMode decalMode)
+            => decalMode == EDecalMaterialMode.Auto &&
+               mode == ETransparencyMode.Masked &&
+               materialName is not null &&
+               materialName.Contains("decal", StringComparison.OrdinalIgnoreCase) &&
+               HasOpacityMask(textures);
 
         public static XRMaterial MakeMaterialDefault(XRTexture[] textureList, List<TextureSlot> textures, string name)
             => MakeMaterialDeferred(textureList, textures, name);
@@ -285,10 +313,30 @@ namespace XREngine
             ShadingMode mode,
             Dictionary<string, List<MaterialProperty>> properties)
         {
+            // A remap owns its textures and surface values. Do not resolve stale
+            // embedded paths or apply producer properties to the replacement.
+            if (ResolveMaterialRemap(name) is { } remapped)
+                return remapped;
+
             XRTexture[] textureList = textures.Count > 0 ? LoadTextures(modelFilePath, textures) : [];
             XRMaterial material = MakeMaterialInternal(textureList, textures, name);
             ApplyImportedDiffuseColor(material, properties);
+            if (properties.Count != 0)
+                ApplyImportedOpacity(
+                    material,
+                    ResolveImportedOpacity(properties),
+                    material.Parameter<ShaderVector3>("BaseColor")?.Value ?? Vector3.One);
             return material;
+        }
+
+
+        /// <summary>Returns the authored replacement before producer material conversion.</summary>
+        internal XRMaterial? ResolveMaterialRemap(string name)
+        {
+            ModelImportOptions? options = _currentImportOptions.Value ?? ImportOptions;
+            return options?.MaterialRemap is { } remaps && remaps.TryGetValue(name, out XRMaterial? material)
+                ? material
+                : null;
         }
 
         /// <summary>
@@ -343,6 +391,17 @@ namespace XREngine
                 return;
 
             path = ResolveTextureFilePath(modelFilePath, path, out bool textureExists);
+            if (!textureExists && GetEffectiveTextureType(textures[i]) == TextureType.NormalCamera)
+            {
+                // Keep normal placeholders separate when a missing path also supplies color.
+                textureList[i] = _missingNormalTexturePathCache.GetOrAdd(path, static missingPath => TextureFactoryInternal(
+                    missingPath,
+                    schedulePreviewLoad: false,
+                    registerStreamingPlaceholder: false,
+                    useNormalPlaceholder: true));
+                return;
+            }
+
             textureList[i] = textureExists
                 ? _texturePathCache.GetOrAdd(path, MakeTextureAction)
                 : _texturePathCache.GetOrAdd(path, static missingPath => TextureFactoryInternal(
@@ -524,6 +583,13 @@ namespace XREngine
                     return modelDirCandidate;
                 }
 
+                string? sourceProjectCandidate = ResolveMissingTexturePath?.Invoke(modelFilePath, rawPath);
+                if (!string.IsNullOrWhiteSpace(sourceProjectCandidate) && File.Exists(sourceProjectCandidate))
+                {
+                    exists = true;
+                    return Path.GetFullPath(sourceProjectCandidate);
+                }
+
                 string? recursiveSearchCandidate = TryResolveTextureFromConfiguredSearchPaths(modelFilePath, fileName);
                 if (!string.IsNullOrWhiteSpace(recursiveSearchCandidate) && File.Exists(recursiveSearchCandidate))
                 {
@@ -543,20 +609,25 @@ namespace XREngine
 
         public Func<string, XRTexture2D> MakeTextureAction { get; set; } = TextureFactoryInternal;
 
+        /// <summary>Resolves an absent model texture from a known source project.</summary>
+        public Func<string, string, string?>? ResolveMissingTexturePath { get; set; }
+
         private static XRTexture2D TextureFactoryInternal(string path)
             => TextureFactoryInternal(path, schedulePreviewLoad: false, registerStreamingPlaceholder: true);
 
         private static XRTexture2D TextureFactoryInternal(
             string path,
             bool schedulePreviewLoad,
-            bool registerStreamingPlaceholder = true)
+            bool registerStreamingPlaceholder = true,
+            bool useNormalPlaceholder = false)
         {
             string textureName = Path.GetFileNameWithoutExtension(path);
             XRTexture2D placeholder = new()
             {
                 Name = textureName,
                 MagFilter = ETexMagFilter.Linear,
-                MinFilter = ETexMinFilter.Linear,
+                MinFilter = ETexMinFilter.LinearMipmapLinear,
+                SmallestAllowedMipmapLevel = 0,
                 UWrap = ETexWrapMode.Repeat,
                 VWrap = ETexWrapMode.Repeat,
                 AlphaAsTransparency = true,
@@ -567,7 +638,7 @@ namespace XREngine
 
             try
             {
-                using RuntimeImage filler = XRTexture2D.FillerImage;
+                using RuntimeImage filler = useNormalPlaceholder ? XRTexture2D.NormalMapFillerImage : XRTexture2D.FillerImage;
                 placeholder.Mipmaps = [new Mipmap2D(filler)];
                 placeholder.SizedInternalFormat = ESizedInternalFormat.Rgba8;
             }
@@ -576,20 +647,16 @@ namespace XREngine
                 LogImportWarning($"Failed to assign filler texture for '{path}'. {ex.Message}");
             }
 
+            // The filler is only a loading placeholder for a texture that streams. Renderers
+            // with a per-binding fallback use that fallback until the first resident data.
+            if (schedulePreviewLoad || registerStreamingPlaceholder)
+                placeholder.MarkAwaitingFirstResidency();
+
             if (schedulePreviewLoad)
             {
                 XRTexture2D.ScheduleImportedTexturePreviewJob(
                     path,
                     placeholder,
-                    onFinished: tex =>
-                    {
-                        tex.MagFilter = ETexMagFilter.Linear;
-                        tex.UWrap = ETexWrapMode.Repeat;
-                        tex.VWrap = ETexWrapMode.Repeat;
-                        tex.AlphaAsTransparency = true;
-                        tex.Resizable = false;
-                        tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-                    },
                     onError: ex => LogImportException(ex, $"[TextureFactory] Texture import job FAILED for '{path}'."),
                     priority: JobPriority.Low);
             }
@@ -892,11 +959,13 @@ namespace XREngine
         private static RuntimeImage CreateUberPlaceholderImage(string samplerName)
             => IsNormalLikeSampler(samplerName) ? XRTexture2D.NormalMapFillerImage : XRTexture2D.FillerImage;
 
-        public static XRTexture2D GetOrCreateUberSamplerTexture(string filePath, string samplerName)
+        public static XRTexture2D GetOrCreateUberSamplerTexture(
+            string filePath, string samplerName, string? cachePartition = null)
             => GetOrCreateUberSamplerTexture(
                 _uberSamplerTextureCache,
                 filePath,
                 samplerName,
+                cachePartition,
                 schedulePreviewLoad: true);
 
         /// <summary>
@@ -904,20 +973,28 @@ namespace XREngine
         /// The texture is registered with the streaming manager and promotes when it is
         /// actually used by a visible material.
         /// </summary>
-        public static XRTexture2D GetOrCreateDeferredUberSamplerTexture(string filePath, string samplerName)
+        public static XRTexture2D GetOrCreateDeferredUberSamplerTexture(
+            string filePath, string samplerName, string? cachePartition = null)
             => GetOrCreateUberSamplerTexture(
                 _deferredUberSamplerTextureCache,
                 filePath,
                 samplerName,
+                cachePartition,
                 schedulePreviewLoad: false);
 
         private static XRTexture2D GetOrCreateUberSamplerTexture(
             WeakTextureCache cache,
             string filePath,
             string samplerName,
+            string? cachePartition,
             bool schedulePreviewLoad)
         {
-            return cache.GetOrAdd((filePath, samplerName), schedulePreviewLoad, static (key, preview) =>
+            // Keep sampler policy in the cache key, but use the material sampler name on the texture.
+            string cacheSamplerName = cachePartition is null
+                ? samplerName
+                : string.Concat(samplerName, "\u001f", cachePartition);
+            return cache.GetOrAdd((filePath, cacheSamplerName),
+                (schedulePreviewLoad, samplerName), static (key, state) =>
             {
                 var tex = new XRTexture2D
                 {
@@ -927,9 +1004,10 @@ namespace XREngine
                         ? File.GetLastWriteTimeUtc(key.path)
                         : null,
                     Name = Path.GetFileNameWithoutExtension(key.path),
-                    SamplerName = key.samplerName,
+                    SamplerName = state.samplerName,
                     MagFilter = ETexMagFilter.Linear,
-                    MinFilter = ETexMinFilter.Linear,
+                    MinFilter = ETexMinFilter.LinearMipmapLinear,
+                    SmallestAllowedMipmapLevel = 0,
                     UWrap = ETexWrapMode.Repeat,
                     VWrap = ETexWrapMode.Repeat,
                     AlphaAsTransparency = true,
@@ -939,7 +1017,7 @@ namespace XREngine
 
                 try
                 {
-                    using RuntimeImage placeholder = CreateUberPlaceholderImage(key.samplerName);
+                    using RuntimeImage placeholder = CreateUberPlaceholderImage(state.samplerName);
                     tex.Mipmaps = [new Mipmap2D(placeholder)];
                 }
                 catch (Exception ex)
@@ -947,25 +1025,14 @@ namespace XREngine
                     LogImportWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
                 }
 
-                if (preview)
+                if (state.schedulePreviewLoad)
                 {
                     _ = XRTexture2D.ScheduleImportedTexturePreviewJob(
                         key.path,
                         tex,
-                        onFinished: loaded =>
-                        {
-                            loaded.SamplerName = key.samplerName;
-                            loaded.MagFilter = ETexMagFilter.Linear;
-                            loaded.MinFilter = ETexMinFilter.Linear;
-                            loaded.UWrap = ETexWrapMode.Repeat;
-                            loaded.VWrap = ETexWrapMode.Repeat;
-                            loaded.AlphaAsTransparency = true;
-                            loaded.AutoGenerateMipmaps = false;
-                            loaded.Resizable = false;
-                        },
                         onError: ex => LogImportException(
                             ex,
-                            $"[UberTexture] Preview load failed for '{key.path}' ({key.samplerName})."),
+                            $"[UberTexture] Preview load failed for '{key.path}' ({state.samplerName})."),
                         priority: JobPriority.Low);
                 }
                 else
@@ -999,7 +1066,19 @@ namespace XREngine
         private const int ImportedSurfaceDetailNormalMapMode = 0;
         private const int ImportedSurfaceDetailHeightMapMode = 1;
         private const float ImportedHeightMapScale = 1.0f;
+
+        /// <summary>Uber lighting mode for generic model imports: 6 is Realistic.</summary>
+        private const int ImportedUberLightingMode = 6;
         private const string ImportedHeightMapShaderDefine = "XRENGINE_HEIGHTMAP_MODE";
+        private const string ImportedHeightMapParallaxShaderDefine = "XRENGINE_HEIGHTMAP_POM";
+        private const string ImportedParallaxScaleParameter = "ParallaxScale";
+        private const string ImportedParallaxSilhouetteParameter = "ParallaxSilhouette";
+        private const float ImportedParallaxScale = 0.04f;
+        private const int ImportedParallaxMinSteps = 8;
+        private const int ImportedParallaxMaxSteps = 32;
+        private const int ImportedParallaxRefineSteps = 5;
+        private const string UberParallaxModeParameter = "_ParallaxMode";
+        private const float UberParallaxOcclusionMode = 1.0f;
 
         private static TextureType NormalizeTextureType(TextureType textureType)
             => textureType switch
@@ -1060,18 +1139,47 @@ namespace XREngine
         private static XRTexture? ResolveTexture(XRTexture[] textureList, int textureIndex)
             => textureIndex >= 0 && textureIndex < textureList.Length ? textureList[textureIndex] : null;
 
-        private static int ResolveSurfaceDetailTextureIndex(List<TextureSlot> textures, out bool isHeightMap)
+        /// <summary>
+        /// Resolves the surface-detail texture and how it is used. A normal slot wins over a height
+        /// (bump) slot. <see cref="ModelImportOptions.SurfaceDetailMapMode"/> selects the use; Auto
+        /// classifies the texture content with <see cref="SurfaceDetailMapClassifier"/> because OBJ
+        /// <c>map_bump</c> files can be height fields or embossed bump maps.
+        /// </summary>
+        /// <param name="usesHeightMap">True for a bump or height map (height-derived lighting normals).</param>
+        /// <param name="usesParallax">True for a height map (parallax occlusion mapping).</param>
+        /// <param name="albedoIndex">The slot index when the texture is a color (albedo) texture; otherwise -1. The method then returns -1.</param>
+        private static int ResolveSurfaceDetailTexture(
+            List<TextureSlot> textures,
+            XRTexture[] textureList,
+            out bool usesHeightMap,
+            out bool usesParallax,
+            out int albedoIndex)
         {
-            int normalIndex = ResolveTextureIndex(textures, TextureType.Normals, TextureType.NormalCamera);
-            if (normalIndex >= 0)
+            usesHeightMap = false;
+            usesParallax = false;
+            albedoIndex = -1;
+            int index = ResolveTextureIndex(textures, TextureType.Normals, TextureType.NormalCamera);
+            bool normalSlot = index >= 0;
+            if (!normalSlot)
+                index = ResolveTextureIndex(textures, TextureType.Height);
+            if (index < 0)
+                return index;
+
+            ESurfaceDetailMapMode mode = _currentImportOptions.Value?.SurfaceDetailMapMode ?? ESurfaceDetailMapMode.Auto;
+            if (mode == ESurfaceDetailMapMode.Auto &&
+                !SurfaceDetailMapClassifier.TryClassifyFile((ResolveTexture(textureList, index) as XRTexture2D)?.FilePath, out mode))
+                mode = normalSlot ? ESurfaceDetailMapMode.Normal : ESurfaceDetailMapMode.Bump;
+
+            // A color texture filed in a detail slot is not surface detail. It can still supply the base color.
+            if (mode == ESurfaceDetailMapMode.Albedo)
             {
-                isHeightMap = false;
-                return normalIndex;
+                albedoIndex = index;
+                return -1;
             }
 
-            int heightIndex = ResolveTextureIndex(textures, TextureType.Height);
-            isHeightMap = heightIndex >= 0;
-            return heightIndex;
+            usesHeightMap = mode is ESurfaceDetailMapMode.Height or ESurfaceDetailMapMode.Bump;
+            usesParallax = mode == ESurfaceDetailMapMode.Height;
+            return index;
         }
 
         private static void AppendSurfaceDetailParameters(ref ShaderVar[] parameters, bool isHeightMap)
@@ -1087,6 +1195,66 @@ namespace XREngine
                 : shader;
 
         /// <summary>
+        /// Selects the deferred GBuffer shader for a surface-detail texture. A height map selects the
+        /// height-to-normal variant. With <paramref name="usesParallax"/>, it also selects parallax
+        /// occlusion mapping (<c>Snippets/SurfaceDetailParallax.glsl</c>), which offsets UVs and depth
+        /// along the view ray.
+        /// </summary>
+        private static XRShader SelectDeferredSurfaceDetailShader(XRShader shader, bool isHeightMap, bool usesParallax)
+        {
+            XRShader selected = SelectSurfaceDetailShader(shader, isHeightMap);
+            return isHeightMap && usesParallax
+                ? ShaderHelper.CreateDefinedShaderVariant(selected, ImportedHeightMapParallaxShaderDefine) ?? selected
+                : selected;
+        }
+
+        /// <summary>
+        /// Appends the parallax occlusion parameters read by <c>Snippets/SurfaceDetailParallax.glsl</c>.
+        /// The silhouette clip starts disabled: it discards where the ray leaves UV [0, 1], which matches
+        /// mesh edges only for a single quad mapped to the whole texture. Set
+        /// <c>ParallaxSilhouette</c> to 1 on such materials.
+        /// </summary>
+        private static void AppendSurfaceParallaxParameters(ref ShaderVar[] parameters)
+        {
+            int start = parameters.Length;
+            Array.Resize(ref parameters, start + 5);
+            parameters[start + 0] = new ShaderFloat(ImportedParallaxScale, ImportedParallaxScaleParameter);
+            parameters[start + 1] = new ShaderInt(ImportedParallaxMinSteps, "ParallaxMinSteps");
+            parameters[start + 2] = new ShaderInt(ImportedParallaxMaxSteps, "ParallaxMaxSteps");
+            parameters[start + 3] = new ShaderInt(ImportedParallaxRefineSteps, "ParallaxRefineSteps");
+            parameters[start + 4] = new ShaderInt(0, ImportedParallaxSilhouetteParameter);
+        }
+
+        /// <summary>Textures that any color slot of an import uses. Their role stays Color.</summary>
+        private static readonly ConditionalWeakTable<XRTexture2D, object> s_colorRoleTextures = new();
+
+        /// <summary>
+        /// Sets the texture role from a material slot. One texture can fill several slots,
+        /// also across materials (for example base color in one material and opacity in
+        /// another). A color slot always wins, because a color texture must never cook to a
+        /// format without sRGB; a normal slot wins over a data slot.
+        /// </summary>
+        private static void AssignImportedTextureRole(XRTexture2D texture, EMaterialTextureSemantic semantic)
+        {
+            if (semantic is EMaterialTextureSemantic.BaseColor or EMaterialTextureSemantic.Emissive)
+            {
+                s_colorRoleTextures.AddOrUpdate(texture, s_colorRoleMarker);
+                texture.ImportedUsage = ETextureImportUsage.Color;
+                return;
+            }
+
+            if (s_colorRoleTextures.TryGetValue(texture, out _))
+                return;
+
+            if (semantic == EMaterialTextureSemantic.Normal)
+                texture.ImportedUsage = ETextureImportUsage.Normal;
+            else if (texture.ImportedUsage != ETextureImportUsage.Normal)
+                texture.ImportedUsage = ETextureImportUsage.Data;
+        }
+
+        private static readonly object s_colorRoleMarker = new();
+
+        /// <summary>
         /// Publishes source texture roles before legacy material factories compact or reorder sampler slots.
         /// These references intentionally use the original loaded texture array rather than <see cref="XRMaterial.Textures"/>.
         /// </summary>
@@ -1100,10 +1268,22 @@ namespace XREngine
 
             List<MaterialSurfaceTextureBinding> bindings = new(textureSlots.Count);
             int count = Math.Min(textureSlots.Count, textureList.Length);
+            XRTexture? opacityTexture = ResolveTexture(textureList, ResolveTextureIndex(textureSlots, TextureType.Opacity));
+            if (opacityTexture is not null && !HasDistinctBaseColorTexture(textureList, textureSlots, count, opacityTexture))
+                opacityTexture = null;
             for (int index = 0; index < count; index++)
             {
                 XRTexture? texture = textureList[index];
-                if (texture is null || !TryGetSurfaceTextureSemantic(NormalizeTextureType(textureSlots[index].TextureType), out EMaterialTextureSemantic semantic))
+                // Use the same effective type as the material factories. Some exporters file
+                // every map of a material in one slot type (NewSponza "metal_door" puts its
+                // base color, roughness and metalness maps in Metalness slots); the file name
+                // then names the real role.
+                if (texture is null || !TryGetSurfaceTextureSemantic(GetEffectiveTextureType(textureSlots[index]), out EMaterialTextureSemantic semantic))
+                    continue;
+
+                // Some exporters write the opacity mask into a color slot too. The mask is
+                // not a base color, so it must not take the color role or a color binding.
+                if (semantic == EMaterialTextureSemantic.BaseColor && ReferenceEquals(texture, opacityTexture))
                     continue;
 
                 ETexWrapMode wrapU = ETexWrapMode.Repeat;
@@ -1112,6 +1292,10 @@ namespace XREngine
                 {
                     wrapU = texture2D.UWrap;
                     wrapV = texture2D.VWrap;
+
+                    // The texture role selects the cooked block format (BC5 for normal maps,
+                    // BC4 for single-channel data).
+                    AssignImportedTextureRole(texture2D, semantic);
                 }
 
                 bindings.Add(new MaterialSurfaceTextureBinding(
@@ -1126,6 +1310,25 @@ namespace XREngine
             }
 
             material.SurfaceTextureBindings = [.. bindings];
+        }
+
+        /// <summary>
+        /// Returns true when a color slot holds a texture other than <paramref name="opacityTexture"/>.
+        /// Only then is a color slot that repeats the opacity mask a duplicate. A diffuse texture
+        /// that is also the opacity source stays the base color.
+        /// </summary>
+        private static bool HasDistinctBaseColorTexture(XRTexture[] textureList, List<TextureSlot> textureSlots, int count, XRTexture opacityTexture)
+        {
+            for (int index = 0; index < count; index++)
+            {
+                if (textureList[index] is not { } texture || ReferenceEquals(texture, opacityTexture))
+                    continue;
+
+                if (GetEffectiveTextureType(textureSlots[index]) is TextureType.Diffuse or TextureType.BaseColor)
+                    return true;
+            }
+
+            return false;
         }
 
         private static bool TryGetSurfaceTextureSemantic(TextureType textureType, out EMaterialTextureSemantic semantic)
@@ -1153,7 +1356,9 @@ namespace XREngine
 
             int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
 
-            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
+            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out bool usesParallax, out int albedoDetailIndex);
+            if (diffuseIndex < 0 && albedoDetailIndex >= 0)
+                diffuseIndex = albedoDetailIndex;
             int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
             int metallicIndex = ResolveTextureIndex(textures, TextureType.Metalness);
@@ -1213,6 +1418,7 @@ namespace XREngine
                         new ShaderFloat(0.9f, "Roughness"),
                         new ShaderFloat(0.0f, "Metallic"),
                         new ShaderFloat(0.0f, "Emission"),
+                        new ShaderFloat(0.0f, MaterialTransparencyParameterName),
                     ];
                     mat.RenderPass = ShaderHelper.ResolveTransparentRenderPass(transparencyMode);
                     mat.RenderOptions = new RenderingParameters()
@@ -1242,32 +1448,32 @@ namespace XREngine
                     {
                         // Sparse metallic slot is intentional: the shader expects Texture2=metallic and Texture3=roughness.
                         mat.Textures = [diffuse, normal, metallic, roughness];
-                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalRoughnessMetallicDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalRoughnessMetallicDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal && hasMetallic)
                     {
                         mat.Textures = [diffuse, normal, metallic];
-                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalMetallicFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalMetallicFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal && hasSpecular && hasAlphaMask)
                     {
                         mat.Textures = [diffuse, normal, specular, alphaMask];
-                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecAlphaFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecAlphaFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal && hasSpecular)
                     {
                         mat.Textures = [diffuse, normal, specular];
-                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal && hasAlphaMask)
                     {
                         mat.Textures = [diffuse, normal, alphaMask];
-                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalAlphaFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalAlphaFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasNormal)
                     {
                         mat.Textures = [diffuse, normal];
-                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalFragDeferred(), usesHeightMap));
+                        mat.Shaders.Add(SelectDeferredSurfaceDetailShader(ShaderHelper.LitTextureNormalFragDeferred(), usesHeightMap, usesParallax));
                     }
                     else if (hasMetallic && hasRoughness)
                     {
@@ -1325,6 +1531,8 @@ namespace XREngine
                     {
                         var parameters = mat.Parameters;
                         AppendSurfaceDetailParameters(ref parameters, usesHeightMap);
+                        if (usesParallax)
+                            AppendSurfaceParallaxParameters(ref parameters);
                         mat.Parameters = parameters;
                     }
                     mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
@@ -1369,6 +1577,10 @@ namespace XREngine
                     },
                     BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 };
+
+                // Parallax reads per-eye camera matrices and the clip depth range to write its depth offset.
+                if (mat.Parameter<ShaderFloat>(ImportedParallaxScaleParameter) is not null)
+                    mat.RenderOptions.RequiredEngineUniforms |= EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy;
             }
 
             ConfigureImportedTransparency(mat, textureList, textures);
@@ -1401,7 +1613,8 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
+            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out _, out _);
+
             int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
 
@@ -1582,10 +1795,13 @@ namespace XREngine
                 new ShaderInt(0, "_MainHueShiftColorSpace"),
                 new ShaderFloat(0.0f, "_MainHueShiftReplace"),
 
-                new ShaderInt(5, "_LightingMode"),
+                // Generic model imports use Realistic lighting. Only Poiyomi conversions keep the
+                // lighting mode of the source material (see SourceToonEnumMapper.LightingMode).
+                new ShaderInt(ImportedUberLightingMode, "_LightingMode"),
                 new ShaderInt(0, "_LightingColorMode"),
                 new ShaderInt(2, "_LightingMapMode"),
                 new ShaderInt(0, "_LightingDirectionMode"),
+                new ShaderFloat(1.0f, "_WorldAmbientOcclusionStrength"),
                 new ShaderFloat(0.0f, "_LightingCapEnabled"),
                 new ShaderFloat(10.0f, "_LightingCap"),
                 new ShaderFloat(0.0f, "_LightingMinLightBrightness"),
@@ -1813,7 +2029,7 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
+            int normalIndex = ResolveSurfaceDetailTexture(textures, textureList, out bool usesHeightMap, out bool usesParallax, out _);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
 
             XRTexture? diffuseSrc = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
@@ -1839,7 +2055,18 @@ namespace XREngine
             if (alphaMaskPath is not null)
                 alphaMask = GetOrCreateUberSamplerTexture(alphaMaskPath, "_AlphaMask");
 
-            mat.Textures = alphaMask is null ? [main, bump] : [main, bump, alphaMask];
+            // A height map also drives Uber parallax occlusion. The same file binds to _ParallaxMap;
+            // _BumpMap keeps the height-to-normal lighting detail (NormalMapMode = 1).
+            XRTexture2D? parallaxMap = usesParallax && normalPath is not null
+                ? GetOrCreateUberSamplerTexture(normalPath, "_ParallaxMap")
+                : null;
+
+            List<XRTexture?> uberTextures = [main, bump];
+            if (alphaMask is not null)
+                uberTextures.Add(alphaMask);
+            if (parallaxMap is not null)
+                uberTextures.Add(parallaxMap);
+            mat.Textures = [.. uberTextures];
 
             XRShader frag = ShaderHelper.UberFragForward();
 
@@ -1853,6 +2080,13 @@ namespace XREngine
             mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
             mat.Name = name;
             mat.RenderOptions = CreateForwardPlusUberShaderRenderOptions();
+
+            if (parallaxMap is not null)
+            {
+                mat.Parameter<ShaderFloat>(UberParallaxModeParameter)?.SetValue(UberParallaxOcclusionMode);
+                mat.Parameter<ShaderFloat>("_ParallaxStrength")?.SetValue(ImportedParallaxScale);
+                mat.SetUberFeatureEnabled("parallax", true);
+            }
 
             ConfigureImportedTransparency(mat, textureList, textures);
             mat.PrepareUberVariantImmediately();
@@ -2086,7 +2320,7 @@ namespace XREngine
                     {
                         assimpProgress?.Invoke(0.02f);
                         RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletSourceParserEntry();
-                        scene = _assimp.ImportFile(SourceFilePath, effectiveImportOptions.ImportSteps.ToAssimp());
+                        scene = AssimpModelFileImporter.Import(_assimp, SourceFilePath, effectiveImportOptions.ImportSteps.ToAssimp());
                         assimpProgress?.Invoke(0.12f);
                     }
 
@@ -2123,6 +2357,7 @@ namespace XREngine
                         NormalizeNodeScales(
                             scene,
                             rootNode,
+                            effectiveImportOptions,
                             cancellationToken,
                             processMeshesAsync,
                             batchSubmeshAdds,
@@ -2427,6 +2662,7 @@ namespace XREngine
         private void NormalizeNodeScales(
             AScene scene,
             SceneNode rootNode,
+            ModelImportOptions importOptions,
             CancellationToken cancellationToken,
             bool processMeshesAsynchronously,
             bool batchSubmeshAddsDuringAsyncImport,
@@ -2437,6 +2673,25 @@ namespace XREngine
             int spatialPartitionMaxTriangles)
         {
             using var t = RuntimeModelImportServices.Current.StartProfileScope("Normalizing node scales");
+            Matrix4x4 originalAssimpRootWorld = _nodeTransforms.Count > 0
+                ? _nodeTransforms[0].SceneNode.Transform.WorldMatrix
+                : Matrix4x4.Identity;
+            AssimpFbxSkinBindPoseResolver? fbxSkinBinds = null;
+            if (string.Equals(Path.GetExtension(SourceFilePath), ".fbx", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    fbxSkinBinds = new AssimpFbxSkinBindPoseResolver(
+                        SourceFilePath,
+                        importOptions.FbxPivotPolicy,
+                        importOptions.MakeLeftHanded);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    LogImportWarning(SourceFilePath,
+                        $"[ModelAssetImporter] Cannot read serialized FBX skin binds for '{SourceFilePath}': {ex.Message}");
+                }
+            }
 
             foreach (var nodeInfo in _nodeTransforms)
             {
@@ -2495,12 +2750,36 @@ namespace XREngine
                 Matrix4x4 unskinnedGeometryTransform = CalculateAssimpUnskinnedGeometryTransform(
                     nodeInfo.OriginalWorldMatrix,
                     nodeInfo.SceneNode.Transform.WorldMatrix);
+                Dictionary<int, Matrix4x4>? authoredSkinBinds = null;
+                if (fbxSkinBinds is not null)
+                {
+                    foreach (int meshIndex in nodeInfo.MeshIndices)
+                    {
+                        Mesh sourceMesh = scene.Meshes[meshIndex];
+                        if (!HasWeightedBones(sourceMesh))
+                            continue;
+                        if (!fbxSkinBinds.TryResolve(
+                            sourceMesh.Name,
+                            nodeInfo.SceneNode.Name ?? string.Empty,
+                            originalAssimpRootWorld,
+                            rootTransform.InverseWorldMatrix,
+                            out Matrix4x4 authoredBind,
+                            out string reason))
+                        {
+                            LogImportWarning(SourceFilePath,
+                                $"[ModelAssetImporter] Cannot use serialized FBX skin bind for mesh '{sourceMesh.Name}' on node '{nodeInfo.SceneNode.Name}': {reason}. Using the Assimp node bind.");
+                            continue;
+                        }
+                        (authoredSkinBinds ??= new()).Add(meshIndex, authoredBind);
+                    }
+                }
                 EnqueueProcessMeshes(
                     nodeInfo.MeshIndices,
                     scene,
                     nodeInfo.SceneNode,
                     nodeInfo.SceneNode.Name ?? "Imported Mesh",
                     skinnedGeometryTransform,
+                    authoredSkinBinds,
                     unskinnedGeometryTransform,
                     rootTransform,
                     cancellationToken,
@@ -2676,6 +2955,7 @@ namespace XREngine
             SceneNode sceneNode,
             string componentBaseName,
             Matrix4x4 skinnedDataTransform,
+            IReadOnlyDictionary<int, Matrix4x4>? authoredSkinBinds,
             Matrix4x4 unskinnedDataTransform,
             TransformBase rootTransform,
             CancellationToken cancellationToken,
@@ -2799,8 +3079,13 @@ namespace XREngine
                 // Weighted meshes use the legacy root-space skinning convention.
                 // Unweighted child meshes keep node-local vertices so the scene node
                 // hierarchy supplies rotation/translation exactly once at render time.
-                Matrix4x4 dataTransform = HasWeightedBones(mesh) ? skinnedDataTransform : unskinnedDataTransform;
+                Matrix4x4 dataTransform = HasWeightedBones(mesh)
+                    ? authoredSkinBinds is not null && authoredSkinBinds.TryGetValue(meshIndex, out Matrix4x4 authoredBind)
+                        ? authoredBind
+                        : skinnedDataTransform
+                    : unskinnedDataTransform;
                 (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform, cancellationToken);
+                ReadProperties(scene.Materials[mesh.MaterialIndex], out string sourceMaterialName, out _, out _, out _);
                 // BindRootMatrix is not set for weighted Assimp/legacy meshes:
                 // the legacy GLSL convention outputs root-local positions (via implicit transpose),
                 // and ModelMatrix correctly transforms root-local to world. Pre-multiplying rootBind
@@ -2812,7 +3097,8 @@ namespace XREngine
                 })
                 {
                     Name = mesh.Name,
-                    RootTransform = rootTransform
+                    RootTransform = rootTransform,
+                    ImportedSourceMaterialName = sourceMaterialName,
                 };
 
                 IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(
@@ -2847,7 +3133,8 @@ namespace XREngine
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            XRMesh xrMesh = AssimpMeshFactory.Create(mesh, _nodeCache, dataTransform);
+            bool importBlendShapeNormals = (_currentImportOptions.Value ?? ImportOptions)?.ImportBlendShapeNormals ?? true;
+            XRMesh xrMesh = AssimpMeshFactory.Create(mesh, _nodeCache, dataTransform, importBlendShapeNormals);
             cancellationToken.ThrowIfCancellationRequested();
             var xrMaterial = ResolveMaterial(mesh, scene, cancellationToken);
             return (xrMesh, xrMaterial);

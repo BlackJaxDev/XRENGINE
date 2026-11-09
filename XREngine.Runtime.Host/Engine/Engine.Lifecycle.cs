@@ -135,6 +135,7 @@ namespace XREngine
                 EnsureMemoryPolicyConfigured(startupSettings);
                 if (allowsWindows)
                     ValidateGpuRenderingStartupConfiguration();
+                ApplyProcessorCacheAffinityPolicy();
                 ResolveExecutionTopology();
                 ConfigureJobManager(GameSettings);
                 if (allowsWindows)
@@ -154,6 +155,10 @@ namespace XREngine
                 {
                     RuntimeEngine.Rendering.SecondaryContext.InitializeIfSupported(RuntimeEngine.Windows.FirstOrDefault());
                     XRWindow.AnyWindowFocusChanged += WindowFocusChanged;
+                    // A window that opens behind another app gets no focus event. Apply the
+                    // unfocused state now, so a background launch uses the unfocused render limit.
+                    if (RuntimeEngine.Windows.FirstOrDefault() is { IsFocused: false } firstWindow)
+                        WindowFocusChanged(firstWindow, false);
                 }
 
                 // VR initialization can run asynchronously in the background
@@ -163,6 +168,9 @@ namespace XREngine
 
                 // Start the engine timer for update/render ticks
                 Time.Initialize(GameSettings, EffectiveUserSettings);
+                // VR uses its own render limit. Re-resolve it when a VR runtime starts or stops.
+                RuntimeEngine.VRState.IsInVRChanged -= OnVrPresenceChanged;
+                RuntimeEngine.VRState.IsInVRChanged += OnVrPresenceChanged;
 
                 // Initialize networking based on configuration
                 InitializeNetworking(startupSettings);
@@ -278,6 +286,10 @@ namespace XREngine
             // the closing window has selected process-exit abandonment instead of unsafe teardown.
             bool coreLoopsStopped = Time.Timer.StopAndWait(TimeSpan.FromSeconds(2));
             if (!coreLoopsStopped)
+                Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
+
+            // Timer quiescence alone does not prove that asynchronous render work settled.
+            if (!DrainAsynchronousRenderWork(closeAdmission: true))
                 Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
 
             if (Volatile.Read(ref _abandonProcessExitCleanup) != 0)

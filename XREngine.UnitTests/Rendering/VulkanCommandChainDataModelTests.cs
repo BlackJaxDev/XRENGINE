@@ -2468,7 +2468,8 @@ public sealed class VulkanCommandChainDataModelTests
         string primaryRecording = SourceContractWorkspace.ReadExactFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
 
-        workers.ShouldContain("RenderWorkBatchLease lease = domain.RentBatch(activeLaneCount);");
+        workers.ShouldContain("RenderWorkBatchLease lease = domain.RentBatch(eligibleLaneCount);");
+        workers.ShouldContain("lease.ShrinkItemCount(activeLaneCount);");
         workers.ShouldContain("result = domain.ExecuteAndWait(");
         workers.ShouldContain("new(FrameTelemetry, EVulkanCpuStage.WorkerWait);");
         workers.ShouldContain("InitializeRenderLaneCommandAttachments();");

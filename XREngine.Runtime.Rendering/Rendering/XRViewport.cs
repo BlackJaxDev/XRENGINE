@@ -307,6 +307,14 @@ namespace XREngine.Rendering
         public bool RendersToExternalSwapchainTarget { get; set; }
 
         /// <summary>
+        /// Quad-view pair that this OpenXR stereo viewport renders: 0 for the wide pair,
+        /// 1 for the inset pair, or <see cref="RenderFrameViewSetPublication.AllViews"/>
+        /// for every published view. Capture, packages and frame plans read the published
+        /// view set through this pair.
+        /// </summary>
+        public int OpenXrViewPair { get; set; } = RenderFrameViewSetPublication.AllViews;
+
+        /// <summary>
         /// Monotonic sequence for full scene renders issued by this viewport. Render commands use
         /// this output-local counter for temporal model history so an independently scheduled
         /// desktop, mirror, or XR viewport cannot consume another output's previous transform.
@@ -1727,7 +1735,7 @@ namespace XREngine.Rendering
 
             VisualScene visualScene = world!.VisualScene!;
             bool stereoFamily =
-                RenderFrameViewSetPublication.TryGet(State.RenderFrameId, out RenderFrameViewSet publishedViews) &&
+                RenderFrameViewSetPublication.TryGet(State.RenderFrameId, OpenXrViewPair, out RenderFrameViewSet publishedViews) &&
                 publishedViews.ViewCount > 1 &&
                 camera.StereoEyeLeft.HasValue;
             XRRenderPipelineInstance.RenderingState visibilityState = _renderPipeline.CollectVisibleState;
@@ -1818,7 +1826,6 @@ namespace XREngine.Rendering
         {
             long packagePathStart = CollectVisibleStageTimings.StartPath();
             RenderResourceGeneration? activeGeneration = _renderPipeline.ActiveGeneration;
-            _renderPipeline.PublishStagedImportedResources(activeGeneration);
             RenderResourceRegistry? activeRegistry = activeGeneration?.Registry;
             int descriptorGeneration = activeRegistry?.DescriptorRevision ?? 0;
             int instanceRevision = activeRegistry?.InstanceRevision ?? 0;
@@ -1985,7 +1992,10 @@ namespace XREngine.Rendering
             if (!pacing.IsDue)
             {
                 long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                CollectVisible_ScreenSpaceUI();
+                // With the VR mirror off the window does not show this viewport, so its
+                // screen-space UI has no consumer. The canvas lookup searches the scene.
+                if (pacing.SkipReason != EFrameOutputSkipReason.MirrorOff)
+                    CollectVisible_ScreenSpaceUI();
                 PrepareBackendReadyFramePackage(_renderPipeline.MeshRenderCommands);
                 RecordFrameOutput(
                     EFrameOutputPhase.Collect,
@@ -2171,6 +2181,8 @@ namespace XREngine.Rendering
                 // so the editor overlay stays responsive.
                 SwapBuffers_ScreenSpaceUI();
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
+                _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
+                _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -2188,6 +2200,8 @@ namespace XREngine.Rendering
                 long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 SwapBuffers_ScreenSpaceUI();
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
+                _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
+                _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -2396,7 +2410,7 @@ namespace XREngine.Rendering
                 {
                     XRViewport registered = window.Viewports[viewportIndex];
                     if (!ReferenceEquals(registered.World, world) ||
-                        registered.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                        registered.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
                         continue;
 
                     bool listed = false;
@@ -2415,7 +2429,7 @@ namespace XREngine.Rendering
             for (int index = 0; index < desktopConsumers.Length; ++index)
             {
                 XRViewport consumer = desktopConsumers[index];
-                if (consumer.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                if (consumer.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
                     continue;
 
                 ++ownerCount;
@@ -2641,9 +2655,13 @@ namespace XREngine.Rendering
 
                 // Visibility-driven compute deformation (skinning/blendshapes).
                 // This runs on the render thread and uses the swapped (rendering) command buffers.
-                // Skip when 3D scene rendering is suppressed — the stale commands don't need re-skinning.
+                // Skip when 3D scene rendering is suppressed, because the stale commands do not
+                // need new skinning. Shadow views and outputs that do not own the deformation
+                // only read the results of the owning output. A two-pass VR eye uses this mono
+                // path, so it passes its eye identity, not the stereo flag.
                 var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-                if (!Suppress3DSceneRendering)
+                if (!Suppress3DSceneRendering &&
+                    SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
                     SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
                 LastRenderedTargetFBO = targetFbo;
@@ -2900,6 +2918,19 @@ namespace XREngine.Rendering
             bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
             long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
+            // The stereo frame owns its compute deformation. Without this, the eyes
+            // read skinned outputs that only a desktop frame updates, so the avatar
+            // pose in the headset advances at the desktop rate.
+            // The stereo pipeline is installed as the current pipeline while it
+            // dispatches, so that the dispatches use that pipeline's frame snapshot pool
+            // and frame-operation context instead of allocating new snapshots each frame.
+            if (!Suppress3DSceneRendering &&
+                SkinningPrepassDispatcher.OwnsDeformation(vrEyeRender: true, shadowPass: false))
+            {
+                using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
+                    SkinningPrepassDispatcher.Instance.RunVisible(MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands);
+            }
+
             LastRenderedTargetFBO = targetFbo;
             _ = Interlocked.Increment(ref _sceneRenderSequenceId);
             bool recorded = _renderPipeline.TryRenderWithFrozenDesktopHistory(
@@ -2937,6 +2968,11 @@ namespace XREngine.Rendering
             return recorded;
         }
 
+        /// <summary>True when the XR frame priority held this viewport's scene for the current render.</summary>
+        internal bool IsHeldForXrFramePriority
+            => !_renderingFrameOutputSceneDue &&
+               _renderingFrameOutputPacing.SkipReason == EFrameOutputSkipReason.Budget;
+
         private FrameOutputPacingDecision EvaluateFrameOutputPacing(EFrameOutputKind fallbackOutputKind)
         {
             EVrOutputViewKind viewKind = ResolveOutputViewKind();
@@ -2963,7 +2999,16 @@ namespace XREngine.Rendering
                 request,
                 pacing.IsDue,
                 deferralReason);
-            if (scheduling.Execute && !pacing.IsDue)
+            // The admission ledger must not force a fresh render over a VR policy skip. A
+            // budget hold has its own limit on held frames, and it admits the first frame.
+            // With the mirror off, or with the window composed from the eye images, no
+            // consumer reads this viewport's scene, so a forced render only adds collect
+            // and record work to the XR frame.
+            bool vrPolicyHold = presentation.IsInVR &&
+                pacing.SkipReason is EFrameOutputSkipReason.Budget
+                    or EFrameOutputSkipReason.MirrorOff
+                    or EFrameOutputSkipReason.HeldLastImage;
+            if (scheduling.Execute && !pacing.IsDue && !vrPolicyHold)
             {
                 pacing = pacing with
                 {
@@ -3053,6 +3098,12 @@ namespace XREngine.Rendering
 
             return fallback;
         }
+
+        /// <summary>
+        /// True when this viewport renders a VR eye output, in any view render mode.
+        /// </summary>
+        internal bool IsVrEyeOutput
+            => ResolveOutputViewKind() is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye;
 
         private bool IsDesktopFacingOutput()
         {

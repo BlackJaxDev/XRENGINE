@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
@@ -9,7 +11,7 @@ uniform sampler2D TransparentRevealageTex;
 
 vec2 GetUv()
 {
-    return FragPos.xy * 0.5 + 0.5;
+    return XRENGINE_ClipXYToFramebufferTextureUV(FragPos.xy);
 }
 
 void main()

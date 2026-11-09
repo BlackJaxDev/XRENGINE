@@ -134,7 +134,7 @@ public partial class HumanoidComponent
             _preFeetProjectedRootPose = WeightProjectedRootPose(_preFeetProjectedRootPose, _importedBodySampleWeight);
             _preFeetBodyAllocationProjectedRootPose = WeightProjectedRootPose(_preFeetBodyAllocationProjectedRootPose, _importedBodySampleWeight);
         }
-        beforeProjection = requested * CreateProjectedRootMatrix(_bodyAllocationProjectedRootPose);
+        beforeProjection = requested * ToAvatarFacing(compiled, CreateProjectedRootMatrix(_bodyAllocationProjectedRootPose));
         return HumanoidBodyFrameMath.IsRigid(requested) && HumanoidBodyFrameMath.IsRigid(beforeProjection);
     }
 
@@ -171,6 +171,8 @@ public partial class HumanoidComponent
         }
     }
 
+    private const float AvatarFacingYawTolerance = 1.0e-3f;
+
     /// <summary>
     /// Converts authored Body channels to one requested rigid frame, not a Hips
     /// delta. Neutral Body is immutable; scale, allocation and root removal each
@@ -198,10 +200,27 @@ public partial class HumanoidComponent
         // Imported RootT is the absolute normalized Body center. The neutral Body
         // frame is only the interpolation origin; adding it here would count the
         // avatar's bind-height twice before projection/allocation.
-        return Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(rotation))
+        return ToAvatarFacing(compiled, Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(rotation))
             * Matrix4x4.CreateTranslation(translation)
             * CreateImportedBodyAllocationMatrix(compiled, rootPolicy, 1.0f)
-            * InvertProjectedRootMatrix(_bodyAllocationProjectedRootPose);
+            * InvertProjectedRootMatrix(_bodyAllocationProjectedRootPose));
+    }
+
+    /// <summary>
+    /// Moves a frame from the imported clip space, where the avatar faces +Z, to the facing of this avatar.
+    /// </summary>
+    /// <remarks>
+    /// Unity prefab imports mirror Z and face -Z, while the clip contract mirrors X and faces +Z.
+    /// The two spaces differ by a yaw. Without this step, Body pitch and roll have the opposite sign on the avatar.
+    /// </remarks>
+    private static Matrix4x4 ToAvatarFacing(CompiledHumanoidAvatarDefinition compiled, in Matrix4x4 clipFrame)
+    {
+        Vector3 forward = compiled.BodyAxes.Forward;
+        float yaw = MathF.Atan2(forward.X, forward.Z);
+        if (!float.IsFinite(yaw) || MathF.Abs(yaw) <= AvatarFacingYawTolerance)
+            return clipFrame;
+
+        return Matrix4x4.CreateRotationY(-yaw) * clipFrame * Matrix4x4.CreateRotationY(yaw);
     }
 
     private void PublishBodyFrameDiagnostic(CompiledHumanoidAvatarDefinition compiled, Matrix4x4 beforeProjection, bool hasRootMotionInput)

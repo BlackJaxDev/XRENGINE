@@ -67,6 +67,7 @@ namespace XREngine.Rendering.Commands
         {
             using var renderTiming = BeginTiming("GPURenderPassCollection.Render");
             CapturePassPolicySnapshot();
+            SelectMaterialDrawPathForScene(scene);
             GpuProgramsPendingThisFrame = false;
             _viewBatchClassificationFrameId = 0u;
             _viewBatchClassificationPublished = false;
@@ -74,10 +75,20 @@ namespace XREngine.Rendering.Commands
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render begin (pass={0})", RenderPass);
             Dbg("Render begin", "Lifecycle");
 
+            bool requiredSharedShadow = RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true;
+            if (requiredSharedShadow && !scene.HasSharedOpaqueShadowCommand(RenderPass))
+            {
+                ClearExactTransparentMultiviewRejection();
+                ClearPassPolicySnapshot();
+                return;
+            }
+
             if (!TryInitializeRender(scene, out XRCamera? camera) || camera is null)
             {
                 ClearExactTransparentMultiviewRejection();
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow pass has no ready GPU render state.");
                 return;
             }
 
@@ -86,7 +97,19 @@ namespace XREngine.Rendering.Commands
                 GpuProgramsPendingThisFrame = true;
                 ClearExactTransparentMultiviewRejection();
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow GPU programs are not ready.");
                 return;
+            }
+
+            if (requiredSharedShadow &&
+                (MeshSubmissionStrategy != EMeshSubmissionStrategy.GpuIndirectZeroReadback ||
+                 MeshPrimitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly))
+            {
+                ClearExactTransparentMultiviewRejection();
+                ClearPassPolicySnapshot();
+                throw new RenderResourcePreparationPendingException(
+                    "Shared opaque shadows require the traditional zero-readback indirect mesh path.");
             }
 
             // Meshlet debug display force-flip:
@@ -103,6 +126,13 @@ namespace XREngine.Rendering.Commands
                 savedStrategy != EMeshSubmissionStrategy.CpuDirect &&
                 savedPrimitivePathPreference == EMeshPrimitivePathPreference.TraditionalOnly &&
                 GpuBvhDebugSettings.ShouldForceMeshletForDebugDisplay(camera, RenderPass);
+
+            if (requiredSharedShadow && meshletDebugForced)
+            {
+                ClearPassPolicySnapshot();
+                throw new RenderResourcePreparationPendingException(
+                    "Meshlet debug drawing cannot write a shared shadow atlas tile.");
+            }
 
             if (meshletDebugForced)
             {
@@ -128,6 +158,21 @@ namespace XREngine.Rendering.Commands
                 ? RenderGraphPassIndexOverride
                 : RenderPass;
             using var renderGraphPassScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(renderGraphPassIndex);
+            if (!scene.TryPrepareLodTransitionBuffer(
+                    AbstractRenderer.Current ?? throw new InvalidOperationException("GPU LOD publication requires a renderer."),
+                    out string lodPublicationReason))
+            {
+                GpuProgramsPendingThisFrame = true;
+                ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException(lodPublicationReason);
+                Debug.RenderingWarningEvery(
+                    "GPUScene.LodTransitionPublication",
+                    TimeSpan.FromSeconds(2),
+                    "GPU LOD transition publication is deferred: {0}",
+                    lodPublicationReason);
+                return;
+            }
             ResetZeroReadbackProgramPendingState();
             bool useTwoPassGpuHiZ = TryPrepareGpuHiZTwoPass(scene, camera, out GpuHiZDepthInput twoPassDepthInput);
             Stopwatch resetStopwatch = Stopwatch.StartNew();
@@ -141,6 +186,8 @@ namespace XREngine.Rendering.Commands
             if (!ResetCounters())
             {
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow GPU counters are not ready.");
                 return;
             }
             resetStopwatch.Stop();
@@ -151,6 +198,8 @@ namespace XREngine.Rendering.Commands
             if (!Cull(scene, camera, deferGpuHiZ: useTwoPassGpuHiZ))
             {
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow GPU cull did not complete.");
                 return;
             }
             LogVulkanCounterDiagnostics("after-cull");
@@ -161,6 +210,8 @@ namespace XREngine.Rendering.Commands
             if (!submitted)
             {
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow visible set was not submitted.");
                 return;
             }
 
@@ -285,7 +336,8 @@ namespace XREngine.Rendering.Commands
             if (batches is not null)
                 Log(LogCategory.Materials, LogLevel.Info, "Material batches={0}, visible commands={1}, phase={2}", batches.Count, VisibleCommandCount, phaseLabel);
 
-            if (!PrepareMaterialTableAndValidateResidency(scene, batches))
+            if (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass != true &&
+                !PrepareMaterialTableAndValidateResidency(scene, batches))
             {
                 Dbg($"Render abort ({phaseLabel}) - material table residency validation failed", "Materials");
                 return false;
@@ -809,7 +861,6 @@ namespace XREngine.Rendering.Commands
             const EMemoryBarrierMask postLodBarrier = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command;
             _lodSelectComputeShader.DispatchCompute(dispatchGroups, 1, 1, postLodBarrier);
             AbstractRenderer.Current?.MemoryBarrier(postLodBarrier);
-            scene.MarkLodTransitionBufferGpuWritten();
             // Turn GPU-raised LOD residency requests (from earlier frames) into atlas loads.
             // Internally frame-throttled and a no-op unless StreamMeshLodsOnDemand is enabled.
             scene.ServiceLodStreamingRequests();
@@ -1876,7 +1927,15 @@ namespace XREngine.Rendering.Commands
             if (!VulkanFeatureProfile.EnableBindlessMaterialTable && !materialTableRequired)
                 return true;
 
+            // The per-material bucket scan binds each material through its own
+            // program and never reads the table, so building rows for it only
+            // costs render-thread time.
+            if (ZeroReadbackMaterialDrawPath == EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic &&
+                MeshPrimitivePathPreference == EMeshPrimitivePathPreference.TraditionalOnly)
+                return true;
+
             _materialTable ??= new GPUMaterialTable(128);
+            BeginMaterialTextureReadinessUpdate();
             var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
             XRMaterial? overrideMaterial = renderState?.OverrideMaterial;
             bool useDepthNormalMaterialVariants = renderState?.UseDepthNormalMaterialVariants ?? false;
@@ -2038,8 +2097,15 @@ namespace XREngine.Rendering.Commands
                 }
 
                 XRMaterial? effectiveMaterial = ResolveEffectiveGpuMaterial(material, overrideMaterial, useDepthNormalMaterialVariants);
+                // Only the plain residency check is cached. Descriptor-index and
+                // bindless modes publish texture references that the backend owns.
+                bool cacheTextureReadiness = textureReferenceMode == EMaterialTableTextureReferenceMode.None;
+                bool texturesConfirmedResident = cacheTextureReadiness &&
+                    effectiveMaterial is not null &&
+                    IsMaterialTextureReadinessConfirmed(materialId, effectiveMaterial);
                 GPUMaterialEntry entry = BuildMaterialEntry(
                     effectiveMaterial,
+                    texturesConfirmedResident,
                     textureReferenceMode,
                     materialCapability,
                     out GPUMaterialTextureReferences textureReferences,
@@ -2047,6 +2113,11 @@ namespace XREngine.Rendering.Commands
                     out int rowNonReadyTextureReferences,
                     out ulong rowDescriptorPublicationGeneration);
                 _materialTable!.AddOrUpdate(materialId, entry, textureReferences);
+                if (cacheTextureReadiness && !texturesConfirmedResident)
+                    RecordMaterialTextureReadiness(
+                        materialId,
+                        effectiveMaterial,
+                        residencyStatus == EMaterialTextureReferenceStatus.Ready);
 
                 if (residencyStatus == EMaterialTextureReferenceStatus.Ready)
                     readyRows++;
@@ -2059,8 +2130,14 @@ namespace XREngine.Rendering.Commands
             return readyRows == materialMap.Count && invalidMaterialIds == 0;
         }
 
+        /// <summary>
+        /// Builds one material-table row. When <paramref name="texturesConfirmedResident"/>
+        /// is true, an earlier update confirmed that every texture of the material is
+        /// resident, so the row sets the texture flags without a new residency check.
+        /// </summary>
         private static GPUMaterialEntry BuildMaterialEntry(
             XRMaterial? material,
+            bool texturesConfirmedResident,
             EMaterialTableTextureReferenceMode textureReferenceMode,
             IMaterialTableBackendCapability? materialCapability,
             out GPUMaterialTextureReferences textureReferences,
@@ -2087,7 +2164,9 @@ namespace XREngine.Rendering.Commands
             XRTexture? rm = source.RM;
             flags = entry.Flags;
 
-            if (albedo is not null)
+            if (albedo is not null && texturesConfirmedResident)
+                flags |= 1u << 0;
+            else if (albedo is not null)
             {
                 flags |= 1u << 0;
                 MaterialTextureReferenceResolution resolution = ResolveMaterialTexture(
@@ -2104,7 +2183,9 @@ namespace XREngine.Rendering.Commands
                 textureReferences = textureReferences with { Albedo = resolution.Reference };
             }
 
-            if (normal is not null)
+            if (normal is not null && texturesConfirmedResident)
+                flags |= 1u << 1;
+            else if (normal is not null)
             {
                 flags |= 1u << 1;
                 MaterialTextureReferenceResolution resolution = ResolveMaterialTexture(
@@ -2121,7 +2202,9 @@ namespace XREngine.Rendering.Commands
                 textureReferences = textureReferences with { Normal = resolution.Reference };
             }
 
-            if (rm is not null)
+            if (rm is not null && texturesConfirmedResident)
+                flags |= 1u << 2;
+            else if (rm is not null)
             {
                 flags |= 1u << 2;
                 MaterialTextureReferenceResolution resolution = ResolveMaterialTexture(

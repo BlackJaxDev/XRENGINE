@@ -1110,6 +1110,15 @@ namespace XREngine.Scene
                 return false;
             }
 
+            // The moving-camera hold is opt-in. Without it, a cascade whose content changed
+            // refreshes in this frame, so it keeps full resolution and coverage while the
+            // camera moves.
+            if (!RuntimeEngine.Rendering.Settings.HoldDirectionalCascadesWhileCameraMoves)
+            {
+                forcedFresh = true;
+                return false;
+            }
+
             // Shadow publication participates in persistent mesh binding-artifact
             // generations. Publishing even one moving cascade invalidates those
             // artifacts for every visible mesh. Hold the last internally coherent
@@ -1931,17 +1940,10 @@ namespace XREngine.Scene
             Add(ref hash, light.ShadowMapResolutionWidth);
             Add(ref hash, light.ShadowMapResolutionHeight);
             Add(ref hash, World.VisualScene.ShadowCasterMembershipRevision);
-            if (light is DirectionalLightComponent directionalLight)
-            {
-                Add(
-                    ref hash,
-                    directionalLight.GetShadowCasterCommandSetSignature(
-                        projectionType,
-                        source,
-                        faceOrCascadeIndex));
-            }
-            if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary &&
-                World.VisualScene.TryGetCoveredShadowCasterOutputRevision(cameraLayerMask, out ulong outputRevision))
+            Add(ref hash, light.GetShadowCasterCommandSetSignature(
+                projectionType, source, faceOrCascadeIndex));
+            if (World.VisualScene.TryGetCoveredShadowCasterOutputRevision(
+                    cameraLayerMask, out ulong outputRevision))
                 Add(ref hash, outputRevision);
             if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary)
                 AddDirectionalCascadeMatrix(ref hash, view, projection, desiredResolution);

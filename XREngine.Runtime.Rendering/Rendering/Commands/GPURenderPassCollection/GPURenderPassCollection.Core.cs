@@ -10,6 +10,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Materials;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.GpuDispatchLogger;
 
@@ -264,6 +265,43 @@ namespace XREngine.Rendering.Commands
             => _passPolicySnapshotValid
                 ? _passValidationLoggingEnabled
                 : RuntimeEngine.EffectiveSettings.EnableGpuIndirectValidationLogging;
+
+        private GPUScene? _uberDrawPathScene;
+        private int _uberDrawPathMaterialCount = -1;
+        private bool _uberDrawPathSceneHasUber;
+
+        /// <summary>
+        /// The shared material-table shader expresses only the base surface of uber materials, so a
+        /// scene that holds any uses per-material programs unless
+        /// <c>ZeroReadbackUberMaterialsUseMaterialTable</c> accepts the base look. A traditional GPU
+        /// indirect draw has this choice. A meshlet draw has no per-material bucket shader and keeps
+        /// the table.
+        /// </summary>
+        private void SelectMaterialDrawPathForScene(GPUScene scene)
+        {
+            if (MeshPrimitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly ||
+                !UsesCompactMaterialTableSubmission(_passZeroReadbackMaterialDrawPath))
+                return;
+
+            IReadOnlyDictionary<uint, XRMaterial> materials = GetMaterialMap(scene);
+            if (!ReferenceEquals(_uberDrawPathScene, scene) || _uberDrawPathMaterialCount != materials.Count)
+            {
+                _uberDrawPathScene = scene;
+                _uberDrawPathMaterialCount = materials.Count;
+                _uberDrawPathSceneHasUber = false;
+                foreach (XRMaterial material in materials.Values)
+                {
+                    if (material.Parameter<ShaderInt>("_LightingMode") is not null)
+                    {
+                        _uberDrawPathSceneHasUber = true;
+                        break;
+                    }
+                }
+            }
+
+            if (_uberDrawPathSceneHasUber && !RuntimeEngine.Rendering.Settings.ZeroReadbackUberMaterialsUseMaterialTable)
+                _passZeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic;
+        }
 
         private void CapturePassPolicySnapshot()
         {

@@ -15,7 +15,7 @@ public struct AdvancedDeformedVertex
     /// Stable identity for the canonical packed deformation layout. Source
     /// mesh layouts are normalized into this layout before dispatch.
     /// </summary>
-    public const ulong CanonicalLayoutId = 0x4144_5631_0040_0001UL;
+    public const ulong CanonicalLayoutId = 0x4144_5631_0040_0002UL;
 
     public Vector3 Position;
     public uint NormalOct;
@@ -27,8 +27,9 @@ public struct AdvancedDeformedVertex
     public uint Custom0;
     public uint SourceVertex;
     public uint Flags;
-    public uint Reserved0;
-    public uint Reserved1;
+    public uint TexCoord2Half;
+    public uint TexCoord3Half;
+    /// <summary>Original UV tile IDs and the validity bit for triangle coverage.</summary>
     public uint Reserved2;
     public uint Reserved3;
 }

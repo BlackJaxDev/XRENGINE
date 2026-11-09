@@ -14,6 +14,7 @@ internal sealed partial class VulkanCommandRuntime
     private const byte RequiredProducerOperationBit = 1 << 1;
     private static readonly string[] EarlyVisibilityRasterGpuProfilerPath = ["Advanced", "Visibility", "RasterEarly"];
     private static readonly string[] LateVisibilityRasterGpuProfilerPath = ["Advanced", "Visibility", "RasterLate"];
+    private static readonly string[] DecalBufferGpuProfilerPath = ["Advanced", "Decals", "DBuffer"];
 
     private bool RecordPrimaryOperations(scoped ref PrimaryCommandBufferRecordingState recordingState,
         int firstOperation = 0, int endOperation = -1, int skipOperation = -1)
@@ -285,6 +286,8 @@ internal sealed partial class VulkanCommandRuntime
                 RecordAdvancedVisibilityLateRasterPayload(ref state, in payload, in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.MultisampleResolve) =>
                 RecordAdvancedVisibilityMultisampleResolvePayload(ref state, in payload, in info),
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.DecalBuffer) =>
+                RecordAdvancedDecalBufferPayload(ref state, in payload, in info),
             (EAdvancedRenderStage.WorkClassification, EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.AmbientOcclusion, EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.NativeOpaqueShading, EAdvancedVisibilityStageBackendPhase.Complete) =>
@@ -313,6 +316,9 @@ internal sealed partial class VulkanCommandRuntime
                 EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.MultisampleResolve) =>
+                EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.DecalBuffer) =>
                 EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
             (EAdvancedRenderStage.WorkClassification,
                 EAdvancedVisibilityStageBackendPhase.Complete) =>
@@ -640,6 +646,115 @@ internal sealed partial class VulkanCommandRuntime
         return RecordAdvancedVisibilityRasterPayload(ref state, in latePayload, in info);
     }
 
+    /// <summary>
+    /// Records the mesh surface decal buffer: clears both decal targets, then draws the decal
+    /// bins of the early and the late argument segments against the resolved depth (test only).
+    /// Native opaque shading reads the targets after this pass.
+    /// </summary>
+    private unsafe int RecordAdvancedDecalBufferPayload(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        in VulkanPrimaryOperationRecordingInfo info)
+    {
+        FramePlan framePlan = state.FramePlan
+            ?? throw new VulkanPlanPreconditionException(
+                "Advanced decal buffer reached recording without an accepted frame plan.");
+        VulkanPreparedStableBinStream bins = framePlan.GetAdvancedVisibilityFamilyBins(
+            payload.Request.Reservation, allowCreate: false);
+        if (!payload.State.IsValid || !payload.SceneState.IsValid ||
+            !payload.TargetClosure.IsValid ||
+            payload.TargetClosure.Kind != EVulkanAdvancedVisibilityTargetKind.DecalBuffer ||
+            !bins.HasSealedSubmissionPlans || payload.Request.Views.ViewCount <= 0 ||
+            !info.BeginsRendering)
+        {
+            throw new VulkanPlanPreconditionException(
+                "Advanced decal buffer reached recording without its sealed view-set resource, target, and stable-bin closure.");
+        }
+        if (ResourceRuntime.BackendObjects.Get(payload.Request.Target) is not VkFrameBuffer targetWrapper)
+        {
+            throw new VulkanPlanPreconditionException(
+                "Advanced decal buffer lost its authoritative Vulkan framebuffer wrapper.");
+        }
+        if (state.Policy.AllowSynchronousResourceUploads)
+            targetWrapper.EnsureCurrent();
+        if (!targetWrapper.TryCaptureRecordedRenderTargetSnapshot(
+                out VulkanRecordedRenderTargetSnapshot currentTarget) ||
+            currentTarget != payload.TargetClosure.NativeTarget)
+        {
+            string mismatch = currentTarget.IsComplete
+                ? payload.TargetClosure.NativeTarget.DescribeFirstMismatch(in currentTarget)
+                : "the current native target is incomplete";
+            throw new VulkanPlanPreconditionException(
+                $"Advanced decal buffer target changed after sealing: {mismatch}.");
+        }
+
+        if (state.RenderScope.IsActive)
+            EndActiveRenderPass(ref state);
+        using var gpuScope = TryBeginVulkanGpuProfilerScope(state.CommandBuffer, DecalBufferGpuProfilerPath);
+        EmitAdvancedVisibilityRasterReadBarrier(ref state);
+        // The render-graph pass clears both targets to "no decal" (rgb 0, transmittance 1)
+        // and loads the resolved depth read-only.
+        BeginRenderPassForTarget(
+            ref state,
+            payload.Request.Target,
+            info.PassIndex,
+            state.ActiveContext,
+            clearPolicy: payload.TargetClosure.ClearPolicy);
+        if (!state.RenderScope.IsActive ||
+            state.RenderScope.Target != payload.TargetClosure.Target ||
+            !state.RenderScope.UsesDynamicRendering ||
+            !state.RenderScope.DepthStencilReadOnly ||
+            !state.RenderScope.DynamicRenderingFormats.Equals(
+                payload.TargetClosure.DynamicRenderingFormats))
+        {
+            throw new VulkanPlanPreconditionException(
+                "The active decal buffer render scope does not match its sealed target closure.");
+        }
+
+        Extent2D extent = new(
+            payload.TargetClosure.NativeTarget.Width,
+            payload.TargetClosure.NativeTarget.Height);
+        Viewport viewport = CreateVulkanViewport(extent);
+        Rect2D scissor = new(new Offset2D(0, 0), extent);
+        SetViewportScissorTracked(state.CommandBuffer, in viewport, in scissor);
+
+        CmdBeginLabel(state.CommandBuffer, "Advanced.Decals.DBuffer");
+        // "No decal" is all zero: rgb 0 and zero accumulated coverage. Clear explicitly so the
+        // value never depends on the shared render-graph clear color.
+        ClearAttachment* decalClears = stackalloc ClearAttachment[2];
+        for (uint attachment = 0u; attachment < 2u; ++attachment)
+        {
+            decalClears[attachment] = new ClearAttachment
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                ColorAttachment = attachment,
+                ClearValue = new ClearValue { Color = new ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f) },
+            };
+        }
+        ClearRect decalClearRect = new()
+        {
+            Rect = scissor,
+            BaseArrayLayer = 0u,
+            // Multiview rendering addresses its layers through the view mask.
+            LayerCount = 1u,
+        };
+        Api!.CmdClearAttachments(state.CommandBuffer, 2u, decalClears, 1u, &decalClearRect);
+        RecordAdvancedRasterBinSegment(ref state, in payload, bins, decalLane: true, lateSegment: false);
+        VulkanAdvancedVisibilityOperationPayload latePayload = payload with
+        {
+            State = payload.State with
+            {
+                RangeCounts = payload.State.LateRangeCounts,
+                IndirectArguments = payload.State.LateIndirectArguments,
+                MeshArguments = payload.State.LateMeshArguments,
+                MeshPayloads = payload.State.LateMeshPayloads,
+            },
+        };
+        RecordAdvancedRasterBinSegment(ref state, in latePayload, bins, decalLane: true, lateSegment: true);
+        CmdEndLabel(state.CommandBuffer);
+        return info.OperationIndex;
+    }
+
     private int RecordAdvancedVisibilityMultisampleResolvePayload(
         scoped ref PrimaryCommandBufferRecordingState state,
         in VulkanAdvancedVisibilityOperationPayload payload,
@@ -927,6 +1042,49 @@ internal sealed partial class VulkanCommandRuntime
         SetViewportScissorTracked(state.CommandBuffer, in viewport, in scissor);
 
         CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.Raster");
+        RecordAdvancedRasterBinSegment(
+            ref state,
+            in payload,
+            bins,
+            decalLane: false,
+            lateSegment: payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster);        CmdEndLabel(state.CommandBuffer);
+        ref readonly FrameOpContext context =
+            ref state.Ops.GetContext(info.OperationIndex);
+        if (state.AcceptedFramePlan is null &&
+            (context.ContextKind is
+                RenderGraph.EVulkanFrameOpContextKind.OpenXrEye or
+                RenderGraph.EVulkanFrameOpContextKind.OpenXrMirror ||
+             !state.Policy.IsPresentNow &&
+             state.Policy.ReadinessPolicy == ERenderOutputReadinessPolicy.AllowDeferral))
+            return info.OperationIndex;
+        XRRenderPipelineInstance pipeline = context.PipelineInstance ??
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility raster has no owning pipeline for canonical picking publication.");
+        AdvancedGpuScenePublication publication =
+            payload.Request.Publication.ScenePublication;
+        (state.AcceptedFramePlan ??
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility raster has no accepted-plan picking authority."))
+            .MarkAdvancedPickingVisibilityRecorded(
+                pipeline,
+                in publication,
+                context.ResourceGeneration);
+        return info.OperationIndex;
+    }
+
+    /// <summary>
+    /// Records one segment (early or late) of the family's sealed bins for every frozen view.
+    /// The visibility lane draws every bin except mesh surface decals with the visibility
+    /// pipeline. The decal lane draws only decal bins with the blended decal buffer pipeline.
+    /// The caller owns the active render scope and the payload's argument segment.
+    /// </summary>
+    private unsafe void RecordAdvancedRasterBinSegment(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        VulkanPreparedStableBinStream bins,
+        bool decalLane,
+        bool lateSegment)
+    {
         ReadOnlySpan<VulkanPreparedStableBinHeader> headers = bins.Headers;
         ReadOnlySpan<VulkanPreparedStableBinRecord> allRecords = bins.Records;
         for (uint viewIndex = 0u;
@@ -941,13 +1099,20 @@ internal sealed partial class VulkanCommandRuntime
             {
                 ref readonly VulkanPreparedStableBinHeader header =
                     ref headers[headerIndex];
-            if (!header.IsRasterReady)
+            // The visibility lane skips mesh surface decal bins; the decal lane draws only
+            // decal bins whose blended pipeline is ready. A decal bin whose program still
+            // compiles draws nothing this frame.
+            if (header.IsSurfaceDecal != decalLane)
+                continue;
+            if (decalLane && !header.IsDecalBufferReady)
+                continue;
+            if (!decalLane && !header.IsRasterReady)
             {
                 throw new VulkanPlanPreconditionException(
                     "A non-empty visibility bin has no sealed raster pipeline and submission plan.");
             }
 
-            VulkanVisibilityRasterPipeline raster = header.RasterPipeline;
+            VulkanVisibilityRasterPipeline raster = decalLane ? header.DecalRasterPipeline : header.RasterPipeline;
             if (!raster.IsValid || raster.TargetClosure != payload.TargetClosure ||
                 raster.Program.LinkGeneration != raster.ProgramLinkGeneration)
             {
@@ -964,7 +1129,7 @@ internal sealed partial class VulkanCommandRuntime
             // LateVisibility deliberately excludes CPU-direct producers: they
             // have no GPU-owned recovered-count stream and replaying them here
             // would duplicate early raster work.
-            if (payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster &&
+            if (lateSegment &&
                 plan.ResolvedStrategy == EMeshSubmissionStrategy.CpuDirect)
             {
                 continue;
@@ -1036,7 +1201,7 @@ internal sealed partial class VulkanCommandRuntime
                     in payload);
             }
 
-            VulkanResidentDrawTemplateNativeState native = header.NativeState;
+            VulkanResidentDrawTemplateNativeState native = decalLane ? header.DecalNativeState : header.NativeState;
             ReadOnlySpan<VulkanPreparedStableBinRecord> records =
                 allRecords.Slice(header.RecordOffset, header.RecordCount);
             bool meshlet = raster.IsMeshShaderPipeline;
@@ -1120,7 +1285,7 @@ internal sealed partial class VulkanCommandRuntime
                     new AdvancedVisibilityMeshRasterPushConstants(
                         indirectRange.FirstPayloadIndex,
                         (uint)indirectRange.Key.Producer |
-                            (payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster ? 8u : 0u),
+                            (lateSegment ? 8u : 0u),
                         viewIndex,
                         1u));
                 RecordAdvancedVisibilityCpuDirect(
@@ -1139,7 +1304,7 @@ internal sealed partial class VulkanCommandRuntime
                     new AdvancedVisibilityMeshRasterPushConstants(
                         indirectRange.FirstPayloadIndex,
                         (uint)indirectRange.Key.Producer |
-                            (payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster ? 8u : 0u),
+                            (lateSegment ? 8u : 0u),
                         viewIndex,
                         1u));
             }
@@ -1154,7 +1319,7 @@ internal sealed partial class VulkanCommandRuntime
                     new AdvancedVisibilityMeshRasterPushConstants(
                         indirectRange.FirstPayloadIndex,
                         (uint)indirectRange.Key.Producer |
-                            (payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster ? 8u : 0u),
+                            (lateSegment ? 8u : 0u),
                         viewIndex,
                         1u));
             }
@@ -1172,7 +1337,7 @@ internal sealed partial class VulkanCommandRuntime
             // Diagnostic plans are part of the sealed lane. Their copy stays
             // in this producer primary, after the indirect/raster consumer,
             // and uses the same completion authority as the frame.
-            if (viewIndex == 0u && plan.DiagnosticPlan is { } diagnosticPlan &&
+            if (!decalLane && viewIndex == 0u && plan.DiagnosticPlan is { } diagnosticPlan &&
                 AdvancedVisibilityDiagnosticCopy is { } recordDiagnosticCopy &&
                 !recordDiagnosticCopy(
                     state.CommandBuffer,
@@ -1186,7 +1351,7 @@ internal sealed partial class VulkanCommandRuntime
                     "[Vulkan] Dropped sealed advanced-visibility diagnostic sidecar for pass {0}.",
                     diagnosticPlan.PassIdentity);
             }
-            if (viewIndex == 0u && plan.OverflowDiagnosticPlan is { } overflowDiagnosticPlan &&
+            if (!decalLane && viewIndex == 0u && plan.OverflowDiagnosticPlan is { } overflowDiagnosticPlan &&
                 AdvancedVisibilityDiagnosticCopy is { } recordOverflowDiagnosticCopy &&
                 !recordOverflowDiagnosticCopy(
                     state.CommandBuffer,
@@ -1202,29 +1367,6 @@ internal sealed partial class VulkanCommandRuntime
             }
             }
         }
-        CmdEndLabel(state.CommandBuffer);
-        ref readonly FrameOpContext context =
-            ref state.Ops.GetContext(info.OperationIndex);
-        if (state.AcceptedFramePlan is null &&
-            (context.ContextKind is
-                RenderGraph.EVulkanFrameOpContextKind.OpenXrEye or
-                RenderGraph.EVulkanFrameOpContextKind.OpenXrMirror ||
-             !state.Policy.IsPresentNow &&
-             state.Policy.ReadinessPolicy == ERenderOutputReadinessPolicy.AllowDeferral))
-            return info.OperationIndex;
-        XRRenderPipelineInstance pipeline = context.PipelineInstance ??
-            throw new VulkanPlanPreconditionException(
-                "Advanced visibility raster has no owning pipeline for canonical picking publication.");
-        AdvancedGpuScenePublication publication =
-            payload.Request.Publication.ScenePublication;
-        (state.AcceptedFramePlan ??
-            throw new VulkanPlanPreconditionException(
-                "Advanced visibility raster has no accepted-plan picking authority."))
-            .MarkAdvancedPickingVisibilityRecorded(
-                pipeline,
-                in publication,
-                context.ResourceGeneration);
-        return info.OperationIndex;
     }
 
     private unsafe void EmitAdvancedVisibilityRasterReadBarrier(
@@ -1719,7 +1861,7 @@ internal sealed partial class VulkanCommandRuntime
                 InvalidatePrimaryGraphicsPipelineAdmission(ref state);
             state.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
             state.RecordingDeferredReason =
-                $"Mesh draw did not record. pass={info.PassIndex} target='{target?.Name ?? "<swapchain>"}' reason={failureReason}";
+                $"Mesh draw did not record. pass={info.PassIndex} target='{target?.Name ?? "<swapchain>"}' mesh='{payload.Draw.Renderer.Mesh?.Name ?? "<unnamed>"}' reason={failureReason}";
             return info.OperationIndex;
         }
         int originalIndex = state.Ops.GetHeader(info.OperationIndex).OriginalIndex;

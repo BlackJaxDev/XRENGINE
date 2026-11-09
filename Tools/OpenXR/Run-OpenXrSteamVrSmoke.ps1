@@ -842,6 +842,7 @@ $environment = @{
     XRE_UNIT_TEST_WORLD_KIND              = "Default"
     XRE_UNIT_TEST_RENDER_API              = $Renderer
     XRE_UNIT_TEST_VR_MODE                 = "OpenXR"
+    XRE_UNIT_TEST_VR_DESKTOP_VIEW         = "FirstPerson"
     XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS = "1"
     XRE_OCCLUSION_CULLING_MODE            = "Disabled"
     XRE_WINDOW_TITLE                      = "XRE OpenXR SteamVR Smoke"

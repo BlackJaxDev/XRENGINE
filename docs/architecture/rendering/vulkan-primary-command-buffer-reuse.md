@@ -3,7 +3,8 @@
 Last Updated: 2026-08-11
 
 This document is the correctness contract for reusing Vulkan primary and
-secondary command buffers. Reuse is enabled by default for desktop and OpenXR;
+secondary command buffers. Reuse is enabled by default for desktop. OpenXR eye
+and mirror paths always record fresh, because `PresentNow` outputs reject reuse;
 `XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE` and
 `XRE_OPENXR_VULKAN_PRIMARY_REUSE` are explicit diagnostic overrides, not
 separate production policies.
@@ -117,6 +118,25 @@ stable:
 
 ImGui, dynamic text, profiler overlays, streaming uploads, and debug commands
 use volatile command chains so they do not invalidate stable scene chains.
+
+## Program Binding Artifacts
+
+A program binding artifact is a detached binding snapshot shared across frames.
+A draw reuses it only while every generation in its slot matches. An artifact may
+hold a buffer, texture array or read-only storage binding only when one of these
+generations changes with that resource:
+
+- the forward lighting snapshot signature, for its buffers, samplers and storage;
+- a resource publisher generation, for what that publisher binds;
+- the material versions, for material textures.
+
+Other bindings stay on a frame-owned snapshot. The native buffer binding revision
+is also part of the generation.
+
+The artifact holds its own resource uses. Its slot owns one lease, and each payload
+row that seals the artifact holds one more until the row resets. The last lease
+releases the resources. A replaced artifact keeps its slot lease for four render
+frames, because a draw captured earlier takes its row lease only at sealing.
 
 ## Acceptance Gate
 

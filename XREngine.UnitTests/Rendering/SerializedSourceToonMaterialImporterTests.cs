@@ -158,7 +158,9 @@ Material:
             $"Warnings={string.Join(" | ", result.Warnings)}; " +
             $"Diagnostics={string.Join(" | ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString()))}");
         result.ShaderPath.ShouldBe(shaderPath);
-        result.Warnings.ShouldBeEmpty();
+        result.Warnings.ShouldHaveSingleItem().ShouldStartWith("[POI0010]");
+        result.Diagnostics.ShouldNotBeEmpty();
+        result.Diagnostics.ShouldAllBe(static diagnostic => diagnostic.Code == "POI0010");
 
         XRMaterial material = result.Material.ShouldNotBeNull();
         material.Name.ShouldBe("AvatarBody");
@@ -173,7 +175,7 @@ Material:
         GetTexture(material, "_EmissionMap").FilePath.ShouldBe(emissionPath);
         GetTexture(material, "_Matcap").FilePath.ShouldBe(matcapPath);
 
-        AssertVector4(material, "_Color", new Vector4(0.1f, 0.2f, 0.3f, 0.4f));
+        AssertVector4(material, "_Color", new Vector4(0.010022826f, 0.033104766f, 0.07323896f, 0.4f));
         AssertVector4(material, "_MainTex_ST", new Vector4(2.0f, 3.0f, 0.25f, 0.5f));
         material.Parameter<ShaderFloat>("_BumpScale")?.Value.ShouldBe(0.75f, 0.0001f);
         material.Parameter<ShaderInt>("_MainTexUV")?.Value.ShouldBe(1);

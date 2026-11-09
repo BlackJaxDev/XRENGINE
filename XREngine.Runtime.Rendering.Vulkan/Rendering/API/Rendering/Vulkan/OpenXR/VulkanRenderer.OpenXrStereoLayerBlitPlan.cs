@@ -17,4 +17,6 @@ internal readonly record struct OpenXrStereoLayerBlitPlan(
     Image RightDestinationImage,
     Format RightDestinationFormat,
     Extent2D RightDestinationExtent,
-    bool FlipY);
+    bool FlipY,
+    OpenXrStereoPreviewCopy LeftPreview,
+    OpenXrStereoPreviewCopy RightPreview);

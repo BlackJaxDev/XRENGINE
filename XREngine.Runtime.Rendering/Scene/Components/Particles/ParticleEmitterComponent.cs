@@ -721,7 +721,7 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     {
         // Method render commands do not pass through the mesh-material eligibility
         // filter. Preserve that admission boundary at the actual callback as well.
-        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is IAdvancedRenderStageFamilyHost)
+        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
         {
             if (Debug.ShouldLogEvery("Advanced.ParticleCallbackRejected", TimeSpan.FromSeconds(5)))
                 Debug.RenderingWarning("[AdvancedParticles] {0}", AdvancedRenderingUnsupportedReason);

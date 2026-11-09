@@ -46,6 +46,13 @@ internal sealed partial class ImportedTextureStreamingManager
     private static ITextureStreamingBackendProvider VulkanProvider
         => TextureStreamingBackendRegistry.GetRequired(RuntimeGraphicsApiKind.Vulkan);
 
+    /// <summary>
+    /// True when the bound Vulkan renderer can accept uploads through the
+    /// synchronized upload service.
+    /// </summary>
+    internal static bool IsVulkanSynchronizedUploadAvailable
+        => VulkanProvider.IsSynchronizedUploadAvailable;
+
     private static ITextureStreamingBackendProvider CurrentProvider
         => TextureStreamingBackendRegistry.GetRequired(
             RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend);
@@ -148,13 +155,24 @@ internal sealed partial class ImportedTextureStreamingManager
     /// This is intentionally internal: presentationless diagnostics may provide
     /// a retained payload, but they may not bypass generation ownership.
     /// </summary>
+    /// <param name="bindStreamingSource">
+    /// When true, the record binds a streaming source from the texture file path,
+    /// so the manager can release the published CPU pixels and stream the texture
+    /// again later. Runtime-owned payloads that must keep their exact decoded
+    /// format pass false.
+    /// </param>
+    /// <param name="onPublished">Runs after the descriptor publication of this upload.</param>
+    /// <param name="onFailed">Runs when the upload service reports a failure for this upload.</param>
     internal bool TryScheduleRawResidentDataForVulkan(
         XRTexture2D texture,
         TextureStreamingResidentData residentData,
         bool includeMipChain,
         TextureUploadPriorityClass priorityClass,
         CancellationToken cancellationToken,
-        out long streamingGeneration)
+        out long streamingGeneration,
+        bool bindStreamingSource = true,
+        Action<XRTexture2D>? onPublished = null,
+        Action<Exception>? onFailed = null)
     {
         ArgumentNullException.ThrowIfNull(texture);
         streamingGeneration = 0;
@@ -166,7 +184,9 @@ internal sealed partial class ImportedTextureStreamingManager
 
         EnsureCallbacksSubscribed();
         uint targetDimension = Math.Max(residentData.ResidentMaxDimension, 1u);
-        ImportedTextureStreamingRecord record = GetOrCreateRecord(texture, texture.FilePath);
+        ImportedTextureStreamingRecord record = GetOrCreateRecord(
+            texture,
+            bindStreamingSource ? texture.FilePath : null);
         CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         long frameId = Volatile.Read(ref _collectFrameId);
         if (!_transitionQueue.TryBeginTransition(
@@ -217,8 +237,16 @@ internal sealed partial class ImportedTextureStreamingManager
             priorityClass,
             IsCurrentTransition,
             cts.Token,
-            completed => ClearPendingTransition(record, cts, completed, targetDimension, frameId),
-            error => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId, failed: true),
+            completed =>
+            {
+                ClearPendingTransition(record, cts, completed, targetDimension, frameId);
+                onPublished?.Invoke(completed);
+            },
+            error =>
+            {
+                ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId, failed: true);
+                onFailed?.Invoke(error);
+            },
             () => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId));
         if (!queued)
         {
@@ -590,7 +618,7 @@ internal sealed partial class ImportedTextureStreamingManager
         }
 
         return previewBackend.SchedulePreviewLoad(
-            record.Source ?? TextureStreamingSourceFactory.Create(filePath),
+            record.Source ?? TextureStreamingSourceFactory.Create(filePath, target.ImportedUsage),
             target,
             residentData =>
             {
@@ -909,6 +937,10 @@ internal sealed partial class ImportedTextureStreamingManager
             return VulkanDenseBackend;
 
         if (backend != RuntimeGraphicsApiKind.OpenGL)
+            return OpenGlDenseBackend;
+
+        // Sparse pages upload pixel rectangles; block-compressed mips use the dense path.
+        if (TextureBlockFormats.IsBlockCompressed(format))
             return OpenGlDenseBackend;
 
         SparseTextureStreamingSupport support = RuntimeRenderingHostServices.Assets.GetSparseTextureStreamingSupport(format);
@@ -1648,7 +1680,7 @@ internal sealed partial class ImportedTextureStreamingManager
             Math.Max(oldestTextureQueueWaitMilliseconds, TextureRuntimeDiagnostics.MaxQueueWaitMilliseconds));
         RenderWorkBudgetCoordinator.RecordUrgentTextureRepairQueue(urgentTextureRepairDepth);
 
-        if (frameId % TextureSummaryIntervalFrames == 0)
+        if (frameId % TextureSummaryIntervalFrames == 0 && TextureRuntimeDiagnostics.IsSummaryLogEnabled)
             TextureRuntimeDiagnostics.LogSummary(frameId, GetTelemetry(), GetTrackedTextureTelemetry());
 
         // Periodic legacy streaming diagnostics (kept in general log for early startup correlation).

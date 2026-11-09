@@ -9,13 +9,15 @@ internal sealed class VulkanFrequencyAutoUniformReservation(
     ulong offset,
     uint size,
     ulong recordingVisibleGeneration,
-    int frameCount)
+    int frameCount,
+    VulkanMappedFrameAllocation? allocation = null)
 {
+    internal VulkanMappedFrameAllocation? Allocation { get; } = allocation;
     internal VulkanFrequencyAutoUniformReservationKey Key { get; } = key;
     internal ulong Offset { get; } = offset;
     internal uint Size { get; } = size;
     internal ulong RecordingVisibleGeneration { get; } =
-        recordingVisibleGeneration;
+        allocation?.Id ?? recordingVisibleGeneration;
     internal VulkanAutoUniformPublicationState[] PublicationStates { get; } =
         new VulkanAutoUniformPublicationState[Math.Max(frameCount, 1)];
 

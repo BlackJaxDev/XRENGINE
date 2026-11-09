@@ -95,8 +95,8 @@ internal sealed partial class VulkanCommandRuntime
         if (commandBufferHandle == 0 || generation == 0)
             return true;
 
-        VulkanMeshFrameDataReservationManifest manifest =
-            _commandBufferRecordingScratch.Value!.MeshFrameDataManifest;
+        CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
+        VulkanMeshFrameDataReservationManifest manifest = recordingScratch.MeshFrameDataManifest;
         bool manifestOwnsDraw = manifest.ContainsSealedDraw(owner, drawSlot, generation);
         bool workerOwnsSealedDraw = sealedGeneration != 0 && sealedGeneration == generation;
         if (!manifestOwnsDraw && !workerOwnsSealedDraw)
@@ -105,6 +105,17 @@ internal sealed partial class VulkanCommandRuntime
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformExhaustion();
             return false;
         }
+
+        // Every draw of one recording renews the same lease. Only the recording
+        // thread changes the lease of a command buffer that it records, so a lease
+        // that this thread acquired and that still has the recording owner for this
+        // generation needs no lock.
+        if (recordingScratch.FrameDataLeaseCommandBuffer == commandBufferHandle &&
+            recordingScratch.FrameDataLeaseRecord is { } leasedLifetime &&
+            leasedLifetime.QueuedSubmissionCount == 0 &&
+            leasedLifetime.FrameDataLease.HasRecordingOwner &&
+            leasedLifetime.FrameDataLease.Generation == generation)
+            return true;
 
         VulkanResourceLifetimeTracker lifetimeTracker = ResourceRuntime.Lifetime.Tracker;
         lock (lifetimeTracker.SyncRoot)
@@ -134,6 +145,8 @@ internal sealed partial class VulkanCommandRuntime
                     generation,
                     commandBufferQueued: lifetime.QueuedSubmissionCount != 0))
             {
+                recordingScratch.FrameDataLeaseCommandBuffer = commandBufferHandle;
+                recordingScratch.FrameDataLeaseRecord = lifetime;
                 return true;
             }
 
@@ -1417,6 +1430,17 @@ internal sealed partial class VulkanCommandRuntime
     /// Publishes the same lifetime and command-local image state as the legacy
     /// tracked barrier path before later commands consult that state.
     /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> s_renderGraphResourceTrackingNames = new();
+
+    /// <summary>
+    /// Returns the cached lifetime-tracking name of a render-graph resource, so a
+    /// tracked barrier does not format a new string for each image.
+    /// </summary>
+    private static string GetRenderGraphResourceTrackingName(int resourceId)
+        => s_renderGraphResourceTrackingNames.GetOrAdd(
+            resourceId,
+            static id => $"RenderGraphResource#{id}");
+
     internal unsafe void CmdPipelineBarrier2Tracked(
         CommandBuffer commandBuffer,
         in DependencyInfo dependencyInfo,
@@ -1479,7 +1503,7 @@ internal sealed partial class VulkanCommandRuntime
             TrackCommandBufferResource(
                 commandBuffer,
                 new VulkanResourceLifetimeKey(ObjectType.Image, frozen.NativeImage.Handle),
-                $"RenderGraphResource#{frozen.ResourceId.Value}",
+                GetRenderGraphResourceTrackingName(frozen.ResourceId.Value),
                 frozen.NativeGeneration);
         }
 

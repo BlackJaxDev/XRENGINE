@@ -32,6 +32,17 @@ public partial class PhysicsChainComponent
             set => SetFieldUnchecked(ref _particles, value ?? []);
         }
 
+        /// <summary>The world matrix of the root's parent when the latest simulation step applied its motion.</summary>
+        public Matrix4x4 PreviousRootParentWorld { get; set; }
+        public bool HasPreviousRootParentWorld { get; set; }
+        /// <summary>The world matrix of the root's parent at the latest prepare.</summary>
+        public Matrix4x4 LatestRootParentWorld { get; set; }
+        /// <summary>The motion of the root's parent since the previous simulation step.</summary>
+        public Matrix4x4 RootParentMotion { get; set; } = Matrix4x4.Identity;
+
+        /// <summary>The motion of the root since the latest simulation step, added to the presented pose.</summary>
+        public Vector3 PresentationOffset { get; set; }
+
         private Vector3 _restGravity;
         public Vector3 RestGravity
         {

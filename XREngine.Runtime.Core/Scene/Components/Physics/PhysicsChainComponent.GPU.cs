@@ -146,11 +146,16 @@ public partial class PhysicsChainComponent
         _lastSimulationProducedResults = loopCount > 0;
         if (observe)
             PhysicsChainWorld.RecordGpuComponentPreparation(Stopwatch.GetTimestamp() - prepareStart);
-        if (loopCount == 0)
+        // A chain that writes skin palettes has no CPU bones to follow the animation between
+        // steps. It publishes its transforms on each frame, so its meshes do not wait for a step.
+        if (loopCount == 0 && (GpuSyncToBones || !UseGpuDrivenSkinning ||
+            !RuntimePhysicsChainRendering.Current.HasGpuDrivenRenderers(this)))
             return;
 
         long packingStart = observe ? Stopwatch.GetTimestamp() : 0L;
         PrepareGpuDispatchDataCore(worldRestMatrices);
+        if (loopCount > 0)
+            ConsumeGpuRootParentMotion();
         if (observe)
             PhysicsChainWorld.RecordGpuInputPacking(Stopwatch.GetTimestamp() - packingStart);
         long dispatchStart = observe ? Stopwatch.GetTimestamp() : 0L;
@@ -166,6 +171,7 @@ public partial class PhysicsChainComponent
             _gpuBoneSignature)
         {
             ReadbackSourceGeneration = ReadbackSourceGeneration,
+            Solver = BuildGpuSolverSettings(),
             SpatialInput = _gpuSpatialInput with
             {
                 IsValid = _gpuSpatialInput.IsValid && float.IsFinite(timeVar),
@@ -173,6 +179,38 @@ public partial class PhysicsChainComponent
         });
         if (observe)
             PhysicsChainWorld.RecordGpuBridgeDispatch(Stopwatch.GetTimestamp() - dispatchStart);
+    }
+
+    private PhysicsChainGpuSolverSettings BuildGpuSolverSettings()
+    {
+        int flags = 0;
+        if (RestFollowsParent)
+            flags |= PhysicsChainGpuSolverSettings.FlagRestFollowsParent;
+        if (StiffnessMode == EPhysicsChainStiffnessMode.HoldParentOffset)
+            flags |= PhysicsChainGpuSolverSettings.FlagHoldParentOffset;
+        if (GravityMode == EPhysicsChainGravityMode.SegmentRatio)
+            flags |= PhysicsChainGpuSolverSettings.FlagSegmentGravity;
+        if (PinBranchChildren)
+            flags |= PhysicsChainGpuSolverSettings.FlagPinBranchChildren;
+        if (InertFollowsRootParent)
+            flags |= PhysicsChainGpuSolverSettings.FlagInertRootParent;
+        if (CollisionMode == EPhysicsChainCollisionMode.Segment)
+            flags |= PhysicsChainGpuSolverSettings.FlagSegmentCollision;
+        if (!CarryParticlesBetweenSteps)
+            flags |= PhysicsChainGpuSolverSettings.FlagHoldBetweenSteps;
+        return new PhysicsChainGpuSolverSettings(GravityFalloff, flags, (int)LimitType, MaxStretch, MaxSquish, StretchMotion, Quaternion.Normalize(LimitRotation));
+    }
+
+    /// <summary>
+    /// Marks the motion of the root's parent as applied. Frames without a dispatch accumulate their motion.
+    /// </summary>
+    private void ConsumeGpuRootParentMotion()
+    {
+        if (!InertFollowsRootParent)
+            return;
+
+        for (int treeIndex = 0; treeIndex < _particleTrees.Count; ++treeIndex)
+            _particleTrees[treeIndex].PreviousRootParentWorld = _particleTrees[treeIndex].LatestRootParentWorld;
     }
 
     private void ApplyPendingGpuBoneSync()
@@ -293,20 +331,22 @@ public partial class PhysicsChainComponent
             Vector3 anchorMaximum = new(float.NegativeInfinity);
             float treeReach = rebuildStatic ? 0.0f : _gpuTreeReach[treeIndex];
             if (rebuildStatic)
-                _gpuTrees.Add(new(tree.RestGravity, particleOffset, tree.Particles.Count));
-            else if (_gpuTrees[treeIndex].RestGravity != tree.RestGravity)
+                _gpuTrees.Add(new(tree.RestGravity, particleOffset, tree.Particles.Count, tree.RootParentMotion));
+            else if (_gpuTrees[treeIndex].RestGravity != tree.RestGravity || _gpuTrees[treeIndex].RootParentMotion != tree.RootParentMotion)
             {
-                _gpuTrees[treeIndex] = _gpuTrees[treeIndex] with { RestGravity = tree.RestGravity };
+                _gpuTrees[treeIndex] = _gpuTrees[treeIndex] with { RestGravity = tree.RestGravity, RootParentMotion = tree.RootParentMotion };
                 treeChanged = true;
             }
             for (int particleIndex = 0; particleIndex < tree.Particles.Count; ++particleIndex)
             {
                 Particle particle = tree.Particles[particleIndex];
-                Vector3 localPosition = useWorldRest && particle.Transform is not null
-                    ? particle.ParentIndex < 0
-                        ? particle.Transform.FrameState.Translation
-                        : particle.InitLocalPosition
-                    : particle.TransformLocalPosition;
+                Vector3 localPosition = particle.Transform is null
+                    ? particle.EndOffset
+                    : useWorldRest
+                        ? particle.ParentIndex < 0
+                            ? particle.Transform.FrameState.Translation
+                            : particle.InitLocalPosition
+                        : particle.TransformLocalPosition;
                 bool particleStaticValid = IsFiniteSpatialVector(localPosition) &&
                     float.IsFinite(particle.Damping) && float.IsFinite(particle.Elasticity) &&
                     float.IsFinite(particle.Stiffness) && float.IsFinite(particle.Inert) &&
@@ -326,7 +366,9 @@ public partial class PhysicsChainComponent
                     _gpuParticleStatic.Add(new(localPosition,
                         particle.ParentIndex >= 0 ? particle.ParentIndex + particleOffset : -1,
                         particle.Damping, particle.Elasticity, particle.Stiffness, particle.Inert, particle.Friction,
-                        particle.Radius, particle.SegmentLength, treeIndex));
+                        particle.Radius, particle.SegmentLength, treeIndex,
+                        particle.MaxAngleRadians, particle.MaxYawRadians,
+                        particle.ParentIndex >= 0 && particle.Transform is not null && tree.Particles[particle.ParentIndex].ChildCount > 1 ? 1 : 0));
                     PhysicsChainGpuBone bone = new(particle.Transform,
                         particle.ParentIndex >= 0 ? particle.ParentIndex + particleOffset : -1,
                         particle.Transform is not null ? particle.InitLocalPosition : particle.EndOffset);
@@ -336,7 +378,7 @@ public partial class PhysicsChainComponent
                     spatialValid &= lengthValid;
                     staticSpatialValid &= lengthValid;
                     float reach = particle.ParentIndex >= 0 && particle.ParentIndex < particleIndex
-                        ? _gpuParticleReach[particleOffset + particle.ParentIndex] + MathF.Max(length, 0.0001f)
+                        ? _gpuParticleReach[particleOffset + particle.ParentIndex] + MathF.Max(length, 0.0001f) * (1.0f + MathF.Max(MaxStretch, 0.0f))
                         : 0.0f;
                     _gpuParticleReach[particleOffset + particleIndex] = reach;
                     treeReach = MathF.Max(treeReach, reach);
@@ -439,6 +481,9 @@ public partial class PhysicsChainComponent
             colliderHash.Add(collider.Params);
             colliderHash.Add(collider.Orientation);
             colliderHash.Add(collider.Type);
+            colliderHash.Add(collider.ParticleContactOnly);
+            colliderHash.Add(collider.Inside);
+            colliderHash.Add(collider.EndRadius);
         }
 
         _gpuColliderSignature = colliderHash.ToHashCode();
@@ -457,9 +502,9 @@ public partial class PhysicsChainComponent
         for (int treeIndex = 0; treeIndex < capture.TreeCount; ++treeIndex)
         {
             ParticleTree tree = _particleTrees[treeIndex];
-            if (_gpuTrees[treeIndex].RestGravity != tree.RestGravity)
+            if (_gpuTrees[treeIndex].RestGravity != tree.RestGravity || _gpuTrees[treeIndex].RootParentMotion != tree.RootParentMotion)
             {
-                _gpuTrees[treeIndex] = _gpuTrees[treeIndex] with { RestGravity = tree.RestGravity };
+                _gpuTrees[treeIndex] = _gpuTrees[treeIndex] with { RestGravity = tree.RestGravity, RootParentMotion = tree.RootParentMotion };
                 treeChanged = true;
             }
 
@@ -502,31 +547,46 @@ public partial class PhysicsChainComponent
 
     private void AppendGpuCollider(PhysicsChainColliderBase collider)
     {
+        int contactOnly = collider.ParticleContactOnly ? 1 : 0;
         if (collider is PhysicsChainSphereCollider sphere)
         {
             TransformBase transform = sphere.ColliderTransform ?? sphere.Transform;
-            _gpuColliders.Add(new(new Vector4(transform.WorldTranslation, sphere.Radius), default, default, 0));
+            _gpuColliders.Add(new(new Vector4(transform.WorldTranslation, sphere.Radius), default, default, 0, contactOnly));
         }
         else if (collider is PhysicsChainCapsuleCollider capsule)
         {
             TransformBase transform = capsule.ColliderTransform ?? capsule.Transform;
             Vector3 halfAxis = transform.WorldUp * (capsule.Height * 0.5f);
-            Vector3 start = transform.WorldTranslation - halfAxis;
-            Vector3 end = transform.WorldTranslation + halfAxis;
-            float lengthSquared = Vector3.DistanceSquared(start, end);
-            _gpuColliders.Add(new(
-                new Vector4(start, capsule.Radius),
-                new Vector4(end, lengthSquared > 1e-8f ? 1.0f / lengthSquared : 0.0f),
-                new Vector4(end - start, -65536.0f),
-                1));
+            AppendGpuCapsule(transform.WorldTranslation - halfAxis, transform.WorldTranslation + halfAxis, capsule.Radius, 0.0f, 0, contactOnly);
         }
         else if (collider is PhysicsChainBoxCollider box)
         {
             TransformBase transform = box.ColliderTransform ?? box.Transform;
             Quaternion rotation = transform.WorldRotation;
-            _gpuColliders.Add(new(new Vector4(transform.WorldTranslation, 0.0f), new Vector4(Vector3.Abs(box.Size) * Vector3.Abs(transform.LossyWorldScale) * 0.5f, 0.0f), new Vector4(rotation.X, rotation.Y, rotation.Z, rotation.W), 2));
+            _gpuColliders.Add(new(new Vector4(transform.WorldTranslation, 0.0f), new Vector4(Vector3.Abs(box.Size) * Vector3.Abs(transform.LossyWorldScale) * 0.5f, 0.0f), new Vector4(rotation.X, rotation.Y, rotation.Z, rotation.W), 2, contactOnly));
         }
         else if (collider is PhysicsChainPlaneCollider plane)
-            _gpuColliders.Add(new(new Vector4(plane.Transform.TransformPoint(plane._center), 0.0f), new Vector4(plane._plane.Normal, plane._bound == PhysicsChainColliderBase.EBound.Inside ? 1.0f : 0.0f), default, 3));
+        {
+            // A plane holds Normal * point + D = 0, so -D * Normal is a point on it.
+            Vector3 point = plane._plane.Normal * -plane._plane.D;
+            _gpuColliders.Add(new(new Vector4(point, 0.0f), new Vector4(plane._plane.Normal, plane._bound == PhysicsChainColliderBase.EBound.Inside ? 1.0f : 0.0f), default, 3, contactOnly));
+        }
+        else if (collider is PhysicsChainCollider volume && volume.TryGetPreparedShape(out Vector3 start, out Vector3 end, out float radius, out float endRadius, out bool isCapsule, out bool inside))
+        {
+            if (isCapsule)
+                AppendGpuCapsule(start, end, radius, endRadius, inside ? 1 : 0, contactOnly);
+            else
+                _gpuColliders.Add(new(new Vector4(start, radius), default, default, 0, contactOnly, inside ? 1 : 0));
+        }
+    }
+
+    private void AppendGpuCapsule(Vector3 start, Vector3 end, float radius, float endRadius, int inside, int contactOnly)
+    {
+        float lengthSquared = Vector3.DistanceSquared(start, end);
+        _gpuColliders.Add(new(
+            new Vector4(start, radius),
+            new Vector4(end, lengthSquared > 1e-8f ? 1.0f / lengthSquared : 0.0f),
+            new Vector4(end - start, -65536.0f),
+            1, contactOnly, inside, endRadius));
     }
 }

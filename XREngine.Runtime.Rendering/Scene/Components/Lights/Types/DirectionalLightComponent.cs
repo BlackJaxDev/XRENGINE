@@ -158,10 +158,9 @@ namespace XREngine.Components.Lights
                 if (!UseShadowAtlas || !RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
                     return false;
 
+                // Vulkan uses the atlas for moment encodings too: the Advanced native
+                // receivers read directional shadows only from atlas records.
                 EShadowMapEncoding encoding = ResolveDirectionalSamplingShadowMapFormat().Encoding;
-                if (IsVulkanDirectionalShadowBackend())
-                    return encoding == EShadowMapEncoding.Depth;
-
                 return encoding is
                     EShadowMapEncoding.Depth or
                     EShadowMapEncoding.Variance2 or
@@ -577,7 +576,7 @@ namespace XREngine.Components.Lights
         private static int ResolveShadowMomentSmallestAllowedMipmapLevel(bool momentEncoding, bool useMipmaps, uint width, uint height)
             => momentEncoding && useMipmaps
                 ? XRTexture.GetSmallestMipmapLevel(width, height)
-                : 1000;
+                : 0;
 
         /// <summary>
         /// Resolves the appropriate shadow map format for directional sampling based on the current settings.

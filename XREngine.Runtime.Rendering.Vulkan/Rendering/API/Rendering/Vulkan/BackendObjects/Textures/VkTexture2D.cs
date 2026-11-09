@@ -96,6 +96,9 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
         if (request.ResidentMipmaps is null || request.ResidentMipmaps.Length == 0)
             return SparseTextureStreamingTransitionResult.Unsupported("Vulkan sparse texture transition compatibility requires resident mip data.");
 
+        if (TextureBlockFormats.IsBlockCompressed(request.ResidentMipmaps[0].InternalFormat))
+            return SparseTextureStreamingTransitionResult.Unsupported("Vulkan sparse texture transitions do not support block-compressed (BC) mips; the texture uses the dense upload path.");
+
         Mipmap2D firstMip = request.ResidentMipmaps[0];
         uint logicalWidth = request.LogicalWidth == 0 ? firstMip.Width : request.LogicalWidth;
         uint logicalHeight = request.LogicalHeight == 0 ? firstMip.Height : request.LogicalHeight;

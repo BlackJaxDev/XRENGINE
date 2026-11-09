@@ -34,7 +34,7 @@ public static class AdvancedSceneColorContract
 
         XRRenderPipelineInstance? instance =
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-        if (instance?.Pipeline is not AdvancedRenderPipeline ||
+        if (instance?.Pipeline?.ResolveAdvancedStageFamily() is null ||
             instance.GetTexture<XRTexture>(SceneColorSnapshotResourceName) is not
                 XRTexture snapshot)
         {

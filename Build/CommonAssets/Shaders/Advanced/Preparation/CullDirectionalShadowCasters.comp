@@ -129,15 +129,10 @@ void main()
     XRAdvancedInstanceRecord instance = XR_ADV_LoadInstance(instanceDense);
     if ((instance.layerMask & XR_ADV_ShadowPush.layerMask) == 0u)
         return;
-    if (draw.deformation.index != 0u)
-    {
-        XRAdvancedPreparedDrawDeformationRecord prepared;
-        if (!XR_ADV_TryLoadPreparedDrawDeformation(drawDense, draw, prepared))
-        {
-            rejectCaster();
-            return;
-        }
-    }
+    // A deformation handle without an active prepared record is a static draw this
+    // frame: the shadow raster then reads the canonical static vertices, exactly as
+    // the main visibility raster does. Only CPU pre-skinned producers require the
+    // prepared record, and they never reach this indexed cull.
 
     vec3 minimum = (flags & (1u << 9u)) != 0u
         ? uintBitsToFloat(uvec3(

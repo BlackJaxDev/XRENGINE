@@ -98,6 +98,30 @@ internal sealed class VulkanAcceptedFramePlan
 
     internal FrameOp[] StaticOperations => _staticOperations;
     internal FrameOp[] DynamicUiOperations => _dynamicUiOperations;
+
+    /// <summary>
+    /// Returns true when a transferred operation targets an OpenXR eye or the
+    /// OpenXR mirror. Only such a plan depends on the captured OpenXR view set.
+    /// </summary>
+    internal bool HasOpenXrTargetOperations()
+        => HasOpenXrTarget(_staticOperations.AsSpan(0, StaticOperationCount)) ||
+           HasOpenXrTarget(_dynamicUiOperations.AsSpan(0, DynamicUiOperationCount));
+
+    private static bool HasOpenXrTarget(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+        {
+            // A submission marker only reports when earlier work was submitted. It
+            // reads no view, so its context does not make the plan depend on the view set.
+            if (operations[index] is SubmissionMarkerOp)
+                continue;
+            if (operations[index].ContextReference.ContextKind is
+                EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror)
+                return true;
+        }
+        return false;
+    }
+
     internal FrameOp[] TextureUploadOperations => _textureUploadOperations;
     internal Span<FrameOp> AuthoredOperations
         => _authoredOperations.AsSpan(0, _authoredOperationCount);
@@ -920,15 +944,18 @@ internal sealed class VulkanAcceptedFramePlan
                 EVulkanAcceptedFrameLane.Ui,
                 _dynamicUiOperations.Length,
                 dynamicUiOperations.Length);
-        dynamicUiOperations.CopyTo(_dynamicUiOperations);
-        DynamicUiOperationCount = dynamicUiOperations.Length;
-
         if (textureUploadOperations.Length > _textureUploadOperations.Length)
             throw new VulkanAcceptedFramePlanCapacityException(
                 EVulkanAcceptedFrameLane.Upload,
                 _textureUploadOperations.Length,
                 textureUploadOperations.Length);
 
+        UnpinCapturedOperations();
+        PinOperations(staticOperations);
+        PinOperations(dynamicUiOperations);
+        PinOperations(textureUploadOperations);
+        dynamicUiOperations.CopyTo(_dynamicUiOperations);
+        DynamicUiOperationCount = dynamicUiOperations.Length;
             staticOperations.CopyTo(_staticOperations);
             StaticOperationCount = staticOperations.Length;
             TerminalOperationCount = terminalOperationCount;
@@ -1599,6 +1626,52 @@ internal sealed class VulkanAcceptedFramePlan
         return false;
     }
 
+    /// <summary>
+    /// Pins the visibility operations that this plan references. Lowering releases
+    /// their input leases before this plan drops them, and the plan can release them
+    /// again later. The pin keeps the workspace from giving such an operation a new
+    /// lease until then, so that late release cannot drop another frame's lease.
+    /// </summary>
+    private static void PinOperations(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations[index] is AdvancedVisibilityOp visibility)
+                visibility.PinForAcceptedPlan();
+    }
+
+    private static void UnpinOperations(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations[index] is AdvancedVisibilityOp visibility)
+                visibility.UnpinFromAcceptedPlan();
+    }
+
+    /// <summary>Ends the pins of every captured operation that the plan still references.</summary>
+    private void UnpinCapturedOperations()
+    {
+        UnpinOperations(_staticOperations.AsSpan(0, StaticOperationCount));
+        UnpinOperations(_dynamicUiOperations.AsSpan(0, DynamicUiOperationCount));
+        UnpinOperations(_textureUploadOperations.AsSpan(0, TextureUploadOperationCount));
+    }
+
+    /// <summary>
+    /// Drops the references to the accepted static, dynamic-UI and texture-upload
+    /// operations without releasing them. A split worker frame releases their
+    /// visibility input leases itself after the worker recorded them; the workspace
+    /// can then reuse those operations, so a later <see cref="Reset"/> must not
+    /// release them again for their new owner.
+    /// </summary>
+    internal void DetachReleasedOperations()
+    {
+        UnpinCapturedOperations();
+        _staticOperations.AsSpan(0, StaticOperationCount).Clear();
+        _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
+        _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();
+        StaticOperationCount = 0;
+        DynamicUiOperationCount = 0;
+        TextureUploadOperationCount = 0;
+    }
+
     internal void Reset()
     {
         _recordedAdvancedPickingPipelines.AsSpan(
@@ -1646,6 +1719,7 @@ internal sealed class VulkanAcceptedFramePlan
             _textureUploadOperations.AsSpan(
                 0,
                 TextureUploadOperationCount));
+        UnpinCapturedOperations();
         _staticOperations.AsSpan(0, StaticOperationCount).Clear();
         _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
         _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();

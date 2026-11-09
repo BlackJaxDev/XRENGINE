@@ -51,8 +51,9 @@ public static partial class OutlinePassVariantFactory
         XRShader ovrVertex = CreateVertexVariant("UberShader_OVR.vert");
         XRShader nvVertex = CreateVertexVariant("UberShader_NV.vert");
 
-        XRMaterial variant = new(monoVertex, ovrVertex, nvVertex, fragment)
+        XRMaterial variant = new()
         {
+            UberOutlineSourceMaterial = sourceMaterial,
             Name = string.Concat(sourceMaterial.Name, " [Outline]"),
             Parameters = sourceMaterial.Parameters,
             Textures = sourceMaterial.Textures,
@@ -66,7 +67,11 @@ public static partial class OutlinePassVariantFactory
             RenderOptions = pass.RenderOptions,
         };
 
-        variant.SettingUniforms += (_, program) => sourceMaterial.OnSettingUniforms(program);
+        // Set the source before shaders. Material initialization must keep the
+        // pass-specific generated fragment instead of restoring the base source.
+        variant.Shaders = [monoVertex, ovrVertex, nvVertex, fragment];
+
+        sourceMaterial.ShareUniformSourcesWith(variant);
         return variant;
     }
 

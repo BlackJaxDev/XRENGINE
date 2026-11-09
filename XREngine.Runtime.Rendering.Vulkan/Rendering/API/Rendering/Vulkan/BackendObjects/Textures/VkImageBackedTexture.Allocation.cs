@@ -164,7 +164,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             _allocatedVRAMBytes = 0;
         }
 
-        _view = default;
+        SetCurrentView(default);
         _attachmentViews.Clear();
         _image = default;
         _memory = default;
@@ -273,7 +273,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 // don't use a destroyed VkImage.
                 if (switchedPhysicalGroup)
                 {
-                    _view = default;
+                    SetCurrentView(default);
                     _attachmentViews.Clear();
                     _image = default;
                     _memory = default;
@@ -302,7 +302,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>");
             if (switchedPhysicalGroup)
             {
-                _view = default;
+                SetCurrentView(default);
                 _attachmentViews.Clear();
             }
             else
@@ -350,7 +350,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
             if (!TryRestorePhysicalImageViewCache(_physicalGroup, current))
             {
-                _view = default;
+                SetCurrentView(default);
                 _attachmentViews.Clear();
                 CreateImageView(default);
             }
@@ -419,6 +419,20 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     {
         if (!BackendContext.IsDeviceOperational)
             throw new InvalidOperationException($"Cannot create a Vulkan image while device state is {BackendContext.DeviceContext.State}.");
+
+        if (VkFormatConversions.IsBlockCompressed(ResolvedFormat))
+        {
+            if (!BackendContext.Supports(EVulkanDeviceCapability.TextureCompressionBc))
+            {
+                throw new NotSupportedException(
+                    $"Texture '{ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>"}' uses {ResolvedFormat}, but the device does not support textureCompressionBC. " +
+                    "Set CookedTextureCompression to None (or XRE_TEXTURE_COOK_COMPRESSION=None) and cook again.");
+            }
+
+            // Block-compressed images are sampled and copied only: they cannot be
+            // color attachments or storage images.
+            Usage &= ~(ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.StorageBit);
+        }
 
         ImageCreateInfo imageInfo = new()
         {

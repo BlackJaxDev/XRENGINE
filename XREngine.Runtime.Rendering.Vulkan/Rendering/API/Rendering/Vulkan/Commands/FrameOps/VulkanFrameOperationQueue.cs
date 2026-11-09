@@ -389,6 +389,35 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         return true;
     }
 
+    internal VulkanRequiredProducerInsertionToken CaptureRequiredProducerInsertionToken()
+    {
+        FrameOpCapture capture = CurrentThread.OrderedComputeBatchCapture
+            ?? throw new InvalidOperationException("The required producer operation batch is not active.");
+        if (!ReferenceEquals(CurrentThread.Capture, capture))
+            throw new InvalidOperationException("A nested frame-operation capture cannot change required producer source order.");
+        return new VulkanRequiredProducerInsertionToken(capture.BatchGeneration, capture.Count);
+    }
+
+    internal int GetRequiredProducerDirectOperationCount()
+        => CurrentThread.OrderedComputeBatchCapture?.Count
+            ?? throw new InvalidOperationException("The required producer operation batch is not active.");
+
+    internal VulkanRequiredProducerInsertionScope BeginRequiredProducerInsertion(
+        in VulkanRequiredProducerInsertionToken token,
+        int directOperationCount)
+    {
+        FrameOpCapture capture = CurrentThread.OrderedComputeBatchCapture
+            ?? throw new InvalidOperationException("The required producer operation batch is not active.");
+        if (!ReferenceEquals(CurrentThread.Capture, capture) ||
+            !token.IsValid || token.BatchGeneration != capture.BatchGeneration ||
+            token.DirectOperationCount > directOperationCount)
+            throw new InvalidOperationException("The mesh request does not belong to the active required producer operation batch.");
+
+        int insertedCount = capture.Count - directOperationCount;
+        capture.BeginInsertion(checked(token.DirectOperationCount + insertedCount));
+        return new VulkanRequiredProducerInsertionScope(capture);
+    }
+
     internal void CommitOrderedBatch()
     {
         FrameOpCapture capture = EndOrderedBatch();
@@ -925,6 +954,40 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             if (retainedIndex < Pending.Count)
                 Pending.RemoveRange(retainedIndex, Pending.Count - retainedIndex);
             return DrainedFrameOpsBuffer;
+        }
+    }
+
+    /// <summary>
+    /// Abandons the scene operations of a render callback that no desktop frame
+    /// takes. Texture uploads and receipt-bound operations stay queued for the
+    /// next accepted output, the same rule as the skip drain, and the frame view
+    /// history and output completions are kept. The method does not allocate.
+    /// </summary>
+    internal int DiscardSkippedSceneOperations()
+    {
+        using (SyncRoot.EnterScope())
+        {
+            Span<FrameOp> operations = CollectionsMarshal.AsSpan(Pending);
+            int retainedCount = 0;
+            for (int index = 0; index < operations.Length; index++)
+            {
+                FrameOp operation = operations[index];
+                if (operation is TextureUploadFrameOp ||
+                    operation.ContextReference.OutputCompletionReceiptId != 0UL)
+                {
+                    operations[retainedCount++] = operation;
+                    continue;
+                }
+
+                ReadOnlySpan<FrameOp> abandoned = operations.Slice(index, 1);
+                FailPendingSubmissionMarkers(abandoned);
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(abandoned);
+            }
+
+            int discardedCount = Pending.Count - retainedCount;
+            if (discardedCount != 0)
+                Pending.RemoveRange(retainedCount, discardedCount);
+            return discardedCount;
         }
     }
 

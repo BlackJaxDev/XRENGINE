@@ -118,10 +118,14 @@ internal unsafe partial class VkMeshRenderer
 				runtimeUniformPublicationLayoutSignature,
 				cacheDependsOnMaterialOrRuntime,
 				out cached);
+		// A block without material or runtime sources builds the same plan for every
+		// material, so its cached plan is valid for another material's payload. A shared
+		// program otherwise rebuilt this plan whenever two materials alternated.
 		if (planCacheHit &&
 			cached is not null &&
-			ReferenceEquals(cached.MaterialPayload,
-				bindingSnapshot?.MaterialUniformBindings) &&
+			(!cacheDependsOnMaterialOrRuntime ||
+			 ReferenceEquals(cached.MaterialPayload,
+				bindingSnapshot?.MaterialUniformBindings)) &&
 			cached.PublicationLayoutSignature ==
 				publicationLayoutSignature &&
 			(!materialOwned ||
@@ -368,7 +372,7 @@ internal unsafe partial class VkMeshRenderer
 	private VulkanAutoUniformOwnerSlotTable GetOrCreateAutoUniformOwnerSlotTable(
 		string blockName)
 	{
-		if (_autoUniformOwnerSlotTables.TryGetValue(
+		if (_autoUniformOwnerSlotTablesByNameIdentity.TryGetValue(
 				blockName,
 				out VulkanAutoUniformOwnerSlotTable? table) &&
 			table.FrameCount == UniformBufferFrameCount &&
@@ -377,10 +381,17 @@ internal unsafe partial class VkMeshRenderer
 			return table;
 		}
 
-		table = new VulkanAutoUniformOwnerSlotTable(
-			UniformBufferFrameCount,
-			UniformBufferSlotCount);
-		_autoUniformOwnerSlotTables[blockName] = table;
+		if (!_autoUniformOwnerSlotTables.TryGetValue(blockName, out table) ||
+			table.FrameCount != UniformBufferFrameCount ||
+			table.DrawSlotCapacity != UniformBufferSlotCount)
+		{
+			table = new VulkanAutoUniformOwnerSlotTable(
+				UniformBufferFrameCount,
+				UniformBufferSlotCount);
+			_autoUniformOwnerSlotTables[blockName] = table;
+		}
+
+		_autoUniformOwnerSlotTablesByNameIdentity[blockName] = table;
 		return table;
 	}
 

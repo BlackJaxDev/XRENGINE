@@ -338,6 +338,7 @@ public static class XREngineEnvironmentVariableCatalog
             fieldName.Contains("WorkerThread", StringComparison.Ordinal) ||
             fieldName is nameof(XREngineEnvironmentVariables.ReservedForegroundThreads) or
                 nameof(XREngineEnvironmentVariables.AllowCpuOversubscription) or
+                nameof(XREngineEnvironmentVariables.PreferLargestCacheCores) or
                 nameof(XREngineEnvironmentVariables.RenderWorkerQos) ||
             fieldName is nameof(XREngineEnvironmentVariables.VulkanCommandChainWorkerCount) ||
             fieldName.Contains("GcLatency", StringComparison.Ordinal) ||

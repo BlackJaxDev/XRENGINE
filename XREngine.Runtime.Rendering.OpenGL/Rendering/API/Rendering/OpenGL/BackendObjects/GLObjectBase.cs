@@ -441,6 +441,12 @@ namespace XREngine.Rendering.OpenGL
                     //Stencil
                     ESizedInternalFormat.StencilIndex8 => GLEnum.StencilIndex8,
 
+                    //Block compressed
+                    ESizedInternalFormat.Bc7Unorm => GLEnum.CompressedRgbaBptcUnorm,
+                    ESizedInternalFormat.Bc7Srgb => GLEnum.CompressedSrgbAlphaBptcUnorm,
+                    ESizedInternalFormat.Bc5Unorm => GLEnum.CompressedRGRgtc2,
+                    ESizedInternalFormat.Bc4Unorm => GLEnum.CompressedRedRgtc1,
+
                     _ => throw new ArgumentOutOfRangeException(nameof(sizedInternalFormat), sizedInternalFormat, null),
                 };
 

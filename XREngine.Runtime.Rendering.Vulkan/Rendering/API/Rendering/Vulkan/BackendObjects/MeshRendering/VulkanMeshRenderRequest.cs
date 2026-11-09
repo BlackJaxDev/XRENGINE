@@ -35,7 +35,36 @@ internal readonly record struct VulkanMeshRenderRequest(
     VulkanResidentDrawTemplateHandle ResidentTemplateHandle,
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
+    // The two large members keep a backing field, so hot readers can take them by
+    // reference (see the Get...Reference helpers) instead of copying them.
+    private readonly FrameOpContext _context = Context;
+    private readonly VulkanMeshProducerSnapshot _producer = Producer;
+
+    public FrameOpContext Context
+    {
+        get => _context;
+        init => _context = value;
+    }
+
+    public VulkanMeshProducerSnapshot Producer
+    {
+        get => _producer;
+        init => _producer = value;
+    }
+
+    internal static ref readonly FrameOpContext GetContextReference(
+        in VulkanMeshRenderRequest request)
+        => ref request._context;
+
+    internal static ref readonly VulkanMeshProducerSnapshot GetProducerReference(
+        in VulkanMeshRenderRequest request)
+        => ref request._producer;
+
+    internal Vector4 SourceFlatDirection { get; init; }
+    /// <summary>Pass state that the queuing pass had when it queued this request.</summary>
+    internal EVulkanMeshDrawPassStateFlags PassStateFlags { get; init; }
     internal VulkanMeshIndexedIndirectPayload? IndexedIndirect { get; init; }
+    internal VulkanRequiredProducerInsertionToken RequiredProducerInsertionToken { get; init; }
 
     internal static void ReleaseAuthoringLease(ref VulkanMeshRenderRequest request)
     {

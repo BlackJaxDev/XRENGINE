@@ -13,6 +13,7 @@ internal sealed class VulkanLaneCommandFamilyArena
     private int _recordingThreadId;
     private int _recordingDepth;
     private bool _transientPoolUsed;
+    private long _pendingUseOwnerGeneration;
     private ulong _lastTransientPreparationIdentity;
 
     internal VulkanLaneCommandFamilyArena(
@@ -48,6 +49,48 @@ internal sealed class VulkanLaneCommandFamilyArena
     internal ulong Identity => RetainedPool.Handle;
     internal int RetainedArtifactCount => _retainedArtifacts.Count;
     internal bool IsRecording => Volatile.Read(ref _recordingThreadId) != 0;
+
+    /// <summary>
+    /// True while asynchronous work owns this arena: queued or recording CPU work, or
+    /// recorded output that is not yet protected by a queue submission. Only the owner
+    /// that set the use can release it.
+    /// </summary>
+    internal bool HasPendingUse => Volatile.Read(ref _pendingUseOwnerGeneration) != 0L;
+
+    internal long PendingUseOwnerGeneration => Volatile.Read(ref _pendingUseOwnerGeneration);
+
+    /// <summary>
+    /// Marks the arena as owned by asynchronous work with <paramref name="ownerGeneration"/>
+    /// before that work is published. Reset, retirement and replacement are rejected
+    /// until the same owner releases the use.
+    /// </summary>
+    internal void AcquirePendingUse(long ownerGeneration)
+    {
+        if (ownerGeneration == 0L)
+            throw new ArgumentOutOfRangeException(nameof(ownerGeneration));
+        long previous = Interlocked.CompareExchange(ref _pendingUseOwnerGeneration, ownerGeneration, 0L);
+        if (previous != 0L)
+        {
+            throw new InvalidOperationException(
+                $"Lane {LaneId}, slot {FrameSlot}, family {QueueFamilyIndex} already has a pending use " +
+                $"by owner generation {previous}.");
+        }
+    }
+
+    /// <summary>
+    /// Ends a pending use when its queue submission protects the work or when the
+    /// output is discarded. A different generation cannot release it.
+    /// </summary>
+    internal void ReleasePendingUse(long ownerGeneration)
+    {
+        long previous = Interlocked.CompareExchange(ref _pendingUseOwnerGeneration, 0L, ownerGeneration);
+        if (previous != ownerGeneration)
+        {
+            throw new InvalidOperationException(
+                $"Lane {LaneId}, slot {FrameSlot}, family {QueueFamilyIndex} pending use belongs to " +
+                $"owner generation {previous}, not {ownerGeneration}.");
+        }
+    }
 
     internal static RecordingLease EnterRecording(VulkanLaneCommandFamilyArena? arena)
         => new(arena);
@@ -86,6 +129,14 @@ internal sealed class VulkanLaneCommandFamilyArena
         ArgumentNullException.ThrowIfNull(runtime);
         if (preparationIdentity == 0)
             throw new ArgumentOutOfRangeException(nameof(preparationIdentity));
+        // Check the pending owner before the preparation-identity fast path: an
+        // identity match does not prove that queued or unsubmitted work has ended.
+        if (HasPendingUse)
+        {
+            throw new InvalidOperationException(
+                $"Cannot reset transient Vulkan command pool for lane {LaneId}, slot {FrameSlot}, " +
+                $"family {QueueFamilyIndex} while owner generation {PendingUseOwnerGeneration} has a pending use.");
+        }
         if (_lastTransientPreparationIdentity == preparationIdentity)
             return;
         if (IsRecording)
@@ -117,6 +168,12 @@ internal sealed class VulkanLaneCommandFamilyArena
 
     internal void ClearAfterRetirement()
     {
+        if (HasPendingUse)
+        {
+            throw new InvalidOperationException(
+                $"Lane {LaneId}, slot {FrameSlot}, family {QueueFamilyIndex} cannot retire while owner " +
+                $"generation {PendingUseOwnerGeneration} has a pending use.");
+        }
         if (IsRecording)
         {
             throw new InvalidOperationException(

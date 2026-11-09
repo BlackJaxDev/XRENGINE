@@ -84,6 +84,7 @@ public unsafe partial class OpenXRAPI
         _openXrLeftViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
         _openXrRightViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
         _openXrStereoViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
+        CancelOpenXrInsetFramePackages();
     }
 
     private bool TryEnterOpenXrEyePublicationCallback()

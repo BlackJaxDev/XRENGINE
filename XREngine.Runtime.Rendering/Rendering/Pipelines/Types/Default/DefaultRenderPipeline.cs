@@ -151,6 +151,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     protected static EMeshSubmissionStrategy MeshSubmissionStrategy
         => RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
 
+    /// <summary>True when mesh passes draw from the shared atlas, which needs deformed vertices published to it.</summary>
+    internal static bool DrawsFromMeshAtlas
+        => MeshSubmissionStrategy is EMeshSubmissionStrategy.GpuIndirectZeroReadback or
+            EMeshSubmissionStrategy.GpuIndirectInstrumented;
+
     internal static bool UseOpenXrVulkanDesktopStartupSafePath
         => UseOpenXrVulkanDesktopStartupSafePathForViewport(null);
 
@@ -3151,8 +3156,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         return EProbeRefreshKind.None;
     }
 
-    private static ProbeParamData CreateProbeParamData(LightProbeComponent probe)
-        => new()
+    private static ProbeParamData CreateProbeParamData(LightProbeComponent probe,
+        LightProbeIblOutputGeneration? generation = null)
+    {
+        if (generation is null)
+            probe.TryGetActiveIblOutput(out generation);
+        return new()
         {
             InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius),
             InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius),
@@ -3166,7 +3175,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
                 probe.ProxyBoxRotation.Y,
                 probe.ProxyBoxRotation.Z,
                 probe.ProxyBoxRotation.W),
+            PrefilterSampling = new Vector4(
+                (float)(generation?.PrefilterConvention ?? ELightProbePrefilterConvention.PerceptualRoughness),
+                generation?.PrefilteredRadiance.SmallestMipmapLevel ?? 0, 0, 0),
         };
+    }
 
     private void BuildProbeResources(
         ForwardLightProbeInstanceResources state,
@@ -3232,7 +3245,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
                 {
                     Position = new Vector4(probe.Transform.RenderTranslation, 1.0f),
                 };
-                parameters[index] = CreateProbeParamData(probe);
+                parameters[index] = CreateProbeParamData(probe, generation);
             }
 
             ESizedInternalFormat irradianceFormat = ForwardLightProbeArrayFormat.Resolve(renderer, irradianceSources, prefilter: false);

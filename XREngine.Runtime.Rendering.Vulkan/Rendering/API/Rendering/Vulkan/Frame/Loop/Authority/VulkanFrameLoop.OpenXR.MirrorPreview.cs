@@ -375,12 +375,23 @@ internal sealed partial class VulkanFrameLoop
         Extent2D rightDestinationExtent,
         string rightDestinationLabel,
         bool flipY,
+        XRTexture2D? leftPreviewTexture,
+        XRTexture2D? rightPreviewTexture,
         EOpenXrStrictSpsFaultInjectionStage faultInjectionStage,
-        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage,
+        out bool leftPreviewCopied,
+        out bool rightPreviewCopied)
     {
         injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
+        leftPreviewCopied = false;
+        rightPreviewCopied = false;
+        // A frame that cannot reserve a slot goes to the runtime without a
+        // projection layer, which shows black in the headset. A late frame is
+        // reprojected instead, so wait for the oldest eye submission for a
+        // few display periods (OpenXrStereoSubmissionWaitMs) before giving up.
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
-                out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+                out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket,
+                timeoutMs: RuntimeEngine.Rendering.Settings.OpenXrStereoSubmissionWaitMs))
         {
             RecordOpenXrRenderFailure(in renderRequest, "submission-reservation");
             return false;
@@ -453,6 +464,8 @@ internal sealed partial class VulkanFrameLoop
                     rightDestinationExtent,
                     rightDestinationLabel,
                     flipY,
+                    leftPreviewTexture,
+                    rightPreviewTexture,
                     out OpenXrStereoLayerBlitPlan plan))
             {
                 RecordOpenXrRenderFailure(in renderRequest, "stereo-blit-plan");
@@ -494,6 +507,8 @@ internal sealed partial class VulkanFrameLoop
             if (submission.SubmissionReceipt.SubmissionAccepted)
             {
                 UpdateStereoLayerBlitTrackedLayouts(in plan);
+                leftPreviewCopied = plan.LeftPreview.IsValid;
+                rightPreviewCopied = plan.RightPreview.IsValid;
             }
             else if (!commandBuffersCompleted && !IsDeviceLost)
             {
@@ -641,6 +656,14 @@ internal sealed partial class VulkanFrameLoop
         uint recordImageIndex = ResolveOpenXrRecordImageIndex(
             request.ResourcePlannerStateIndex,
             OutputRuntime.Desktop.Images?.Length ?? 0);
+        uint alternateRecordImageIndex = strictSpsTemporalHistory
+            ? ResolveOpenXrRecordImageIndex(1 - request.ResourcePlannerStateIndex, OutputRuntime.Desktop.Images?.Length ?? 0)
+            : recordImageIndex;
+        // Single-pass stereo records both eyes as one frame, so the second eye
+        // frame-data slot is otherwise idle. Alternate between the two slots so the
+        // next stereo frame can record while the previous one is still on the GPU.
+        if (strictSpsTemporalHistory && _openXrStereoUsesAlternateFrameDataSlot)
+            (recordImageIndex, alternateRecordImageIndex) = (alternateRecordImageIndex, recordImageIndex);
 
         VulkanOpenXrFrameContext openXrFrameContext =
             CreateOpenXrMirrorFrameContext(in request);
@@ -659,13 +682,29 @@ internal sealed partial class VulkanFrameLoop
             EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
             _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(
                 openXrFrameDataSlotCount);
+            bool frameDataSlotCompletionProven;
             if (!TryPrepareOpenXrFrameDataSlot(
                     recordImageIndex,
                     "eye mirror render",
-                    out bool frameDataSlotCompletionProven))
+                    out frameDataSlotCompletionProven))
             {
-                RecordOpenXrRenderFailure(in request, "frame-data-slot");
-                return false;
+                if (alternateRecordImageIndex == recordImageIndex ||
+                    !TryPrepareOpenXrFrameDataSlot(
+                        alternateRecordImageIndex,
+                        "eye mirror render",
+                        out frameDataSlotCompletionProven))
+                {
+                    RecordOpenXrRenderFailure(in request, "frame-data-slot");
+                    return false;
+                }
+                recordImageIndex = alternateRecordImageIndex;
+            }
+            if (strictSpsTemporalHistory)
+            {
+                _openXrStereoUsesAlternateFrameDataSlot =
+                    recordImageIndex == ResolveOpenXrRecordImageIndex(
+                        request.ResourcePlannerStateIndex,
+                        OutputRuntime.Desktop.Images?.Length ?? 0);
             }
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
@@ -806,6 +845,10 @@ internal sealed partial class VulkanFrameLoop
                         _framePlanner,
                         _resourceRuntime.BackendObjectContext),
                     openXrViewIndex: request.OpenXrViewIndex,
+                    // A quad-view pair plans against its own two located views.
+                    publicationSnapshot: request.ViewPair == RenderFrameViewSetPublication.AllViews
+                        ? null
+                        : RenderFrameViewSetPublication.CaptureLatest(request.ViewPair),
                     logicalFrameSlot: 0);
                 framePlan.PrepareRecordingPlannerGenerations(in plannerState);
                 VulkanFrameOpPlannerStateKey recordingPlannerKey =
@@ -1102,6 +1145,12 @@ internal sealed partial class VulkanFrameLoop
     private static int ResolveOpenXrDesktopFrameDataSlotCount(int desktopSwapchainImageCount)
         => Math.Max(Math.Max(desktopSwapchainImageCount, DesktopFrameSlotCount), 1);
 
+    /// <summary>
+    /// True when the next single-pass stereo record starts with the second eye
+    /// frame-data slot. Render-thread state; only the strict stereo record reads it.
+    /// </summary>
+    private bool _openXrStereoUsesAlternateFrameDataSlot;
+
     private static uint ResolveOpenXrRecordImageIndex(
         int resourcePlannerStateIndex,
         int desktopSwapchainImageCount)
@@ -1119,6 +1168,9 @@ internal sealed partial class VulkanFrameLoop
         _framePlanner.FramePlanBuilder.ProvisionFrameSlots(frameDataSlotCount);
         _commandRuntime.EnsureCommandBufferFrameDataSlotCapacity(frameDataSlotCount);
         ResourceRuntime.EnsureMappedFrameArenaFrameSlotCapacity(frameDataSlotCount);
+        // Eye recordings use slots after the desktop slots. Without matching
+        // timing pools, eye command buffers record no GPU timestamps.
+        EnsureFrameTimingSlotCapacity(frameDataSlotCount);
         if (FrameDataArena is not { } storage || !storage.TryEnsureFrameSlotCount(frameDataSlotCount))
             throw new InvalidOperationException($"OpenXR could not reserve {frameDataSlotCount} immutable storage slots within the mapped-memory budget.");
     }

@@ -303,6 +303,9 @@ public sealed partial class RenderWorkDomain : IDisposable
             throw new ArgumentException("The batch lease belongs to a different render-work domain.", nameof(lease));
         if (_currentDomain is not null)
             throw new InvalidOperationException("Nested render-work execution on a scheduler lane is forbidden.");
+        if (lease.Batch.IsAsynchronous)
+            throw new InvalidOperationException("An asynchronous render-work rental cannot run through ExecuteAndWait.");
+        ThrowIfSynchronousBatchCollides(lease.Batch);
 
         lock (_laneZeroExecutionSync)
         {
@@ -478,7 +481,7 @@ public sealed partial class RenderWorkDomain : IDisposable
             ? 0
             : affine
                 ? item.PreferredLane
-                : (int)((uint)Interlocked.Increment(ref _roundRobinLane) % (uint)LogicalLaneCount);
+                : SelectMigratableLane();
         BoundedRenderWorkQueue queue = affine
             ? _affineQueues[targetLane]
             : _migratableQueues[targetLane];
@@ -749,6 +752,15 @@ public sealed partial class RenderWorkDomain : IDisposable
             return true;
         }
 
+        // A reserved lane runs only its own affine items. It does not steal unrelated
+        // work between the dependent items of its asynchronous batch.
+        if (IsLaneReservedForAsynchronousWork(laneId))
+        {
+            claim = default;
+            stolen = false;
+            return false;
+        }
+
         for (int offset = 1; offset < LogicalLaneCount; offset++)
         {
             int sourceLane = (laneId + offset) % LogicalLaneCount;
@@ -764,6 +776,22 @@ public sealed partial class RenderWorkDomain : IDisposable
         claim = default;
         stolen = false;
         return false;
+    }
+
+    /// <summary>
+    /// Chooses a lane for a migratable item in round-robin order, and skips lanes
+    /// that asynchronous work reserves. Lane 0 is never reserved.
+    /// </summary>
+    private int SelectMigratableLane()
+    {
+        for (int attempt = 0; attempt < LogicalLaneCount; attempt++)
+        {
+            int lane = (int)((uint)Interlocked.Increment(ref _roundRobinLane) % (uint)LogicalLaneCount);
+            if (!IsLaneReservedForAsynchronousWork(lane))
+                return lane;
+        }
+
+        return 0;
     }
 
     private bool TryDequeueAndRecord(
@@ -789,7 +817,7 @@ public sealed partial class RenderWorkDomain : IDisposable
             Interlocked.Increment(ref _queueLockWaitOverThresholdCount);
     }
 
-    private void BindCallingThreadAsLaneZero(RenderWorkBatch candidateBatch, long candidateGeneration)
+    private void BindCallingThreadAsLaneZero(RenderWorkBatch? candidateBatch, long candidateGeneration)
     {
         int currentThreadId = Environment.CurrentManagedThreadId;
         int boundThreadId = Volatile.Read(ref _laneZeroThreadId);
@@ -803,7 +831,8 @@ public sealed partial class RenderWorkDomain : IDisposable
             Volatile.Write(ref _managedThreadIds[0], currentThreadId);
             return;
         }
-        if (_batchPool.HasUnquiescedBatchesExcept(candidateBatch, candidateGeneration) ||
+        if (_batchPool.AsynchronousRentalCount != 0 ||
+            _batchPool.HasUnquiescedBatchesExcept(candidateBatch, candidateGeneration) ||
             BackendAttachments.HasAnyForLane(0))
         {
             throw new InvalidOperationException(

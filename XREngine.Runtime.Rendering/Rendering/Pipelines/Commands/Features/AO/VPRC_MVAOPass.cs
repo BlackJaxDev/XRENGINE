@@ -459,7 +459,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("Samples", Kernel);
             program.Uniform("KernelSize", _kernelSize);
 
-            var camera = ActivePipelineInstance.RenderState.SceneCamera;
+            var camera = ActivePipelineInstance.RenderState.SceneCamera
+                ?? ActivePipelineInstance.RenderState.RenderingCamera
+                ?? ActivePipelineInstance.LastSceneCamera
+                ?? ActivePipelineInstance.LastRenderingCamera;
             if (camera is null)
                 return;
 
@@ -490,9 +493,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void MVAOBlur_SetUniforms(XRRenderProgram program)
         {
-            var camera = ActivePipelineInstance.RenderState.SceneCamera;
-            if (camera is not null)
-                program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)camera.DepthMode);
+            var camera = ActivePipelineInstance.RenderState.SceneCamera
+                ?? ActivePipelineInstance.RenderState.RenderingCamera
+                ?? ActivePipelineInstance.LastSceneCamera
+                ?? ActivePipelineInstance.LastRenderingCamera;
+            camera?.SetUniforms(program);
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)region.Width);
@@ -539,7 +544,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             noiseTexture.UWrap = ETexWrapMode.Repeat;
             noiseTexture.VWrap = ETexWrapMode.Repeat;
             noiseTexture.Resizable = false;
-            noiseTexture.SizedInternalFormat = ESizedInternalFormat.Rg16f;
+            noiseTexture.SizedInternalFormat = ESizedInternalFormat.Rg32f;
             noiseTexture.Mipmaps =
             [
                 new()

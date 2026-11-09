@@ -53,7 +53,7 @@ namespace XREngine.Rendering
 
         public override bool Load3rdParty(string filePath)
         {
-            string authorityPath = ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
+            string authorityPath = ResolveTextureStreamingAuthorityPathInternal(filePath, ImportedUsage, out string? originalSourcePath);
             return Load3rdPartyCore(authorityPath, originalSourcePath);
         }
 
@@ -185,7 +185,7 @@ namespace XREngine.Rendering
             for (int i = 0; i < entries.Length; i++)
             {
                 var (filePath, target) = entries[i];
-                string resolvedPath = ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
+                string resolvedPath = ResolveTextureStreamingAuthorityPathInternal(filePath, target.ImportedUsage, out string? originalSourcePath);
                 target.FilePath = resolvedPath;
                 if (!string.IsNullOrWhiteSpace(originalSourcePath))
                     target.OriginalPath ??= originalSourcePath;
@@ -406,6 +406,48 @@ namespace XREngine.Rendering
                 return;
             }
 
+            if (backend == RuntimeGraphicsApiKind.Vulkan)
+            {
+                // The upload service binds to the renderer during renderer
+                // startup, which can be after an early asset load finishes. The
+                // render thread runs jobs only after that binding, so decide
+                // there. Only the cheap scheduling step runs on the render thread.
+                if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
+                {
+                    if (!TryScheduleVulkanServiceUpload(texture, cancellationToken, onCompleted, priorityClass))
+                        ScheduleRenderThreadUpload(texture, cancellationToken, onCompleted, backend);
+                }
+                else
+                {
+                    RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(
+                        () =>
+                        {
+                            if (cancellationToken.IsCancellationRequested)
+                                return;
+
+                            if (!TryScheduleVulkanServiceUpload(texture, cancellationToken, onCompleted, priorityClass))
+                                ScheduleRenderThreadUpload(texture, cancellationToken, onCompleted, backend);
+                        },
+                        GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ScheduleUpload"),
+                        RenderThreadJobKind.TextureUpload);
+                }
+
+                return;
+            }
+
+            ScheduleRenderThreadUpload(texture, cancellationToken, onCompleted, backend);
+        }
+
+        /// <summary>
+        /// Uploads the whole mip payload in one render-thread job. Large textures
+        /// on Vulkan use <see cref="TryScheduleVulkanServiceUpload"/> instead.
+        /// </summary>
+        private static void ScheduleRenderThreadUpload(
+            XRTexture2D texture,
+            CancellationToken cancellationToken,
+            Action? onCompleted,
+            RuntimeGraphicsApiKind backend)
+        {
             void UploadAction()
             {
                 if (cancellationToken.IsCancellationRequested)
@@ -500,6 +542,96 @@ namespace XREngine.Rendering
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Base-level byte count at or above which a runtime texture upload on
+        /// Vulkan goes through the chunked upload service. Smaller textures stay
+        /// on the single render-thread job, where the cost is small.
+        /// </summary>
+        private const long VulkanServiceUploadMinBaseBytes = 8L * 1024L * 1024L;
+
+        /// <summary>
+        /// Sends a large in-memory texture through the Vulkan upload service.
+        /// The service copies the base level to staging in bounded chunks off the
+        /// render thread and records the copies (and GPU mip generation when the
+        /// texture requests it) in budgeted upload batches. The single
+        /// render-thread job copied the full payload and generated mips in one
+        /// frame, which stalled the frame for tens of milliseconds on 4K float
+        /// textures. If the service reports a failure, the texture uses the
+        /// render-thread upload and a warning is logged.
+        /// </summary>
+        private static bool TryScheduleVulkanServiceUpload(
+            XRTexture2D texture,
+            CancellationToken cancellationToken,
+            Action? onCompleted,
+            TextureUploadPriorityClass priorityClass)
+        {
+            if (texture.PreferSynchronousGpuUpload
+                || !ImportedTextureStreamingManager.IsVulkanSynchronizedUploadAvailable)
+            {
+                return false;
+            }
+
+            Mipmap2D[]? mipmaps = texture.Mipmaps;
+            if (mipmaps is not { Length: > 0 } || mipmaps[0] is not { } baseMip)
+                return false;
+
+            for (int i = 0; i < mipmaps.Length; ++i)
+            {
+                if (mipmaps[i]?.Data is not { Length: > 0 })
+                    return false;
+            }
+
+            if ((long)mipmaps[0].Data!.Length < VulkanServiceUploadMinBaseBytes)
+                return false;
+
+            // A CPU chain plus auto-generation means the render-thread path
+            // regenerates over the uploaded levels; keep that behavior there.
+            if (texture.AutoGenerateMipmaps && mipmaps.Length > 1)
+                return false;
+
+            bool generateMipChainOnGpu = texture.AutoGenerateMipmaps
+                && Math.Max(baseMip.Width, baseMip.Height) > 1u;
+
+            Mipmap2D[] retainedMipmaps = [.. mipmaps];
+            for (int i = 0; i < retainedMipmaps.Length; ++i)
+                retainedMipmaps[i].StreamingPBO = null;
+
+            TextureStreamingResidentData residentData = new(
+                retainedMipmaps,
+                Math.Max(texture.Width, baseMip.Width),
+                Math.Max(texture.Height, baseMip.Height),
+                Math.Max(baseMip.Width, baseMip.Height),
+                generateMipChainOnGpu);
+
+            RuntimeGraphicsApiKind backend = RuntimeGraphicsApiKind.Vulkan;
+            void OnFailed(Exception error)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    return;
+
+                Debug.TexturesWarning(
+                    $"[UploadMipmaps] Vulkan upload service failed for '{texture.Name}'; using the render-thread upload. {error.Message}");
+                ScheduleRenderThreadUpload(texture, cancellationToken, onCompleted, backend);
+            }
+
+            long scheduleStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool scheduled = ImportedTextureStreamingManager.Instance.TryScheduleRawResidentDataForVulkan(
+                texture,
+                residentData,
+                includeMipChain: retainedMipmaps.Length > 1,
+                priorityClass,
+                cancellationToken,
+                out _,
+                bindStreamingSource: false,
+                onPublished: _ => onCompleted?.Invoke(),
+                onFailed: OnFailed);
+            double scheduleMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(scheduleStart).TotalMilliseconds;
+            if (scheduleMilliseconds >= 4.0)
+                Debug.TexturesWarning(
+                    $"[UploadMipmaps] Vulkan upload service scheduling for '{texture.Name}' took {scheduleMilliseconds:F2} ms (gpuMips={generateMipChainOnGpu}).");
+            return scheduled;
         }
 
         private static bool ShouldUseProgressiveRenderThreadUpload(RuntimeGraphicsApiKind backend, XRTexture2D texture)
@@ -1450,6 +1582,12 @@ namespace XREngine.Rendering
                 // Stencil formats
                 EPixelInternalFormat.StencilIndex8 => ESizedInternalFormat.StencilIndex8,
 
+                // Block-compressed formats from the texture cook
+                EPixelInternalFormat.CompressedRgbaBptcUnorm => ESizedInternalFormat.Bc7Unorm,
+                EPixelInternalFormat.CompressedSrgbAlphaBptcUnorm => ESizedInternalFormat.Bc7Srgb,
+                EPixelInternalFormat.CompressedRGRgtc2 => ESizedInternalFormat.Bc5Unorm,
+                EPixelInternalFormat.CompressedRedRgtc1 => ESizedInternalFormat.Bc4Unorm,
+
                 // Default fallback for unsized/legacy formats
                 _ => ESizedInternalFormat.Rgba32f,
             };
@@ -1477,7 +1615,7 @@ namespace XREngine.Rendering
         public bool Resizable
         {
             get => _resizable;
-            set => SetField(ref _resizable, value);
+            set => SetImportedTextureMetadataField(ref _resizable, value);
         }
 
         public override uint MaxDimension => Math.Max(Width, Height);
@@ -1667,28 +1805,28 @@ namespace XREngine.Rendering
         public Mipmap2D[] Mipmaps
         {
             get => _mipmaps;
-            set => SetField(ref _mipmaps, value);
+            set => SetImportedTextureMetadataField(ref _mipmaps, value);
         }
 
         public ETexMagFilter MagFilter
         {
             get => _magFilter;
-            set => SetField(ref _magFilter, value);
+            set => SetImportedTextureMetadataField(ref _magFilter, value);
         }
         public ETexMinFilter MinFilter
         {
             get => _minFilter;
-            set => SetField(ref _minFilter, value);
+            set => SetImportedTextureMetadataField(ref _minFilter, value);
         }
         public ETexWrapMode UWrap
         {
             get => _uWrap;
-            set => SetField(ref _uWrap, value);
+            set => SetImportedTextureMetadataField(ref _uWrap, value);
         }
         public ETexWrapMode VWrap
         {
             get => _vWrap;
-            set => SetField(ref _vWrap, value);
+            set => SetImportedTextureMetadataField(ref _vWrap, value);
         }
         public GrabPassInfo? GrabPass
         {
@@ -1698,7 +1836,7 @@ namespace XREngine.Rendering
         public float LodBias
         {
             get => _lodBias;
-            set => SetField(ref _lodBias, value);
+            set => SetImportedTextureMetadataField(ref _lodBias, value);
         }
         /// <summary>
         /// Maximum anisotropy requested by the source texture importer.
@@ -1706,7 +1844,7 @@ namespace XREngine.Rendering
         public float MaxAnisotropy
         {
             get => _maxAnisotropy;
-            set => SetField(ref _maxAnisotropy, Math.Max(1.0f, value));
+            set => SetImportedTextureMetadataField(ref _maxAnisotropy, Math.Max(1.0f, value));
         }
         /// <summary>
         /// When true, sampling this texture performs a depth comparison against a reference value
@@ -1715,7 +1853,7 @@ namespace XREngine.Rendering
         public bool EnableComparison
         {
             get => _enableComparison;
-            set => SetField(ref _enableComparison, value);
+            set => SetImportedTextureMetadataField(ref _enableComparison, value);
         }
         /// <summary>
         /// The comparison function used when <see cref="EnableComparison"/> is true.
@@ -1723,12 +1861,12 @@ namespace XREngine.Rendering
         public ETextureCompareFunc CompareFunc
         {
             get => _compareFunc;
-            set => SetField(ref _compareFunc, value);
+            set => SetImportedTextureMetadataField(ref _compareFunc, value);
         }
         public ESizedInternalFormat SizedInternalFormat
         {
             get => _sizedInternalFormat;
-            set => SetField(ref _sizedInternalFormat, value);
+            set => SetImportedTextureMetadataField(ref _sizedInternalFormat, value);
         }
 
         public uint Width => Mipmaps.Length > 0 ? Mipmaps[0].Width : 0;
@@ -1737,7 +1875,12 @@ namespace XREngine.Rendering
         /// <summary>
         /// Set on construction
         /// </summary>
-        public bool Rectangle { get; set; } = false;
+        private bool _rectangle;
+        public bool Rectangle
+        {
+            get => _rectangle;
+            set => SetImportedTextureMetadataField(ref _rectangle, value, publishNotifications: false);
+        }
         public bool MultiSample => MultiSampleCount > 1;
 
         private uint _multiSampleCount = 1;
@@ -1747,7 +1890,7 @@ namespace XREngine.Rendering
         public uint MultiSampleCount
         {
             get => _multiSampleCount;
-            set => SetField(ref _multiSampleCount, value);
+            set => SetImportedTextureMetadataField(ref _multiSampleCount, value);
         }
 
         private bool _fixedSampleLocations = true;
@@ -1774,21 +1917,24 @@ namespace XREngine.Rendering
         /// </summary>
         public void Resize(uint width, uint height)
         {
-            if (Width == width && Height == height || _mipmaps is null || _mipmaps.Length <= 0)
-                return;
-
-            for (int i = 0; i < _mipmaps.Length && width > 0u && height > 0u; ++i)
+            lock (_importedSourceMetadataWriteSync)
             {
-                if (_mipmaps[i] is null)
-                    continue;
+                if (Width == width && Height == height || _mipmaps is null || _mipmaps.Length <= 0)
+                    return;
 
-                _mipmaps[i]?.Resize(width, height);
+                for (int i = 0; i < _mipmaps.Length && width > 0u && height > 0u; ++i)
+                {
+                    if (_mipmaps[i] is null)
+                        continue;
 
-                width >>= 1;
-                height >>= 1;
+                    _mipmaps[i]?.Resize(width, height);
+
+                    width >>= 1;
+                    height >>= 1;
+                }
+
+                Resized?.Invoke();
             }
-
-            Resized?.Invoke();
         }
 
     [field: MemoryPackIgnore]
@@ -1893,7 +2039,13 @@ namespace XREngine.Rendering
         public bool RuntimeManagedProgressiveUploadActive
         {
             get => _runtimeManagedProgressiveUploadActive;
-            set => _runtimeManagedProgressiveUploadActive = value;
+            set
+            {
+                if (_runtimeManagedProgressiveUploadActive == value)
+                    return;
+                _runtimeManagedProgressiveUploadActive = value;
+                AdvanceAdvancedSourceVersion();
+            }
         }
 
         /// <summary>

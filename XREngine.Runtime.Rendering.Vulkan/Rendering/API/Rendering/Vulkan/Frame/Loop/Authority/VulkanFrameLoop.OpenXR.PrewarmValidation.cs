@@ -508,18 +508,20 @@ internal sealed partial class VulkanFrameLoop
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
             FrameOp capturedOp = ops[opIndex];
-            XRRenderPipelineInstance? pipeline = capturedOp.Context.PipelineInstance;
+            // FrameOpContext is large; read the captured context by reference.
+            ref readonly FrameOpContext capturedContext = ref capturedOp.ContextReference;
+            XRRenderPipelineInstance? pipeline = capturedContext.PipelineInstance;
             if (pipeline is null)
                 continue;
 
             RenderResourceRegistry activeRegistry = pipeline.Resources;
-            FrameOpContext context = capturedOp.Context with
+            FrameOpContext context = capturedContext with
             {
                 ResourceRegistry = activeRegistry,
-                DisplayWidth = pipeline.ResourceDisplayWidth ?? capturedOp.Context.DisplayWidth,
-                DisplayHeight = pipeline.ResourceDisplayHeight ?? capturedOp.Context.DisplayHeight,
-                InternalWidth = pipeline.ResourceInternalWidth ?? capturedOp.Context.InternalWidth,
-                InternalHeight = pipeline.ResourceInternalHeight ?? capturedOp.Context.InternalHeight,
+                DisplayWidth = pipeline.ResourceDisplayWidth ?? capturedContext.DisplayWidth,
+                DisplayHeight = pipeline.ResourceDisplayHeight ?? capturedContext.DisplayHeight,
+                InternalWidth = pipeline.ResourceInternalWidth ?? capturedContext.InternalWidth,
+                InternalHeight = pipeline.ResourceInternalHeight ?? capturedContext.InternalHeight,
                 ResourceGeneration = unchecked((ulong)Math.Max(pipeline.ResourceGeneration, 0)),
                 DescriptorGeneration = ResolveFrameOpContextDescriptorGeneration(activeRegistry),
                 ResourceRegistrySignatureSnapshot = VulkanFramePlanner.ComputeResourceRegistrySignature(activeRegistry),
@@ -532,7 +534,7 @@ internal sealed partial class VulkanFrameLoop
 
             ComputeDispatchSnapshot? snapshot = op switch
             {
-                MeshDrawOp meshDraw => meshDraw.Draw.ProgramBindingSnapshot,
+                MeshDrawOp meshDraw => meshDraw.DrawRef.ProgramBindingSnapshot,
                 ComputeDispatchOp compute => compute.Snapshot,
                 ComputeDispatchIndirectOp computeIndirect => computeIndirect.Snapshot,
                 _ => null,

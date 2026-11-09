@@ -28,7 +28,8 @@ exists, OpenXR quad/stereo view plumbing is view-count aware, OpenXR visibility
 mask meshes can be queried, and RVC resources/passes are declared in the frame
 graph.
 
-The backend shader dispatch for the production RVC GPU stages is not yet linked.
+The backend shader dispatch for the production RVC GPU stages is not yet linked,
+except the shadelet telemetry kernel (see [Shadelet Telemetry](#shadelet-telemetry)).
 `VPRC_RvcPass` deliberately emits a throttled warning when an active graph stage
 does not have a backend kernel. This is a feature, not a placeholder accident:
 it prevents the engine from pretending the cache path is doing GPU work when it
@@ -45,7 +46,7 @@ The foundation covers:
   hidden/visible mesh fetch, status reporting, and invalidation state
 - RVC settings, quality controls, pipeline selection, fallback reasons, and
   engine stats hooks
-- `RvcRenderPipeline` as a sibling of `DefaultRenderPipeline`
+- `RvcRenderPipeline` as its own pipeline that executes the Advanced stage family
 - declared RVC texture arrays, shared buffers, framebuffers, and pass graph
   stages for the planned opaque cache renderer
 - renderer capability hooks for descriptor backend, material resource table,
@@ -203,10 +204,15 @@ missing piece.
 
 ## Pipeline Selection And Fallback
 
-`RvcRenderPipeline` is a sibling of `DefaultRenderPipeline`. It starts from the
-same Forward+ infrastructure instead of forking the render path wholesale. This
-keeps mono/stereo/editor behavior stable while RVC adds opaque-cache resources
-and diagnostics.
+`RvcRenderPipeline` derives from `RenderPipeline`, not from the Default or
+Advanced pipelines. It composes the Advanced stage family
+(`AdvancedRenderPipeline.CreateOpenXrEyeStageFamilyDefinition`) and executes it
+over its own view array as its own frame: one layered pipeline for both eyes in
+`SinglePassStereo`, or one mono pipeline per eye. The Advanced definition owns
+the scene feature values, and RVC forwards its feature properties to it. So the
+RVC eye image matches the Advanced pipeline. The RVC sharing stages and their
+resources are not scheduled until their GPU kernels exist; each one must match
+the Advanced image before it is turned on.
 
 `RvcRenderingSettings` controls:
 
@@ -236,7 +242,8 @@ VR uses `RvcRenderPipeline` only when `VrRenderPipeline` is `Rvc`, in
 `SinglePassStereo` or `ParallelCommandBufferRecording`. For that explicit
 selection, a resolution with any fallback reason (including `Off`) is a
 failure: OpenXR submits the frame with no projection layer and reports the
-reason. The pipeline never hosts the Advanced stage family.
+reason. The eye output takes the Advanced output reservation, and the OpenXR
+frame gate requires it to be bound, as for `VrRenderPipeline` = `Advanced`.
 
 ## Renderer Capability Surface
 
@@ -400,6 +407,38 @@ Both backends must expose semantically identical material rows. Shadelet keys do
 not include descriptor-set handles because handles would make cache identity
 backend-specific and fragile across resource rebinding.
 
+### Shadelet Telemetry
+
+The first RVC GPU kernel measures reuse before any shading changes. It is the
+gate for stereo reuse: the design descopes stereo reuse when the measured
+cross-eye ceiling is low.
+
+- Enable it with the `RvcShadeletTelemetryEnabled` engine setting. It has an
+  effect only on Vulkan eyes that `RvcRenderPipeline` renders.
+- `RvcRenderPipeline` makes its Advanced family declare one 64-byte counter
+  buffer per frame slot (`RvcShadeletTelemetry.Counters.SlotN`).
+- After the last view of native opaque shading, the Vulkan backend dispatches
+  `Advanced/Rvc/RvcShadeletTelemetry.comp` once over all view layers. The kernel
+  reads whole-array identity and depth views (set-1 bindings 66 and 67) and
+  writes counters at binding 68. Shading output does not change.
+- It counts two key levels. The primitive key is the visible draw handle and
+  primitive; its counts are loose upper bounds. The surface key adds the
+  world-space cell that holds the surface point. The cell edge is the footprint
+  of N pixels at the point's distance from the head center, rounded up to a
+  power of two so that neighbor cells nest.
+- Intra-view counts are the unique keys per 2x2, 4x4 and 8x8 pixel block. The
+  surface key uses N = 2, 4 and 8 for those blocks.
+- Stereo counts reproject each visible first-view pixel into the second view.
+  A candidate is visible in both eyes when the second view's depth gives a
+  point within 1% of the camera distance. A primitive key match also needs the
+  same primitive. A surface key match also needs the second view's own sample
+  to fall in the same one-pixel cell, which models per-pixel shading reuse.
+- The counters return through the delayed diagnostic readback under every
+  submission strategy, because the setting is an explicit opt-in. They land in
+  `RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetry` and in the
+  `rvc_shadelet_telemetry` object of the MCP `get_render_profiler_stats` tool.
+- Inset/wide counts stay zero until quad view renders.
+
 ## Foveated Shading Rate
 
 RVC has a foveated shading-rate stage for material classes that have not yet
@@ -413,6 +452,29 @@ while the shadelet path takes over the stable opaque set.
 
 Near UI and hands can force 1x1 shading. That override keeps interaction-critical
 content sharp even when surrounding peripheral content is coarser.
+
+### Foveated Quad Shading
+
+The Advanced family shades in compute, so fragment shading rate does not apply
+to its opaque shading. RVC eyes therefore use foveated quad shading in compute:
+
+- Enable it with the `RvcFoveatedQuadShadingEnabled` engine setting. It has an
+  effect only on Vulkan eyes that `RvcRenderPipeline` renders without MSAA.
+- Each 4x4 pixel block gets a block size from the eccentricity of its center:
+  1 inside the mid radius, 2 between the mid and outer radii, and 4 outside the
+  outer radius. The radii come from the view record's foveation data
+  (`foveationRadii.y` and `.w`); without foveation data the kernel uses 0.55
+  and 0.85 (distance from the center in [-1, 1] framebuffer units).
+- A pixel is a follower when the top-left pixel of its block (the
+  representative) shows the same draw and primitive. Followers skip
+  `ShadeNativeOpaque.comp`.
+- `FoveatedQuadFill.comp` then copies HDR color, velocity, reactive mask,
+  shading diagnostics, and (when exported) the material surface inputs from the
+  representative to each follower.
+- The rule is in `FoveatedQuadShading.glslinc` and depends only on the
+  visibility identity and the view record, so shading and fill always agree.
+- Edges between primitives stay per pixel, because a follower needs the same
+  primitive as its representative.
 
 ## Shared Head-Space Lighting
 
@@ -545,6 +607,9 @@ a documented warm-cache policy.
 | `XREngine.Runtime.XR.OpenXR/OpenXRAPI.State.cs` | View, swapchain, image, visibility-mask, and diagnostic storage sized by `RenderFrameViewSet.MaxViewCount`. |
 | `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs` | OpenGL swapchain setup and per-view Forward+ rendering path. |
 | `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs` | Vulkan swapchain setup, per-view rendering path, and quad-safe storage/prewarm plumbing. |
+| `Build/CommonAssets/Shaders/Advanced/Rvc/RvcShadeletTelemetry.comp` | Shadelet telemetry kernel: intra-view unique keys and stereo reprojection key matches. |
+| `XREngine.Runtime.Core/Settings/RvcRuntimeContracts/Records/RvcShadeletTelemetryCounters.cs` | Telemetry counter record, GPU word layout, decode, and reuse ratios. |
+| `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.NativeShading.cs` | Records the telemetry dispatch after the last native shading view and its counter readback. |
 | `XREngine.UnitTests/Rendering/RvcRenderingContractTests.cs` | Source-contract tests for resolver behavior, resources, visibility payloads, shadelets, lighting, temporal hashing, OpenXR wiring, renderer hooks, and host-service reporting. |
 
 ## Remaining Validation And Backend Work

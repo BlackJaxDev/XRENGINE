@@ -59,13 +59,14 @@ internal unsafe partial class VkMeshRenderer
 			!string.Equals(name, FallbackDescriptorUniformName, StringComparison.Ordinal);
 		if (_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? existing))
 		{
-			bool valid = EngineUniformBuffersValid(existing, bufferCount, size) &&
+			bool valid = EngineUniformBuffersValid(name, existing, bufferCount, size) &&
 				(!useFrameArena || !existing[0].OwnsBuffer);
 			if (valid)
 				return true;
 
 			DestroyEngineUniformBufferArray(existing);
 			_engineUniformBuffers.Remove(name);
+			_engineUniformBufferCertificates.Remove(name);
 		}
 
 		if (useFrameArena)
@@ -73,6 +74,7 @@ internal unsafe partial class VkMeshRenderer
 			if (!TryCreateEngineUniformArenaViews(name, size, out EngineUniformBuffer[] arenaBuffers))
 				return false;
 			_engineUniformBuffers[name] = arenaBuffers;
+			EngineUniformBuffersValid(name, arenaBuffers, bufferCount, size);
 			return true;
 		}
 
@@ -105,6 +107,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		_engineUniformBuffers[name] = buffers;
+		EngineUniformBuffersValid(name, buffers, bufferCount, size);
 		return true;
 	}
 
@@ -126,10 +129,15 @@ internal unsafe partial class VkMeshRenderer
 					name,
 					out AutoUniformBlockInfo existingBlock) &&
 				existingBlock.Frequency != EVulkanBindingFrequency.Unknown;
+			// A frequency-owned block replaces each slot view with an exact-size
+			// reservation when it writes, so the array only has to have the right
+			// shape. Checking the size there rebuilt the array whenever programs
+			// with different block sizes shared this renderer.
 			bool valid = AutoUniformBuffersValid(
+					name,
 					existing,
 					bufferCount,
-					size,
+					frequencyOwnedArena ? 1u : size,
 					requireMappedPointers: !frequencyOwnedArena) &&
 				(!useFrameArena || !existing[0].OwnsBuffer);
 			if (valid)
@@ -137,7 +145,9 @@ internal unsafe partial class VkMeshRenderer
 
 			DestroyAutoUniformBufferArray(existing);
 			_autoUniformBuffers.Remove(name);
+			_autoUniformBufferCertificates.Remove(name);
 			_autoUniformOwnerSlotTables.Remove(name);
+			_autoUniformOwnerSlotTablesByNameIdentity.Clear();
 			_publishedAutoUniformMaterialWritePlans.Remove(name);
 		}
 
@@ -146,6 +156,7 @@ internal unsafe partial class VkMeshRenderer
 			if (!TryCreateAutoUniformArenaViews(name, size, out AutoUniformBuffer[] arenaBuffers))
 				return false;
 			_autoUniformBuffers[name] = arenaBuffers;
+			AutoUniformBuffersValid(name, arenaBuffers, bufferCount, size, requireMappedPointers: true);
 			return true;
 		}
 
@@ -175,6 +186,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		_autoUniformBuffers[name] = buffers;
+		AutoUniformBuffersValid(name, buffers, bufferCount, size, requireMappedPointers: true);
 		return true;
 	}
 
@@ -279,42 +291,6 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 
 		totalSize = stride * count;
-		return true;
-	}
-
-	private static bool EngineUniformBuffersValid(EngineUniformBuffer[] buffers, int expectedCount, uint requiredSize)
-	{
-		if (buffers.Length != expectedCount)
-			return false;
-
-		for (int i = 0; i < buffers.Length; i++)
-		{
-			if (buffers[i].Buffer.Handle == 0 ||
-				(!buffers[i].UsesMappedFrameArena && !buffers[i].UsesMappedMemoryLease) ||
-				buffers[i].Size < requiredSize)
-				return false;
-		}
-
-		return true;
-	}
-
-	private static bool AutoUniformBuffersValid(
-		AutoUniformBuffer[] buffers,
-		int expectedCount,
-		uint requiredSize,
-		bool requireMappedPointers)
-	{
-		if (buffers.Length != expectedCount)
-			return false;
-
-		for (int i = 0; i < buffers.Length; i++)
-		{
-			if (buffers[i].Buffer.Handle == 0 ||
-				(requireMappedPointers && !buffers[i].UsesMappedFrameArena && !buffers[i].UsesMappedMemoryLease) ||
-				buffers[i].Size < requiredSize)
-				return false;
-		}
-
 		return true;
 	}
 

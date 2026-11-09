@@ -21,13 +21,9 @@ public static class AdvancedReconstructionTangentSpace
         if (!Matrix4x4.Invert(world, out Matrix4x4 inverse))
             return false;
 
-        Vector3 world0 = Vector3.Transform(localPosition0, world);
-        Vector3 world1 = Vector3.Transform(localPosition1, world);
-        Vector3 world2 = Vector3.Transform(localPosition2, world);
-        Vector3 edge0 = world1 - world0;
-        Vector3 edge1 = world2 - world0;
-        Vector3 geometric = Vector3.Cross(edge0, edge1);
-        if (!TryNormalize(geometric, out geometric))
+        Vector3 edge0 = Vector3.TransformNormal(localPosition1 - localPosition0, world);
+        Vector3 edge1 = Vector3.TransformNormal(localPosition2 - localPosition0, world);
+        if (!TryGeometricNormal(edge0, edge1, out Vector3 geometric))
             return false;
 
         Matrix4x4 inverseTranspose = Matrix4x4.Transpose(inverse);
@@ -56,6 +52,31 @@ public static class AdvancedReconstructionTangentSpace
             mirrored);
         return true;
     }
+
+    private static bool TryGeometricNormal(Vector3 edge0, Vector3 edge1, out Vector3 normal)
+    {
+        normal = default;
+        if (!IsFinite(edge0) || !IsFinite(edge1))
+            return false;
+        float scale0 = MaximumAbsoluteComponent(edge0);
+        float scale1 = MaximumAbsoluteComponent(edge1);
+        if (scale0 == 0.0f || scale1 == 0.0f)
+            return false;
+
+        // Match the shader. World size must not reject a raster-visible triangle.
+        Vector3 cross = Vector3.Cross(edge0 / scale0, edge1 / scale1);
+        float crossScale = MaximumAbsoluteComponent(cross);
+        if (crossScale == 0.0f || !IsFinite(cross))
+            return false;
+        normal = Vector3.Normalize(cross / crossScale);
+        return true;
+    }
+
+    private static bool IsFinite(Vector3 value)
+        => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
+
+    private static float MaximumAbsoluteComponent(Vector3 value)
+        => MathF.Max(MathF.Max(MathF.Abs(value.X), MathF.Abs(value.Y)), MathF.Abs(value.Z));
 
     private static Vector3 BuildOrthogonalTangent(Vector3 normal, Vector3 sourceTangent)
     {

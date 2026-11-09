@@ -26,9 +26,6 @@ namespace XREngine.UnitTests.Scene;
 [NonParallelizable]
 public sealed class SerializedPrefabAvatarPrivateIntegrationTests
 {
-    private const string DefaultPrivateFixturePath =
-        @"K:\Unity\Jax Main Avatars\Assets\Avatars\JAX\Mine\jax2026.prefab";
-
     private IRuntimeShaderServices? _previousShaderServices;
     private IRuntimeRenderingHostServices? _previousRenderingServices;
     private RendererBackendCatalog? _rendererBackendCatalog;
@@ -59,14 +56,13 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
 
     [Test]
     [Category("PrivateIntegration")]
-    public void Jax2026_ImportsCompleteVisualAndAvatarClosureWithoutChangingSource()
+    public void PrivateAvatar_ImportsCompleteVisualAndAvatarClosureWithoutChangingSource()
     {
-        string fixturePath = Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_FIXTURE")
-            ?? DefaultPrivateFixturePath;
+        string fixturePath = Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_FIXTURE") ?? string.Empty;
         if (!File.Exists(fixturePath))
         {
             Assert.Ignore(
-                "Private Unity avatar corpus is unavailable. Set XRE_UNITY_AVATAR_FIXTURE to jax2026.prefab to run this opt-in integration test.");
+                "Private Unity avatar corpus is unavailable. Set XRE_UNITY_AVATAR_FIXTURE to the private avatar prefab to run this opt-in integration test.");
         }
 
         FileInfo beforeInfo = new(fixturePath);
@@ -179,14 +175,14 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
 
     [Test]
     [Category("PrivateIntegration")]
-    public async Task Jax2026_ExternalizedNativePrefabReloads()
+    public async Task PrivateAvatar_ExternalizedNativePrefabReloads()
     {
         string? nativeAssetPath =
             Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_NATIVE_ASSET");
         if (string.IsNullOrWhiteSpace(nativeAssetPath) || !File.Exists(nativeAssetPath))
         {
             Assert.Ignore(
-                "Externalized private Unity avatar output is unavailable. Set XRE_UNITY_AVATAR_NATIVE_ASSET to the generated jax2026.asset to run this opt-in integration test.");
+                "Externalized private Unity avatar output is unavailable. Set XRE_UNITY_AVATAR_NATIVE_ASSET to the generated avatar asset to run this opt-in integration test.");
         }
 
         string? nativeMetadataPath =
@@ -272,7 +268,7 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
                         StringComparison.OrdinalIgnoreCase)),
             ];
             TestContext.Progress.WriteLine(
-                $"Native jax2026 references {nativeModels.Length} models, {nativeSubMeshes.Length} submeshes, {nativeMaterials.Length} materials, {nativeTextures.Length} total texture resources, and {importedSourceTextures.Length} imported source textures.");
+                $"Native private avatar references {nativeModels.Length} models, {nativeSubMeshes.Length} submeshes, {nativeMaterials.Length} materials, {nativeTextures.Length} total texture resources, and {importedSourceTextures.Length} imported source textures.");
             importedSourceTextures.Length.ShouldBe(
                 90,
                 $"Native closure loaded {nativeModels.Length} models, {nativeSubMeshes.Length} submeshes, and {nativeMaterials.Length} materials.");
@@ -306,7 +302,7 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
                     .SelectMany(static node => node.GetComponents<ModelComponent>()),
             ];
             TestContext.Progress.WriteLine(
-                $"Native jax2026 instance contains {activeModelComponents.Length} effectively active model components.");
+                $"Native private avatar instance contains {activeModelComponents.Length} effectively active model components.");
             activeModelComponents.Length.ShouldBe(22);
             instanceNodes.Single(static node => node.Name == "Meshes")
                 .IsActiveSelf.ShouldBeTrue();
@@ -555,14 +551,13 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
 
     [Test]
     [Category("PrivateIntegration")]
-    public void Jax2026_HairSourceMaterialMapsSourceToonRimWithoutDefaultSubstitution()
+    public void PrivateAvatar_HairSourceMaterialMapsSourceToonRimWithoutDefaultSubstitution()
     {
-        string fixturePath = Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_FIXTURE")
-            ?? DefaultPrivateFixturePath;
+        string fixturePath = Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_FIXTURE") ?? string.Empty;
         if (!File.Exists(fixturePath))
         {
             Assert.Ignore(
-                "Private Unity avatar corpus is unavailable. Set XRE_UNITY_AVATAR_FIXTURE to jax2026.prefab to run this opt-in integration test.");
+                "Private Unity avatar corpus is unavailable. Set XRE_UNITY_AVATAR_FIXTURE to the private avatar prefab to run this opt-in integration test.");
         }
 
         string projectRoot = SourceProjectLocator.Locate(fixturePath).ProjectRoot;
@@ -594,19 +589,19 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
 
     [Test]
     [Category("PrivateIntegration")]
-    public void Jax2026_HairThemeVariantRetainsAnimatedThemeUniforms()
+    public void PrivateAvatar_HairThemeVariantRetainsAnimatedThemeUniforms()
     {
         string? nativeAssetPath =
             Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_NATIVE_ASSET");
         if (string.IsNullOrWhiteSpace(nativeAssetPath) || !File.Exists(nativeAssetPath))
         {
             Assert.Ignore(
-                "Externalized private Unity avatar output is unavailable. Set XRE_UNITY_AVATAR_NATIVE_ASSET to the generated jax2026.asset to run this opt-in integration test.");
+                "Externalized private Unity avatar output is unavailable. Set XRE_UNITY_AVATAR_NATIVE_ASSET to the generated avatar asset to run this opt-in integration test.");
         }
 
         string materialPath = Path.Combine(
             Path.GetDirectoryName(nativeAssetPath)!,
-            "jax2026",
+            Path.GetFileNameWithoutExtension(nativeAssetPath),
             "Materials",
             "1 Hair 2.asset");
         if (!File.Exists(materialPath))
@@ -653,19 +648,19 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
 
     [Test]
     [Category("PrivateIntegration")]
-    public void Jax2026_ExternalizedUberMaterialReloadsAndCompiles()
+    public void PrivateAvatar_ExternalizedUberMaterialReloadsAndCompiles()
     {
         string? nativeAssetPath =
             Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_NATIVE_ASSET");
         if (string.IsNullOrWhiteSpace(nativeAssetPath) || !File.Exists(nativeAssetPath))
         {
             Assert.Ignore(
-                "Externalized private Unity avatar output is unavailable. Set XRE_UNITY_AVATAR_NATIVE_ASSET to the generated jax2026.asset to run this opt-in integration test.");
+                "Externalized private Unity avatar output is unavailable. Set XRE_UNITY_AVATAR_NATIVE_ASSET to the generated avatar asset to run this opt-in integration test.");
         }
 
         string materialPath = Path.Combine(
             Path.GetDirectoryName(nativeAssetPath)!,
-            "jax2026",
+            Path.GetFileNameWithoutExtension(nativeAssetPath),
             "Materials",
             "1 Hair 3.asset");
         if (!File.Exists(materialPath))
@@ -720,14 +715,13 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
 
     [Test]
     [Category("PrivateIntegration")]
-    public void Jax2026_ImportedUberMaterialVariantsCompile()
+    public void PrivateAvatar_ImportedUberMaterialVariantsCompile()
     {
-        string fixturePath = Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_FIXTURE")
-            ?? DefaultPrivateFixturePath;
+        string fixturePath = Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_FIXTURE") ?? string.Empty;
         if (!File.Exists(fixturePath))
         {
             Assert.Ignore(
-                "Private Unity avatar corpus is unavailable. Set XRE_UNITY_AVATAR_FIXTURE to jax2026.prefab to run this opt-in integration test.");
+                "Private Unity avatar corpus is unavailable. Set XRE_UNITY_AVATAR_FIXTURE to the private avatar prefab to run this opt-in integration test.");
         }
 
         SerializedPrefabConversionResult conversion = SerializedSceneImporter.ImportPrefabWithManifest(fixturePath);

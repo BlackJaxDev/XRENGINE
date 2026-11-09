@@ -157,6 +157,17 @@ namespace XREngine.Components.Lights
             public XRViewport[] Viewports = [];
             public Transform[] Transforms = [];
             public XRCamera[] Cameras = [];
+            // Render-thread copies of the cascade cameras. The collect thread refits
+            // Cameras for the next frame and publishes their render matrices at once,
+            // which caster culling needs. The tile draws use these copies, refreshed
+            // at the swap boundary, so a tile is drawn with the same fit that its
+            // atlas slot records for reprojection.
+            public XRCamera[] RenderCameras = [];
+            // The cascade matrices of the same swap, for draws that take explicit matrices
+            // (grouped atlas, legacy layered, Advanced lane). Slices is refitted by the
+            // collect thread for the next frame while the render thread draws.
+            public readonly Matrix4x4[] RenderSliceMatrices = new Matrix4x4[MaxCascadeRenderCount];
+            public int RenderSliceMatrixCount;
             public ulong ContentRevision;
             public ulong LegacyRenderedContentRevision;
             public int LegacyRenderedCascadeCount;
@@ -2769,21 +2780,50 @@ namespace XREngine.Components.Lights
             ref float radius)
         {
             Vector3 point = EvaluateCascadeCorner(nearCorner, farCorner, t, worldToLight);
-            Vector2 delta = new(point.X - centerLS.X, point.Y - centerLS.Y);
-            radius = MathF.Max(radius, delta.Length());
+            radius = MathF.Max(radius, Vector3.Distance(point, centerLS));
         }
 
+        /// <summary>
+        /// Replaces the slice bounds with a light-space cube around the bounding sphere of
+        /// the slice corners. The sphere uses the corner centroid and the 3D corner distance,
+        /// which move rigidly with the camera, so the cube size does not change when the
+        /// camera turns or moves. A size that followed the camera orientation changed the
+        /// texel size every frame and made shadow edges shimmer. The radius is rounded up
+        /// to a fixed step so float noise cannot change it from frame to frame either.
+        /// </summary>
         private static void ApplySphereFit(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, ref Vector3 min, ref Vector3 max)
         {
-            Vector3 centerLS = (min + max) * 0.5f;
+            Vector3 centerLS = Vector3.Zero;
+            int cornerCount = 0;
+            for (int i = 0; i < cameraFrusta.Length; i++)
+                AccumulateCascadeCentroid(cameraFrusta[i], nearT, farT, worldToLight, ref centerLS, ref cornerCount);
+            if (cornerCount == 0)
+                return;
+            centerLS /= cornerCount;
+
             float radius = 1e-3f;
             for (int i = 0; i < cameraFrusta.Length; i++)
                 ExpandCascadeSphereRadius(cameraFrusta[i], nearT, farT, worldToLight, centerLS, ref radius);
+            radius = MathF.Ceiling(radius * CascadeSphereRadiusSteps) / CascadeSphereRadiusSteps;
 
-            min.X = centerLS.X - radius;
-            max.X = centerLS.X + radius;
-            min.Y = centerLS.Y - radius;
-            max.Y = centerLS.Y + radius;
+            min = centerLS - new Vector3(radius);
+            max = centerLS + new Vector3(radius);
+        }
+
+        /// <summary>Steps per world unit for the rounded cascade sphere radius.</summary>
+        private const float CascadeSphereRadiusSteps = 64.0f;
+
+        private static void AccumulateCascadeCentroid(Frustum cameraFrustum, float nearT, float farT, Matrix4x4 worldToLight, ref Vector3 sum, ref int count)
+        {
+            sum += EvaluateCascadeCorner(cameraFrustum.LeftBottomNear, cameraFrustum.LeftBottomFar, nearT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.RightBottomNear, cameraFrustum.RightBottomFar, nearT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.LeftTopNear, cameraFrustum.LeftTopFar, nearT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.RightTopNear, cameraFrustum.RightTopFar, nearT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.LeftBottomNear, cameraFrustum.LeftBottomFar, farT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.RightBottomNear, cameraFrustum.RightBottomFar, farT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.LeftTopNear, cameraFrustum.LeftTopFar, farT, worldToLight);
+            sum += EvaluateCascadeCorner(cameraFrustum.RightTopNear, cameraFrustum.RightTopFar, farT, worldToLight);
+            count += 8;
         }
 
         private static void SnapCascadeCenterToTexels(ref Vector3 centerLS, Vector3 halfExtents, uint resolution)
@@ -2945,6 +2985,10 @@ namespace XREngine.Components.Lights
                     EFrameBufferAttachment.DepthAttachment);
                 state.RasterDepthTexture.Name = GetCascadeShadowResourceName(source, "RasterDepthArray");
                 state.RasterDepthTexture.SamplerName = "ShadowRasterDepthArray";
+                // Raster depth is attached and sampled only at mip zero.
+                state.RasterDepthTexture.LargestMipmapLevel = 0;
+                state.RasterDepthTexture.SmallestAllowedMipmapLevel = 0;
+                state.RasterDepthTexture.AutoGenerateMipmaps = false;
             }
 
             if (recreateTexture || state.LayeredFrameBuffer is null)
@@ -3008,6 +3052,7 @@ namespace XREngine.Components.Lights
             var viewports = new XRViewport[requiredCascades];
             var transforms = new Transform[requiredCascades];
             var cameras = new XRCamera[requiredCascades];
+            var renderCameras = new XRCamera[requiredCascades];
 
             for (int i = 0; i < requiredCascades; i++)
             {
@@ -3035,8 +3080,10 @@ namespace XREngine.Components.Lights
                     Camera = camera,
                 };
 
+                viewport.RenderPipelineInstance.PropagateCommandExceptions = true;
                 transforms[i] = transform;
                 cameras[i] = camera;
+                renderCameras[i] = CreateCascadeRenderCamera();
                 viewports[i] = viewport;
                 if (createFrameBuffers)
                 {
@@ -3057,12 +3104,66 @@ namespace XREngine.Components.Lights
 
             state.Transforms = transforms;
             state.Cameras = cameras;
+            state.RenderCameras = renderCameras;
             state.Viewports = viewports;
             state.FrameBuffers = createFrameBuffers ? frameBuffers : [];
         }
 
         private string GetCascadeShadowResourceName(string suffix)
             => GetCascadeShadowResourceName(ShadowRequestSource.Desktop, suffix);
+
+        private XRCamera CreateCascadeRenderCamera()
+        {
+            XROrthographicCameraParameters parameters = new(1.0f, 1.0f, NearZ, 1.0f)
+            {
+                InheritAspectRatio = false,
+            };
+            parameters.SetOriginPercentages(0.5f, 0.5f);
+            return new XRCamera(new Transform { Order = XREngine.Animation.ETransformOrder.TRS }, parameters)
+            {
+                CullingMask = DefaultLayers.EverythingExceptGizmos,
+            };
+        }
+
+        /// <summary>
+        /// Copies the fit of each collected cascade camera to its render-thread copy.
+        /// Runs at the swap boundary, before the render thread draws this frame's tiles
+        /// and before the collect thread refits the cameras for the next frame.
+        /// </summary>
+        private void PublishCascadeRenderCameras(DirectionalCascadeSourceState state, int cascadeCount)
+        {
+            lock (_cascadeDataLock)
+            {
+                int matrixCount = Math.Min(state.Slices.Count, state.RenderSliceMatrices.Length);
+                for (int i = 0; i < matrixCount; i++)
+                    state.RenderSliceMatrices[i] = state.Slices[i].WorldToLightSpaceMatrix;
+                state.RenderSliceMatrixCount = matrixCount;
+            }
+
+            XRCamera[] cameras = state.Cameras;
+            XRCamera[] renderCameras = state.RenderCameras;
+            int count = Math.Min(cascadeCount, Math.Min(cameras.Length, renderCameras.Length));
+            for (int i = 0; i < count; i++)
+            {
+                XRCamera source = cameras[i];
+                XRCamera target = renderCameras[i];
+                if (source.Transform is not Transform sourceTransform ||
+                    target.Transform is not Transform targetTransform ||
+                    source.Parameters is not XROrthographicCameraParameters sourceParameters ||
+                    target.Parameters is not XROrthographicCameraParameters targetParameters)
+                {
+                    continue;
+                }
+
+                targetTransform.Translation = sourceTransform.Translation;
+                targetTransform.Rotation = sourceTransform.Rotation;
+                targetTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+                targetParameters.Resize(sourceParameters.Width, sourceParameters.Height);
+                targetParameters.NearZ = sourceParameters.NearZ;
+                targetParameters.FarZ = sourceParameters.FarZ;
+                target.CullingMask = source.CullingMask;
+            }
+        }
 
         private string GetCascadeShadowResourceName(ShadowRequestSource source, string suffix)
             => $"DirectionalShadow.{ID:N}.Cascade.{source}.{suffix}";
@@ -3105,6 +3206,7 @@ namespace XREngine.Components.Lights
             state.Viewports = [];
             state.Transforms = [];
             state.Cameras = [];
+            state.RenderCameras = [];
 
             for (int i = 0; i < retiredViewports.Length; i++)
                 retiredViewports[i].Destroy();
@@ -3386,6 +3488,7 @@ namespace XREngine.Components.Lights
                 DirectionalCascadeSourceState state = GetCascadeSourceState(source);
                 state.Aabbs.Clear();
                 state.Slices.Clear();
+                state.RenderSliceMatrixCount = 0;
                 Array.Clear(state.AtlasSlots);
                 Array.Clear(state.PendingAtlasSlots);
                 state.RangeNear = 0.0f;
@@ -3992,7 +4095,7 @@ namespace XREngine.Components.Lights
             CollectVisibleStageTimings.EndView(previousCascadeView, cascadeViewStart);
         }
 
-        internal ulong GetShadowCasterCommandSetSignature(
+        internal override ulong GetShadowCasterCommandSetSignature(
             EShadowProjectionType projectionType,
             ShadowRequestSource source,
             int faceOrCascadeIndex)
@@ -4150,6 +4253,8 @@ namespace XREngine.Components.Lights
             int cascadeCount = GetPublishedCascadeViewportCount(source, cascadeShadowViewports);
             if (cascadeCount <= 0)
                 return;
+
+            PublishCascadeRenderCameras(state, cascadeCount);
 
             bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedCascadeCollection(cascadeCount);
             DirectionalCascadeShadowRenderPlan plan = prepareAtlasGroupedCommands
@@ -4431,6 +4536,7 @@ namespace XREngine.Components.Lights
                     return DeclineCascadeAtlasRender(out declineReason, "The lane request rejected a cascade tile.");
             }
 
+            LogGroupedCascadeDrawMatrix(source, publishedMatrices[0]);
             declineReason = null;
             return true;
         }
@@ -4540,6 +4646,13 @@ namespace XREngine.Components.Lights
                 CollectAndSwapCascadeSourcesNow();
             }
 
+            // Draw with the fit published at the swap boundary, not the live camera that
+            // the collect thread may already have refitted for the next frame.
+            XRCamera[] renderCameras = sourceState.RenderCameras;
+            XRCamera? renderCamera = (uint)cascadeIndex < (uint)renderCameras.Length
+                ? renderCameras[cascadeIndex]
+                : null;
+
             bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
             shadowPipeline.PreserveExistingRenderArea = true;
             shadowPipeline.ClearColor = GetShadowMapClearColor();
@@ -4549,7 +4662,7 @@ namespace XREngine.Components.Lights
                 using var renderArea = state.PushRenderArea(renderRect);
                 using var cropArea = state.PushCropArea(renderRect);
                 using var renderSample = RuntimeEngine.Profiler.Start("DirectionalCascade.Cascade.CommandRecording");
-                if (!viewport.TryRender(atlasFbo, null, null, true, ShadowAtlasMaterial))
+                if (!viewport.TryRender(atlasFbo, null, renderCamera, true, ShadowAtlasMaterial))
                     return DeclineCascadeAtlasRender(out declineReason, DescribeCascadeViewportRenderDecline(viewport));
             }
             finally
@@ -4558,6 +4671,7 @@ namespace XREngine.Components.Lights
             }
 
             LogDirectionalAtlasTileRender(source, "cascade", cascadeIndex, renderRect, collectVisibleNow, viewport);
+            LogCascadeDrawMatrix(source, cascadeIndex, renderCamera, viewport.Camera);
             DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeTileRenders);
             declineReason = null;
             return true;
@@ -4672,6 +4786,8 @@ namespace XREngine.Components.Lights
             }
 
             LogDirectionalAtlasGroupedRender(group, collectVisibleNow, viewport.Camera);
+            if (groupedCount > 0)
+                LogGroupedCascadeDrawMatrix(source, publishedMatrices[0]);
             DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeGroupRenders);
             declineReason = null;
             return true;
@@ -4897,7 +5013,17 @@ namespace XREngine.Components.Lights
             int copyCount = Math.Min(MaxCascadeRenderCount, matrices.Length);
             lock (_cascadeDataLock)
             {
-                List<CascadeShadowSlice> slices = GetCascadeSourceState(source).Slices;
+                DirectionalCascadeSourceState state = GetCascadeSourceState(source);
+                // Draws use the matrices of the last swap, which match the request that the
+                // atlas slot records. The live slices can already hold the next frame's fit.
+                if (state.RenderSliceMatrixCount > 0)
+                {
+                    copyCount = Math.Min(copyCount, state.RenderSliceMatrixCount);
+                    state.RenderSliceMatrices.AsSpan(0, copyCount).CopyTo(matrices);
+                    return copyCount;
+                }
+
+                List<CascadeShadowSlice> slices = state.Slices;
                 copyCount = Math.Min(copyCount, slices.Count);
                 for (int i = 0; i < copyCount; i++)
                     matrices[i] = slices[i].WorldToLightSpaceMatrix;
@@ -5010,6 +5136,70 @@ namespace XREngine.Components.Lights
                     slice.BiasMax,
                     slice.ReceiverOffset);
             }
+        }
+
+        /// <summary>
+        /// Audit: logs the matrix a cascade tile was drawn with next to the live collect
+        /// camera. A difference means the collect thread had already refitted the live
+        /// camera for the next frame, which the render-thread copy keeps out of the draw.
+        /// </summary>
+        /// <summary>
+        /// Audit: logs the cascade 0 matrix a grouped or lane draw used next to the live slice.
+        /// A difference means the collect thread had already refitted the slices for the
+        /// next frame, which the swap-boundary snapshot keeps out of the draw.
+        /// </summary>
+        private void LogGroupedCascadeDrawMatrix(ShadowRequestSource source, in Matrix4x4 drawMatrix)
+        {
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit)
+                return;
+
+            Matrix4x4 liveMatrix;
+            lock (_cascadeDataLock)
+            {
+                List<CascadeShadowSlice> slices = GetCascadeSourceState(source).Slices;
+                if (slices.Count == 0)
+                    return;
+                liveMatrix = slices[0].WorldToLightSpaceMatrix;
+            }
+
+            ulong drawHash = HashMatrix(drawMatrix);
+            ulong liveHash = HashMatrix(liveMatrix);
+            if (drawHash == liveHash &&
+                !Debug.ShouldLogEvery($"DirectionalShadowAudit.GroupedDrawMatrix.{ID}.{source}", TimeSpan.FromSeconds(1.0)))
+                return;
+
+            Debug.Lighting(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][CascadeDrawMatrix] frame={0} source={1} cascade=0 grouped=True drawMatrixHash={2:X16} liveMatrixHash={3:X16} liveRefitted={4}",
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                source,
+                drawHash,
+                liveHash,
+                drawHash != liveHash);
+        }
+
+        private void LogCascadeDrawMatrix(ShadowRequestSource source, int cascadeIndex, XRCamera? drawCamera, XRCamera? liveCamera)
+        {
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit || drawCamera is null || liveCamera is null)
+                return;
+
+            ulong drawHash = HashMatrix(drawCamera.Transform.InverseRenderMatrix * drawCamera.ProjectionMatrix);
+            ulong liveHash = HashMatrix(liveCamera.Transform.InverseRenderMatrix * liveCamera.ProjectionMatrix);
+            if (drawHash == liveHash &&
+                !Debug.ShouldLogEvery($"DirectionalShadowAudit.CascadeDrawMatrix.{ID}.{source}.{cascadeIndex}", TimeSpan.FromSeconds(1.0)))
+                return;
+
+            Debug.Lighting(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][CascadeDrawMatrix] frame={0} source={1} cascade={2} drawMatrixHash={3:X16} liveMatrixHash={4:X16} liveRefitted={5}",
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                source,
+                cascadeIndex,
+                drawHash,
+                liveHash,
+                drawHash != liveHash);
         }
 
         private void LogDirectionalAtlasTileRender(

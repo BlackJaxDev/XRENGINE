@@ -28,6 +28,7 @@ These linked guides remain required instructions for their respective tasks; rea
 
 - **Broker/API workers or hierarchical swarms:** [broker policy](docs/developer-guides/ai/agent-broker-policy.md). Setup/trust/restarts: [broker user guide](docs/user-guide/ai/local-agent-broker.md); implementation/security: [broker developer guide](docs/developer-guides/ai/local-agent-broker.md).
 - **Editor/MCP/RenderDoc work or launch/settings/tooling changes:** relevant sections of [editor and tooling workflows](docs/developer-guides/ai/agent-editor-workflows.md). MCP: [setup](docs/user-guide/ai/mcp-server.md) and [protocol/tools](docs/developer-guides/ai/mcp-server.md).
+- **Window videos (the user asks for a video, recording, or clip of an XRENGINE window):** [record-window-video skill](.agents/skills/record-window-video/SKILL.md), which uses `Tools/Record-WindowVideo.ps1` (ffmpeg `gfxcapture`). Ask before you download ffmpeg.
 - **Rendering changes:** [AdvancedRenderPipeline](docs/architecture/rendering/advanced-render-pipeline.md) (the default pipeline), [DefaultRenderPipeline invariants](docs/architecture/rendering/default-render-pipeline-notes.md), and [mesh submission contracts](docs/architecture/rendering/mesh-submission-strategies.md).
 - **Licensing, dependencies, or contributions:** `LICENSE.md`, `LEGAL/README.md`, and relevant `LEGAL/` guidance.
 

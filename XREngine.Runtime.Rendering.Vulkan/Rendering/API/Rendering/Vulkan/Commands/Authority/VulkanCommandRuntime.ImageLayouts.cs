@@ -158,7 +158,7 @@ internal sealed partial class VulkanCommandRuntime
                     handle,
                     out VulkanRecordedImageLayoutState? recorded))
             {
-                recorded = new VulkanRecordedImageLayoutState();
+                recorded = Synchronization.RentRecordedImageLayoutState(0);
                 Synchronization._recordedImageLayoutsByCommandBuffer[handle] = recorded;
             }
 
@@ -226,10 +226,7 @@ internal sealed partial class VulkanCommandRuntime
                     commandBufferHandle,
                     out VulkanRecordedImageLayoutState? recorded))
             {
-                recorded = new VulkanRecordedImageLayoutState
-                {
-                    RecordingGeneration = batch.RecordingGeneration,
-                };
+                recorded = Synchronization.RentRecordedImageLayoutState(batch.RecordingGeneration);
                 Synchronization._recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
             }
 

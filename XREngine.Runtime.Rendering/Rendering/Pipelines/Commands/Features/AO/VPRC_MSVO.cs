@@ -34,7 +34,6 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
         public string[] DependentFboNames { get; set; } = Array.Empty<string>();
 
-        public Vector4 ScaleFactors { get; set; } = new(0.1f, 0.2f, 0.4f, 0.8f);
         public bool Stereo { get; set; }
 
         private sealed class InstanceState
@@ -160,7 +159,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.LastWidth = width;
             state.LastHeight = height;
 
-            state.RawAoTexture = ResolveDeclaredAoTexture(instance, width, height, MSVORawTextureName, MSVOIntensityTextureName);
+            state.RawAoTexture = ResolveDeclaredAoTexture(instance, width, height, MSVORawTextureName, MSVORawTextureName);
             state.FinalAoTexture = ResolveDeclaredAoTexture(instance, width, height, MSVOIntensityTextureName, MSVOIntensityTextureName);
 
             if (!instance.TryGetFBO(MSVOFBOName, out _) || !instance.TryGetFBO(MSVOBlurFBOName, out _))
@@ -323,9 +322,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void MSVOGen_SetUniforms(XRRenderProgram program)
         {
-            program.Uniform("ScaleFactors", ScaleFactors);
-
-            var rc = ActivePipelineInstance.RenderState.SceneCamera;
+            var rc = ActivePipelineInstance.RenderState.SceneCamera
+                ?? ActivePipelineInstance.RenderState.RenderingCamera
+                ?? ActivePipelineInstance.LastSceneCamera
+                ?? ActivePipelineInstance.LastRenderingCamera;
             if (rc is null)
                 return;
 
@@ -342,12 +342,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             Debug.RenderingEvery(
                 $"AO.MSVO.GenUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
                 TimeSpan.FromSeconds(1),
-                "[AO][MSVO] Gen depthMode={0} region={1}x{2} stereoPass={3} scaleFactors={4}",
+                "[AO][MSVO] Gen depthMode={0} region={1}x{2} stereoPass={3}",
                 rc.DepthMode,
                 ActivePipelineInstance.RenderState.CurrentRenderRegion.Width,
                 ActivePipelineInstance.RenderState.CurrentRenderRegion.Height,
-                RuntimeEngine.Rendering.State.IsStereoPass,
-                ScaleFactors);
+                RuntimeEngine.Rendering.State.IsStereoPass);
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);

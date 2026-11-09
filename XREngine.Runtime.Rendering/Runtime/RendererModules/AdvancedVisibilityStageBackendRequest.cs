@@ -26,6 +26,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     bool EnableLightProbesAndIbl = false,
     bool RequiresMaterialSurfaceExports = false,
     bool SuppressBaselineDiffuse = false,
+    bool AmbientOcclusionMultiBounce = false,
+    bool AmbientOcclusionSpecularUsesVisibility = false,
     bool IsMinimalVisibilityOutput = false,
     uint NativeViewIndex = 0u,
     Commands.AdvancedSharedGpuSceneDatabase? SceneDatabase = null,
@@ -45,6 +47,28 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// </summary>
     Shadows.AdvancedDirectionalShadowLaneRequest? DirectionalShadowLane = null)
 {
+    /// <summary>Render time frozen with the authored stage family.</summary>
+    public float RenderTimeSeconds { get; init; }
+
+    /// <summary>
+    /// True when the native opaque shading stage also records the RVC shadelet
+    /// telemetry kernel after its last view. It is not part of the family identity.
+    /// </summary>
+    public bool RecordRvcShadeletTelemetry { get; init; }
+
+    /// <summary>
+    /// True when native opaque shading shades one pixel per peripheral 2x2 or 4x4
+    /// block of the same primitive and fills the rest. Only RVC eyes without MSAA set it.
+    /// </summary>
+    public bool RvcFoveatedQuadShading { get; init; }
+
+    /// <summary>
+    /// True when this family records the mesh surface decal buffer phase. Native opaque
+    /// shading then blends the decal buffer before lighting. Every stage of one family
+    /// carries the same value.
+    /// </summary>
+    public bool DecalBufferEnabled { get; init; }
+
     public bool IsValid => GetInvalidReason() is null;
 
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
@@ -53,6 +77,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// <summary>Reports the failed prerequisite without allocating on accepted frames.</summary>
     public string? GetInvalidReason()
     {
+        if (!float.IsFinite(RenderTimeSeconds))
+            return "The advanced visibility stage has no finite frozen render time.";
         if (!IsStagePhaseValid())
             return "The advanced visibility stage/phase combination is unsupported.";
         if (Publication.FrameId == 0u || Publication.PublicationGeneration == 0u)
@@ -108,7 +134,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
             EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
                 Phase is EAdvancedVisibilityStageBackendPhase.LateCompute or
                     EAdvancedVisibilityStageBackendPhase.LateRaster or
-                    EAdvancedVisibilityStageBackendPhase.MultisampleResolve,
+                    EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
+                    EAdvancedVisibilityStageBackendPhase.DecalBuffer,
             // These stages are compute-only.  Their Vulkan implementation
             // seals a per-stage descriptor closure from the frozen graph
             // generation before recording; they do not participate in the

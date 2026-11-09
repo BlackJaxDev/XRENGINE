@@ -300,6 +300,12 @@ namespace XREngine.Rendering
         /// <summary>Allows the backend to pace a desktop frame before scene preparation begins.</summary>
         public virtual void PrepareRenderFramePacing() { }
 
+        /// <summary>
+        /// Drops the desktop work that this render callback queued when the window
+        /// skips its frame. The next callback queues its own complete work.
+        /// </summary>
+        public virtual void DiscardSkippedDesktopFrameWork() { }
+
         /// <summary>Executes one renderer frame independently from host loop ownership.</summary>
         public void RenderFrame(double delta)
             => RenderFrameCallback(delta);
@@ -1226,7 +1232,8 @@ namespace XREngine.Rendering
             XRDataBuffer destination,
             nint destinationOffset,
             nuint byteCount,
-            string label)
+            string label,
+            IRenderResourceLeaseOwner? authoringLease = null)
             => ERendererComputeEnqueueStatus.Unsupported;
 
         /// <summary>
@@ -1658,6 +1665,13 @@ namespace XREngine.Rendering
             MemoryBarrier(mask);
             return ERendererComputeEnqueueStatus.Enqueued;
         }
+        /// <summary>
+        /// Prepares the current attachment backing without authoring a draw or
+        /// certifying its contents. Deferred backends can return false for retry.
+        /// </summary>
+        public virtual bool TryPrepareFrameBufferAttachments(XRFrameBuffer frameBuffer)
+            => GetOrCreateAPIRenderObject(frameBuffer, generateNow: true)?.IsGenerated == true;
+
         public virtual void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer) { }
         public virtual XRGpuFence? InsertGpuFence()
             => null;

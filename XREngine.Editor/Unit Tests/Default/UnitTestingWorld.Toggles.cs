@@ -114,10 +114,11 @@ public static partial class EditorUnitTests
     {
         public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop; //Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.
         public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.ParallelCommandBufferRecording; //Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo strictly requires true layered multiview rendering and never falls back to per-eye rendering; unavailable capabilities are logged and the XR output is not rendered.
-        public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Default; //Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (SequentialViews and ParallelCommandBufferRecording), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.
+        public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Default; //Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (every view mode), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.
         public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.Off; //Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.
         public bool PreviewStereoViews { get; set; } = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active.
         public bool AllowDesktopEditing { get; set; } = true; //When a VR pawn is active, keeps a desktop editing camera/pawn available.
+        public XREngine.Components.VR.EVrDesktopView DesktopView { get; set; } = XREngine.Components.VR.EVrDesktopView.EditorCamera; //Desktop view at OpenXR startup when AllowDesktopEditing is on. EditorCamera gives mouse and keyboard to the editor camera and pauses VR action input such as thumbstick locomotion; head and hand tracking continue. FirstPerson, Spectator, and TextureOutput keep input on the VR pawn.
         public UnitTestingVrFoveationSettings Foveation { get; set; } = new(); //Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback.
         public UnitTestingOpenXrEyeResolutionSettings OpenXrEyeResolution { get; set; } = new(); //OpenXR per-eye swapchain resolution preset, custom size, and scalar for reproducible headset-resolution testing.
         public string? OpenXrRuntimeJson { get; set; } = null; //Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes. Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects common Monado install/build locations when this is unset.
@@ -261,7 +262,7 @@ public static partial class EditorUnitTests
             public bool Enabled { get; set; } = true;
             public UnitTestModelImportKind Kind { get; set; } = UnitTestModelImportKind.Static;
             /// <summary>
-            /// Selects the generic model material factory. Unity prefabs use their source-aware
+            /// Selects the generic model material factory. Unity scenes and prefabs use their source-aware
             /// material converter instead; recognized Poiyomi materials are always converted to
             /// XRENGINE's forward-plus Uber shader.
             /// </summary>
@@ -289,13 +290,28 @@ public static partial class EditorUnitTests
             /// </summary>
             public ModelImportBackendPreference ImporterBackend { get; set; } = ModelImportBackendPreference.PreferNativeThenAssimp;
 
+            /// <summary>
+            /// Model, .prefab, .unity, or .unitypackage path. Packages import each scene and prefab as a separate root.
+            /// </summary>
             public string Path { get; set; } = string.Empty;
             /// <summary>
-            /// Optional Unity project root (or its Assets directory) for <c>.prefab</c> imports.
-            /// When omitted, the importer locates the owning project from the prefab path.
+            /// Optional Unity project root (or its Assets directory) for loose scenes and prefabs.
+            /// When omitted, the importer locates the owning project from the source path.
             /// Relative paths are resolved from the process working directory.
+            /// Package imports always use their extracted project and ignore this setting.
             /// </summary>
             public string? SourceProjectRoot { get; set; }
+            /// <summary>
+            /// Companion sources for a Unity package import. Each source is a local package,
+            /// package folder, HTTPS archive, or VCC repository URL. Repository entries can
+            /// select a package ID and exact version. Only the main package creates startup roots.
+            /// </summary>
+            public List<UnityPackageDependencySettings> Dependencies { get; set; } = [];
+            /// <summary>
+            /// Imports available Unity content when dependencies are missing. Missing materials use
+            /// a visible fallback, missing prefab instances are skipped, and diagnostics report the loss.
+            /// </summary>
+            public bool AllowPartialImport { get; set; }
             public ModelImportSteps ImportFlags { get; set; } = ModelImportSteps.None;
             public float Scale { get; set; } = 1.0f;
             public bool ZUp { get; set; } = false;
@@ -388,11 +404,12 @@ public static partial class EditorUnitTests
         /// <summary>
         /// Startup model imports processed when the Unit Testing World boots. Each array item
         /// is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend,
-        /// Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, InstanceCount, GenerateMeshletLods,
+        /// Path, optional SourceProjectRoot, ImportFlags, Scale, ZUp, InstanceCount, GenerateMeshletLods,
         /// MeshletAdditionalLodCount, PostImportFlags, and optional
-        /// YawPitchRoll/Translation objects. Unity prefab entries use the Unity converter; recognized
+        /// YawPitchRoll/Translation objects. Unity scenes and prefabs use the Unity converter; recognized
         /// Poiyomi materials are converted to the forward-plus Uber shader.
-        /// Paths are relative to the process working directory unless absolute.
+        /// Relative paths are checked in the working directory, Desktop, and engine assets.
+        /// Unity packages extract to the asset cache and import each scene and prefab as a separate root.
         /// </summary>
         public List<ModelImportSettings> ModelsToImport { get; set; } = [];
         /// <summary>

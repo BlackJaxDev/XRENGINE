@@ -1,6 +1,8 @@
 #version 460
 #extension GL_OVR_multiview2 : require
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
@@ -10,7 +12,7 @@ uniform sampler2DArray TransparentRevealageTex;
 
 vec3 GetUv()
 {
-    return vec3(FragPos.xy * 0.5 + 0.5, gl_ViewID_OVR);
+    return vec3(XRENGINE_ClipXYToFramebufferTextureUV(FragPos.xy), gl_ViewID_OVR);
 }
 
 void main()

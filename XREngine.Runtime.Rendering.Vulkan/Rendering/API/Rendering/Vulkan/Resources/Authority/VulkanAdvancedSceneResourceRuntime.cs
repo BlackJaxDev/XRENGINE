@@ -44,6 +44,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         new AdvancedSamplerRecord[SamplerCacheCapacity];
     private readonly Sampler[] _samplerCache = new Sampler[SamplerCacheCapacity];
     private AdvancedTextureRecord[] _textureRecordScratch = [];
+    private readonly VulkanAdvancedTextureReadinessTracker _textureReadiness = new();
     private AdvancedEncodedTextureReference[] _encodedTextureScratch = [];
     private AdvancedEncodedSamplerReference[] _encodedSamplerScratch = [];
     private DescriptorImageInfo[] _imageDescriptorScratch = [];
@@ -1040,6 +1041,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
 
         DescriptorSet globalDescriptorSet =
             slot.GlobalDescriptorSets[slot.EntryCount];
+        bool textureViewRetired = false;
         if (!TryUpdateGlobalTableDescriptors(
                  globalDescriptorSet,
                  fallbackTableSlice,
@@ -1075,7 +1077,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 (uint)textureHighWater,
                 samplerBase,
                 (uint)samplerHighWater,
-                out reason))
+                out reason,
+                out textureViewRetired))
         {
             if (!TryRollbackStorageTransaction(
                     slot, storageArena, frameSlot, rollbackCursor, out string rollbackReason))
@@ -1084,8 +1087,11 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 reason = rollbackReason;
                 return false;
             }
-            failure =
-                EVulkanAdvancedSceneResourceFailure.DescriptorUpdateFailed;
+            // A texture view that retired after its row was prepared wrote nothing.
+            // The next frame prepares the row again from the current view.
+            failure = textureViewRetired
+                ? EVulkanAdvancedSceneResourceFailure.TextureDescriptorNotReady
+                : EVulkanAdvancedSceneResourceFailure.DescriptorUpdateFailed;
             reason += $" Scene slot={frameSlot} slotGeneration={slot.FrameGeneration} requestedGeneration={frameGeneration} entries={slot.EntryCount} activeUses={slot.ActiveUseCount} globalSet=0x{globalDescriptorSet.Handle:X} resourceSet=0x{slot.ResourceDescriptorSet.Handle:X}.";
             return false;
         }
@@ -1134,7 +1140,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             encodedSamplerSlice,
             lookupSlice,
             fallbackTableSlice,
-            lookupSegments);
+            lookupSegments,
+            VulkanAdvancedNativeShadingKernelFamilies.Create(snapshot.MaterialPayloads.Kernels));
         // The sealed preflight is charged only once the complete publication,
         // including both descriptor updates, is visible. Failed retries cannot
         // leak logical capacity even though the arena itself remains monotonic.
@@ -1344,6 +1351,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         ReadOnlySpan<AdvancedTextureRecord> records = textures.PhysicalRecords;
         records.CopyTo(_textureRecordScratch);
         _encodedTextureScratch[0] = CreateFallbackTextureReference();
+        int loadingTextureCount = 0;
         for (int denseIndex = 0; denseIndex < records.Length; ++denseIndex)
         {
             _imageDescriptorScratch[denseIndex] = new DescriptorImageInfo
@@ -1418,6 +1426,14 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     "Advanced canonical scene publication cold readiness",
                     allowSynchronousUpload: true,
                     out descriptor);
+            // An imported placeholder that waits for its first streamed data has a ready
+            // image, but that image is only a loading filler. Publish it as still loading,
+            // so the shader uses the per-binding fallback instead of the filler.
+            if (IsAwaitingFirstResidency(source))
+            {
+                ++loadingTextureCount;
+                continue;
+            }
             if (!descriptorReady ||
                 !descriptor.IsReady || descriptor.View.Handle == 0 ||
                 descriptor.ViewType != requiredViewType ||
@@ -1425,6 +1441,25 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 !HasCompatibleLayerCount(record, descriptor.ArrayLayers) ||
                 !_resources.Images.IsAvailableForDescriptor(descriptor.View))
             {
+                // A texture that is still loading draws with the fallback of each
+                // material binding (for example black, white or a flat normal) until
+                // its image is ready. The row keeps encoded reference 0, which is not
+                // resident, so the shader uses the binding fallback. The cold readiness
+                // call above has scheduled the upload, and every frame builds the
+                // publication again, so the real image replaces the fallback as soon
+                // as it is ready. This keeps loading from failing whole frames.
+                // A view that exists but has the wrong shape is a real error.
+                bool stillLoading =
+                    !descriptorReady ||
+                    !descriptor.IsReady ||
+                    descriptor.View.Handle == 0 ||
+                    !_resources.Images.IsAvailableForDescriptor(descriptor.View);
+                if (stillLoading)
+                {
+                    ++loadingTextureCount;
+                    continue;
+                }
+
                 failure =
                     EVulkanAdvancedSceneResourceFailure.TextureDescriptorNotReady;
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} ('{source.Name ?? source.GetType().Name}', sourceId={RuntimeHelpers.GetHashCode(source)}, framebufferAttachment={source.FrameBufferAttachment.HasValue}, dimension={record.Dimension}, sourceGeneration={record.Generation}, descriptorGeneration={descriptorSource.DescriptorGeneration}, wrapper={descriptorSource.GetType().Name}, ready={descriptorSource.IsDescriptorReady}, snapshotReady={descriptorReady}, snapshotView=0x{descriptor.View.Handle:X}, snapshotType={descriptor.ViewType}, snapshotSamples={descriptor.Samples}, snapshotLayers={descriptor.ArrayLayers}, compatibleLayers={HasCompatibleLayerCount(record, descriptor.ArrayLayers)}, viewAvailable={_resources.Images.IsAvailableForDescriptor(descriptor.View)}) is not ready for an exact Vulkan sampled-image descriptor after bounded cold preparation.";
@@ -1463,10 +1498,30 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     EAdvancedResourceReferenceFlags.Resident);
         }
 
+        if (loadingTextureCount > 0)
+        {
+            Debug.VulkanEvery(
+                "Vulkan.AdvancedScene.LoadingTextureFallback",
+                TimeSpan.FromSeconds(2),
+                "[AdvancedScene] {0} canonical texture(s) are still loading and draw with their binding fallback this frame.",
+                loadingTextureCount);
+        }
+
+        // Readiness is backend state outside the canonical generations. Advance the
+        // readiness generation, so the resident texture table writes the new rows.
+        _textureReadiness.Update(_textureRecordScratch.AsSpan(0, records.Length));
+
         failure = EVulkanAdvancedSceneResourceFailure.None;
         reason = "Ready";
         return true;
     }
+
+    /// <summary>
+    /// Returns whether <paramref name="source"/> shows only an imported loading placeholder
+    /// that waits for its first streamed resident data.
+    /// </summary>
+    internal static bool IsAwaitingFirstResidency(XRTexture source)
+        => source is XRTexture2D { IsAwaitingFirstResidency: true };
 
     private bool TryPrepareSamplerRows(
         AdvancedGpuRecordTablePublicationSnapshot<AdvancedSamplerRecord> samplers,
@@ -1668,7 +1723,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MaterialBindings, frameSlot, MemoryMarshal.AsBytes(material.TextureBindings), material.Generations.MaterialRows.Content, snapshot.DatabaseEpoch, slot.ResidentMaterialBindings, out bindings) &&
                TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Textures, frameSlot,
                    _textureRecordScratch.AsSpan(0, textureHighWater),
-                   snapshot.Textures, snapshot.DatabaseEpoch, slot.ResidentTextures, out textures) &&
+                   snapshot.Textures, snapshot.DatabaseEpoch, slot.ResidentTextures, out textures,
+                   _textureReadiness.Generation) &&
                TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Samplers, frameSlot, snapshot.Samplers.PhysicalRecords,
                    snapshot.Samplers, snapshot.DatabaseEpoch, slot.ResidentSamplers, out samplers) &&
                TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Lights, frameSlot, snapshot.GlobalResources.Lights.PhysicalRecords,
@@ -1819,7 +1875,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         AdvancedGpuRecordTablePublicationSnapshot<T> table,
         ulong databaseEpoch,
         VulkanAdvancedSceneResidentTable<T> resident,
-        out VulkanFrameDataSlice slice)
+        out VulkanFrameDataSlice slice,
+        ulong backendContentGeneration = 0u)
         where T : unmanaged
     {
         ReadOnlySpan<AdvancedGpuRecordPublicationDelta> deltas = table.Deltas;
@@ -1833,15 +1890,15 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             {
                 if (!resident.TryInitialize(slice, source))
                     return false;
-                resident.StampPublication(databaseEpoch, table.Sequence, table.Generations);
+                resident.StampPublication(databaseEpoch, table.Sequence, table.Generations, backendContentGeneration);
             }
 
             return true;
         }
 
-        if (resident.CanReuseUnchanged(databaseEpoch, table.Generations, source))
+        if (resident.CanReuseUnchanged(databaseEpoch, table.Generations, source, backendContentGeneration))
         {
-            resident.StampPublication(databaseEpoch, table.Sequence, table.Generations);
+            resident.StampPublication(databaseEpoch, table.Sequence, table.Generations, backendContentGeneration);
             slice = resident.CreateCurrentSlice(source.Length);
             return true;
         }
@@ -1851,7 +1908,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             table.Sequence,
             table.JournalFloorSequence,
             table.HasRetainedJournal,
-            source);
+            source,
+            backendContentGeneration);
 
         if (!deltaPatch && !TryWriteResidentBytes(
                 resident.Slice,
@@ -1881,7 +1939,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             resident.CommitPatched(source, deltas);
         else
             resident.Commit(source);
-        resident.StampPublication(databaseEpoch, table.Sequence, table.Generations);
+        resident.StampPublication(databaseEpoch, table.Sequence, table.Generations, backendContentGeneration);
         slice = resident.CreateCurrentSlice(source.Length);
         return true;
     }
@@ -2634,7 +2692,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     DescriptorCapacity,
                     0u,
                     DescriptorCapacity,
-                    out reason))
+                    out reason,
+                    out _))
             {
                 return false;
             }
@@ -2756,8 +2815,10 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         uint textureCount,
         uint samplerBase,
         uint samplerCount,
-        out string reason)
+        out string reason,
+        out bool referenceRetired)
     {
+        referenceRetired = false;
         WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[4];
         uint writeCount = 0u;
         fixed (DescriptorImageInfo* imagePointer = _imageDescriptorScratch)
@@ -2803,7 +2864,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 !_resources.DescriptorLifetime.TryUpdateDescriptorSets(
                     writeCount,
                     writes,
-                    out reason))
+                    out reason,
+                    out referenceRetired))
             {
                 return false;
             }
@@ -2893,6 +2955,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         int descriptorCount = checked((int)capacity);
         _textureRecordScratch =
             new AdvancedTextureRecord[descriptorCount];
+        _textureReadiness.Allocate(descriptorCount);
         _encodedTextureScratch =
             new AdvancedEncodedTextureReference[descriptorCount];
         _encodedSamplerScratch =

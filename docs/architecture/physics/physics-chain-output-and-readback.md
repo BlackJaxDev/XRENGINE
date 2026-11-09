@@ -118,6 +118,30 @@ animation therefore updates the contract on the next publication. A custom
 vertex shader that is not an engine Uber shader must declare its displacement
 in `_VertexConservativeBounds`.
 
+The dispatcher retains the bounds rows of its last full build
+(`GPUPhysicsChainDispatcher.RetainedBoundsRows`). A later build reuses every
+row when all witnesses hold:
+
+- Each palette binding has the same renderer, component, request, scene,
+  palette slice base and size, bone-buffer generation, and complete-palette
+  flag, and the same rows exist.
+- Each row's mesh envelope stamp still matches the mesh, geometry revision,
+  bind root, and bone layout.
+- Each row's scene route has the same publication generation, and each
+  retained drawn-material snapshot is still current.
+- The retained layout was committed, and no abandon, invalidation, retirement,
+  or reset happened since that commit (`_boundsRowsInvalidationVersion`).
+
+A reused build keeps the slot layout, bound sources, mesh envelopes, material
+contracts, and work items, and does not upload the work items again. It computes
+only the per-frame spatial state, committed proxy, renderer state, spatial
+checkpoint, and slot metadata of each row. The commit then skips the source-map
+comparison and does not swap the palette-input bound maps. Any failed witness
+rebuilds every row in that frame. Rows with blendshapes, rows without a scene
+route, and rows whose work item still holds a prior local box always take the
+full build. The stage timings report `BoundsRowReuses` and
+`BoundsRowRebuilds`.
+
 Each renderer on an output page has a committed CPU bound and a bound version.
 CPU consumers, such as the octree and the CPU BVH, use this bound. The
 committed bound is an enlarged proxy of the exact spatial bound
@@ -126,11 +150,18 @@ quarter of its largest extent. A new page keeps the prior proxy and its version
 while the proxy contains the exact bound and its largest extent is at most
 twice that of the exact bound. Otherwise the page fits a new proxy with a new
 version. The version therefore changes only when that renderer's committed
-bound changes, not on each physics output. At commit, the dispatcher reports
-each output to each renderer with a flag that is set only when the bound
-version or validity changed. `RenderableMesh` reconciles its CPU tree placement
-only for a changed bound. A covered shadow caster still advances the shadow
-output revision on each output, because the GPU pose changes. The proxy always
+bound changes, not on each physics output. At commit, the dispatcher notifies
+only the renderers whose bound version or validity changed
+(`XRMeshRenderer.CommittedOutputChanged`), and `RenderableMesh` reconciles the
+CPU tree placement of each of them. A renderer with an unchanged bound gets no
+notification. The GPU pose of a covered shadow caster changes on each output,
+so each commit advances the covered shadow caster output revision of each scene
+in the publication once (`VisualScene3D.NotifyCoveredShadowCasterOutputChanged`;
+the scene ignores a repeated producer epoch). A withdrawn output still notifies
+every renderer on the page. The bounds build compares each row with the
+published page while it writes the row. The commit uses that result while the
+same page, with the same generation and producer epoch, is still published and
+the row count is equal; otherwise it compares the two pages again. The proxy always
 contains the exact bound, so CPU culling stays conservative, but it is less
 precise than the exact bound.
 
@@ -181,7 +212,25 @@ Compatible ranges copy the prior palette even when the atlas layout changes.
 New or incompatible ranges seed previous from current and clear deformation
 history. Shared destinations must use the same prior source. The palette
 completion barrier makes compute writes visible to buffer copies before the
-history copy starts.
+history copy starts. The dispatcher keeps one palette layout entry for each
+binding (renderer, owner, request, slice, bone generation, and binding
+generation) and advances a layout version only when an entry changes. Each
+page keeps its slice map and refills it only when its layout version differs.
+When the published page has the same layout version and every renderer keeps
+its history source and mesh envelope, one copy covers the whole layout. The
+stage timings count these copies in `PreviousPaletteSingleCopies`.
+
+Renderers read the GPU-driven palette through one shared `SkinPaletteView`
+(`XRMeshRenderer.ActiveSkinPaletteBuffer` and
+`ActivePreviousSkinPaletteBuffer`). Each publication writes the buffers of the
+new output into the view once. The dispatcher binds the renderers to the view
+again only when the layout version, a palette history reset, the external
+palette source epoch (`XRMeshRenderer.ExternalSkinPaletteSourceEpoch`, which a
+source clear or an owner or view change advances), or the skinning setting
+changes; `PaletteSourceRebinds` counts these binds. A renderer that leaves the
+layout keeps the buffers that it read last. A bound renderer's
+`SkinnedOutputVersion` includes the view's publication count, so it still
+advances once for each output.
 
 Physics palette history and retained aggregate deformation history have
 separate lifetimes. Aggregate deformation writes only current vertices;

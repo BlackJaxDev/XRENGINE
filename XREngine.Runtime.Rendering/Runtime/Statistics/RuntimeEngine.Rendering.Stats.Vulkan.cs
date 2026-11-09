@@ -267,6 +267,8 @@ namespace XREngine
                     private static int _vulkanQueueSubmitCount;
                     private static int _vulkanPresentAttemptCount;
                     private static int _vulkanPresentAcceptedCount;
+                    // Accepted desktop presents since startup; never reset, so readers can form a rate.
+                    private static long _vulkanPresentAcceptedTotal;
                     private static int _vulkanLastPresentResult;
                     private static int _lastFrameVulkanDeviceLocalAllocationCount;
                     private static long _lastFrameVulkanDeviceLocalAllocatedBytes;
@@ -795,6 +797,8 @@ namespace XREngine
                     public static int VulkanQueueSubmitCount => _lastFrameVulkanQueueSubmitCount;
                     public static int VulkanPresentAttemptCount => _lastFrameVulkanPresentAttemptCount;
                     public static int VulkanPresentAcceptedCount => _lastFrameVulkanPresentAcceptedCount;
+                    /// <summary>Accepted desktop presents since startup. The difference between two reads over a known time is the desktop present rate.</summary>
+                    public static long VulkanPresentAcceptedTotal => Volatile.Read(ref _vulkanPresentAcceptedTotal);
                     public static int VulkanLastPresentResult => _lastFrameVulkanLastPresentResult;
                     public static bool VulkanValidationLayersEnabled
                         => RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled;
@@ -1194,7 +1198,10 @@ namespace XREngine
 
                         Interlocked.Increment(ref _vulkanPresentAttemptCount);
                         if (accepted)
+                        {
                             Interlocked.Increment(ref _vulkanPresentAcceptedCount);
+                            Interlocked.Increment(ref _vulkanPresentAcceptedTotal);
+                        }
                         Volatile.Write(ref _vulkanLastPresentResult, result);
                     }
 
@@ -2119,6 +2126,51 @@ namespace XREngine
 
                         UpdateHighWater(ref _vulkanPipelineQueueDepthHighWater, Math.Max(queueDepth, 0));
                         UpdateHighWater(ref _vulkanPipelineQueueCapacity, Math.Max(queueCapacity, 0));
+                    }
+
+                    private static long _vulkanComputePipelineCachePersistedHitsTotal;
+                    private static long _vulkanComputePipelineCacheRuntimeHitsTotal;
+                    private static long _vulkanComputePipelineCacheMissesTotal;
+                    private static long _vulkanComputePipelineCacheUnknownTotal;
+                    private static long _vulkanComputePipelineCreationTicksTotal;
+
+                    /// <summary>Compute pipelines created from the persisted driver cache since process start.</summary>
+                    public static long VulkanComputePipelineCachePersistedHitsTotal => Interlocked.Read(ref _vulkanComputePipelineCachePersistedHitsTotal);
+                    /// <summary>Compute pipelines created from driver cache entries made in this process.</summary>
+                    public static long VulkanComputePipelineCacheRuntimeHitsTotal => Interlocked.Read(ref _vulkanComputePipelineCacheRuntimeHitsTotal);
+                    /// <summary>Compute pipelines that the driver had to compile since process start.</summary>
+                    public static long VulkanComputePipelineCacheMissesTotal => Interlocked.Read(ref _vulkanComputePipelineCacheMissesTotal);
+                    /// <summary>Compute pipelines created without a cache probe since process start.</summary>
+                    public static long VulkanComputePipelineCacheUnknownTotal => Interlocked.Read(ref _vulkanComputePipelineCacheUnknownTotal);
+                    /// <summary>Total compute pipeline creation time since process start, in milliseconds.</summary>
+                    public static double VulkanComputePipelineCreationMillisecondsTotal
+                        => TimeSpan.FromTicks(Interlocked.Read(ref _vulkanComputePipelineCreationTicksTotal)).TotalMilliseconds;
+
+                    /// <summary>
+                    /// Adds one created compute pipeline to the cumulative cache-outcome counters.
+                    /// These counters do not reset per frame, so a completed cold or warm start
+                    /// can be read at any later time.
+                    /// </summary>
+                    public static void RecordVulkanComputePipelineCacheOutcome(EVulkanDriverPipelineCacheOutcome cacheOutcome, double creationMilliseconds)
+                    {
+                        switch (cacheOutcome)
+                        {
+                            case EVulkanDriverPipelineCacheOutcome.PersistedHit:
+                                Interlocked.Increment(ref _vulkanComputePipelineCachePersistedHitsTotal);
+                                break;
+                            case EVulkanDriverPipelineCacheOutcome.RuntimeHit:
+                                Interlocked.Increment(ref _vulkanComputePipelineCacheRuntimeHitsTotal);
+                                break;
+                            case EVulkanDriverPipelineCacheOutcome.Miss:
+                                Interlocked.Increment(ref _vulkanComputePipelineCacheMissesTotal);
+                                break;
+                            default:
+                                Interlocked.Increment(ref _vulkanComputePipelineCacheUnknownTotal);
+                                break;
+                        }
+
+                        Interlocked.Add(ref _vulkanComputePipelineCreationTicksTotal,
+                            Math.Max(0L, TimeSpan.FromMilliseconds(Math.Max(0.0, creationMilliseconds)).Ticks));
                     }
 
                     public static void RecordVulkanIndirectEffectiveness(

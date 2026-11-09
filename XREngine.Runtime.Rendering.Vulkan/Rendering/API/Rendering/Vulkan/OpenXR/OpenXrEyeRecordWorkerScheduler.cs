@@ -11,18 +11,54 @@ internal sealed class OpenXrEyeRecordWorkerScheduler : IDisposable
 {
     private readonly OpenXrEyeRecordWorkExecutor _executor = new();
 
+    /// <summary>
+    /// Rents the paired eye batch and claims both eye lanes before the caller freezes
+    /// worker inputs, because freezing touches the lanes' backend attachments. A lane
+    /// that asynchronous work reserves fails here with a collision diagnostic.
+    /// </summary>
+    public static RenderWorkBatchLease RentAndClaimLanes(
+        VulkanCommandRuntime runtime,
+        int firstLaneId,
+        int secondLaneId)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        RenderWorkDomain domain = runtime.RenderDomain;
+        RenderWorkBatchLease lease = domain.RentBatch(2);
+        ulong laneMask = (1UL << firstLaneId) | (1UL << secondLaneId);
+        RenderWorkAdmissionResult claim = domain.TryClaimSynchronousLanes(lease, laneMask);
+        if (claim.IsAdmitted)
+            return lease;
+
+        lease.Dispose();
+        throw new InvalidOperationException(
+            $"OpenXR eye lanes {firstLaneId} and {secondLaneId} cannot be claimed: {claim.Reason}. " +
+            "Asynchronous render work reserves one of them.");
+    }
+
+    /// <summary>
+    /// Records both eyes on their claimed lanes and disposes <paramref name="lease"/>.
+    /// The lease must come from <see cref="RentAndClaimLanes"/>.
+    /// </summary>
     public OpenXrEyeRecordWorkerBatchResult Record(
         VulkanCommandRuntime runtime,
         VulkanOpenXrCommandRecordingService recordingService,
+        RenderWorkBatchLease lease,
         in OpenXrPreparedEyeRecordWorkerInput leftEye,
         in OpenXrPreparedEyeRecordWorkerInput rightEye)
     {
         ArgumentNullException.ThrowIfNull(runtime);
         ArgumentNullException.ThrowIfNull(recordingService);
-        _executor.Prepare(runtime, recordingService, in leftEye, in rightEye);
-
         RenderWorkDomain domain = runtime.RenderDomain;
-        RenderWorkBatchLease lease = domain.RentBatch(2);
+        try
+        {
+            _executor.Prepare(runtime, recordingService, in leftEye, in rightEye);
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
+
         lease.SetItem(
             0,
             new RenderWorkItem(

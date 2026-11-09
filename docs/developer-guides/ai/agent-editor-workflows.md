@@ -20,7 +20,11 @@ preserves the command exit code. A shared mutex allows one wrapped command
 at a time across checkouts in the same Windows session. Each command uses
 at most two MSBuild workers with low priority, no worker reuse, and no shared
 C# compiler server. The node-reuse environment setting applies only during
-the command. Editor and RenderBench session builds use this wrapper.
+the command. The wrapper also limits the command to the upper half of the
+logical CPUs. Child processes (MSBuild nodes, `csc`, and test hosts) inherit
+this limit, so a build cannot fill every core. Set
+`XRE_AGENT_BUILD_AFFINITY_MASK` to a hex mask to use other CPUs, or to `0` to
+keep the full affinity. Editor and RenderBench session builds use this wrapper.
 
 Raw `dotnet` commands and other build tools do not acquire this lock. Agents
 must use the wrapper for builds and run applications with `--no-build`.
@@ -113,9 +117,19 @@ The loop:
    pwsh Tools/Manage-McpEditorSession.ps1 Start -Name <unique-agent-session>
    ```
 
-   The command builds into the session's own .NET artifacts root, selects an unused MCP port, starts the editor asynchronously, and waits for MCP readiness. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
+   The command builds into the session's own .NET artifacts root (with hard links in place of copy-local copies where the volume allows them), selects an unused MCP port, starts the editor asynchronously, and waits for MCP readiness. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
 2. Position the view with MCP: `set_editor_camera_view` (or `focus_node_in_view` after locating the subject with `find_nodes_by_name`/`select_node_by_name`). Use `duration: 0` for an immediate cut.
 3. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Pass `output_dir` under the current run root, for example `Build/_AgentValidation/<run>/mcp-captures/`; do not rely on the default `McpCaptures/` location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
+
+   Vulkan viewport PNG capture applies the SDR sRGB display transfer when it
+   reads a single-layer floating-point color image and the desktop uses an sRGB
+   swapchain. That image holds linear display values, and the swapchain applies
+   the same transfer when it presents them. MCP reports the applied conversion
+   in `readback.output_transfer`. If it reports `Unchanged` for a float source,
+   the PNG is darker and more saturated than the window.
+   SDR composited window capture reads the encoded swapchain bytes. Raw texture
+   and diagnostic readbacks keep their source values. This conversion does not
+   provide an HDR screenshot display transform.
 4. Determine what the issue looks like and whether it still exists by inspecting the image(s), not by trusting tool return values.
 5. Stop only the named editor session:
 
@@ -128,6 +142,8 @@ The loop:
 
 Notes:
 - Record durable findings (symptoms, ruled-out causes, render-pass order, next isolation step) so later iterations build on earlier ones instead of repeating them.
+- Use Vulkan validation off (do not set `XRE_VULKAN_VALIDATION`) for performance, timing, and visual verification runs. The validation layer checks each large shader module when the pipeline is made. For the Advanced native shading kernels (about 3.4 MB of SPIR-V each), this check can delay the first rendered frame by many minutes. If a run needs validation, you can skip only the shader-module check through the layer settings (`VK_EXT_layer_settings` or `vk_layer_settings.txt`). Do a separate validation-on run only when the task needs a correctness check, and use it to confirm that the validation error count is 0.
+- `Stop` first asks the editor windows to close. This lets the engine shut down cleanly and the Vulkan layers save their caches. If the process does not exit in a short time, `Stop` ends it.
 
 ### RenderDoc GPU Captures
 
@@ -184,6 +200,20 @@ passed.
 
 4. Always export suspicious render targets/textures to PNG and visually inspect them. For this engine, useful first checks are directional shadow atlas/cascade depth, Velocity, AmbientOcclusionTexture, LightingAccumTexture, BloomBlurTexture mips, TsrOutputTexture, and the final post-process output.
 5. Keep capture output under the current run root's `renderdoc/` folder, close RenderDoc/`rdc` sessions when done, and record durable findings alongside the MCP/log observations.
+
+### Window Videos
+
+Use `Tools/Record-WindowVideo.ps1` when the user asks for a video of a window. The [record-window-video skill](../../../.agents/skills/record-window-video/SKILL.md) has the full procedure. The script uses the ffmpeg `gfxcapture` filter (Windows Graphics Capture), which records one window at its real presentation rate, also when another window covers it. `gdigrab` cannot see Vulkan swapchain output, and the MCP viewport sequence capture is limited to about 8 frames per second by its readback.
+
+The script needs ffmpeg 8.0 or later. If no ffmpeg on the machine has `gfxcapture`, ask the user, then run `Tools/Dependencies/Get-PortableFfmpeg.ps1`. It extracts a portable build to `Build/_AgentValidation/00000000-000000-shared/tools/ffmpeg` and installs nothing.
+
+```powershell
+# Editor window of an isolated MCP session, and the Monado preview window, at the same time.
+Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','Tools/Record-WindowVideo.ps1','-Window','Monado','-Seconds','20','-Fps','60'
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Record-WindowVideo.ps1 -Window Editor -SessionName <name> -Seconds 20 -Fps 60
+```
+
+For a VR recording, start the session with the Monado OpenXR environment of the benchmark (`XRE_UNIT_TEST_VR_MODE=MonadoOpenXR` and `XR_RUNTIME_JSON` that points to `Build/Deps/Monado/openxr_monado.json`), wait until the scene shows, then record. The script prints the frame count and the number of changed frames. A changed-frame count near 1 means a frozen or black capture.
 
 ## Windowless RenderBench Profiling
 
@@ -258,3 +288,8 @@ After adding or renaming MCP tools, regenerate docs:
 ```powershell
 pwsh Tools/Reports/generate_mcp_docs.ps1
 ```
+
+For source-only tool-table updates without an implicit build, use
+`pwsh Tools/Reports/generate_mcp_docs.ps1 -SourceOnly`. Check the generated
+diff. This reads the editor action attributes and does not validate runtime
+tool registration; confirm registration in the isolated editor as well.

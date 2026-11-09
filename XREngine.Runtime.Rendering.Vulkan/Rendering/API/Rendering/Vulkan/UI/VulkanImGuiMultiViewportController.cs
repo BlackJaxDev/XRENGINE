@@ -25,6 +25,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         private readonly Dictionary<uint, VulkanImGuiPlatformWindow> _platformWindows = [];
         private readonly List<PendingPlatformWindowDisposal> _pendingPlatformWindowDisposals = [];
         private readonly List<ImGuiPlatformMonitor> _monitorScratch = [];
+        private readonly ImGuiPointerOwnerTracker _pointerOwner = new();
         private IDisposable? _callbackRegistration;
         private nint _monitorData;
         private int _monitorCapacity;
@@ -130,7 +131,29 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             Debug.Rendering("Vulkan ImGui multi-viewports enabled.");
         }
 
-        public void PrepareForNewFrame(ImGuiIOPtr io)
+        /// <summary>
+        /// Reports focus for the complete ImGui window group.
+        /// </summary>
+        public bool IsAnyWindowFocused()
+        {
+            if (_mainWindow.Events.IsFocused)
+                return true;
+            if (!_installed || _disposed)
+                return false;
+
+            foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
+                if (!window.IsDisposed && window.Focused)
+                    return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Replays platform-window input and the main-window pointer before <c>ImGui.NewFrame</c>.
+        /// </summary>
+        /// <param name="io">The ImGui IO of the editor context.</param>
+        /// <param name="mainButtonActivity">Whether the main window reported mouse button or wheel input this frame.</param>
+        public void PrepareForNewFrame(ImGuiIOPtr io, bool mainButtonActivity)
         {
             if (!_installed || _disposed)
                 return;
@@ -139,14 +162,34 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             PrepareImplicitWindowForNewFrame();
             EnsureMainViewportPlatformData();
 
+            _pointerOwner.BeginFrame();
+            if (mainButtonActivity)
+                _pointerOwner.NoteMainPointerActivity();
             foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
+            {
+                if (window.IsDisposed)
+                    continue;
+
+                // ImGui clears platform requests after Platform_UpdateWindow.
+                // Send close intent before NewFrame so Begin can close the panel.
+                if (window.Window.IsClosing)
+                    RequestClose(window.ViewportId);
                 window.DrainInput();
+            }
+
+            ReleaseStalePointerOwner();
 
             if (!_mainWindow.Events.IsFocused)
                 return;
 
             WindowInputSnapshot input = _mainWindow.Input;
             if (!input.HasMouse)
+                return;
+
+            // A popup viewport does not take focus on click, so the main window stays
+            // focused while its last pointer position is stale. Do not let that stale
+            // position replace the position that the popup window reported.
+            if (!_pointerOwner.UpdateMainPointer(input.PointerX, input.PointerY))
                 return;
             IVector2 origin = _mainWindow.ClientScreenPosition;
             IVector2 cursorPosition = new(origin.X + (int)input.PointerX, origin.Y + (int)input.PointerY);
@@ -674,6 +717,20 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             _pendingPlatformWindowDisposals.Clear();
         }
 
+        /// <summary>
+        /// Returns pointer ownership to the main window when the owning platform window
+        /// is gone or no longer accepts input.
+        /// </summary>
+        private void ReleaseStalePointerOwner()
+        {
+            uint owner = _pointerOwner.OwnerViewportId;
+            if (owner == ImGuiPointerOwnerTracker.MainWindow)
+                return;
+
+            if (!_platformWindows.TryGetValue(owner, out VulkanImGuiPlatformWindow? window) || window.IsDisposed || !window.AcceptsInputs)
+                _pointerOwner.ReleasePlatformWindow(owner);
+        }
+
         private uint ResolveHoveredViewportId(IVector2 screenPosition)
         {
             foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
@@ -704,7 +761,6 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         internal void ReplayViewportInput(
             uint viewportId,
             IVector2 screenOrigin,
-            WindowInputSnapshot input,
             ReadOnlySpan<WindowInputEvent> events)
         {
             MakeCurrent();
@@ -722,6 +778,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                     case WindowInputEventKind.MouseButton:
                         io.AddMouseButtonEvent((int)item.MouseButton, item.IsDown);
                         io.AddMouseViewportEvent(viewportId);
+                        _pointerOwner.NotePlatformPointerActivity(viewportId);
                         break;
                     case WindowInputEventKind.Text:
                         io.AddInputCharacter(item.Character);
@@ -729,15 +786,15 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                     case WindowInputEventKind.Pointer:
                         io.AddMousePosEvent(screenOrigin.X + item.X, screenOrigin.Y + item.Y);
                         io.AddMouseViewportEvent(viewportId);
+                        _pointerOwner.NotePlatformPointerActivity(viewportId);
                         break;
                     case WindowInputEventKind.Scroll:
                         io.AddMouseWheelEvent(item.X, item.Y);
                         io.AddMouseViewportEvent(viewportId);
+                        _pointerOwner.NotePlatformPointerActivity(viewportId);
                         break;
                 }
             }
-            if (input.IsFocused)
-                io.AddFocusEvent(true);
         }
 
         private void ReplayModifier(ImGuiIOPtr io, EKey key, bool down)

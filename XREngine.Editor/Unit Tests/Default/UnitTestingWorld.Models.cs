@@ -36,6 +36,14 @@ public static partial class EditorUnitTests
 {
     public static partial class Models
     {
+        private static void ReportModelImportFailure(Exception exception, string message)
+        {
+            Debug.WriteAuxiliaryLog("model-import-failures.log", $"{message}{Environment.NewLine}{exception}");
+            Debug.MeshesException(exception, message);
+#if !DEBUG && !EDITOR
+            Console.Error.WriteLine($"[EXCEPTION] {message}{Environment.NewLine}{exception}");
+#endif
+        }
         private static ModelAssetImporter.DelMakeMaterialAction ResolveMakeMaterialAction(Settings.ModelImportSettings model)
         {
             ModelAssetImporter.DelMakeMaterialAction baseAction = model.MaterialMode switch
@@ -405,31 +413,72 @@ public static partial class EditorUnitTests
                 DispatchAllModelsImported();
             }
 
-            void ScheduleModelImport(Settings.ModelImportSettings model)
+            void ScheduleModelImport(
+                Settings.ModelImportSettings model,
+                string? sourcePath = null,
+                string? sourceProjectRoot = null,
+                Action? onSerializedImportCompleted = null)
             {
-                string resolvedPath = ResolveModelPath(desktopDir, model.Path);
+                string resolvedPath = sourcePath ?? ResolveModelPath(desktopDir, model.Path);
                 if (!File.Exists(resolvedPath))
                 {
                     Debug.MeshesWarning($"[UnitTestingWorld] Model file not found at '{resolvedPath}' (raw='{model.Path}')");
                     if (model.Kind is UnitTestModelImportKind.Static)
                         CompleteStaticImportSlot();
                     CompleteAllModelImportSlot();
+                    onSerializedImportCompleted?.Invoke();
                     return;
                 }
 
-                if (IsSerializedPrefabPath(resolvedPath))
+                if (IsUnityPackagePath(resolvedPath))
                 {
-                    SceneNode? sourceStaticParent = null;
-                    if (model.Kind is UnitTestModelImportKind.Static)
-                    {
-                        importedStaticModelsRootNode ??= new SceneNode(rootNode)
+                    ScheduleUnityPackageExtraction(
+                        resolvedPath,
+                        model,
+                        desktopDir,
+                        onFinished: (projectRoot, entries) =>
                         {
-                            Name = "Static Model Root",
-                            Layer = DefaultLayers.StaticIndex,
-                        };
-                        sourceStaticParent = importedStaticModelsRootNode;
-                    }
+                            _ = Engine.InvokeOnAppThread(() =>
+                            {
+                                // Register every entry before releasing the package slot. Fast imports
+                                // must not complete startup while other package roots are still pending.
+                                Interlocked.Add(ref pendingModelImports, entries.Count);
+                                if (model.Kind is UnitTestModelImportKind.Static)
+                                    Interlocked.Add(ref pendingStaticImports, entries.Count);
 
+                                int nextEntryIndex = 0;
+                                int entryInFlight = 0;
+                                void ReleaseEntry() => Volatile.Write(ref entryInFlight, 0);
+                                Engine.AddAppThreadCoroutine(() =>
+                                {
+                                    if (nextEntryIndex >= entries.Count)
+                                        return true;
+                                    if (Volatile.Read(ref entryInFlight) != 0)
+                                        return false;
+
+                                    // Keep native model decoders and temporary hierarchy data from
+                                    // different package roots out of memory at the same time.
+                                    Volatile.Write(ref entryInFlight, 1);
+                                    ScheduleModelImport(model, entries[nextEntryIndex++], projectRoot, ReleaseEntry);
+                                    return nextEntryIndex >= entries.Count;
+                                });
+                                if (model.Kind is UnitTestModelImportKind.Static)
+                                    CompleteStaticImportSlot();
+                                CompleteAllModelImportSlot();
+                            }, $"UnitTestingWorld: Schedule Unity package '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
+                        },
+                        onError: ex =>
+                        {
+                            ReportModelImportFailure(ex, $"[UnityPackage] Failed to extract package: {resolvedPath}");
+                            if (model.Kind is UnitTestModelImportKind.Static)
+                                CompleteStaticImportSlot();
+                            CompleteAllModelImportSlot();
+                        });
+                    return;
+                }
+
+                if (IsSerializedHierarchyPath(resolvedPath))
+                {
                     ScheduleSerializedPrefabImport(
                         resolvedPath,
                         model,
@@ -440,47 +489,47 @@ public static partial class EditorUnitTests
                                 try
                                 {
                                     SceneNode importedRoot = result.RootNode;
+                                    var importedScene = new XRScene(Path.GetFileName(resolvedPath), importedRoot)
+                                    {
+                                        IsVisible = !IsSerializedPrefabPath(resolvedPath),
+                                    };
+                                    List<ModelComponent> suspendedModels = [];
                                     if (model.Kind is UnitTestModelImportKind.Animated)
                                     {
-                                        List<ModelComponent> suspendedModels =
-                                            SuspendSerializedPrefabModelPublication(importedRoot);
-                                        if (importedRoot.Transform.Parent != characterParentNode.Transform)
-                                            characterParentNode.Transform.AddChild(importedRoot.Transform, false, EParentAssignmentMode.Immediate);
-
-                                        OnFinishedImportingAvatar(
-                                            importedRoot,
-                                            characterParentNode,
-                                            result.SourceContentSha256);
-                                        StageSerializedPrefabModelPublication(
-                                            importedRoot,
-                                            suspendedModels);
+                                        suspendedModels = SuspendSerializedPrefabModelPublication(importedRoot);
                                     }
                                     else
                                     {
-                                        SceneNode staticParent = sourceStaticParent
-                                            ?? throw new InvalidOperationException("Unity static prefab import has no static parent node.");
-                                        if (importedRoot.Transform.Parent != staticParent.Transform)
-                                            staticParent.Transform.AddChild(importedRoot.Transform, false, EParentAssignmentMode.Immediate);
-
                                         if (HasPostImportFlag(model, ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh))
                                         {
                                             bool combineCoacdColliders = HasPostImportFlag(model, ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent);
                                             AttachAutoGeneratedStaticColliders(importedRoot, combineCoacdColliders);
                                         }
 
-                                        lock (importedStaticRootsLock)
-                                            importedStaticRoots.Add(importedRoot);
-
                                         int instanceCount = Math.Clamp(model.InstanceCount, 1, 64);
                                         for (int instanceIndex = 1; instanceIndex < instanceCount; instanceIndex++)
                                         {
-                                            SceneNode instance = SceneNodePrefabUtility.CloneHierarchyAttached(importedRoot, staticParent);
+                                            SceneNode instance = SceneNodePrefabUtility.CloneHierarchy(importedRoot);
                                             instance.Name = $"{importedRoot.Name} Instance {instanceIndex + 1}";
-                                            lock (importedStaticRootsLock)
-                                                importedStaticRoots.Add(instance);
+                                            importedScene.RootNodes.Add(instance);
                                         }
                                     }
 
+                                    PublishSerializedImportScene(rootNode, importedScene);
+                                    if (importedScene.IsVisible && model.Kind is UnitTestModelImportKind.Static)
+                                    {
+                                        lock (importedStaticRootsLock)
+                                            importedStaticRoots.AddRange(importedScene.RootNodes);
+                                    }
+                                    if (model.Kind is UnitTestModelImportKind.Animated)
+                                    {
+                                        if (IsSerializedPrefabPath(resolvedPath))
+                                            OnFinishedImportingAvatar(result.AvatarRoot, null, result.SourceContentSha256);
+                                        StageSerializedPrefabModelPublication(importedRoot, suspendedModels);
+                                    }
+
+                                    Debug.Meshes(
+                                        $"[UnityPrefab] Scene '{importedScene.Name}' contains '{resolvedPath}' (visible: {importedScene.IsVisible}).");
                                     Debug.Meshes(
                                         $"[UnityPrefab] Import completed: {resolvedPath} " +
                                         $"({result.ModelCount} models, {result.MaterialCount} materials, " +
@@ -489,7 +538,7 @@ public static partial class EditorUnitTests
                                 }
                                 catch (Exception ex)
                                 {
-                                    Debug.MeshesException(ex, $"[UnityPrefab] Failed to finalize imported prefab: {resolvedPath}");
+                                    ReportModelImportFailure(ex, $"[UnityPrefab] Failed to finalize imported prefab: {resolvedPath}");
                                 }
                                 finally
                                 {
@@ -500,18 +549,24 @@ public static partial class EditorUnitTests
                                     }
                                     finally
                                     {
-                                        CompleteAllModelImportSlot();
+                                        try { CompleteAllModelImportSlot(); }
+                                        finally { onSerializedImportCompleted?.Invoke(); }
                                     }
                                 }
                             }, $"UnitTestingWorld: Finish Unity prefab import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
                         },
                         onError: ex =>
                         {
-                            Debug.MeshesException(ex, $"[UnityPrefab] Failed to import prefab: {resolvedPath}");
-                            if (model.Kind is UnitTestModelImportKind.Static)
-                                CompleteStaticImportSlot();
-                            CompleteAllModelImportSlot();
-                        });
+                            try
+                            {
+                                ReportModelImportFailure(ex, $"[UnityPrefab] Failed to import prefab: {resolvedPath}");
+                                if (model.Kind is UnitTestModelImportKind.Static)
+                                    CompleteStaticImportSlot();
+                                CompleteAllModelImportSlot();
+                            }
+                            finally { onSerializedImportCompleted?.Invoke(); }
+                        },
+                        sourceProjectRoot);
                     return;
                 }
 
@@ -543,7 +598,7 @@ public static partial class EditorUnitTests
                             },
                             onError: ex =>
                             {
-                                Debug.MeshesException(ex, $"[AnimatedModel] Failed to import animated model: {resolvedPath}");
+                                ReportModelImportFailure(ex, $"[AnimatedModel] Failed to import animated model: {resolvedPath}");
                                 CompleteAllModelImportSlot();
                             },
                             onCanceled: () =>
@@ -640,7 +695,7 @@ public static partial class EditorUnitTests
                             },
                             onError: ex =>
                             {
-                                Debug.MeshesException(ex, $"[StaticModel] Failed to import static model: {resolvedPath}");
+                                ReportModelImportFailure(ex, $"[StaticModel] Failed to import static model: {resolvedPath}");
                                 CompleteStaticImportSlot();
                                 CompleteAllModelImportSlot();
                             },
@@ -1392,6 +1447,8 @@ public static partial class EditorUnitTests
             HeightScaleBaseComponent? heightScale = null;
             VRIKSolverComponent? vrIKSolver = null;
             int stage = 0;
+            bool bindToStartupPawn = characterParentNode is not null &&
+                ReferenceEquals(rootNode.Parent, characterParentNode);
 
             // Spread startup-only avatar setup across app-thread dispatches so input and camera
             // updates keep getting time slices while heavy humanoid/clip initialization runs.
@@ -1427,9 +1484,9 @@ public static partial class EditorUnitTests
                         var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
 
                         // VRHeightScaleComponent depends on VRState. For desktop locomotion we just scale once to fit the capsule.
-                        if (Toggles.VRPawn)
+                        if (bindToStartupPawn && Toggles.VRPawn)
                             heightScale = rootNode.AddComponent<VRHeightScaleComponent>()!;
-                        else if (Toggles.Locomotion)
+                        else if (bindToStartupPawn && Toggles.Locomotion)
                         {
                             var desktopHeightScale = rootNode.AddComponent<HeightScaleComponent>()!;
                             heightScale = desktopHeightScale;
@@ -1454,7 +1511,7 @@ public static partial class EditorUnitTests
                         if (humanComp is null || humanComp.IsDestroyed)
                             return true;
 
-                        if (Toggles.Locomotion)
+                        if (bindToStartupPawn && Toggles.Locomotion)
                         {
                             if (heightScale is null)
                                 return true;

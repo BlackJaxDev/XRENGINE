@@ -258,7 +258,8 @@ internal sealed partial class VulkanFrameLoop
                     out string deferredReason,
                     foregroundRequired: true,
                     readinessDeadlineTimestamp: deadlineTimestamp,
-                    sourceFrameId: RuntimeEngine.Rendering.State.RenderFrameId))
+                    sourceFrameId: RuntimeEngine.Rendering.State.RenderFrameId,
+                    openXrEyeCohort: s_openXrMeshCohortEnabled))
             {
                 return;
             }

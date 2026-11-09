@@ -346,6 +346,19 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected abstract ViewportRenderCommandContainer GenerateCommandChain();
 
     /// <summary>
+    /// The Advanced stage family that this pipeline executes: the pipeline itself
+    /// when it is Advanced, or the family that a host such as RVC composes. Null
+    /// when the pipeline does not run the Advanced stage family.
+    /// </summary>
+    internal AdvancedRenderPipeline? ResolveAdvancedStageFamily()
+        => this switch
+        {
+            AdvancedRenderPipeline advanced => advanced,
+            IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } host => host.AdvancedStageFamilyDefinition,
+            _ => null,
+        };
+
+    /// <summary>
     /// Gets the mapping of render pass indices to their corresponding sorters for this pipeline.
     /// </summary>
     /// <returns>The dictionary mapping render pass indices to their corresponding sorters.</returns>

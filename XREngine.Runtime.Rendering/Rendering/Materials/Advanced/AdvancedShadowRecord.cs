@@ -63,4 +63,39 @@ public struct AdvancedShadowRecord
 
     /// <summary>Receipt-stamped point/cube light origin and radial depth range.</summary>
     public Vector4 RenderedLightPositionAndFar;
+
+    /// <summary>
+    /// Directional soft-shadow controls in tile-local UV: filter radius (already
+    /// scaled for the cascade), blocker search radius, minimum and maximum penumbra.
+    /// Zero for other shadow types, which keep the <see cref="DepthBiasAndFilter"/> W kernel.
+    /// </summary>
+    public Vector4 SoftShadowParameters;
+
+    /// <summary>
+    /// Directional light-source radius for contact-hardening shadows, then the
+    /// contact-shadow ray distance, thickness and normal offset in world units.
+    /// </summary>
+    public Vector4 ContactParameters;
+
+    /// <summary>
+    /// Contact-shadow fade start and end in view depth, ray jitter strength, and
+    /// the tile-local size of one atlas texel.
+    /// </summary>
+    public Vector4 ContactFadeAndTexel;
+
+    /// <summary>
+    /// Directional filter selection: <see cref="XREngine.Components.Capture.Lights.ESoftShadowMode"/>, filter samples,
+    /// blocker samples and Vogel taps. A soft-shadow mode of zero with one filter
+    /// sample is a single hard compare.
+    /// </summary>
+    public uint SoftShadowMode;
+    public uint FilterSamples;
+    public uint BlockerSamples;
+    public uint VogelTapCount;
+
+    /// <summary>Contact-shadow ray samples; zero disables contact shadows.</summary>
+    public uint ContactSamples;
+    public uint Reserved0;
+    public uint Reserved1;
+    public uint Reserved2;
 }

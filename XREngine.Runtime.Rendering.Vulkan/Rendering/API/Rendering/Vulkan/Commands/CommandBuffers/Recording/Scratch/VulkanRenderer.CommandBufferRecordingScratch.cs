@@ -9,6 +9,10 @@ internal sealed partial class CommandBufferRecordingScratch
             internal const int MaxAdmittedFrameDataPreparationSignatures =
                 16384;
             public VulkanRenderScopeController RenderScope { get; } = new();
+            /// <summary>Command buffer whose frame-data lease this thread acquired last.</summary>
+            public ulong FrameDataLeaseCommandBuffer { get; set; }
+            /// <summary>Lifetime record of <see cref="FrameDataLeaseCommandBuffer"/>.</summary>
+            public VulkanCommandBufferLifetimeRecord? FrameDataLeaseRecord { get; set; }
             public Dictionary<int, VulkanSecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
             public List<VulkanSecondaryRecordingBucket> SecondaryRecordingBuckets { get; } = new(32);
             public Dictionary<int, int> SwapchainWritesByPipeline { get; } = new();

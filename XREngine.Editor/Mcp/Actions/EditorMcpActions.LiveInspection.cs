@@ -702,8 +702,8 @@ namespace XREngine.Editor.Mcp
             {
                 if (currentDepth >= maxDepth)
                 {
-                    int count = 0;
-                    foreach (var _ in enumerable) count++;
+                    // Do not enumerate live render collections only to count them.
+                    int? count = value is ICollection collection ? collection.Count : null;
                     return new { type = FormatTypeName(type), count, truncated = true };
                 }
 

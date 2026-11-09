@@ -48,4 +48,5 @@ internal enum EVulkanDeviceCapability : ulong
     ShaderDemoteToHelperInvocation = 1UL << 41,
     ShaderTerminateInvocation = 1UL << 42,
     UnifiedImageLayouts = 1UL << 43,
+    TextureCompressionBc = 1UL << 44,
 }

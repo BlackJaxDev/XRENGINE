@@ -118,6 +118,8 @@ public static class SerializedTextureImportDocumentParser
             IsNormalMap = textureType == 1 ||
                           (bumpmap is not null &&
                            (SerializedAssetYamlReader.GetScalarBool(bumpmap, "convertToNormalMap") ?? false)),
+            ConvertsToNormalMap = bumpmap is not null &&
+                                  (SerializedAssetYamlReader.GetScalarBool(bumpmap, "convertToNormalMap") ?? false),
             NormalMapChannel =
                 SerializedAssetYamlReader.GetScalarInt(mapping, "singleChannelComponent") ??
                 (bumpmap is null ? 0 : SerializedAssetYamlReader.GetScalarInt(bumpmap, "normalMapFilter") ?? 0),

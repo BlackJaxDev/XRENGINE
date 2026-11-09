@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
 {
     internal sealed partial class VulkanFrameLoop
     {
-        private const uint DesktopSubmitCommandBufferCapacity = 4;
+        private const uint DesktopSubmitCommandBufferCapacity = 5;
 
         internal VulkanDesktopFramePhaseResult SubmitDesktopFrame(
             ref VulkanFrameAttempt attempt)
@@ -121,6 +121,14 @@ namespace XREngine.Rendering.Vulkan
                     commandBuffers,
                     ref commandBufferCount,
                     attempt.SceneCommandBuffer);
+                if (attempt.HasDesktopOffscreenCopyCommandBuffer &&
+                    attempt.DesktopOffscreenCopyCommandBuffer.Handle != 0)
+                {
+                    AppendDesktopSubmitCommandBuffer(
+                        commandBuffers,
+                        ref commandBufferCount,
+                        attempt.DesktopOffscreenCopyCommandBuffer);
+                }
                 if (attempt.HasImGuiOverlayCommandBuffer &&
                     attempt.ImGuiOverlayCommandBuffer.Handle != 0)
                 {
@@ -421,9 +429,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 _frameTelemetry.MarkFrameTimingSubmitted(
-                    unchecked((int)Math.Min(
-                        attempt.ImageIndex,
-                        int.MaxValue)),
+                    ResolveDesktopTimingQueryIndex(in attempt),
                     RuntimeEngine.Rendering.State.RenderFrameId);
                 CommitSubmittedDesktopTextureUpload(
                     ref attempt,
@@ -636,12 +642,19 @@ namespace XREngine.Rendering.Vulkan
             if (attempt.CommandArtifactsSettled)
                 return;
 
-            Span<ulong> handles = stackalloc ulong[3];
+            Span<ulong> handles = stackalloc ulong[4];
             int count = 0;
             count = AddRejectedArtifactHandle(
                 handles,
                 count,
                 attempt.SceneCommandBuffer);
+            if (attempt.HasDesktopOffscreenCopyCommandBuffer)
+            {
+                count = AddRejectedArtifactHandle(
+                    handles,
+                    count,
+                    attempt.DesktopOffscreenCopyCommandBuffer);
+            }
             if (attempt.HasImGuiOverlayCommandBuffer)
             {
                 count = AddRejectedArtifactHandle(

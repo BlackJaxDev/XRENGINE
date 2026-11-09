@@ -43,6 +43,7 @@ public static class AdvancedViewRecordFactory
             SourceCameraIdentityLo = unchecked((uint)source.SourceCameraIdentity),
             SourceCameraIdentityHi = unchecked((uint)(source.SourceCameraIdentity >> 32)),
             CullingLayerMask = source.CullingLayerMask,
+            RenderTimeBits = BitConverter.SingleToUInt32Bits(source.RenderTimeSeconds),
         };
     }
 

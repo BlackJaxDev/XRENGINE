@@ -33,6 +33,15 @@ public partial class XRMesh
             throw new ArgumentException(
                 $"Blendshape source has {sourceVertices.Count} vertices; mesh '{Name}' has {VertexCount}.",
                 nameof(sourceVertices));
+        RebuildBlendshapeBuffers((vertex, destination) => ReadVertexBlendshapeDeltas(sourceVertices[vertex], destination));
+    }
+
+    /// <summary>
+    /// Rebuilds blendshape buffers from one vertex at a time. The source buffers
+    /// stay readable until the replacement buffers are ready.
+    /// </summary>
+    private void RebuildBlendshapeBuffers(BlendshapeDeltaSource deltaSource)
+    {
         lock (_blendshapeBufferPreparationLock)
         {
         BufferCollection targetBuffers = Buffers;
@@ -44,7 +53,7 @@ public partial class XRMesh
         XRMesh? staging = null;
         try
         {
-            if (sourceVertices.Count > 0 && HasBlendshapes)
+            if (VertexCount > 0 && HasBlendshapes)
             {
                 // The temporary owner and its metadata are detached. Replacement
                 // buffers created below still join the caller's atomic publication.
@@ -57,7 +66,7 @@ public partial class XRMesh
                     };
                 }
                 using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
-                staging.PopulateBlendshapeBuffers((vertex, destination) => ReadVertexBlendshapeDeltas(sourceVertices[vertex], destination));
+                staging.PopulateBlendshapeBuffers(deltaSource);
                 prepared = staging.CaptureBlendshapeBufferState();
                 KeyValuePair<string, XRDataBuffer>[] replacements = CreateBlendshapeBufferReplacements(prepared);
                 publication.Complete(

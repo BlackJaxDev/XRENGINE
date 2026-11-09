@@ -102,6 +102,14 @@ public static partial class EditorUnitTests
         private static readonly long FpsOverlayRefreshPeriodTicks =
             XREngine.Timers.EngineTimer.SecondsToStopwatchTicks(0.25);
         private static long _lastFpsOverlayRefreshTicks;
+        // Running totals at the previous refresh. Their differences over the refresh window are
+        // the presented desktop rate and the submitted OpenXR rate, which in VR differ from the
+        // render-loop rate: the loop ticks with every eye frame, while the desktop presents less often.
+        private static long _lastRateSampleTicks;
+        private static long _lastDesktopPresentTotal;
+        private static long _lastXrSubmittedTotal;
+        private static double _desktopPresentHz;
+        private static double _xrSubmittedHz;
 
         private readonly record struct CameraPreviewRequest(CameraComponent Camera, string Label);
 
@@ -161,7 +169,8 @@ public static partial class EditorUnitTests
             double dispatchCpuMs = _fpsWindowDispatchMs / windowFrames;
             double renderWaitForCollectMs = _fpsWindowRenderWaitMs / windowFrames;
             double collectWaitForRenderMs = _fpsWindowCollectWaitMs / windowFrames;
-            double vrHz = ResolveVrRenderHz();
+            SampleOutputRates(renderTimestampTicks);
+            double vrHz = _xrSubmittedHz > 0.0 ? _xrSubmittedHz : ResolveVrRenderHz();
             double vrPassMs = _fpsWindowVrFrames > 0 ? _fpsWindowVrPassMs / _fpsWindowVrFrames : 0.0;
             ResetFpsWindow();
             int fallbackEvents = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
@@ -200,8 +209,14 @@ public static partial class EditorUnitTests
             builder.Append(ResolveMeshSubmissionStrategyLabel());
 
             builder.Append(vrActive ? "\ndesktop:" : "\nrender: ");
-            AppendFixed(builder, averageHz, "F0", 3);
+            AppendFixed(builder, vrActive ? _desktopPresentHz : averageHz, "F0", 3);
             builder.Append("hz ");
+            if (vrActive)
+            {
+                builder.Append("presented | loop ");
+                AppendFixed(builder, averageHz, "F0", 3);
+                builder.Append("hz ");
+            }
             AppendFixed(builder, renderMs, "F1", 5);
             builder.Append("ms avg ");
             AppendFixed(builder, maxRenderMs, "F0", 3);
@@ -560,6 +575,147 @@ public static partial class EditorUnitTests
                 return "OpenVR";
 
             return "VR";
+        }
+
+        /// <summary>
+        /// Returns the running totals behind the overlay output rates, for a timed external probe
+        /// such as MCP <c>invoke_method</c>. Two reads give the presented desktop rate and the
+        /// submitted OpenXR rate over the time between them.
+        /// </summary>
+        public static object CaptureOutputRateTotals()
+            => new
+            {
+                timestampSeconds = System.Diagnostics.Stopwatch.GetTimestamp() / (double)System.Diagnostics.Stopwatch.Frequency,
+                desktopPresentedTotal = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPresentAcceptedTotal,
+                xrSubmittedTotal = RuntimeEngine.VRState.OpenXRApi?.SmokeSubmittedFrameCount ?? 0L,
+                xrNoLayerTotal = RuntimeEngine.VRState.OpenXRApi?.SmokeNoLayerFrameCount ?? 0L,
+            };
+
+        /// <summary>
+        /// Sets one boolean engine rendering setting by property name, for a timed external
+        /// A/B probe such as MCP <c>invoke_method</c>. Returns false when no writable
+        /// boolean property has that name.
+        /// </summary>
+        public static bool SetRenderingSettingBool(string propertyName, bool value)
+        {
+            object settings = RuntimeEngine.Rendering.Settings;
+            System.Reflection.PropertyInfo? property = settings.GetType().GetProperty(propertyName);
+            if (property is null || !property.CanWrite || property.PropertyType != typeof(bool))
+                return false;
+
+            property.SetValue(settings, value);
+            return true;
+        }
+
+        /// <summary>
+        /// Sets one engine rendering setting by property name from its text form, for a timed
+        /// external A/B probe such as MCP <c>invoke_method</c>. Accepts bool, enum (by name),
+        /// integer and floating-point properties. Returns false when no writable property has
+        /// that name or the text does not parse.
+        /// </summary>
+        public static bool SetRenderingSettingValue(string propertyName, string value)
+            => SetSettingValue(RuntimeEngine.Rendering.Settings, propertyName, value);
+
+        /// <summary>
+        /// Sets one user setting (<see cref="Engine.UserSettings"/>) by property name from its
+        /// text form, for a timed external A/B probe such as MCP <c>invoke_method</c>. Accepts
+        /// the same property types as <see cref="SetRenderingSettingValue"/>.
+        /// </summary>
+        public static bool SetUserSettingValue(string propertyName, string value)
+            => SetSettingValue(Engine.UserSettings, propertyName, value);
+
+        /// <summary>
+        /// Moves the camera node of local player one by a world-space offset, for an external
+        /// camera-motion probe such as MCP <c>invoke_method</c>. Returns false when the player
+        /// has no pawn with a plain transform.
+        /// </summary>
+        public static bool TranslateLocalPlayerCamera(float dx, float dy, float dz)
+        {
+            if (Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent is not { } pawn ||
+                pawn.SceneNode.Transform is not Transform transform)
+                return false;
+
+            transform.Translation += new Vector3(dx, dy, dz);
+            return true;
+        }
+
+        /// <summary>
+        /// Sets the camera node of local player one to a world position and a yaw/pitch in
+        /// degrees, for an external camera-motion probe such as MCP <c>invoke_method</c>.
+        /// Returns false when the player has no pawn with a plain transform.
+        /// </summary>
+        public static bool SetLocalPlayerCameraPose(float x, float y, float z, float yawDegrees, float pitchDegrees)
+        {
+            if (Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent is not { } pawn ||
+                pawn.SceneNode.Transform is not Transform transform)
+                return false;
+
+            transform.Translation = new Vector3(x, y, z);
+            transform.Rotation = Quaternion.CreateFromYawPitchRoll(
+                float.DegreesToRadians(yawDegrees),
+                float.DegreesToRadians(pitchDegrees),
+                0.0f);
+            return true;
+        }
+
+        private static bool SetSettingValue(object settings, string propertyName, string value)
+        {
+            System.Reflection.PropertyInfo? property = settings.GetType().GetProperty(propertyName);
+            if (property is null || !property.CanWrite)
+                return false;
+
+            Type type = property.PropertyType;
+            object? parsed = null;
+            if (type.IsEnum && Enum.TryParse(type, value, ignoreCase: true, out object? enumValue))
+                parsed = enumValue;
+            else if (type == typeof(bool) && bool.TryParse(value, out bool boolValue))
+                parsed = boolValue;
+            else if (type == typeof(int) && int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int intValue))
+                parsed = intValue;
+            else if (type == typeof(float) && float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float floatValue))
+                parsed = floatValue;
+            if (parsed is null)
+                return false;
+
+            property.SetValue(settings, parsed);
+            return true;
+        }
+
+        /// <summary>
+        /// Sets the VR render priority user setting by name (<c>Vr</c> or <c>Desktop</c>),
+        /// for a timed external A/B probe such as MCP <c>invoke_method</c>. Returns false
+        /// for an unknown name.
+        /// </summary>
+        public static bool SetVrRenderPriority(string priority)
+        {
+            if (!Enum.TryParse(priority, ignoreCase: true, out EVrRenderPriority value))
+                return false;
+
+            Engine.UserSettings.VrRenderPriority = value;
+            return true;
+        }
+
+        /// <summary>
+        /// Updates the presented desktop rate and the submitted OpenXR rate from their running
+        /// totals. The first call only stores the totals.
+        /// </summary>
+        private static void SampleOutputRates(long nowTicks)
+        {
+            long desktopTotal = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPresentAcceptedTotal;
+            long xrTotal = RuntimeEngine.VRState.OpenXRApi?.SmokeSubmittedFrameCount ?? 0L;
+            long elapsedTicks = nowTicks - _lastRateSampleTicks;
+            if (_lastRateSampleTicks != 0 && elapsedTicks > 0)
+            {
+                double seconds = elapsedTicks / (double)System.Diagnostics.Stopwatch.Frequency;
+                _desktopPresentHz = Math.Max(0L, desktopTotal - _lastDesktopPresentTotal) / seconds;
+                _xrSubmittedHz = xrTotal >= _lastXrSubmittedTotal
+                    ? (xrTotal - _lastXrSubmittedTotal) / seconds
+                    : 0.0;
+            }
+
+            _lastRateSampleTicks = nowTicks;
+            _lastDesktopPresentTotal = desktopTotal;
+            _lastXrSubmittedTotal = xrTotal;
         }
 
         private static double ResolveVrRenderHz()
@@ -1779,7 +1935,7 @@ public static partial class EditorUnitTests
             if (node.SuppressTransformTools)
             {
                 TransformToolUndoAdapter.Attach(null);
-                TransformTool3D.DestroyInstance();
+                TransformTool3D.HideInstance();
                 return;
             }
 
@@ -1789,7 +1945,7 @@ public static partial class EditorUnitTests
                 if (x.SuppressTransformTools)
                 {
                     TransformToolUndoAdapter.Attach(null);
-                    TransformTool3D.DestroyInstance();
+                    TransformTool3D.HideInstance();
                     x.Activated -= Edit;
                     return;
                 }

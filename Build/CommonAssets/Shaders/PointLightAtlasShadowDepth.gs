@@ -5,6 +5,9 @@ layout (triangle_strip, max_vertices=18) out;
 layout (location = 0) in vec3 InFragPos[];
 layout (location = 1) in vec3 InFragNorm[];
 layout (location = 4) in vec2 InFragUV0[];
+layout (location = 5) in vec2 InFragUV1[];
+layout (location = 6) in vec2 InFragUV2[];
+layout (location = 7) in vec2 InFragUV3[];
 layout (location = 12) in vec4 InFragColor0[];
 layout (location = 20) in vec3 InFragPosLocal[];
 
@@ -16,6 +19,9 @@ uniform int PointShadowFaceMask;
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
 layout (location = 4) out vec2 FragUV0;
+layout (location = 5) out vec2 FragUV1;
+layout (location = 6) out vec2 FragUV2;
+layout (location = 7) out vec2 FragUV3;
 layout (location = 12) out vec4 FragColor0;
 layout (location = 20) out vec3 FragPosLocal;
 
@@ -34,9 +40,13 @@ void main()
             FragPos = InFragPos[i];
             FragNorm = InFragNorm[i];
             FragUV0 = InFragUV0[i];
+            FragUV1 = InFragUV1[i];
+            FragUV2 = InFragUV2[i];
+            FragUV3 = InFragUV3[i];
             FragColor0 = InFragColor0[i];
             FragPosLocal = InFragPosLocal[i];
             gl_Position = PointShadowViewProjectionMatrices[faceSlot] * vec4(FragPos, 1.0);
+            gl_PrimitiveID = gl_PrimitiveIDIn;
             EmitVertex();
         }
         EndPrimitive();

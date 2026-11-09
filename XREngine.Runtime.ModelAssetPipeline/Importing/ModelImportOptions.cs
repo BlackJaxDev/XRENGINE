@@ -46,6 +46,13 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool DeferMeshletCookingUntilPostNormalization { get; set; }
 
     /// <summary>
+    /// Prepares optional deformation input during native model import. Disable
+    /// this when later coordinate conversion would invalidate that input.
+    /// Rendering can prepare the final mesh through its normal bounded path.
+    /// </summary>
+    public bool PrepareGpuDeformationOnImport { get; set; } = true;
+
+    /// <summary>
     /// Optional Unity project or Assets folder selected for external .prefab conversion.
     /// Model importers ignore this value.
     /// </summary>
@@ -196,6 +203,11 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public float ScaleConversion { get; set; } = 1.0f;
 
     /// <summary>
+    /// If false, blendshapes move positions only and keep the base normals and tangents.
+    /// </summary>
+    public bool ImportBlendShapeNormals { get; set; } = true;
+
+    /// <summary>
     /// If true, treat the source file as Z-up (common in some DCCs).
     /// </summary>
     public bool ZUp { get; set; } = false;
@@ -209,6 +221,20 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     /// Controls how explicit opacity maps should be interpreted during import.
     /// </summary>
     public EOpacityMapMode OpacityMapMode { get; set; } = EOpacityMapMode.Auto;
+
+    /// <summary>
+    /// Controls how the surface-detail texture (normal, bump or height slot) is used: an RGB normal map,
+    /// a bump map (height-derived lighting normals), or a height map (parallax occlusion mapping plus
+    /// height-derived normals). Auto classifies the texture content.
+    /// </summary>
+    public ESurfaceDetailMapMode SurfaceDetailMapMode { get; set; } = ESurfaceDetailMapMode.Auto;
+
+    /// <summary>
+    /// Controls whether materials with an opacity map and "decal" in their name become surface
+    /// decals. The Advanced Render Pipeline on Vulkan blends a surface decal over the surface
+    /// below it before lighting. Other renderers draw it as a masked material.
+    /// </summary>
+    public EDecalMaterialMode DecalMaterialMode { get; set; } = EDecalMaterialMode.Auto;
 
     /// <summary>
     /// Enables Assimp multithreading when the Assimp backend is used.

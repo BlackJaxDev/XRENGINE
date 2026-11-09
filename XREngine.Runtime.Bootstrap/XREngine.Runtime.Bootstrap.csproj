@@ -29,6 +29,7 @@
     <ProjectReference Include="..\XREngine.Audio.Audio2Face\XREngine.Audio.Audio2Face.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.UI.Ultralight\XREngine.Runtime.UI.Ultralight.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.UI.Rive\XREngine.Runtime.UI.Rive.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Imaging.Bc7Enc\XREngine.Runtime.Imaging.Bc7Enc.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Imaging.Magick\XREngine.Runtime.Imaging.Magick.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Text.FreeType\XREngine.Runtime.Text.FreeType.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Platform.Desktop\XREngine.Runtime.Platform.Desktop.csproj" />

@@ -181,6 +181,55 @@ internal sealed unsafe class VulkanImGuiPlatformWindowOutputAuthority
         }
     }
 
+    /// <summary>
+    /// Creates the image views of a detached viewport generation on the DXGI path. The
+    /// images belong to <paramref name="ring"/>; the generation stores the ring sentinel
+    /// in place of a native swapchain.
+    /// </summary>
+    internal void CreateDxgiGeneration(
+        VulkanDeviceContext device,
+        VulkanCommandRuntime commandRuntime,
+        VulkanTargetOutputContext target,
+        VulkanDxgiImageRing ring,
+        uint viewportId,
+        out VulkanImGuiPlatformSwapchainGeneration generation)
+    {
+        Format format = ring.SurfaceFormat.VulkanFormat;
+        Image[] images = new Image[ring.Images.Length];
+        Array.Copy(ring.Images, images, images.Length);
+        ImageView[] imageViews = new ImageView[images.Length];
+        try
+        {
+            for (int index = 0; index < images.Length; index++)
+            {
+                ImageViewCreateInfo viewInfo = new()
+                {
+                    SType = StructureType.ImageViewCreateInfo,
+                    Image = images[index],
+                    ViewType = ImageViewType.Type2D,
+                    Format = format,
+                    Components = new ComponentMapping(
+                        ComponentSwizzle.Identity, ComponentSwizzle.Identity,
+                        ComponentSwizzle.Identity, ComponentSwizzle.Identity),
+                    SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1),
+                };
+                ThrowIfFailed(device.Api.CreateImageView(device.Device, in viewInfo, null, out imageViews[index]), "create detached-window DXGI image view");
+                // The "Swapchain.Color" prefix marks the ring images as external, like
+                // native swapchain images, so retirement can release them.
+                target.TrackLiveImageView(imageViews[index], in viewInfo, $"Swapchain.Color.ImGuiViewport.Dxgi[{viewportId:X8}]");
+                commandRuntime.ClearTrackedImageLayouts(images[index]);
+            }
+        }
+        catch
+        {
+            DestroyImageViewsImmediately(device, target, imageViews, viewportId);
+            throw;
+        }
+
+        generation = new VulkanImGuiPlatformSwapchainGeneration(
+            ring.Sentinel, format, ring.SurfaceFormat.VulkanColorSpace, ring.Extent, images, imageViews);
+    }
+
     internal void DestroySwapchainGeneration(
         VulkanDeviceContext device,
         VulkanCommandRuntime commandRuntime,
@@ -204,7 +253,8 @@ internal sealed unsafe class VulkanImGuiPlatformWindowOutputAuthority
                     $"Detached ImGui viewport {viewportId:X8} cannot release swapchain image 0x{images[index].Handle:X} while it is still in use.");
             }
         }
-        if (swapchain.Handle != 0)
+        // A DXGI sentinel is not a Vulkan object; its ring is disposed by the window.
+        if (swapchain.Handle != 0 && !VulkanDxgiImageRing.IsSentinel(swapchain))
             swapchainApi.DestroySwapchain(device.Device, swapchain, null);
     }
 

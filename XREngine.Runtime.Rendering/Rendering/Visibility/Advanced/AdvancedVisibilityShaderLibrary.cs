@@ -10,6 +10,8 @@ public static class AdvancedVisibilityShaderLibrary
     public const string OpaqueFragment = Root + "/VisibilityRaster.frag";
     public const string MaskedFragment = Root + "/VisibilityRasterMasked.frag";
     public const string Mesh = Root + "/VisibilityRaster.mesh";
+    /// <summary>Mesh surface decal fragment shader of the decal buffer pass.</summary>
+    public const string DecalBufferFragment = Root + "/DecalBuffer.frag";
     public const string DirectionalShadowVertex = Root + "/DirectionalShadowRaster.vert";
     public const string DirectionalShadowOpaqueFragment = Root + "/DirectionalShadowRaster.frag";
     public const string DirectionalShadowMaskedFragment = Root + "/DirectionalShadowRasterMasked.frag";

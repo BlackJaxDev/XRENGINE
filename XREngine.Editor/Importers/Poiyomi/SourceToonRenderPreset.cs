@@ -1,7 +1,7 @@
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Rendering presets exposed by Poiyomi Toon 9.3.64's <c>_Mode</c> property.
+/// Rendering presets exposed by verified Poiyomi Toon sources' <c>_Mode</c> property.
 /// Values intentionally match the serialized Unity material values.
 /// </summary>
 public enum SourceToonRenderPreset

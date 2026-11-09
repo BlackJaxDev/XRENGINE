@@ -22,7 +22,17 @@ namespace XREngine.Rendering
         
         [field: MemoryPackIgnore]
         public event Action? Invalidated;
-        public void Invalidate() => Invalidated?.Invoke();
+        public void Invalidate()
+        {
+            Interlocked.Add(ref _canonicalContentEpoch, 2);
+            Invalidated?.Invoke();
+        }
+
+        /// <summary>Gets the epoch of the CPU image data and its description.</summary>
+        internal int CanonicalContentEpoch => Volatile.Read(ref _canonicalContentEpoch);
+
+        /// <summary>Gets whether an observed image field is being changed.</summary>
+        internal bool CanonicalContentWriteActive => Volatile.Read(ref _canonicalActiveWriters) != 0;
 
         [MemoryPackConstructor]
         public Mipmap2D() { }
@@ -89,14 +99,23 @@ namespace XREngine.Rendering
             bool change = base.OnPropertyChanging(propName, field, @new);
             if (change && propName is nameof(Data) or nameof(DataBytes) or nameof(Width) or nameof(Height)
                 or nameof(PixelFormat) or nameof(PixelType) or nameof(InternalFormat))
+            {
+                Interlocked.Increment(ref _canonicalActiveWriters);
                 Interlocked.Increment(ref _resizeRevision);
+                Interlocked.Increment(ref _canonicalContentEpoch);
+            }
             if (change && propName == nameof(Data) && Data is not null)
                 Data.Dispose();
             return change;
         }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-
+            if (propName is nameof(Data) or nameof(DataBytes) or nameof(Width) or nameof(Height)
+                or nameof(PixelFormat) or nameof(PixelType) or nameof(InternalFormat))
+            {
+                Interlocked.Increment(ref _canonicalContentEpoch);
+                Interlocked.Decrement(ref _canonicalActiveWriters);
+            }
         }
 
         public static explicit operator Mipmap2D(RuntimeImage image)
@@ -170,8 +189,12 @@ namespace XREngine.Rendering
         }
 
         /// <summary>Returns an independent snapshot of this mipmap's pixels.</summary>
+        /// <exception cref="NotSupportedException">The mipmap holds block-compressed (BC) data, which the engine does not decode on the CPU.</exception>
         public RuntimeImage GetImage()
         {
+            if (TextureBlockFormats.IsBlockCompressed(InternalFormat))
+                throw new NotSupportedException($"Mipmap {Width}x{Height} holds block-compressed {InternalFormat} data, which cannot be read as an image.");
+
             byte[] bytes = Data?.GetBytes()
                 ?? XRTexture.AllocateBytes(Width, Height, PixelFormat, PixelType);
             return new RuntimeImage(Width, Height, PixelFormat, PixelType, bytes);
@@ -197,6 +220,12 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         [YamlIgnore]
         private int _resizeRevision;
+        [MemoryPackIgnore]
+        [YamlIgnore]
+        private int _canonicalContentEpoch;
+        [MemoryPackIgnore]
+        [YamlIgnore]
+        private int _canonicalActiveWriters;
         [MemoryPackIgnore]
         [YamlIgnore]
         public XRDataBuffer? _streamingPBO = null;

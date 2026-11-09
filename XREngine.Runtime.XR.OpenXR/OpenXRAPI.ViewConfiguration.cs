@@ -482,9 +482,11 @@ public unsafe partial class OpenXRAPI
             : _openXrRightViewport;
 
     private XRCamera? GetOpenXrEyeCamera(uint viewIndex)
-        => IsLeftEyeLikeOpenXrView(viewIndex)
-            ? _openXrLeftEyeCamera
-            : _openXrRightEyeCamera;
+        => viewIndex >= 2u && IsOpenXrInsetPairActive
+            ? (IsLeftEyeLikeOpenXrView(viewIndex) ? _openXrLeftInsetEyeCamera : _openXrRightInsetEyeCamera)
+            : IsLeftEyeLikeOpenXrView(viewIndex)
+                ? _openXrLeftEyeCamera
+                : _openXrRightEyeCamera;
 
     private bool TryGetOpenXrViewConfigurationViewCount(
         ViewConfigurationType viewConfigurationType,

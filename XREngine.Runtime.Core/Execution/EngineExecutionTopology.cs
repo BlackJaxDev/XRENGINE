@@ -15,6 +15,14 @@ public sealed class EngineExecutionTopology
     public const int DefaultRenderWorkerCap = 8;
     public const int DefaultForegroundReservation = 4;
 
+    /// <summary>
+    /// Smallest automatic general worker pool when processors remain after the foreground
+    /// reservation. Dedicated background lanes (recording, pipeline compile, OpenXR) are
+    /// mostly idle, so they must not take the last processors from Any-affinity jobs such
+    /// as imports and texture cooks.
+    /// </summary>
+    public const int MinimumAutomaticGeneralWorkerCount = 2;
+
     private EngineExecutionTopology(
         EngineExecutionTopologyRequest request,
         int reservedForegroundThreadCount,
@@ -46,6 +54,13 @@ public sealed class EngineExecutionTopology
     public bool AllowCpuOversubscription { get; }
     public ERenderWorkerQos RenderWorkerQos { get; }
     public bool IsOversubscribed => TotalReservedThreadCount > EffectiveProcessorCount;
+
+    /// <summary>
+    /// True when the reserved threads exceed the machine budget: the larger of
+    /// <see cref="EffectiveProcessorCount"/> and <see cref="EngineExecutionTopologyRequest.SystemProcessorCount"/>.
+    /// </summary>
+    public bool ExceedsProcessorBudget
+        => TotalReservedThreadCount > Math.Max(EffectiveProcessorCount, Request.SystemProcessorCount);
     public bool GeneralWorkerCountIsAutomatic => Request.GeneralWorkerThreadCount == AutomaticWorkerCount;
     public bool RenderWorkerCountIsAutomatic => Request.RenderWorkerThreadCount == AutomaticWorkerCount;
     public bool ForegroundReservationIsAutomatic => Request.ReservedForegroundThreadCount == AutomaticWorkerCount;
@@ -90,8 +105,14 @@ public sealed class EngineExecutionTopology
             : request.RenderWorkerThreadCount;
 
         int remainingGeneralBudget = Math.Max(0, availableWorkerBudget - renderWorkerCount);
+        // The floor oversubscribes only the dedicated background lanes, never the
+        // foreground reservation. With no processor left after the foreground threads,
+        // the floor is zero and jobs keep the cooperative inline mode.
+        int automaticGeneralFloor = Math.Min(
+            MinimumAutomaticGeneralWorkerCount,
+            Math.Max(0, request.EffectiveProcessorCount - foregroundCount));
         int generalWorkerCount = request.GeneralWorkerThreadCount == AutomaticWorkerCount
-            ? Math.Min(request.GeneralWorkerThreadCap, remainingGeneralBudget)
+            ? Math.Min(request.GeneralWorkerThreadCap, Math.Max(automaticGeneralFloor, remainingGeneralBudget))
             : request.GeneralWorkerThreadCount;
 
         var topology = new EngineExecutionTopology(
@@ -104,7 +125,7 @@ public sealed class EngineExecutionTopology
             request.GeneralWorkerThreadCount != AutomaticWorkerCount ||
             request.RenderWorkerThreadCount != AutomaticWorkerCount ||
             request.ReservedForegroundThreadCount != AutomaticWorkerCount;
-        if (topology.IsOversubscribed &&
+        if (topology.ExceedsProcessorBudget &&
             !topology.AllowCpuOversubscription &&
             hasExplicitReservation)
         {
@@ -130,6 +151,8 @@ public sealed class EngineExecutionTopology
         var builder = new StringBuilder(384);
         builder.Append("[ExecutionTopology] processors=")
             .Append(EffectiveProcessorCount)
+            .Append(" systemProcessors=")
+            .Append(Request.SystemProcessorCount)
             .Append(" foreground=")
             .Append(ReservedForegroundThreadCount)
             .Append(" general=")

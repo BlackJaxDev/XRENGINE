@@ -766,12 +766,14 @@ internal static partial class GlslSnippetDeadCodeEliminator
 
         // Always collect referenced identifiers (we'll subtract decl names later).
         HashSet<string> referenced = new(StringComparer.Ordinal);
-        foreach (Match m in IdentifierRegex().Matches(text))
+        var reservedLookup = GlslReserved.GetAlternateLookup<ReadOnlySpan<char>>();
+        var referencedLookup = referenced.GetAlternateLookup<ReadOnlySpan<char>>();
+        foreach (var match in IdentifierRegex().EnumerateMatches(text.AsSpan()))
         {
-            string id = m.Value;
-            if (GlslReserved.Contains(id))
+            ReadOnlySpan<char> identifier = text.AsSpan(match.Index, match.Length);
+            if (reservedLookup.Contains(identifier))
                 continue;
-            referenced.Add(id);
+            referencedLookup.Add(identifier);
         }
 
         // Detect struct.
@@ -1075,13 +1077,15 @@ internal static partial class GlslSnippetDeadCodeEliminator
     {
         if (start >= end)
             return;
-        string segment = masked.Substring(start, end - start);
-        foreach (Match m in IdentifierRegex().Matches(segment))
+        ReadOnlySpan<char> segment = masked.AsSpan(start, end - start);
+        var reservedLookup = GlslReserved.GetAlternateLookup<ReadOnlySpan<char>>();
+        var liveLookup = live.GetAlternateLookup<ReadOnlySpan<char>>();
+        foreach (var match in IdentifierRegex().EnumerateMatches(segment))
         {
-            string id = m.Value;
-            if (GlslReserved.Contains(id))
+            ReadOnlySpan<char> identifier = segment.Slice(match.Index, match.Length);
+            if (reservedLookup.Contains(identifier))
                 continue;
-            live.Add(id);
+            liveLookup.Add(identifier);
         }
     }
 }

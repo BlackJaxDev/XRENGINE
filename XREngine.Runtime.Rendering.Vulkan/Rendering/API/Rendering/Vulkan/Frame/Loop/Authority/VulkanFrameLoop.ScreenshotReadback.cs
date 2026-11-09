@@ -130,6 +130,8 @@ internal sealed partial class VulkanFrameLoop
         bool submitted = false;
         try
         {
+            bool encodeLinearRgbForSrgbDisplay =
+                ShouldEncodeScreenshotForSrgbDisplay(in source, compositedSource.HasValue);
             PrepareScreenshotReadbackRequest(
                 slot,
                 callback,
@@ -138,6 +140,7 @@ internal sealed partial class VulkanFrameLoop
                 height,
                 rawByteCount,
                 withTransparency,
+                encodeLinearRgbForSrgbDisplay,
                 source.Samples != SampleCountFlags.Count1Bit);
             reservationOwned = false;
 
@@ -539,6 +542,20 @@ internal sealed partial class VulkanFrameLoop
         return null;
     }
 
+    /// <summary>
+    /// Returns true when the PNG must apply the linear-to-sRGB transfer. A single-layer float
+    /// color target holds linear display values, and the sRGB desktop swapchain applies the
+    /// transfer when it presents them. The readback must apply the same transfer, or the file
+    /// is darker and more saturated than the window. This does not depend on the identity of
+    /// the last presented image: viewport targets, post-process outputs and the present source
+    /// all hold the same linear encoding.
+    /// </summary>
+    private bool ShouldEncodeScreenshotForSrgbDisplay(in BlitImageInfo source, bool isComposited)
+        => !isComposited &&
+            OutputRuntime.Desktop.ImageFormat is Format.B8G8R8A8Srgb or Format.R8G8B8A8Srgb &&
+            source.Format is Format.R16G16B16A16Sfloat or Format.R32G32B32A32Sfloat or Format.B10G11R11UfloatPack32 &&
+            source.BaseArrayLayer == 0 && source.MipLevel == 0 && source.LayerCount == 1;
+
     private void PrepareScreenshotReadbackRequest(
         VulkanScreenshotReadbackSlot slot,
         Action<ScreenshotReadbackResult> callback,
@@ -547,6 +564,7 @@ internal sealed partial class VulkanFrameLoop
         int height,
         ulong rawByteCount,
         bool withTransparency,
+        bool encodeLinearRgbForSrgbDisplay,
         bool usedMultisampleResolve)
     {
         slot.Callback = callback;
@@ -556,6 +574,7 @@ internal sealed partial class VulkanFrameLoop
         slot.AdvancedPickingMetadataSource = null;
         slot.AdvancedPickingSelectionSource = null;
         slot.SourceFormat = sourceFormat;
+        slot.EncodeLinearRgbForSrgbDisplay = encodeLinearRgbForSrgbDisplay;
         slot.Width = width;
         slot.Height = height;
         slot.RawByteCount = rawByteCount;
@@ -977,7 +996,8 @@ internal sealed partial class VulkanFrameLoop
                     rawPixels.Bytes,
                     slot.SourceFormat,
                     pixelCount,
-                    rgbaPixels))
+                    rgbaPixels,
+                    slot.EncodeLinearRgbForSrgbDisplay))
             {
                 DeliverScreenshotReadbackFailure(
                     slot,
@@ -1010,7 +1030,8 @@ internal sealed partial class VulkanFrameLoop
                 slot.SubmittedAtUtc,
                 completedAtUtc,
                 gpuCompletionSeconds,
-                cpuProcessingSeconds);
+                cpuProcessingSeconds,
+                outputTransfer: slot.EncodeLinearRgbForSrgbDisplay ? "LinearToSrgb" : "Unchanged");
             Action<ScreenshotReadbackResult>? callback = Interlocked.Exchange(ref slot.Callback, null);
             Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackCompletedCount);
             if (callback is null)
@@ -1195,6 +1216,7 @@ internal sealed partial class VulkanFrameLoop
         slot.Width = 0;
         slot.Height = 0;
         slot.WithTransparency = false;
+        slot.EncodeLinearRgbForSrgbDisplay = false;
         slot.UsedMultisampleResolve = false;
         slot.SubmittedTimestamp = 0;
         slot.FenceSignaledTimestamp = 0;

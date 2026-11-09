@@ -2,14 +2,31 @@ using XREngine.Imaging;
 using System.IO;
 using System.Threading;
 using XREngine.Data;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
 internal static class TextureStreamingSourceFactory
 {
     internal static ITextureStreamingSource Create(string filePath)
+        => Create(filePath, usage: null);
+
+    /// <param name="usage">The texture role that selects the cache variant, or null when it is unknown.</param>
+    internal static ITextureStreamingSource Create(string filePath, ETextureImportUsage? usage)
     {
-        string authorityPath = XRTexture2D.ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
+        ITextureStreamingSource source = CreateResolved(filePath, usage);
+        if (source is AssetTextureStreamingSource || string.IsNullOrWhiteSpace(filePath))
+            return source;
+
+        // The cache missed. A warm-up cook can finish later in this session, so the
+        // source checks again on later loads instead of pinning the raw source file.
+        return new CacheUpgradingTextureStreamingSource(Path.GetFullPath(filePath), usage, source);
+    }
+
+    /// <summary>Resolves the authority once and returns the matching source.</summary>
+    internal static ITextureStreamingSource CreateResolved(string filePath, ETextureImportUsage? usage)
+    {
+        string authorityPath = XRTexture2D.ResolveTextureStreamingAuthorityPathInternal(filePath, usage, out string? originalSourcePath);
 
         if (XRTexture2D.HasAssetExtensionInternal(authorityPath))
             return new AssetTextureStreamingSource(authorityPath, originalSourcePath);
@@ -21,10 +38,14 @@ internal static class TextureStreamingSourceFactory
     /// Creates a source whose cache authority is resolved on first residency
     /// request rather than during placeholder registration.
     /// </summary>
-    internal static ITextureStreamingSource CreateDeferred(string filePath)
+    /// <param name="texture">
+    /// The texture whose role selects the cache variant. The role is read when the
+    /// authority is resolved, because importers can assign it after registration.
+    /// </param>
+    internal static ITextureStreamingSource CreateDeferred(string filePath, XRTexture2D? texture = null)
     {
         RuntimeTextureSourceAccess.RequireHostFiles();
-        return new DeferredAuthorityTextureStreamingSource(Path.GetFullPath(filePath));
+        return new DeferredAuthorityTextureStreamingSource(Path.GetFullPath(filePath), texture);
     }
 }
 
@@ -32,10 +53,10 @@ internal static class TextureStreamingSourceFactory
 /// Delays cache lookup and potential cache cooking until a texture is actually
 /// asked to become resident.
 /// </summary>
-internal sealed class DeferredAuthorityTextureStreamingSource(string sourcePath) : ITextureStreamingSource
+internal sealed class DeferredAuthorityTextureStreamingSource(string sourcePath, XRTexture2D? texture = null) : ITextureStreamingSource
 {
     private readonly Lazy<ITextureStreamingSource> _source = new(
-        () => TextureStreamingSourceFactory.Create(sourcePath),
+        () => TextureStreamingSourceFactory.Create(sourcePath, texture?.ImportedUsage),
         LazyThreadSafetyMode.ExecutionAndPublication);
 
     public string SourcePath => sourcePath;
@@ -45,6 +66,56 @@ internal sealed class DeferredAuthorityTextureStreamingSource(string sourcePath)
         bool includeMipChain,
         CancellationToken cancellationToken)
         => _source.Value.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
+}
+
+/// <summary>
+/// Reads the raw source file while its cooked cache asset does not exist, and changes
+/// to the cache asset when a warm-up cook makes it fresh.
+/// </summary>
+/// <remarks>
+/// A cache miss queues a warm-up cook and returns the raw source. Without this source,
+/// the first residency of a texture pins the raw source for the full session, also after
+/// the cook finishes. The check runs at most once per <see cref="RecheckIntervalMilliseconds"/>,
+/// and it stops after the change. The resolver does not queue a cook again after a failed
+/// cook of the same source file, so a repeated check does not repeat failed cooks.
+/// </remarks>
+internal sealed class CacheUpgradingTextureStreamingSource(
+    string sourcePath,
+    ETextureImportUsage? usage,
+    ITextureStreamingSource initialSource) : ITextureStreamingSource
+{
+    private const double RecheckIntervalMilliseconds = 1000.0;
+
+    private ITextureStreamingSource _current = initialSource;
+    private long _lastCheckTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+    private int _upgraded;
+
+    public string SourcePath => Volatile.Read(ref _current).SourcePath;
+
+    public TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken)
+    {
+        TryUpgrade();
+        return Volatile.Read(ref _current).LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
+    }
+
+    private void TryUpgrade()
+    {
+        if (Volatile.Read(ref _upgraded) != 0)
+            return;
+
+        long lastCheck = Interlocked.Read(ref _lastCheckTimestamp);
+        if (System.Diagnostics.Stopwatch.GetElapsedTime(lastCheck).TotalMilliseconds < RecheckIntervalMilliseconds)
+            return;
+        if (Interlocked.CompareExchange(ref _lastCheckTimestamp, System.Diagnostics.Stopwatch.GetTimestamp(), lastCheck) != lastCheck)
+            return;
+
+        ITextureStreamingSource resolved = TextureStreamingSourceFactory.CreateResolved(sourcePath, usage);
+        if (resolved is not AssetTextureStreamingSource)
+            return;
+
+        Volatile.Write(ref _current, resolved);
+        Volatile.Write(ref _upgraded, 1);
+    }
 }
 
 internal sealed class AssetTextureStreamingSource(string assetPath, string? fallbackSourcePath = null) : ITextureStreamingSource

@@ -8,7 +8,6 @@
 #pragma snippet "DepthUtils"
 
 // Reflection mip is derived from the texture's mip count; no fixed cap.
-const float MAX_REFLECTION_LOD = 4.0f; // Deprecated; retained to avoid breaking includes, actual max is queried per texture.
 
 layout(location = 0) out vec4 OutLo; //Diffuse Light Color, to start off the HDR Scene Texture
 layout(location = 0) in vec3 FragPos;
@@ -42,12 +41,24 @@ struct ProbeParam
     vec4 ProxyCenterEnable;    // xyz center offset, w = parallax enabled (1/0)
     vec4 ProxyHalfExtents;     // xyz half extents, w = normalization scale
     vec4 ProxyRotation;        // xyzw quaternion
+    vec4 PrefilterSampling;     // x filter, y published maximum mip
 };
 
 layout(std430, binding = 22) buffer LightProbeParameters
 {
     ProbeParam ProbeParams[];
 };
+
+float XRENGINE_DeferredProbePrefilterLod(int probeIndex, float roughness,
+    float availableMip)
+{
+    ProbeParam probe = ProbeParams[probeIndex];
+    float maxMip = min(max(probe.PrefilterSampling.y, 0.0), availableMip);
+    float r = clamp(roughness, 0.0, 1.0);
+    float lod = probe.PrefilterSampling.x > 0.5
+        ? 6.0 * r * (1.7 - 0.7 * r) : r * maxMip;
+    return min(lod, maxMip);
+}
 
 // Sparse grid accelerator: flattened cells with offsets into a compact probe list
 struct ProbeGridCell
@@ -410,8 +421,9 @@ void main()
         vec3 parallaxDir = ApplyParallax(probeIndices[i], normal, fragPosWS);
         vec3 reflDir = ApplyParallax(probeIndices[i], R, fragPosWS);
         float normScale = max(ProbeParams[probeIndices[i]].ProxyHalfExtents.w, 0.0001f);
-        float maxMip = float(textureQueryLevels(PrefilterArray) - 1);
-        float clampedLod = min(roughness * MAX_REFLECTION_LOD, maxMip);
+        float availableMip = float(max(textureQueryLevels(PrefilterArray) - 1, 0));
+        float clampedLod = XRENGINE_DeferredProbePrefilterLod(
+            probeIndices[i], roughness, availableMip);
 
         irradianceColor += w * normScale * XRENGINE_SampleOctaArray(IrradianceArray, parallaxDir, probeIndices[i]);
         prefilteredColor += w * normScale * XRENGINE_SampleOctaArrayLod(PrefilterArray, reflDir, probeIndices[i], clampedLod);
@@ -426,8 +438,9 @@ void main()
     }
     else if (ProbeCount > 0)
     {
-        float maxMip = float(textureQueryLevels(PrefilterArray) - 1);
-        float clampedLod = min(roughness * MAX_REFLECTION_LOD, maxMip);
+        float availableMip = float(max(textureQueryLevels(PrefilterArray) - 1, 0));
+        float clampedLod = XRENGINE_DeferredProbePrefilterLod(
+            0, roughness, availableMip);
         irradianceColor = XRENGINE_SampleOctaArray(IrradianceArray, normal, 0.0f);
         prefilteredColor = XRENGINE_SampleOctaArrayLod(PrefilterArray, normal, 0.0f, clampedLod);
         probeAmbient = irradianceColor;

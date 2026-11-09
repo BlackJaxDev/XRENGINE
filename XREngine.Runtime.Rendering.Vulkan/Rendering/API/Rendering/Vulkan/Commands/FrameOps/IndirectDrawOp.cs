@@ -20,7 +20,7 @@ internal sealed record IndirectDrawOp(
     public VkDataBuffer IndirectBuffer { get; private set; } = IndirectBuffer;
     public VkDataBuffer? ParameterBuffer { get; private set; } = ParameterBuffer;
     public VkMeshRenderer MeshRenderer { get; private set; } = MeshRenderer;
-    private PendingMeshDraw _draw = Draw;
+    private PendingMeshDraw _draw = Draw with { CaptureOwnerToken = Context.CaptureOwnerToken };
     public PendingMeshDraw Draw
     {
         get => _draw;
@@ -122,7 +122,7 @@ internal sealed record IndirectDrawOp(
         IndirectBuffer = indirectBuffer;
         ParameterBuffer = parameterBuffer;
         MeshRenderer = meshRenderer;
-        Draw = draw;
+        Draw = draw with { CaptureOwnerToken = context.CaptureOwnerToken };
         DrawCount = drawCount;
         Stride = stride;
         ByteOffset = byteOffset;

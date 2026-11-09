@@ -240,7 +240,11 @@ namespace XREngine.Rendering
         public MaterialPassSet PassSet
         {
             get => _passSet;
-            set => SetField(ref _passSet, value ?? MaterialPassSet.Empty);
+            set
+            {
+                if (SetField(ref _passSet, value ?? MaterialPassSet.Empty))
+                    BumpShaderStateRevision();
+            }
         }
 
         [Browsable(false)]
@@ -294,6 +298,10 @@ namespace XREngine.Rendering
             => GetShaderList(shaderType).Count;
 
         public void SetShader(EShaderType shaderType, XRShader? shader, bool coerceShaderType = false)
+            => SetShaderCore(shaderType, shader, coerceShaderType, internalUberReplacement: false);
+
+        private void SetShaderCore(EShaderType shaderType, XRShader? shader, bool coerceShaderType,
+            bool internalUberReplacement)
         {
             if (shader is not null)
             {
@@ -333,7 +341,28 @@ namespace XREngine.Rendering
             if (!changed)
                 return;
 
-            Shaders = new EventList<XRShader>(updated);
+            EventList<XRShader> replacement = new(updated);
+            UberMaterialShaderTransition? transition = null;
+            if (internalUberReplacement && shader is not null && HasEngineSemantic &&
+                GetShaderCount(EShaderType.Fragment) == 1 &&
+                GetShader(EShaderType.Fragment) is { } previousFragment &&
+                UberShaderVariantBuilder.IsCompatibleInternalReplacement(previousFragment, shader))
+            {
+                transition = new(Shaders, replacement, [.. Shaders], [.. replacement],
+                    previousFragment, shader, ShaderStateRevision, UberStateRevision, EngineSemantic);
+                SetField(ref _pendingUberShaderTransition, transition, publishNotifications: false, nameof(Shaders));
+            }
+            try { Shaders = replacement; }
+            finally
+            {
+                if (ReferenceEquals(_pendingUberShaderTransition, transition))
+                    SetField(ref _pendingUberShaderTransition, null, publishNotifications: false, nameof(Shaders));
+                // The setter has reconciled subscriptions. Recheck edits made by callbacks
+                // while the new shader and list were not yet subscribed.
+                if (transition is not null && ReferenceEquals(Shaders, replacement) &&
+                    HasEngineSemantic && !transition.MatchesAfterAdoption(this))
+                    InvalidateEngineSemantic();
+            }
             MarkDirty();
         }
 
@@ -550,6 +579,8 @@ namespace XREngine.Rendering
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            bool preserveEngineSemantic = propName == nameof(Shaders) &&
+                ConsumeUberShaderTransition(prev, field);
             // V2 auxiliary programs read the live source's parameters/coverage.
             // Numeric and mode edits must not destroy stable replay pipelines.
             // Replacing the parameter layout, shaders, or options still invalidates.
@@ -567,16 +598,18 @@ namespace XREngine.Rendering
                 InvalidateDepthNormalPrePassVariant();
                 InvalidateShadowCasterVariant();
             }
-            // A cooked outline reads the same live ShaderVar instances as its
-            // source. Value animation must not retire its stable program.
+            // Outline variants read the same live ShaderVar instances as the source.
+            // Value animation must not retire a trusted stable program.
             if (propName != nameof(BindingValueVersion) ||
-                _outlinePassVariant?.EngineSemantic != EngineMaterialSemanticIdentity.UberOutlineV1)
+                (_outlinePassVariant?.EngineSemantic != EngineMaterialSemanticIdentity.UberOutlineV1 &&
+                 !ReferenceEquals(_outlinePassVariant?.UberOutlineSourceMaterial, this)))
                 InvalidateOutlinePassVariant();
 
             switch (propName)
             {
                 case nameof(Shaders):
-                    InvalidateEngineSemantic();
+                    if (!preserveEngineSemantic)
+                        InvalidateEngineSemantic();
                     ShadersChanged();
                     break;
                 case nameof(Name):
@@ -645,6 +678,9 @@ namespace XREngine.Rendering
                 return _outlinePassVariant;
             }
         }
+
+        internal bool IsResolvedOutlinePassVariant(XRMaterial variant)
+            => _outlinePassVariantResolved && ReferenceEquals(_outlinePassVariant, variant);
 
         [Browsable(false)]
         [YamlIgnore]
@@ -778,6 +814,41 @@ namespace XREngine.Rendering
 
         public void InvalidateDepthNormalPrePassVariant() => InvalidateDepthNormalPrePassVariant(now: false);
 
+        /// <summary>
+        /// Gives a pass variant this material's uniform sources. The variant forwards the
+        /// uniform callbacks only when this material has some, because any callback makes
+        /// the backend capture a new binding snapshot for every draw, and it shares this
+        /// material's typed publishers. Both sets are copied when the variant is created,
+        /// so a later change to them rebuilds the variants.
+        /// </summary>
+        internal void ShareUniformSourcesWith(XRMaterial variant)
+        {
+            if (HasSettingUniformsHandlers)
+                variant.SettingUniforms += (_, program) => OnSettingUniforms(program);
+            foreach (IRenderBindingPublisher publisher in BindingPublishers)
+                variant.BindingPublishers.Add(publisher);
+        }
+
+        protected override void OnSettingUniformsHandlersChanged()
+        {
+            base.OnSettingUniformsHandlersChanged();
+            InvalidateUniformSourceVariants();
+        }
+
+        protected override void OnBindingPublishersChanged()
+        {
+            base.OnBindingPublishersChanged();
+            InvalidateUniformSourceVariants();
+        }
+
+        private void InvalidateUniformSourceVariants()
+        {
+            if (_depthNormalPrePassVariantResolved)
+                InvalidateDepthNormalPrePassVariant(now: false);
+            if (_outlinePassVariant is not null)
+                InvalidateOutlinePassVariant(now: false);
+        }
+
         private void InvalidateDepthNormalPrePassVariant(bool now)
         {
             DestroyNativeVertexPassMaterials(now);
@@ -839,6 +910,7 @@ namespace XREngine.Rendering
 
         private void PreShadersSet()
         {
+            SetUberCanonicalSubscription(null);
             if (_subscribedShaders is not { } subscribed)
                 return;
             subscribed.PostModified -= ShadersModified;
@@ -939,12 +1011,14 @@ namespace XREngine.Rendering
 
             foreach (var shader in subscribed)
                 ShaderAdded(shader);
+            ReconcileUberCanonicalSubscription();
         }
 
         private void ShadersModified()
         {
             InvalidateEngineSemantic();
             ShadersChanged();
+            ReconcileUberCanonicalSubscription();
         }
 
         void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
@@ -959,7 +1033,7 @@ namespace XREngine.Rendering
             if (item is null)
                 return;
             item.Reloaded -= ShaderReloaded;
-            item.SourceChanged -= AuthoredShaderSourceChanged;
+            item.AuthoredSourceChanged -= AuthoredShaderSourceChanged;
         }
 
         private void ShaderAdded(XRShader item)
@@ -968,8 +1042,8 @@ namespace XREngine.Rendering
                 return;
             item.Reloaded -= ShaderReloaded;
             item.Reloaded += ShaderReloaded;
-            item.SourceChanged -= AuthoredShaderSourceChanged;
-            item.SourceChanged += AuthoredShaderSourceChanged;
+            item.AuthoredSourceChanged -= AuthoredShaderSourceChanged;
+            item.AuthoredSourceChanged += AuthoredShaderSourceChanged;
         }
 
         private void ShaderReloaded(XRAsset asset)

@@ -125,10 +125,45 @@ public static class FbxDeformerParser
 
                 Dictionary<long, FbxBlendShapeChannelBinding[]> frozenBlendShapeChannels = new(blendShapeChannelsByGeometryObjectId.Count);
                 foreach ((long geometryObjectId, List<FbxBlendShapeChannelBinding> bindings) in blendShapeChannelsByGeometryObjectId)
-                    frozenBlendShapeChannels[geometryObjectId] = [.. bindings.OrderBy(static binding => binding.ChannelObjectId)];
+                    frozenBlendShapeChannels[geometryObjectId] = OrderBlendShapeChannels(semantic, geometryObjectId, bindings);
 
                 return new FbxDeformerDocument(skinsByGeometryObjectId, frozenBlendShapeChannels, blendShapeChannelsByObjectId);
             });
+    }
+
+    /// <summary>
+    /// Retains deformer and channel connection order for indexed morph weights.
+    /// Object IDs identify channels but do not define their source indices.
+    /// </summary>
+    private static FbxBlendShapeChannelBinding[] OrderBlendShapeChannels(
+        FbxSemanticDocument semantic,
+        long geometryObjectId,
+        List<FbxBlendShapeChannelBinding> bindings)
+    {
+        Dictionary<long, FbxBlendShapeChannelBinding> remaining = bindings.ToDictionary(static binding => binding.ChannelObjectId);
+        List<FbxBlendShapeChannelBinding> ordered = new(bindings.Count);
+        int geometryIndex = semantic.ObjectIndexById[geometryObjectId];
+        foreach (int ownerConnectionIndex in semantic.GetInboundConnectionIndices(geometryIndex))
+        {
+            FbxConnection ownerConnection = semantic.Connections[ownerConnectionIndex];
+            if (ownerConnection.Source.Id is not { } ownerId ||
+                !semantic.TryGetObject(ownerId, out FbxSceneObject owner) ||
+                owner.Category != FbxObjectCategory.Deformer ||
+                !owner.Subclass.Equals("BlendShape", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            foreach (int channelConnectionIndex in semantic.GetInboundConnectionIndices(semantic.ObjectIndexById[ownerId]))
+            {
+                FbxConnection channelConnection = semantic.Connections[channelConnectionIndex];
+                if (channelConnection.Source.Id is { } channelId && remaining.Remove(channelId, out FbxBlendShapeChannelBinding? channel))
+                    ordered.Add(channel);
+            }
+        }
+
+        if (remaining.Count != 0)
+            throw new InvalidDataException($"FBX geometry {geometryObjectId} has blendshape channels without an ordered deformer connection.");
+
+        return [.. ordered];
     }
 
     private static FbxClusterBinding? ParseClusterBinding(FbxStructuralValueReader reader, FbxSemanticDocument semantic, long clusterObjectId)
@@ -159,8 +194,8 @@ public static class FbxDeformerParser
         // row-vector convention; TransformLink must not be inverted a second time.
         Matrix4x4 inverseBindMatrix = transformMatrix;
 
-        Dictionary<int, float> controlPointWeights = new(indices.Length);
         int pairCount = Math.Min(indices.Length, weights.Length);
+        Dictionary<int, float> controlPointWeights = new(pairCount);
         for (int index = 0; index < pairCount; index++)
         {
             int controlPointIndex = indices[index];
@@ -232,9 +267,11 @@ public static class FbxDeformerParser
                 indices[index] = index;
         }
 
-        Dictionary<int, Vector3> positionDeltasByControlPoint = new(indices.Length);
-        Dictionary<int, Vector3> normalDeltasByControlPoint = new(indices.Length);
         int positionCount = Math.Min(indices.Length, positionDeltas.Length);
+        int normalCount = Math.Min(indices.Length, normalDeltas.Length);
+        Dictionary<int, Vector3> positionDeltasByControlPoint = new(positionCount);
+        // A shape with no normal deltas must not reserve a full position-sized table.
+        Dictionary<int, Vector3> normalDeltasByControlPoint = new(normalCount);
         for (int index = 0; index < positionCount; index++)
         {
             int controlPointIndex = indices[index];
@@ -243,7 +280,6 @@ public static class FbxDeformerParser
             positionDeltasByControlPoint[controlPointIndex] = positionDeltas[index];
         }
 
-        int normalCount = Math.Min(indices.Length, normalDeltas.Length);
         for (int index = 0; index < normalCount; index++)
         {
             int controlPointIndex = indices[index];

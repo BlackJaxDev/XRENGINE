@@ -88,6 +88,10 @@ namespace XREngine.Components.Scene.Mesh
         /// <summary>Reads the component convention only while sealing the primary command's swap image.</summary>
         internal Matrix4x4 GetLodComponentWorldMatrix() => GetCurrentTransformMatrix(Component.Transform);
 
+        /// <summary>Gets the source orientation used by authored flat shading.</summary>
+        internal Matrix4x4 GetSourceFlatBasisMatrix()
+            => IsSkinned ? GetSkinnedBoundsBasisMatrix() : GetLodComponentWorldMatrix();
+
         public XRMesh? CurrentLODMesh
             => Volatile.Read(ref _currentLODRenderer)?.Mesh;
 
@@ -356,6 +360,19 @@ namespace XREngine.Components.Scene.Mesh
         {
             lock (_lodsLock)
                 return [.. LODs];
+        }
+
+        /// <summary>
+        /// Appends the renderer of every LOD to <paramref name="destination"/>.
+        /// Per-frame callers reuse one list instead of a new LOD array.
+        /// </summary>
+        internal void AppendLodRenderers(List<XRMeshRenderer> destination)
+        {
+            lock (_lodsLock)
+            {
+                for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null; node = node.Next)
+                    destination.Add(node.Value.Renderer);
+            }
         }
 
         internal XRMeshRenderer? GetCurrentOrFirstLodRenderer()

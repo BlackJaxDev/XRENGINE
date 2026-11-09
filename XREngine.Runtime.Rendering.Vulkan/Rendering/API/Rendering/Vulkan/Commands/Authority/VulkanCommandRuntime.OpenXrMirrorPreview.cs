@@ -1001,7 +1001,7 @@ internal sealed partial class VulkanCommandRuntime
                 generation));
     }
 
-    private static ImageBlit CreateOpenXrMirrorBlit(
+    internal static ImageBlit CreateOpenXrMirrorBlit(
         ImageAspectFlags sourceAspect,
         ImageAspectFlags destinationAspect,
         Extent2D sourceExtent,

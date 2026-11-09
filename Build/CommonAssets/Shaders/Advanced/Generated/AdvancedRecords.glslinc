@@ -84,6 +84,13 @@ struct XRAdvancedEnvironmentRecord
     uint viewMaskHi;
     uint reserved0;
     uint reserved1;
+    vec4 sourceSHAr;
+    vec4 sourceSHAg;
+    vec4 sourceSHAb;
+    vec4 sourceSHBr;
+    vec4 sourceSHBg;
+    vec4 sourceSHBb;
+    vec4 sourceSHC;
 };
 
 struct XRAdvancedGiResourceRecord
@@ -248,6 +255,17 @@ struct XRAdvancedShadowRecord
     vec4 momentParameters;
     vec4 depthRangeAndCascade;
     vec4 renderedLightPositionAndFar;
+    vec4 softShadowParameters;
+    vec4 contactParameters;
+    vec4 contactFadeAndTexel;
+    uint softShadowMode;
+    uint filterSamples;
+    uint blockerSamples;
+    uint vogelTapCount;
+    uint contactSamples;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
 };
 
 struct SkinInfluence
@@ -318,7 +336,7 @@ struct XRAdvancedViewRecord
     uint sourceCameraIdentityLo;
     uint sourceCameraIdentityHi;
     uint cullingLayerMask;
-    uint sourceCameraIdentityPadding1;
+    uint renderTimeBits;
 };
 
 struct XRAdvancedBufferReference
@@ -355,8 +373,8 @@ struct XRAdvancedDrawRecord
     XRAdvancedGpuHandle previousTransform;
     uint primitiveSection;
     uint flags;
-    uint reserved0;
-    uint reserved1;
+    uint sourceFlatDirectionOct;
+    uint sourceFlatDirectionValid;
 };
 
 struct XRAdvancedEditorIdentityRecord

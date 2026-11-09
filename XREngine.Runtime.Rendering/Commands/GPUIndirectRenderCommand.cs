@@ -203,6 +203,12 @@ namespace XREngine.Rendering.Commands
         EditorHighlightMask = EditorHovered | EditorSelected,
         /// <summary>The authored command or primary material pass is disabled.</summary>
         PrimaryDisabled = 1u << 24,
+        /// <summary>The complete source command can use the shared opaque shadow program.</summary>
+        SharedOpaqueShadow = 1u << 25,
+        /// <summary>The material writes fragment depth (parallax occlusion). Advanced visibility routes it to the depth-writing masked raster.</summary>
+        FragmentDepth = 1u << 26,
+        /// <summary>The material is a mesh surface decal. Advanced visibility routes it to the decal buffer pass.</summary>
+        SurfaceDecal = 1u << 27,
     }
 
     public enum GPUSortAlgorithm

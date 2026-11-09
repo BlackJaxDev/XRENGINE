@@ -242,7 +242,7 @@ public sealed partial class BackendReadyFramePackage
             hash = AddHash(hash, material.BindingLayoutVersion);
             hash = AddHash(hash, unchecked((ulong)material.ShaderStateRevision));
             hash = AddHash(hash, unchecked((ulong)material.UberStateRevision));
-            AdvancedLatePassMetadata? lateMetadata = material.AdvancedLatePassMetadata;
+            AdvancedLatePassMetadata? lateMetadata = material.ResolveAdvancedLatePassMetadata();
             if (lateMetadata is not null)
             {
                 hash = AddHash(hash, (uint)lateMetadata.Kind);

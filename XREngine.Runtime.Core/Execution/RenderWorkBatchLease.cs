@@ -26,6 +26,14 @@ public readonly struct RenderWorkBatchLease : IDisposable
         batch.Domain.RecordBuildAllocation(allocationBefore);
     }
 
+    /// <summary>
+    /// Lowers the item count of a building batch. Use it when the lease is rented
+    /// before the final item count is known, for example to hold a lane-plan claim.
+    /// Items at or above the new count must still be unconfigured.
+    /// </summary>
+    public void ShrinkItemCount(int itemCount)
+        => GetBatch().ShrinkItemCount(Generation, itemCount);
+
     public void SetDependent(int dependentSlot, int dependentItemIndex)
     {
         RenderWorkBatch batch = GetBatch();

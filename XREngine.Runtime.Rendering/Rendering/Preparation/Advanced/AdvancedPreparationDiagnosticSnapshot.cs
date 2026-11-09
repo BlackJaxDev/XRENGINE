@@ -10,4 +10,16 @@ public readonly record struct AdvancedPreparationDiagnosticSnapshot(
     AdvancedSharedPreparationTelemetry SharedTelemetry,
     AdvancedDeformedVertexArenaTelemetry ArenaTelemetry,
     AdvancedFrameUploadTelemetrySnapshot FrameUploadTelemetry,
-    AdvancedVisibilityContentTelemetry VisibilityContent);
+    AdvancedVisibilityContentTelemetry VisibilityContent)
+{
+    /// <summary>Exact mesh-input generation selected for the last preparation attempt.</summary>
+    public ulong DeformationSourceGeneration { get; init; }
+
+    /// <summary>Unique mesh count in the selected deformation source set.</summary>
+    public int DeformationSourceMeshCount { get; init; }
+    /// <summary>Changed input fields in the last source generation transition.</summary>
+    public EAdvancedDeformationSourceChange DeformationSourceChanges { get; init; }
+
+    /// <summary>First mesh with changed inputs in that transition.</summary>
+    public string? DeformationSourceChangedMesh { get; init; }
+}

@@ -154,7 +154,10 @@ public partial class AdvancedRenderPipeline
             XRMaterial material = _material
                 ?? throw new InvalidOperationException("Post-process material was not constructed.");
             frameBuffer.PrepareForInitialRendering();
-            frameBuffer.SettingUniforms += program => owner.ApplyPostProcessProgramBindings(material, program);
+            if (UseTypedPostProcessPublishers)
+                frameBuffer.FullScreenMesh.BindingPublishers.Add(new PostProcessBindingPublisher(owner, material));
+            else
+                frameBuffer.SettingUniforms += program => owner.ApplyPostProcessProgramBindings(material, program);
         }
 
         public void Dispose()
@@ -216,7 +219,10 @@ public partial class AdvancedRenderPipeline
         {
             Name = FinalPostProcessFBOName
         };
-        fbo.SettingUniforms += ApplyFinalPostProcessProgramBindings;
+        if (UseTypedPostProcessPublishers)
+            fbo.FullScreenMesh.BindingPublishers.Add(new FinalPostProcessBindingPublisher());
+        else
+            fbo.SettingUniforms += ApplyFinalPostProcessProgramBindings;
         return fbo;
     }
 

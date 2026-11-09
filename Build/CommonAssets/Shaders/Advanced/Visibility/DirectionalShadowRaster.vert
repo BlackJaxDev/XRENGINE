@@ -27,6 +27,15 @@ layout(location = 1) in vec2 TexCoord0;
 
 layout(location = 0) out vec2 ShadowCoverageUv;
 layout(location = 1) flat out uint ShadowMaterialDenseIndex;
+layout(location = 2) out vec2 ShadowCoverageUv1;
+layout(location = 3) out vec4 ShadowCoverageColor;
+layout(location = 4) out vec3 ShadowCoverageWorldPosition;
+layout(location = 5) out vec3 ShadowCoverageLocalPosition;
+layout(location = 6) out vec2 ShadowCoverageUv2;
+layout(location = 7) out vec2 ShadowCoverageUv3;
+layout(location = 8) flat out uint ShadowDrawIndex;
+layout(location = 9) flat out uint ShadowProducer;
+layout(location = 10) flat out uint ShadowPrimitiveBase;
 
 uint XR_ADV_VisibilityPayloadIndex()
 {
@@ -53,6 +62,15 @@ void XR_ADV_RejectShadowVertex()
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     ShadowCoverageUv = vec2(0.0);
     ShadowMaterialDenseIndex = XR_ADV_INVALID_DENSE_INDEX;
+    ShadowCoverageUv1 = vec2(0.0);
+    ShadowCoverageUv2 = vec2(0.0);
+    ShadowCoverageUv3 = vec2(0.0);
+    ShadowCoverageColor = vec4(1.0);
+    ShadowCoverageWorldPosition = vec3(0.0);
+    ShadowCoverageLocalPosition = vec3(0.0);
+    ShadowDrawIndex = XR_ADV_VIS_INVALID;
+    ShadowProducer = XR_ADV_VIS_INVALID;
+    ShadowPrimitiveBase = 0u;
 }
 
 void main()
@@ -113,6 +131,10 @@ void main()
 
     vec3 localPosition = Position;
     vec2 localTexCoord0 = TexCoord0;
+    vec2 localTexCoord1 = localTexCoord0;
+    vec2 localTexCoord2 = vec2(0.0);
+    vec2 localTexCoord3 = vec2(0.0);
+    vec4 localColor = vec4(1.0);
     uint selectedVertex = uint(XR_ADV_VERTEX_INDEX);
     if (producer == XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
     {
@@ -146,6 +168,16 @@ void main()
             : XR_ADV_VisibilityStaticVertices.records[selectedVertex];
         localPosition = vertex.position;
         localTexCoord0 = unpackHalf2x16(vertex.texCoord0Half);
+        localTexCoord1 = (vertex.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u
+            ? unpackHalf2x16(vertex.texCoord1Half)
+            : localTexCoord0;
+        localTexCoord2 = (vertex.flags & XR_ADV_VERTEX_HAS_TEXCOORD2) != 0u
+            ? unpackHalf2x16(vertex.texCoord2Half)
+            : vec2(0.0);
+        localTexCoord3 = (vertex.flags & XR_ADV_VERTEX_HAS_TEXCOORD3) != 0u
+            ? unpackHalf2x16(vertex.texCoord3Half)
+            : vec2(0.0);
+        localColor = unpackUnorm4x8(vertex.color0Rgba8);
     }
 #if defined(XR_ADV_VIS_VERTEX_DISPLACEMENT)
     localPosition += XR_ADV_ApplyVisibilityVertexDisplacement(
@@ -179,5 +211,14 @@ void main()
     gl_Position =
         worldPosition * XR_ADV_DirectionalShadowPush.viewProjection;
     ShadowCoverageUv = localTexCoord0;
+    ShadowCoverageUv1 = localTexCoord1;
+    ShadowCoverageUv2 = localTexCoord2;
+    ShadowCoverageUv3 = localTexCoord3;
+    ShadowCoverageColor = localColor;
+    ShadowCoverageWorldPosition = worldPosition.xyz;
+    ShadowCoverageLocalPosition = localPosition;
     ShadowMaterialDenseIndex = materialDense;
+    ShadowDrawIndex = payload.draw.index;
+    ShadowProducer = producer;
+    ShadowPrimitiveBase = payload.firstIndex / 3u;
 }

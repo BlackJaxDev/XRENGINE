@@ -14,6 +14,10 @@ While VR is active, the desktop window, editor panels, mirror composition, and X
 | `LowRatePreview` | Render a low-rate desktop preview. |
 | `FullIndependentRender` | Render the desktop scene independently. This mode is expensive. Use it for editor diagnostics. Visibility uses `EVrVisibilityPolicy.IndependentDesktopAndVrEyes`. |
 
+With `Off`, `XRWindow` does not record or present the window on most frames. It presents at a keep-alive rate of 2 Hz, so window and desktop-frame maintenance still run. Before this hold, each VR frame acquired a swapchain image, deferred an empty recording, and presented a rejected image, which delayed the next XR frame.
+
+`Engine.Rendering.Settings.VrDesktopFrameExecutionMode` (`EVrDesktopFrameExecutionMode`) selects how a recording desktop view (`FullIndependentRender`) executes while VR is active. `Inline` (the default) records, submits and presents the desktop frame on the render thread after the eyes. `WorkerRecord` records the desktop primary on reserved background render lane 2 into an engine-owned offscreen color image for the frame slot (created on first use with the swapchain format and extent, retired with the desktop WSI generation). After the scene, the render thread records a short copy from that image into the acquired swapchain image, and the ImGui and dynamic text overlays follow it. The render thread still joins the worker before it submits; a later change moves the join to the next desktop opportunity so that the desktop presents one XR frame later. `WorkerRecord` needs dynamic rendering and no Streamline frame generation, and fails loudly without them. `SeparateDomain` is reserved for a separate desktop render domain; selecting it holds the desktop window at its last image with a warning. No mode records inline instead.
+
 All modes except `FullIndependentRender` use `EVrVisibilityPolicy.CombinedRuntimeLeftRightCyclopean`. The legacy flags `RenderWindowsWhileInVR` and `VrMirrorComposeFromEyeTextures` are compatibility views of `VrMirrorMode`: setting `RenderWindowsWhileInVR=false` selects `Off`, and setting `VrMirrorComposeFromEyeTextures=true` selects the submitted-eye mirror path. The Unit Testing World bootstrap selects `FullIndependentRender` when a VR pawn renders desktop windows. A mirror mode change never changes XR eye submission.
 
 ## Cyclopean reconstruction contract
@@ -67,6 +71,31 @@ The manifest attributes each frame to a budget band:
 | `VR120` | 8.33 ms. |
 
 When `VrDesktopAutoSkipWhenOverBudget` is true and the previous whole-frame time exceeded the active band, a desktop-facing output skips with reason `Budget` instead of making the eyes miss their deadline. The skip is counted in the manifest.
+
+## XR frame priority
+
+The eyes render first in the render loop. With `VrDesktopAutoSkipWhenOverBudget` on, at most one independent desktop frame runs per XR frame, and only when its last measured cost fits before the next XR frame. `OpenXRAPI.NextFrameSlackMs` estimates that time from the eye work time and the runtime period. A held frame reports `EFrameOutputSkipReason.Budget`, and the window keeps its last image.
+
+The desktop keeps a minimum rate of 15 Hz, so the window cannot freeze. A frame that is due at this rate waits for the start of the next slack window (just after `xrEndFrame`). It runs only when its measured cost goes past the next XR wake by at most 1.5 ms. When the cost does not fit, a 4 Hz fallback frame runs early in a slack window, with at least 1.5 ms of slack left. Below 1 Hz, a frame runs at any time. A frame that starts just before an XR wake delays the eye frame by most of its cost and makes the eye frame miss its display slot; on the imported avatar at 90 Hz, this change reduced missed slots from 42 to 13 of about 450 frames.
+
+## Render priority
+
+The user setting `UserSettings.VrRenderPriority` selects which output gets render-thread time first while VR is active. The default is `Vr`.
+
+- `Vr`: the XR frame priority above applies. Desktop frames that do not fit before the next XR frame are held, and the window keeps its last image.
+- `Desktop`: every due desktop frame runs. The XR budget skip, the XR slack hold and the WorkerRecord slack gate are off. A late eye frame is reprojected by the XR runtime.
+
+The priority output also owns the per-frame mesh deformation (compute skinning and blendshapes, and the mesh atlas publish). `SkinningPrepassDispatcher.OwnsDeformation` makes the decision. With `Vr`, the stereo eye render dispatches the deformation inside its own submission, and the desktop and its shadow views only read the latest results. With `Desktop`, the desktop render owns it and the eyes only read. The reading output never waits for the owner, so the two outputs keep independent rates. Its pose can be one owner frame old. Both outputs submit to one graphics queue, so queue order keeps a read from overlapping a write. Shadow views never dispatch the deformation, because they render before the owning pipeline is active. Without an active VR session, every render owns the deformation.
+
+On the imported-avatar benchmark scene at 90 Hz (zero-readback, WorkerRecord), `Desktop` gave 31 Hz VR and 31 Hz desktop with the avatar visible, and `Vr` gave 30 Hz VR and 12 Hz desktop. When the eyes cannot reach the runtime rate, the hold mostly costs desktop frames.
+
+## Next-frame collect
+
+Only one OpenXR frame can be between `xrBeginFrame` and `xrEndFrame`. In single-pass stereo, the collect thread therefore collects the commands for the next frame while the current frame renders, after the swap publishes the current commands. When the next frame is located, the swap assigns these commands to it and publishes its located view set. Without this, each frame waits for a collect pass after `xrWaitFrame` returns, and that wait adds to the render time.
+
+These commands use the last pose, because the next pose is not known yet. The combined culling projection is scaled by 0.85, which widens the volume by about 8 degrees at each edge. Eye rendering still applies the exact late pose, so the pose only selects the collected objects. The collect does not change the eye cameras, the pipelines, or the post-process state, because the current frame reads them on the render thread. A change of view mode or a failed view-set publication drops these commands, and the frame does a full collect.
+
+Set `XRE_OPENXR_SPECULATIVE_COLLECT=0` to turn this off. Parallel command buffer recording does not use it.
 
 ## Limits
 

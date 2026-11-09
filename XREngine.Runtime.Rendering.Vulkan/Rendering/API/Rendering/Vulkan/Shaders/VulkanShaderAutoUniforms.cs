@@ -319,6 +319,7 @@ internal static partial class VulkanShaderAutoUniforms
             new(populatedFrequencyCount);
         List<AutoUniformMember> allLayoutMembers = new(members.Count);
         List<string> blocks = new(populatedFrequencyCount);
+        Dictionary<string, string> uniformReferences = new(StringComparer.Ordinal);
         string blockNamePrefix = GetAutoUniformBlockName(shaderType);
         int bindingIndex = 0;
 
@@ -353,10 +354,7 @@ internal static partial class VulkanShaderAutoUniforms
                  memberIndex++)
             {
                 AutoUniformMember member = layoutMembers[memberIndex];
-                rewritten = Regex.Replace(
-                    rewritten,
-                    $@"(?<!\.)\b{Regex.Escape(member.Name)}\b",
-                    $"{instanceName}.{member.Name}");
+                uniformReferences.Add(member.Name, $"{instanceName}.{member.Name}");
             }
 
             allLayoutMembers.AddRange(layoutMembers);
@@ -378,6 +376,7 @@ internal static partial class VulkanShaderAutoUniforms
                     frequency));
         }
 
+        rewritten = RewriteUniformReferences(rewritten, uniformReferences);
         int insertionIndex = FindAutoUniformInsertionIndex(rewritten);
         List<string> movedStructDeclarations =
             MoveRequiredStructDeclarationsBeforeInsertion(

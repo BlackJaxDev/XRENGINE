@@ -10,4 +10,6 @@ public enum EGpuDiagnosticReadbackDecoder : byte
     AdvancedVisibilityCounters,
     AdvancedClassificationCounters,
     AdvancedLightingCounters,
+    /// <summary>RVC shadelet telemetry counters; read back only when RVC telemetry is enabled.</summary>
+    RvcShadeletTelemetry,
 }

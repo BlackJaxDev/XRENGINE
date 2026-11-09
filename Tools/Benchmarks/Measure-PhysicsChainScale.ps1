@@ -850,7 +850,19 @@ try {
     $script:endpoint = [string]$sessionView.endpoint
     if ([string]::IsNullOrWhiteSpace($script:endpoint)) { throw 'Session has no MCP endpoint.' }
 
-    Invoke-ScaleTool 'set_editor_preference' @{ property_name = 'McpDispatchMode'; value = 'MainThread'; session_only = $true } | Out-Null
+    # MCP can answer before the editor creates its target world. World tools then report a missing
+    # World capability, so retry the first world tool call until the world exists.
+    $worldDeadline = [DateTime]::UtcNow.AddSeconds(180)
+    while ($true) {
+        try {
+            Invoke-ScaleTool 'set_editor_preference' @{ property_name = 'McpDispatchMode'; value = 'MainThread'; session_only = $true } | Out-Null
+            break
+        }
+        catch {
+            if ($_.Exception.Message -notlike '*requires unavailable capabilities*' -or [DateTime]::UtcNow -ge $worldDeadline) { throw }
+            Start-Sleep -Milliseconds 500
+        }
+    }
 
     $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
     if ($null -ne $nvidiaSmi) { $script:nvidiaSmiPath = $nvidiaSmi.Source }
@@ -1136,6 +1148,8 @@ try {
         $traceProcess = Start-Process -FilePath $traceCommand.Source -ArgumentList $traceArguments -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput (Join-Path $outputPath "$safeLabel-trace-output.log") `
             -RedirectStandardError (Join-Path $outputPath "$safeLabel-trace-error.log")
+        # Windows PowerShell 5.1 reports no ExitCode for this process unless the script reads its handle first.
+        $null = $traceProcess.Handle
         $summary.cpuTraceStartedUtc = [DateTime]::UtcNow.ToString('O')
     }
     $nextSampleSeconds = 1.0

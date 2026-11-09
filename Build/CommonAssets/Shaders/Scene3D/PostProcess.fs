@@ -163,6 +163,14 @@ float rand(vec2 coord)
 {
     return fract(sin(dot(coord, vec2(12.9898f, 78.233f))) * 43758.5453f);
 }
+// Returns the linear change per unit of sRGB-encoded display value.
+vec3 DisplayToLinearSlope(vec3 linearColor)
+{
+    vec3 color = max(linearColor, vec3(0.0));
+    vec3 upper = 2.4 / 1.055 * pow(color, vec3(1.0 - 1.0 / 2.4));
+    return mix(vec3(1.0 / 12.92), upper, step(vec3(0.0031308), color));
+}
+
 float interleavedGradientNoise(vec2 pixelCoord)
 {
   return fract(52.9829189f * fract(dot(pixelCoord, vec2(0.06711056f, 0.00583715f))));
@@ -558,9 +566,10 @@ void main()
     // framebuffer / sRGB FBOs). Manual gamma here would double-encode and
     // wash out the image.
     //
-    // Fix subtle banding by applying fine noise in linear space.
+    // Fix subtle banding with one display-code step of noise. Hardware applies the sRGB transfer
+    // after this point, so scale the noise by the local transfer slope.
     vec2 noiseCoord = XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(HDRSceneTex, 0)));
-    sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, interleavedGradientNoise(noiseCoord));
+    sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, interleavedGradientNoise(noiseCoord)) * DisplayToLinearSlope(sceneColor);
   }
 
   sceneColor = SafeColor(sceneColor);

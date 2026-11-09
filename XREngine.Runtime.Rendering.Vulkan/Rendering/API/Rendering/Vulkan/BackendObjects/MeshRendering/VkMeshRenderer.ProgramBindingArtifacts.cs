@@ -97,11 +97,14 @@ internal unsafe partial class VkMeshRenderer
             _fastPersistentArtifactGeneration.TypedPublisherSignature,
             engineBindingSnapshot?.PersistentEngineUniformSignature ?? 0UL,
             engineBindingSnapshot?.PersistentEngineResourceSignature ?? 0UL,
+            BackendContext.Resources.NativeBufferBindingRevision,
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Variables
                 .UniformContentGeneration ?? 0UL,
             engineRequirements,
             MeshRenderer.CaptureUniformsOnRender);
-        if (currentGeneration != _fastPersistentArtifactGeneration)
+        engineBindingSnapshot?.ReleaseIfUnpooled();
+        if (currentGeneration != _fastPersistentArtifactGeneration ||
+            _fastPersistentArtifact is { IsArtifactLive: false })
             return false;
 
         artifact = _fastPersistentArtifact;
@@ -158,10 +161,12 @@ internal unsafe partial class VkMeshRenderer
             _fastPersistentArtifactGeneration.TypedPublisherSignature,
             engineBindingSnapshot?.PersistentEngineUniformSignature ?? 0UL,
             engineBindingSnapshot?.PersistentEngineResourceSignature ?? 0UL,
+            BackendContext.Resources.NativeBufferBindingRevision,
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Variables
                 .UniformContentGeneration ?? 0UL,
             engineRequirements,
             MeshRenderer.CaptureUniformsOnRender);
+        engineBindingSnapshot?.ReleaseIfUnpooled();
         return generation == _fastPersistentArtifactGeneration;
     }
 
@@ -210,6 +215,7 @@ internal unsafe partial class VkMeshRenderer
             typedPublisherSignature,
             engineRequirements,
             engineBindingSnapshot);
+        engineBindingSnapshot?.ReleaseIfUnpooled();
         return true;
     }
 
@@ -280,6 +286,7 @@ internal unsafe partial class VkMeshRenderer
                     typedPublisherSignature,
                     engineRequirements,
                     engineBindingSnapshot);
+            engineBindingSnapshot?.ReleaseIfUnpooled();
             PersistentProgramBindingArtifactSlotKey slot =
                 new(material, MeshRenderer);
             return expectedProgram.TryGetPersistentProgramBindingArtifact(
@@ -499,6 +506,7 @@ internal unsafe partial class VkMeshRenderer
             typedPublisherSignature,
             engineBindingSnapshot?.PersistentEngineUniformSignature ?? 0UL,
             engineBindingSnapshot?.PersistentEngineResourceSignature ?? 0UL,
+            BackendContext.Resources.NativeBufferBindingRevision,
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Variables
                 .UniformContentGeneration ?? 0UL,
             engineRequirements,
@@ -509,6 +517,7 @@ internal unsafe partial class VkMeshRenderer
         ComputeDispatchSnapshot snapshot,
         EUniformRequirements engineRequirements,
         bool hasGenerationOwnedPublisherResources,
+        ComputeDispatchSnapshot? engineBindingSnapshot,
         out ComputeDispatchSnapshot artifact,
         out EVulkanProgramBindingArtifactFallbackReason fallbackReason,
         out string? fallbackDetail)
@@ -516,24 +525,45 @@ internal unsafe partial class VkMeshRenderer
         artifact = null!;
         fallbackReason = EVulkanProgramBindingArtifactFallbackReason.None;
         fallbackDetail = null;
-        // Ordinary buffer snapshots contain exact native handles, but a shared
-        // artifact does not own their allocation leases. An unrelated engine
-        // or publisher generation cannot authorize retaining those handles.
-        if (snapshot.Buffers.Count != 0 || snapshot.BuffersByName.Count != 0)
+        // An artifact may keep a native resource only when a generation in its slot
+        // key changes as soon as that resource does. The forward lighting snapshot's
+        // signature covers its buffers, samplers and storage. A resource publisher's
+        // generation covers what it publishes. The material versions cover its textures.
+        foreach ((uint binding, VulkanComputeBufferBinding buffer) in snapshot.Buffers)
         {
-            fallbackReason = EVulkanProgramBindingArtifactFallbackReason.UnownedDescriptorResource;
-            fallbackDetail = "ordinary buffer bindings require a frame-owned binding snapshot";
-            return false;
+            bool engineOwned =
+                engineBindingSnapshot is not null &&
+                engineBindingSnapshot.Buffers.TryGetValue(binding, out VulkanComputeBufferBinding engineBuffer) &&
+                engineBuffer.Buffer.Handle == buffer.Buffer.Handle &&
+                engineBuffer.NativeGeneration == buffer.NativeGeneration;
+            if (!engineOwned && !hasGenerationOwnedPublisherResources)
+            {
+                fallbackReason = EVulkanProgramBindingArtifactFallbackReason.UnownedDescriptorResource;
+                fallbackDetail = "a buffer binding has no generation owner";
+                return false;
+            }
         }
-        // Cross-frame artifacts are shared by reference and do not own a
-        // publication lease per recorded consumer. Keep immutable storage on
-        // the frame-owned GPU snapshot path until that cache supports leases.
-        if (snapshot.ReadOnlyStorageBindings is { } storageBindings &&
-            !storageBindings.Bindings.IsEmpty)
+        foreach (XRTexture texture in snapshot.Samplers.Values)
+            if (!IsTextureArrayGenerationOwned(texture, material, engineBindingSnapshot, hasGenerationOwnedPublisherResources))
+                return RejectTextureArrayArtifact(out fallbackReason, out fallbackDetail);
+        foreach (XRTexture texture in snapshot.SamplersByName.Values)
+            if (!IsTextureArrayGenerationOwned(texture, material, engineBindingSnapshot, hasGenerationOwnedPublisherResources))
+                return RejectTextureArrayArtifact(out fallbackReason, out fallbackDetail);
+        foreach (ProgramImageBinding image in snapshot.Images.Values)
+            if (!IsTextureArrayGenerationOwned(image.Texture, material, engineBindingSnapshot, hasGenerationOwnedPublisherResources))
+                return RejectTextureArrayArtifact(out fallbackReason, out fallbackDetail);
+        // Every artifact shares the lighting snapshot's one storage set, because the
+        // set pool is bounded and a set per draw could exhaust it during light motion.
+        ReadOnlyStorageBindingSet? sharedStorageBindings = null;
+        if (snapshot.HasReadOnlyStorageBindings)
         {
-            fallbackReason = EVulkanProgramBindingArtifactFallbackReason.UnownedDescriptorResource;
-            fallbackDetail = "immutable storage requires a frame-owned binding snapshot";
-            return false;
+            if (!HasSameStorageBindings(snapshot, engineBindingSnapshot))
+            {
+                fallbackReason = EVulkanProgramBindingArtifactFallbackReason.UnownedDescriptorResource;
+                fallbackDetail = "immutable storage has no generation owner";
+                return false;
+            }
+            sharedStorageBindings = engineBindingSnapshot!.ReadOnlyStorageBindings;
         }
         if (snapshot.MutableLegacyUniformNames.Count != 0)
         {
@@ -587,8 +617,68 @@ internal unsafe partial class VkMeshRenderer
             BackendContext,
             WrapperLookup,
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
-            RetainedArtifactEngineRequirements);
+            RetainedArtifactEngineRequirements,
+            sharedStorageBindings);
         return true;
+    }
+
+    private static bool IsTextureArrayGenerationOwned(
+        XRTexture texture,
+        XRMaterial material,
+        ComputeDispatchSnapshot? engineBindingSnapshot,
+        bool hasGenerationOwnedPublisherResources)
+    {
+        if (texture is not XRTexture2DArray || hasGenerationOwnedPublisherResources)
+            return true;
+
+        for (int index = 0; index < material.Textures.Count; index++)
+            if (ReferenceEquals(material.Textures[index], texture))
+                return true;
+
+        if (engineBindingSnapshot is null)
+            return false;
+        foreach (XRTexture engineTexture in engineBindingSnapshot.SamplersByName.Values)
+            if (ReferenceEquals(engineTexture, texture))
+                return true;
+        foreach (XRTexture engineTexture in engineBindingSnapshot.Samplers.Values)
+            if (ReferenceEquals(engineTexture, texture))
+                return true;
+        return false;
+    }
+
+    private static bool HasSameStorageBindings(
+        ComputeDispatchSnapshot snapshot,
+        ComputeDispatchSnapshot? engineBindingSnapshot)
+    {
+        if (snapshot.ReadOnlyStorageBindings is not { } bindings ||
+            engineBindingSnapshot?.ReadOnlyStorageBindings is not { } engineBindings)
+        {
+            return false;
+        }
+
+        ReadOnlySpan<ReadOnlyStorageBinding> captured = bindings.Bindings;
+        if (captured.Length != engineBindings.Bindings.Length)
+            return false;
+        for (int index = 0; index < captured.Length; index++)
+        {
+            if (!engineBindings.TryGet(captured[index].Binding, out ReadOnlyStorageBinding engineBinding) ||
+                !engineBinding.Publication.IsSameToken(captured[index].Publication) ||
+                engineBinding.Offset != captured[index].Offset ||
+                engineBinding.Length != captured[index].Length)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool RejectTextureArrayArtifact(
+        out EVulkanProgramBindingArtifactFallbackReason reason,
+        out string? detail)
+    {
+        reason = EVulkanProgramBindingArtifactFallbackReason.UnownedDescriptorResource;
+        detail = "texture arrays require a frame-owned binding snapshot";
+        return false;
     }
 
     private static bool SnapshotContainsOnlyMaterialSamplers(

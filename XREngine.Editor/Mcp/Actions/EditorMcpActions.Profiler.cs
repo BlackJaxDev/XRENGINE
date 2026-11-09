@@ -410,6 +410,8 @@ namespace XREngine.Editor.Mcp
             EngineWorkSchedulerMetrics schedulerMetrics =
                 workScheduler?.Metrics ?? default;
             RenderWorkDomainMetrics renderWork = schedulerMetrics.Render;
+            RenderWorkAsynchronousMetrics asyncWork =
+                workScheduler?.Render.AsynchronousMetrics ?? default;
             RenderForegroundWorkSnapshot foregroundWork =
                 RenderForegroundWorkCoordinator.CaptureSnapshot();
             VulkanFrameHotPathSnapshot hotPath =
@@ -425,6 +427,7 @@ namespace XREngine.Editor.Mcp
                     ? OcclusionGpuElapsedTiming.Instance.CaptureRingDiagnostic(activeRenderer)
                     : default;
             RvcFrameProfileSnapshot rvcFrameProfile = RuntimeEngine.Rendering.Stats.Rvc.FrameProfile;
+            RvcShadeletTelemetryCounters rvcShadeletTelemetry = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetry;
             XRMeshCpuPreparationTelemetrySnapshot meshCpuPreparation =
                 XRMeshCpuPreparationTelemetry.CaptureSnapshot();
             var gpuScene = context.RenderWorld.VisualScene.GPUCommands;
@@ -523,6 +526,34 @@ namespace XREngine.Editor.Mcp
                                 1000.0 / Stopwatch.Frequency,
                             queue_lock_waits_over_0_1_ms =
                                 renderWork.QueueLockWaitOverThresholdCount,
+                            asynchronous = new
+                            {
+                                rental_limit = asyncWork.AsynchronousRentalLimit,
+                                outstanding_batches = asyncWork.OutstandingBatchCount,
+                                peak_outstanding_batches = asyncWork.PeakOutstandingBatchCount,
+                                oldest_unjoined_age_ms =
+                                    asyncWork.OldestUnjoinedAgeTicks * 1000.0 / Stopwatch.Frequency,
+                                rentals = asyncWork.RentalCount,
+                                submits = asyncWork.SubmitCount,
+                                joins = asyncWork.JoinCount,
+                                waiting_joins = asyncWork.WaitingJoinCount,
+                                join_wait_ms = asyncWork.JoinWaitTicks * 1000.0 / Stopwatch.Frequency,
+                                join_wait_peak_ms = asyncWork.PeakJoinWaitTicks * 1000.0 / Stopwatch.Frequency,
+                                submit_to_quiescence_ms =
+                                    asyncWork.SubmitToQuiescenceTicks * 1000.0 / Stopwatch.Frequency,
+                                deadline_violations = asyncWork.DeadlineViolationCount,
+                                completed = asyncWork.CompletedCount,
+                                canceled = asyncWork.CanceledCount,
+                                faulted = asyncWork.FaultedCount,
+                                rejected_capacity_disabled = asyncWork.RejectedCapacityDisabledCount,
+                                rejected_capacity_exhausted = asyncWork.RejectedCapacityExhaustedCount,
+                                rejected_executor_busy = asyncWork.RejectedExecutorBusyCount,
+                                rejected_last_free_batch = asyncWork.RejectedLastFreeBatchCount,
+                                rejected_domain_unavailable = asyncWork.RejectedDomainUnavailableCount,
+                                rejected_lane_reserved = asyncWork.RejectedLaneReservedCount,
+                                lane_reservations = asyncWork.LaneReservationCount,
+                                affine_collisions = asyncWork.AffineCollisionCount,
+                            },
                         },
                     },
                     frame_lifecycle = new
@@ -706,6 +737,7 @@ namespace XREngine.Editor.Mcp
                     },
                     frame_outputs = BuildFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest),
                     rvc_frame_profile = BuildRvcFrameProfile(rvcFrameProfile),
+                    rvc_shadelet_telemetry = BuildRvcShadeletTelemetry(rvcShadeletTelemetry),
                     occlusion = new
                     {
                         effective_mode = OcclusionTelemetry.LastEffectiveMode.ToString(),
@@ -867,6 +899,7 @@ namespace XREngine.Editor.Mcp
                         collect_frustum_expansion_degrees = JsonFinite(VrStats.VrXrCollectFrustumExpansionDegrees),
                         pacing_thread_idle_ms = JsonFinite(VrStats.VrXrPacingThreadIdleTimeMs),
                         pacing_handoff_stalls = VrStats.VrXrPacingHandoffStalls,
+                        headroom = BuildVrHeadroomStats(),
                     },
                     vulkan = new
                     {
@@ -1136,6 +1169,11 @@ namespace XREngine.Editor.Mcp
                             mesh_draw_binding_snapshot_copy = VulkanCpuStage(EVulkanCpuStage.MeshDrawBindingSnapshotCopy),
                             mesh_draw_enqueue = VulkanCpuStage(EVulkanCpuStage.MeshDrawEnqueue),
                             frame_data_descriptor_validation = VulkanCpuStage(EVulkanCpuStage.FrameDataDescriptorValidation),
+                            prewarm_program_activation = VulkanCpuStage(EVulkanCpuStage.PrewarmProgramActivation),
+                            prewarm_buffer_preparation = VulkanCpuStage(EVulkanCpuStage.PrewarmBufferPreparation),
+                            prewarm_binding_application = VulkanCpuStage(EVulkanCpuStage.PrewarmBindingApplication),
+                            prewarm_descriptor_sets = VulkanCpuStage(EVulkanCpuStage.PrewarmDescriptorSets),
+                            prewarm_frame_source_descriptors = VulkanCpuStage(EVulkanCpuStage.PrewarmFrameSourceDescriptors),
                             frame_data_engine_uniform_upload = VulkanCpuStage(EVulkanCpuStage.FrameDataEngineUniformUpload),
                             frame_data_auto_uniform_upload = VulkanCpuStage(EVulkanCpuStage.FrameDataAutoUniformUpload),
                             prepared_draw_construction = VulkanCpuStage(EVulkanCpuStage.PreparedDrawConstruction),
@@ -1275,6 +1313,16 @@ namespace XREngine.Editor.Mcp
                             program_binding_artifact_builds = VulkanStats.VulkanProgramBindingArtifactBuilds,
                             program_binding_artifact_reuses = VulkanStats.VulkanProgramBindingArtifactReuses,
                             program_binding_artifact_fallbacks = VulkanStats.VulkanProgramBindingArtifactFallbacks,
+                            program_binding_artifact_totals = new
+                            {
+                                builds = VulkanStats.VulkanProgramBindingArtifactBuildsTotal,
+                                reuses = VulkanStats.VulkanProgramBindingArtifactReusesTotal,
+                                fallbacks = VulkanStats.VulkanProgramBindingArtifactFallbacksTotal,
+                                renderer_callback = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonTotal(EVulkanProgramBindingArtifactFallbackReason.RendererCallback),
+                                material_callback = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonTotal(EVulkanProgramBindingArtifactFallbackReason.MaterialCallback),
+                                shadow_pass = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonTotal(EVulkanProgramBindingArtifactFallbackReason.ShadowPass),
+                                active_scoped_bindings = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonTotal(EVulkanProgramBindingArtifactFallbackReason.ActiveScopedBindings),
+                            },
                             program_binding_allocation_breakdown_bytes = new
                             {
                                 setup = VulkanStats.GetVulkanProgramBindingAllocationBytes(EVulkanProgramBindingAllocationSegment.Setup),
@@ -1454,6 +1502,15 @@ namespace XREngine.Editor.Mcp
                             driver_cache_runtime_hits = VulkanStats.VulkanDriverPipelineCacheRuntimeHits,
                             driver_cache_misses = VulkanStats.VulkanDriverPipelineCacheMisses,
                             driver_cache_unknown = VulkanStats.VulkanDriverPipelineCacheUnknown,
+                            // Cumulative since process start; the driver_cache_* fields above are per frame.
+                            compute_cache_cumulative = new
+                            {
+                                persisted_hits = VulkanStats.VulkanComputePipelineCachePersistedHitsTotal,
+                                runtime_hits = VulkanStats.VulkanComputePipelineCacheRuntimeHitsTotal,
+                                misses = VulkanStats.VulkanComputePipelineCacheMissesTotal,
+                                unknown = VulkanStats.VulkanComputePipelineCacheUnknownTotal,
+                                creation_ms = VulkanStats.VulkanComputePipelineCreationMillisecondsTotal,
+                            },
                             compile_required_count = VulkanStats.VulkanPipelineCompileRequiredCount,
                             compile_completed_count = VulkanStats.VulkanPipelineCompileCompletedCount,
                             background_compile_completed_count = VulkanStats.VulkanPipelineBackgroundCompileCompletedCount,
@@ -2004,6 +2061,41 @@ namespace XREngine.Editor.Mcp
                 outputs = outputData,
             };
         }
+
+        /// <summary>Reports the latest completed RVC shadelet telemetry record and its reuse ratios.</summary>
+        private static object BuildRvcShadeletTelemetry(in RvcShadeletTelemetryCounters telemetry)
+            => new
+            {
+                frame_id = telemetry.FrameId,
+                view_count = telemetry.ViewCount,
+                valid_pixels = telemetry.ValidPixels,
+                unique_shadelets_2x2 = telemetry.UniqueShadelets2x2,
+                unique_shadelets_4x4 = telemetry.UniqueShadelets4x4,
+                unique_shadelets_8x8 = telemetry.UniqueShadelets8x8,
+                intra_view_reuse_2x2 = telemetry.IntraView2x2ReuseRatio,
+                intra_view_reuse_4x4 = telemetry.IntraView4x4ReuseRatio,
+                intra_view_reuse_8x8 = telemetry.IntraView8x8ReuseRatio,
+                stereo_candidates = telemetry.StereoCandidates,
+                stereo_offscreen = telemetry.StereoOffscreen,
+                stereo_visible_in_both_eyes = telemetry.StereoVisibleInBothEyes,
+                stereo_key_matches = telemetry.StereoKeyMatches,
+                stereo_key_match_ratio = telemetry.StereoKeyMatchRatio,
+                inset_wide_key_matches = telemetry.InsetWideKeyMatches,
+                unique_surface_shadelets_2x2 = telemetry.UniqueSurfaceShadelets2x2,
+                unique_surface_shadelets_4x4 = telemetry.UniqueSurfaceShadelets4x4,
+                unique_surface_shadelets_8x8 = telemetry.UniqueSurfaceShadelets8x8,
+                intra_view_surface_reuse_2x2 = telemetry.IntraViewSurface2x2ReuseRatio,
+                intra_view_surface_reuse_4x4 = telemetry.IntraViewSurface4x4ReuseRatio,
+                intra_view_surface_reuse_8x8 = telemetry.IntraViewSurface8x8ReuseRatio,
+                stereo_surface_key_matches = telemetry.StereoSurfaceKeyMatches,
+                stereo_surface_key_match_ratio = telemetry.StereoSurfaceKeyMatchRatio,
+                requests = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetryRequests,
+                dispatches = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetryDispatches,
+                readbacks_attached = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetryReadbacks,
+                readbacks_decoded = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetryDecoded,
+                skips = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetrySkips,
+                skip_reason = RuntimeEngine.Rendering.Stats.Rvc.ShadeletTelemetrySkipReason,
+            };
 
         private static object BuildRvcFrameProfile(in RvcFrameProfileSnapshot snapshot)
         {

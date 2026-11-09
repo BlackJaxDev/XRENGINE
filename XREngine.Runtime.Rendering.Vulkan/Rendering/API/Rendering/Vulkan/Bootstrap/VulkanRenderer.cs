@@ -179,6 +179,9 @@ public sealed partial class VulkanRenderer :
         : base(hostContext)
     {
         VulkanNativeOwnershipQuarantine.ThrowIfOccupied();
+        // The Advanced visibility family records the mesh surface decal buffer phase.
+        // Enable the lane before any scene publication routes decal draws.
+        AdvancedSurfaceDecalLane.EnableBackendSupport();
         IVulkanRendererTargetDriver targetDriver = VulkanRendererTargetDriverFactory.Create(hostContext);
         int frameSlotCount = targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget
             ? checked((int)explicitTarget.OutputProperties.FrameSlotCount)
@@ -219,6 +222,8 @@ public sealed partial class VulkanRenderer :
             _frameLoop.TryRecordAdvancedVisibilityDiagnosticCopy;
         _commandRuntime.AdvancedCounterDiagnosticCopy =
             _frameLoop.TryRecordAdvancedCounterDiagnosticCopy;
+        _commandRuntime.PrimaryDiagnosticSubmissionSettled =
+            _frameLoop.SettlePrimaryDiagnosticSubmission;
         _commandRuntime.ProvisionAdvancedVisibilityWorkspace =
             _framePlanner.FramePlanBuilder.ProvisionAdvancedVisibilityFamily;
         _framePlanner.FramePlanBuilder.AcquireAdvancedVisibilityPlanLease =
@@ -261,6 +266,9 @@ public sealed partial class VulkanRenderer :
 
     public override void PrepareRenderFramePacing()
         => _frameLoop.PrepareDesktopFramePacing();
+
+    public override void DiscardSkippedDesktopFrameWork()
+        => _frameLoop.DiscardSkippedDesktopFrameWork();
 
     internal override void RequestFrameAdmissionRecovery(string reason)
         => _frameLoop.RequestPresentNowRecovery(reason);
@@ -517,6 +525,8 @@ public sealed partial class VulkanRenderer :
             out failure);
 
     public override void MemoryBarrier(EMemoryBarrierMask mask) => _frameLoop.EnqueueMemoryBarrier(mask);
+    public override bool TryPrepareFrameBufferAttachments(XRFrameBuffer frameBuffer)
+        => _frameLoop.TryPrepareFrameBufferAttachments(frameBuffer);
     public override void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer) => _frameLoop.PublishFrameBufferAttachmentsForSampling(frameBuffer);
     public override void ApplyRenderParameters(RenderingParameters parameters) => _commandRuntime.ApplyRenderParameters(parameters);
     public override void SetEngineUniforms(XRRenderProgram program, XRCamera camera) => _commandRuntime.SetEngineUniforms(program, camera);
@@ -575,6 +585,7 @@ public sealed partial class VulkanRenderer :
     bool ISceneDatabaseDeviceAddressBackendCapability.TryBindSceneDatabaseDeviceAddressUniforms(XRRenderProgram program, XRDataBuffer drawMetadataBuffer, XRDataBuffer? instanceTransformBuffer, bool useInstanceTransformBuffer, string consumer) => _resourceRuntime.TryBindSceneDatabaseDeviceAddressUniforms(program, drawMetadataBuffer, instanceTransformBuffer, useInstanceTransformBuffer, consumer);
     bool IAdvancedVisibilityStageBackendCapability.SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage)
         => _frameLoop.SupportsAdvancedVisibilityStage(stage);
+    bool IAdvancedVisibilityStageBackendCapability.SupportsAdvancedSurfaceDecalBuffer => true;
     bool IAdvancedVisibilityStageBackendCapability.TryEnqueueAdvancedVisibilityStage(
         in AdvancedVisibilityStageBackendRequest request,
         out string failureReason)
@@ -867,7 +878,14 @@ public sealed partial class VulkanRenderer :
         return _frameLoop.TryEnqueueBufferCopy(source, sourceOffset, destination,
             destinationOffset, byteCount, label, authoringLease);
     }
-    public override ERendererComputeEnqueueStatus TryEnqueueGpuBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label) => _frameLoop.TryEnqueueGpuBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label);
+    public override ERendererComputeEnqueueStatus TryEnqueueGpuBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label, IRenderResourceLeaseOwner? authoringLease = null)
+    {
+        if (GetOrCreateAPIRenderObject(source) is not VkDataBuffer
+            || GetOrCreateAPIRenderObject(destination) is not VkDataBuffer)
+            return ERendererComputeEnqueueStatus.InvalidResource;
+
+        return _frameLoop.TryEnqueueGpuBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label, authoringLease);
+    }
     public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, XRDataBuffer destination, nuint byteCount, string label)
         => _frameLoop.TryEnqueueGpuDiagnosticBufferSnapshot(source, destination, byteCount, label) == ERendererComputeEnqueueStatus.Enqueued;
     public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, nuint sourceByteOffset, XRDataBuffer destination, nuint destinationByteOffset, nuint byteCount, string label)

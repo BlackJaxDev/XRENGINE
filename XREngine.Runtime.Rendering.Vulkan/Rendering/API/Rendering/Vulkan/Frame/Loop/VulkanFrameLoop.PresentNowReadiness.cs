@@ -80,6 +80,7 @@ internal sealed partial class VulkanFrameLoop
                 RejectPresentNowFrame(ref attempt, in retry);
                 return EDesktopFrameFlow.Stop;
             }
+            FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyAccepted);
             watchdog.RecordProgress();
 
             ClassifyIncompleteResizeReleaseSuccessorBeforeAcquire(ref attempt);
@@ -184,7 +185,9 @@ internal sealed partial class VulkanFrameLoop
             }
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyShadow);
         CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyOpsCaptured);
 
         _preparedMeshIngress.Clear();
         int requestCount;
@@ -232,6 +235,14 @@ internal sealed partial class VulkanFrameLoop
             if (!openXrPublication.HasViewSet)
                 requestCount = RemoveOpenXrMeshRequests(requestCount);
 
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan.AuthoredOperations) ||
+                VulkanCaptureOwnerReadiness.HasClosedOwner(
+                    _meshOperationRequestScratch.AsSpan(0, requestCount)))
+            {
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
+
             attempt.PresentNowMeshRequestCount = requestCount;
             acceptedPlan.CaptureRequiredTextureReferences(
                 _meshOperationRequestScratch.AsSpan(0, requestCount));
@@ -249,16 +260,25 @@ internal sealed partial class VulkanFrameLoop
                 acceptedPlan.ResetAuthoredOperations();
                 return false;
             }
+            FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyTextures);
 
             if (!MaterializeQueuedMeshRenderRequests(
                     requestCount,
                     allowPreparedCohort: true,
                     out string meshFailure,
                     out bool coldSliceDeferred,
+                    out bool captureOwnerClosed,
                     ref watchdog,
                     sourceFrameId: attempt.FrameNumber,
                     allowFrameOwnedAuthoringOperations: true))
             {
+                if (captureOwnerClosed ||
+                    VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan.AuthoredOperations))
+                {
+                    CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
+                    retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                    return false;
+                }
                 if (coldSliceDeferred)
                 {
                     CapturePresentNowAuthoredOperations(
@@ -286,7 +306,14 @@ internal sealed partial class VulkanFrameLoop
                 _meshOperationRequestScratch.AsSpan(0, requestCount));
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyMeshes);
         CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
+        if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan.AuthoredOperations) ||
+            VulkanCaptureOwnerReadiness.HasClosedOwner(_preparedMeshIngress))
+        {
+            retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+            return false;
+        }
         // Keep target preparation, barrier freezing, and plan sealing on one
         // immutable generation. A later publication is retried as a new
         // PresentNow attempt rather than mixed into this accepted cohort.
@@ -336,6 +363,7 @@ internal sealed partial class VulkanFrameLoop
                 $"packageGeneration={stableBinFailure.PackageGeneration} " +
                 $"packageSourceRevision={stableBinFailure.PackageSourceRevision} " +
                 $"selectedPipeline={stableBinFailure.SelectedPipeline?.Pipeline?.DebugName ?? "<null>"} " +
+                $"ingressDetails={stableBinFailure.IngressEntries} " +
                 $"stableExceptions={failedStableBinStream.OrderedExceptionCount}/{failedStableBinStream.OrderedExceptionCapacity} " +
                 $"stableRecords={failedStableBinStream.RecordCount}/{failedStableBinStream.RecordCapacity} " +
                 $"stableLateResourceUses={failedStableBinStream.LateResourceUseCount}/{failedStableBinStream.LateResourceUseCapacity} " +
@@ -367,6 +395,7 @@ internal sealed partial class VulkanFrameLoop
         }
         if (_preparedMeshIngress.IsCohortHit)
             PublishPreparedMeshIngressCohortHit();
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyStableBins);
 
         SplitPreparedDynamicUiOperations(
             acceptedPlan.AuthoredOperations,
@@ -386,6 +415,12 @@ internal sealed partial class VulkanFrameLoop
         }
         if (!computePreparation.Succeeded)
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan) ||
+                VulkanCaptureOwnerReadiness.HasClosedOwner(_preparedMeshIngress))
+            {
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (computePreparation.Pending)
             {
                 retry = watchdog.CreateRetry(
@@ -404,6 +439,7 @@ internal sealed partial class VulkanFrameLoop
                 disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyCompute);
         if (planningSnapshot.RenderGraphPlan.Revision !=
             plannerState.ResourcePlannerRevision)
         {
@@ -432,6 +468,12 @@ internal sealed partial class VulkanFrameLoop
                 allowSynchronousResourceUploads: true,
                 out targetFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan) ||
+                VulkanCaptureOwnerReadiness.HasClosedOwner(_preparedMeshIngress))
+            {
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (VulkanFrameBufferAttachmentNotReadyException.IsTransientReason(targetFailure))
             {
                 retry = watchdog.CreateRetry(
@@ -477,16 +519,22 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyTargets);
         acceptedPlan.TransferAuthoredOperations(
             staticOperations,
             dynamicUiOperations);
         acceptedPlan.PreparedMeshIngress.CopyFrom(_preparedMeshIngress);
         _preparedMeshIngress.Clear();
 
+        // A desktop plan without OpenXR eye or mirror work does not read the view
+        // set. A long desktop prepare spans several XR frames, so requiring an
+        // unchanged view set for such a plan would make every attempt retry.
+        bool requiresCurrentOpenXrViews = acceptedPlan.HasOpenXrTargetOperations();
         FramePlan logicalPlan;
         try
         {
-            if (!RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
+            if (requiresCurrentOpenXrViews &&
+                !RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
             {
                 retry = watchdog.CreateRetry(
                     EVulkanPresentNowReadinessStage.FramePlanSeal,
@@ -518,7 +566,8 @@ internal sealed partial class VulkanFrameLoop
                 requiredOutputContract: provisionalContract,
                 historyReservations: acceptedPlan.FrameViewHistory,
                 publicationSnapshot: openXrPublication);
-            if (!RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
+            if (requiresCurrentOpenXrViews &&
+                !RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
             {
                 logicalPlan.Reset();
                 retry = watchdog.CreateRetry(
@@ -538,6 +587,7 @@ internal sealed partial class VulkanFrameLoop
                 exception.Message);
             return false;
         }
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyPlanSealed);
         logicalPlan.PrepareRecordingPlannerGenerations(in plannerState);
         if (!logicalPlan.HasAnyExecutableOutput)
         {
@@ -611,12 +661,19 @@ internal sealed partial class VulkanFrameLoop
         {
             return false;
         }
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyPlanTextures);
         if (!TryPrepareReadOnlyStorage(
                 logicalPlan, attempt.FrameSlot,
                 out VulkanReadOnlyStoragePreparedAuthority? storageAuthority,
                 out bool materialPending,
                 out string storageFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+            {
+                logicalPlan.Reset();
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (materialPending)
             {
                 retry = watchdog.CreateRetry(
@@ -634,6 +691,7 @@ internal sealed partial class VulkanFrameLoop
         }
         using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
             ResourceRuntime.EnterReadOnlyStorageRecordingScope(storageAuthority);
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyStorage);
         watchdog.RecordProgress();
         if (!_commandRuntime.TryPreparePresentNowPipelinesForSealedFramePlan(
                 logicalPlan,
@@ -648,6 +706,12 @@ internal sealed partial class VulkanFrameLoop
                 out bool pipelineRetryable,
                 out string pipelineFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+            {
+                logicalPlan.Reset();
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (pipelineRetryable)
             {
                 retry = watchdog.CreateRetry(
@@ -668,6 +732,7 @@ internal sealed partial class VulkanFrameLoop
 
         // Readiness prepares the same sealed slot that completion maintenance
         // reopened. An acquired swapchain image never owns frame-data storage.
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyPipelines);
         uint frameDataSlotIndex = checked((uint)logicalPlan.FrameSlot);
         computePreparation =
             _commandRuntime.PrepareComputeFramePlanForRecording(
@@ -676,6 +741,12 @@ internal sealed partial class VulkanFrameLoop
                 in plannerState);
         if (!computePreparation.Succeeded)
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan) ||
+                VulkanCaptureOwnerReadiness.HasClosedOwner(_preparedMeshIngress))
+            {
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (computePreparation.Pending)
             {
                 retry = watchdog.CreateRetry(
@@ -694,10 +765,12 @@ internal sealed partial class VulkanFrameLoop
                 disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
+        FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyComputeRecording);
         acceptedPlan.DeclareDependencies(logicalPlan);
         acceptedPlan.MarkNonTextureDependenciesReady();
         _ = acceptedPlan.SynchronizeTextureDependencies();
-        if (!RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
+        if (requiresCurrentOpenXrViews &&
+            !RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
         {
             logicalPlan.Reset();
             retry = watchdog.CreateRetry(
@@ -707,6 +780,12 @@ internal sealed partial class VulkanFrameLoop
                 $"Publication changed during readiness preparation. Captured={openXrPublication.Revision}.");
             return false;
         }
+        if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+        {
+            logicalPlan.Reset();
+            retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+            return false;
+        }
         acceptedPlan.Seal(
             in outputContract,
             logicalPlan,
@@ -714,6 +793,14 @@ internal sealed partial class VulkanFrameLoop
             in frozenPlanningSnapshot);
         return true;
     }
+
+    private static VulkanPresentNowReadinessRetry CreateClosedCaptureOwnerRetry(
+        ref VulkanPresentNowReadinessWatchdog watchdog)
+        => watchdog.CreateRetry(
+            EVulkanPresentNowReadinessStage.FramePlanSeal,
+            "capture-owner-closed",
+            "DesktopScene -> capture owner",
+            "A capture owner closed before submission. Discard the unsubmitted frame and accept fresh work.");
 
     private void CapturePresentNowAuthoredOperations(
         VulkanAcceptedFramePlan acceptedPlan,
@@ -883,6 +970,12 @@ internal sealed partial class VulkanFrameLoop
                 out bool materialPending,
                 out string storageFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+            {
+                logicalPlan.Reset();
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (materialPending)
             {
                 retry = watchdog.CreateRetry(
@@ -913,6 +1006,12 @@ internal sealed partial class VulkanFrameLoop
                 out bool pipelineRetryable,
                 out string pipelineFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+            {
+                logicalPlan.Reset();
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (pipelineRetryable)
             {
                 retry = watchdog.CreateRetry(
@@ -1093,6 +1192,11 @@ internal sealed partial class VulkanFrameLoop
     {
         PublishPresentNowRetryDiagnostic(ref attempt, in retry);
         ResetIncompleteAcceptedPresentNowPlan(ref attempt);
+        // The next callback renders the scene again and queues a complete new
+        // cohort. Work that this attempt did not take must not stay queued: it
+        // would join that cohort as a duplicate, and each stale request keeps a
+        // canonical publication pinned until the publication ring is full.
+        DiscardSkippedDesktopFrameWork();
         attempt.PresentNowReadinessRetry = retry;
         Debug.VulkanEvery(
             $"Vulkan.PresentNow.FrameRetry.{retry.Stage}.{GetHashCode()}",

@@ -17,6 +17,15 @@ public sealed record EngineExecutionTopologyRequest
     public required bool AllowCpuOversubscription { get; init; }
     public required ERenderWorkerQos RenderWorkerQos { get; init; }
 
+    /// <summary>
+    /// Logical processors of the machine when the process affinity was narrowed below them
+    /// (for example to the cores of the largest L3 cache); 0 when it was not narrowed. Automatic
+    /// worker counts use <see cref="EffectiveProcessorCount"/>. The startup oversubscription
+    /// check uses this larger count, because the fixed dedicated loops and explicit worker
+    /// counts still fit the machine and only share the narrowed cores.
+    /// </summary>
+    public int SystemProcessorCount { get; init; }
+
     public EEngineExecutionSettingSource GeneralWorkerThreadCountSource { get; init; }
     public EEngineExecutionSettingSource GeneralWorkerThreadCapSource { get; init; }
     public EEngineExecutionSettingSource RenderWorkerThreadCountSource { get; init; }

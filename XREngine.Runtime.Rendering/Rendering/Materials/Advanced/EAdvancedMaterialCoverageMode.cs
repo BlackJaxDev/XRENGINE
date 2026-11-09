@@ -10,4 +10,9 @@ public enum EAdvancedMaterialCoverageMode : uint
     Masked = 1,
     Transparent = 2,
     Refractive = 3,
+    /// <summary>
+    /// Mesh surface decal. It never enters the visibility buffer, Hi-Z, or shadow lanes.
+    /// The decal buffer pass draws it, and native shading blends it before lighting.
+    /// </summary>
+    Decal = 4,
 }

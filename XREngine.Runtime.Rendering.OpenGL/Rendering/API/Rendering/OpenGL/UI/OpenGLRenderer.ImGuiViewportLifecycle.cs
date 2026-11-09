@@ -25,6 +25,7 @@ namespace XREngine.Rendering.OpenGL
             private readonly Dictionary<uint, PlatformWindow> _platformWindows = [];
             private readonly List<PendingPlatformWindowDisposal> _pendingPlatformWindowDisposals = [];
             private readonly List<ImGuiPlatformMonitor> _monitorScratch = [];
+            private readonly ImGuiPointerOwnerTracker _pointerOwner = new();
 
 
             private readonly nint _platformCreateWindowPtr;
@@ -218,6 +219,23 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
+            /// Reports focus for the complete ImGui window group.
+            /// </summary>
+            public bool IsAnyWindowFocused()
+            {
+                if (_mainWindow.Events.IsFocused)
+                    return true;
+                if (!_installed || _disposed)
+                    return false;
+
+                foreach (PlatformWindow window in _platformWindows.Values)
+                    if (!window.IsDisposed && window.Focused)
+                        return true;
+
+                return false;
+            }
+
+            /// <summary>
             /// Pushes one-time mouse state transition data for the main platform window.
             /// </summary>
             public void QueueMainViewportInput()
@@ -232,13 +250,35 @@ namespace XREngine.Rendering.OpenGL
                     EnsureMainViewportPlatformData();
 
                     var io = ImGui.GetIO();
+                    _pointerOwner.BeginFrame();
+                    if (_controller?.MainWindowButtonActivity == true)
+                        _pointerOwner.NoteMainPointerActivity();
                     foreach (PlatformWindow window in _platformWindows.Values)
-                        window.DrainInput(io);
+                    {
+                        if (window.IsDisposed)
+                            continue;
+
+                        // ImGui clears platform requests after Platform_UpdateWindow.
+                        // Send close intent before NewFrame so Begin can close the panel.
+                        if (window.Window.IsClosing)
+                            RequestClose(window.ViewportId);
+                        if (window.DrainInput(io))
+                            _pointerOwner.NotePlatformPointerActivity(window.ViewportId);
+                    }
+
+                    ReleaseStalePointerOwner();
 
                     if (!_mainWindow.Events.IsFocused)
                         return;
 
                     if (!TryGetMousePosition(out Vector2 position, out uint viewportId))
+                        return;
+
+                    // A popup viewport does not take focus on click, so the main window stays
+                    // focused while its last pointer position is stale. Do not let that stale
+                    // position replace the position that the popup window reported.
+                    WindowInputSnapshot input = _renderer.XRWindow.LatestWindowInputSnapshot;
+                    if (!_pointerOwner.UpdateMainPointer(input.PointerX, input.PointerY))
                         return;
 
                     io.AddMousePosEvent(position.X, position.Y);
@@ -252,33 +292,17 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
-            /// Continuously updates main-window hover and cursor state in ImGui IO.
+            /// Returns pointer ownership to the main window when the owning platform window
+            /// is gone or no longer accepts input.
             /// </summary>
-            public void UpdateMainViewportInput()
+            private void ReleaseStalePointerOwner()
             {
-                if (!_installed || _disposed)
+                uint owner = _pointerOwner.OwnerViewportId;
+                if (owner == ImGuiPointerOwnerTracker.MainWindow)
                     return;
 
-                try
-                {
-                    MakeCurrent();
-                    EnsureMainViewportPlatformData();
-
-                    if (!_mainWindow.Events.IsFocused)
-                        return;
-
-                    if (!TryGetMousePosition(out Vector2 position, out uint viewportId))
-                        return;
-
-                    var io = ImGui.GetIO();
-                    io.MousePos = position;
-                    io.AddMouseViewportEvent(viewportId);
-                    io.MouseHoveredViewport = viewportId;
-                }
-                catch (Exception ex)
-                {
-                    LogCallbackException(nameof(UpdateMainViewportInput), ex);
-                }
+                if (!_platformWindows.TryGetValue(owner, out PlatformWindow? window) || window.IsDisposed || !window.AcceptsInputs)
+                    _pointerOwner.ReleasePlatformWindow(owner);
             }
 
             /// <summary>
@@ -728,8 +752,6 @@ namespace XREngine.Rendering.OpenGL
                         return;
 
                     window.UpdateViewportFlags(viewport.Flags);
-                    if (window.Window.IsClosing)
-                        viewport.PlatformRequestClose = true;
                 }
                 catch (Exception ex)
                 {
@@ -833,7 +855,10 @@ namespace XREngine.Rendering.OpenGL
                         OpenGlDebugContext: false,
                         OpenGlForwardCompatible: false,
                         SwapAutomatically: false,
-                        SharedContext: owner._mainWindow.GlContext);
+                        SharedContext: owner._mainWindow.GlContext)
+                    {
+                        EventPumpParentGeneration = owner._mainWindow.LifetimeGeneration,
+                    };
                     IRuntimeWindowBackend? created = null;
                     try
                     {
@@ -979,15 +1004,20 @@ namespace XREngine.Rendering.OpenGL
                     AbandonedShutdownWindows.Add(Window);
                 }
 
-                public void DrainInput(ImGuiIOPtr io)
+                /// <summary>
+                /// Replays the pending input of this window into ImGui.
+                /// </summary>
+                /// <returns><see langword="true"/> when the window reported pointer, button, or wheel input.</returns>
+                public bool DrainInput(ImGuiIOPtr io)
                 {
                     if (_disposeStarted || _owner._controller is null)
-                        return;
+                        return false;
                     var origin = Window.ClientScreenPosition;
-                    _owner._controller.ReplayViewportInput(
+                    bool pointerActivity = _owner._controller.ReplayViewportInput(
                         Window, origin.X, origin.Y, ViewportId);
                     if (Window.Events.IsFocused)
                         io.MouseHoveredViewport = ViewportId;
+                    return pointerActivity;
                 }
 
                 private sealed class ViewportWindowEventSink : IRuntimeWindowEventSink
