@@ -38,10 +38,10 @@ internal sealed class TextureStreamingWorkLane
     /// timestamps. Give a cached delegate, so the lane allocates nothing.
     /// </param>
     /// <param name="rememberExcessCost">
-    /// True for a lane whose item cost is partly invisible to its timers. See
+    /// True for a lane whose item cost is partly invisible to its timers. The default is false. See
     /// <see cref="TextureStreamingWorkControllerOptions.RememberExcessCost"/>.
     /// </param>
-    public TextureStreamingWorkLane(string name, int initialItemsPerFrame, Action? beforeFrameClose = null, bool rememberExcessCost = true)
+    public TextureStreamingWorkLane(string name, int initialItemsPerFrame, Action? beforeFrameClose = null, bool rememberExcessCost = false)
     {
         _rememberExcessCost = rememberExcessCost;
         Name = name;

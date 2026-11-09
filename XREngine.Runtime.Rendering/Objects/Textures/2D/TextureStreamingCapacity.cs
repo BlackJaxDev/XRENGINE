@@ -51,9 +51,10 @@ internal static class TextureStreamingCapacity
 
     /// <summary>
     /// Resident data applies and sparse transitions on the OpenGL render thread. The old fixed limit was one in each frame
-    /// for each OpenGL backend.
+    /// for each OpenGL backend. Most of the cost of an apply is driver work at the next present, which no timer sees, so
+    /// the lane keeps the back-off excess cost.
     /// </summary>
-    public static TextureStreamingWorkLane OpenGlResidentApply { get; } = new("OpenGL.ResidentApply", initialItemsPerFrame: 1, beforeFrameClose: PollOpenGlGpuTimer);
+    public static TextureStreamingWorkLane OpenGlResidentApply { get; } = new("OpenGL.ResidentApply", initialItemsPerFrame: 1, beforeFrameClose: PollOpenGlGpuTimer, rememberExcessCost: true);
 
     /// <summary>
     /// Vulkan transfer chunks that complete, retire, and publish. The old fixed limit was four in each frame. The lane times

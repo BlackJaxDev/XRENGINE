@@ -35,9 +35,11 @@ namespace XREngine.Rendering;
 /// <para>Excess cost: many cheap timed samples push a back-off sample out of the robust cost quickly, so cost that no timer
 /// sees would be forgotten. Each back-off therefore also keeps the smaller of its excess per item and the excess of the
 /// previous back-off as the excess cost. Both values decay with <see cref="ExcessCostTimeConstantMilliseconds"/>, so back-offs
-/// that are some seconds apart still count, but one back-off alone (a possible hitch) does not set it. The model uses the
-/// larger of the robust cost and the excess cost. <see cref="TextureStreamingWorkControllerOptions.RememberExcessCost"/>
-/// turns it off for a lane that times all of its GPU work. A probe or two idle
+/// that are some seconds apart still count, but one back-off alone (a possible hitch) does not set it. Only a back-off whose
+/// previous work frame also went over refreshes the excess cost: hidden item cost puts work frames over in a row, but scene
+/// stalls that are not related to the work (GC pauses, shader compiles) fall on single work frames. The model uses the
+/// larger of the robust cost and the excess cost. It is off by default; a lane whose item cost is partly hidden from its
+/// timers turns it on with <see cref="TextureStreamingWorkControllerOptions.RememberExcessCost"/>. A probe or two idle
 /// frames that show a slower scene restart it, because the excess before them was scene cost.</para>
 /// <para>Model target: <c>(tolerance + share * headroom) / costPerItem</c> items per frame.</para>
 /// <para>Hysteresis: the limit rises toward the target only while work was deferred and the hold time has passed, by at
@@ -132,6 +134,7 @@ internal sealed class TextureStreamingWorkController
     private double _costEstimate;
     private double _excessCost;
     private double _lastBackoffExcess;
+    private bool _previousWorkFrameOver;
     private double _gpuCostMean;
     private double _idleMean = double.NaN;
     private double _idleDeviation;
@@ -315,6 +318,12 @@ internal sealed class TextureStreamingWorkController
         if (items > 0 && cpuWork > 0.0 && !overBudget)
             ObserveItemCost(cpuWork / items);
 
+        // Hidden item cost puts work frames over in a row; a scene stall that is not related to the work falls on single
+        // work frames. Only the first kind refreshes the excess cost.
+        bool sustainedOverrun = overBudget && _previousWorkFrameOver;
+        if (frameKnown && items > 0)
+            _previousWorkFrameOver = overBudget;
+
         if (frameKnown)
         {
             double counted = CountedFrame(frameMilliseconds, target);
@@ -372,10 +381,12 @@ internal sealed class TextureStreamingWorkController
                 SetCeiling(items);
             }
 
-            // The smaller of the two excess samples, so one hitch in either frame does not set a large excess cost.
+            // The smaller of the two excess samples, so one hitch in either frame does not set a large excess cost. Only a
+            // back-off whose previous work frame also went over refreshes it, so rare scene stalls do not keep it alive.
             if (_options.RememberExcessCost)
             {
-                _excessCost = Math.Max(_excessCost, Math.Min(excess, _lastBackoffExcess));
+                if (sustainedOverrun)
+                    _excessCost = Math.Max(_excessCost, Math.Min(excess, _lastBackoffExcess));
                 _lastBackoffExcess = Math.Max(_lastBackoffExcess, excess);
             }
 

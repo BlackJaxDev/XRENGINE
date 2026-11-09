@@ -13,9 +13,9 @@ namespace XREngine.Rendering;
 /// <param name="ItemsPerFrameOverride">When set, the limit is always this value. The controller still measures.</param>
 /// <param name="ItemsPerFrameCap">When set, the adaptive limit is not more than this value.</param>
 /// <param name="RememberExcessCost">
-/// When true, back-offs keep an excess cost per item that decays slowly. Use it for a lane whose item cost is partly
-/// invisible to its timers (OpenGL driver work at the next present). A lane that times all of its GPU work turns it off,
-/// so frame hitches that are not item cost do not hold its limit low.
+/// When true, back-offs keep an excess cost per item that decays slowly. Use it only for a lane whose item cost is partly
+/// invisible to its timers (OpenGL driver work at the next present). The default is false: a lane that times all of its
+/// GPU work does not need it, and frame hitches that are not item cost must not hold its limit low.
 /// </param>
 internal readonly record struct TextureStreamingWorkControllerOptions(
     int InitialItemsPerFrame,
@@ -23,4 +23,4 @@ internal readonly record struct TextureStreamingWorkControllerOptions(
     double ToleranceMilliseconds,
     int? ItemsPerFrameOverride = null,
     int? ItemsPerFrameCap = null,
-    bool RememberExcessCost = true);
+    bool RememberExcessCost = false);

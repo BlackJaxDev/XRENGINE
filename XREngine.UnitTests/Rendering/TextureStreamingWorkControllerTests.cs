@@ -21,8 +21,9 @@ public sealed class TextureStreamingWorkControllerTests
         int initial = 1,
         int max = 16,
         int? pinned = null,
-        int? cap = null)
-        => new(new TextureStreamingWorkControllerOptions(initial, max, Tolerance, pinned, cap));
+        int? cap = null,
+        bool rememberExcessCost = true)
+        => new(new TextureStreamingWorkControllerOptions(initial, max, Tolerance, pinned, cap, rememberExcessCost));
 
     /// <summary>Runs idle frames (no streaming items) so the controller learns the budget and the idle busy time.</summary>
     private static void RunIdle(TextureStreamingWorkController controller, int frames, double baseBusy, double period = Period60Hz)
@@ -187,13 +188,48 @@ public sealed class TextureStreamingWorkControllerTests
     [Test]
     public void LaneWithoutExcessCostMemory_KeepsNoExcessCost()
     {
-        TextureStreamingWorkController controller = new(new TextureStreamingWorkControllerOptions(1, 16, Tolerance, RememberExcessCost: false));
+        // The default options keep no excess cost. Only a lane that opts in (the OpenGL apply lane) keeps it.
+        TextureStreamingWorkController controller = new(new TextureStreamingWorkControllerOptions(1, 16, Tolerance));
         RunIdle(controller, 30, baseBusy: 10.0);
 
         RunHiddenApplies(controller, 600, baseBusy: 10.0, hiddenPerItem: 7.0);
 
         controller.BackoffCount.ShouldBeGreaterThan(1);
         controller.ExcessCostPerItemMilliseconds.ShouldBe(0.0);
+    }
+
+    [Test]
+    public void RareSceneSpikes_ThatStreamingDoesNotCause_DoNotHoldTheLaneBelowThePinnedRate()
+    {
+        // An OpenGL-like lane (excess cost on) with cheap applies (0.1 ms that the timer sees) and a full backlog. In 5 % of
+        // the frames, at random and not related to the work, the scene adds a 6 ms stall after the frame limiter (for
+        // example a GC pause or a shader compile). Each such frame with work goes over the rule and backs off, but the
+        // stalls are not item cost, so they must not keep an excess cost. Sixty seconds.
+        TextureStreamingWorkController controller = CreateController();
+        RunIdle(controller, 30, baseBusy: 10.0);
+
+        Random random = new(5);
+        const int frameCount = 3600;
+        int items = 0;
+        int streamingOverruns = 0;
+        for (int i = 0; i < frameCount; i++)
+        {
+            int frameItems = controller.ItemsThisFrame;
+            double work = frameItems * 0.1;
+            double busy = 10.0 + work;
+            double withoutSpike = Math.Max(Period60Hz, busy);
+            double frame = withoutSpike + (random.NextDouble() < 0.05 ? 6.0 : 0.0);
+            if (withoutSpike > Period60Hz + Tolerance)
+                streamingOverruns++;
+            controller.Update(new TextureStreamingWorkSample(frame, busy, Period60Hz, work, frameItems, true, 0.5));
+            if (i >= 300)
+                items += frameItems;
+        }
+
+        // The pinned OpenGL limit is one apply in each frame.
+        streamingOverruns.ShouldBe(0);
+        controller.BackoffCount.ShouldBeGreaterThan(0);
+        items.ShouldBeGreaterThanOrEqualTo(frameCount - 300);
     }
 
     [Test]
