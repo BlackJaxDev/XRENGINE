@@ -19,6 +19,73 @@ public sealed partial class AdvancedGpuScenePublisher
     private uint[] _packedMeshletVertexIndices = [];
     private uint[] _packedMeshletTriangleWords = [];
     private StagedCanonicalGeometry[] _stagedGeometry = [];
+    // Meshes whose pre-packed entry this publication copied. They are released after it commits.
+    private readonly List<XRMesh> _consumedPrepackMeshes = [];
+    private long _prepackHitCount;
+    private long _prepackMissCount;
+
+    /// <summary>Gets the staged meshes that were copied from a worker-packed entry.</summary>
+    internal long PrepackHitCount => _prepackHitCount;
+
+    /// <summary>Gets the staged meshes that were packed on the swap thread.</summary>
+    internal long PrepackMissCount => _prepackMissCount;
+
+    /// <summary>Worker-packed canonical geometry that the staging step copies instead of packing.</summary>
+    internal AdvancedCanonicalGeometryPrepackCache Prepack { get; } = new();
+
+    /// <summary>Validates that a mesh can be packed into the canonical geometry arenas.</summary>
+    internal static bool TryValidateCanonicalGeometrySource(XRMesh mesh)
+        => TryValidateCanonicalGeometry(mesh, out _);
+
+    /// <summary>Converts CPU meshlet descriptors into the canonical meshlet descriptor layout.</summary>
+    internal static void ConvertMeshletDescriptors(
+        ReadOnlySpan<CpuMeshletDescriptor> source,
+        Span<AdvancedMeshletDescriptor> destination)
+    {
+        for (int descriptorIndex = 0; descriptorIndex < source.Length; ++descriptorIndex)
+        {
+            CpuMeshletDescriptor descriptor = source[descriptorIndex];
+            destination[descriptorIndex] = new AdvancedMeshletDescriptor
+            {
+                BoundsSphere = descriptor.BoundsSphere,
+                VertexOffset = descriptor.VertexOffset,
+                TriangleByteOffset = descriptor.TriangleOffset,
+                VertexCount = descriptor.VertexCount,
+                TriangleCount = descriptor.TriangleCount,
+                Cone = descriptor.Cone,
+                ConeApex = descriptor.ConeApex,
+                PackedCone = descriptor.PackedCone,
+            };
+        }
+    }
+
+    /// <summary>Packs meshlet triangle bytes four to a word.</summary>
+    internal static void PackMeshletTriangleWords(ReadOnlySpan<byte> triangleBytes, Span<uint> destination)
+        => PackTriangleWords(triangleBytes, destination);
+
+    /// <summary>
+    /// Gets the ready pre-packed entry for the planned geometry. The entry must describe the same
+    /// revision, buffers, triangle list, meshlet payload and counts as the mesh does now.
+    /// </summary>
+    private bool TryGetPrepackedGeometry(
+        in AdvancedGpuSceneCommandTransition plan,
+        XRMesh mesh,
+        out AdvancedCanonicalGeometryPrepackCache.Entry entry)
+    {
+        if (!Prepack.TryGetReady(mesh, plan.MeshGeometryRevision, out entry))
+            return false;
+        return entry.VertexCount == plan.MeshVertexCount &&
+               entry.IndexCount == plan.MeshIndexCount &&
+               ReferenceEquals(entry.Payload, mesh.MeshletPayload);
+    }
+
+    /// <summary>Releases the pre-packed entries that the committed publication appended.</summary>
+    private void ReleaseConsumedPrepackEntries()
+    {
+        for (int index = 0; index < _consumedPrepackMeshes.Count; ++index)
+            Prepack.Release(_consumedPrepackMeshes[index]);
+        _consumedPrepackMeshes.Clear();
+    }
 
     private struct StagedCanonicalGeometry
     {
@@ -144,6 +211,7 @@ public sealed partial class AdvancedGpuScenePublisher
     private bool TryStagePlannedGeometry(out string failure)
     {
         failure = string.Empty;
+        _consumedPrepackMeshes.Clear();
         int vertexCursor = 0;
         int indexCursor = 0;
         int descriptorCursor = 0;
@@ -172,12 +240,14 @@ public sealed partial class AdvancedGpuScenePublisher
 
             using (scope)
             {
+                // A worker validated and packed a ready entry for this exact revision.
+                bool prepacked = TryGetPrepackedGeometry(in plan, mesh, out AdvancedCanonicalGeometryPrepackCache.Entry prepack);
                 if (mesh.GeometryRevision != plan.MeshGeometryRevision ||
                     mesh.VertexCount != plan.MeshVertexCount ||
                     mesh.Type != plan.MeshPrimitiveTopology ||
                     mesh.Triangles is not { } triangles ||
                     (long)triangles.Count * 3L != plan.MeshIndexCount ||
-                    !TryValidateCanonicalGeometry(mesh, out _))
+                    (!prepacked && !TryValidateCanonicalGeometry(mesh, out _)))
                 {
                     failure = $"Command {commandIndex} geometry changed before capture; plannedRevision={plan.MeshGeometryRevision}, currentRevision={mesh.GeometryRevision}.";
                     return false;
@@ -209,43 +279,53 @@ public sealed partial class AdvancedGpuScenePublisher
                     return false;
                 }
 
-                AdvancedPackedVertexCodec.Pack(
-                    mesh,
-                    firstVertex: 0u,
-                    _packedGeometryVertices.AsSpan(vertexCursor, vertexCount),
-                    firstSourceVertex: 0u);
-
-                int destinationIndex = indexCursor;
-                for (int triangleIndex = 0; triangleIndex < triangles.Count; ++triangleIndex)
+                if (prepacked && prepack.UseMeshlets == useMeshlets)
                 {
-                    IndexTriangle triangle = triangles[triangleIndex];
-                    _packedGeometryIndices[destinationIndex++] = checked((uint)triangle.Point0);
-                    _packedGeometryIndices[destinationIndex++] = checked((uint)triangle.Point1);
-                    _packedGeometryIndices[destinationIndex++] = checked((uint)triangle.Point2);
-                }
-
-                if (useMeshlets)
-                {
-                    for (int descriptorIndex = 0; descriptorIndex < descriptorCount; ++descriptorIndex)
+                    prepack.Vertices.AsSpan(0, vertexCount).CopyTo(
+                        _packedGeometryVertices.AsSpan(vertexCursor, vertexCount));
+                    prepack.Indices.AsSpan(0, indexCount).CopyTo(
+                        _packedGeometryIndices.AsSpan(indexCursor, indexCount));
+                    if (useMeshlets)
                     {
-                        CpuMeshletDescriptor source = payload!.Meshlets[descriptorIndex];
-                        _packedMeshletDescriptors[descriptorCursor + descriptorIndex] = new AdvancedMeshletDescriptor
-                        {
-                            BoundsSphere = source.BoundsSphere,
-                            VertexOffset = source.VertexOffset,
-                            TriangleByteOffset = source.TriangleOffset,
-                            VertexCount = source.VertexCount,
-                            TriangleCount = source.TriangleCount,
-                            Cone = source.Cone,
-                            ConeApex = source.ConeApex,
-                            PackedCone = source.PackedCone,
-                        };
+                        prepack.MeshletDescriptors.AsSpan(0, descriptorCount).CopyTo(
+                            _packedMeshletDescriptors.AsSpan(descriptorCursor, descriptorCount));
+                        prepack.MeshletVertexIndices.AsSpan(0, meshletIndexCount).CopyTo(
+                            _packedMeshletVertexIndices.AsSpan(meshletIndexCursor, meshletIndexCount));
+                        prepack.MeshletTriangleWords.AsSpan(0, triangleWordCount).CopyTo(
+                            _packedMeshletTriangleWords.AsSpan(triangleWordCursor, triangleWordCount));
                     }
-                    payload!.VertexIndices.AsSpan().CopyTo(
-                        _packedMeshletVertexIndices.AsSpan(meshletIndexCursor, meshletIndexCount));
-                    PackTriangleWords(
-                        payload.TriangleIndices.AsSpan(),
-                        _packedMeshletTriangleWords.AsSpan(triangleWordCursor, triangleWordCount));
+                    _consumedPrepackMeshes.Add(mesh);
+                    ++_prepackHitCount;
+                }
+                else
+                {
+                    ++_prepackMissCount;
+                    AdvancedPackedVertexCodec.Pack(
+                        mesh,
+                        firstVertex: 0u,
+                        _packedGeometryVertices.AsSpan(vertexCursor, vertexCount),
+                        firstSourceVertex: 0u);
+
+                    int destinationIndex = indexCursor;
+                    for (int triangleIndex = 0; triangleIndex < triangles.Count; ++triangleIndex)
+                    {
+                        IndexTriangle triangle = triangles[triangleIndex];
+                        _packedGeometryIndices[destinationIndex++] = checked((uint)triangle.Point0);
+                        _packedGeometryIndices[destinationIndex++] = checked((uint)triangle.Point1);
+                        _packedGeometryIndices[destinationIndex++] = checked((uint)triangle.Point2);
+                    }
+
+                    if (useMeshlets)
+                    {
+                        ConvertMeshletDescriptors(
+                            payload!.Meshlets.AsSpan(),
+                            _packedMeshletDescriptors.AsSpan(descriptorCursor, descriptorCount));
+                        payload.VertexIndices.AsSpan().CopyTo(
+                            _packedMeshletVertexIndices.AsSpan(meshletIndexCursor, meshletIndexCount));
+                        PackTriangleWords(
+                            payload.TriangleIndices.AsSpan(),
+                            _packedMeshletTriangleWords.AsSpan(triangleWordCursor, triangleWordCount));
+                    }
                 }
 
                 if (!ReferenceEquals(mesh.Buffers, buffers) ||
@@ -381,7 +461,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     mesh.Type != plan.MeshPrimitiveTopology ||
                     mesh.Triangles is not { } triangles ||
                     (long)triangles.Count * 3L != plan.MeshIndexCount ||
-                    !TryValidateCanonicalGeometry(mesh, out _))
+                    (!TryGetPrepackedGeometry(in plan, mesh, out _) && !TryValidateCanonicalGeometry(mesh, out _)))
                     return false;
 
                 int vertexCount = mesh.VertexCount;

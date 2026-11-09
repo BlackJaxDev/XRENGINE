@@ -523,10 +523,23 @@ The hook also respects `DebugInstanceRenderingAvailable` and the capture
 policy's `DebugOverlays` permission. Shadow and light-probe passes skip it.
 Minimal depth and visibility output profiles omit the late stage entirely.
 
-The dispatcher generates one bounded batch per world and reuses successful
-content across views in the same frame. Deferred or native uses can block
-batch reuse, so a later frame can skip debug output. The hook adds no CPU
-readback. Buffer ownership, barriers, and indirect draw rules are defined in
+The dispatcher keeps a ring of four bounded batches for each world and view. A
+view is the pipeline instance that records the draw, so the desktop view and
+the XR eye views draw the same world in the same frame. A view draws the slot
+that it generated this frame, or it regenerates the first slot whose native
+buffers are free. A frame skips the debug output of a view only when all four
+slots still have GPU work in flight. One lock serializes batch generation,
+because it records compute work through the shared backend. Batches of a view
+that has not drawn for 600 frames are retired. The hook adds no CPU readback.
+
+`VPRC_RenderDebugPhysics` takes the world from the window viewport. An XR eye
+view has no window viewport, so the command uses the world that is rendering
+now, as `VPRC_RenderDebugShapes` does.
+
+The chain's `DebugDrawChains` value is the selection. A change made while the
+chain was not registered with the GPU dispatcher, for example while a `UseGPU`
+change was pending, is applied on the chain's next GPU dispatch. That check
+compares two flags and takes a lock only when they differ. Buffer ownership, barriers, and indirect draw rules are defined in
 the [physics-chain compute contract](../physics/physics-chain-compute-backends.md#global-gpu-chain-debug).
 
 ### Transparent motion-vector matrices
@@ -538,6 +551,34 @@ frame matrices. A retained `FrameViewSet` must contain one matching camera and
 eye. A missing or duplicate match disables history for that eye and sets its
 previous matrix to its current matrix. It must not reuse camera-global history
 from another output. Vulkan draw snapshots retain these matrices until replay.
+
+### Canonical geometry pre-pack
+
+The publication copies each new mesh into the canonical geometry arenas as
+packed `AdvancedDeformedVertex` records, indices and meshlet words. Packing
+used to run on the swap thread, so a large scene activation blocked one swap
+for more than a second. `AdvancedCanonicalGeometryPrepackCache` moves that work
+to the general job workers:
+
+- When a pipeline has requested the canonical resident scene once, GPUScene
+  queues a pre-pack for each mesh it registers. Registration runs in the
+  collect phase, so most entries are ready when the publication runs.
+- A worker takes the mesh's geometry read scope with a non-blocking enter and
+  tries again on a later job tick when the mesh is busy. It validates the
+  triangles, packs the vertices, indices and meshlets, and keeps the result
+  only when the geometry revision, buffers, triangle list and meshlet payload
+  did not change during the pack. Workers never take the GPUScene lock and
+  never touch the publication transaction.
+- The publication copies a ready entry for the exact planned revision into its
+  staging arrays and skips the per-triangle validation of that mesh. A mesh
+  without a ready entry is validated and packed on the swap thread, as before.
+  The result is the same bytes either way.
+- A committed publication releases the entries it copied. GPUScene releases an
+  entry when its mesh leaves the atlas. Entries own plain arrays, so their
+  memory returns to the runtime.
+
+`XRE_ADVANCED_GEOMETRY_PREPACK=0` disables the pre-pack. The publication then
+packs every mesh on the swap thread.
 
 ### Synchronization boundaries
 

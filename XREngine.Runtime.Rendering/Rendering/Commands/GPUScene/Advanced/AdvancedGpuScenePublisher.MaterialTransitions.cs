@@ -231,8 +231,9 @@ public sealed partial class AdvancedGpuScenePublisher
                 out int cachedRegistrationIndex)
                 ? cachedRegistrationIndex
                 : FindRegistration(source, primitiveIndex);
-            bool geometryAlreadyValidated = registrationIndex >= 0 &&
-                HasValidatedCanonicalGeometry(in _registrations[registrationIndex], in plan);
+            bool geometryAlreadyValidated = (registrationIndex >= 0 &&
+                HasValidatedCanonicalGeometry(in _registrations[registrationIndex], in plan)) ||
+                (mesh is not null && Prepack.TryGetReady(mesh, plan.MeshGeometryRevision, out _));
             if (!geometryAlreadyValidated && !TryValidateCanonicalGeometry(
                     mesh,
                     out EAdvancedCanonicalCompatibilityReason geometryReason))

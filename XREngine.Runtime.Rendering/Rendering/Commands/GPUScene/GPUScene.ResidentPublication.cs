@@ -107,7 +107,22 @@ public partial class GPUScene
     /// Multiple viewports coalesce into one allocation-free request bit.
     /// </summary>
     internal void RequestAdvancedResidentPublication()
-        => System.Threading.Interlocked.Exchange(ref _advancedPublicationRequested, 1);
+    {
+        System.Threading.Interlocked.Exchange(ref _advancedPublicationRequested, 1);
+        System.Threading.Volatile.Write(ref _advancedPrepackEnabled, true);
+    }
+
+    // Set once a pipeline consumes the canonical resident scene. From then on, mesh registration
+    // queues a worker pre-pack, so the publication copies ready geometry instead of packing it.
+    private bool _advancedPrepackEnabled;
+
+    /// <summary>Queues a worker pre-pack of a mesh that the canonical resident scene will publish.</summary>
+    private void RequestAdvancedGeometryPrepack(XRMesh mesh)
+    {
+        if (AdvancedCanonicalGeometryPrepackCache.Enabled &&
+            System.Threading.Volatile.Read(ref _advancedPrepackEnabled))
+            _advancedScenePublisher.Prepack.Request(mesh);
+    }
 
     internal void RequestAdvancedAuthoredDecalPublication()
         => System.Threading.Interlocked.Exchange(ref _advancedAuthoredDecalsRequested, 1);

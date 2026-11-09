@@ -516,6 +516,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             PromoteOrderedRegistrations();
             ClearPublicationFailure();
             MarkUnchangedRowBaseline(submissionRowsValid: true);
+            ReleaseConsumedPrepackEntries();
         }
         catch (Exception exception)
         {
