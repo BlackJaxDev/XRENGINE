@@ -153,7 +153,8 @@ Each lane finds the frame boundary itself (`TextureStreamingFrameSampler`, from 
 | Headroom | budget - idle busy time | Only when the idle render-thread time is below 90 % of the budget; otherwise the frame is full or the busy time includes a present wait, and the headroom is 0. With vsync, the busy time includes the present wait, so the headroom is 0 and the `Cutscene` share has no effect. |
 | Allowed cost | tolerance + share x headroom | Share 0.5 normally (half of the idle time stays free for heavier gameplay frames), 1.0 while a cutscene waits for residency. |
 | Cost per item | third-highest of the last 16 item costs | Samples come from the CPU time without GC pauses, from GPU timestamps, and from each back-off frame: max(effective work, frame - normal frame) / items, so cost that no timer sees still counts. The robust value ignores up to two hitches. |
-| Target | allowed cost / cost per item, at most 16 | 16 is a hard bound for a wrong measurement. |
+| Excess cost | min(excess of this back-off, excess of the last back-off), decays with tau 2 s | Many cheap timed samples push a back-off sample out of the robust cost within 16 samples, so cost that no timer sees (OpenGL driver work at the next present) would be forgotten. Both values decay, so back-offs some seconds apart still count; one back-off alone (a possible hitch) does not set it. A probe or two idle frames that show a slower scene restart it, because that excess was scene cost. |
+| Target | allowed cost / max(cost per item, excess cost), at most 16 | 16 is a hard bound for a wrong measurement. The floor after a repeated back-off uses the same cost. |
 | Back-off | limit x 0.5, hold 250 ms | Every frame with lane work that goes over the rule, whether or not a timer saw the cost. |
 | Floor | 1 item per frame | The old fixed limit. After a second back-off within 1 s, the floor is tolerance / cost (at least 1/32) for 1 s, so an item that is too large for one frame runs only as often as the tolerance pays for it on average. |
 | Ceiling | N - 1 items for 2 s | After a second back-off within 1 s, with N items. |
@@ -173,7 +174,7 @@ A steady cost and a steady frame time give a constant limit. Cost that no timer 
 
 ### Diagnostics
 
-The profiler summary (`RenderWorkBudgetCoordinator.AppendProfilerSummary`) writes `TextureStreamingDecode:` (width, base, permits in use, waiting decodes, back-offs, processors, cutscene wait, OpenGL GPU pairs read) and one line for each lane: limit, rate, target, cost per item, GPU cost per item, learned budget, headroom, ceiling, overruns, back-offs, discontinuities, probes, items, and frames with deferred work. `PriorityAsyncSemaphore.ExcessReleaseCount` counts a release without a held permit.
+The profiler summary (`RenderWorkBudgetCoordinator.AppendProfilerSummary`) writes `TextureStreamingDecode:` (width, base, permits in use, waiting decodes, back-offs, processors, cutscene wait, OpenGL GPU pairs read) and one line for each lane: limit, rate, target, cost per item, GPU cost per item, learned budget, excess cost per item, headroom, ceiling, overruns, back-offs, discontinuities, probes, items, and frames with deferred work. `PriorityAsyncSemaphore.ExcessReleaseCount` counts a release without a held permit.
 
 ### Measurements
 

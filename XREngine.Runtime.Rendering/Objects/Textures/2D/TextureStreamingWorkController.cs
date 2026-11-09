@@ -32,6 +32,12 @@ namespace XREngine.Rendering;
 /// <see cref="CostOutliersIgnored"/> highest), from the render-thread CPU time without GC pauses, from GPU timestamps, and
 /// from back-off frames. One hitch in one item therefore does not move it. The effective work of a frame is the larger of
 /// the CPU work and the item count times the mean GPU cost.</para>
+/// <para>Excess cost: many cheap timed samples push a back-off sample out of the robust cost quickly, so cost that no timer
+/// sees would be forgotten. Each back-off therefore also keeps the smaller of its excess per item and the excess of the
+/// previous back-off as the excess cost. Both values decay with <see cref="ExcessCostTimeConstantMilliseconds"/>, so back-offs
+/// that are some seconds apart still count, but one back-off alone (a possible hitch) does not set it. The model uses the
+/// larger of the robust cost and the excess cost. A probe or two idle
+/// frames that show a slower scene restart it, because the excess before them was scene cost.</para>
 /// <para>Model target: <c>(tolerance + share * headroom) / costPerItem</c> items per frame.</para>
 /// <para>Hysteresis: the limit rises toward the target only while work was deferred and the hold time has passed, by at
 /// most <see cref="RiseFraction"/> in one frame, and never above the target. It falls without an overrun only when the
@@ -60,6 +66,9 @@ internal sealed class TextureStreamingWorkController
 
     /// <summary>The number of highest recent item costs that the estimate ignores as outliers (hitches).</summary>
     internal const int CostOutliersIgnored = 2;
+
+    /// <summary>The time constant of the decay of the excess cost that back-offs keep.</summary>
+    internal const double ExcessCostTimeConstantMilliseconds = 2000.0;
 
     /// <summary>The smoothing factor of the mean GPU cost for each GPU sample.</summary>
     internal const double GpuCostSmoothing = 0.1;
@@ -120,6 +129,8 @@ internal sealed class TextureStreamingWorkController
     private double _rate;
     private double _credit;
     private double _costEstimate;
+    private double _excessCost;
+    private double _lastBackoffExcess;
     private double _gpuCostMean;
     private double _idleMean = double.NaN;
     private double _idleDeviation;
@@ -170,6 +181,12 @@ internal sealed class TextureStreamingWorkController
 
     /// <summary>The robust cost of one item in milliseconds. Zero before the first measurement.</summary>
     public double CostPerItemMilliseconds => _costEstimate;
+
+    /// <summary>The excess cost of one item that back-offs keep, in milliseconds. It decays to zero.</summary>
+    public double ExcessCostPerItemMilliseconds => _excessCost;
+
+    /// <summary>The cost of one item that the model uses: the larger of the robust cost and the excess cost.</summary>
+    public double ModelCostPerItemMilliseconds => Math.Max(_costEstimate, _excessCost);
 
     /// <summary>The mean GPU cost of one item in milliseconds. Zero before the first GPU measurement.</summary>
     public double GpuCostPerItemMilliseconds => _gpuCostMean;
@@ -343,7 +360,8 @@ internal sealed class TextureStreamingWorkController
 
             // The frame time above the normal frame belongs to the items, whether or not a timer saw it.
             double normalFrame = double.IsFinite(_idleMean) ? Math.Max(target, _idleMean) : budget;
-            ObserveItemCost(Math.Max(work, frameMilliseconds - normalFrame) / items);
+            double excess = Math.Max(work, frameMilliseconds - normalFrame) / items;
+            ObserveItemCost(excess);
 
             bool repeated = _millisecondsSinceBackoff <= RepeatedBackoffMilliseconds;
             _millisecondsSinceBackoff = 0.0;
@@ -352,6 +370,10 @@ internal sealed class TextureStreamingWorkController
                 _millisecondsSinceRepeatedBackoff = 0.0;
                 SetCeiling(items);
             }
+
+            // The smaller of the two excess samples, so one hitch in either frame does not set a large excess cost.
+            _excessCost = Math.Max(_excessCost, Math.Min(excess, _lastBackoffExcess));
+            _lastBackoffExcess = Math.Max(_lastBackoffExcess, excess);
 
             // One item still goes over: measure the frame without work, to tell a scene step from the cost of the item.
             if (items <= 1)
@@ -362,7 +384,8 @@ internal sealed class TextureStreamingWorkController
         }
 
         double allowedCost = tolerance + share * headroom;
-        double modelRate = _costEstimate > 0.0 ? allowedCost / _costEstimate : double.NaN;
+        double modelCost = Math.Max(_costEstimate, _excessCost);
+        double modelRate = modelCost > 0.0 ? allowedCost / modelCost : double.NaN;
         double floor = ResolveFloor(maxRate);
         if (overBudget)
         {
@@ -442,7 +465,7 @@ internal sealed class TextureStreamingWorkController
         // Two idle frames in a row above the limit are a scene step, not a stall: the lower of them is the new mean.
         if (double.IsFinite(_previousIdleAboveLimit))
         {
-            _idleMean = Math.Min(counted, _previousIdleAboveLimit);
+            SetSceneMean(Math.Min(counted, _previousIdleAboveLimit), target);
             _previousIdleAboveLimit = double.NaN;
             return;
         }
@@ -450,6 +473,21 @@ internal sealed class TextureStreamingWorkController
         // One stall frame counts as the limit, with the weight of a frame of that length.
         _previousIdleAboveLimit = counted;
         LearnIdle(limit, limit);
+    }
+
+    /// <summary>
+    /// Sets the mean from frames without work. When the new mean is above the idle limit, the scene became slower, so the
+    /// back-off excess of the frames before it was scene cost, not item cost: the excess cost restarts.
+    /// </summary>
+    private void SetSceneMean(double mean, double target)
+    {
+        if (double.IsFinite(_idleMean) && mean > ResolveIdleLimit(target))
+        {
+            _excessCost = 0.0;
+            _lastBackoffExcess = 0.0;
+        }
+
+        _idleMean = mean;
     }
 
     private void LearnIdle(double counted, double elapsed)
@@ -514,7 +552,7 @@ internal sealed class TextureStreamingWorkController
             return;
 
         // The jitter of the old scene is kept: it is the best guess until idle frames of the new scene teach it.
-        _idleMean = _probeMinimum;
+        SetSceneMean(_probeMinimum, _lastTargetFrameMilliseconds);
         _underFrames = 0;
         _previousUnder = double.NaN;
     }
@@ -557,6 +595,9 @@ internal sealed class TextureStreamingWorkController
             return;
 
         _holdRemainingMilliseconds = Math.Max(0.0, _holdRemainingMilliseconds - elapsedMilliseconds);
+        double excessDecay = Math.Exp(-elapsedMilliseconds / ExcessCostTimeConstantMilliseconds);
+        _excessCost *= excessDecay;
+        _lastBackoffExcess *= excessDecay;
         _millisecondsSinceBackoff += elapsedMilliseconds;
         _millisecondsSinceRepeatedBackoff += elapsedMilliseconds;
         _millisecondsSinceProbe += elapsedMilliseconds;
@@ -582,8 +623,9 @@ internal sealed class TextureStreamingWorkController
         if (_millisecondsSinceRepeatedBackoff < RecoverMilliseconds)
         {
             double tolerance = Math.Max(0.0, _options.ToleranceMilliseconds);
-            floor = _costEstimate > 0.0
-                ? Math.Clamp(tolerance / _costEstimate, MinimumItemsPerFrame, 1.0)
+            double cost = Math.Max(_costEstimate, _excessCost);
+            floor = cost > 0.0
+                ? Math.Clamp(tolerance / cost, MinimumItemsPerFrame, 1.0)
                 : MinimumItemsPerFrame;
         }
 

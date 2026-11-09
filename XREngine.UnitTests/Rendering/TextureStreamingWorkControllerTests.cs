@@ -123,6 +123,83 @@ public sealed class TextureStreamingWorkControllerTests
         settled.Max(f => f.Items).ShouldBeLessThanOrEqualTo(3);
     }
 
+    /// <summary>
+    /// Runs an OpenGL-like backlog: each apply adds <paramref name="hiddenPerItem"/> to the frame that no timer sees, and the
+    /// CPU timer sees 0.01 ms for each apply.
+    /// </summary>
+    private static Frame[] RunHiddenApplies(TextureStreamingWorkController controller, int frames, double baseBusy, double hiddenPerItem)
+    {
+        Frame[] result = new Frame[frames];
+        for (int i = 0; i < frames; i++)
+        {
+            int items = controller.ItemsThisFrame;
+            double busy = baseBusy + items * hiddenPerItem;
+            double frame = Math.Max(Period60Hz, busy);
+            result[i] = new Frame(items, frame);
+            controller.Update(new TextureStreamingWorkSample(frame, busy, Period60Hz, items * 0.01, items, true, 0.5));
+        }
+
+        return result;
+    }
+
+    [Test]
+    public void LargeHiddenApplyCost_KeepsTheLaneLow()
+    {
+        // One apply fits (10 + 7 ms against the 18.7 ms rule), two do not. The timed cost is 0.01 ms, so without the excess
+        // cost the model would allow 16 applies after each hold time. Twenty seconds.
+        TextureStreamingWorkController controller = CreateController();
+        RunIdle(controller, 30, baseBusy: 10.0);
+
+        Frame[] frames = RunHiddenApplies(controller, 1200, baseBusy: 10.0, hiddenPerItem: 7.0);
+
+        Frame[] settled = frames[60..];
+        settled.Count(f => f.FrameMilliseconds > Period60Hz + Tolerance).ShouldBeLessThanOrEqualTo(settled.Length / 40);
+        settled.Max(f => f.Items).ShouldBeLessThanOrEqualTo(3);
+        settled.Count(f => f.Items == 1).ShouldBeGreaterThan(settled.Length * 9 / 10);
+    }
+
+    [Test]
+    public void HiddenApplyCost_InTheNextFrame_KeepsTheLaneLow()
+    {
+        // As with OpenGL, the driver cost of each apply shows at the next present, so a frame is long because of the applies
+        // of the frame before it. Then over-budget frames are farther apart than one second, the ceiling does not act, and
+        // only the excess cost keeps the lane low. Twenty seconds.
+        TextureStreamingWorkController controller = CreateController();
+        RunIdle(controller, 30, baseBusy: 10.0);
+
+        Frame[] frames = new Frame[1200];
+        int previousItems = 0;
+        for (int i = 0; i < frames.Length; i++)
+        {
+            int items = controller.ItemsThisFrame;
+            double busy = 10.0 + previousItems * 7.0;
+            double frame = Math.Max(Period60Hz, busy);
+            frames[i] = new Frame(items, frame);
+            controller.Update(new TextureStreamingWorkSample(frame, busy, Period60Hz, items * 0.01, items, true, 0.5));
+            previousItems = items;
+        }
+
+        Frame[] settled = frames[60..];
+        settled.Count(f => f.FrameMilliseconds > Period60Hz + Tolerance).ShouldBeLessThanOrEqualTo(settled.Length / 40);
+        settled.Max(f => f.Items).ShouldBeLessThanOrEqualTo(3);
+    }
+
+    [Test]
+    public void HiddenCostThatEnds_LetsTheLimitRampUpAgain()
+    {
+        // After ten seconds of large hidden apply cost, the applies become cheap (0.3 ms that the timer sees). The excess cost
+        // decays, so the limit ramps up again.
+        TextureStreamingWorkController controller = CreateController();
+        RunIdle(controller, 30, baseBusy: 6.0);
+        RunHiddenApplies(controller, 600, baseBusy: 6.0, hiddenPerItem: 9.0);
+
+        Frame[] frames = RunBacklog(controller, 600, baseBusy: 6.0, costAt: _ => 0.3);
+
+        controller.ExcessCostPerItemMilliseconds.ShouldBeLessThan(0.3);
+        controller.ItemsThisFrame.ShouldBeGreaterThanOrEqualTo(8);
+        frames[300..].Max(f => f.FrameMilliseconds).ShouldBeLessThanOrEqualTo(Period60Hz + Tolerance);
+    }
+
     [Test]
     public void LowCapacity_SlowUploadsThatFit_StayInsideTheFrameRule()
     {

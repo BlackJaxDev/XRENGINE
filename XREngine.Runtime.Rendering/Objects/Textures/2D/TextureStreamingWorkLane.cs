@@ -186,6 +186,7 @@ internal sealed class TextureStreamingWorkLane
                 .Append(" target=").Append(_controller.TargetItemsPerFrame.ToString("F3", inv))
                 .Append(" costMs=").Append(_controller.CostPerItemMilliseconds.ToString("F3", inv))
                 .Append(" gpuMs=").Append(_controller.GpuCostPerItemMilliseconds.ToString("F3", inv))
+                .Append(" excessMs=").Append(_controller.ExcessCostPerItemMilliseconds.ToString("F3", inv))
                 .Append(" budgetMs=").Append(_controller.BudgetMilliseconds.ToString("F2", inv))
                 .Append(" headroomMs=").Append(_controller.HeadroomMilliseconds.ToString("F2", inv))
                 .Append(" ceiling=").Append(_controller.CeilingItems.ToString(inv))
