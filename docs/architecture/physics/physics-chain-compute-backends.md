@@ -58,22 +58,26 @@ a separate native content-reuse check later permits page reuse.
 
 ## Global GPU chain debug
 
-Selected chain debug uses one bounded compact batch per world. The batch caps
-selection at 256 chains and 16,384 particles. A compute pass writes point and
-line instance storage and one 20-byte indexed indirect command. Two indexed
-draws use point input topology; their geometry shaders produce points and
-lines. The pass completes with shader-storage and command visibility. It
+Selected chain debug uses bounded compact batches. Each world and view has a
+ring of four batches; a view is the pipeline instance that records the draw.
+A batch caps selection at 256 chains and 16,384 particles. A compute pass
+writes point and line instance storage and one 20-byte indexed indirect
+command with six indices. Two indexed draws use triangle topology over a
+two-triangle quad; the vertex stage expands each instance into a camera-facing
+point quad or a screen-space line quad, with mono and multiview stereo
+variants. The pass completes with shader-storage and command visibility. It
 performs no CPU readback. No selected chain means no batch generation or draw.
 
 Each batch owns its buffers, mesh renderers, and compute program. It borrows
 the shared cached shader from `ShaderHelper` and must not destroy that shader.
-Successful content stays fixed for all views in the same render frame. The
-renderer must match the simulation output owner. A later frame can mutate the
-single retained batch only after deferred authoring uses end. Vulkan also
-requires the original renderer and exact native buffer content to report
-Ready. If deferred or native work still uses the batch, that frame skips debug
-generation and drawing. Debug output is not guaranteed on every frame.
-OpenGL uses its ordered context and buffer-update contract.
+A slot generated in a render frame is drawn again by the same view in that
+frame. The renderer must match the simulation output owner. A view regenerates
+the first slot whose deferred authoring uses ended; Vulkan also requires the
+original renderer and exact native buffer content to report Ready. A view
+skips debug output for a frame only when all four slots are still in use.
+Batch generation is serialized across views. Batches of a view that has not
+drawn for 600 frames are retired. OpenGL uses its ordered context and
+buffer-update contract.
 
 The Advanced pipeline draws selected GPU chains in a depth-tested late pass.
 It loads the existing HDR color and native visibility depth, enables depth
