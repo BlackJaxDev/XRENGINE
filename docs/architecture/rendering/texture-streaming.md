@@ -229,6 +229,7 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 - An OpenGL resident apply has cost that the CPU timer does not see (driver work at the next present, about 5 to 9 ms for a 1024-texel chain). The apply lane cannot split an apply, so a frame with one large apply can still break the frame-time rule.
 - A Vulkan imported upload stages one chunk for each mip level (or each 4 MB of rows), and the chunks of one texture complete in sequence. A 1024-texel chain needs 11 round trips through preparation, transfer, and completion, so the Vulkan refine is bound by this latency more than by the lane limits.
 - The decode width feedback measures frame-time contention, not the disk (an HDD can prefer fewer parallel reads). Use `TextureStreamingDecodeConcurrency` to pin it.
+- The decode width controller reads the gate one time in each frame, so a decode that starts and ends between two frames does not count as active, and a scrub that signals a discontinuity in each frame keeps it in a relearn without back-offs.
 - An unsignaled scene step to a heavier scene makes every work frame go over the rule until a probe or an idle frame measures the new scene, so the lane backs off for a short time. A camera cut must call `NotifySceneDiscontinuity` (the cutscene player does).
 - On a scene with jitter larger than the tolerance, frames with work go over the rule a little more often than frames without work, and each such frame backs off. This lowers throughput on jittery machines, but it keeps the frame-time rule.
 
