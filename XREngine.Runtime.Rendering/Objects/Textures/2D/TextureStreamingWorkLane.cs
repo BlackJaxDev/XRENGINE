@@ -21,6 +21,7 @@ internal sealed class TextureStreamingWorkLane
     private readonly TextureStreamingFrameSampler _sampler = new();
     private readonly int _initialItemsPerFrame;
     private readonly Action? _beforeFrameClose;
+    private readonly bool _rememberExcessCost;
     private long _frameKey = long.MinValue;
     private long _discontinuityEpoch;
     private int _items;
@@ -36,8 +37,13 @@ internal sealed class TextureStreamingWorkLane
     /// Optional work that runs on the render thread one time before each frame closes, for example a read of completed GPU
     /// timestamps. Give a cached delegate, so the lane allocates nothing.
     /// </param>
-    public TextureStreamingWorkLane(string name, int initialItemsPerFrame, Action? beforeFrameClose = null)
+    /// <param name="rememberExcessCost">
+    /// True for a lane whose item cost is partly invisible to its timers. See
+    /// <see cref="TextureStreamingWorkControllerOptions.RememberExcessCost"/>.
+    /// </param>
+    public TextureStreamingWorkLane(string name, int initialItemsPerFrame, Action? beforeFrameClose = null, bool rememberExcessCost = true)
     {
+        _rememberExcessCost = rememberExcessCost;
         Name = name;
         _initialItemsPerFrame = Math.Max(1, initialItemsPerFrame);
         _beforeFrameClose = beforeFrameClose;
@@ -250,7 +256,8 @@ internal sealed class TextureStreamingWorkLane
             TextureStreamingCapacity.MaxItemsPerFrame,
             settings.TextureStreamingFrameToleranceMilliseconds,
             settings.TextureStreamingUploadsPerFrame,
-            settings.TextureStreamingMaxUploadsPerFrame);
+            settings.TextureStreamingMaxUploadsPerFrame,
+            _rememberExcessCost);
     }
 
     private static double ResolveHeadroomShare()

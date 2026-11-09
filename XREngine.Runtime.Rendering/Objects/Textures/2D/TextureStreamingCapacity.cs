@@ -55,8 +55,12 @@ internal static class TextureStreamingCapacity
     /// </summary>
     public static TextureStreamingWorkLane OpenGlResidentApply { get; } = new("OpenGL.ResidentApply", initialItemsPerFrame: 1, beforeFrameClose: PollOpenGlGpuTimer);
 
-    /// <summary>Vulkan transfer chunks that complete, retire, and publish. The old fixed limit was four in each frame.</summary>
-    public static TextureStreamingWorkLane VulkanCompletion { get; } = new("Vulkan.Completion", initialItemsPerFrame: 4);
+    /// <summary>
+    /// Vulkan transfer chunks that complete, retire, and publish. The old fixed limit was four in each frame. The lane times
+    /// each transfer batch on the GPU, so it does not keep a back-off excess cost: its over-budget frames are mostly frame
+    /// hitches, not item cost.
+    /// </summary>
+    public static TextureStreamingWorkLane VulkanCompletion { get; } = new("Vulkan.Completion", initialItemsPerFrame: 4, rememberExcessCost: false);
 
     /// <summary>GPU timestamps around OpenGL applies and sparse transitions. Use it on the render thread only.</summary>
     public static TextureStreamingGpuTimer OpenGlGpuTimer { get; } =

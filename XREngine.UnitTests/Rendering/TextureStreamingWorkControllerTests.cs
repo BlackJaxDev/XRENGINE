@@ -185,6 +185,18 @@ public sealed class TextureStreamingWorkControllerTests
     }
 
     [Test]
+    public void LaneWithoutExcessCostMemory_KeepsNoExcessCost()
+    {
+        TextureStreamingWorkController controller = new(new TextureStreamingWorkControllerOptions(1, 16, Tolerance, RememberExcessCost: false));
+        RunIdle(controller, 30, baseBusy: 10.0);
+
+        RunHiddenApplies(controller, 600, baseBusy: 10.0, hiddenPerItem: 7.0);
+
+        controller.BackoffCount.ShouldBeGreaterThan(1);
+        controller.ExcessCostPerItemMilliseconds.ShouldBe(0.0);
+    }
+
+    [Test]
     public void HiddenCostThatEnds_LetsTheLimitRampUpAgain()
     {
         // After ten seconds of large hidden apply cost, the applies become cheap (0.3 ms that the timer sees). The excess cost

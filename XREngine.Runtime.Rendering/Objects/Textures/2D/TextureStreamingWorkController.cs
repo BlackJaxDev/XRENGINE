@@ -36,7 +36,8 @@ namespace XREngine.Rendering;
 /// sees would be forgotten. Each back-off therefore also keeps the smaller of its excess per item and the excess of the
 /// previous back-off as the excess cost. Both values decay with <see cref="ExcessCostTimeConstantMilliseconds"/>, so back-offs
 /// that are some seconds apart still count, but one back-off alone (a possible hitch) does not set it. The model uses the
-/// larger of the robust cost and the excess cost. A probe or two idle
+/// larger of the robust cost and the excess cost. <see cref="TextureStreamingWorkControllerOptions.RememberExcessCost"/>
+/// turns it off for a lane that times all of its GPU work. A probe or two idle
 /// frames that show a slower scene restart it, because the excess before them was scene cost.</para>
 /// <para>Model target: <c>(tolerance + share * headroom) / costPerItem</c> items per frame.</para>
 /// <para>Hysteresis: the limit rises toward the target only while work was deferred and the hold time has passed, by at
@@ -372,8 +373,11 @@ internal sealed class TextureStreamingWorkController
             }
 
             // The smaller of the two excess samples, so one hitch in either frame does not set a large excess cost.
-            _excessCost = Math.Max(_excessCost, Math.Min(excess, _lastBackoffExcess));
-            _lastBackoffExcess = Math.Max(_lastBackoffExcess, excess);
+            if (_options.RememberExcessCost)
+            {
+                _excessCost = Math.Max(_excessCost, Math.Min(excess, _lastBackoffExcess));
+                _lastBackoffExcess = Math.Max(_lastBackoffExcess, excess);
+            }
 
             // One item still goes over: measure the frame without work, to tell a scene step from the cost of the item.
             if (items <= 1)
