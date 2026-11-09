@@ -323,6 +323,12 @@ namespace XREngine.Rendering.UI
         /// <summary>GPU-side helper for renderer-specific video frame uploads (PBO for OpenGL, staging buffer for Vulkan).</summary>
         private IVideoFrameGpuActions? _gpuVideoActions;
 
+        /// <summary>Selects which frame upload failures of the current uploader to log.</summary>
+        private VideoFrameUploadFailureReporter _videoUploadFailures = new();
+
+        /// <summary>True after the first successful frame upload of the current uploader was logged.</summary>
+        private bool _firstVideoUploadLogged;
+
         /// <summary>Task tracking the async open operation.</summary>
         private Task? _streamingSessionOpenTask;
 

@@ -9,11 +9,18 @@ namespace XREngine.Rendering.VideoStreaming;
 /// Each frame:
 ///   1. Resolve the backend texture handle for the target texture.
 ///   2. Delegate the upload to that handle, which:
-///      - Allocates a host-visible staging buffer and memcpy's the pixel data.
+///      - Writes the RGB24 texels to a synchronous frame-data staging slice in the
+///        image's byte order. An RGB8 texture uses a four-byte image format, so each
+///        texel receives an opaque alpha.
 ///      - Transitions the image to TransferDstOptimal.
-///      - Issues vkCmdCopyBufferToImage from the staging buffer to mip 0.
+///      - Issues vkCmdCopyBufferToImage from the staging slice to mip 0.
 ///      - Transitions the image to ShaderReadOnlyOptimal.
-///      - Releases the staging buffer.
+///      - Marks the texture as uploaded.
+/// </para>
+/// <para>
+/// The caller uploads on the render thread while the frame loop prepares the video
+/// material's draw. Each transfer step waits for its own one-shot submission, so the
+/// frame that samples the texture sees the new contents.
 /// </para>
 /// </summary>
 public sealed class VulkanVideoFrameGpuActions : IVideoFrameGpuActions
@@ -53,14 +60,24 @@ public sealed class VulkanVideoFrameGpuActions : IVideoFrameGpuActions
         IVulkanVideoFrameTextureHandle? vkTex = _context.ResolveTexture(xrTexture);
         if (vkTex is null)
         {
-            error = "Failed to obtain VkTexture2D wrapper.";
+            error = "The video texture has no published Vulkan wrapper, for example after a resize. Descriptor preparation publishes it when the video material draws.";
             return false;
         }
 
-        // Upload via staging buffer → vkCmdCopyBufferToImage.
-        if (!vkTex.UploadVideoFrameData(memory.Span, w, h))
+        // Upload via staging buffer → vkCmdCopyBufferToImage. A failed staging or
+        // submission step throws; report it as an upload failure so that one video
+        // cannot fail the render frame that prepares its draw.
+        try
         {
-            error = "Vulkan staging buffer upload failed.";
+            if (!vkTex.UploadVideoFrameData(memory.Span, w, h, out string? failureReason))
+            {
+                error = failureReason ?? "The Vulkan staging upload failed.";
+                return false;
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = $"Vulkan staging upload failed: {ex.Message}";
             return false;
         }
 

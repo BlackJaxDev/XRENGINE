@@ -251,32 +251,53 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
     }
 
     /// <summary>
-    /// Uploads raw packed pixel data (e.g. RGB24 video frames) into the texture
-    /// via a Vulkan staging buffer, bypassing the engine's mipmap/DataSource path.
+    /// Uploads one packed RGB24 video frame to mip 0, bypassing the engine's mipmap/DataSource path.
     /// <para>
     /// The image is (re-)created if the dimensions have changed, then:
     /// <list type="number">
-    ///   <item>A persistently mapped frame-data upload slice is allocated and filled.</item>
+    ///   <item>The RGB24 texels are written to a synchronous frame-data staging slice in the image's byte order.</item>
     ///   <item>The image is transitioned to <c>TransferDstOptimal</c>.</item>
-    ///   <item><c>vkCmdCopyBufferToImage</c> copies from the staging buffer to mip 0.</item>
+    ///   <item><c>vkCmdCopyBufferToImage</c> copies from the staging slice to mip 0.</item>
     ///   <item>The image is transitioned to <c>ShaderReadOnlyOptimal</c>.</item>
-    ///   <item>The frame slot retains the arena slice until its accepted GPU work completes.</item>
+    ///   <item>The texture is marked as uploaded, so descriptor preparation does not push stale CPU mip data over the frame.</item>
     /// </list>
     /// </para>
     /// </summary>
-    /// <param name="pixelData">Raw packed pixel bytes (e.g. RGB24).</param>
+    /// <remarks>
+    /// Call this on the render thread. Each transfer step is a one-shot graphics-queue
+    /// submission that waits for its fence, the same path as other synchronous texture
+    /// uploads. The image is therefore in its shader-read layout before the frame that
+    /// samples it is submitted, and no in-flight frame command buffer is reused. The
+    /// barriers order the copy after earlier queue work that samples the image.
+    /// </remarks>
+    /// <param name="pixelData">Packed RGB24 texels: <paramref name="width"/> x <paramref name="height"/> x 3 bytes.</param>
     /// <param name="width">Frame width in pixels.</param>
     /// <param name="height">Frame height in pixels.</param>
+    /// <param name="failureReason">The reason for a failed upload, or <c>null</c> when the upload succeeds.</param>
     /// <returns><c>true</c> if the upload succeeded.</returns>
-    internal bool UploadVideoFrameData(ReadOnlySpan<byte> pixelData, uint width, uint height)
+    /// <exception cref="InvalidOperationException">Thrown when the staging arena or a synchronous submission fails.</exception>
+    internal bool UploadVideoFrameData(ReadOnlySpan<byte> pixelData, uint width, uint height, out string? failureReason)
     {
+        failureReason = null;
         if (!BackendContext.IsDeviceOperational)
+        {
+            failureReason = "The Vulkan device is not operational.";
             return false;
+        }
 
-        if (pixelData.IsEmpty || width == 0 || height == 0)
+        if (width == 0 || height == 0)
+        {
+            failureReason = $"The video frame size {width}x{height} is not valid.";
             return false;
+        }
 
-        // Ensure the image object exists and is the right size.
+        ulong expectedSourceBytes = (ulong)width * height * 3UL;
+        if ((ulong)pixelData.Length != expectedSourceBytes)
+        {
+            failureReason = $"The RGB24 video frame has {pixelData.Length} bytes, but {width}x{height} needs {expectedSourceBytes} bytes.";
+            return false;
+        }
+
         // Resize the engine-side texture so that Generate() creates the
         // correct Vulkan image dimensions.
         if (Data.Width != width || Data.Height != height)
@@ -285,17 +306,61 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
         Generate();
 
         if (Image.Handle == 0)
+        {
+            failureReason = $"The Vulkan image for texture '{Data.Name ?? GetDescribingName()}' was not created.";
             return false;
+        }
 
+        if (ResolvedExtent.Width != width || ResolvedExtent.Height != height)
+        {
+            failureReason = $"The Vulkan image is {ResolvedExtent.Width}x{ResolvedExtent.Height}, but the video frame is {width}x{height}.";
+            return false;
+        }
 
-        // Map â†’ memcpy â†’ unmap.
+        if (!VulkanRgb24TexelWriter.TryGetDestinationBytesPerTexel(ResolvedFormat, out uint destinationBytesPerTexel))
+        {
+            failureReason = $"The Vulkan image format {ResolvedFormat} cannot receive RGB24 video frames.";
+            return false;
+        }
 
-        // Transition â†’ copy â†’ transition.
         TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
-        Extent3D extent = new(width, height, 1);
-        _ = UploadStagingBytesToImage(pixelData, 0, 0, 1, extent);
+        UploadRgb24StagingToImage(pixelData, new Extent3D(width, height, 1), destinationBytesPerTexel);
         TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
 
+        // A resize invalidates the texture data. This upload replaces the CPU mip path,
+        // so publish the new contents instead of letting descriptor preparation push
+        // the CPU mip data over the frame.
+        MarkUploaded();
         return true;
+    }
+
+    /// <summary>
+    /// Writes RGB24 texels to a synchronous staging slice in the image's byte order and copies them to mip 0.
+    /// </summary>
+    private void UploadRgb24StagingToImage(ReadOnlySpan<byte> rgb24PixelData, Extent3D extent, uint destinationBytesPerTexel)
+    {
+        ulong stagingBytes = (ulong)extent.Width * extent.Height * destinationBytesPerTexel;
+        if (stagingBytes > int.MaxValue)
+            throw new InvalidOperationException($"The video frame staging upload is too large for the frame-data arena: {stagingBytes:N0} bytes.");
+
+        if (!BackendContext.Resources.TryAcquireSynchronousFrameDataArenaLease(out VulkanSynchronousFrameDataArenaLease lease))
+            throw new InvalidOperationException("The Vulkan synchronous frame-data arena is unavailable for a video frame upload.");
+        using (lease)
+        {
+            if (!lease.Arena.TryAllocate(0, EVulkanFrameDataLane.TransferUpload, stagingBytes, 16, out VulkanFrameDataSlice slice))
+                throw new InvalidOperationException($"The Vulkan frame-data arena rejected {stagingBytes:N0} video frame staging bytes.");
+
+            if (!lease.Arena.TryBeginWrite(slice, out VulkanFrameDataWriteScope scope))
+                throw new InvalidOperationException("The Vulkan frame-data arena could not map the video frame staging slice.");
+            using (scope)
+            {
+                if (!VulkanRgb24TexelWriter.TryWrite(rgb24PixelData, scope.Bytes, ResolvedFormat))
+                    throw new InvalidOperationException($"The RGB24 video frame could not be written in the {ResolvedFormat} byte order.");
+            }
+
+            CopyBufferToImage(slice, lease, 0, 0, 1, extent);
+            if (!lease.TryComplete(slice))
+                throw new InvalidOperationException("The Vulkan video frame upload did not complete its frame-data staging slot.");
+        }
     }
 }

@@ -69,13 +69,8 @@ namespace XREngine.Rendering.UI
             }
 
             // Create the GPU upload helper for the active renderer.
-            _gpuVideoActions?.Dispose();
-            _gpuVideoActions = RuntimeVideoStreamingServices.Current?.CreateVideoFrameGpuActions(renderer);
-            if (_gpuVideoActions is null)
-            {
-                Debug.UIWarning("Streaming playback requires a registered video GPU actions service.");
+            if (!TryCreateGpuVideoActions(renderer))
                 return;
-            }
 
             if (!HlsReferenceRuntime.EnsureStarted())
             {
@@ -153,13 +148,8 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
-            _gpuVideoActions?.Dispose();
-            _gpuVideoActions = RuntimeVideoStreamingServices.Current?.CreateVideoFrameGpuActions(renderer);
-            if (_gpuVideoActions is null)
-            {
-                Debug.UIWarning("Streaming playback requires a registered video GPU actions service.");
+            if (!TryCreateGpuVideoActions(renderer))
                 return;
-            }
 
             if (!HlsReferenceRuntime.EnsureStarted())
             {
@@ -270,6 +260,29 @@ namespace XREngine.Rendering.UI
             _driftIntervalSamples = 0;
             _driftIntervalMinTicks = long.MaxValue;
             _driftIntervalMaxTicks = long.MinValue;
+        }
+
+        /// <summary>
+        /// Replaces the GPU frame uploader with one for <paramref name="renderer"/> and
+        /// resets the upload diagnostics. Logs the selected uploader in every build, so
+        /// a renderer without frame uploads is visible in a Release log.
+        /// </summary>
+        /// <returns><c>false</c> when no video streaming service is registered.</returns>
+        private bool TryCreateGpuVideoActions(AbstractRenderer renderer)
+        {
+            _gpuVideoActions?.Dispose();
+            _gpuVideoActions = RuntimeVideoStreamingServices.Current?.CreateVideoFrameGpuActions(renderer);
+            _videoUploadFailures = new VideoFrameUploadFailureReporter();
+            _firstVideoUploadLogged = false;
+            if (_gpuVideoActions is null)
+            {
+                VideoStreamingDiagnostics.Warning("Streaming playback requires a registered video GPU actions service.");
+                return false;
+            }
+
+            VideoStreamingDiagnostics.Info(
+                $"[AV Video] Frame uploads use '{_gpuVideoActions.GetType().Name}' on renderer '{renderer.GetType().Name}'.");
+            return true;
         }
 
         // ═══════════════════════════════════════════════════════════════
