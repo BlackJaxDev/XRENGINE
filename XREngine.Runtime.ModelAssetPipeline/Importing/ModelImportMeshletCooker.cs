@@ -46,6 +46,8 @@ public static class ModelImportMeshletCooker
             .OrderBy(GetCanonicalSubMeshKey, StringComparer.Ordinal)];
         long allocationStart = GC.GetAllocatedBytesForCurrentThread();
         System.Diagnostics.Stopwatch cookStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        // Payloads of an earlier import of this model, validated per mesh before use.
+        ModelImportMeshletPayloadCache? cache = OpenPayloadCache(stableModelIdentity);
         int meshletCount = 0;
         int payloadCount = 0;
         int generatedLodCount = 0;
@@ -82,16 +84,25 @@ public static class ModelImportMeshletCooker
                 ImportedEntityKey entityKey = new(
                     $"{ownerIdentity}/lod:{lodIndex}",
                     isStable: subMesh.ImportedEntityIdentityIsStable);
+                cache?.TryAttach(
+                    mesh,
+                    entityKey.Value,
+                    subMesh.MeshOptimizer.Meshlets,
+                    subMesh.MeshOptimizer.Lods);
                 MeshletPayload payload = mesh.GetOrCreateMeshletPayload(
                     subMesh.MeshOptimizer.Meshlets,
                     subMesh.MeshOptimizer.Lods,
                     entityKey.Value);
                 payload.ValidatePortablePayload();
+                cache?.Record(payload);
                 payloadCount++;
                 meshletCount += payload.Meshlets.Length;
                 lodIndex++;
             }
         }
+
+        if (cache is not null)
+            SavePayloadCache(cache);
 
         cookStopwatch.Stop();
         RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletColdImport(
@@ -101,6 +112,37 @@ public static class ModelImportMeshletCooker
             payloads: payloadCount,
             meshlets: meshletCount);
         return new ModelImportMeshletCookResult(ordered.Count, generatedLodCount, payloadCount, meshletCount);
+    }
+
+    private static ModelImportMeshletPayloadCache? OpenPayloadCache(string stableModelIdentity)
+    {
+        ModelImportMeshletPayloadCache? cache = ModelImportMeshletPayloadCache.TryOpen(
+            RuntimeRenderingHostServices.GameCachePath,
+            stableModelIdentity);
+        if (cache?.LoadFailure is { } failure)
+            Debug.WriteAuxiliaryLog("meshlet-cache.log", $"[MeshletCache] unreadable file {cache.FilePath}; cooking. {failure}");
+        return cache;
+    }
+
+    private static void SavePayloadCache(ModelImportMeshletPayloadCache cache)
+    {
+        bool written = false;
+        string? failure = null;
+        try
+        {
+            written = cache.SaveIfChanged();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException)
+        {
+            // A failed write costs only a rebuild on the next import.
+            failure = $"{exception.GetType().Name}: {exception.Message}";
+        }
+
+        Debug.WriteAuxiliaryLog(
+            "meshlet-cache.log",
+            $"[MeshletCache] file={Path.GetFileName(cache.FilePath)} stored={cache.StoredCount} hits={cache.HitCount} " +
+            $"misses={cache.MissCount} rejected={cache.RejectedCount} written={written}" +
+            (failure is null ? string.Empty : $" writeFailure={failure}"));
     }
 
     private static void ApplyModelDefaultsWhenUnspecified(SubMesh subMesh, ModelCookSettings defaults)

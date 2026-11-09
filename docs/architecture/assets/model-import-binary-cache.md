@@ -50,6 +50,16 @@ The meshlet section is an optional chunk that stores cooked meshlet payloads for
 - `ModelBinaryMeshletSectionTelemetry` counts primary, secondary, repaired, and unmatched entries.
 - GPU upload data is rebuilt from the cached CPU descriptors. The cache stays CPU-owned.
 
+### Import meshlet payload cache
+
+Until the full model cache hydrates prefabs, `ModelImportMeshletCooker.Cook` keeps the meshlet payloads of each imported model in one file, `<game cache>/model-meshlets/<hash>.xrmeshlets`, in the meshlet section format. `ModelImportMeshletPayloadCache` owns the file. The game cache is `RuntimeRenderingHostServices.GameCachePath` (`XRE_GAME_CACHE_PATH` when set).
+
+- The file name hashes the model's source identity, `MeshletPayloadUtility.CurrentCookProvenanceKey` (builder, payload, hash and codec versions) and the section format version.
+- A cached payload is used only after `XRMesh.AttachValidatedCookedMeshletPayload` accepts it (source mesh hash over vertices and triangles, vertex and triangle counts, mesh identity, freshness hash over settings and provenance) and it is fresh for the requested meshlet and LOD settings. Any other case cooks the mesh. An edited source, changed settings or a corrupt file therefore costs only a rebuild.
+- The file is rewritten when the import cooked a payload or the file held unused entries. It is written to a unique temporary file and moved into place on the import worker.
+- `meshlet-cache.log` records the stored, hit, miss and rejected counts of each model. `XRE_MODEL_MESHLET_CACHE=0` disables the cache.
+- The source parse still runs. Only the meshlet build is skipped.
+
 ## Rules For Remaining Work
 
 These rules hold for the pending hydration and publication work:
