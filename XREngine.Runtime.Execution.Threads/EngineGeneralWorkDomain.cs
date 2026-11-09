@@ -20,6 +20,9 @@ internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
     private long _wakeCount;
     private long _throttledDispatchCount;
     private long _throttleWaitTicks;
+    // Lanes with an index at or above this limit park. Guarded by _limitSync for waits and pulses.
+    private int _activeWorkerLimit;
+    private readonly object _limitSync = new();
 
     [ThreadStatic]
     private static EngineGeneralWorkDomain?[]? _inlineDrainStack;
@@ -35,6 +38,7 @@ internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
 
         _jobs = jobs;
         _workers = new Thread[workerCount];
+        _activeWorkerLimit = workerCount;
         for (int laneId = 0; laneId < workerCount; laneId++)
         {
             // General lanes do background work: asset loads, imports, and shader preparation.
@@ -50,7 +54,8 @@ internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
         }
     }
 
-    public int WorkerCount => _workers.Length;
+    public int WorkerCount => Math.Min(_workers.Length, Volatile.Read(ref _activeWorkerLimit));
+    public int ThreadCount => _workers.Length;
     public long DispatchCount => Interlocked.Read(ref _dispatchCount);
     public long WakeCount => Interlocked.Read(ref _wakeCount);
     public long ThrottledDispatchCount
@@ -79,6 +84,25 @@ internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
 
             throw;
         }
+    }
+
+    public void SetActiveWorkerLimit(int limit)
+    {
+        int bounded = Math.Clamp(limit, Math.Min(1, _workers.Length), _workers.Length);
+        int previous;
+        lock (_limitSync)
+        {
+            previous = _activeWorkerLimit;
+            if (previous == bounded)
+                return;
+            Volatile.Write(ref _activeWorkerLimit, bounded);
+            Monitor.PulseAll(_limitSync);
+        }
+
+        // Newly active lanes wait for a work signal. Give each one a signal so queued work
+        // is picked up now instead of at the next enqueue.
+        for (int lane = previous; lane < bounded; ++lane)
+            NotifyWorkAvailable();
     }
 
     public void NotifyWorkAvailable()
@@ -128,6 +152,9 @@ internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
             catch (SemaphoreFullException)
             {
             }
+
+            lock (_limitSync)
+                Monitor.PulseAll(_limitSync);
         }
 
         if (!waitForWorkers)
@@ -214,6 +241,10 @@ internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
         {
             while (Volatile.Read(ref _shutdownState) == 0)
             {
+                ParkWhileAboveLimit(laneId);
+                if (Volatile.Read(ref _shutdownState) != 0)
+                    continue;
+
                 try
                 {
                     _readySignal.Wait();
@@ -226,8 +257,17 @@ internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
                 if (Volatile.Read(ref _shutdownState) != 0)
                     continue;
 
+                if (laneId >= Volatile.Read(ref _activeWorkerLimit))
+                {
+                    // The limit dropped while this lane waited. Hand the signal to an active
+                    // lane so the work it announced is not left without a worker.
+                    NotifyWorkAvailable();
+                    continue;
+                }
+
                 Interlocked.Increment(ref _wakeCount);
-                while (Volatile.Read(ref _shutdownState) == 0)
+                while (Volatile.Read(ref _shutdownState) == 0 &&
+                       laneId < Volatile.Read(ref _activeWorkerLimit))
                 {
                     if (_jobs.TryDispatchGeneralWork(out bool throttled))
                     {
@@ -251,6 +291,18 @@ internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
         finally
         {
             JobManager.RestoreWorkerLane(previousLane);
+        }
+    }
+
+    private void ParkWhileAboveLimit(int laneId)
+    {
+        if (laneId < Volatile.Read(ref _activeWorkerLimit))
+            return;
+
+        lock (_limitSync)
+        {
+            while (Volatile.Read(ref _shutdownState) == 0 && laneId >= _activeWorkerLimit)
+                Monitor.Wait(_limitSync);
         }
     }
 }

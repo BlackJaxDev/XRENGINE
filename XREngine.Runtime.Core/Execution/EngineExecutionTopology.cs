@@ -27,9 +27,11 @@ public sealed class EngineExecutionTopology
         EngineExecutionTopologyRequest request,
         int reservedForegroundThreadCount,
         int generalWorkerThreadCount,
+        int generalWorkerThreadCountWithoutXrSession,
         int renderWorkerThreadCount)
     {
         Request = request;
+        GeneralWorkerThreadCountWithoutXrSession = generalWorkerThreadCountWithoutXrSession;
         EffectiveProcessorCount = request.EffectiveProcessorCount;
         ReservedForegroundThreadCount = reservedForegroundThreadCount;
         GeneralWorkerThreadCount = generalWorkerThreadCount;
@@ -47,7 +49,14 @@ public sealed class EngineExecutionTopology
     public EngineExecutionTopologyRequest Request { get; }
     public int EffectiveProcessorCount { get; }
     public int ReservedForegroundThreadCount { get; }
+    /// <summary>Gets the general workers while an XR session is active and its dedicated lanes run.</summary>
     public int GeneralWorkerThreadCount { get; }
+
+    /// <summary>
+    /// Gets the general workers while no XR session is active. The XR session lanes are idle then,
+    /// so their processors are given to general work. It is never below <see cref="GeneralWorkerThreadCount"/>.
+    /// </summary>
+    public int GeneralWorkerThreadCountWithoutXrSession { get; }
     public int RenderWorkerThreadCount { get; }
     public int DedicatedBackgroundThreadCount { get; }
     public int TotalReservedThreadCount { get; }
@@ -87,6 +96,13 @@ public sealed class EngineExecutionTopology
                 $"{nameof(request.DedicatedBackgroundThreadCount)} must be between 0 and {MaximumWorkerCount}.");
         }
 
+        if (request.XrSessionDedicatedThreadCount < 0 ||
+            request.XrSessionDedicatedThreadCount > request.DedicatedBackgroundThreadCount)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(request.XrSessionDedicatedThreadCount)} must be between 0 and {nameof(request.DedicatedBackgroundThreadCount)}.");
+        }
+
         if (!Enum.IsDefined(request.RenderWorkerQos))
             throw new InvalidOperationException($"Unknown render worker QoS value '{request.RenderWorkerQos}'.");
 
@@ -111,14 +127,23 @@ public sealed class EngineExecutionTopology
         int automaticGeneralFloor = Math.Min(
             MinimumAutomaticGeneralWorkerCount,
             Math.Max(0, request.EffectiveProcessorCount - foregroundCount));
-        int generalWorkerCount = request.GeneralWorkerThreadCount == AutomaticWorkerCount
+        bool automaticGeneral = request.GeneralWorkerThreadCount == AutomaticWorkerCount;
+        int generalWorkerCount = automaticGeneral
             ? Math.Min(request.GeneralWorkerThreadCap, Math.Max(automaticGeneralFloor, remainingGeneralBudget))
             : request.GeneralWorkerThreadCount;
+        // Without an XR session its dedicated lanes are idle. The render worker count stays the
+        // one resolved with the lanes, so only the general pool changes between the two states.
+        int generalWorkerCountWithoutXrSession = automaticGeneral
+            ? Math.Min(
+                request.GeneralWorkerThreadCap,
+                Math.Max(generalWorkerCount, remainingGeneralBudget + request.XrSessionDedicatedThreadCount))
+            : generalWorkerCount;
 
         var topology = new EngineExecutionTopology(
             request,
             foregroundCount,
             generalWorkerCount,
+            generalWorkerCountWithoutXrSession,
             renderWorkerCount);
 
         bool hasExplicitReservation =
@@ -157,6 +182,8 @@ public sealed class EngineExecutionTopology
             .Append(ReservedForegroundThreadCount)
             .Append(" general=")
             .Append(GeneralWorkerThreadCount)
+            .Append(" generalWithoutXrSession=")
+            .Append(GeneralWorkerThreadCountWithoutXrSession)
             .Append(" render=")
             .Append(RenderWorkerThreadCount)
             .Append(" dedicated=")
@@ -181,6 +208,8 @@ public sealed class EngineExecutionTopology
             .Append(Request.RenderWorkerThreadCap)
             .Append(",dedicated:")
             .Append(Request.DedicatedBackgroundThreadCount)
+            .Append(",xrSessionDedicated:")
+            .Append(Request.XrSessionDedicatedThreadCount)
             .Append('}')
             .Append(" sources={general:")
             .Append(Request.GeneralWorkerThreadCountSource)

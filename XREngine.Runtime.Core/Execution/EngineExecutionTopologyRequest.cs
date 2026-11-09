@@ -45,4 +45,10 @@ public sealed record EngineExecutionTopologyRequest
     /// <see cref="DedicatedBackgroundThreadCount"/>.
     /// </summary>
     public string[] DedicatedBackgroundThreadNames { get; init; } = [];
+
+    /// <summary>
+    /// Dedicated lanes, already included in <see cref="DedicatedBackgroundThreadCount"/>, that run
+    /// only while an XR session is active. Without a session their processors go to general workers.
+    /// </summary>
+    public int XrSessionDedicatedThreadCount { get; init; }
 }

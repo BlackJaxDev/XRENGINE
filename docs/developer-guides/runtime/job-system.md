@@ -59,7 +59,16 @@ whenever processors remain after the foreground reservation, because the
 dedicated background lanes (Vulkan recording, pipeline compile, OpenXR) are
 mostly idle and must not take every processor from imports and texture cooks.
 With 16 large-cache processors, 4 foreground and 12 dedicated lanes, the general
-pool is 2 instead of 0. The startup
+pool is 2 instead of 0. The five OpenXR lanes (frame pacing, two collect lanes
+and two eye-record lanes) run only during an OpenXR session, so the topology also
+resolves `GeneralWorkerThreadCountWithoutXrSession`, which gives their processors
+to general work. The general domain owns lanes for the larger count and limits
+the active lanes: `OpenXRAPI.SetRuntimeState` calls
+`RuntimeWorkScheduler.SetXrSessionActive` when a session enters or leaves
+`SessionRunning`. A lane above the limit finishes its current job and parks; a
+raised limit wakes parked lanes. No thread starts or stops, and queued work stays
+queued. In the 16-processor case the pool is 5 without a session and 2 during
+one. `JobManager.WorkerCount` reports the active lanes. The startup
 oversubscription check still uses the machine's processor count
 (`SystemProcessorCount`), because the fixed dedicated loops and explicit worker
 counts fit the machine and only share the narrowed cores. The rule reads the cache topology from the

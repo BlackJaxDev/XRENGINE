@@ -8,6 +8,61 @@ namespace XREngine.UnitTests.Core;
 public sealed class JobManagerTests
 {
     [Test]
+    public void ActiveGeneralWorkerLimit_ParksLanesWithoutLosingWork()
+    {
+        var manager = new JobManager(workerCount: 4);
+        try
+        {
+            manager.WorkerCount.ShouldBe(4);
+            manager.SetActiveGeneralWorkerLimit(1);
+            manager.WorkerCount.ShouldBe(1);
+
+            int completed = 0;
+            int concurrent = 0;
+            int maxConcurrent = 0;
+            const int jobCount = 64;
+            for (int index = 0; index < jobCount; ++index)
+            {
+                manager.Schedule(new ActionJob(() =>
+                {
+                    int now = Interlocked.Increment(ref concurrent);
+                    int seen;
+                    while ((seen = Volatile.Read(ref maxConcurrent)) < now &&
+                           Interlocked.CompareExchange(ref maxConcurrent, now, seen) != seen)
+                    {
+                    }
+                    Thread.Sleep(1);
+                    Interlocked.Decrement(ref concurrent);
+                    Interlocked.Increment(ref completed);
+                }));
+            }
+
+            SpinWait.SpinUntil(() => Volatile.Read(ref completed) == jobCount, TimeSpan.FromSeconds(10)).ShouldBeTrue();
+            Volatile.Read(ref maxConcurrent).ShouldBe(1);
+
+            manager.SetActiveGeneralWorkerLimit(4);
+            manager.WorkerCount.ShouldBe(4);
+            using Barrier barrier = new(4);
+            int joined = 0;
+            for (int index = 0; index < 4; ++index)
+            {
+                manager.Schedule(new ActionJob(() =>
+                {
+                    // Four jobs can only pass the barrier together when four lanes run.
+                    if (barrier.SignalAndWait(TimeSpan.FromSeconds(5)))
+                        Interlocked.Increment(ref joined);
+                }));
+            }
+
+            SpinWait.SpinUntil(() => Volatile.Read(ref joined) == 4, TimeSpan.FromSeconds(10)).ShouldBeTrue();
+        }
+        finally
+        {
+            manager.Shutdown(waitForWorkers: true).ShouldBeTrue();
+        }
+    }
+
+    [Test]
     public void ShutdownWithoutWorkerWait_ReturnsImmediatelyWhenWorkerJobIgnoresCancellation()
     {
         using ManualResetEventSlim releaseWorker = new(false);

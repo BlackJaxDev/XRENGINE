@@ -22,13 +22,19 @@ public sealed class EngineWorkScheduler : IDisposable
         IEngineWorkerDomainFactory workerFactory = EngineWorkerDomainServices.GetRequiredFactory();
         Topology = topology;
 
-        GeneralJobs = new JobManager(
+        // The general domain owns enough lanes for the larger pool without an XR session and
+        // limits the active lanes to the pool of the current state. No XR session is active yet.
+        int generalLaneCount = Math.Max(
             topology.GeneralWorkerThreadCount,
+            topology.GeneralWorkerThreadCountWithoutXrSession);
+        GeneralJobs = new JobManager(
+            generalLaneCount,
             generalQueueLimit,
             generalQueueWarningThreshold,
             topology.Request.GeneralWorkerThreadCap,
             createWorkerDomains: false);
-        GeneralJobs.InitializeWorkerDomains(workerFactory, topology.GeneralWorkerThreadCount);
+        GeneralJobs.InitializeWorkerDomains(workerFactory, generalLaneCount);
+        GeneralJobs.SetActiveGeneralWorkerLimit(topology.GeneralWorkerThreadCountWithoutXrSession);
         _generalDomain = GeneralJobs.GeneralDomain;
         _jobAuxiliaryDomain = GeneralJobs.AuxiliaryDomain;
         try
@@ -65,6 +71,29 @@ public sealed class EngineWorkScheduler : IDisposable
     }
 
     public EngineExecutionTopology Topology { get; }
+
+    /// <summary>Gets whether the general pool is sized for an active XR session.</summary>
+    public bool XrSessionActive => Volatile.Read(ref _xrSessionActive) != 0;
+
+    private int _xrSessionActive;
+
+    /// <summary>
+    /// Resizes the active general pool when an XR session starts or stops. With a session, the
+    /// session's dedicated lanes run and the pool shrinks to <see cref="EngineExecutionTopology.GeneralWorkerThreadCount"/>;
+    /// without one it grows to <see cref="EngineExecutionTopology.GeneralWorkerThreadCountWithoutXrSession"/>.
+    /// Lanes only park or wake, so the change does not stall and no queued job is lost.
+    /// </summary>
+    public void SetXrSessionActive(bool active)
+    {
+        if (Interlocked.Exchange(ref _xrSessionActive, active ? 1 : 0) == (active ? 1 : 0))
+            return;
+        if (Volatile.Read(ref _shutdownState) != 0)
+            return;
+
+        GeneralJobs.SetActiveGeneralWorkerLimit(active
+            ? Topology.GeneralWorkerThreadCount
+            : Topology.GeneralWorkerThreadCountWithoutXrSession);
+    }
     public JobManager GeneralJobs { get; }
     public RenderWorkDomain Render { get; }
 

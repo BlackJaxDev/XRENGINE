@@ -862,6 +862,9 @@ public unsafe partial class OpenXRAPI
 
         _runtimeState = next;
         Volatile.Write(ref _sessionRunning, next == OpenXrRuntimeState.SessionRunning ? 1 : 0);
+        // The OpenXR frame, collect and eye-record lanes run only during a session. Give their
+        // processors to general workers while no session runs, and take them back when one starts.
+        XREngine.Execution.RuntimeWorkScheduler.SetXrSessionActive(next == OpenXrRuntimeState.SessionRunning);
         RecordSmokeRuntimeState(next);
     }
 
