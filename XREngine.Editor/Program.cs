@@ -284,6 +284,7 @@ internal partial class Program
         try
         {
             smokeRun.Install();
+            XREngine.Editor.Services.EditorTypeCatalogWarmup.Start();
             WriteBootstrapTrace("Calling Engine.Run.");
             // The editor owns the Edit -> Play transition. Standalone Engine.Run startup
             // would otherwise begin every world immediately and suppress the editor UI.
