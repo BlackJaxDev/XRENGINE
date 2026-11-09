@@ -3,7 +3,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// GPU timestamp queries of the current renderer for <see cref="TextureStreamingGpuTimer"/>, through the backend-neutral
 /// <see cref="IOcclusionQueryBackendCapability"/> (OpenGL <c>glQueryCounter</c> and a non-blocking result read). The queries
-/// are created on first use on the render thread. When the renderer has no timestamp support, nothing is timed.
+/// are created on first use on the render thread, and again for each new renderer. When the renderer has no timestamp support, nothing is timed.
 /// </summary>
 internal sealed class RendererTextureStreamingTimestampSource(int queryCount) : ITextureStreamingTimestampSource
 {
@@ -22,10 +22,13 @@ internal sealed class RendererTextureStreamingTimestampSource(int queryCount) : 
         if (renderQuery is null)
         {
             renderQuery = new XRRenderQuery(RenderQueryDescriptor.Timestamp);
-            if (!capability.EnsureQueryGenerated(renderQuery))
-                return false;
             _queries[query] = renderQuery;
         }
+
+        // The current renderer can be a new one (for example, after a window or context change), so make sure that its
+        // query object exists before each write. The call does nothing when the query exists.
+        if (!capability.EnsureQueryGenerated(renderQuery))
+            return false;
 
         return capability.WriteTimestamp(renderQuery) == ERenderQueryReadStatus.Ready;
     }
