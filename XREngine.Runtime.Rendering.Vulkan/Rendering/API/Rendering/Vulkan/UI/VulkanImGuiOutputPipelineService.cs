@@ -117,8 +117,8 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
         string fragment = "#version 450\nlayout(set=0,binding=0) uniform sampler2D sTexture; layout(location=0) in vec2 inUv; layout(location=1) in vec4 inColor; layout(location=0) out vec4 outColor; vec3 SrgbToLinear(vec3 c){ bvec3 cut=lessThanEqual(c,vec3(0.04045)); return mix(pow((c+vec3(0.055))/1.055,vec3(2.4)),c/12.92,cut); } void main(){ vec4 color=inColor*texture(sTexture,inUv);" +
             (srgb ? " color.rgb=SrgbToLinear(color.rgb*color.a);" : string.Empty) + " outColor=color; }";
 
-        handles.VertShader = CreateShaderModule(new XRShader(EShaderType.Vertex, vertex) { Name = "VkImGui.vs" });
-        handles.FragShader = CreateShaderModule(new XRShader(EShaderType.Fragment, fragment) { Name = "VkImGui.fs" });
+        handles.VertShader = CreateShaderModule(new XRShader(EShaderType.Vertex, vertex) { Name = "VkImGui.vs" }, ShaderStageFlags.VertexBit);
+        handles.FragShader = CreateShaderModule(new XRShader(EShaderType.Fragment, fragment) { Name = "VkImGui.fs" }, ShaderStageFlags.FragmentBit);
         try
         {
             PushConstantRange range = new() { StageFlags = ShaderStageFlags.VertexBit, Size = (uint)sizeof(VulkanImGuiPushConstants) };
@@ -226,9 +226,11 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
         }
     }
 
-    private ShaderModule CreateShaderModule(XRShader shader)
+    private ShaderModule CreateShaderModule(XRShader shader, ShaderStageFlags stage)
     {
-        byte[] spirv = VulkanShaderCompiler.Compile(shader, out _, out _, out _);
+        // The overlay pipeline is created inside the first visible frame. Use the shader
+        // artifact cache so a warm start does not run the GLSL compiler on the render thread.
+        byte[] spirv = VulkanShaderCompiler.CompileWithArtifactCache(shader, stage);
         fixed (byte* code = spirv)
         {
             ShaderModuleCreateInfo info = new() { SType = StructureType.ShaderModuleCreateInfo, CodeSize = (nuint)spirv.Length, PCode = (uint*)code };
