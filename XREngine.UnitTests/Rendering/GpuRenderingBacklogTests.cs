@@ -44,8 +44,8 @@ public class GpuRenderingBacklogTests
         EnsureDynamicAtlasResidency(scene, mesh, meshId, "refcount-test");
         scene.RebuildAtlasIfDirty(EAtlasTier.Dynamic);
 
-        Dictionary<XRMesh, (int firstVertex, int firstIndex, int indexCount)> atlasOffsets =
-            GetPrivateField<Dictionary<XRMesh, (int, int, int)>>(scene, "_atlasMeshOffsets");
+        System.Collections.IDictionary atlasOffsets =
+            (System.Collections.IDictionary)GetNonPublicField(GetNonPublicField(scene, "_dynamicAtlas"), "MeshOffsets");
         Dictionary<XRMesh, int> refCounts =
             GetPrivateField<Dictionary<XRMesh, int>>(scene, "_atlasMeshRefCounts");
 
@@ -55,11 +55,11 @@ public class GpuRenderingBacklogTests
 
         InvokeNonPublic(scene, "DecrementAtlasMeshRefCount", meshId, "unit-test");
         refCounts[mesh].ShouldBe(1);
-        atlasOffsets.ContainsKey(mesh).ShouldBeTrue();
+        atlasOffsets.Contains(mesh).ShouldBeTrue();
 
         InvokeNonPublic(scene, "DecrementAtlasMeshRefCount", meshId, "unit-test");
         refCounts.ContainsKey(mesh).ShouldBeFalse();
-        atlasOffsets.ContainsKey(mesh).ShouldBeFalse();
+        atlasOffsets.Contains(mesh).ShouldBeFalse();
 
         int atlasIndexCount = GetPrivateField<int>(scene, "_atlasIndexCount");
         atlasIndexCount.ShouldBe(0);

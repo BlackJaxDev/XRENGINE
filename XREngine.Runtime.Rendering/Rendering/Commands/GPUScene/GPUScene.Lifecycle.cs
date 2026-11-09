@@ -262,9 +262,7 @@ namespace XREngine.Rendering.Commands
             _atlasDirty = false;
             _atlasVertexCount = 0;
             _atlasIndexCount = 0;
-            _atlasMeshOffsets.Clear();
             _atlasMeshRefCounts.Clear();
-            _indirectFaceIndices.Clear();
             _atlasVersion = 0;
             _atlasIndexElementSize = IndexSize.FourBytes;
             _activeAtlasTiers.Clear();

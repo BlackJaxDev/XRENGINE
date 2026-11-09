@@ -249,9 +249,6 @@ namespace XREngine.Rendering.Commands
         /// <summary>Running index count for atlas packing.</summary>
         private int _atlasIndexCount = 0;
 
-        /// <summary>Maps each mesh to its offsets within the atlas (firstVertex, firstIndex, indexCount).</summary>
-        private readonly Dictionary<XRMesh, (int firstVertex, int firstIndex, int indexCount)> _atlasMeshOffsets = [];
-
         /// <summary>
         /// Tracks how many active GPU commands reference each mesh resident in the atlas.
         /// Atlas geometry is only removed when this reaches zero.
@@ -264,17 +261,17 @@ namespace XREngine.Rendering.Commands
         /// <summary>Current index element type (u8/u16/u32) used in atlas index buffer.</summary>
         private IndexSize _atlasIndexElementSize = IndexSize.FourBytes;
 
-        /// <summary>List of triangle indices for indirect rendering.</summary>
-        private readonly List<IndexTriangle> _indirectFaceIndices = [];
-
         /// <summary>
         /// Raised after the atlas GPU buffers have been rebuilt (EBO updated).
         /// Listeners should re-bind their VAO index buffers.
         /// </summary>
         public event Action<GPUScene>? AtlasRebuilt;
 
-        /// <summary>Gets the list of triangle indices for indirect rendering.</summary>
-        public List<IndexTriangle> IndirectFaceIndices => _indirectFaceIndices;
+        /// <summary>
+        /// Gets the triangle indices of the dynamic atlas tier for indirect rendering.
+        /// This is the live tier list, not a copy. Read it under the scene lock.
+        /// </summary>
+        public List<IndexTriangle> IndirectFaceIndices => _dynamicAtlas.IndirectFaceIndices;
 
         public IReadOnlyList<IndexTriangle> GetIndirectFaceIndices(EAtlasTier tier)
             => GetTierState(tier).IndirectFaceIndices;

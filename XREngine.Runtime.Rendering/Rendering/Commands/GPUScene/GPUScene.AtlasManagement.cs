@@ -6,6 +6,7 @@
 using XREngine.Extensions;
 using System;
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -28,7 +29,11 @@ namespace XREngine.Rendering.Commands
 {
     public partial class GPUScene
     {
-
+        /// <summary>
+        /// Copies the dynamic tier's buffer references and counts into the legacy single-atlas fields.
+        /// This runs on every atlas append, so it must stay constant-time. The legacy face list
+        /// reads the tier list directly and is not copied here.
+        /// </summary>
         private void SyncLegacyDynamicAtlasState()
         {
             _atlasPositions = _dynamicAtlas.Positions;
@@ -40,11 +45,6 @@ namespace XREngine.Rendering.Commands
             _atlasVertexCount = _dynamicAtlas.VertexCount;
             _atlasIndexCount = _dynamicAtlas.IndexCount;
             _atlasIndexElementSize = _dynamicAtlas.IndexElementSize;
-            _indirectFaceIndices.Clear();
-            _indirectFaceIndices.AddRange(_dynamicAtlas.IndirectFaceIndices);
-            _atlasMeshOffsets.Clear();
-            foreach (var kvp in _dynamicAtlas.MeshOffsets)
-                _atlasMeshOffsets[kvp.Key] = (kvp.Value.FirstVertex, kvp.Value.FirstIndex, kvp.Value.IndexCount);
         }
 
         private static string GetTierLabel(EAtlasTier tier)
@@ -1284,9 +1284,10 @@ namespace XREngine.Rendering.Commands
 
             if (state.Indices is not null)
             {
-                IndexTriangle[] faceSnapshot = state.IndirectFaceIndices.Count > 0
-                    ? [.. state.IndirectFaceIndices]
-                    : [];
+                // The lock is held for the whole rebuild, so the face list cannot change here.
+                // Read it in place: a copy of every triangle on each append makes a batch
+                // registration quadratic in the atlas size.
+                ReadOnlySpan<IndexTriangle> faceSnapshot = CollectionsMarshal.AsSpan(state.IndirectFaceIndices);
 
                 int requiredIndices = faceSnapshot.Length * 3;
                 if (requiredIndices > 0)
