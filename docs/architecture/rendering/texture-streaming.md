@@ -122,7 +122,8 @@ Base width: `clamp(processors - foreground - dedicated, 2, 8)`, from `TextureStr
 - Rise: while decodes wait and all permits are in use, the width grows by half (at least 1), but only after 8 frames with decodes at the current width (and at least 50 ms), and only when those frames do not go over the rule more often than frames without decodes. The bound is `clamp(processors - foreground, 2, 8)` (`ResolveMaxDecodeWidth`): decodes never take the processors of the foreground threads. On 4 logical processors the bound is 2, the old fixed width.
 - Back-off: an over-budget frame with active decodes halves the width and holds it 500 ms, but only on evidence: after at least 8 frames with and 8 frames without decodes, frames with decodes go over the rule more often by 0.15. The width that gave the evidence, less 1, is a ceiling for 5 s.
 - Floor: 2 without evidence, 1 for 5 s after evidence.
-- A scene discontinuity restarts the statistics and relearns the normal frame time.
+- A scene discontinuity restarts the statistics and relearns the normal frame time for 250 ms. A scrub that signals a discontinuity in each frame keeps the width controller in a relearn, so the width does not back off during the scrub.
+- The budget uses the same bound as the work lanes (see below): at most the frame interval plus the tolerance.
 
 The base width refreshes at most one time each second. A larger width grants waiting decodes at once. A smaller width takes effect as held permits are released. The Vulkan upload preparation workers use the same width, not more than the 8 background staging buffers, because each worker holds one buffer until its chunk completes.
 
@@ -141,21 +142,24 @@ Each lane finds the frame boundary itself (`TextureStreamingFrameSampler`, from 
 
 | Rule | Value | Derivation |
 |---|---|---|
-| Frame-time rule | frame time <= budget + tolerance | Design target: no frame more than 2 ms above the normal frame budget. `TextureStreamingFrameToleranceMilliseconds` (default 2). |
-| Normal frame budget | max(target period, mean + 2.5 x mean deviation) | The learned frame time without the effective lane work (tau 330 ms for frames without work and for shorter work frames, 1.66 s for longer work frames). 2.5 mean deviations are about 2 standard deviations, so scene jitter alone rarely breaks the rule. The first frames seed it from the target period. |
-| Scene discontinuity | relearn for 250 ms, then the lowest frame of the relearn becomes the normal frame time; statistics restart | A cutscene cut or jump calls `ITextureResidencyRequests.NotifySceneDiscontinuity`. Without a signal, 2 frames in a row whose time without the work is over the rule count as a scene step when the items do not explain them (no more items than a work frame inside the rule before them). After a frame without work, new work and a scene change cannot be told apart; a cut there needs the signal, and an exploratory back-off (halve once after 4 over-budget frames with several items and no recent baseline frame) tests new work. A step down (2 frames in a row below the mean by more than the jitter allowance plus 2 x tolerance, for example when a slow period of another process ends) also starts a relearn. A scene step moves every frame and a load stall only some, so the lowest frame ignores stalls; the jitter is learned again after a relearn. A scene excess is never a cost sample. |
+| Frame-time rule | frame time <= budget + tolerance | Design target: no frame with streaming work more than 2 ms above the frame budget. `TextureStreamingFrameToleranceMilliseconds` (default 2). |
+| Frame budget | max(target, min(idle mean + 2.5 x idle mean deviation, interval + tolerance)) | Learned only from frames without lane work (idle frames, tau 330 ms). A frame with work never raises it. 2.5 mean deviations are about 2 standard deviations, so scene jitter alone rarely breaks the rule. |
+| Frame interval | max(target period, idle mean) | The target period of the engine (the focused or unfocused target FPS). When the scene is slower than the target, or when there is no target (VSync or no limit), the idle mean is the present interval. |
+| Idle frame | counts as at most interval + tolerance | One stall frame moves the mean only a little. Two idle frames in a row above that limit are a scene step: the mean becomes the lower of the two. |
+| Step down | mean becomes the higher of 2 frames | 2 frames in a row (with or without work) whose time without the measured work is below the mean by more than the jitter allowance plus 2 x tolerance, for example when a slow period of another process ends. It can only lower the mean. |
+| Probe | 2 frames without work; the mean becomes the lowest of them | At the first frames, after a scene discontinuity (a cutscene cut or jump calls `ITextureResidencyRequests.NotifySceneDiscontinuity`), and after a frame with one item that still goes over the rule. At most one probe starts in each second; a discontinuity inside that second waits for its end, so a scrub that signals each frame stops streaming for at most 2 frames each second. A probe ends after 4 frames when it has no 2 known frames. A discontinuity also restarts the mean GPU cost. |
 | Effective work | max(CPU work, items x mean GPU cost) | GPU timestamps make driver and copy cost visible. |
 | Headroom | budget - idle busy time | Only when the idle render-thread time is below 90 % of the budget; otherwise the frame is full or the busy time includes a present wait, and the headroom is 0. With vsync, the busy time includes the present wait, so the headroom is 0 and the `Cutscene` share has no effect. |
 | Allowed cost | tolerance + share x headroom | Share 0.5 normally (half of the idle time stays free for heavier gameplay frames), 1.0 while a cutscene waits for residency. |
-| Cost per item | third-highest of the last 16 item costs | Ignores up to two hitches (a preemption or a page fault); GC pauses are taken out of each timed item. |
+| Cost per item | third-highest of the last 16 item costs | Samples come from the CPU time without GC pauses, from GPU timestamps, and from each back-off frame: max(effective work, frame - normal frame) / items, so cost that no timer sees still counts. The robust value ignores up to two hitches. |
 | Target | allowed cost / cost per item, at most 16 | 16 is a hard bound for a wrong measurement. |
-| Back-off | limit x 0.5, hold 250 ms | When the effective work explains at least half of the excess, or, statistically, after 2 over-budget frames in a row with several items when such frames go over more often for each item than recent frames with one item (500 ms). |
-| Floor | 1 item per frame | The old fixed limit. After a second explained overrun within 1 s, the floor is tolerance / cost (at least 1/32) for 1 s, so an item that is too large for one frame runs only as often as the tolerance pays for it on average. One explained overrun alone is a possible hitch. |
-| Ceiling | N - 1 items for 2 s | After a repeated explained overrun, a statistical back-off, or a second exploratory back-off within 2 s, with N items. |
-| Rise | at most +25 % in one frame, never above the target | Only while work was deferred, after the hold time, and not in an over-budget frame with several items that the statistics do not clear. |
+| Back-off | limit x 0.5, hold 250 ms | Every frame with lane work that goes over the rule, whether or not a timer saw the cost. |
+| Floor | 1 item per frame | The old fixed limit. After a second back-off within 1 s, the floor is tolerance / cost (at least 1/32) for 1 s, so an item that is too large for one frame runs only as often as the tolerance pays for it on average. |
+| Ceiling | N - 1 items for 2 s | After a second back-off within 1 s, with N items. |
+| Rise | at most +25 % in one frame, never above the target | Only while work was deferred and after the hold time. |
 | Fall without overrun | to the target | Only when the target is more than 15 % below the limit, which is wider than the usual cost jitter. |
 
-A steady cost and a steady frame time give a constant limit. When frames with more items go over less often for each item than frames with one item, the cost is mostly a fixed cost of each work frame (for example, a descriptor rebuild after a publication). Then fewer items in a frame would only add frames that pay it, so the limit does not fall. The lanes allocate nothing in a frame.
+A steady cost and a steady frame time give a constant limit. Cost that no timer sees cannot raise the budget, because only idle frames teach it, and the budget is never more than the frame interval plus the tolerance. Such cost shows as frames over the rule, which back off. A fixed cost of each work frame that is larger than the tolerance breaks the rule in each work frame, so the work frames become fewer. The lanes allocate nothing in a frame. The OpenGL apply lane reads its completed GPU timestamps one time before each lane frame closes.
 
 ### Settings
 
@@ -168,7 +172,7 @@ A steady cost and a steady frame time give a constant limit. When frames with mo
 
 ### Diagnostics
 
-The profiler summary (`RenderWorkBudgetCoordinator.AppendProfilerSummary`) writes `TextureStreamingDecode:` (width, base, permits in use, waiting decodes, back-offs, processors, cutscene wait, OpenGL GPU pairs read) and one line for each lane: limit, rate, target, cost per item, GPU cost per item, learned budget, headroom, ceiling, overruns, explained overruns, back-offs, discontinuities, items, and frames with deferred work. `PriorityAsyncSemaphore.ExcessReleaseCount` counts a release without a held permit.
+The profiler summary (`RenderWorkBudgetCoordinator.AppendProfilerSummary`) writes `TextureStreamingDecode:` (width, base, permits in use, waiting decodes, back-offs, processors, cutscene wait, OpenGL GPU pairs read) and one line for each lane: limit, rate, target, cost per item, GPU cost per item, learned budget, headroom, ceiling, overruns, back-offs, discontinuities, probes, items, and frames with deferred work. `PriorityAsyncSemaphore.ExcessReleaseCount` counts a release without a held permit.
 
 ### Measurements
 
@@ -225,7 +229,8 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 - An OpenGL resident apply has cost that the CPU timer does not see (driver work at the next present, about 5 to 9 ms for a 1024-texel chain). The apply lane cannot split an apply, so a frame with one large apply can still break the frame-time rule.
 - A Vulkan imported upload stages one chunk for each mip level (or each 4 MB of rows), and the chunks of one texture complete in sequence. A 1024-texel chain needs 11 round trips through preparation, transfer, and completion, so the Vulkan refine is bound by this latency more than by the lane limits.
 - The decode width feedback measures frame-time contention, not the disk (an HDD can prefer fewer parallel reads). Use `TextureStreamingDecodeConcurrency` to pin it.
-- An unsignaled scene step that starts together with a burst after an idle frame cannot be told apart from new work. The exploratory back-off then halves the limit once; a camera cut must call `NotifySceneDiscontinuity` (the cutscene player does).
+- An unsignaled scene step to a heavier scene makes every work frame go over the rule until a probe or an idle frame measures the new scene, so the lane backs off for a short time. A camera cut must call `NotifySceneDiscontinuity` (the cutscene player does).
+- On a scene with jitter larger than the tolerance, frames with work go over the rule a little more often than frames without work, and each such frame backs off. This lowers throughput on jittery machines, but it keeps the frame-time rule.
 
 - Partial sparse page residency is disabled by policy on OpenGL. Vulkan sparse images are not implemented.
 - Cooked payloads are not page-addressable. GPU-native compressed payloads and compressed uploads are not implemented.

@@ -107,7 +107,8 @@ public interface ITextureResidencyRequests
 
     /// <summary>
     /// Tells streaming that the scene cost changed at once, for example at a camera cut. The upload and decode controllers
-    /// then relearn the normal frame time, so the cost of the new shot does not count as streaming cost.
+    /// then measure the new frame time again (the upload lanes with frames without work), so the cost of the new shot does
+    /// not count as streaming cost.
     /// </summary>
     /// <remarks>Any thread can call it. It allocates nothing. The default implementation does nothing.</remarks>
     void NotifySceneDiscontinuity()

@@ -114,7 +114,7 @@ public sealed class TextureStreamingGpuTimerTests
     }
 
     [Test]
-    public void GpuCost_RaisesTheEffectiveWork_SoTheControllerExplainsTheOverrun()
+    public void GpuCost_RaisesTheEffectiveWork_AndTheCostOfTheItems()
     {
         // The CPU timer sees 0.5 ms for each apply, but the GPU timestamps show 8 ms.
         TextureStreamingWorkController controller = new(new TextureStreamingWorkControllerOptions(1, 16, 2.0));
@@ -126,7 +126,7 @@ public sealed class TextureStreamingGpuTimerTests
         controller.Update(new TextureStreamingWorkSample(28.0, 28.0, 1000.0 / 60.0, 1.0, 2, true, 0.5));
 
         controller.GpuCostPerItemMilliseconds.ShouldBe(8.0, tolerance: 1e-9);
-        controller.AttributedOverrunCount.ShouldBe(1);
+        controller.BackoffCount.ShouldBe(1);
         controller.ItemsThisFrame.ShouldBe(1);
     }
 }

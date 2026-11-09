@@ -20,6 +20,7 @@ internal sealed class TextureStreamingWorkLane
     private readonly TextureStreamingWorkController _controller;
     private readonly TextureStreamingFrameSampler _sampler = new();
     private readonly int _initialItemsPerFrame;
+    private readonly Action? _beforeFrameClose;
     private long _frameKey = long.MinValue;
     private long _discontinuityEpoch;
     private int _items;
@@ -31,10 +32,15 @@ internal sealed class TextureStreamingWorkLane
     /// <summary>Creates a lane.</summary>
     /// <param name="name">The name in diagnostics.</param>
     /// <param name="initialItemsPerFrame">The limit before the first cost measurement (the old fixed limit of the lane).</param>
-    public TextureStreamingWorkLane(string name, int initialItemsPerFrame)
+    /// <param name="beforeFrameClose">
+    /// Optional work that runs on the render thread one time before each frame closes, for example a read of completed GPU
+    /// timestamps. Give a cached delegate, so the lane allocates nothing.
+    /// </param>
+    public TextureStreamingWorkLane(string name, int initialItemsPerFrame, Action? beforeFrameClose = null)
     {
         Name = name;
         _initialItemsPerFrame = Math.Max(1, initialItemsPerFrame);
+        _beforeFrameClose = beforeFrameClose;
         _controller = new TextureStreamingWorkController(ResolveOptions());
     }
 
@@ -184,9 +190,9 @@ internal sealed class TextureStreamingWorkLane
                 .Append(" headroomMs=").Append(_controller.HeadroomMilliseconds.ToString("F2", inv))
                 .Append(" ceiling=").Append(_controller.CeilingItems.ToString(inv))
                 .Append(" overruns=").Append(_controller.OverrunCount.ToString(inv))
-                .Append(" attributed=").Append(_controller.AttributedOverrunCount.ToString(inv))
                 .Append(" backoffs=").Append(_controller.BackoffCount.ToString(inv))
                 .Append(" discontinuities=").Append(_controller.DiscontinuityCount.ToString(inv))
+                .Append(" probes=").Append(_controller.ProbeCount.ToString(inv))
                 .Append(" items=").Append(_totalItems.ToString(inv))
                 .Append(" deferredFrames=").Append(_totalDeferredFrames.ToString(inv))
                 .AppendLine();
@@ -200,6 +206,9 @@ internal sealed class TextureStreamingWorkLane
             return;
 
         _frameKey = frameKey;
+        if (_beforeFrameClose is not null && RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
+            _beforeFrameClose();
+
         if (_sampler.TryAdvance(out TextureStreamingClosedFrame closed))
         {
             if (double.IsFinite(closed.IdleFrameMilliseconds))
@@ -219,7 +228,7 @@ internal sealed class TextureStreamingWorkLane
                 ResolveHeadroomShare()));
         }
 
-        // A scene discontinuity (for example, a cutscene cut) starts a relearn before the new frame uses the limit.
+        // A scene discontinuity (for example, a cutscene cut) starts a probe before the new frame uses the limit.
         long epoch = TextureStreamingCapacity.DiscontinuityEpoch;
         if (epoch != _discontinuityEpoch)
         {

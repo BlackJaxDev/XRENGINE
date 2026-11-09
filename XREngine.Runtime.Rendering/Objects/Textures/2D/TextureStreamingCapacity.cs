@@ -53,7 +53,7 @@ internal static class TextureStreamingCapacity
     /// Resident data applies and sparse transitions on the OpenGL render thread. The old fixed limit was one in each frame
     /// for each OpenGL backend.
     /// </summary>
-    public static TextureStreamingWorkLane OpenGlResidentApply { get; } = new("OpenGL.ResidentApply", initialItemsPerFrame: 1);
+    public static TextureStreamingWorkLane OpenGlResidentApply { get; } = new("OpenGL.ResidentApply", initialItemsPerFrame: 1, beforeFrameClose: PollOpenGlGpuTimer);
 
     /// <summary>Vulkan transfer chunks that complete, retire, and publish. The old fixed limit was four in each frame.</summary>
     public static TextureStreamingWorkLane VulkanCompletion { get; } = new("Vulkan.Completion", initialItemsPerFrame: 4);
@@ -81,7 +81,7 @@ internal static class TextureStreamingCapacity
     /// <summary>The processor count of the last refresh (the live process affinity).</summary>
     public static int EffectiveProcessorCount => Volatile.Read(ref s_effectiveProcessorCount);
 
-    /// <summary>A counter that grows with each scene discontinuity. The lanes compare it to start a relearn.</summary>
+    /// <summary>A counter that grows with each scene discontinuity. The lanes compare it to start a probe.</summary>
     public static long DiscontinuityEpoch => Volatile.Read(ref s_discontinuityEpoch);
 
     /// <summary>
@@ -99,8 +99,8 @@ internal static class TextureStreamingCapacity
     }
 
     /// <summary>
-    /// Signals a scene discontinuity, for example a cutscene cut: the scene cost changes, so the controllers relearn the
-    /// normal frame time and do not count the new scene cost as streaming cost. Any thread can call it; it allocates nothing.
+    /// Signals a scene discontinuity, for example a cutscene cut: the scene cost changes, so the controllers measure the
+    /// new frame time again and do not count the new scene cost as streaming cost. Any thread can call it; it allocates nothing.
     /// </summary>
     public static void NotifySceneDiscontinuity()
         => Interlocked.Increment(ref s_discontinuityEpoch);
@@ -121,12 +121,12 @@ internal static class TextureStreamingCapacity
     }
 
     /// <summary>
-    /// Starts the measurement of one OpenGL apply or sparse transition on the render thread: it reads completed GPU
-    /// timestamps, writes the start timestamp, and starts the CPU timer. It allocates nothing.
+    /// Starts the measurement of one OpenGL apply or sparse transition on the render thread: it writes the start timestamp
+    /// and starts the CPU timer. The apply lane reads completed timestamps one time before each frame closes. It allocates
+    /// nothing.
     /// </summary>
     public static TextureStreamingApplyMeasurement BeginOpenGlApply()
     {
-        PollOpenGlGpuTimer();
         int pair = OpenGlGpuTimer.Begin();
         return new TextureStreamingApplyMeasurement(TextureStreamingWorkTimer.Start(), pair);
     }

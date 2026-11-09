@@ -19,7 +19,9 @@ namespace XREngine.Rendering;
 /// that gave the evidence is a ceiling (less one) for <see cref="EvidenceMemoryMilliseconds"/>, so the rise does not bring
 /// it back at once.</para>
 /// <para>A scene discontinuity restarts the statistics and relearns the normal frame time for
-/// <see cref="TextureStreamingWorkController.RelearnMilliseconds"/>.</para>
+/// <see cref="RelearnMilliseconds"/>. A scrub that signals a discontinuity in each frame keeps the controller in a relearn,
+/// so the width does not back off during the scrub. The controller reads the gate once in each frame, so a decode that
+/// starts and ends between two frames does not count as an active decode.</para>
 /// </remarks>
 internal sealed class TextureStreamingDecodeWidthController
 {
@@ -41,6 +43,15 @@ internal sealed class TextureStreamingDecodeWidthController
     /// <summary>The number of frames without decodes, after a reset, before the statistics count as evidence.</summary>
     internal const int MinimumIdleFrames = 8;
 
+    /// <summary>The duration of a relearn after a scene discontinuity.</summary>
+    internal const double RelearnMilliseconds = 250.0;
+
+    /// <summary>The fewest known frames in a relearn, so one long stall frame cannot end it alone.</summary>
+    internal const int RelearnMinimumFrames = 4;
+
+    /// <summary>The time constant of the over-budget rates.</summary>
+    internal const double OverrunRateTimeConstantMilliseconds = 160.0;
+
     private const double FallbackFrameMilliseconds = 1000.0 / 60.0;
 
     private int _baseWidth;
@@ -57,7 +68,7 @@ internal sealed class TextureStreamingDecodeWidthController
     private double _sinceRiseMilliseconds = double.PositiveInfinity;
     private int _decodingFramesAtWidth;
     private double _sinceEvidenceMilliseconds = double.PositiveInfinity;
-    private double _relearnRemainingMilliseconds = TextureStreamingWorkController.RelearnMilliseconds;
+    private double _relearnRemainingMilliseconds = RelearnMilliseconds;
     private double _relearnMinimum = double.PositiveInfinity;
     private int _relearnFrames;
     private double _tolerance = 2.0;
@@ -100,7 +111,7 @@ internal sealed class TextureStreamingDecodeWidthController
         _overRateIdle = 0.0;
         _decodingFrames = 0;
         _idleFrames = 0;
-        _relearnRemainingMilliseconds = TextureStreamingWorkController.RelearnMilliseconds;
+        _relearnRemainingMilliseconds = RelearnMilliseconds;
         _relearnMinimum = double.PositiveInfinity;
         _relearnFrames = 0;
     }
@@ -122,7 +133,7 @@ internal sealed class TextureStreamingDecodeWidthController
 
         if (known && !relearning && double.IsFinite(budget))
         {
-            double alpha = 1.0 - Math.Exp(-elapsed / TextureStreamingWorkController.OverrunRateTimeConstantMilliseconds);
+            double alpha = 1.0 - Math.Exp(-elapsed / OverrunRateTimeConstantMilliseconds);
             if (decoding)
             {
                 _overRateDecoding += ((over ? 1.0 : 0.0) - _overRateDecoding) * alpha;
@@ -158,7 +169,7 @@ internal sealed class TextureStreamingDecodeWidthController
 
         _holdRemainingMilliseconds = Math.Max(0.0, _holdRemainingMilliseconds - elapsed);
         _relearnRemainingMilliseconds = Math.Max(0.0, _relearnRemainingMilliseconds - elapsed);
-        if (relearning && _relearnFrames < TextureStreamingWorkController.RelearnMinimumFrames)
+        if (relearning && _relearnFrames < RelearnMinimumFrames)
             _relearnRemainingMilliseconds = Math.Max(_relearnRemainingMilliseconds, 1.0);
         if (relearning && _relearnRemainingMilliseconds <= 0.0 && double.IsFinite(_relearnMinimum))
         {
@@ -203,15 +214,7 @@ internal sealed class TextureStreamingDecodeWidthController
         => HasRecentEvidence ? 1.0 : Math.Min(_maxWidth, TextureStreamingCapacityModel.MinimumDecodeConcurrency);
 
     private double ResolveBudget(double target)
-    {
-        double learned = double.IsFinite(_normalFrameMean)
-            ? _normalFrameMean + TextureStreamingWorkController.JitterDeviationFactor * _normalFrameDeviation
-            : double.NaN;
-        if (target <= 0.0)
-            return learned;
-
-        return double.IsFinite(learned) ? Math.Max(target, learned) : target;
-    }
+        => TextureStreamingWorkController.ResolveBoundedBudget(_normalFrameMean, _normalFrameDeviation, target, _tolerance);
 
     private void ObserveNormalFrame(double frame, double target, double smoothing, bool relearning)
     {
