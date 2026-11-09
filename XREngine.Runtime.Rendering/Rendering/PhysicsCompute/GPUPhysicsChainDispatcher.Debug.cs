@@ -13,8 +13,16 @@ public sealed partial class GPUPhysicsChainDispatcher
     private const int MaximumGlobalDebugChains = 256;
     private const int MaximumGlobalDebugParticles = 16_384;
 
-    private readonly Dictionary<IRuntimeWorldContext, PhysicsChainGpuDebugBatch> _gpuDebugBatches =
-        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    // A small ring of batches per world and view. A view is the pipeline instance that records the
+    // draw; each one records on one thread at a time, so the desktop and the XR eye views draw the same
+    // world in the same frame without sharing regeneration state. The ring lets a view regenerate into
+    // a slot whose buffers are free while earlier frames still use the other slots on the GPU.
+    private readonly Dictionary<GpuDebugBatchKey, PhysicsChainGpuDebugBatch?[]> _gpuDebugBatches = [];
+    private readonly List<GpuDebugBatchKey> _gpuDebugBatchKeyScratch = [];
+    // Guards _gpuDebugBatches and _gpuDebugBatchesReadyToRetire. Lock order: _registeredComponentsSync first.
+    private readonly Lock _gpuDebugBatchSync = new();
+    // Serializes batch generation, which records compute work through the shared backend.
+    private readonly Lock _gpuDebugGenerationSync = new();
     private readonly HashSet<IRuntimeWorldContext> _gpuDebugWorldsPendingRetirement =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly List<PhysicsChainGpuDebugBatch> _gpuDebugBatchesReadyToRetire = [];
@@ -25,6 +33,25 @@ public sealed partial class GPUPhysicsChainDispatcher
     /// <summary>True when at least one registered chain requests GPU debug drawing.</summary>
     internal bool HasSelectedGpuDebugChains
         => Volatile.Read(ref _selectedGpuDebugChainCount) != 0;
+
+    /// <summary>Identifies the debug batch of one world as drawn by one pipeline instance.</summary>
+    private readonly struct GpuDebugBatchKey(IRuntimeWorldContext world, XRRenderPipelineInstance? view)
+        : IEquatable<GpuDebugBatchKey>
+    {
+        public IRuntimeWorldContext World { get; } = world;
+        public XRRenderPipelineInstance? View { get; } = view;
+
+        public bool Equals(GpuDebugBatchKey other)
+            => ReferenceEquals(World, other.World) && ReferenceEquals(View, other.View);
+
+        public override bool Equals(object? obj)
+            => obj is GpuDebugBatchKey other && Equals(other);
+
+        public override int GetHashCode()
+            => HashCode.Combine(
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(World),
+                View is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(View));
+    }
 
     private sealed class PhysicsChainGpuDebugBatch : RenderResourceLeaseOwner
     {
@@ -60,13 +87,18 @@ public sealed partial class GPUPhysicsChainDispatcher
     }
 
     /// <summary>Updates the count when an explicit chain debug choice changes.</summary>
-    internal void SetDebugDrawChainsSelection(IPhysicsChainComputeSource component, bool selected)
+    /// <returns>
+    /// True when the dispatcher now holds <paramref name="selected"/> for the component. False when the
+    /// component is not registered yet; the caller applies the choice again after registration.
+    /// </returns>
+    internal bool SetDebugDrawChainsSelection(IPhysicsChainComputeSource component, bool selected)
     {
         lock (_registeredComponentsSync)
         {
-            if (!_registeredComponents.TryGetValue(component, out GPUPhysicsChainRequest? request) ||
-                request.DebugSelected == selected)
-                return;
+            if (!_registeredComponents.TryGetValue(component, out GPUPhysicsChainRequest? request))
+                return false;
+            if (request.DebugSelected == selected)
+                return true;
 
             request.DebugSelected = selected;
             _selectedGpuDebugChainCount += selected ? 1 : -1;
@@ -84,6 +116,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             }
             if (_selectedGpuDebugChainCount == 0)
                 _gpuDebugDiagnostics = default;
+            return true;
         }
     }
 
@@ -120,24 +153,81 @@ public sealed partial class GPUPhysicsChainDispatcher
         _gpuDebugWorldsPendingRetirement.Add(world);
     }
 
+    /// <summary>Frames without a regeneration after which a view's batches count as unused.</summary>
+    private const ulong StaleGpuDebugBatchFrames = 600UL;
+
+    /// <summary>Batches per view. One more than the frames that can be in flight on the GPU.</summary>
+    private const int GpuDebugBatchRingSize = 4;
+
+    /// <summary>
+    /// Moves the batches of <paramref name="world"/> to the retirement list. Only batches last generated
+    /// before <paramref name="retireOlderThanFrame"/> move; <see cref="ulong.MaxValue"/> moves all of them.
+    /// The caller holds <see cref="_gpuDebugBatchSync"/>.
+    /// </summary>
+    private void QueueGpuDebugBatchesForRetirementNoLock(IRuntimeWorldContext world, ulong retireOlderThanFrame)
+    {
+        _gpuDebugBatchKeyScratch.Clear();
+        foreach (KeyValuePair<GpuDebugBatchKey, PhysicsChainGpuDebugBatch?[]> entry in _gpuDebugBatches)
+        {
+            if (!ReferenceEquals(entry.Key.World, world))
+                continue;
+            if (retireOlderThanFrame == ulong.MaxValue)
+            {
+                _gpuDebugBatchKeyScratch.Add(entry.Key);
+                continue;
+            }
+
+            // A ring that was never generated belongs to a view that has just appeared; keep it.
+            ulong latest = 0UL;
+            bool generatedAny = false;
+            foreach (PhysicsChainGpuDebugBatch? slot in entry.Value)
+            {
+                if (slot is null || slot.GeneratedFrame == ulong.MaxValue)
+                    continue;
+                generatedAny = true;
+                latest = Math.Max(latest, slot.GeneratedFrame);
+            }
+            if (generatedAny && latest < retireOlderThanFrame)
+                _gpuDebugBatchKeyScratch.Add(entry.Key);
+        }
+
+        for (int index = 0; index < _gpuDebugBatchKeyScratch.Count; ++index)
+        {
+            if (!_gpuDebugBatches.Remove(_gpuDebugBatchKeyScratch[index], out PhysicsChainGpuDebugBatch?[]? ring))
+                continue;
+            foreach (PhysicsChainGpuDebugBatch? slot in ring)
+            {
+                if (slot is not null)
+                    _gpuDebugBatchesReadyToRetire.Add(slot);
+            }
+        }
+        _gpuDebugBatchKeyScratch.Clear();
+    }
+
     /// <summary>Releases batches after all deferred authoring users retire.</summary>
     private void ProcessGpuDebugRetirements()
     {
         lock (_registeredComponentsSync)
         {
-            foreach (IRuntimeWorldContext world in _gpuDebugWorldsPendingRetirement)
+            if (_gpuDebugWorldsPendingRetirement.Count != 0)
             {
-                if (_gpuDebugBatches.Remove(world, out PhysicsChainGpuDebugBatch? batch))
-                    _gpuDebugBatchesReadyToRetire.Add(batch);
+                lock (_gpuDebugBatchSync)
+                {
+                    foreach (IRuntimeWorldContext world in _gpuDebugWorldsPendingRetirement)
+                        QueueGpuDebugBatchesForRetirementNoLock(world, retireOlderThanFrame: ulong.MaxValue);
+                }
             }
             _gpuDebugWorldsPendingRetirement.Clear();
         }
 
-        for (int index = _gpuDebugBatchesReadyToRetire.Count - 1; index >= 0; --index)
+        lock (_gpuDebugBatchSync)
         {
-            PhysicsChainGpuDebugBatch batch = _gpuDebugBatchesReadyToRetire[index];
-            batch.RequestRetirement();
-            _gpuDebugBatchesReadyToRetire.RemoveAt(index);
+            for (int index = _gpuDebugBatchesReadyToRetire.Count - 1; index >= 0; --index)
+            {
+                PhysicsChainGpuDebugBatch batch = _gpuDebugBatchesReadyToRetire[index];
+                batch.RequestRetirement();
+                _gpuDebugBatchesReadyToRetire.RemoveAt(index);
+            }
         }
     }
 
@@ -145,7 +235,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         => _gpuDebugDiagnostics;
 
     /// <summary>
-    /// Generates one debug batch per world and frame, then draws it for each view.
+    /// Generates one debug batch per world, view and frame, then draws it for that view.
     /// </summary>
     internal void RenderSelectedGpuDebug(IRuntimeWorldContext? world = null)
     {
@@ -172,57 +262,19 @@ public sealed partial class GPUPhysicsChainDispatcher
             return;
         }
 
-        if (!_gpuDebugBatches.TryGetValue(world, out PhysicsChainGpuDebugBatch? batch))
-        {
-            batch = new PhysicsChainGpuDebugBatch
-            {
-                GeneratedRenderer = renderer,
-                GeneratedBackendGeneration = _readbackBackendGeneration,
-            };
-            _gpuDebugBatches.Add(world, batch);
-        }
-        if (!batch.TryAcquireActiveUse())
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        GpuDebugBatchKey key = new(world, RuntimeEngine.Rendering.State.CurrentRenderingPipeline);
+        if (!TryAcquireGpuDebugBatch(key, renderer, frameId, out PhysicsChainGpuDebugBatch? batch, out bool regenerate))
             return;
-        if (batch.GeneratedRenderer is not null &&
-            (!ReferenceEquals(batch.GeneratedRenderer, renderer) ||
-             batch.GeneratedBackendGeneration != _readbackBackendGeneration))
-        {
-            PhysicsChainGpuDebugBatch previousBatch = batch;
-            try
-            {
-                batch = new PhysicsChainGpuDebugBatch
-                {
-                    GeneratedRenderer = renderer,
-                    GeneratedBackendGeneration = _readbackBackendGeneration,
-                };
-                _gpuDebugBatchesReadyToRetire.Add(previousBatch);
-                _gpuDebugBatches[world] = batch;
-            }
-            finally
-            {
-                previousBatch.ReleaseAuthoringUse();
-            }
-            if (!batch.TryAcquireActiveUse())
-                return;
-        }
 
         try
         {
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-            // A successful batch stays fixed until the next frame. Earlier view
-            // requests can still be waiting for deferred native materialization.
-            if (batch.GeneratedFrame != frameId ||
-                !ReferenceEquals(batch.GeneratedRenderer, renderer) ||
-                batch.GeneratedBackendGeneration != _readbackBackendGeneration)
+            if (regenerate)
             {
-                if (!CanRegenerateGpuDebugBatch(batch, renderer, out string reuseFailure))
-                {
-                    Debug.PhysicsWarningEvery(
-                        "PhysicsChain.Debug.AuthoringBusy", TimeSpan.FromSeconds(2),
-                        "GPU chain debug draw skipped: {0}.", reuseFailure);
-                    return;
-                }
-                if (!GenerateGpuDebugBatch(backend, world, batch, frameId))
+                bool generated;
+                lock (_gpuDebugGenerationSync)
+                    generated = GenerateGpuDebugBatch(backend, world, batch, frameId);
+                if (!generated)
                     return;
             }
 
@@ -262,6 +314,81 @@ public sealed partial class GPUPhysicsChainDispatcher
         {
             batch.ReleaseAuthoringUse();
         }
+    }
+
+    /// <summary>
+    /// Acquires the batch that one view draws this frame. A slot that was generated this frame is
+    /// drawn again. Otherwise the first slot whose buffers are free is regenerated.
+    /// </summary>
+    /// <returns>False when every slot still has GPU work in flight; the view skips this frame.</returns>
+    private bool TryAcquireGpuDebugBatch(
+        GpuDebugBatchKey key,
+        AbstractRenderer renderer,
+        ulong frameId,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out PhysicsChainGpuDebugBatch? batch,
+        out bool regenerate)
+    {
+        batch = null;
+        regenerate = false;
+        string failure = string.Empty;
+        lock (_gpuDebugBatchSync)
+        {
+            if (!_gpuDebugBatches.TryGetValue(key, out PhysicsChainGpuDebugBatch?[]? ring))
+            {
+                // A new view appeared. Retire the batches of views that stopped drawing this world,
+                // for example a pipeline instance that was replaced.
+                QueueGpuDebugBatchesForRetirementNoLock(
+                    key.World,
+                    retireOlderThanFrame: frameId > StaleGpuDebugBatchFrames ? frameId - StaleGpuDebugBatchFrames : 0UL);
+                ring = new PhysicsChainGpuDebugBatch?[GpuDebugBatchRingSize];
+                _gpuDebugBatches.Add(key, ring);
+            }
+
+            for (int index = 0; index < ring.Length; ++index)
+            {
+                PhysicsChainGpuDebugBatch? slot = ring[index];
+                if (slot is null ||
+                    (ReferenceEquals(slot.GeneratedRenderer, renderer) &&
+                     slot.GeneratedBackendGeneration == _readbackBackendGeneration))
+                    continue;
+
+                // The renderer or the simulation output changed. Retire the slot after its users finish.
+                _gpuDebugBatchesReadyToRetire.Add(slot);
+                ring[index] = null;
+            }
+
+            for (int index = 0; index < ring.Length; ++index)
+            {
+                PhysicsChainGpuDebugBatch? slot = ring[index];
+                if (slot is null || slot.GeneratedFrame != frameId || !slot.TryAcquireActiveUse())
+                    continue;
+                batch = slot;
+                return true;
+            }
+
+            for (int index = 0; index < ring.Length; ++index)
+            {
+                PhysicsChainGpuDebugBatch slot = ring[index] ??= new PhysicsChainGpuDebugBatch
+                {
+                    GeneratedRenderer = renderer,
+                    GeneratedBackendGeneration = _readbackBackendGeneration,
+                };
+                if (!slot.TryAcquireActiveUse())
+                    continue;
+                if (CanRegenerateGpuDebugBatch(slot, renderer, out failure))
+                {
+                    batch = slot;
+                    regenerate = true;
+                    return true;
+                }
+                slot.ReleaseAuthoringUse();
+            }
+        }
+
+        Debug.PhysicsWarningEvery(
+            "PhysicsChain.Debug.AuthoringBusy", TimeSpan.FromSeconds(2),
+            "GPU chain debug draw skipped: {0}.", failure);
+        return false;
     }
 
     private bool GenerateGpuDebugBatch(IPhysicsChainComputeBackend backend,
@@ -513,12 +640,18 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private void DisposeGlobalDebugResources()
     {
-        foreach (PhysicsChainGpuDebugBatch batch in _gpuDebugBatches.Values)
-            batch.RequestRetirement();
-        _gpuDebugBatches.Clear();
-        for (int index = 0; index < _gpuDebugBatchesReadyToRetire.Count; ++index)
-            _gpuDebugBatchesReadyToRetire[index].RequestRetirement();
-        _gpuDebugBatchesReadyToRetire.Clear();
+        lock (_gpuDebugBatchSync)
+        {
+            foreach (PhysicsChainGpuDebugBatch?[] ring in _gpuDebugBatches.Values)
+            {
+                foreach (PhysicsChainGpuDebugBatch? slot in ring)
+                    slot?.RequestRetirement();
+            }
+            _gpuDebugBatches.Clear();
+            for (int index = 0; index < _gpuDebugBatchesReadyToRetire.Count; ++index)
+                _gpuDebugBatchesReadyToRetire[index].RequestRetirement();
+            _gpuDebugBatchesReadyToRetire.Clear();
+        }
         _gpuDebugWorldsPendingRetirement.Clear();
         _gpuDebugDiagnostics = default;
     }
