@@ -489,7 +489,8 @@ internal sealed partial class VulkanTextureUploadService
                 manifest.RequiresExactDescriptorPublication, out string? failure,
                 out EVulkanPresentNowFailureDisposition failureDisposition);
         double publishMilliseconds = Stopwatch.GetElapsedTime(publishStart).TotalMilliseconds;
-        if (publishMilliseconds >= SlowTransferDrainLogMilliseconds || upload.ResidentData.GenerateMipChainOnGpu)
+        // Log only a slow publication, so the fast path builds no string.
+        if (publishMilliseconds >= SlowTransferDrainLogMilliseconds)
         {
             Debug.VulkanWarning(
                 $"[VkTextureUpload.Publish] texture='{upload.Request.TextureName}' publish={publishMilliseconds:F2} ms " +
