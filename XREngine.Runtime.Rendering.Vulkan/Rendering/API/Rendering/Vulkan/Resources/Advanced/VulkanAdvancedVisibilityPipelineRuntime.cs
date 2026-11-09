@@ -572,23 +572,29 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 coverage,
                 meshlet,
                 multiview);
+            bool opaque = coverage == EAdvancedMaterialCoverageMode.Opaque;
+            // The opaque fragment reads only flat identity values. Its vertex and mesh
+            // stages skip the interpolated coverage attributes.
+            string coveragePreamble = opaque ? IdentityOnlyRasterPreamble : string.Empty;
             retainedProgram ??= meshlet
                 ? CreateMeshRasterProgram(
-                    coverage == EAdvancedMaterialCoverageMode.Opaque
+                    opaque
                         ? AdvancedVisibilityShaderLibrary.OpaqueFragment
                         : AdvancedVisibilityShaderLibrary.MaskedFragment,
-                    coverage == EAdvancedMaterialCoverageMode.Opaque
+                    opaque
                         ? "VulkanAdvancedVisibilityMeshOpaque"
                         : "VulkanAdvancedVisibilityMeshMasked",
-                    multiview)
+                    multiview,
+                    coveragePreamble)
                 : CreateRasterProgram(
-                coverage == EAdvancedMaterialCoverageMode.Opaque
-                    ? AdvancedVisibilityShaderLibrary.OpaqueFragment
-                    : AdvancedVisibilityShaderLibrary.MaskedFragment,
-                coverage == EAdvancedMaterialCoverageMode.Opaque
-                    ? "VulkanAdvancedVisibilityOpaque"
-                    : "VulkanAdvancedVisibilityMasked",
-                multiview);
+                    opaque
+                        ? AdvancedVisibilityShaderLibrary.OpaqueFragment
+                        : AdvancedVisibilityShaderLibrary.MaskedFragment,
+                    opaque
+                        ? "VulkanAdvancedVisibilityOpaque"
+                        : "VulkanAdvancedVisibilityMasked",
+                    multiview,
+                    coveragePreamble);
             VulkanAdvancedVisibilityPipelineReadiness linkReadiness = TryPrepareProgram(
                 retainedProgram,
                 out VkRenderProgram raster,
@@ -606,6 +612,12 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
     }
+
+    /// <summary>
+    /// Selects the identity-only raster interface. The vertex and mesh stages then write only
+    /// the position and the flat identity values that the opaque fragment reads.
+    /// </summary>
+    private const string IdentityOnlyRasterPreamble = "#define XR_ADV_VISIBILITY_IDENTITY_ONLY 1\n";
 
     private ref XRRenderProgram? GetRasterProgramSlot(
         EAdvancedMaterialCoverageMode coverage,
@@ -688,7 +700,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return program;
     }
 
-    private XRRenderProgram CreateMeshRasterProgram(string fragmentPath, string name, bool multiview)
+    private XRRenderProgram CreateMeshRasterProgram(string fragmentPath, string name, bool multiview, string additionalPreamble = "")
     {
         XRShader meshAsset = XRShader.EngineShader(
             AdvancedVisibilityShaderLibrary.Mesh,
@@ -696,7 +708,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         XRShader fragmentAsset = XRShader.EngineShader(
             fragmentPath,
             EShaderType.Fragment);
-        string preamble = VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
+        string preamble = additionalPreamble + VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
             _resources.AdvancedSceneResources);
         if (multiview)
             preamble = "#define XR_ADV_MULTIVIEW_RASTER 1\n" + preamble;

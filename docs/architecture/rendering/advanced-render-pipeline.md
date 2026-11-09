@@ -489,6 +489,14 @@ capacity is sufficient.
 `ModelComponent` copies its `RenderBounds` setting into each new runtime mesh.
 A model rebuild preserves the requested bounds display.
 
+The Vulkan opaque visibility raster programs (indexed, mesh-shader, mono and
+multiview) define `XR_ADV_VISIBILITY_IDENTITY_ONLY`. With this define,
+`VisibilityRaster.vert` and `VisibilityRaster.mesh` write only the position and
+the flat identity values that `VisibilityRaster.frag` reads (locations 0-5 and
+7-10). The masked, fragment-depth and decal programs do not set the define. They
+keep the interpolated coverage attributes (locations 6 and 11-16). OpenGL does
+not set the define.
+
 Initial native visibility raster clears both depth and stencil. Late raster
 loads both attachments to preserve values written in the current frame. MSAA
 resolve clears the canonical stencil target because the depth resolve does not
