@@ -4,6 +4,7 @@ using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Physics.DebugVisualization;
 
 namespace XREngine.Rendering.Compute;
 
@@ -236,10 +237,10 @@ public sealed partial class GPUPhysicsChainDispatcher
                 batch.LinesRenderer is not { } linesRenderer)
                 return;
             bool pointsSubmitted = pointsRenderer.RenderIndexedIndirect(
-                arguments, 0, EPrimitiveType.Points, out string pointFailure,
+                arguments, 0, EPrimitiveType.Triangles, out string pointFailure,
                 authoringLease: batch);
             bool linesSubmitted = linesRenderer.RenderIndexedIndirect(
-                arguments, 0, EPrimitiveType.Points, out string lineFailure,
+                arguments, 0, EPrimitiveType.Triangles, out string lineFailure,
                 authoringLease: batch);
             if (!pointsSubmitted || !linesSubmitted)
             {
@@ -441,11 +442,16 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
 
         batch.PointsRenderer ??= new XRMeshRenderer(
-            new XRMesh([new Vertex(Vector3.Zero)]),
+            DebugPrimitiveShaders.CreateQuadScaffold(),
             CreateGpuDebugPointMaterial());
         batch.LinesRenderer ??= new XRMeshRenderer(
-            new XRMesh([new Vertex(Vector3.Zero)]),
+            DebugPrimitiveShaders.CreateQuadScaffold(),
             CreateGpuDebugLineMaterial());
+
+        // The materials own their single-view and multiview vertex variants, so the
+        // renderers must not build generated stereo variants or separable pipelines.
+        batch.PointsRenderer.GetDefaultVersion().AllowShaderPipelines = false;
+        batch.LinesRenderer.GetDefaultVersion().AllowShaderPipelines = false;
 
         ReplaceDebugRendererBuffer(batch.PointsRenderer, batch.PointsBuffer);
         ReplaceDebugRendererBuffer(batch.LinesRenderer, batch.LinesBuffer);
@@ -519,12 +525,7 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private static XRMaterial CreateGpuDebugPointMaterial()
     {
-        XRShader vertexShader = ShaderHelper.LoadEngineShader(
-            Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"),
-            EShaderType.Vertex);
-        XRShader geometryShader = ShaderHelper.LoadEngineShader(
-            Path.Combine("Common", "Debug", "gs", "PointInstance.gs"),
-            EShaderType.Geometry);
+        XRShader[] vertexShaders = DebugPrimitiveShaders.LoadVertexShaders("Point", compressed: false);
         XRShader fragmentShader = ShaderHelper.LoadEngineShader(
             Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitivePoint.fs"),
             EShaderType.Fragment);
@@ -533,7 +534,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             new ShaderFloat(0.005f, "PointSize"),
             new ShaderInt(0, "TotalPoints"),
         ];
-        var material = new XRMaterial(variables, vertexShader, geometryShader, fragmentShader);
+        var material = new XRMaterial(variables, [.. vertexShaders, fragmentShader]);
         material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
         material.RenderOptions.CullMode = ECullMode.None;
         material.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
@@ -547,12 +548,7 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private static XRMaterial CreateGpuDebugLineMaterial()
     {
-        XRShader vertexShader = ShaderHelper.LoadEngineShader(
-            Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"),
-            EShaderType.Vertex);
-        XRShader geometryShader = ShaderHelper.LoadEngineShader(
-            Path.Combine("Common", "Debug", "gs", "LineInstance.gs"),
-            EShaderType.Geometry);
+        XRShader[] vertexShaders = DebugPrimitiveShaders.LoadVertexShaders("Line", compressed: false);
         XRShader fragmentShader = ShaderHelper.LoadEngineShader(
             Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitiveLine.fs"),
             EShaderType.Fragment);
@@ -561,7 +557,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             new ShaderFloat(0.001f, "LineWidth"),
             new ShaderInt(0, "TotalLines"),
         ];
-        var material = new XRMaterial(variables, vertexShader, geometryShader, fragmentShader);
+        var material = new XRMaterial(variables, [.. vertexShaders, fragmentShader]);
         material.RenderOptions.RequiredEngineUniforms =
             EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions;
         material.RenderOptions.CullMode = ECullMode.None;

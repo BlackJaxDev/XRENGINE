@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Physics.DebugVisualization;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -61,7 +62,7 @@ internal sealed class DDGIProbeDebugResources
 
         if (_probeRenderer is null)
         {
-            _probeRenderer = new XRMeshRenderer(new XRMesh([new Vertex(Vector3.Zero)]), CreateProbeMaterial())
+            _probeRenderer = new XRMeshRenderer(DebugPrimitiveShaders.CreateQuadScaffold(), CreateProbeMaterial())
             {
                 GenerateAsync = false,
                 GenerationPriority = EMeshGenerationPriority.RenderPipeline,
@@ -73,7 +74,7 @@ internal sealed class DDGIProbeDebugResources
     }
 
     public bool TryPrepareForRendering()
-        => _probeRenderer?.TryPrepareForRendering(forceNoStereo: true) == true;
+        => _probeRenderer?.TryPrepareForRendering() == true;
 
     public void Dispatch(XRDataBuffer probeBuffer, DDGIVolumeRuntimeState state, uint probeCount, uint computeGroupSize)
     {
@@ -92,7 +93,7 @@ internal sealed class DDGIProbeDebugResources
         => _probeRenderer?.Material?.SetFloat(0, probeSize);
 
     public void Render(uint probeCount)
-        => _probeRenderer!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, probeCount, forceNoStereo: true);
+        => _probeRenderer!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, probeCount);
 
     private void AddOrReplaceDebugBuffer()
     {
@@ -105,10 +106,9 @@ internal sealed class DDGIProbeDebugResources
 
     private static XRMaterial CreateProbeMaterial()
     {
-        XRShader vert = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-        XRShader geom = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "gs", "PointInstance.gs"), EShaderType.Geometry);
+        XRShader[] vertexShaders = DebugPrimitiveShaders.LoadVertexShaders("Point", compressed: false);
         XRShader frag = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitivePoint.fs"), EShaderType.Fragment);
-        var material = new XRMaterial([new ShaderFloat(0.0125f, "PointSize")], [vert, geom, frag]);
+        var material = new XRMaterial([new ShaderFloat(0.0125f, "PointSize")], [.. vertexShaders, frag]);
         material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions;
         material.RenderOptions.CullMode = ECullMode.None;
         material.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;

@@ -5,6 +5,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Physics.DebugVisualization;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -15,7 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Designed to pair with <see cref="VPRC_BuildAccelerationStructure"/> and the
 /// zero-readback GPU rendering path: a compute shader walks the BVH node SSBO and
 /// writes 12 line segments (one per AABB edge) per node directly into a debug-line
-/// SSBO that is then drawn via the engine's instanced debug-line geometry shader.
+/// SSBO that is then drawn with the engine's vertex-expanded instanced debug lines.
 ///
 /// No CPU-side traversal or readback is involved; the only host-side state is the
 /// node count published by <see cref="VPRC_BuildAccelerationStructure"/> so we know
@@ -48,7 +49,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
 
     private const uint ComputeGroupSize = 64u;
     private const uint LinesPerBox = 12u;
-    private const uint Vec4PerLine = 3u;       // start, end, color (LineInstance.gs layout)
+    private const uint Vec4PerLine = 3u;       // start, end, color (DebugLineInstance.vs layout)
     private const uint FloatsPerVec4 = 4u;
 
     private XRShader? _computeShader;
@@ -132,8 +133,8 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
                 1u,
                 EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray | EMemoryBarrierMask.Command);
 
-            // Render pass: draw `visualizedLines` instances of a single point;
-            // LineInstance.gs expands each into a screen-space line quad sourced
+            // Render pass: draw `visualizedLines` instances of a quad scaffold;
+            // the vertex stage expands each into a screen-space line quad sourced
             // from the SSBO populated above. No CPU readback occurred.
             var material = _linesRenderer!.Material;
             material?.SetFloat(0, lineWidth);
@@ -142,7 +143,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
             using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(ResolveRenderGraphPassIndex()))
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
             {
-                _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines, forceNoStereo: true);
+                _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines);
             }
         }
         finally
@@ -184,7 +185,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
             _computeProgram = new XRRenderProgram(true, false, _computeShader);
         }
 
-        // Expanded layout: 3 vec4 per line (matches LineInstance.gs/SSBO binding 0).
+        // Expanded layout: 3 vec4 per line (matches DebugLineInstance.vs/SSBO binding 0).
         uint requiredVec4 = Math.Max(requiredLineCapacity, 1u) * Vec4PerLine;
 
         if (_linesBuffer is null || _allocatedLineCapacity < requiredLineCapacity)
@@ -224,13 +225,13 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
             if (material is null)
                 return false;
 
-            _linesRenderer = new XRMeshRenderer(new XRMesh([new Vertex(Vector3.Zero)]), material);
+            _linesRenderer = new XRMeshRenderer(DebugPrimitiveShaders.CreateQuadScaffold(), material);
             _linesRenderer.GenerateAsync = false;
             _linesRenderer.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
             AddOrReplaceLineBuffer();
 
-            // The debug line material expands points in a geometry shader, so it
-            // must stay on the default vertex variant instead of generated stereo variants.
+            // The material owns its single-view and multiview vertex variants, so the
+            // renderer must not build generated stereo variants or separable pipelines.
             _linesRenderer.GetDefaultVersion().AllowShaderPipelines = false;
         }
 
@@ -249,8 +250,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
 
     private XRMaterial? CreateLineMaterial()
     {
-        XRShader vert = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-        XRShader geom = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "gs", "LineInstance.gs"), EShaderType.Geometry);
+        XRShader[] vertexShaders = DebugPrimitiveShaders.LoadVertexShaders("Line", compressed: false);
         XRShader frag = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitiveLine.fs"), EShaderType.Fragment);
 
         ShaderVar[] vars =
@@ -259,7 +259,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
             new ShaderInt(0, "TotalLines"),
         ];
 
-        var mat = new XRMaterial(vars, [vert, geom, frag]);
+        var mat = new XRMaterial(vars, [.. vertexShaders, frag]);
         mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions;
         mat.RenderOptions.CullMode = ECullMode.None;
         mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;

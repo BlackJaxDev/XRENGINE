@@ -1,5 +1,5 @@
 // Vertex expansion of packed desktop debug lines. Width is in NDC units
-// relative to the smaller viewport dimension, matching DebugLineQuad.glsl.
+// relative to the smaller viewport dimension, matching DebugInstanceExpansion.glslinc.
 struct DebugLineView
 {
     float4x4 viewProjection;

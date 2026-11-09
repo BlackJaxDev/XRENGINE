@@ -73,19 +73,18 @@ public sealed class VulkanShaderCompilationRegressionTests
 
     private static readonly string[] DebugVertexShaders =
     [
-        "Common/Debug/vs/InstancedDebugPrimitive.vs",
-        "Common/Debug/vs/InstancedDebugPrimitiveStereoMV2.vs",
-        "Common/Debug/vs/InstancedDebugPrimitiveStereoNV.vs",
-    ];
-
-    private static readonly string[] GeometryShaders =
-    [
-        "Common/Debug/gs/LineInstance.gs",
-        "Common/Debug/gs/LineInstanceCompressed.gs",
-        "Common/Debug/gs/PointInstance.gs",
-        "Common/Debug/gs/PointInstanceCompressed.gs",
-        "Common/Debug/gs/TriangleInstance.gs",
-        "Common/Debug/gs/TriangleInstanceCompressed.gs",
+        "Common/Debug/vs/DebugPointInstance.vs",
+        "Common/Debug/vs/DebugPointInstanceStereo.vs",
+        "Common/Debug/vs/DebugPointInstanceCompressed.vs",
+        "Common/Debug/vs/DebugPointInstanceCompressedStereo.vs",
+        "Common/Debug/vs/DebugLineInstance.vs",
+        "Common/Debug/vs/DebugLineInstanceStereo.vs",
+        "Common/Debug/vs/DebugLineInstanceCompressed.vs",
+        "Common/Debug/vs/DebugLineInstanceCompressedStereo.vs",
+        "Common/Debug/vs/DebugTriangleInstance.vs",
+        "Common/Debug/vs/DebugTriangleInstanceStereo.vs",
+        "Common/Debug/vs/DebugTriangleInstanceCompressed.vs",
+        "Common/Debug/vs/DebugTriangleInstanceCompressedStereo.vs",
     ];
 
     private static readonly string[] GizmoGeometryShaders =
@@ -225,54 +224,15 @@ public sealed class VulkanShaderCompilationRegressionTests
         spirv.Length.ShouldBeGreaterThan(0);
         rewrittenSource.ShouldNotBeNull();
         rewrittenSource.ShouldContain("#define XRENGINE_VULKAN 1");
-        rewrittenSource.ShouldContain("flat out int instanceID");
         rewrittenSource.ShouldContain("gl_InstanceIndex");
-        rewrittenSource.ShouldNotContain("out gl_PerVertex");
-        rewrittenSource.ShouldContain("gl_PointSize = 1.0");
         rewrittenSource.ShouldNotContain("gl_CullDistance");
-    }
-
-    [TestCaseSource(nameof(GeometryShaders))]
-    public void GeometryShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
-    {
-        LoadedShaderSource loadedShader = LoadShaderSource(shaderRelativePath);
-        var shaderSource = new TextFile
+        if (shaderRelativePath.EndsWith("Stereo.vs", StringComparison.Ordinal))
         {
-            FilePath = loadedShader.FullPath,
-            Text = loadedShader.Source
-        };
-
-        XRShader shader = new(EShaderType.Geometry, shaderSource);
-
-        byte[] spirv = VulkanShaderCompiler.Compile(
-            shader,
-            out string entryPoint,
-            out _,
-            out string? rewrittenSource);
-
-        entryPoint.ShouldBe("main");
-        spirv.ShouldNotBeNull();
-        spirv.Length.ShouldBeGreaterThan(0);
-        rewrittenSource.ShouldNotBeNull();
-        rewrittenSource.ShouldContain("#define XRENGINE_VULKAN 1");
-        rewrittenSource.ShouldContain("flat in int instanceID");
-        rewrittenSource.ShouldContain("gl_Position");
-        rewrittenSource.ShouldNotContain("in gl_PerVertex");
-        rewrittenSource.ShouldNotContain("out gl_PerVertex");
-        rewrittenSource.ShouldNotContain("gl_CullDistance");
-
-        if (shaderRelativePath.Contains("PointInstance", StringComparison.Ordinal) ||
-            shaderRelativePath.Contains("LineInstance", StringComparison.Ordinal))
-        {
-            rewrittenSource.ShouldContain("max_vertices = 4");
-        }
-
-        if (shaderRelativePath.Contains("LineInstance", StringComparison.Ordinal))
-        {
-            rewrittenSource.ShouldContain("#ifdef XRENGINE_VULKAN");
-            rewrittenSource.ShouldContain("float da = a.z;");
+            rewrittenSource.ShouldContain("gl_ViewIndex");
+            rewrittenSource.ShouldNotContain("gl_ViewID_OVR");
         }
     }
+
 
     [TestCaseSource(nameof(GizmoGeometryShaders))]
     public void GizmoGeometryShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
