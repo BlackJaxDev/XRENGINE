@@ -223,6 +223,7 @@ namespace XREngine.Rendering.Commands
                             WriteTightCommandAabb(index, snapshot.Owner, mesh.Bounds, modelMatrix);
                         QueueLodTransitionReset(index);
                         AcquireLogicalMeshResidency(commandValue.LogicalMeshID);
+                        RequestAdvancedGeometryPrepack(mesh);
 
                         if (IsGpuSceneLoggingEnabled())
                         {
@@ -512,6 +513,7 @@ namespace XREngine.Rendering.Commands
 
             _atlasMeshRefCounts.Remove(mesh);
             UnsubscribeMeshletPayloadChanges(mesh);
+            _advancedScenePublisher.Prepack.Release(mesh);
 
             // Clear MeshData entry for safety (prevents stale atlas offsets from being consumed).
             EnsureMeshDataCapacity(meshID + 1);

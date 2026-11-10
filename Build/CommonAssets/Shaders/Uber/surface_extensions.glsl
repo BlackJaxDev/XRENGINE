@@ -148,20 +148,20 @@ vec3 uberResolveThemeColor(int themeIndex, vec3 authoredColor)
 #endif
 }
 
-vec4 uberSampleGlobalMaskTexture(int textureIndex, ToonMesh mesh)
+vec4 uberSampleGlobalMaskTexture(int textureIndex, ToonMesh mesh, float timeScale)
 {
 #ifdef XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES
     return vec4(1.0);
 #else
     vec4 value;
     if (textureIndex == 0)
-        value = texture(_GlobalMaskTexture0, panUV(transformUV(getUV(_GlobalMaskTexture0UV, mesh), _GlobalMaskTexture0_ST), _GlobalMaskTexture0Pan, u_Time));
+        value = texture(_GlobalMaskTexture0, panUV(transformUV(getUV(_GlobalMaskTexture0UV, mesh), _GlobalMaskTexture0_ST), _GlobalMaskTexture0Pan, u_Time * timeScale));
     else if (textureIndex == 1)
-        value = texture(_GlobalMaskTexture1, panUV(transformUV(getUV(_GlobalMaskTexture1UV, mesh), _GlobalMaskTexture1_ST), _GlobalMaskTexture1Pan, u_Time));
+        value = texture(_GlobalMaskTexture1, panUV(transformUV(getUV(_GlobalMaskTexture1UV, mesh), _GlobalMaskTexture1_ST), _GlobalMaskTexture1Pan, u_Time * timeScale));
     else if (textureIndex == 2)
-        value = texture(_GlobalMaskTexture2, panUV(transformUV(getUV(_GlobalMaskTexture2UV, mesh), _GlobalMaskTexture2_ST), _GlobalMaskTexture2Pan, u_Time));
+        value = texture(_GlobalMaskTexture2, panUV(transformUV(getUV(_GlobalMaskTexture2UV, mesh), _GlobalMaskTexture2_ST), _GlobalMaskTexture2Pan, u_Time * timeScale));
     else
-        value = texture(_GlobalMaskTexture3, panUV(transformUV(getUV(_GlobalMaskTexture3UV, mesh), _GlobalMaskTexture3_ST), _GlobalMaskTexture3Pan, u_Time));
+        value = texture(_GlobalMaskTexture3, panUV(transformUV(getUV(_GlobalMaskTexture3UV, mesh), _GlobalMaskTexture3_ST), _GlobalMaskTexture3Pan, u_Time * timeScale));
 
     vec4 denominator = max(_GlobalMaskMax - _GlobalMaskMin, vec4(EPSILON));
     value = saturate((value - _GlobalMaskMin) / denominator);
@@ -182,7 +182,7 @@ vec4 uberSampleGlobalMaskTexture(int textureIndex, ToonMesh mesh)
 #endif
 }
 
-float uberGlobalMask(int encodedIndex, ToonMesh mesh)
+float uberGlobalMask(int encodedIndex, ToonMesh mesh, float timeScale)
 {
     if (encodedIndex <= 0)
         return 1.0;
@@ -194,7 +194,7 @@ float uberGlobalMask(int encodedIndex, ToonMesh mesh)
     // an out-of-bounds access.
     int zeroBased = clamp(encodedIndex - 1, 0, 15);
     int channel = zeroBased % 4;
-    vec4 mask = uberSampleGlobalMaskTexture(zeroBased / 4, mesh);
+    vec4 mask = uberSampleGlobalMaskTexture(zeroBased / 4, mesh, timeScale);
     if (channel == 0)
         return mask.r;
     if (channel == 1)
@@ -202,6 +202,23 @@ float uberGlobalMask(int encodedIndex, ToonMesh mesh)
     if (channel == 2)
         return mask.b;
     return mask.a;
+}
+
+float uberGlobalMask(int encodedIndex, ToonMesh mesh)
+{
+    return uberGlobalMask(encodedIndex, mesh, 1.0);
+}
+
+float uberBlendMask(float baseMask, float blendMask, int blendType)
+{
+    if (blendType == 0) return clamp(blendMask, 0.0, 1.0);
+    if (blendType == 1) return clamp(baseMask - blendMask, 0.0, 1.0);
+    if (blendType == 2) return clamp(baseMask * blendMask, 0.0, 1.0);
+    if (blendType == 3) return clamp(baseMask / max(blendMask, 0.0001), 0.0, 1.0);
+    if (blendType == 4) return min(baseMask, blendMask);
+    if (blendType == 5) return max(baseMask, blendMask);
+    if (blendType == 6) return clamp((baseMask + blendMask) * 0.5, 0.0, 1.0);
+    return clamp(baseMask + blendMask, 0.0, 1.0);
 }
 
 vec3 uberApplyColorMask(vec3 baseColor, ToonMesh mesh, inout vec3 emission, inout PBRData pbr)
@@ -425,6 +442,10 @@ void uberApplyEmissionSlots(inout FragmentData fragData, ToonMesh mesh, vec3 dir
 }
 
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
+#ifndef XRENGINE_UBER_DISABLE_AUDIOLINK
+float uberAudioBandValue(int band, float history);
+#endif
+
 vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection, vec3 projectedNormal)
 {
     vec3 normal = projectedNormal;
@@ -469,7 +490,12 @@ vec4 uberMatcapSlot(
     vec4 maskOptions,
     vec4 uvBlend,
     vec4 uvControl,
+    float rotation,
     vec4 hue,
+    vec4 audioBands,
+    vec2 audioAlpha,
+    vec2 audioEmission,
+    vec2 audioIntensity,
     vec4 sourceSt,
     vec2 sourcePan,
     vec4 maskSt,
@@ -498,7 +524,13 @@ vec4 uberMatcapSlot(
         maskSample = texture(maskTexture, maskUv);
         if (uvBlend.x != 0.0 || uvBlend.y != 0.0)
             uv = mix(uv, getUV(int(uvControl.x + 0.5), mesh), uvBlend.xy);
-        uv = panUV(transformUV(uv, sourceSt), sourcePan, u_Time * 0.05);
+        uv = panUV(uv, sourcePan, u_Time * 0.05);
+        float angle = rotation * 3.14159265359;
+        float sine = sin(angle), cosine = cos(angle);
+        vec2 centeredUv = uv - 0.5;
+        uv = vec2(centeredUv.x * cosine + centeredUv.y * sine,
+            -centeredUv.x * sine + centeredUv.y * cosine) + 0.5;
+        uv = transformUV(uv, sourceSt);
         // Convert procedural source UVs to the imported texture origin.
         uv.y = 1.0 - uv.y;
     }
@@ -510,20 +542,29 @@ vec4 uberMatcapSlot(
         ? textureLod(source, uv, lod) : texture(source, uv);
     sampleColor.rgb *= uberResolveThemeColor(themeIndex, color.rgb);
     sampleColor.a *= color.a;
+    float intensity = parameters.x;
+    float emissionStrength = parameters.z;
+#ifndef XRENGINE_UBER_DISABLE_AUDIOLINK
+    if (sourceMatcap && audioBands.x > 0.5 && _AudioLinkAnimToggle != 0)
+    {
+        float alphaBand = uberAudioBandValue(int(audioBands.y), 0.0);
+        float emissionBand = uberAudioBandValue(int(audioBands.z), 0.0);
+        float intensityBand = uberAudioBandValue(int(audioBands.w), 0.0);
+        sampleColor.a = clamp(sampleColor.a + mix(audioAlpha.x, audioAlpha.y, alphaBand), 0.0, 1.0);
+        emissionStrength += mix(audioEmission.x, audioEmission.y, emissionBand);
+        intensity = max(0.0, intensity + mix(audioIntensity.x, audioIntensity.y, intensityBand));
+    }
+#endif
     float mask = sourceMatcap ? maskSample[clamp(int(maskOptions.x + 0.5), 0, 3)] : texture(maskTexture, getUV(0, mesh)).r;
     if (sourceMatcap && maskOptions.y > 0.5) mask = 1.0 - mask;
     mask *= mix(1.0, saturate(light.lightMap), saturate(parameters.y));
 #ifndef XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES
     if (sourceMatcap && uvControl.z > 0.5)
-    {
-        vec2 globalUv = panUV(transformUV(getUV(_GlobalMaskTexture0UV, mesh),
-            _GlobalMaskTexture0_ST), _GlobalMaskTexture0Pan, u_Time * 0.05);
-        float globalMask = texture(_GlobalMaskTexture0, globalUv).r;
-        mask = clamp(mask - globalMask, 0.0, 1.0);
-    }
+        mask = uberBlendMask(mask, uberGlobalMask(int(uvControl.z + 0.5), mesh, 0.05),
+            int(uvControl.w + 0.5));
 #endif
     sampleColor.rgb *= mix(vec3(1.0), light.color, saturate(projection.w));
-    sampleColor.rgb *= max(parameters.x, 0.0);
+    sampleColor.rgb *= max(intensity, 0.0);
     if (sourceMatcap)
         sampleColor.rgb = mix(sampleColor.rgb, sampleColor.rgb * baseColor, clamp(sourceOptions.y, 0.0, 1.0));
     if (sourceMatcap && hue.x > 0.5)
@@ -534,7 +575,7 @@ vec4 uberMatcapSlot(
     }
     mask *= sampleColor.a;
     if (sourceMatcap) lightAdd += sampleColor.rgb * sourceOptions.z * mask;
-    emission += sampleColor.rgb * max(parameters.z, 0.0) * mask;
+    emission += sampleColor.rgb * max(emissionStrength, 0.0) * mask;
     return vec4(sampleColor.rgb, mask);
 }
 
@@ -552,42 +593,58 @@ void uberBlendMatcapSlot(inout vec3 finalColor, vec4 slot, vec4 blend, float mix
 void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3 lightAdd, ToonMesh mesh, ToonLight light)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
-    if (_MatcapSlotParams0.x > 0.0)
+    bool audioActive = false;
+#ifndef XRENGINE_UBER_DISABLE_AUDIOLINK
+    audioActive = _AudioLinkAnimToggle != 0;
+#endif
+    if (_MatcapSlotParams0.x > 0.0 || (audioActive && _MatcapSlotAudioBands0.x > 0.5 &&
+        (max(_MatcapSlotAudioIntensity0.x, _MatcapSlotAudioIntensity0.y) > 0.0 ||
+         max(_MatcapSlotAudioEmission0.x, _MatcapSlotAudioEmission0.y) > 0.0)))
     {
         vec4 value = uberMatcapSlot(
             _Matcap0Tex, _Matcap0Mask, _MatcapSlotColor0, _MatcapSlotTheme0,
             _MatcapSlotParams0, _MatcapSlotExtra0, _MatcapSlotSource0, _MatcapSlotMask0,
-            _MatcapSlotUvBlend0, _MatcapSlotUvControl0, _MatcapSlotHue0,
+            _MatcapSlotUvBlend0, _MatcapSlotUvControl0, _MatcapSlotRotation0, _MatcapSlotHue0,
+            _MatcapSlotAudioBands0, _MatcapSlotAudioAlpha0, _MatcapSlotAudioEmission0, _MatcapSlotAudioIntensity0,
             _Matcap0Tex_ST, _Matcap0TexPan, _Matcap0Mask_ST, _Matcap0MaskPan,
             mesh, light, finalColor, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend0, _MatcapSlotExtra0.x);
     }
-    if (_MatcapSlotParams1.x > 0.0)
+    if (_MatcapSlotParams1.x > 0.0 || (audioActive && _MatcapSlotAudioBands1.x > 0.5 &&
+        (max(_MatcapSlotAudioIntensity1.x, _MatcapSlotAudioIntensity1.y) > 0.0 ||
+         max(_MatcapSlotAudioEmission1.x, _MatcapSlotAudioEmission1.y) > 0.0)))
     {
         vec4 value = uberMatcapSlot(
             _Matcap1Tex, _Matcap1Mask, _MatcapSlotColor1, _MatcapSlotTheme1,
             _MatcapSlotParams1, _MatcapSlotExtra1, _MatcapSlotSource1, _MatcapSlotMask1,
-            _MatcapSlotUvBlend1, _MatcapSlotUvControl1, _MatcapSlotHue1,
+            _MatcapSlotUvBlend1, _MatcapSlotUvControl1, _MatcapSlotRotation1, _MatcapSlotHue1,
+            _MatcapSlotAudioBands1, _MatcapSlotAudioAlpha1, _MatcapSlotAudioEmission1, _MatcapSlotAudioIntensity1,
             _Matcap1Tex_ST, _Matcap1TexPan, _Matcap1Mask_ST, _Matcap1MaskPan,
             mesh, light, finalColor, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend1, _MatcapSlotExtra1.x);
     }
-    if (_MatcapSlotParams2.x > 0.0)
+    if (_MatcapSlotParams2.x > 0.0 || (audioActive && _MatcapSlotAudioBands2.x > 0.5 &&
+        (max(_MatcapSlotAudioIntensity2.x, _MatcapSlotAudioIntensity2.y) > 0.0 ||
+         max(_MatcapSlotAudioEmission2.x, _MatcapSlotAudioEmission2.y) > 0.0)))
     {
         vec4 value = uberMatcapSlot(
             _Matcap2Tex, _Matcap2Mask, _MatcapSlotColor2, _MatcapSlotTheme2,
             _MatcapSlotParams2, _MatcapSlotExtra2, _MatcapSlotSource2, _MatcapSlotMask2,
-            _MatcapSlotUvBlend2, _MatcapSlotUvControl2, _MatcapSlotHue2,
+            _MatcapSlotUvBlend2, _MatcapSlotUvControl2, _MatcapSlotRotation2, _MatcapSlotHue2,
+            _MatcapSlotAudioBands2, _MatcapSlotAudioAlpha2, _MatcapSlotAudioEmission2, _MatcapSlotAudioIntensity2,
             _Matcap2Tex_ST, _Matcap2TexPan, _Matcap2Mask_ST, _Matcap2MaskPan,
             mesh, light, finalColor, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend2, _MatcapSlotExtra2.x);
     }
-    if (_MatcapSlotParams3.x > 0.0)
+    if (_MatcapSlotParams3.x > 0.0 || (audioActive && _MatcapSlotAudioBands3.x > 0.5 &&
+        (max(_MatcapSlotAudioIntensity3.x, _MatcapSlotAudioIntensity3.y) > 0.0 ||
+         max(_MatcapSlotAudioEmission3.x, _MatcapSlotAudioEmission3.y) > 0.0)))
     {
         vec4 value = uberMatcapSlot(
             _Matcap3Tex, _Matcap3Mask, _MatcapSlotColor3, _MatcapSlotTheme3,
             _MatcapSlotParams3, _MatcapSlotExtra3, _MatcapSlotSource3, _MatcapSlotMask3,
-            _MatcapSlotUvBlend3, _MatcapSlotUvControl3, _MatcapSlotHue3,
+            _MatcapSlotUvBlend3, _MatcapSlotUvControl3, _MatcapSlotRotation3, _MatcapSlotHue3,
+            _MatcapSlotAudioBands3, _MatcapSlotAudioAlpha3, _MatcapSlotAudioEmission3, _MatcapSlotAudioIntensity3,
             _Matcap3Tex_ST, _Matcap3TexPan, _Matcap3Mask_ST, _Matcap3MaskPan,
             mesh, light, finalColor, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend3, _MatcapSlotExtra3.x);

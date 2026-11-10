@@ -14,6 +14,11 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private int _completedPreparationIdentity;
     private bool _preparationStopped;
     private VulkanAdvancedNativeComputePipelines _preparedNativeComputePipelines;
+    private CancellationTokenSource? _multisampleShadingCancellation;
+    private Task? _multisampleShadingTask;
+    private MultisampleShadingSnapshot _multisampleShading = new(
+        VulkanAdvancedVisibilityPipelineReadiness.Missing,
+        "Multisample native shading has not been requested.", default, 0);
     private long _foregroundPollTicks;
     private long _foregroundPollCount;
     private long _preparationAttemptTicks;
@@ -188,7 +193,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     internal void StopPreparation()
     {
         Task? task;
+        Task? multisampleTask;
         CancellationTokenSource? cancellation;
+        CancellationTokenSource? multisampleCancellation;
         lock (_preparationGate)
         {
             if (_preparationStopped)
@@ -198,8 +205,32 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             task = _preparationTask;
             cancellation = _preparationCancellation;
             cancellation?.Cancel();
+            multisampleTask = _multisampleShadingTask;
+            multisampleCancellation = _multisampleShadingCancellation;
+            multisampleCancellation?.Cancel();
         }
 
+        try
+        {
+            WaitForPreparationTask(task);
+        }
+        finally
+        {
+            try
+            {
+                WaitForPreparationTask(multisampleTask);
+            }
+            finally
+            {
+                WaitForPendingShaderCompiles();
+                cancellation?.Dispose();
+                multisampleCancellation?.Dispose();
+            }
+        }
+    }
+
+    private static void WaitForPreparationTask(Task? task)
+    {
         try
         {
             task?.GetAwaiter().GetResult();
@@ -207,11 +238,106 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         catch (OperationCanceledException)
         {
         }
-        finally
+    }
+
+    /// <summary>Returns the exact multisample shade generation when its background preparation is ready.</summary>
+    private VulkanAdvancedVisibilityPipelineReadiness GetMultisampleNativeShadingReadiness(
+        out VulkanAdvancedComputePipeline shade, out string reason)
+    {
+        shade = default;
+        RequestMultisampleNativeShadingPreparation();
+        MultisampleShadingSnapshot snapshot = Volatile.Read(ref _multisampleShading);
+        reason = snapshot.Reason;
+        if (snapshot.State != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return snapshot.State;
+        if (snapshot.Identity != CaptureMultisampleShadingIdentity() || !snapshot.Pipeline.IsCurrent ||
+            !IsProgramCurrent(_nativeComputePrograms[ShadeStandardMultisampleProgramIndex], compute: true))
         {
-            WaitForPendingShaderCompiles();
-            cancellation?.Dispose();
+            reason = "Multisample native shading generation changed during preparation.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Pending;
         }
+        shade = snapshot.Pipeline;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
+    private void RequestMultisampleNativeShadingPreparation()
+    {
+        lock (_preparationGate)
+        {
+            if (_preparationStopped || _multisampleShadingTask is { IsCompleted: false })
+                return;
+
+            int identity = CaptureMultisampleShadingIdentity();
+            MultisampleShadingSnapshot snapshot = Volatile.Read(ref _multisampleShading);
+            if (snapshot.Identity == identity &&
+                (snapshot.State == VulkanAdvancedVisibilityPipelineReadiness.Failed ||
+                 snapshot.State == VulkanAdvancedVisibilityPipelineReadiness.Ready && snapshot.Pipeline.IsCurrent &&
+                 IsProgramCurrent(_nativeComputePrograms[ShadeStandardMultisampleProgramIndex], compute: true)))
+                return;
+
+            _multisampleShadingCancellation?.Dispose();
+            _multisampleShadingCancellation = new CancellationTokenSource();
+            CancellationToken token = _multisampleShadingCancellation.Token;
+            Volatile.Write(ref _multisampleShading, new MultisampleShadingSnapshot(
+                VulkanAdvancedVisibilityPipelineReadiness.Pending,
+                "Multisample native shading pipeline preparation is pending.", default, identity));
+            _multisampleShadingTask = StartMultisampleShadingTask(identity, token);
+        }
+    }
+
+    private Task StartMultisampleShadingTask(int identity, CancellationToken token)
+        => Task.Run(() => PrepareMultisampleNativeShadingAsync(identity, token), token);
+
+    private async Task PrepareMultisampleNativeShadingAsync(int identity, CancellationToken token)
+    {
+        try
+        {
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                VulkanAdvancedVisibilityPipelineReadiness readiness = TryGetNativeComputePipeline(
+                    ShadeStandardMultisampleProgramIndex, ShadeMultisampleShaderPath,
+                    out VulkanAdvancedComputePipeline shade, out string reason);
+                int currentIdentity = CaptureMultisampleShadingIdentity();
+                if (currentIdentity != identity)
+                {
+                    identity = currentIdentity;
+                    Volatile.Write(ref _multisampleShading, new MultisampleShadingSnapshot(
+                        VulkanAdvancedVisibilityPipelineReadiness.Pending,
+                        "Multisample native shading source changed during preparation.", default, identity));
+                    continue;
+                }
+                if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Pending)
+                {
+                    Volatile.Write(ref _multisampleShading,
+                        new MultisampleShadingSnapshot(readiness, reason, shade, identity));
+                    return;
+                }
+                Volatile.Write(ref _multisampleShading,
+                    new MultisampleShadingSnapshot(readiness, reason, default, identity));
+                await Task.Delay(5, token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            Volatile.Write(ref _multisampleShading, new MultisampleShadingSnapshot(
+                VulkanAdvancedVisibilityPipelineReadiness.Failed,
+                "Multisample native shading preparation was canceled during renderer shutdown.", default, identity));
+        }
+        catch (Exception exception)
+        {
+            Volatile.Write(ref _multisampleShading,
+                new MultisampleShadingSnapshot(VulkanAdvancedVisibilityPipelineReadiness.Failed,
+                    exception.Message, default, identity));
+        }
+    }
+
+    private int CaptureMultisampleShadingIdentity()
+    {
+        HashCode hash = new();
+        hash.Add(RuntimeEngine.Rendering.Settings.ShaderConfigVersion);
+        AddProgramIdentity(ref hash, _nativeComputePrograms[ShadeStandardMultisampleProgramIndex]);
+        return hash.ToHashCode();
     }
 
     private void RequestPreparation()
@@ -514,7 +640,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         // The optional Uber kernels are created after admission, only for scenes that need
         // them. Their lazy creation must not invalidate the admitted family.
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
-            if (!IsOptionalNativeShadingProgram(i))
+            if (!IsOptionalNativeShadingProgram(i) && i != ShadeStandardMultisampleProgramIndex)
                 AddProgramIdentity(ref hash, _nativeComputePrograms[i]);
         return hash.ToHashCode();
     }
@@ -558,7 +684,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             return false;
         }
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
-            if (!IsOptionalNativeShadingProgram(i) && !IsProgramCurrent(_nativeComputePrograms[i], compute: true))
+            if (!IsOptionalNativeShadingProgram(i) && i != ShadeStandardMultisampleProgramIndex &&
+                !IsProgramCurrent(_nativeComputePrograms[i], compute: true))
                 return false;
         if (!IsProgramCurrent(_opaqueRasterProgram, compute: false) ||
             !IsProgramCurrent(_maskedRasterProgram, compute: false))
@@ -604,4 +731,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private sealed record PreparationSnapshot(
         VulkanAdvancedVisibilityPipelineReadiness State,
         string Reason);
+
+    private sealed record MultisampleShadingSnapshot(
+        VulkanAdvancedVisibilityPipelineReadiness State,
+        string Reason,
+        VulkanAdvancedComputePipeline Pipeline,
+        int Identity);
 }

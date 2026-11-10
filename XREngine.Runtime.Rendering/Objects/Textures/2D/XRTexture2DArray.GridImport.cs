@@ -18,7 +18,7 @@ public partial class XRTexture2DArray
         using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
         read.EnsureHostFileAccess("Texture grid import");
         byte[] bytes = read.ReadAllBytes(filePath);
-        using RuntimeImage source = RuntimeImageCodecs.Require().Decode(bytes);
+        using RuntimeImage source = RuntimeImageCodecs.Require().Decode(bytes, filePath);
         if (source.Width % columns != 0 || source.Height % rows != 0)
             throw new InvalidDataException(
                 $"Texture dimensions {source.Width}x{source.Height} are not divisible by the {columns}x{rows} flipbook grid.");

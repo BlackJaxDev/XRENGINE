@@ -53,7 +53,8 @@ public partial class GPUScene
             foreach (XRMeshRenderer? renderer in _meshSubmissionLodRenderers)
                 if ((record.MaterialOverride ?? renderer?.Material)?.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outline) == true && outline.Enabled)
                 {
-                    bool modeled = outline.ShaderBehavior == EngineMaterialSemanticIdentity.UberOutlineV1;
+                    bool modeled = outline.ShaderBehavior == EngineMaterialSemanticIdentity.UberOutlineV1 ||
+                        outline.ShaderBehavior == EngineMaterialSemanticIdentity.UberSoftOutlineV2;
                     destination.WritableRecords[recordIndex] = destination.WritableRecords[recordIndex] with
                     {
                         MaterialOutlineCommand = renderable!.MaterialOutlineCommand,
@@ -128,11 +129,12 @@ public partial class GPUScene
                     PayloadOwnerValidationToken = payload?.OwnerValidationToken ?? 0,
                 };
                 if (passSet?.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outlinePass) == true && outlinePass.Enabled &&
-                    outlinePass.ShaderBehavior == EngineMaterialSemanticIdentity.UberOutlineV1)
+                    (outlinePass.ShaderBehavior == EngineMaterialSemanticIdentity.UberOutlineV1 ||
+                     outlinePass.ShaderBehavior == EngineMaterialSemanticIdentity.UberSoftOutlineV2))
                 {
                     XRMaterial outlineSource = record.MaterialOverride ?? renderer.Material!;
                     XRMaterial? outlineMaterial = outlineSource.OutlinePassVariant;
-                    if (outlineMaterial?.EngineSemantic != EngineMaterialSemanticIdentity.UberOutlineV1)
+                    if (outlineMaterial?.EngineSemantic != outlinePass.ShaderBehavior)
                         throw new NotSupportedException("GPUScene.OutlineCompanionMissing: the modeled outline requires its exact cooked material variant.");
                     GpuMeshSubmissionSourceBindings outlineBindings = GpuMeshSubmissionSourceBindings.Capture(
                         mesh, renderer, outlineMaterial, _updatingMeshSubmissionOutlineBindings[bindingIndex]);

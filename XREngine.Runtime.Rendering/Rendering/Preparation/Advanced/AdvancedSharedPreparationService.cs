@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.Rendering;
 
@@ -17,6 +18,8 @@ public sealed class AdvancedSharedPreparationService : IDisposable
     private readonly object _sync = new();
     private AdvancedPreparationExtractor _extractor;
     private GPUScene? _publishedScene;
+    private AdvancedGpuScenePublication _publishedSource;
+    private AdvancedGpuScenePublicationLease _publicationLease;
     private AdvancedPreparationPublication _publication;
     private long _acquireCount;
     private long _cacheHitCount;
@@ -61,8 +64,11 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             AdvancedPreparationExtractor retired = service._extractor;
             AdvancedPreparationExtractor replacement = new(retired.Options);
             retired.Dispose();
+            service._publicationLease.Dispose();
+            service._publicationLease = default;
             service._extractor = replacement;
             service._publishedScene = null;
+            service._publishedSource = default;
             service._publication = default;
         }
     }
@@ -104,14 +110,34 @@ public sealed class AdvancedSharedPreparationService : IDisposable
         in RenderWorldSnapshot world,
         RenderFrameViewSet? viewSet,
         EAdvancedPreparationConsumer consumers)
-        => Acquire(world, viewSet, consumers,
-            RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+        => AcquireCore(world, viewSet, consumers,
+            RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(), null);
 
     public AdvancedPreparationPublication Acquire(
         in RenderWorldSnapshot world,
         RenderFrameViewSet? viewSet,
         EAdvancedPreparationConsumer consumers,
         EMeshSubmissionStrategy submissionStrategy)
+        => AcquireCore(world, viewSet, consumers, submissionStrategy, null);
+
+    /// <summary>Acquires preparation from the exact scene publication retained by the active frame package.</summary>
+    public AdvancedPreparationPublication Acquire(
+        in RenderWorldSnapshot world,
+        RenderFrameViewSet? viewSet,
+        EAdvancedPreparationConsumer consumers,
+        BackendReadyFramePackage package,
+        EMeshSubmissionStrategy submissionStrategy)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        return AcquireCore(world, viewSet, consumers, submissionStrategy, package);
+    }
+
+    private AdvancedPreparationPublication AcquireCore(
+        in RenderWorldSnapshot world,
+        RenderFrameViewSet? viewSet,
+        EAdvancedPreparationConsumer consumers,
+        EMeshSubmissionStrategy submissionStrategy,
+        BackendReadyFramePackage? package)
     {
         long waitStarted = Stopwatch.GetTimestamp();
         lock (_sync)
@@ -122,10 +148,28 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 _maximumAcquireLockWaitTicks,
                 acquireLockWaitTicks);
             _acquireCount++;
+            AdvancedSharedGpuSceneDatabase database = world.GpuScene.AdvancedSharedDatabase;
+            AdvancedGpuScenePublicationReference requested = package is null
+                ? world.GpuScene.AdvancedScenePublication
+                : package.State == EBackendReadyFramePackageState.Published &&
+                    package.TryGetCanonicalPublication(out AdvancedSharedGpuSceneDatabase packageDatabase,
+                    out AdvancedGpuScenePublicationReference packageReference) &&
+                    ReferenceEquals(packageDatabase, database)
+                    ? packageReference
+                    : default;
+            if (package is not null && !requested.IsValid)
+                return RejectRequest(world, consumers, requested,
+                    "The active frame package has no canonical publication from this world GPU scene.");
+
+            if (_publication.GpuResourcesPublished && _publication.FrameId == world.FrameId &&
+                ReferenceEquals(_publishedScene, world.GpuScene) &&
+                _publishedSource != requested.Publication)
+                return RejectRequest(world, consumers, requested,
+                    $"The world frame already prepared scene sequence {_publishedSource.Sequence}; the active package requests sequence {requested.Sequence}. Recollect a matching package.");
+
             if (_publication.FrameId == world.FrameId &&
                 ReferenceEquals(_publishedScene, world.GpuScene) &&
-                _publication.ScenePublication ==
-                    world.GpuScene.AdvancedScenePublication.Publication)
+                _publishedSource == requested.Publication)
             {
                 _cacheHitCount++;
                 if (!_publication.GpuResourcesPublished)
@@ -167,36 +211,86 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 return _publication;
             }
 
+            AdvancedGpuScenePublicationLease candidateLease = default;
+            AdvancedGpuScenePublicationSnapshot? snapshot = null;
+            if (requested.IsValid &&
+                database.TryAcquirePublicationLease(requested,
+                    EAdvancedGpuScenePublicationPinKind.Package, out candidateLease))
+                database.TryGetPublicationSnapshot(requested, out snapshot);
+            if (package is not null && snapshot is null)
+            {
+                candidateLease.Dispose();
+                return RejectRequest(world, consumers, requested,
+                    $"The active frame package publication sequence {requested.Sequence} is no longer available.");
+            }
+
             _rebuildCount++;
             long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
             long buildStarted = Stopwatch.GetTimestamp();
-            _publication = _extractor.Build(world, viewSet, consumers, submissionStrategy);
-            _buildTicks += Stopwatch.GetTimestamp() - buildStarted;
-            _buildAllocatedBytes +=
-                GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
-            _extractionTicks += _extractor.LastExtractionTicks;
-            _indirectPlanningTicks += _extractor.LastIndirectPlanningTicks;
-            _initialViewPlanningTicks += _extractor.LastInitialViewPlanningTicks;
-            long deformationStarted = Stopwatch.GetTimestamp();
-            bool executed = _publication.GpuResourcesPublished &&
-                _extractor.GpuDeformation.TryExecute(
-                    _extractor.DispatchPlanner,
-                    _extractor.DeformationJobs,
-                    consumers,
-                    _extractor.Admission.RejectedJobCount);
-            _deformationTicks += Stopwatch.GetTimestamp() - deformationStarted;
-            AdvancedDeformationDispatchTelemetry telemetry =
-                _extractor.GpuDeformation.LastTelemetry;
-            _publication = _publication with
+            try
             {
-                AggregateDispatchExecuted = executed,
-                Backend = _extractor.GpuDeformation.Backend,
-                DeformationGpuMilliseconds =
-                    telemetry.GpuMilliseconds,
-            };
-            _publishedScene = world.GpuScene;
-            return _publication;
+                AdvancedPreparationPublication built = _extractor.Build(
+                    world, viewSet, consumers, submissionStrategy, requested, snapshot);
+                _buildTicks += Stopwatch.GetTimestamp() - buildStarted;
+                _buildAllocatedBytes +=
+                    GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+                _extractionTicks += _extractor.LastExtractionTicks;
+                _indirectPlanningTicks += _extractor.LastIndirectPlanningTicks;
+                _initialViewPlanningTicks += _extractor.LastInitialViewPlanningTicks;
+                long deformationStarted = Stopwatch.GetTimestamp();
+                bool executed = built.GpuResourcesPublished &&
+                    _extractor.GpuDeformation.TryExecute(
+                        _extractor.DispatchPlanner,
+                        _extractor.DeformationJobs,
+                        consumers,
+                        _extractor.Admission.RejectedJobCount);
+                _deformationTicks += Stopwatch.GetTimestamp() - deformationStarted;
+                AdvancedDeformationDispatchTelemetry telemetry =
+                    _extractor.GpuDeformation.LastTelemetry;
+                AdvancedGpuScenePublicationLease retiredLease = _publicationLease;
+                _publicationLease = candidateLease;
+                retiredLease.Dispose();
+                _publication = built with
+                {
+                    AggregateDispatchExecuted = executed,
+                    Backend = _extractor.GpuDeformation.Backend,
+                    DeformationGpuMilliseconds = telemetry.GpuMilliseconds,
+                };
+                _publishedScene = world.GpuScene;
+                _publishedSource = requested.Publication;
+                return _publication;
+            }
+            catch
+            {
+                candidateLease.Dispose();
+                _publicationLease.Dispose();
+                _publicationLease = default;
+                _publishedScene = null;
+                _publishedSource = default;
+                _publication = default;
+                throw;
+            }
         }
+    }
+
+    private static AdvancedPreparationPublication RejectRequest(
+        in RenderWorldSnapshot world,
+        EAdvancedPreparationConsumer consumers,
+        in AdvancedGpuScenePublicationReference requested,
+        string reason)
+    {
+        Debug.RenderingWarningEvery(
+            "AdvancedPreparation.CanonicalPublicationUnavailable",
+            TimeSpan.FromSeconds(30),
+            "[AdvancedPipeline] Preparation cannot use this frame package: {0}", reason);
+        return default(AdvancedPreparationPublication) with
+        {
+            FrameId = world.FrameId,
+            SceneIdentity = unchecked((uint)RuntimeHelpers.GetHashCode(world.GpuScene)),
+            ScenePublication = requested.Publication,
+            Consumers = consumers,
+            WarmedManagedAllocationFree = true,
+        };
     }
 
     /// <summary>
@@ -366,5 +460,15 @@ public sealed class AdvancedSharedPreparationService : IDisposable
     }
 
     public void Dispose()
-        => _extractor.Dispose();
+    {
+        lock (_sync)
+        {
+            _publicationLease.Dispose();
+            _publicationLease = default;
+            _extractor.Dispose();
+            _publishedScene = null;
+            _publishedSource = default;
+            _publication = default;
+        }
+    }
 }

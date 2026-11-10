@@ -177,6 +177,7 @@ namespace XREngine
                     "collect-visible/swap",
                 ],
                 DedicatedBackgroundThreadNames = dedicatedBackgroundThreadNames,
+                XrSessionDedicatedThreadCount = CountXrSessionLanes(dedicatedBackgroundThreadNames),
             };
 
             EngineExecutionTopology topology = EngineExecutionTopology.Resolve(request);
@@ -231,6 +232,16 @@ namespace XREngine
 
             names = [.. retainedNames];
             return names.Length;
+        }
+
+        /// <summary>Counts the dedicated lanes that run only during an OpenXR session.</summary>
+        private static int CountXrSessionLanes(string[] names)
+        {
+            int count = 0;
+            foreach (string name in names)
+                if (name.StartsWith("openxr-", StringComparison.Ordinal))
+                    ++count;
+            return count;
         }
 
         private static int ReadExecutionIntegerOverride(

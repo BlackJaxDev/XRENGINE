@@ -1045,6 +1045,12 @@ public sealed partial class CameraComponentEditor : IXRComponentEditor
 
     private static List<(string Label, RenderPipeline Pipeline)> GetCandidatePostProcessingPipelines(XRCamera camera, RenderPipeline activePipeline)
     {
+        // The type scan below reads every loaded assembly. Until the startup warm-up has
+        // filled the type catalog, that scan would run inside the ImGui frame on the render
+        // thread. Show the pipelines that are already owned and discover types later.
+        if (!EditorTypeCatalogWarmup.IsReady)
+            return GetKnownPostProcessingPipelines(camera, activePipeline, out _);
+
         const int maxGenerationAttempts = 2;
         for (int attempt = 0; attempt < maxGenerationAttempts; attempt++)
         {
@@ -1242,25 +1248,29 @@ public sealed partial class CameraComponentEditor : IXRComponentEditor
 
     private static RenderPipeline DrawCameraPipelineSelector(XRCamera camera, RenderPipeline activePipeline)
     {
-        List<(string Label, RenderPipeline Pipeline)> candidatePipelines = GetCandidatePostProcessingPipelines(camera, activePipeline);
+        // The full candidate list scans loaded types and creates a read-only preview of each
+        // pipeline type. Build it only when the combo is open or a type preview is selected.
+        // Otherwise the already-owned pipelines are enough to show the current selection.
+        List<(string Label, RenderPipeline Pipeline)> candidatePipelines = GetKnownPostProcessingPipelines(camera, activePipeline, out _);
 
         var editorState = PostProcessEditorStates.GetOrCreateValue(camera);
-        RenderPipeline selectedPipeline = activePipeline;
-        int selectedIndex = 0;
-
-        if (editorState.SelectedPipelineId is not null)
+        int selectedIndex = FindSelectedPipelineIndex(candidatePipelines, editorState.SelectedPipelineId);
+        if (selectedIndex < 0 && editorState.SelectedPipelineId is not null)
         {
-            int idx = candidatePipelines.FindIndex(p => p.Pipeline.ID.ToString() == editorState.SelectedPipelineId || p.Pipeline.DebugName == editorState.SelectedPipelineId);
-            if (idx >= 0)
-            {
-                selectedPipeline = candidatePipelines[idx].Pipeline;
-                selectedIndex = idx;
-            }
+            candidatePipelines = GetCandidatePostProcessingPipelines(camera, activePipeline);
+            selectedIndex = FindSelectedPipelineIndex(candidatePipelines, editorState.SelectedPipelineId);
         }
+
+        // Index 0 is always the active viewport pipeline.
+        if (selectedIndex < 0)
+            selectedIndex = 0;
+        RenderPipeline selectedPipeline = candidatePipelines[selectedIndex].Pipeline;
 
         CameraSettingLabel("Target Pipeline");
         if (ImGui.BeginCombo("##TargetPipeline", candidatePipelines[selectedIndex].Label))
         {
+            candidatePipelines = GetCandidatePostProcessingPipelines(camera, activePipeline);
+            selectedIndex = Math.Max(0, FindSelectedPipelineIndex(candidatePipelines, editorState.SelectedPipelineId));
             for (int i = 0; i < candidatePipelines.Count; i++)
             {
                 bool isSelected = i == selectedIndex;
@@ -1291,6 +1301,16 @@ public sealed partial class CameraComponentEditor : IXRComponentEditor
             ImGui.TreePop();
         }
         return selectedPipeline;
+    }
+
+    private static int FindSelectedPipelineIndex(
+        List<(string Label, RenderPipeline Pipeline)> candidates,
+        string? selectedPipelineId)
+    {
+        if (selectedPipelineId is null)
+            return -1;
+
+        return candidates.FindIndex(p => p.Pipeline.ID.ToString() == selectedPipelineId || p.Pipeline.DebugName == selectedPipelineId);
     }
 
     private static RenderPipeline ResolveCameraEditorPipeline(XRCamera camera)

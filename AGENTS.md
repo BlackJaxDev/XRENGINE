@@ -22,6 +22,13 @@ XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10.
 - Use short, clear sentences, active voice, and consistent technical terms. Give each instruction a clear action. Keep technical names, code identifiers, commands, and quoted source text exact.
 - Follow the [maintainer code and writing style](docs/developer-guides/ai/maintainer-style.md) when producing code, comments, XML summaries, commit messages, pull request text, documentation, or user summaries. Current explicit instructions take priority.
 
+### Comments And Member Summaries
+
+- Write for a developer who is learning the subsystem. Explain the concrete operation and why the code needs it. Include the relevant input, output, or state change when it helps the reader follow the data flow. Do not repeat obvious syntax.
+- Method and type names are navigation aids, not explanations. State what the named code does and how its result is used. For registrations, name the actual consumer and explain what the registration supplies to it.
+- Replace vague verbs such as "restores," "handles," or "processes" with the specific actions. For example, write "Reads the saved track data, creates an AnimationClip, and fills its animation members" instead of "Restores the animation."
+- Explain unfamiliar subsystem terms where they matter. Distinguish steps such as identifying a type, creating an object, reading its saved values, and applying those values during playback. Keep comments concise, but do not omit the mechanism or reason merely to make them shorter. Verify claims against the implementation.
+
 ## Read On Demand
 
 These linked guides remain required instructions for their respective tasks; read them before acting:

@@ -120,6 +120,14 @@ GPUScene auxiliary rows do not contain descriptor, texture or sampler state.
 Those epochs belong to Advanced material-table publication. A draw-metadata
 comparison cannot validate those separate dependencies.
 
+Each full Advanced scene plan validates the Uber shader manifest for each
+distinct NativeUber material before it reuses that material in the same plan.
+The plan keeps a source and revision proof for later rows. A changed material,
+shader, source owner, or shader service causes another full check. The next
+full plan starts with no proofs. A retained proof does not replace the first
+file and directory dependency check in a new plan. The publisher reports full
+check, proof hit, and retained proof counts for the last full plan.
+
 Several materials can share one state class under the current last-writer
 row definition. This can still cause state-class writes during merged-node
 motion. The result record preserves that limit; it is not evidence that every
@@ -131,6 +139,17 @@ remaining write is redundant.
 leases. The range planner uses preallocated hash lookup storage and remembered
 payload-range indices. It compares the complete key on collision and preserves
 first-encounter grouping.
+
+Advanced preparation reads the canonical scene reference and snapshot from the
+published backend-ready frame package. It checks that the package database is
+the world GPU scene database, then takes its own publication lease before it
+builds. The service keeps that lease until it replaces the cached preparation,
+resets after renderer retirement, or is disposed. It takes a replacement lease
+before it releases the old one. The cache key is the world frame ID, the GPU
+scene instance, and the exact package publication. A second publication in the
+same frame cannot replace a successful preparation; the consumer receives a
+rejection with no prepared GPU output. Extraction uses the retained snapshot
+throughout the build, even when the scene publishes a newer frame.
 
 Scene/publication identity, temporal and feedback epochs, view capacity,
 geometry compaction and bounded static-deformation generations remain part of
@@ -178,6 +197,14 @@ outcomes. A generation owns its preparation task. Polling must not synchronously
 link, compile or wait, duplicate requests, or reset progress. Only a complete
 compatible family can become ready. Unsupported capability and failed work
 remain visible; required draws cannot silently disappear or use a CPU fallback.
+
+The standard native shading family prepares the single-sample shader before
+admission. A sealed frame that uses multisample visibility requests its shade
+shader through a separate background preparation task. That task owns an exact
+shader generation and pipeline snapshot. The base family stays ready while the
+multisample shader is pending. Frame association and recording check the shader
+for the sealed visibility mode. A pending or failed multisample shader defers
+that frame; the render thread does not compile it or wait for it.
 
 Additive program links and first shader-module creation retain existing
 dependency leases. Program/layout and shader-module replacement use exact

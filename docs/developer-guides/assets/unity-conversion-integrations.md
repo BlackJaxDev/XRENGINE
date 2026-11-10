@@ -150,11 +150,16 @@ path, byte length, and last-write time. Repeated references to that revision
 reuse the validation result without retaining decoded pixels. A new root, a
 changed revision, or a failed decode requires validation again.
 
-Required texture validation uses `IRuntimeImageCodec.Validate(Stream)`. It
+Required texture validation uses `IRuntimeImageCodec.Validate(Stream, sourcePath)`. It
 checks the full decoded image without exporting RGBA pixels that import would
 immediately discard. The stream and native decode state are released after
 each image. Deferred texture registration still loads pixels when rendering
-needs them; validation does not change texture quality or resolution.
+needs them; validation does not change texture quality or resolution. File-backed
+decode paths pass the same source path. The image codec uses an explicit TGA
+format hint for `.tga` files because their header can lack a reliable automatic
+format signature. Other source formats keep automatic detection. A TGA decode
+failure stays visible; the importer does not rename the source or substitute an
+image.
 
 Coordinate conversion streams packed blendshape targets and keeps only a
 compact array of base attributes. Unity model import disables early native
@@ -174,7 +179,26 @@ and animation clips remain independent for each avatar instance.
 
 Use `Kind: Static` to retain each converted hierarchy without the unit-world
 avatar setup. `Kind: Animated` adds that setup to prefab roots. Scene files do
-not receive avatar setup on their scene parent. Independent prefab scenes do
+not receive avatar setup on their scene parent. Use `PackageEntryPath` to select
+one scene or prefab from the main package by its `Assets/...` path. Set
+`SceneRootName` to publish only the uniquely named top-level node and its children. An
+animated import then attaches startup animation to that selected node. A missing
+or ambiguous selection fails instead of selecting a different avatar. For example:
+
+The importer checks all scene dependencies and composes all prefab instances
+before it selects the root. It cooks meshes only for the selected root.
+
+```json
+{
+  "Kind": "Animated",
+  "Path": "misc/Avatar.unitypackage",
+  "PackageEntryPath": "Assets/Avatar/Main.unity",
+  "SceneRootName": "Avatar"
+}
+```
+
+Root selection controls publication; the converter still validates the source
+scene before selecting the hierarchy. Independent prefab scenes do
 not bind to the Main Scene pawn or its locomotion setup. Scale, rotation, translation,
 static instance count, and static collider options apply to each entry.
 
@@ -265,6 +289,13 @@ reported and terminated without dropping other valid edges. Optional
 behavior-only references may remain missing; required model, material, and
 texture references fail the visual import instead of being replaced by an
 invisible placeholder.
+
+For external-model prefab instances with generation 2 file IDs, material-slot
+overrides are checked after target resolution. Overrides for absent model
+objects or indices beyond an explicit `m_Materials.Array.size` are stale and
+do not require the old material. Cleanup applies only to the owning prefab
+instance. Missing materials in retained slots still fail a strict import. A
+final dependency check runs before the composed hierarchy is published.
 
 ## Supported Source Assets
 
@@ -504,9 +535,32 @@ reflects the source Z axis, so the strand cross products use the corresponding
 reversed signs.
 
 An unassigned anisotropy color map uses the source fallback `(1, 1, 1, 0)`.
-Assigned anisotropy maps, global masks, and toon edges fail source conversion
-with a diagnostic until those paths have an exact GPU implementation. The
-serialized prefab cache version invalidates output without this source stage.
+An assigned map supplies color and an alpha offset for each strand layer.
+The importer keeps its UV, scale, offset, and pan. A source global mask changes
+the shadow mask before the strand response. Native Advanced samples neighboring
+map and mask values when it calculates a toon edge footprint. The importer
+rejects unsupported UV, mask index, and mask blend values.
+
+### Native Outline, Decal, And ShadeMap Operations
+
+The Advanced pipeline consumes outline companions from both `OpaqueForward`
+and `MaskedForward`. It keeps the authored pass identity. A native base row
+omits the separate outline operation only when a matching enabled companion
+exists. Stereo hull outlines require an active two-eye Vulkan multiview target
+and use each eye's camera position. Multisample hull output and temporal replay
+remain unsupported and report a failure.
+
+Native decals apply source global masks when their view and distance modifiers
+are neutral. Unsupported view-dependent masks, depth controls, and chroma
+controls still fail native admission. ShadeMap lighting samples `_FirstShadeMap`
+with its authored UV, transform, and pan. Its alpha blends the shadow-band color;
+the general shadow tint remains separate.
+
+Native layered emission applies each slot's global mask to its emission
+contribution. The local mask still controls the base-color replacement weight.
+Decal and emission masks use full render time for texture pan; source matcap,
+glitter, and anisotropy masks retain their source time scale. Disabled global
+masks return a neutral value.
 
 ### Authored Source Ambient Lighting
 

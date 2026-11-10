@@ -52,7 +52,8 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanPrimaryOperationRecordingInfo info)
     {
         if (payload.NativeComputeClosure is not { IsValid: true } closure ||
-            !payload.NativeComputePipelines.IsCurrent || payload.NativeComputeDescriptorSet.Handle == 0 ||
+            !payload.NativeComputePipelines.IsCurrentFor(closure.UsesMultisampleVisibility) ||
+            payload.NativeComputeDescriptorSet.Handle == 0 ||
             !payload.State.IsValid || !payload.SceneState.IsValid)
             throw new VulkanPlanPreconditionException("Advanced native compute reached recording without its immutable resources and pipeline generation.");
         if (state.RenderScope.IsActive) EndActiveRenderPass(ref state);

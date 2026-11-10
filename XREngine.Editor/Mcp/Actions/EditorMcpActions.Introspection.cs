@@ -16,6 +16,7 @@ using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
@@ -350,10 +351,12 @@ namespace XREngine.Editor.Mcp
                 : camera ?? renderState?.SceneCamera ?? activeViewport?.ActiveCamera;
             var activeCameraTransform = activeCamera?.Transform ?? activeViewport?.CameraComponent?.Transform;
             var activeCameraNode = activeCameraTransform?.SceneNode;
-            var activeCameraPipeline = activeCamera?.RenderPipeline;
-            var activeViewportPipeline = activeViewport?.RenderPipeline;
-            var activeCameraPostProcessState = activeCamera?.GetPostProcessState(activeCameraPipeline);
-            var activeViewportPostProcessState = activeCamera?.GetPostProcessState(activeViewportPipeline);
+            var activeCameraPipeline = activeCamera?.GetConfiguredRenderPipeline();
+            var activeViewportPipeline = activeViewport?.RenderPipelineInstance.GetFullyAppliedPipeline();
+            var renderingPipeline = pipeline?.GetFullyAppliedPipeline();
+            var activeCameraPostProcessState = activeCamera?.GetExistingPostProcessState(activeCameraPipeline);
+            var activeViewportPostProcessState = activeCamera?.GetExistingPostProcessState(activeViewportPipeline);
+            var renderingPostProcessState = activeCamera?.GetExistingPostProcessState(renderingPipeline);
             var viewportCameraComponent = activeViewport?.CameraComponent;
             var viewportCameraTransform = viewportCameraComponent?.Transform;
             var viewportCameraNode = viewportCameraTransform?.SceneNode;
@@ -428,6 +431,9 @@ namespace XREngine.Editor.Mcp
                     pendingIdentityRecipientCount = activeGpuScene.AdvancedPendingIdentityRecipientCount,
                     reusedStaticDrawPlanCount = activeGpuScene.AdvancedReusedStaticDrawPlanCount,
                     materialResolveAttemptCount = activeGpuScene.AdvancedMaterialResolveAttemptCount,
+                    nativeUberLayoutFullCheckCount = activeGpuScene.AdvancedNativeUberLayoutFullCheckCount,
+                    nativeUberLayoutProofHitCount = activeGpuScene.AdvancedNativeUberLayoutProofHitCount,
+                    nativeUberLayoutProofCount = activeGpuScene.AdvancedNativeUberLayoutProofCount,
                     unchangedRowGateHitCount = activeGpuScene.AdvancedUnchangedRowGateHitCount,
                     retainedRowCommit = activeGpuScene.AdvancedRetainedRowCommit,
                     geometryCompactionReplacementCount = activeGpuScene.AdvancedGeometryCompactionReplacementCount,
@@ -468,9 +474,9 @@ namespace XREngine.Editor.Mcp
                 activeCameraWorldForward = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldForward),
                 meshletDebugDisplayRequested = EditorUnitTests.Toggles.MeshletDebugDisplay,
                 activeCameraMeshletDebugDisplayOverride = activeCamera?.MeshletDebugDisplayEnabledOverride,
-                activeCameraMeshletDebugDisplayEnabled = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(activeCamera),
-                activeViewportPipelineMeshletDebugDisplayEnabled = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(activeCamera, activeViewportPipeline),
-                currentRenderingPipelineMeshletDebugDisplayEnabled = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(activeCamera, pipeline?.Pipeline),
+                activeCameraMeshletDebugDisplayEnabled = IsExistingMeshletDebugEnabled(activeCamera, activeCameraPostProcessState),
+                activeViewportPipelineMeshletDebugDisplayEnabled = IsExistingMeshletDebugEnabled(activeCamera, activeViewportPostProcessState),
+                currentRenderingPipelineMeshletDebugDisplayEnabled = IsExistingMeshletDebugEnabled(activeCamera, renderingPostProcessState),
                 activeCameraPipelineDebugName = activeCameraPipeline?.DebugName,
                 activeCameraPipelineSchemaStageCount = activeCameraPipeline?.PostProcessSchema.StagesByKey.Count,
                 activeCameraPostProcessStateStageCount = activeCameraPostProcessState?.Stages.Count,
@@ -494,8 +500,8 @@ namespace XREngine.Editor.Mcp
                 mainPawnCameraComponentName = pawnCamera?.Name,
                 mainPawnCameraWorldPosition = pawnCameraTransform is null ? null : ToMcpVector3(pawnCameraTransform.WorldTranslation),
                 mainPawnCameraWorldForward = pawnCameraTransform is null ? null : ToMcpVector3(pawnCameraTransform.WorldForward),
-                pipelineDebugName = pipeline?.Pipeline?.DebugName,
-                pipelineType = pipeline?.Pipeline?.GetType().FullName,
+                pipelineDebugName = renderingPipeline?.DebugName,
+                pipelineType = renderingPipeline?.GetType().FullName,
                 pipelineDescriptor = pipeline?.DebugDescriptor,
                 activeResourceGeneration = pipeline?.ActiveGeneration?.Key.ToString(),
                 pendingResourceGeneration = pipeline?.PendingGeneration?.Key.ToString(),
@@ -519,6 +525,18 @@ namespace XREngine.Editor.Mcp
             };
 
             return Task.FromResult(new McpToolResponse("Retrieved render state.", data));
+        }
+
+        private static bool? IsExistingMeshletDebugEnabled(XRCamera? camera, PipelinePostProcessState? state)
+        {
+            if (camera?.MeshletDebugDisplayEnabledOverride is bool enabledOverride)
+                return enabledOverride;
+
+            var stage = state?.GetStage<GpuBvhDebugSettings>();
+            if (stage is null || !stage.TryGetBacking(out GpuBvhDebugSettings? settings))
+                return null;
+
+            return settings?.MeshletDebugDisplayEnabled;
         }
 
         private static object? CaptureCanonicalFramePackage(RenderCommandCollection? commands)
@@ -602,7 +620,7 @@ namespace XREngine.Editor.Mcp
                 pipelineInstanceId = viewport.RenderPipelineInstance.InstanceId,
                 viewHistoryLedger = viewport.FrameViewHistorySnapshot,
                 pipelineDebugName = viewport.RenderPipelineInstance.DebugName,
-                pipelineType = viewport.RenderPipeline?.GetType().FullName,
+                pipelineType = viewport.RenderPipelineInstance.GetFullyAppliedPipeline()?.GetType().FullName,
                 resourceGeneration = viewport.RenderPipelineInstance.ResourceGeneration,
                 activeResourceGeneration = viewport.RenderPipelineInstance.ActiveGeneration?.Key.ToString(),
                 pendingResourceGeneration = viewport.RenderPipelineInstance.PendingGeneration?.Key.ToString(),

@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <XREngineRuntimeContractMode>Contracts</XREngineRuntimeContractMode>
   </PropertyGroup>
 
   <ItemGroup>
@@ -100,4 +101,5 @@
   </ItemGroup>
 
 
+  <Import Project="../Build/Registration/RuntimeContracts.props" />
 </Project>

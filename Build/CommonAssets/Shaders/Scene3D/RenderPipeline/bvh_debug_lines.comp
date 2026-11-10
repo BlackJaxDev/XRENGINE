@@ -5,7 +5,7 @@
 // (one per AABB edge) directly into a debug-line SSBO that is then
 // rendered via the engine's instanced debug-line geometry shader.
 //
-// Buffer layout matches LineInstance.gs: 3 vec4 per line (start, end, color).
+// Buffer layout matches DebugLineInstance.vs: 3 vec4 per line (start, end, color).
 // No CPU readback is required: the upper bound on visualized nodes is
 // supplied as a uniform from the C# side based on the BVH node count
 // already known when the BVH is built.

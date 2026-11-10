@@ -334,7 +334,7 @@ namespace XREngine.Rendering
             ETexMagFilter magFilter,
             bool autoGenerateMipmaps)
         {
-            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(atlasPath));
+            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(atlasPath), atlasPath);
             var atlasTexture = new XRTexture2D(atlasImage)
             {
                 FilePath = atlasPath,
@@ -362,7 +362,7 @@ namespace XREngine.Rendering
 
         private static XRTexture2D CreateBitmapAtlasTexture(string atlasPath)
         {
-            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(atlasPath));
+            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(atlasPath), atlasPath);
             byte[] coverage = ExtractAlphaCoverage(atlasImage);
 
             var atlasTexture = new XRTexture2D(

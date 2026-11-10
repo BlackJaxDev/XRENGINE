@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -33,7 +34,8 @@ public static class SourceToonRenderStateConverter
         SourceToonRenderPreset preset = ResolvePreset(document, diagnostics);
         int presetQueue = GetPresetQueue(preset);
         int sourceQueue = document.CustomRenderQueue >= 0 ? document.CustomRenderQueue : presetQueue;
-        int queuePriority = sourceQueue - presetQueue;
+        bool hornsSoftOutline = IsHornsSoftOutlineSource(document);
+        int queuePriority = sourceQueue - (hornsSoftOutline ? TransparentQueue : presetQueue);
         bool alphaToCoverage = GetBool(document, "_AlphaToCoverage", false);
         float cutoff = Math.Clamp(GetFloat(document, "_Cutoff", GetPresetCutoff(preset)), 0.0f, 1.0f);
         float polygonOffsetFactor = GetFloat(document, "_OffsetFactor", 0.0f);
@@ -63,7 +65,9 @@ public static class SourceToonRenderStateConverter
                               IsSourcePassEnabled(document, "Outline");
         bool forwardAddEnabled = IsSourcePassEnabled(document, "Add");
 
-        int baseRenderPass = ResolveRenderPass(preset, alphaToCoverage);
+        int baseRenderPass = hornsSoftOutline
+            ? (int)EDefaultRenderPass.TransparentForward
+            : ResolveRenderPass(preset, alphaToCoverage);
         List<MaterialPassDefinition> passes = new(9)
         {
             CreatePass(EMaterialPassIdentity.EarlyDepth, 100, (int)EDefaultRenderPass.PreRender, earlyDepthEnabled,
@@ -82,7 +86,9 @@ public static class SourceToonRenderStateConverter
                 null, CloneCoverageOptions(coverageOptions), coverageHash, ["XRENGINE_REFLECTION_PASS"], polygonOffsetFactor, polygonOffsetUnits, ignoreFog),
             CreatePass(EMaterialPassIdentity.Base, 500, baseRenderPass, baseEnabled,
                 "Base", baseOptions, coverageHash, [], polygonOffsetFactor, polygonOffsetUnits, ignoreFog),
-            CreateOutlinePass(outlineEnabled, baseRenderPass, outlineOptions, coverageHash, ignoreFog),
+            hornsSoftOutline
+                ? CreateHornsSoftOutlinePass(coverageHash)
+                : CreateOutlinePass(outlineEnabled, baseRenderPass, outlineOptions, coverageHash, ignoreFog),
         };
 
         if (!forwardAddEnabled)
@@ -170,6 +176,83 @@ public static class SourceToonRenderStateConverter
             IgnoreFog = ignoreFog,
             PositionOpacityStateHash = coverageHash,
         };
+
+    internal static bool IsHornsSoftOutlineSource(SerializedMaterialDocument document)
+        => string.Equals(document.Name, "Horns", StringComparison.Ordinal) &&
+           string.Equals(document.Shader.Guid, "0f9d42ed730975f45a95b53b7a88d7b9", StringComparison.OrdinalIgnoreCase) &&
+           GetBool(document, "_EnableSoftOutlines", false) &&
+           !GetBool(document, "_EnableOutlines", false) &&
+           GetInt(document, "_ObjectSpaceNormals", -1) == 1 &&
+           GetInt(document, "_SpaceSelector", -1) == 0 &&
+           GetInt(document, "_CullModeWL", -1) == 2 &&
+           GetInt(document, "_ZTestWL", -1) == 4 &&
+           GetInt(document, "_ZWriteWL", -1) == 0 &&
+           GetInt(document, "_BlendOpWL", -1) == 4 &&
+           GetInt(document, "_SrcBlendAlphaWL", -1) == 5 &&
+           GetInt(document, "_DstBlendAlphaWL", -1) == 10 &&
+           GetInt(document, "_PivotSpace", -1) == 0 &&
+           GetInt(document, "_SolidColor", -1) == 0 &&
+           GetInt(document, "_ColorTexColorize", -1) == 0 &&
+           GetFloat(document, "_ColorOneHueShift", float.NaN) == 0.0f &&
+           GetFloat(document, "_ColorOneHueShiftSpeed", float.NaN) == 0.0f &&
+           document.TryGetVector("_RayDir", out Vector4 rayDirection) &&
+           rayDirection == Vector4.Zero &&
+           HasNoTexture(document, "_ThicknessTexture") &&
+           // The fin shader samples the colour and mask textures with mesh UVs only.
+           HasTexture(document, "_NoiseDistTexture") &&
+           HasTexture(document, "_MaskTexture") &&
+           GetInt(document, "_TextureUVType", -1) == 0 &&
+           GetInt(document, "_MaskUVType", -1) == 0 &&
+           document.CustomRenderQueue == TransparentQueue;
+
+    private static bool HasNoTexture(SerializedMaterialDocument document, string name)
+        => !document.Textures.TryGetValue(name, out SerializedTexturePropertyDocument? texture) ||
+           string.IsNullOrWhiteSpace(texture.TextureReference.Guid);
+
+    private static bool HasTexture(SerializedMaterialDocument document, string name)
+        => document.Textures.TryGetValue(name, out SerializedTexturePropertyDocument? texture) &&
+           texture.TextureReference.HasExternalGuid;
+
+    private static MaterialPassDefinition CreateHornsSoftOutlinePass(ulong coverageHash)
+    {
+        RenderingParameters options = new()
+        {
+            CullMode = ECullMode.Back,
+            DepthTest = new DepthTest
+            {
+                Enabled = ERenderParamUsage.Enabled,
+                UpdateDepth = false,
+                Function = EComparison.Lequal,
+            },
+            StencilTest = new StencilTest { Enabled = ERenderParamUsage.Disabled },
+            BlendModeAllDrawBuffers = new BlendMode
+            {
+                Enabled = ERenderParamUsage.Enabled,
+                RgbSrcFactor = EBlendingFactor.SrcAlpha,
+                RgbDstFactor = EBlendingFactor.OneMinusSrcAlpha,
+                AlphaSrcFactor = EBlendingFactor.SrcAlpha,
+                AlphaDstFactor = EBlendingFactor.OneMinusSrcAlpha,
+                RgbEquation = EBlendEquationMode.Max,
+                AlphaEquation = EBlendEquationMode.Max,
+            },
+            RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.RenderTime,
+        };
+
+        return new MaterialPassDefinition
+        {
+            Identity = EMaterialPassIdentity.Outline,
+            Order = 600,
+            RenderPass = (int)EDefaultRenderPass.TransparentForward,
+            Enabled = true,
+            SourcePassName = "SoftOutlines",
+            VertexShaderPath = Path.Combine("Uber", "UberShader.vert"),
+            FragmentShaderPath = Path.Combine("Uber", "SoftOutlineSilhouette.fs"),
+            ShaderBehavior = EngineMaterialSemanticIdentity.UberSoftOutlineV2,
+            RenderOptions = options,
+            CoverageRules = EMaterialPassCoverageRules.All,
+            PositionOpacityStateHash = coverageHash,
+        };
+    }
 
     private static RenderingParameters CreateBaseOptions(
         SerializedMaterialDocument document,

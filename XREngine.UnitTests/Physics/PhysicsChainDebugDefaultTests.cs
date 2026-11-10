@@ -23,8 +23,10 @@ public sealed class PhysicsChainDebugDefaultTests
         fields.ShouldContain("RuntimePhysicsChainRendering.Current.SetDebugDrawChains(this, value);");
         component.ShouldContain("if (DebugDrawChains)");
         gpu.ShouldContain("RuntimePhysicsChainRendering.Current.RenderDebug(this)");
-        // The chain choice becomes the dispatcher selection at registration and on each change.
-        renderingBridge.ShouldContain("GPUPhysicsChainDispatcher.Instance.SetDebugDrawChainsSelection(this, selected);");
+        // The chain choice becomes the dispatcher selection at registration, on each change, and on
+        // the next dispatch when an earlier change reached an unregistered source.
+        renderingBridge.ShouldContain("_debugSelectionApplied = GPUPhysicsChainDispatcher.Instance.SetDebugDrawChainsSelection(this, selected);");
+        renderingBridge.ShouldContain("if (debugDrawChains != source.DebugDrawChains || !source.DebugSelectionApplied)");
         dispatcher.ShouldContain("request.DebugSelected = component.DebugDrawChains;");
 
         // All draw entries go through the selected-chain path for one world.

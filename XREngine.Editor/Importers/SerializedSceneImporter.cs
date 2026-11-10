@@ -30,6 +30,7 @@ internal static partial class SerializedSceneImporter
         context.DiscoverDependencies();
         var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
+        context.ValidateComposedDependencies();
         sourceDocuments.Clear();
         context.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Converted);
         ValidateComposedModelAnimations(state);
@@ -93,7 +94,8 @@ internal static partial class SerializedSceneImporter
         CancellationToken cancellationToken,
         Action<float, string>? progress,
         FbxImportBackend fbxBackend = FbxImportBackend.Assimp,
-        bool allowPartialImport = false)
+        bool allowPartialImport = false,
+        string? sceneRootName = null)
         => ImportPrefabWithManifest(
             filePath,
             outputDestination,
@@ -103,7 +105,8 @@ internal static partial class SerializedSceneImporter
             new ModelCookSettings(),
             ModelCookOverrideSnapshot.Empty,
             fbxBackend,
-            allowPartialImport);
+            allowPartialImport,
+            sceneRootName);
 
     private static SerializedPrefabConversionResult ImportPrefabWithManifest(
         string filePath,
@@ -114,7 +117,8 @@ internal static partial class SerializedSceneImporter
         ModelCookSettings cookSettings,
         ModelCookOverrideSnapshot cookOverrides,
         FbxImportBackend fbxBackend,
-        bool allowPartialImport = false)
+        bool allowPartialImport = false,
+        string? sceneRootName = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         ArgumentNullException.ThrowIfNull(cookSettings);
@@ -136,6 +140,7 @@ internal static partial class SerializedSceneImporter
         context.DiscoverDependencies();
         var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
+        context.ValidateComposedDependencies();
         sourceDocuments.Clear();
         hierarchy.SortRoots();
 
@@ -158,6 +163,7 @@ internal static partial class SerializedSceneImporter
 
         context.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Converted);
         ValidateComposedModelAnimations(state);
+        rootNode = SelectSerializedSceneRoot(rootNode, sceneRootName);
         AssignFinalMeshletEntityIdentities(rootNode);
         string meshletCookIdentity = ModelCacheSourceIdentityResolver.Resolve(
             normalizedPath,
@@ -180,6 +186,33 @@ internal static partial class SerializedSceneImporter
             Manifest = manifest,
             MeshletCookingCompleted = true,
         };
+    }
+
+    /// <summary>Selects one composed scene root before meshlet cooking.</summary>
+    private static SceneNode SelectSerializedSceneRoot(SceneNode root, string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || string.Equals(root.Name, name, StringComparison.Ordinal))
+            return root;
+
+        SceneNode? selected = null;
+        int matches = 0;
+        foreach (TransformBase child in root.Transform.Children)
+        {
+            SceneNode? node = child.SceneNode;
+            if (node is null || !string.Equals(node.Name, name, StringComparison.Ordinal))
+                continue;
+
+            selected = node;
+            matches++;
+        }
+
+        if (matches != 1 || selected is null)
+            throw new SourceVisualImportException(
+                $"Unity scene root selection '{name}' matched {matches} top-level nodes; exactly one is required.");
+
+        selected.Parent = null;
+        root.Destroy();
+        return selected;
     }
 
     /// <summary>
@@ -570,23 +603,53 @@ internal static partial class SerializedSceneImporter
             .Where(static modification => !string.IsNullOrWhiteSpace(modification.PropertyPath))
             .GroupBy(static modification => modification.TargetFileId))
         {
+            int? materialArraySize = null;
+            foreach (PropertyModification modification in group)
+            {
+                if (modification.PropertyPath == "m_Materials.Array.size" &&
+                    TryParseInt(modification.Value, out int size) && size >= 0)
+                    materialArraySize = size;
+            }
+
+            bool importedModel = SupportedExternalModelExtensions.Contains(
+                Path.GetExtension(hierarchy.SourcePath));
+            if (importedModel && materialArraySize is int authoredSize)
+            {
+                state.Context.IgnorePrefabMaterialOverridesOutsideArraySize(
+                    modificationSourcePath, prefabInstance.FileId, group.Key, authoredSize);
+            }
+
+            IEnumerable<PropertyModification> activeModifications = materialArraySize is int activeSize
+                ? group.Where(modification =>
+                    !TryParseArrayIndex(modification.PropertyPath, "m_Materials.Array.data[", out int index) ||
+                    index < activeSize)
+                : group;
             bool targetResolved = false;
+            if (hierarchy.NodesByGameObjectId.ContainsKey(group.Key) ||
+                hierarchy.NodesByTransformId.ContainsKey(group.Key) ||
+                hierarchy.ComponentsByFileId.ContainsKey(group.Key) ||
+                hierarchy.SerializedAnimatorsByFileId.ContainsKey(group.Key))
+            {
+                state.Context.ValidatePrefabModificationDependencies(
+                    modificationSourcePath, prefabInstance.FileId, group.Key);
+            }
+
             if (hierarchy.NodesByGameObjectId.TryGetValue(group.Key, out SceneNode? node))
             {
-                ApplyGameObjectModifications(node, group);
+                ApplyGameObjectModifications(node, activeModifications);
                 targetResolved = true;
             }
 
             if (hierarchy.NodesByTransformId.TryGetValue(group.Key, out SceneNode? transformNode) &&
                 transformNode.Transform is Transform transform)
             {
-                ApplyTransformModifications(group.Key, transform, group, hierarchy);
+                ApplyTransformModifications(group.Key, transform, activeModifications, hierarchy);
                 targetResolved = true;
             }
 
             if (hierarchy.ComponentsByFileId.TryGetValue(group.Key, out XRComponent? component))
             {
-                ApplyComponentModifications(component, group, state);
+                ApplyComponentModifications(component, activeModifications, state);
                 targetResolved = true;
             }
 
@@ -594,7 +657,7 @@ internal static partial class SerializedSceneImporter
                     group.Key,
                     out SerializedAnimatorRecord? animator))
             {
-                ApplyAnimatorModifications(animator, group, state);
+                ApplyAnimatorModifications(animator, activeModifications, state);
                 targetResolved = true;
             }
 
@@ -603,7 +666,11 @@ internal static partial class SerializedSceneImporter
 
             bool hadVisualOverrides = group.Any(static modification =>
                 IsRequiredVisualOverride(modification.PropertyPath));
-            state.Context.IgnoreStalePrefabModification(modificationSourcePath, group.Key);
+            if (importedModel)
+            {
+                state.Context.IgnoreStalePrefabModification(
+                    modificationSourcePath, prefabInstance.FileId, group.Key);
+            }
             state.Context.AddDiagnostic(
                 "UNITYOVERRIDE0003",
                 hadVisualOverrides

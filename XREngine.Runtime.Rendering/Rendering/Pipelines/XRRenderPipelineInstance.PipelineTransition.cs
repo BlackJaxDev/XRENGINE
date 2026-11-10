@@ -39,6 +39,13 @@ public sealed partial class XRRenderPipelineInstance
     /// </summary>
     public ulong PipelineRevision => _appliedPipelineRevision;
 
+    /// <summary>Gets the fully applied pipeline without requesting a default pipeline.</summary>
+    public RenderPipeline? GetFullyAppliedPipeline()
+    {
+        lock (_pipelineTransitionSync)
+            return _fullyAppliedPipeline;
+    }
+
     /// <summary>
     /// Gets the pipeline whose output binding may be updated on the render thread. During a
     /// transition this is the explicit applying target; otherwise it is the fully applied owner.

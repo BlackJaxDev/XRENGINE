@@ -580,6 +580,19 @@ namespace XREngine.Rendering
                 : _postProcessStates.GetOrCreateState(pipeline);
         }
 
+        /// <summary>Gets the assigned pipeline or an existing default without creating one.</summary>
+        public RenderPipeline? GetConfiguredRenderPipeline()
+            => _renderPipeline ?? _defaultRenderPipeline;
+
+        /// <summary>Gets an existing post-process state without creating or rebinding it.</summary>
+        public PipelinePostProcessState? GetExistingPostProcessState(RenderPipeline? pipeline)
+        {
+            if (pipeline is null || !_postProcessStates.TryGetState(pipeline.ID, out PipelinePostProcessState? state))
+                return null;
+
+            return state?.IsBoundTo(pipeline) == true ? state : null;
+        }
+
         /// <summary>
         /// True when a camera claim keeps this exact pipeline for this camera, and the camera has no explicit state for it.
         /// The camera then uses its default post-process values, so the kept pipeline ID does not enter the saved state.

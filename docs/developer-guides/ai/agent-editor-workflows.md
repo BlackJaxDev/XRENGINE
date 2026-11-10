@@ -152,18 +152,38 @@ diagnostic runs on the caller thread and can report `terminalFault` after the
 engine update loop stops. A responsive native window does not prove that the
 engine loop is running.
 
+`get_render_state` reads fully applied pipeline state. An unassigned pipeline,
+RVC stage family, or postprocess state can be absent during startup. The query
+does not create those objects or request a pipeline transition.
+
 For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and logs do not identify the failing pass/resource. Prefer it for shadow maps, post-process inputs, motion vectors, G-buffer contents, descriptor binding mistakes, layout hazards, and "the frame looks wrong but logs are inconclusive" cases.
 
 For an editor frame with presentation, use
 `RenderDocCaptureBridge.TryTriggerCapture` through MCP. Pass a capture path
 template under the current run's `renderdoc/` folder. It captures the next
-presented frame. Direct `TryStartCapture` and `TryEndCapture` calls through
+presented frame. If it returns false, call `RenderDocCaptureBridge.GetCaptureStatus`
+through `invoke_method`. This distinguishes an unavailable module or API from
+an active capture. A loaded Vulkan capture layer alone does not prove that the
+bridge accepted the capture request. Direct `TryStartCapture` and `TryEndCapture` calls through
 `invoke_method` do not reserve a render-frame boundary. `MainThread` mode runs
 on the app/update thread, so those calls can change capture state during native
 command recording. Use explicit start/end only when the capture owner controls
 the recording boundary. A Vulkan chain-scale run reproduced a native
 `renderdoc.dll` fault with explicit start/end; presented-frame trigger captures
 passed.
+
+Monado builds with `XRT_FEATURE_RENDERDOC` can start and end a capture for every
+OpenXR frame when a RenderDoc module is loaded. In this case, an active capture
+does not prove that an editor trigger succeeded. Capture overhead can prevent
+normal import and preparation progress. Do not use these runs for frame-rate
+acceptance. Warm the desktop scene before enabling OpenXR when practical.
+
+Check the loaded capture module and replay module versions before a long run.
+An older replay module can reject captures from a newer layer. A process-local
+`VK_IMPLICIT_LAYER_PATH` can select an installed layer without a registry change;
+see the [Vulkan loader environment variables](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md#table-of-debug-environment-variables).
+Verify the module actually loaded. A desktop launch with an explicit OpenXR
+runtime can still need the OpenXR loader on its process search path.
 
 1. Verify capture tooling first:
 

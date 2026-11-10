@@ -11,6 +11,13 @@ internal static class RenderCommandSortPriority
             return 0;
         XRMaterial? material = mesh.MaterialOverride ?? mesh.Mesh?.Material;
         // Earlier and arbitrary shader profiles retain neutral priority in mixed transparent lists.
-        return material?.EngineSemantic.IsColorCoverage() == true ? material.TransparentSortPriority : 0;
+        return material is not null &&
+            (material.EngineSemantic.IsColorCoverage() ||
+             material.EngineSemantic == EngineMaterialSemanticIdentity.UberSoftOutlineV2 ||
+             material.ResolveAdvancedLatePassMetadata() is { } metadata &&
+             AdvancedLatePassEligibilityValidator.IsVerifiedSoftOutlineBase(
+                 material, command.RenderPass, metadata))
+            ? material.TransparentSortPriority
+            : 0;
     }
 }

@@ -5,16 +5,46 @@
 #define XR_GLITTER_I(name) UBER_I(name)
 #define XR_GLITTER_V2(name) UBER_V(name).xy
 #define XR_GLITTER_V4(name) UBER_V(name)
+#define XR_GLITTER_HUE_OKLAB(color, shift) XR_UBER_hueShiftOklab(color, shift)
+#define XR_GLITTER_HUE_HSV(color, shift) XR_UBER_hueShift(color, shift)
+#define XR_GLITTER_HSV_TO_RGB(value) XR_UBER_hsvToRgb(value)
 #define XR_GLITTER_SAMPLE(uv, dx, dy) XR_UBER_Sample(UBER_T(_GlitterTexture), clamp(uv, vec2(0.0), vec2(1.0)), dx, dy, vec4(1.0))
 #include "Uber/source_glitter.glsl"
 #undef XR_GLITTER_SAMPLE
 #undef XR_GLITTER_V4
+#undef XR_GLITTER_HUE_OKLAB
+#undef XR_GLITTER_HUE_HSV
+#undef XR_GLITTER_HSV_TO_RGB
 #undef XR_GLITTER_I
 #undef XR_GLITTER_F
 #undef XR_GLITTER_V2
 
+#include "Advanced/Shading/NativeUberGlobalMasks.glslinc"
+
+float XR_UBER_AudioBandValue(int band, float history)
+{
+    if (band < 0 || band > 3)
+        return 0.0;
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_AUDIOLINK))
+        return 0.0;
+    uint slot = UBER_T(_AudioLinkTexture);
+    if (slot >= XR_UBER_Material.textureReferenceCount)
+        return 0.0;
+    XRAdvancedEncodedTextureReference reference;
+    if (!XR_ADV_TryResolveTextureReference(
+        XR_ADV_LoadMaterialTextureBinding(XR_UBER_Material, slot), reference) ||
+        (reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return 0.0;
+    ivec2 extent = XR_ADV_Texture2DSize(reference);
+    if (extent.x < 4 || extent.y < 1)
+        return 0.0;
+    vec2 uv = (vec2(float(band),
+        clamp(history, 0.0, float(extent.y - 1))) + 0.5) / vec2(extent);
+    return XR_ADV_SampleTexture2DLod(reference, uv, 0.0).r;
+}
+
 void XR_UBER_ApplySourceGlitter(XRUberCoordinates c, vec3 geometric, vec3 normal,
-    vec3 viewDirection, vec3 lightDirection, vec3 lightColor, float rampedLight,
+    vec3 viewDirection, vec3 cameraPosition, vec3 lightDirection, vec3 lightColor, float rampedLight,
     inout vec3 baseColor, inout vec3 emission)
 {
     if (!XR_UBER_HasFeature(XR_UBER_FEATURE_GLITTER) || UBER_I(_SourceGlitter) == 0)
@@ -37,10 +67,26 @@ void XR_UBER_ApplySourceGlitter(XRUberCoordinates c, vec3 geometric, vec3 normal
     vec3 colorMap = XR_UBER_CoverageTexture(UBER_T(_GlitterColorMap),
         UBER_I(_GlitterColorMapUV), UBER_V(_GlitterColorMap_ST),
         UBER_V(_GlitterColorMapPan).xy * 0.05, c, vec4(1.0)).rgb;
+    vec4 tint = UBER_V(_GlitterColor);
+    tint.rgb = XR_UBER_Theme(UBER_I(_GlitterColorThemeIndex), tint.rgb);
+    float globalMask = 1.0;
+    if (UBER_V(_GlitterGlobalMask).x > 0.5)
+        globalMask = XR_UBER_GlobalMask(c, int(UBER_V(_GlitterGlobalMask).x + 0.5),
+            uvec4(UBER_T(_GlobalMaskTexture0), UBER_T(_GlobalMaskTexture1),
+                UBER_T(_GlobalMaskTexture2), UBER_T(_GlobalMaskTexture3)),
+            cameraPosition, normal, viewDirection);
+    vec4 audioBands = vec4(0.0);
+    vec4 audioControl = UBER_V(_GlitterAudioBands);
+    if (audioControl.x > 0.5 && UBER_I(_AudioLinkAnimToggle) != 0 &&
+        XR_UBER_HasFeature(XR_UBER_FEATURE_AUDIOLINK))
+        audioBands = vec4(
+            XR_UBER_AudioBandValue(int(audioControl.y), 0.0),
+            XR_UBER_AudioBandValue(int(audioControl.z), 0.0),
+            XR_UBER_AudioBandValue(int(audioControl.w), 0.0), 1.0);
     xrApplySourceGlitter(uv, dx, dy, c.uv0Dx, c.uv0Dy, c.time,
         geometric, normal, viewDirection,
         lightDirection, lightColor, rampedLight, dot(lightColor, vec3(0.299, 0.587, 0.114)),
-        UBER_V(_GlitterColor), colorMap, mask, baseColor, emission);
+        tint, colorMap, mask, globalMask, audioBands, baseColor, emission);
 }
 
 // The including shader supplies XRUberCoordinates and coverage texture helpers.
@@ -141,7 +187,13 @@ void XR_UBER_ApplyDecalSlot(
     float faceMask = modifiers.x == 1.0
         ? float(coordinates.frontFacing)
         : modifiers.x == 2.0 ? float(!coordinates.frontFacing) : 1.0;
-    decal.a *= maskSample[maskChannel] * bounds * faceMask;
+    float globalMask = 1.0;
+    if (modifiers.y > 0.5)
+        globalMask = XR_UBER_GlobalMask(coordinates, int(modifiers.y + 0.5),
+            uvec4(UBER_T(_GlobalMaskTexture0), UBER_T(_GlobalMaskTexture1),
+                UBER_T(_GlobalMaskTexture2), UBER_T(_GlobalMaskTexture3)),
+            vec3(0.0), vec3(0.0), vec3(0.0), 1.0);
+    decal.a *= maskSample[maskChannel] * bounds * faceMask * globalMask;
 
     int blendMode = int(blendParameters.x + 0.5);
     float opacity = clamp(decal.a * blendParameters.y, 0.0, 1.0);

@@ -457,26 +457,35 @@ vec3 xrSourceRimBlend(vec3 baseColor, vec3 rimColor, float amount, int mode)
     return baseColor + rimColor * amount;
 }
 
-vec3 xrSourceAnisoLayer(vec3 tangent, vec3 binormal, vec3 normal,
-    vec3 view, vec3 light, float shadowMask, vec4 layer, vec3 tint)
+float xrSourceAnisoLayerResponse(vec3 tangent, vec3 binormal, vec3 normal,
+    vec3 view, vec3 light, float shadowMask, vec4 layer, float mapAlpha,
+    float offsetMapStrength)
 {
-    vec3 strand = normalize(mix(binormal, tangent, layer.w) + layer.z * normal);
+    float offset = layer.z + offsetMapStrength * mapAlpha;
+    vec3 strand = normalize(mix(binormal, tangent, layer.w) + offset * normal);
     vec3 halfVector = normalize(light + view);
     float tangentHalf = clamp(dot(strand, halfVector), -1.0, 1.0);
     float sine = sqrt(max(0.0, 1.0 - tangentHalf * tangentHalf));
     float response = clamp(smoothstep(-1.0, 0.0, tangentHalf) *
         pow(sine, layer.y * 1000.0) * layer.x, 0.0, 1.0);
-    return response * shadowMask * tint;
+    return response * shadowMask;
 }
 
-void xrSourceApplyAnisotropy(vec3 geometricNormal, vec3 mappedNormal,
-    vec3 tangent, vec3 bitangent, vec3 view, vec3 light, vec3 directColor,
-    float rampedLightMap, vec4 settings, vec4 mixSettings,
-    vec4 layer0, vec4 layer1, vec3 tint0, vec3 tint1,
-    inout vec3 baseColor, inout vec3 lightAdd)
+float xrSourceAnisoStylize(float response, float footprint, vec4 toon)
 {
-    if (settings.x <= 0.5) return;
+    float edgeMin = clamp(toon.y - toon.z * 0.5, 0.0, 1.0);
+    float edgeMax = clamp(toon.y + toon.z * 0.5, 0.0, 1.0);
+    float stylized = clamp((response - edgeMin) /
+        max(edgeMax - edgeMin + footprint, 0.001), 0.0, 1.0);
+    return mix(response, stylized, toon.x);
+}
 
+vec2 xrSourceAnisoResponses(vec3 geometricNormal, vec3 mappedNormal,
+    vec3 tangent, vec3 bitangent, vec3 view, vec3 light,
+    float rampedLightMap, vec4 settings, vec4 mixSettings,
+    vec4 layer0, vec4 layer1, vec2 offsetMapStrength, vec4 specMap,
+    float globalMask, int globalBlend)
+{
     float normalBlend = settings.w;
     vec3 normal = mix(geometricNormal, mappedNormal, normalBlend);
     // The imported coordinate frame reflects the source Z axis. Reverse the
@@ -487,10 +496,29 @@ void xrSourceApplyAnisotropy(vec3 geometricNormal, vec3 mappedNormal,
     vec3 strandBinormal = mix(bitangent, mappedBinormal, normalBlend);
     float shadowMask = mix(1.0, rampedLightMap, mixSettings.z) *
         mix(1.0, dot(normal, light), mixSettings.w);
-    vec3 color0 = xrSourceAnisoLayer(strandTangent, strandBinormal,
-        normal, view, light, shadowMask, layer0, tint0);
-    vec3 color1 = xrSourceAnisoLayer(strandTangent, strandBinormal,
-        normal, view, light, shadowMask, layer1, tint1);
+    if (globalBlend == 0) shadowMask = globalMask;
+    else if (globalBlend == 2) shadowMask *= globalMask;
+    else if (globalBlend == 5) shadowMask = max(shadowMask, globalMask);
+    else if (globalBlend == 6) shadowMask = 1.0 - (1.0 - shadowMask) * (1.0 - globalMask);
+    else if (globalBlend == 7) shadowMask = max(shadowMask - globalMask, 0.0);
+    else if (globalBlend == 8) shadowMask = min(shadowMask + globalMask, 1.0);
+    else if (globalBlend == 9) shadowMask = shadowMask < 0.5
+        ? 2.0 * shadowMask * globalMask
+        : 1.0 - 2.0 * (1.0 - shadowMask) * (1.0 - globalMask);
+    else if (globalBlend == 20) shadowMask += shadowMask * globalMask;
+    return vec2(
+        xrSourceAnisoLayerResponse(strandTangent, strandBinormal,
+            normal, view, light, shadowMask, layer0, specMap.a, offsetMapStrength.x),
+        xrSourceAnisoLayerResponse(strandTangent, strandBinormal,
+            normal, view, light, shadowMask, layer1, specMap.a, offsetMapStrength.y));
+}
+
+void xrSourceApplyAnisotropy(vec2 responses, vec2 footprint, vec3 directColor,
+    vec4 settings, vec4 mixSettings, vec4 toon0, vec4 toon1, vec3 tint0, vec3 tint1,
+    vec3 specMapColor, inout vec3 baseColor, inout vec3 lightAdd)
+{
+    vec3 color0 = xrSourceAnisoStylize(responses.x, footprint.x, toon0) * tint0 * specMapColor;
+    vec3 color1 = xrSourceAnisoStylize(responses.y, footprint.y, toon1) * tint1 * specMapColor;
     vec3 lightColor = mix(vec3(dot(directColor, vec3(0.299, 0.587, 0.114))),
         directColor, mixSettings.y);
     vec3 result = (color0 + color1) *

@@ -1,7 +1,7 @@
 #version 460
 
 // Converts DDGI's persistent 32-byte probe records into the point-debug layout
-// consumed by Common/Debug/gs/PointInstance.gs. No probe data returns to the CPU.
+// consumed by Common/Debug/vs/DebugPointInstance.vs. No probe data returns to the CPU.
 layout(local_size_x = 64) in;
 
 #pragma snippet "DDGIBindings"

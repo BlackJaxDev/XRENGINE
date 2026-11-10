@@ -55,6 +55,9 @@ public sealed partial class AdvancedGpuScenePublisher
     /// </summary>
     private void ReleasePlanScratch()
     {
+        _nativeUberLayoutProofs.Clear();
+        _nativeUberLayoutFullCheckCount = 0;
+        _nativeUberLayoutProofHitCount = 0;
         Array.Clear(_plannedCommands, 0, _plannedCommandCount);
         Array.Clear(_plannedDeformationSources, 0, _legacyMappingCount);
         _plannedCommandCount = 0;

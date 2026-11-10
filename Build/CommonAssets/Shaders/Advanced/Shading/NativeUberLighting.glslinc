@@ -311,7 +311,13 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
         }
         else if (mode == 5) band = UBER_F(_ForceFlatRampedLightmap) > 0.5 ? step(0.5, map) : 1.0;
         else band = smoothstep(UBER_F(_ShadowBorder) - UBER_F(_ShadowBlur), UBER_F(_ShadowBorder) + UBER_F(_ShadowBlur), map);
-        vec3 lit = mode == 5 ? radiance * band : mix(radiance * shadowColor, radiance, band);
+        vec3 bandColor = shadowColor;
+        if (mode == 4)
+        {
+            vec4 shadeMap = UBER_SAMPLE(c, _FirstShadeMap, vec4(1.0));
+            bandColor = mix(shadowColor, shadeMap.rgb, shadeMap.a);
+        }
+        vec3 lit = mode == 5 ? radiance * band : mix(radiance * bandColor, radiance, band);
         float engineShadow = clamp(visibility * mask, 0.0, 1.0);
         color = base * lit * mix(1.0, engineShadow, strength) * mix(shadowColor, vec3(1.0), mix(1.0, clamp(band * engineShadow, 0.0, 1.0), strength)) + ambient;
     }

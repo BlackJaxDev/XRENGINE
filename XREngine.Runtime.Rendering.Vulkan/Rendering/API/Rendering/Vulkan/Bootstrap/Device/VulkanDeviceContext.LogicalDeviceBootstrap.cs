@@ -706,9 +706,13 @@ internal sealed unsafe partial class VulkanDeviceContext
         _deviceContext.QueryMultiviewCapabilities(
             multiviewExtensionEnabled,
             out bool multiviewFeatureSupported,
+            out bool multiviewGeometryShaderSupported,
             out bool multiviewPromotedToCore);
         bool enableMultiviewFeature = multiviewFeatureSupported;
         _deviceContext.AdvancedMultiviewEnabled = enableMultiviewFeature;
+        _deviceContext.AdvancedMultiviewGeometryShaderEnabled =
+            enableMultiviewFeature && multiviewGeometryShaderSupported &&
+            _deviceContext.MutableCapabilities._supportsGeometryShader;
 
         bool indexTypeUint8ExtensionEnabled =
             extensionsArray.Contains("VK_EXT_index_type_uint8") ||
@@ -1138,6 +1142,7 @@ internal sealed unsafe partial class VulkanDeviceContext
             PNext = null,
             ShaderDrawParameters = enableShaderDrawParametersFeature,
             Multiview = enableMultiviewFeature,
+            MultiviewGeometryShader = _deviceContext.AdvancedMultiviewGeometryShaderEnabled,
         };
 
         PhysicalDeviceVulkan12Features vulkan12FeatureEnable = new()

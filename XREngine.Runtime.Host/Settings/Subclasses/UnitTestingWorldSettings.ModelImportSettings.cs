@@ -39,6 +39,16 @@ public partial class UnitTestingWorldSettings
         /// </summary>
         public string Path { get; set; } = string.Empty;
         /// <summary>
+        /// Selects one scene or prefab by its Assets-relative path inside a Unity package.
+        /// An empty value imports all scene and prefab entries from the main package.
+        /// </summary>
+        public string? PackageEntryPath { get; set; }
+        /// <summary>
+        /// Publishes only the uniquely named top-level node and its children from an imported scene.
+        /// Animated imports attach the selected startup clip to this node.
+        /// </summary>
+        public string? SceneRootName { get; set; }
+        /// <summary>
         /// Optional Unity project root (or its Assets directory) for loose scenes and prefabs.
         /// When omitted, the importer locates the owning project from the source path.
         /// Relative paths are resolved from the process working directory.

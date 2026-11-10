@@ -96,7 +96,8 @@ public static partial class SerializedMaterialImporter
         diagnostics.AddRange(sourceToonMatch.Diagnostics);
         SerializedMaterialDocument conversionDocument;
         if (sourceToonMatch.IsDowngradeSource)
-            conversionDocument = SourceToonFeatureLossNormalizer.Normalize(document, diagnostics);
+            conversionDocument = SourceToonFeatureLossNormalizer.Normalize(
+                document, diagnostics, shaderPath, sourceToonMatch.IsLocked);
         else if (sourceToonMatch.IsAccepted && sourceToonMatch.Version == SourceToon10Catalog.Version)
             conversionDocument = SourceToon10Catalog.CreateConversionDocument(document, sourceToonMatch);
         else
@@ -128,7 +129,8 @@ public static partial class SerializedMaterialImporter
                     sourceToonDescriptor)
                 : isLilToon
                     ? ConvertLilToonToUberMaterial(document, resolver, warnings, shaderPath)
-                    : ConvertGenericSerializedMaterial(document, resolver, warnings);
+                    : ConvertGenericSerializedMaterial(
+                        document, resolver, warnings, reportUnconvertedProjectShader: true);
 
             material.OriginalPath = normalizedPath;
             EMaterialConversionOutcome outcome = isSourceToonFeatureLoss
@@ -144,6 +146,9 @@ public static partial class SerializedMaterialImporter
                 outcome,
                 sourceToonMatch);
             MaterialConversionReportRegistry.Instance.Set(material, conversionReport);
+            if (isSourceToonConversion && material.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
+                !string.IsNullOrWhiteSpace(document.Shader.Guid))
+                context?.ResolveConvertedShader(normalizedPath, document.Shader.Guid);
             context?.MarkOutcome(
                 normalizedPath,
                 isSourceToonFeatureLoss
@@ -175,7 +180,9 @@ public static partial class SerializedMaterialImporter
             Debug.LogWarning(warnings[^1]);
             try
             {
-                XRMaterial material = ConvertGenericSerializedMaterial(document, resolver, warnings);
+                // The warning above already states the conversion failure and the fallback.
+                XRMaterial material = ConvertGenericSerializedMaterial(
+                    document, resolver, warnings, reportUnconvertedProjectShader: false);
                 material.OriginalPath = normalizedPath;
                 MaterialConversionReport conversionReport = MaterialConversionReportBuilder.Create(
                     normalizedPath,
@@ -397,7 +404,7 @@ public static partial class SerializedMaterialImporter
         ApplySourceToonSurfaceFeatures(material, document, resolver, diagnostics, warnings, sourceVersion);
         NormalizeSourceToonDetailColor(material, document, detailTexSource, resolver.ProjectRoot);
         ApplySourceToonEffectsAndIntegrations(material, document, resolver, diagnostics, warnings);
-        ApplySourceToonRenderState(material, document, diagnostics);
+        ApplySourceToonRenderState(material, document, resolver, diagnostics, warnings);
         // Pro material animation/controller semantics are not part of the lossy
         // Toon conversion contract. Keep their imported authored values as
         // variant constants so inactive branches can be pruned instead of
@@ -547,10 +554,14 @@ public static partial class SerializedMaterialImporter
     private static XRMaterial ConvertGenericSerializedMaterial(
         SerializedMaterialDocument document,
         SourceAssetResolver resolver,
-        List<string> warnings)
+        List<string> warnings,
+        bool reportUnconvertedProjectShader)
     {
         if (TryConvertOpaqueStandardMaterial(document, resolver, warnings, out XRMaterial standardMaterial))
             return standardMaterial;
+
+        if (reportUnconvertedProjectShader)
+            ReportUnconvertedProjectShader(document, resolver, warnings);
 
         ColorF4 baseColor = document.TryGetVector("_BaseColor", out Vector4 baseColorVector) ||
                             document.TryGetVector("_Color", out baseColorVector)
@@ -565,6 +576,26 @@ public static partial class SerializedMaterialImporter
 
         material.Name = document.Name;
         return material;
+    }
+
+    /// <summary>
+    /// Reports a shader from the source project that has no native conversion.
+    /// The generic material keeps only the base color or the main texture, thus the report must state the loss.
+    /// A built-in Unity shader has no file in the project and gets no report.
+    /// </summary>
+    private static void ReportUnconvertedProjectShader(
+        SerializedMaterialDocument document,
+        SourceAssetResolver resolver,
+        List<string> warnings)
+    {
+        string? shaderPath = resolver.Resolve(document.Shader.Guid);
+        if (string.IsNullOrWhiteSpace(shaderPath) || !File.Exists(shaderPath))
+            return;
+
+        warnings.Add(
+            $"Unity material '{document.Name}' uses project shader '{Path.GetFileName(shaderPath)}' " +
+            $"(GUID {document.Shader.Guid}), which has no native conversion. The generic lit material keeps only " +
+            "the base color or the main texture. The other behavior of the shader was not converted.");
     }
 
     private static void ApplySourceToonScalarAndColorProperties(
@@ -1260,7 +1291,9 @@ public static partial class SerializedMaterialImporter
     private static void ApplySourceToonRenderState(
         XRMaterial material,
         SerializedMaterialDocument document,
-        ICollection<MaterialConversionDiagnostic> diagnostics)
+        SourceAssetResolver resolver,
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        List<string> warnings)
     {
         SourceToonRenderStateConversion conversion = SourceToonRenderStateConverter.Convert(document, diagnostics);
         material.PassSet = conversion.PassSet;
@@ -1284,6 +1317,16 @@ public static partial class SerializedMaterialImporter
         }
 
         material.TransparentSortPriority = conversion.PassSet.QueuePriority;
+        if (SourceToonRenderStateConverter.IsHornsSoftOutlineSource(document))
+        {
+            ApplyHornsSoftOutlineParameters(material, document, resolver, warnings);
+            if (document.TryGetPositive("_AlEnabled"))
+                diagnostics.Add(new MaterialConversionDiagnostic(
+                    MaterialConversionDiagnosticCodes.RuntimeMappingMissing,
+                    MaterialConversionDiagnosticSeverity.Warning,
+                    "The soft outline uses neutral AudioLink values. Filtered AudioLink input is not mapped for this pass.",
+                    "_AlEnabled"));
+        }
         ApplySourceToonLatePassMetadata(material, document, diagnostics);
     }
 
@@ -1591,7 +1634,7 @@ public static partial class SerializedMaterialImporter
                 0.12f,
                 $"Validating required texture {Path.GetFileName(texturePath)}");
             using FileStream encodedImage = File.OpenRead(texturePath);
-            (uint width, uint height) = RuntimeImageCodecs.Require().Validate(encodedImage);
+            (uint width, uint height) = RuntimeImageCodecs.Require().Validate(encodedImage, texturePath);
             source.Refresh();
             if (source.Exists && source.Length == length && source.LastWriteTimeUtc.Ticks == lastWriteTicks)
                 context.RecordValidatedTexture(source.FullName, length, lastWriteTicks);
@@ -1779,7 +1822,7 @@ public static partial class SerializedMaterialImporter
         }
 
         IReadOnlyDictionary<string, string> overrideTags = document.OverrideTags;
-        if (resolver.ImportContext is { AllowPartialImport: true, DependencyGraph: not null } context &&
+        if (resolver.ImportContext is { DependencyGraph: not null } context &&
             !string.IsNullOrWhiteSpace(document.SourcePath) &&
             string.IsNullOrWhiteSpace(shaderPath) &&
             !document.OverrideTags.ContainsKey("OriginalShader") &&
@@ -1794,7 +1837,7 @@ public static partial class SerializedMaterialImporter
             overrideTags = projectTags;
         }
 
-        return SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
+        SourceToonShaderMatchResult match = SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
         {
             ShaderPath = shaderPath,
             ShaderGuid = document.Shader.Guid,
@@ -1802,6 +1845,26 @@ public static partial class SerializedMaterialImporter
             PropertyNames = document.GetPropertyNames(),
             OverrideTags = overrideTags,
         });
+        if (match.IsAccepted && match.Version == SourceToonZekkSoftOutlineCatalog.Version &&
+            string.Equals(document.Shader.Guid, SourceToonZekkSoftOutlineCatalog.ShaderGuid,
+                StringComparison.OrdinalIgnoreCase) &&
+            !SourceToonRenderStateConverter.IsHornsSoftOutlineSource(document))
+        {
+            return match with
+            {
+                Kind = SourceToonShaderMatchKind.UnsupportedVersion,
+                IsAccepted = false,
+                Diagnostics =
+                [
+                    new MaterialConversionDiagnostic(
+                        MaterialConversionDiagnosticCodes.RuntimeMappingMissing,
+                        MaterialConversionDiagnosticSeverity.Warning,
+                        "The verified locked soft-outline shader needs the exact Horns material state. This material keeps its source shader for review."),
+                ],
+            };
+        }
+
+        return match;
     }
 
     private static bool RegisterProjectShaderEvidence(

@@ -127,7 +127,8 @@ public static partial class EditorUnitTests
                     cancellationToken: default,
                     progress: ReportProgress,
                     fbxBackend: ResolveFbxBackend(settings),
-                    allowPartialImport: settings.AllowPartialImport);
+                    allowPartialImport: settings.AllowPartialImport,
+                    sceneRootName: settings.SceneRootName);
 
                 SceneNode convertedRoot = conversion.RootNode
                     ?? throw new SourceVisualImportException(
@@ -331,6 +332,7 @@ public static partial class EditorUnitTests
 
             int sourceToonCount = 0;
             int downgradeCount = 0;
+            List<string> failures = [];
             foreach (XRMaterial material in materials)
             {
                 if (!MaterialConversionReportRegistry.Instance.TryGet(material, out MaterialConversionReport report) ||
@@ -350,31 +352,37 @@ public static partial class EditorUnitTests
                 }
                 if (unsupportedVersion)
                 {
-                    throw new SourceVisualImportException(
+                    failures.Add(
                         $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' uses an unsupported " +
                         $"shader source ({report.SourceShaderVersion}). No verified source profile matched. " +
                         "Inspect the material conversion report for its source identity.");
+                    continue;
                 }
 
                 if (report.Outcome is EMaterialConversionOutcome.GenericFallback or EMaterialConversionOutcome.Failed)
                 {
-                    throw new SourceVisualImportException(
+                    failures.Add(
                         $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' did not convert to the " +
                         $"native Uber shader (outcome: {report.Outcome}). " +
                         string.Join(" ", report.Failures.Count > 0 ? report.Failures : report.Warnings));
+                    continue;
                 }
 
                 if (!material.TryGetUberMaterialState(out _, out _))
                 {
-                    throw new SourceVisualImportException(
+                    failures.Add(
                         $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' reported a successful " +
                         "conversion but has no native Uber shader state.");
+                    continue;
                 }
 
                 if (report.Outcome == EMaterialConversionOutcome.ConvertedToSourceToon)
                     downgradeCount++;
                 sourceToonCount++;
             }
+
+            if (failures.Count > 0)
+                throw new SourceVisualImportException(string.Join(Environment.NewLine, failures));
 
             return (models.Count, materials.Count, sourceToonCount, downgradeCount);
         }

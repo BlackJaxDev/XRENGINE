@@ -297,7 +297,7 @@ internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITex
 
         long decodeStartTimestamp = XRTexture2D.StartImportedTextureTiming();
         byte[] bytes = read.ReadAllBytes(sourcePath);
-        using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(bytes);
+        using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(bytes, sourcePath);
         double decodeMilliseconds = XRTexture2D.CompleteImportedTextureTiming(decodeStartTimestamp);
         read.EnsureCurrent();
         TextureStreamingResidentData residentData = XRTexture2D.BuildResidentDataFromImage(

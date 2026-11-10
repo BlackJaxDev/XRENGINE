@@ -195,6 +195,13 @@ namespace XREngine
                 InitializeWorkerDomains(workerFactory!, count);
         }
 
+        /// <summary>
+        /// Sets how many general lanes may drain work. Lanes above the limit finish their
+        /// current job and park; queued work stays queued for the active lanes.
+        /// </summary>
+        internal void SetActiveGeneralWorkerLimit(int limit)
+            => _generalDomain?.SetActiveWorkerLimit(limit);
+
         /// <summary>Creates both domains before it starts either domain.</summary>
         internal void InitializeWorkerDomains(
             Execution.IEngineWorkerDomainFactory factory,

@@ -4,10 +4,10 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Runs a cold Vulkan pipeline compile without occupying a thread-pool thread.
-/// One persistent normal-priority worker owns the native calls; creating a new
+/// One persistent below-normal-priority worker owns the native calls; creating a new
 /// OS thread per variant made dense cold views spend seconds scheduling sub-ms
-/// driver compiles. Normal priority prevents cold import/cook work from starving
-/// admission-critical pipeline publication while render hosts remain above it.
+/// driver compiles. Foreground requests take queue priority, while an active
+/// native call finishes without holding the render scheduling admission gate.
 /// </summary>
 internal sealed class VulkanPipelineCompileTask : IDisposable
 {
@@ -25,13 +25,10 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
         internal bool TryPromoteToForeground()
             => Interlocked.Exchange(ref _foregroundRequired, 1) == 0;
 
-        internal bool TryExecute()
-        {
-            if (Interlocked.CompareExchange(ref _executionStarted, 1, 0) != 0)
-                return false;
-            ExecuteCore();
-            return true;
-        }
+        internal bool TryClaimExecution()
+            => Interlocked.CompareExchange(ref _executionStarted, 1, 0) == 0;
+
+        internal void ExecuteClaimed() => ExecuteCore();
 
         protected abstract void ExecuteCore();
     }
@@ -122,7 +119,8 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
 
             if (work.IsForegroundRequired)
             {
-                _ = work.TryExecute();
+                if (work.TryClaimExecution())
+                    work.ExecuteClaimed();
                 continue;
             }
 
@@ -135,14 +133,20 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
                 continue;
             }
 
+            bool executionClaimed;
             try
             {
-                _ = work.TryExecute();
+                executionClaimed = work.TryClaimExecution();
             }
             finally
             {
                 backgroundSlice.Dispose();
             }
+
+            // Admission is bounded. The driver compile cannot be preempted and
+            // must not hold the scheduling gate that foreground frames drain.
+            if (executionClaimed)
+                work.ExecuteClaimed();
         }
     }
 

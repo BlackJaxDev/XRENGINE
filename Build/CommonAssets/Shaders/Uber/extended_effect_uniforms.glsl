@@ -64,6 +64,7 @@ uniform float _VideoBlend;
 #ifndef XRENGINE_UBER_DISABLE_AUDIOLINK
 //@property(name="_AudioLinkTexture", display="AudioLink Data", slot=texture)
 uniform sampler2D _AudioLinkTexture;
+uniform int _AudioLinkAnimToggle;
 uniform vec4 _AudioLinkTextureSize;
 uniform vec4 _AudioLinkTime;
 //@property(name="_AudioLinkBand", display="Audio Band", mode=animated, range=[0,3])

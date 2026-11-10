@@ -75,12 +75,24 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             ShadeUberProgramIndex or ShadeCombinedMultisampleProgramIndex;
 
     internal VulkanAdvancedVisibilityPipelineReadiness TryGetNativeComputePipelines(
+        bool multisampleVisibility,
         out VulkanAdvancedNativeComputePipelines pipelines, out string reason)
     {
         pipelines = default;
         VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
-        if (readiness == VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            pipelines = _preparedNativeComputePipelines;
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        pipelines = _preparedNativeComputePipelines;
+        if (multisampleVisibility)
+        {
+            readiness = GetMultisampleNativeShadingReadiness(out VulkanAdvancedComputePipeline shade, out reason);
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                pipelines = default;
+                return readiness;
+            }
+            pipelines = pipelines with { ShadeMultisample = shade };
+        }
         return readiness;
     }
 
@@ -106,9 +118,6 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         readiness = TryGetNativeComputePipeline(5, "Advanced/Shading/ShadeNativeOpaque.comp",
             out VulkanAdvancedComputePipeline shade, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(6, "Advanced/Shading/ShadeNativeOpaqueMsaa.comp",
-            out VulkanAdvancedComputePipeline shadeMultisample, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
         // The RVC telemetry kernel is small. It is prepared with the family so
         // a compile failure is loud at admission, not a silent missing counter.
         readiness = TryGetNativeComputePipeline(RvcShadeletTelemetryProgramIndex, RvcShadeletTelemetryShaderPath,
@@ -117,7 +126,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         readiness = TryGetNativeComputePipeline(FoveatedQuadFillProgramIndex, FoveatedQuadFillShaderPath,
             out VulkanAdvancedComputePipeline foveatedFill, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        pipelines = new(classify, arguments, ambientOcclusion, froxels, background, shade, shadeMultisample)
+        pipelines = new(classify, arguments, ambientOcclusion, froxels, background, shade, default)
         {
             RvcShadeletTelemetry = telemetry,
             FoveatedQuadFill = foveatedFill,

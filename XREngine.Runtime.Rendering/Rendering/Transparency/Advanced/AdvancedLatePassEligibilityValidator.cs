@@ -87,7 +87,8 @@ public static class AdvancedLatePassEligibilityValidator
 
         bool rejectOpaqueOrMasked =
             isOpaqueOrMasked &&
-            renderPass != (int)EDefaultRenderPass.OnTopForward;
+            renderPass != (int)EDefaultRenderPass.OnTopForward &&
+            !IsVerifiedSoftOutlineBase(material, renderPass, metadata);
         if (!TryValidateLatePass(metadata, rejectOpaqueOrMasked, out rejectionReason))
             return false;
 
@@ -104,6 +105,31 @@ public static class AdvancedLatePassEligibilityValidator
         }
 
         return true;
+    }
+
+    internal static bool IsVerifiedSoftOutlineBase(
+        XRMaterial material,
+        int renderPass,
+        AdvancedLatePassMetadata metadata)
+    {
+        if (renderPass != (int)EDefaultRenderPass.TransparentForward ||
+            material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 ||
+            material.GetEffectiveTransparencyMode() != ETransparencyMode.Opaque ||
+            metadata.Kind != EAdvancedLatePassKind.SpecialEffects ||
+            material.PassSet.SourceRenderQueue != 3000 ||
+            material.PassSet.QueuePriority != 0 ||
+            !material.PassSet.TryGetPass(EMaterialPassIdentity.Base, out MaterialPassDefinition basePass) ||
+            !basePass.Enabled || basePass.RenderPass != renderPass ||
+            !ReferenceEquals(basePass.RenderOptions, material.RenderOptions) ||
+            !material.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outlinePass) ||
+            !outlinePass.Enabled || outlinePass.RenderPass != renderPass ||
+            outlinePass.ShaderBehavior != EngineMaterialSemanticIdentity.UberSoftOutlineV2)
+            return false;
+
+        RenderingParameters options = basePass.RenderOptions;
+        return options.DepthTest.Enabled == ERenderParamUsage.Enabled &&
+               options.DepthTest.UpdateDepth &&
+               options.BlendModeAllDrawBuffers is { Enabled: ERenderParamUsage.Disabled };
     }
 
     public static bool IsAdvancedLateRenderPass(int renderPass)

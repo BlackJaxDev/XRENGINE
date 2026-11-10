@@ -636,6 +636,18 @@ uniform vec4 _GlitterColor;
 uniform float _GlitterDensity;
 //@property(name="_GlitterSize", display="Size", mode=static, range=[0,1])
 uniform float _GlitterSize;
+uniform int _GlitterRandomSize;
+uniform vec2 _GlitterMinMaxSize;
+uniform int _GlitterRandomColors;
+uniform vec2 _GlitterRandomSaturation;
+uniform vec2 _GlitterRandomValue;
+uniform vec2 _GlitterGlobalMask;
+uniform int _GlitterColorThemeIndex;
+uniform vec4 _GlitterHueControl;
+uniform vec4 _GlitterAudioBands;
+uniform vec2 _GlitterAudioSizeRange;
+uniform vec2 _GlitterAudioBrightnessRange;
+uniform vec2 _GlitterAudioMaskRange;
 //@property(name="_GlitterSpeed", display="Scroll Speed", mode=animated, range=[0,10])
 uniform float _GlitterSpeed;
 //@property(name="_GlitterBrightness", display="Brightness", mode=static, range=[0,16])

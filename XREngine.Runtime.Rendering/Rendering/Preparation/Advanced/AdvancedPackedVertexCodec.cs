@@ -208,10 +208,24 @@ public static partial class AdvancedPackedVertexCodec
     }
 
     public static uint PackHalf2(Vector2 value)
-        => BitConverter.HalfToUInt16Bits((Half)value.X) |
-           ((uint)BitConverter.HalfToUInt16Bits((Half)value.Y) << 16);
+    {
+        // Absent texture-coordinate sets are positive zero. Both halves of +0 are zero bits, so skip
+        // the software half conversion. A negative zero has other bits and takes the full path.
+        if (System.Runtime.CompilerServices.Unsafe.As<Vector2, ulong>(ref value) == 0UL)
+            return 0u;
+        return BitConverter.HalfToUInt16Bits((Half)value.X) |
+               ((uint)BitConverter.HalfToUInt16Bits((Half)value.Y) << 16);
+    }
 
     public static uint PackRgba8(Vector4 value)
+    {
+        // Absent color sets are opaque white, which packs to all ones.
+        if (value.X == 1.0f && value.Y == 1.0f && value.Z == 1.0f && value.W == 1.0f)
+            return uint.MaxValue;
+        return PackRgba8Core(value);
+    }
+
+    private static uint PackRgba8Core(Vector4 value)
         => QuantizeUnorm8(value.X) |
            ((uint)QuantizeUnorm8(value.Y) << 8) |
            ((uint)QuantizeUnorm8(value.Z) << 16) |

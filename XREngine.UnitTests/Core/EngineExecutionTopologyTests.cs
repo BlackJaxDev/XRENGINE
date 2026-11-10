@@ -127,7 +127,7 @@ public sealed class EngineExecutionTopologyTests
 
         summary.ShouldContain("general:User");
         summary.ShouldContain("render:Environment");
-        summary.ShouldContain("requests={foreground:-1,general:-1,generalCap:16,render:0,renderCap:8,dedicated:0}");
+        summary.ShouldContain("requests={foreground:-1,general:-1,generalCap:16,render:0,renderCap:8,dedicated:0,xrSessionDedicated:0}");
         summary.ShouldContain("schedulerDomains=[general,render,job-auxiliary]");
         summary.ShouldContain("backendRecording=retained");
     }
@@ -164,6 +164,50 @@ public sealed class EngineExecutionTopologyTests
         topology.RenderWorkerThreadCount.ShouldBe(0);
         topology.GeneralWorkerThreadCount.ShouldBe(EngineExecutionTopology.MinimumAutomaticGeneralWorkerCount);
     }
+
+    [Test]
+    public void Resolve_XrSessionLanes_GoToGeneralWorkersWithoutASession()
+    {
+        // The 16-processor process above, with the five OpenXR lanes marked as session-only.
+        EngineExecutionTopology topology = EngineExecutionTopology.Resolve(
+            CreateRequest() with
+            {
+                EffectiveProcessorCount = 16,
+                SystemProcessorCount = 32,
+                RenderWorkerThreadCount = EngineExecutionTopology.AutomaticWorkerCount,
+                DedicatedBackgroundThreadCount = 12,
+                XrSessionDedicatedThreadCount = 5,
+            });
+
+        topology.RenderWorkerThreadCount.ShouldBe(0);
+        topology.GeneralWorkerThreadCount.ShouldBe(EngineExecutionTopology.MinimumAutomaticGeneralWorkerCount);
+        topology.GeneralWorkerThreadCountWithoutXrSession.ShouldBe(5);
+    }
+
+    [Test]
+    public void Resolve_ExplicitGeneralCount_IsTheSameWithAndWithoutAnXrSession()
+    {
+        EngineExecutionTopology topology = EngineExecutionTopology.Resolve(
+            CreateRequest() with
+            {
+                EffectiveProcessorCount = 16,
+                GeneralWorkerThreadCount = 3,
+                DedicatedBackgroundThreadCount = 8,
+                XrSessionDedicatedThreadCount = 5,
+            });
+
+        topology.GeneralWorkerThreadCount.ShouldBe(3);
+        topology.GeneralWorkerThreadCountWithoutXrSession.ShouldBe(3);
+    }
+
+    [Test]
+    public void Resolve_XrSessionLanesAboveDedicatedLanes_Throws()
+        => Should.Throw<InvalidOperationException>(() => EngineExecutionTopology.Resolve(
+            CreateRequest() with
+            {
+                DedicatedBackgroundThreadCount = 2,
+                XrSessionDedicatedThreadCount = 3,
+            }));
 
     private static EngineExecutionTopologyRequest CreateRequest()
         => new()

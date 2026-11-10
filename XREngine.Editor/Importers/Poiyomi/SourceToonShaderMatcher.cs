@@ -84,6 +84,10 @@ public static partial class SourceToonShaderMatcher
             (hasProProperties && (hasSourceToonPath || hasSignature || isLockedName)) ||
             (hasNonToonOriginalGuid && hasProProperties && hasOptimizerMarker);
 
+        if (SourceToonZekkSoftOutlineCatalog.Matches(input))
+            return Accepted(SourceToonShaderMatchKind.ExactLockedSource,
+                SourceToonZekkSoftOutlineCatalog.Version, isLocked: true);
+
         if (isProDowngradeSource)
         {
             string version = sourceVersion?.ToString() ?? "unknown";

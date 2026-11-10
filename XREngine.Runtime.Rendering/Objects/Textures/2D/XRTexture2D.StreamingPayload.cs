@@ -191,7 +191,7 @@ public partial class XRTexture2D
         {
             // The encoded source is read through an owner so the file bytes never become a managed array.
             using XREngine.Core.Files.CookedPayloadOwner fileBytes = RuntimeRenderingHostServices.Assets.ReadAllBytesOwned(sourceFilePath);
-            using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileBytes.ReadOnlyMemory);
+            using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileBytes.ReadOnlyMemory, sourceFilePath);
             texture = CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(sourceImage), usage);
             texture.FilePath = cacheFilePath;
             texture.OriginalPath = sourceFilePath;

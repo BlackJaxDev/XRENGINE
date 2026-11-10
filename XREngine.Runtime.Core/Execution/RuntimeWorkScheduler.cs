@@ -32,6 +32,13 @@ public static class RuntimeWorkScheduler
         }
     }
 
+    /// <summary>
+    /// Reports that an XR session started or stopped, so the general pool gives its processors to or
+    /// takes them back from the session's dedicated lanes. Safe to call from any thread.
+    /// </summary>
+    public static void SetXrSessionActive(bool active)
+        => Scheduler?.SetXrSessionActive(active);
+
     public static EngineWorkScheduler? Scheduler
     {
         get

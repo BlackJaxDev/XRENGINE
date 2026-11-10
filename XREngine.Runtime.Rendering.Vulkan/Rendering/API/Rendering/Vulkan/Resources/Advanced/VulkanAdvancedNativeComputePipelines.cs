@@ -38,6 +38,10 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
     internal VulkanAdvancedComputePipeline ShadeMultisampleCombined { get; init; }
 
     internal bool IsCurrent => Classify.IsCurrent && BuildArguments.IsCurrent && AmbientOcclusion.IsCurrent &&
-        BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent && ShadeMultisample.IsCurrent &&
+        BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent &&
         RvcShadeletTelemetry.IsCurrent && FoveatedQuadFill.IsCurrent;
+
+    /// <summary>Checks the shading program selected by the sealed visibility mode.</summary>
+    internal bool IsCurrentFor(bool multisampleVisibility)
+        => IsCurrent && (!multisampleVisibility || ShadeMultisample.IsCurrent);
 }

@@ -272,10 +272,26 @@ uniform float _AnisotropyRotation;
 uniform vec4 _SourceAnisoSettings;
 //@property(name="_SourceAnisoMix", display="Source Anisotropy Mix", mode=static, default="vec4(0.0)")
 uniform vec4 _SourceAnisoMix;
+//@property(name="_AnisoColorMap", display="Source Anisotropy Color Map", slot=texture, semantic=color)
+uniform sampler2D _AnisoColorMap;
+//@property(name="_AnisoColorMap_ST", display="Source Anisotropy Color Map Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _AnisoColorMap_ST;
+//@property(name="_AnisoColorMapPan", display="Source Anisotropy Color Map Pan", mode=animated, default="vec2(0.0)")
+uniform vec2 _AnisoColorMapPan;
+//@property(name="_AnisoColorMapUV", display="Source Anisotropy Color Map UV", mode=static, default="0")
+uniform int _AnisoColorMapUV;
+//@property(name="_SourceAnisoMapSettings", display="Source Anisotropy Map Settings", mode=static, default="vec4(0.0, 0.0, 2.0, 0.0)")
+uniform vec4 _SourceAnisoMapSettings;
+//@property(name="_SourceAnisoOffsetMapStrength", display="Source Anisotropy Offset Map Strength", mode=static, default="vec2(0.0)")
+uniform vec2 _SourceAnisoOffsetMapStrength;
 //@property(name="_SourceAnisoLayer0", display="Source Anisotropy Layer 0", mode=static, default="vec4(0.0)")
 uniform vec4 _SourceAnisoLayer0;
 //@property(name="_SourceAnisoLayer1", display="Source Anisotropy Layer 1", mode=static, default="vec4(0.0)")
 uniform vec4 _SourceAnisoLayer1;
+//@property(name="_SourceAnisoToon0", display="Source Anisotropy Toon 0", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceAnisoToon0;
+//@property(name="_SourceAnisoToon1", display="Source Anisotropy Toon 1", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceAnisoToon1;
 //@property(name="_SourceAnisoTint0", display="Source Anisotropy Tint 0", mode=animated, default="vec4(1.0, 1.0, 1.0, 0.0)")
 uniform vec4 _SourceAnisoTint0;
 //@property(name="_SourceAnisoTint1", display="Source Anisotropy Tint 1", mode=animated, default="vec4(1.0, 1.0, 1.0, 0.0)")
@@ -438,6 +454,26 @@ uniform vec4 _MatcapSlotUvControl0;
 uniform vec4 _MatcapSlotUvControl1;
 uniform vec4 _MatcapSlotUvControl2;
 uniform vec4 _MatcapSlotUvControl3;
+uniform float _MatcapSlotRotation0;
+uniform float _MatcapSlotRotation1;
+uniform float _MatcapSlotRotation2;
+uniform float _MatcapSlotRotation3;
+uniform vec4 _MatcapSlotAudioBands0;
+uniform vec4 _MatcapSlotAudioBands1;
+uniform vec4 _MatcapSlotAudioBands2;
+uniform vec4 _MatcapSlotAudioBands3;
+uniform vec2 _MatcapSlotAudioAlpha0;
+uniform vec2 _MatcapSlotAudioAlpha1;
+uniform vec2 _MatcapSlotAudioAlpha2;
+uniform vec2 _MatcapSlotAudioAlpha3;
+uniform vec2 _MatcapSlotAudioEmission0;
+uniform vec2 _MatcapSlotAudioEmission1;
+uniform vec2 _MatcapSlotAudioEmission2;
+uniform vec2 _MatcapSlotAudioEmission3;
+uniform vec2 _MatcapSlotAudioIntensity0;
+uniform vec2 _MatcapSlotAudioIntensity1;
+uniform vec2 _MatcapSlotAudioIntensity2;
+uniform vec2 _MatcapSlotAudioIntensity3;
 uniform vec4 _MatcapSlotHue0;
 uniform vec4 _MatcapSlotHue1;
 uniform vec4 _MatcapSlotHue2;

@@ -57,7 +57,7 @@ them from native visibility bins. The authored pass draws them in package order.
 Advanced late color and participating temporal passes declare filtered
 `CpuDirect` submission independently of the opaque native GPU family. Their
 draws still execute on the GPU; the CPU filters authored late-lane eligibility.
-An enabled masked-forward material outline has a frozen supplemental command
+An enabled opaque-forward or masked-forward material outline has a frozen supplemental command
 identity. The Advanced pipeline draws that command over native HDR and depth
 before it takes the transparent scene snapshot. It checks the owner, source
 pass, outline variant, and render options before the draw. The Vulkan outline

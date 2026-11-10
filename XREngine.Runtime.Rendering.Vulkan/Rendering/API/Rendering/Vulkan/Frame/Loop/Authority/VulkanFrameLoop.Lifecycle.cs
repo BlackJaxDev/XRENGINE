@@ -613,6 +613,7 @@ internal sealed partial class VulkanFrameLoop
         RuntimeEngine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;
         RuntimeEngine.Rendering.State.IsIntel = properties.VendorID == 0x8086;
         RuntimeEngine.Rendering.State.IsVulkan = true;
+        RuntimeEngine.Rendering.State.HasVulkanMultiviewGeometryShader = false;
         RuntimeEngine.Rendering.State.SupportsOpenGLLayeredFramebuffers = false;
         RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering = false;
         RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering = false;
@@ -735,6 +736,8 @@ internal sealed partial class VulkanFrameLoop
         if (result.Resources.CreatePipelineCache)
             _resourceRuntime.PipelineManager.CreatePipelineCache();
         RuntimeEngine.Rendering.State.HasVulkanMultiView = result.Engine.HasVulkanMultiView;
+        RuntimeEngine.Rendering.State.HasVulkanMultiviewGeometryShader =
+            _deviceContext.AdvancedMultiviewGeometryShaderEnabled;
         RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = result.Engine.HasVulkanDepthClipControl;
         RuntimeEngine.Rendering.State.HasVulkanMemoryDecompression = result.Engine.HasVulkanMemoryDecompression;
         RuntimeEngine.Rendering.State.HasVulkanCopyMemoryIndirect = result.Engine.HasVulkanCopyMemoryIndirect;

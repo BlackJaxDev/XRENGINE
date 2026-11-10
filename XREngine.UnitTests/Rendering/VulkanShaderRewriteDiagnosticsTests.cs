@@ -126,7 +126,7 @@ void main()
             LoadShaderSource("Scene3D/SkyboxDynamic.fs").Source,
             EShaderType.Fragment);
         uint debugGeometryBinding = RewriteForVulkanAutoUniformBinding(
-            LoadShaderSource("Common/Debug/gs/PointInstance.gs").Source,
+            LoadShaderSource("Common/GizmoLine.gs").Source,
             EShaderType.Geometry);
 
         skyboxFragmentBinding.ShouldBe(64u);

@@ -1070,6 +1070,7 @@ public static partial class RuntimeEngine
             public static bool SupportsOpenGLGeometryShaderViewportIndex { get; internal set; }
             public static int MaxOpenGLViewports { get; internal set; } = 1;
             public static bool HasVulkanMultiView { get; internal set; }
+            public static bool HasVulkanMultiviewGeometryShader { get; internal set; }
             public static bool HasAnyMultiViewExtension => HasOvrMultiViewExtension || HasVulkanMultiView;
             public static bool DebugInstanceRenderingAvailable { get; internal set; } = true;
             public static bool IsNVIDIA { get; internal set; }

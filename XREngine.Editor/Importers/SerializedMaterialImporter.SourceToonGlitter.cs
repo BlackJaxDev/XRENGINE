@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text.RegularExpressions;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Importers.SourceToon;
@@ -11,6 +12,7 @@ public static partial class SerializedMaterialImporter
     private static void BindSourceToonGlitter(
         XRMaterial material,
         SerializedMaterialDocument document,
+        SourceAssetResolver resolver,
         SourceToonShaderVersion? sourceVersion,
         ICollection<MaterialConversionDiagnostic> diagnostics)
     {
@@ -36,15 +38,44 @@ public static partial class SerializedMaterialImporter
                 throw new SourceVisualImportException("The source linear glitter mode requires a separate directional response mapping.");
         }
 
-        RejectGlitterOption(document, "_GlitterRandomSize");
-        RejectGlitterOption(document, "_GlitterRandomColors");
+        bool randomSize = document.TryGetPositive("_GlitterRandomSize");
+        Vector4 sizeRange = Vector4.Zero;
+        if (randomSize && (!TryGetGlitterSizeRange(document, out sizeRange) ||
+            !float.IsFinite(sizeRange.X) || !float.IsFinite(sizeRange.Y) ||
+            sizeRange.X < 0.0f || sizeRange.Y > 1.0f || sizeRange.X > sizeRange.Y))
+            throw new SourceVisualImportException("Active glitter random size requires a valid source size range.");
+        bool randomColors = document.TryGetPositive("_GlitterRandomColors");
+        if (randomColors && (!document.TryGetVector("_GlitterMinMaxSaturation", out Vector4 saturationRange) ||
+            !document.TryGetVector("_GlitterMinMaxBrightness", out Vector4 valueRange) ||
+            !IsValidUnitRange(saturationRange) || !IsValidUnitRange(valueRange)))
+            throw new SourceVisualImportException("Active glitter random colors require valid saturation and value ranges.");
         RejectGlitterOption(document, "_GlitterRandomRotation");
         RejectGlitterOption(document, "_GlitterTextureRotation");
-        RejectGlitterOption(document, "_GlitterHueShiftEnabled");
-        RejectGlitterOption(document, "_GlitterALEnabled");
-        if (!legacy81)
-            RejectGlitterOption(document, "_GlitterMaskGlobalMask");
-        RejectGlitterOption(document, "_GlitterColorThemeIndex");
+        bool audioLink = document.TryGetPositive("_GlitterALEnabled");
+        if (audioLink && GetFloat(document, "_GlitterALChronoRotationSpeed") != 0.0f)
+            throw new SourceVisualImportException("Active glitter AudioLink chrono rotation is not supported.");
+        if (audioLink && GetFloat(document, "_GlitterALChronoSparkleSpeed") != 0.0f)
+            throw new SourceVisualImportException("Active glitter AudioLink chrono sparkle is not supported.");
+        int globalMaskIndex = legacy81 ? 0 : GetInt(document, "_GlitterMaskGlobalMask");
+        int globalMaskBlend = GetInt(document, "_GlitterMaskGlobalMaskBlendType", 2);
+        if (globalMaskIndex < 0 || globalMaskIndex > 16 || globalMaskBlend < 0 || globalMaskBlend > 7)
+            throw new SourceVisualImportException("Active glitter global mask has an unsupported index or blend mode.");
+        if (globalMaskIndex > 0 && !document.TryGetPositive("_GlobalMaskTexturesEnable"))
+        {
+            if (globalMaskBlend != 2)
+                throw new SourceVisualImportException("Active glitter global mask requires its source mask module.");
+            globalMaskIndex = 0;
+        }
+        if (globalMaskIndex > 0)
+        {
+            string maskName = $"_GlobalMaskTexture{(globalMaskIndex - 1) / 4}";
+            if (!HasExternalTexture(document, maskName) &&
+                !HasWhiteShaderTextureDefault(resolver.Resolve(document.Shader.Guid), maskName))
+                throw new SourceVisualImportException("Active glitter global mask texture is missing and has no verified white source default.");
+        }
+        int themeIndex = GetInt(document, "_GlitterColorThemeIndex");
+        if (themeIndex < 0 || themeIndex > 4)
+            throw new SourceVisualImportException("Active glitter color theme is outside the supported range.");
         if (document.TryGetVector("_GlitterRandomRotationSpeed", out Vector4 rotationSpeed) &&
             (rotationSpeed.X != 0.0f || rotationSpeed.Y != 0.0f))
         {
@@ -79,6 +110,28 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_GlitterColorMapUV", colorMapUv);
         SetFloat(material, "_GlitterFrequency", GetFloat(document, "_GlitterFrequency", legacy81 ? 100.0f : 300.0f));
         SetFloat(material, "_GlitterSize", GetFloat(document, "_GlitterSize", legacy81 ? 0.25f : 0.3f));
+        SetInt(material, "_GlitterRandomSize", randomSize ? 1 : 0);
+        SetVector2(material, "_GlitterMinMaxSize", new Vector2(sizeRange.X, sizeRange.Y));
+        SetInt(material, "_GlitterRandomColors", randomColors ? 1 : 0);
+        SetVector2(material, "_GlitterRandomSaturation", randomColors
+            ? GetSourceAudioRange(document, "_GlitterMinMaxSaturation") : Vector2.Zero);
+        SetVector2(material, "_GlitterRandomValue", randomColors
+            ? GetSourceAudioRange(document, "_GlitterMinMaxBrightness") : Vector2.Zero);
+        SetVector2(material, "_GlitterGlobalMask", new Vector2(globalMaskIndex, globalMaskBlend));
+        SetInt(material, "_GlitterColorThemeIndex", themeIndex);
+        SetVector4(material, "_GlitterHueControl", new Vector4(
+            document.TryGetPositive("_GlitterHueShiftEnabled") ? 1.0f : 0.0f,
+            GetFloat(document, "_GlitterHueShift"),
+            GetFloat(document, "_GlitterHueShiftSpeed"),
+            GetFloat(document, "_GlitterHueShiftColorSpace")));
+        SetVector4(material, "_GlitterAudioBands", new Vector4(
+            audioLink ? 1.0f : 0.0f,
+            GetSourceAudioBand(document, "_GlitterALSizeAddBand", audioLink),
+            GetSourceAudioBand(document, "_GlitterALMaxBrightnessBand", audioLink),
+            GetSourceAudioBand(document, "_GlitterALAlphaAddBand", audioLink)));
+        SetVector2(material, "_GlitterAudioSizeRange", GetSourceAudioRange(document, "_GlitterALSizeAdd"));
+        SetVector2(material, "_GlitterAudioBrightnessRange", GetSourceAudioRange(document, "_GlitterALMaxBrightnessAdd"));
+        SetVector2(material, "_GlitterAudioMaskRange", GetSourceAudioRange(document, "_GlitterALAlphaAdd"));
         SetFloat(material, "_GlitterSpeed", GetFloat(document, "_GlitterSpeed", 10.0f));
         SetFloat(material, "_GlitterBrightness", GetFloat(document, "_GlitterBrightness", 3.0f));
         SetFloat(material, "_GlitterAngleRange", GetFloat(document, "_GlitterAngleRange", legacy81 ? 7.0f : 90.0f));
@@ -145,6 +198,67 @@ public static partial class SerializedMaterialImporter
         if (document.TryGetVector("_GlobalMaskTexture0SplitPan_G", out Vector4 splitPan) &&
             splitPan != Vector4.Zero)
             throw new SourceVisualImportException("The verified Poiyomi 8.1.167 glitter requires the original global mask green pan.");
+    }
+
+    private static bool TryGetGlitterSizeRange(SerializedMaterialDocument document, out Vector4 range)
+    {
+        if (document.TryGetVector("_GlitterMinMaxSize", out range))
+            return true;
+
+        range = Vector4.Zero;
+        bool found = false;
+        foreach ((string name, Vector4 value) in document.Vectors)
+        {
+            if (!name.StartsWith("_GlitterMinMaxSize_", StringComparison.Ordinal))
+                continue;
+            if (found)
+                throw new SourceVisualImportException("Active glitter random size has more than one optimized size range.");
+            range = value;
+            found = true;
+        }
+
+        return found;
+    }
+
+    private static Vector2 GetSourceAudioRange(SerializedMaterialDocument document, string name)
+        => document.TryGetVector(name, out Vector4 range)
+            ? new Vector2(range.X, range.Y)
+            : Vector2.Zero;
+
+    private static bool IsValidUnitRange(Vector4 range)
+        => float.IsFinite(range.X) && float.IsFinite(range.Y) &&
+           range.X >= 0.0f && range.Y <= 1.0f && range.X <= range.Y;
+
+    private static bool HasWhiteShaderTextureDefault(string? shaderPath, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(shaderPath) ||
+            !shaderPath.EndsWith(".shader", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        try
+        {
+            string pattern = $@"^\s*(?:\[[^\]\r\n]+\]\s*)*{Regex.Escape(propertyName)}\s*\(\s*""(?:[^""\\]|\\.)*""\s*,\s*2D\s*\)\s*=\s*""white""\s*\{{";
+            foreach (string line in File.ReadLines(shaderPath))
+            {
+                if (Regex.IsMatch(line, pattern, RegexOptions.CultureInvariant))
+                    return true;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    private static int GetSourceAudioBand(SerializedMaterialDocument document, string property, bool enabled)
+    {
+        float value = GetFloat(document, property);
+        if (enabled && (!float.IsFinite(value) || value < 0.0f || value > 3.0f ||
+            value != MathF.Truncate(value)))
+            throw new SourceVisualImportException($"Active AudioLink band '{property}' is outside the supported 0..3 range.");
+        return (int)value;
     }
 
     private static int GetSupportedGlitterValue(

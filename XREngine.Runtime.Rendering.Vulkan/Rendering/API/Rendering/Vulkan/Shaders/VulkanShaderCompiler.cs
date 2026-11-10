@@ -100,6 +100,69 @@ internal static class VulkanShaderCompiler
         return CompilePrepared(shader, prepared);
     }
 
+    /// <summary>
+    /// Compiles a shader that has no shader backend object, such as a backend overlay shader,
+    /// through the shader artifact disk cache. A cache hit skips the GLSL-to-SPIR-V compile.
+    /// </summary>
+    /// <param name="shader">The GLSL shader with entry point <c>main</c>.</param>
+    /// <param name="stageFlags">The Vulkan stage of the shader.</param>
+    /// <returns>The SPIR-V module bytes.</returns>
+    internal static byte[] CompileWithArtifactCache(XRShader shader, ShaderStageFlags stageFlags)
+    {
+        int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
+        bool useVulkanClipDepthRemap = RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap;
+        PreparedSource prepared = Prepare(shader, useVulkanClipDepthRemap);
+        string artifactIdentity = BuildArtifactIdentity(
+            shader,
+            shaderConfigVersion,
+            useVulkanClipDepthRemap,
+            prepared.RewrittenSource);
+
+        if (VulkanShaderArtifactCache.TryRead(
+            artifactIdentity,
+            shader,
+            shaderConfigVersion,
+            useVulkanClipDepthRemap,
+            prepared.RewrittenSource,
+            prepared.AutoUniformBlocks,
+            stageFlags,
+            string.Empty,
+            out VulkanShaderArtifact cachedArtifact))
+        {
+            return cachedArtifact.SpirV;
+        }
+
+        byte[] spirv = CompilePrepared(shader, prepared);
+        QueueArtifactWrite(shader, stageFlags, prepared, artifactIdentity, shaderConfigVersion, useVulkanClipDepthRemap, spirv);
+        return spirv;
+    }
+
+    private static void QueueArtifactWrite(
+        XRShader shader,
+        ShaderStageFlags stageFlags,
+        PreparedSource prepared,
+        string artifactIdentity,
+        int shaderConfigVersion,
+        bool useVulkanClipDepthRemap,
+        byte[] spirv)
+    {
+        VulkanShaderArtifact artifact = new(
+            artifactIdentity,
+            shader.Type,
+            prepared.EntryPoint,
+            shader.Source?.FilePath ?? shader.FilePath,
+            prepared.RewrittenSource,
+            spirv,
+            VulkanShaderReflection.ExtractBindings(spirv, stageFlags, prepared.RewrittenSource),
+            prepared.AutoUniformBlock,
+            new Dictionary<string, uint>(StringComparer.Ordinal),
+            stageFlags,
+            shaderConfigVersion,
+            useVulkanClipDepthRemap,
+            FrequencyOwnedAutoUniformBlocks: prepared.AutoUniformBlocks);
+        VulkanShaderArtifactCache.QueueWrite(artifact);
+    }
+
     public static PreparedSource Prepare(XRShader shader, bool useVulkanClipDepthRemap)
         => Prepare(shader, useVulkanClipDepthRemap, null);
 
