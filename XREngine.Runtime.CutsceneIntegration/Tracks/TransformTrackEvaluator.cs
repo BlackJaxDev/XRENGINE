@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Rendering.UI;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Cutscenes;
@@ -69,7 +70,8 @@ public sealed class TransformTrackEvaluator : ICutsceneTrackEvaluator
         int slot = track.BindingSlot;
         if ((uint)slot >= (uint)_written.Length || !context.Bindings.IsLive(slot))
             return;
-        if (context.Bindings.GetNode(slot)?.Transform is not Transform transform)
+        TransformBase? nodeTransform = context.Bindings.GetNode(slot)?.Transform;
+        if (nodeTransform is not Transform and not UITransform)
             return;
 
         // Pass 1: find the total weight of the valid clips on the track.
@@ -135,9 +137,21 @@ public sealed class TransformTrackEvaluator : ICutsceneTrackEvaluator
             blendedRotation = Quaternion.Slerp(originalRotation, blendedRotation, totalWeight);
         }
 
-        transform.Translation = position;
-        transform.Scale = scale;
-        transform.Rotation = blendedRotation;
+        if (nodeTransform is Transform transform)
+        {
+            transform.Translation = position;
+            transform.Scale = scale;
+            transform.Rotation = blendedRotation;
+        }
+        else if (nodeTransform is UITransform uiTransform)
+        {
+            uiTransform.Translation = new Vector2(position.X, position.Y);
+            uiTransform.DepthTranslation = position.Z;
+            uiTransform.Scale = scale;
+            uiTransform.RotationRadians = MathF.Atan2(
+                2f * (blendedRotation.W * blendedRotation.Z + blendedRotation.X * blendedRotation.Y),
+                1f - 2f * (blendedRotation.Y * blendedRotation.Y + blendedRotation.Z * blendedRotation.Z));
+        }
 
         _touched[slot] = true;
         _written[slot] = true;

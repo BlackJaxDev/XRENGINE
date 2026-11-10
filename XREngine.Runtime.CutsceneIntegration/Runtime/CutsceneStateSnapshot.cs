@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -55,20 +56,29 @@ public sealed class CutsceneStateSnapshot
 
     /// <summary>
     /// Records the local transform of a slot. If the slot is already recorded, the first value stays.
-    /// A slot without a live node, or with a node that has no standard transform, is not recorded.
+    /// A slot without a live node, or with a node that has no standard or UI transform, is not recorded.
     /// </summary>
     /// <param name="slot">The binding slot.</param>
     public void CaptureTransform(int slot)
     {
         if ((uint)slot >= (uint)_hasTransform.Length || _hasTransform[slot])
             return;
-        if (_table.GetNode(slot)?.Transform is not Transform transform)
-            return;
 
-        _translations[slot] = transform.Translation;
-        _rotations[slot] = transform.Rotation;
-        _scales[slot] = transform.Scale;
-        _hasTransform[slot] = true;
+        TransformBase? nodeTransform = _table.GetNode(slot)?.Transform;
+        if (nodeTransform is Transform transform)
+        {
+            _translations[slot] = transform.Translation;
+            _rotations[slot] = transform.Rotation;
+            _scales[slot] = transform.Scale;
+            _hasTransform[slot] = true;
+        }
+        else if (nodeTransform is UITransform uiTransform)
+        {
+            _translations[slot] = new Vector3(uiTransform.Translation, uiTransform.DepthTranslation);
+            _rotations[slot] = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, uiTransform.RotationRadians);
+            _scales[slot] = uiTransform.Scale;
+            _hasTransform[slot] = true;
+        }
     }
 
     /// <summary>
@@ -163,12 +173,25 @@ public sealed class CutsceneStateSnapshot
     {
         if ((uint)slot >= (uint)_hasTransform.Length || !_hasTransform[slot])
             return;
-        if (_table.GetNode(slot)?.Transform is not Transform transform)
-            return;
 
-        transform.Translation = _translations[slot];
-        transform.Rotation = _rotations[slot];
-        transform.Scale = _scales[slot];
+        TransformBase? nodeTransform = _table.GetNode(slot)?.Transform;
+        if (nodeTransform is Transform transform)
+        {
+            transform.Translation = _translations[slot];
+            transform.Rotation = _rotations[slot];
+            transform.Scale = _scales[slot];
+        }
+        else if (nodeTransform is UITransform uiTransform)
+        {
+            Vector3 translation = _translations[slot];
+            Quaternion rotation = _rotations[slot];
+            uiTransform.Translation = new Vector2(translation.X, translation.Y);
+            uiTransform.DepthTranslation = translation.Z;
+            uiTransform.RotationRadians = MathF.Atan2(
+                2f * (rotation.W * rotation.Z + rotation.X * rotation.Y),
+                1f - 2f * (rotation.Y * rotation.Y + rotation.Z * rotation.Z));
+            uiTransform.Scale = _scales[slot];
+        }
     }
 
     /// <summary>

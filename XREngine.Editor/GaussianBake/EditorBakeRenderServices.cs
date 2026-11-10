@@ -7,6 +7,7 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Build;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
+using XREngine.Rendering.Models.Gaussian.Baking.Motion;
 using XREngine.Rendering.Models.Gaussian.Baking.Rendering;
 using XREngine.Rendering.Models.Gaussian.Baking.Video;
 using XREngine.Rendering.Models.Gaussian.Baking.Views;
@@ -213,8 +214,34 @@ public sealed class EditorBakeRenderServices : IBakeRenderServices
         {
             root.IterateComponents(component =>
             {
+                if (!BakeMotionSelector.IsEnabled(component, root))
+                    return;
                 if (component is not IRenderable renderable || component is LightComponent)
                     return;
+
+                if (component is ModelComponent modelComponent && modelComponent.Model is { } model)
+                {
+                    foreach (var subMesh in model.Meshes)
+                    {
+                        if (subMesh is null)
+                            continue;
+
+                        foreach (var lod in subMesh.LODs)
+                        {
+                            XRMaterial? material = lod?.Material;
+                            if (material is null)
+                                continue;
+
+                            foreach (XRTexture? texture in material.Textures)
+                            {
+                                if (texture is XRTexture2D texture2D)
+                                    texture2D.PreferSynchronousGpuUpload = true;
+                            }
+
+                            material.PrepareUberVariantImmediately();
+                        }
+                    }
+                }
 
                 foreach (RenderInfo info in renderable.RenderedObjects)
                     if (info is RenderInfo3D info3D)

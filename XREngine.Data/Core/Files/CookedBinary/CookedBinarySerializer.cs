@@ -1338,7 +1338,9 @@ public static partial class CookedBinarySerializer
         if (!LoggedTypeDeserializationFailures.TryAdd(type, 0))
             return;
 
-        Trace.TraceWarning($"Cooked binary deserialization skipped type '{type}': {ex.Message}");
+        string message = $"Cooked binary deserialization skipped type '{type}': {ex.Message}";
+        Trace.TraceWarning(message);
+        Console.Error.WriteLine(message);
     }
 
     private static void LogMemoryPackSerializationFailure(Type type, Exception ex)
@@ -1355,8 +1357,10 @@ public static partial class CookedBinarySerializer
         if (!LoggedTypeDeserializationFailures.TryAdd(type, 0))
             return;
 
-        Trace.TraceWarning($"[MEMORYPACK DESERIALIZE FAIL] Type '{type.FullName}' failed to deserialize via MemoryPack. " +
-            $"This may cause data loss! Consider adding explicit support in CookedBinarySerializer. Exception: {ex.GetType().Name}: {ex.Message}");
+        string message = $"[MEMORYPACK DESERIALIZE FAIL] Type '{type.FullName}' failed to deserialize via MemoryPack. " +
+            $"This may cause data loss! Consider adding explicit support in CookedBinarySerializer. Exception: {ex}";
+        Trace.TraceWarning(message);
+        Console.Error.WriteLine(message);
     }
 
     private static void LogMemberSerializationFailure(Type ownerType, string memberName, Exception ex)

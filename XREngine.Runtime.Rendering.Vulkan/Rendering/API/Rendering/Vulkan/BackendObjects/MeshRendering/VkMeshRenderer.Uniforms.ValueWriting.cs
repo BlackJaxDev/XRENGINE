@@ -100,7 +100,7 @@ internal unsafe partial class VkMeshRenderer
 				Unsafe.WriteUnaligned(ref data[offset], value.Vector2);
 				return true;
 			case EShaderVarType._vec3:
-				Unsafe.WriteUnaligned(ref data[offset], new Vector4(value.Vector3, 0f));
+				Unsafe.WriteUnaligned(ref data[offset], value.Vector3);
 				return true;
 			case EShaderVarType._vec4:
 				Unsafe.WriteUnaligned(ref data[offset], value.Vector4);

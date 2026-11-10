@@ -68,6 +68,9 @@ internal sealed partial class ViewportSequenceCaptureSession
                     elapsedSeconds - _lastScheduledElapsedSeconds < 1.0 / captureFramesPerSecond)
                     return;
 
+                if (ShouldCaptureFrame is not null && !ShouldCaptureFrame(_scheduledFrameCount))
+                    return;
+
                 if (_scheduledFrameCount >= _options.CaptureLimit)
                 {
                     deferredStopReason = _options.FrameCount.HasValue
@@ -172,6 +175,8 @@ internal sealed partial class ViewportSequenceCaptureSession
             return;
         }
 
+        FrameScheduled?.Invoke(frame.CaptureIndex);
+
         if (stopAfterSchedule)
         {
             RequestStop(
@@ -197,7 +202,7 @@ internal sealed partial class ViewportSequenceCaptureSession
         else
             renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, null);
 
-        return renderer.TryQueueScreenshotReadback(captureRegion, _options.PreserveAlpha, result =>
+        Action<ScreenshotReadbackResult> callback = result =>
         {
             if (Interlocked.Exchange(ref frame.CompletionClaimed, 1) != 0)
             {
@@ -224,7 +229,11 @@ internal sealed partial class ViewportSequenceCaptureSession
             // Diagnostic captures may allocate and encode, but neither operation is permitted
             // to run in the per-frame render callback. The in-flight queue bounds this work.
             _ = Task.Run(() => ProcessCapturedImage(result.Image, frame, readbackBytes));
-        }, out queueFailure);
+        };
+
+        return targetReadScope is null && _viewport.AllowUIRender && !_options.PreserveAlpha
+            ? renderer.TryQueueCompositedScreenshotReadback(captureRegion, callback, out queueFailure)
+            : renderer.TryQueueScreenshotReadback(captureRegion, _options.PreserveAlpha, callback, out queueFailure);
     }
 
     private void HandleRendererQueueRejection(

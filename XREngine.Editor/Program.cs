@@ -137,6 +137,12 @@ internal partial class Program
         if (XREngine.Editor.GaussianBake.BakeSplatPreviewCommand.TryRun(args))
             return;
 
+        if (XREngine.Editor.GaussianBake.CookUnityPrefabCommand.TryRun(args))
+            return;
+
+        if (XREngine.Editor.GaussianBake.RecordSplatCutsceneCommand.TryRun(args))
+            return;
+
         if (TryRunProjectBuildCommand(args))
             return;
 

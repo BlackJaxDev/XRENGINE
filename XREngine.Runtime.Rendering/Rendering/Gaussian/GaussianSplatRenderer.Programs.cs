@@ -80,6 +80,7 @@ public sealed partial class GaussianSplatRenderer
             GenerationPriority = EMeshGenerationPriority.RenderPipeline,
         };
         // The material has its own vertex shader that reads the splat buffers.
+        renderer.CaptureUniformsOnRender = true;
         renderer.GetDefaultVersion().AllowShaderPipelines = false;
         return renderer;
     }

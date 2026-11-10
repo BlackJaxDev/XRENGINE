@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Numerics;
+using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -234,6 +235,8 @@ internal sealed class BakeViewCapture
         for (int i = 0; i < _targets.Length; i++)
         {
             RenderInfo3D target = _targets[i];
+            if (target.Owner is XRComponent { IsActiveInHierarchy: false })
+                continue;
             if (!target.IsVisible || !target.ShouldRender)
                 continue;
 
@@ -365,12 +368,13 @@ internal sealed class BakeViewCapture
     {
         pendingMeshes = 0;
         pendingPrograms = false;
+        bool pendingTextures = XRTexture2D.ActiveProgressiveUploadCount > 0 || XRTexture2D.QueuedProgressiveUploadCount > 0;
         if (!((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRendererStartupWarmupBackendCapability>(out var warmup) || warmup is null)
-            return false;
+            return pendingTextures;
 
         pendingMeshes = warmup.PendingStartupWorkCount;
         pendingPrograms = warmup.HasPendingAsyncPrograms;
-        return pendingMeshes > 0 || pendingPrograms;
+        return pendingMeshes > 0 || pendingPrograms || pendingTextures;
     }
 
     private static void FlipRows(float[] rgba, int width, int height)

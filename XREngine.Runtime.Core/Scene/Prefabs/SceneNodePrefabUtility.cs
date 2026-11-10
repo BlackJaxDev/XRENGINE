@@ -7,6 +7,7 @@ using System.IO;
 using System.Numerics;
 using XREngine.Components;
 using XREngine;
+using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Diagnostics;
@@ -231,18 +232,38 @@ namespace XREngine.Scene.Prefabs
             if (XRRuntimeEnvironment.IsAotRuntimeBuild)
                 return CloneHierarchyBounded(template);
 
-            string serialized = AssetManager.Serializer.Serialize(template);
-            SceneNode clone;
-            using (XRObjectBase.SuppressObjectCacheRegistration())
+            SceneNode? clone = null;
+            try
             {
-                clone = AssetManager.Deserializer.Deserialize<SceneNode>(serialized)
-                    ?? throw new InvalidOperationException("Failed to deserialize prefab hierarchy");
+                string serialized = AssetManager.Serializer.Serialize(template);
+                using (XRObjectBase.SuppressObjectCacheRegistration())
+                {
+                    clone = AssetManager.Deserializer.Deserialize<SceneNode>(serialized);
+                }
             }
+            catch
+            {
+                clone = CloneHierarchyCookedBinary(template);
+            }
+
+            if (clone is null)
+                throw new InvalidOperationException("Failed to deserialize prefab hierarchy");
 
             DetachWorldRecursive(clone);
             RegenerateRuntimeHierarchyIdentities(clone);
             NotifyYamlHierarchyDeserialized(clone);
             return clone;
+        }
+
+        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "The cooked-binary reflection fallback is guarded out of published AOT builds by the IsAotRuntimeBuild check in CloneHierarchy.")]
+        [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "The cooked-binary reflection fallback is guarded out of published AOT builds by the IsAotRuntimeBuild check in CloneHierarchy.")]
+        private static SceneNode? CloneHierarchyCookedBinary(SceneNode template)
+        {
+            byte[] binaryPayload = CookedBinarySerializer.Serialize(template);
+            using (XRObjectBase.SuppressObjectCacheRegistration())
+            {
+                return CookedBinarySerializer.Deserialize(typeof(SceneNode), binaryPayload) as SceneNode;
+            }
         }
 
         /// <summary>

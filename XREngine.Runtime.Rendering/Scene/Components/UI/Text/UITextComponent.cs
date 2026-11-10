@@ -293,6 +293,15 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _color, value);
         }
 
+        /// <summary>
+        /// Gets or sets the alpha channel of <see cref="Color"/>, clamped to the range from 0 to 1.
+        /// </summary>
+        public float Opacity
+        {
+            get => _color.A;
+            set => Color = new ColorF4(_color.R, _color.G, _color.B, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
         private ColorF4 _outlineColor = new(0.0f, 0.0f, 0.0f, 0.0f);
 
         /// <summary>
@@ -302,6 +311,15 @@ namespace XREngine.Rendering.UI
         {
             get => _outlineColor;
             set => SetField(ref _outlineColor, value);
+        }
+
+        /// <summary>
+        /// Gets or sets the alpha channel of <see cref="OutlineColor"/>, clamped to the range from 0 to 1.
+        /// </summary>
+        public float OutlineOpacity
+        {
+            get => _outlineColor.A;
+            set => OutlineColor = new ColorF4(_outlineColor.R, _outlineColor.G, _outlineColor.B, Math.Clamp(value, 0.0f, 1.0f));
         }
 
         private float _outlineThickness = 0.0f;

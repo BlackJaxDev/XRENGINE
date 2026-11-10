@@ -30,6 +30,14 @@ public sealed record AdvancedLatePassMetadata
     /// </summary>
     public string? TemporalUnsupportedReason { get; init; }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AdvancedLatePassMetadata"/> record for reflection and YAML serialization.
+    /// </summary>
+    public AdvancedLatePassMetadata()
+        : this(EAdvancedLatePassKind.SortedAlpha)
+    {
+    }
+
     public AdvancedLatePassMetadata(
         EAdvancedLatePassKind kind,
         bool requiresSceneColorSnapshot = false,

@@ -24,8 +24,8 @@ namespace XREngine.Rendering.Gaussian;
 /// </para>
 /// <para>
 /// Call the methods on the render thread. <see cref="Prepare()"/> and <see cref="Draw"/> do not allocate
-/// after the first frame. The draw binds the buffers in the quad's uniform callback, so the backend must
-/// run that callback inside <c>XRMeshRenderer.Render</c>, as the OpenGL backend does.
+/// after the first frame. The draw registers its storage buffers on the quad renderer and binds its parameters
+/// in the quad's uniform callback for both immediate and deferred backend submission.
 /// </para>
 /// </remarks>
 public sealed partial class GaussianSplatRenderer : IDisposable
@@ -237,23 +237,35 @@ public sealed partial class GaussianSplatRenderer : IDisposable
     }
 
     /// <summary>
-    /// Subscribes the binding handler to the quad that this renderer draws. A quad can be shared:
-    /// the handler binds only during this renderer's <see cref="Draw"/> call.
+    /// Subscribes the binding handler and registers the splat storage buffers on the quad that this renderer draws.
     /// </summary>
     private void AttachTo(XRMeshRenderer? quad)
     {
         if (ReferenceEquals(_attachedQuad, quad))
             return;
         if (_attachedQuad is not null)
+        {
             _attachedQuad.SettingUniforms -= _settingUniformsHandler;
+            if (_attachedQuad.Buffers.TryGetValue(SplatsBufferName, out XRDataBuffer? existingSplats) && ReferenceEquals(existingSplats, Splats))
+                _attachedQuad.Buffers.Remove(SplatsBufferName);
+            if (_attachedQuad.Buffers.TryGetValue(OrderBufferName, out XRDataBuffer? existingOrder) && ReferenceEquals(existingOrder, _order))
+                _attachedQuad.Buffers.Remove(OrderBufferName);
+            if (_attachedQuad.Buffers.TryGetValue(VisibleCountBufferName, out XRDataBuffer? existingCount) && ReferenceEquals(existingCount, VisibleCount))
+                _attachedQuad.Buffers.Remove(VisibleCountBufferName);
+        }
         _attachedQuad = quad;
         if (quad is not null)
+        {
+            quad.Buffers[SplatsBufferName] = Splats;
+            quad.Buffers[OrderBufferName] = _order;
+            quad.Buffers[VisibleCountBufferName] = VisibleCount;
             quad.SettingUniforms += _settingUniformsHandler;
+        }
     }
 
     private void OnQuadSettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
     {
-        if (!ReferenceEquals(t_drawingRenderer, this))
+        if (t_drawingRenderer is not null && !ReferenceEquals(t_drawingRenderer, this))
             return;
 
         vertexProgram.BindBuffer(Splats, SplatsBinding);

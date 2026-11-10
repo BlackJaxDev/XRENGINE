@@ -2844,6 +2844,8 @@ internal unsafe partial class VkMeshRenderer
 		else
 		{
 			ApplyScopedProgramBindingsForPreparation(material);
+			if (_program?.Data is { } programData)
+				NotifyDrawUniforms(material, programData, draw);
 		}
 
 		if (!EnsureDescriptorSets(
