@@ -140,6 +140,7 @@ public static class SerializedTextureImportDocumentParser
             MipBias = settings is null ? 0.0f : SerializedAssetYamlReader.GetScalarFloat(settings, "mipBias") ?? 0.0f,
             Anisotropy = settings is null ? 1 : SerializedAssetYamlReader.GetScalarInt(settings, "aniso") ?? 1,
             RawShape = rawShape,
+            GenerateCubemap = SerializedAssetYamlReader.GetScalarInt(mapping, "generateCubemap") ?? 0,
             FlipbookRows = Math.Max(1, SerializedAssetYamlReader.GetScalarInt(mapping, "flipbookRows") ?? 1),
             FlipbookColumns = Math.Max(1, SerializedAssetYamlReader.GetScalarInt(mapping, "flipbookColumns") ?? 1),
             Shape = Enum.IsDefined(typeof(SerializedTextureShape), rawShape)

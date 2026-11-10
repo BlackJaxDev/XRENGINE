@@ -25,6 +25,7 @@ public sealed record SerializedTextureImportDocument
     public float MipBias { get; init; }
     public int Anisotropy { get; init; } = 1;
     public int RawShape { get; init; } = 1;
+    public int GenerateCubemap { get; init; }
     public int FlipbookRows { get; init; } = 1;
     public int FlipbookColumns { get; init; } = 1;
     public SerializedTextureShape Shape { get; init; } = SerializedTextureShape.Texture2D;

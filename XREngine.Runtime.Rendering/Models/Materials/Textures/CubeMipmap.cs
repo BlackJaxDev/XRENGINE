@@ -39,6 +39,85 @@ namespace XREngine.Rendering.Models.Materials.Textures
             using RuntimeImage cross = RuntimeImageCodecs.Require().ReprojectEquirectangularToCubeCross(equirectangularImage);
             return SetCrossCubeMap(cross);
         }
+
+        /// <summary>Builds six cube faces from a top-first mirrored-ball image.</summary>
+        public bool SetMirroredBallMap(RuntimeImage image, bool isSrgb)
+        {
+            if (image.Width != image.Height || image.Width < 2 ||
+                image.Type != EPixelType.UnsignedByte ||
+                image.Format is not (EPixelFormat.Rgb or EPixelFormat.Rgba or EPixelFormat.Bgr or EPixelFormat.Bgra))
+                return false;
+
+            byte[] source = image.CopyRgba8Pixels();
+            int sourceExtent = checked((int)image.Width);
+            int faceExtent = Math.Max(1, sourceExtent / 2);
+            Mipmap2D[] faces = new Mipmap2D[6];
+            for (int face = 0; face < faces.Length; face++)
+            {
+                byte[] pixels = new byte[checked(faceExtent * faceExtent * 16)];
+                for (int row = 0; row < faceExtent; row++)
+                {
+                    float b = 2.0f * (row + 0.5f) / faceExtent - 1.0f;
+                    for (int column = 0; column < faceExtent; column++)
+                    {
+                        float a = 2.0f * (column + 0.5f) / faceExtent - 1.0f;
+                        (float x, float y, float z) = face switch
+                        {
+                            0 => (1.0f, -b, -a),
+                            1 => (-1.0f, -b, a),
+                            2 => (a, 1.0f, b),
+                            3 => (a, -1.0f, -b),
+                            4 => (a, -b, 1.0f),
+                            _ => (-a, -b, -1.0f),
+                        };
+                        float inverseLength = 1.0f / MathF.Sqrt(x * x + y * y + z * z);
+                        x *= inverseLength;
+                        y *= inverseLength;
+                        z *= inverseLength;
+                        float denominator = 2.0f * MathF.Sqrt(x * x + y * y + (z + 1.0f) * (z + 1.0f));
+                        float u = denominator > 0.0f ? 0.5f + x / denominator : 0.5f;
+                        float v = denominator > 0.0f ? 0.5f - y / denominator : 0.0f;
+                        float sampleX = Math.Clamp(u * sourceExtent - 0.5f, 0.0f, sourceExtent - 1.0f);
+                        float sampleY = Math.Clamp(v * sourceExtent - 0.5f, 0.0f, sourceExtent - 1.0f);
+                        int left = (int)sampleX;
+                        int top = (int)sampleY;
+                        int right = Math.Min(left + 1, sourceExtent - 1);
+                        int bottom = Math.Min(top + 1, sourceExtent - 1);
+                        float tx = sampleX - left;
+                        float ty = sampleY - top;
+                        int destination = (row * faceExtent + column) * 16;
+                        for (int channel = 0; channel < 4; channel++)
+                        {
+                            float topLeft = DecodeMirroredBallChannel(source[(top * sourceExtent + left) * 4 + channel], isSrgb && channel < 3);
+                            float topRight = DecodeMirroredBallChannel(source[(top * sourceExtent + right) * 4 + channel], isSrgb && channel < 3);
+                            float bottomLeft = DecodeMirroredBallChannel(source[(bottom * sourceExtent + left) * 4 + channel], isSrgb && channel < 3);
+                            float bottomRight = DecodeMirroredBallChannel(source[(bottom * sourceExtent + right) * 4 + channel], isSrgb && channel < 3);
+                            float upper = topLeft + (topRight - topLeft) * tx;
+                            float lower = bottomLeft + (bottomRight - bottomLeft) * tx;
+                            BitConverter.TryWriteBytes(pixels.AsSpan(destination + channel * 4, 4), upper + (lower - upper) * ty);
+                        }
+                    }
+                }
+
+                using RuntimeImage faceImage = new((uint)faceExtent, (uint)faceExtent,
+                    RuntimePixelFormat.RgbaFloat32, pixels);
+                faces[face] = new Mipmap2D(faceImage);
+            }
+
+            Sides = faces;
+            return true;
+        }
+
+        private static float DecodeMirroredBallChannel(byte value, bool isSrgb)
+        {
+            float normalized = value / 255.0f;
+            if (!isSrgb)
+                return normalized;
+            return normalized <= 0.04045f
+                ? normalized / 12.92f
+                : MathF.Pow((normalized + 0.055f) / 1.055f, 2.4f);
+        }
+
         public bool SetCrossCubeMap(RuntimeImage cubeCrossBmp)
         {
             uint w = cubeCrossBmp.Width;

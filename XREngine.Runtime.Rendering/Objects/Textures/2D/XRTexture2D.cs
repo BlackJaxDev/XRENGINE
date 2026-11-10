@@ -110,7 +110,7 @@ namespace XREngine.Rendering
             try
             {
                 byte[] fileBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(filePath);
-                using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileBytes);
+                using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileBytes, filePath);
                 // Only upload the base mip; the GPU generates the rest via glGenerateMipmap.
                 Mipmaps = [new Mipmap2D(sourceImage)];
                 SizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
@@ -1180,7 +1180,7 @@ namespace XREngine.Rendering
             try
             {
                 byte[] bytes = read.ReadAllBytes(filePath);
-                using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(bytes);
+                using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(bytes, filePath);
                 using RuntimeImage previewImage = ResizePreviewIfNeeded(sourceImage, maxPreviewSize);
                 mip = new Mipmap2D(previewImage);
                 using IDisposable publication = read.BeginPublication();
@@ -1700,7 +1700,7 @@ namespace XREngine.Rendering
                         path = path[7..];
                     try
                     {
-                        using RuntimeImage image = RuntimeImageCodecs.Require().Decode(read!.ReadAllBytes(path));
+                        using RuntimeImage image = RuntimeImageCodecs.Require().Decode(read!.ReadAllBytes(path), path);
                         mips.Add(new Mipmap2D(image));
                     }
                     catch (OperationCanceledException)

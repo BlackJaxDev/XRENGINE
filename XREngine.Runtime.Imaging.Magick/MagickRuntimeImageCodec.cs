@@ -9,17 +9,23 @@ namespace XREngine.Runtime.Imaging.Magick;
 /// <summary>Converts encoded source images and cooked pixels with ImageMagick.</summary>
 public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
 {
-    public RuntimeImage Decode(ReadOnlyMemory<byte> encodedImage)
+    public RuntimeImage Decode(ReadOnlyMemory<byte> encodedImage, string? sourcePath = null)
     {
-        using MagickImage source = new(encodedImage.Span);
+        MagickFormat? format = GetSourceFormat(sourcePath);
+        using MagickImage source = format.HasValue
+            ? new MagickImage(encodedImage.Span, format.Value)
+            : new MagickImage(encodedImage.Span);
         return DecodePixels(source);
     }
 
     /// <summary>Checks decoded pixels in bounded chunks without retaining an exported image.</summary>
-    public (uint Width, uint Height) Validate(Stream encodedImage)
+    public (uint Width, uint Height) Validate(Stream encodedImage, string? sourcePath = null)
     {
         ArgumentNullException.ThrowIfNull(encodedImage);
-        using MagickImage source = new(encodedImage);
+        MagickFormat? format = GetSourceFormat(sourcePath);
+        using MagickImage source = format.HasValue
+            ? new MagickImage(encodedImage, format.Value)
+            : new MagickImage(encodedImage);
         bool highDynamicRange = source.Format is MagickFormat.Exr or MagickFormat.Hdr or MagickFormat.Pfm;
         if (source.Width == 0 || source.Height == 0)
             throw new InvalidDataException("Image dimensions must be positive.");
@@ -46,9 +52,19 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
         return (source.Width, source.Height);
     }
 
-    public IReadOnlyList<RuntimeImage> DecodeFrames(ReadOnlyMemory<byte> encodedImage)
+    private static MagickFormat? GetSourceFormat(string? sourcePath)
+        => Path.GetExtension(sourcePath)?.ToLowerInvariant() switch
+        {
+            ".tga" => MagickFormat.Tga,
+            _ => null,
+        };
+
+    public IReadOnlyList<RuntimeImage> DecodeFrames(ReadOnlyMemory<byte> encodedImage, string? sourcePath = null)
     {
-        using MagickImageCollection collection = new(encodedImage.Span);
+        MagickFormat? format = GetSourceFormat(sourcePath);
+        using MagickImageCollection collection = format.HasValue
+            ? new MagickImageCollection(encodedImage.Span, format.Value)
+            : new MagickImageCollection(encodedImage.Span);
         RuntimeImage[] frames = new RuntimeImage[collection.Count];
         int completed = 0;
         try
