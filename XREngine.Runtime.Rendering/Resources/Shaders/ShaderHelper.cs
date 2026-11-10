@@ -216,10 +216,11 @@ public static class ShaderHelper
         XRShader source;
         if (cache.Tasks.TryGetValue(key, out Task<XRShader>? existingTask))
         {
+            // A caller can hold a job permit. Do not wait for a queued load.
             if (!existingTask.IsCompleted && !services.SupportsSynchronousShaderWork)
                 source = GetCachedShaderOrThrow(cache, key);
             else
-                source = !existingTask.IsCompleted && RuntimeEngine.IsRenderThread
+                source = !existingTask.IsCompleted
                     ? LoadAndCacheEngineShaderInline(cache, key)
                     : existingTask.GetAwaiter().GetResult();
         }
@@ -231,9 +232,7 @@ public static class ShaderHelper
                 cache.Tasks.TryAdd(key, Task.FromResult(source));
             }
             else
-                source = RuntimeEngine.IsRenderThread
-                    ? LoadAndCacheEngineShaderInline(cache, key)
-                    : GetOrCreateEngineShaderTask(cache, key).GetAwaiter().GetResult();
+                source = LoadAndCacheEngineShaderInline(cache, key);
         }
 
         EnsureLiveEngineShader(cache, key, source);
