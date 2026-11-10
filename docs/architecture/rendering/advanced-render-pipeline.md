@@ -658,8 +658,9 @@ packing. `AdvancedDeformedVertex.Reserved2` stores four five-bit tile IDs and a
 validity bit at bit 31. IDs 0–15 identify the four-by-four tile grid; 16 means
 outside the grid, and 17 means a non-finite source UV. The record remains 64
 bytes. Its layout identity changes when this coverage data becomes required.
-Deformation preserves the field. Native material admission currently permits
-UV0 and UV1. Missing or invalid classification rejects the triangle and increments
+Deformation preserves the field. Native material admission permits
+UV0 through UV3. Visibility and directional shadows use the same tile selector.
+Missing or invalid classification rejects the triangle and increments
 the existing decode diagnostic counter.
 
 ## Source Flat Lighting Direction

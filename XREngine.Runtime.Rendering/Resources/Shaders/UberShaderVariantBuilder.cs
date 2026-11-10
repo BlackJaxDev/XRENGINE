@@ -435,6 +435,12 @@ internal static partial class UberShaderVariantBuilder
     internal static bool HasCurrentProvenance(XRShader variant)
         => ProvenanceByVariant.TryGetValue(variant, out UberShaderVariantProvenance? proof) && proof.IsCurrent;
 
+    /// <summary>Gets the retained variant proof without checking its file dependencies.</summary>
+    internal static bool TryGetVariantProvenance(
+        XRShader variant,
+        [NotNullWhen(true)] out UberShaderVariantProvenance? proof)
+        => ProvenanceByVariant.TryGetValue(variant, out proof);
+
     internal static bool IsCompatibleInternalReplacement(XRShader previous, XRShader next)
     {
         XRShader previousCanonical = previous;

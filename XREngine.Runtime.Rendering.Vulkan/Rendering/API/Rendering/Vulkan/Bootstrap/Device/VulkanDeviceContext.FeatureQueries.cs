@@ -433,6 +433,7 @@ internal sealed partial class VulkanDeviceContext
     internal unsafe void QueryMultiviewCapabilities(
         bool extensionEnabled,
         out bool featureSupported,
+        out bool geometryShaderSupported,
         out bool promotedToCore)
     {
         Api.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties properties);
@@ -441,6 +442,7 @@ internal sealed partial class VulkanDeviceContext
         PhysicalDeviceFeatures2 features2 = new() { SType = StructureType.PhysicalDeviceFeatures2, PNext = &features };
         Api.GetPhysicalDeviceFeatures2(PhysicalDevice, &features2);
         featureSupported = features.Multiview && (promotedToCore || extensionEnabled);
+        geometryShaderSupported = featureSupported && features.MultiviewGeometryShader;
     }
 
     internal unsafe void QueryIndexTypeUint8Capabilities(out bool featureSupported)

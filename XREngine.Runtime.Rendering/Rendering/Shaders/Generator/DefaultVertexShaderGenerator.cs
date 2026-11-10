@@ -234,6 +234,7 @@ namespace XREngine.Rendering.Shaders.Generator
         public const string FragViewIndexName = "FragViewIndex";
         public const string FragPosName = "FragPos";
         public const string FragNormName = "FragNorm";
+        public const string FragNormLocalName = "FragNormLocal";
         public const string FragTanName = "FragTan";
         public const string FragBinormName = "FragBinorm"; //Binormal is created in vertex shader if tangents exist
         public const string FragColorName = "FragColor{0}";
@@ -323,6 +324,12 @@ namespace XREngine.Rendering.Shaders.Generator
             // Ensure FragNorm is always initialized to a sensible default when normals are absent
             if (!_useNormals)
                 Line($"{FragNormName} = vec3(0.0f, 0.0f, 1.0f);");
+            if (!_useNormals)
+            {
+                Line("#if defined(XRENGINE_SOFT_OUTLINE_PASS)");
+                Line($"{FragNormLocalName} = vec3(0.0f, 0.0f, 1.0f);");
+                Line("#endif");
+            }
 
             if (!_useTangents)
             {
@@ -370,6 +377,9 @@ namespace XREngine.Rendering.Shaders.Generator
 
         protected override void WriteOutputs()
         {
+            Line("#if defined(XRENGINE_SOFT_OUTLINE_PASS)");
+            Line($"layout (location = 23) out vec3 {FragNormLocalName};");
+            Line("#endif");
             if (UseNVStereo)
                 Line("layout(secondary_view_offset = 1) out highp int gl_Layer;"); //Apply secondary view offset to the layer output
 
@@ -679,6 +689,9 @@ namespace XREngine.Rendering.Shaders.Generator
             Line();
             if (hasNormals)
             {
+                Line("#if defined(XRENGINE_SOFT_OUTLINE_PASS)");
+                Line($"{FragNormLocalName} = normalize({FinalNormalName});");
+                Line("#endif");
                 Line($"{FragNormName} = normalize({NormalMatrixName} * {FinalNormalName});");
                 if (hasTangents)
                 {

@@ -48,6 +48,22 @@ public partial class RenderableMesh
 
     internal bool IsPrimaryCommand(RenderCommand command) => ReferenceEquals(command, _rc);
 
+    /// <summary>
+    /// Tells if a collection of the given kind takes this command.
+    /// A shadow collection takes no supplemental material pass.
+    /// </summary>
+    /// <remarks>
+    /// All collections of one frame share the command objects, and a swap publishes their state one time.
+    /// Thus a shadow collection must skip the outline command here and must not disable it.
+    /// </remarks>
+    internal bool ShouldCollectCommand(RenderCommand command, bool isShadowCollection)
+    {
+        if (ReferenceEquals(command, _rc))
+            return ShouldCollectPrimaryCommand(isShadowCollection);
+
+        return !isShadowCollection || !ReferenceEquals(command, _materialOutlineCommand);
+    }
+
     internal bool ShouldCollectPrimaryCommand(bool isShadowCollection)
         => IsPrimaryMaterialPassEnabled(
             MaterialOverride ?? CurrentLODRenderer?.Material, isShadowCollection);

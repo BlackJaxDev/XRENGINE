@@ -18,6 +18,31 @@ public static class UberMaterialRuntimeAdapters
 
     public static IAudioLinkProvider? AudioLink { get; set; }
 
+    /// <summary>Gets one ready linear AudioLink texture for a material binding.</summary>
+    public static bool TryGetReadyAudioLinkTexture(out XRTexture2D? texture)
+    {
+        texture = null;
+        IAudioLinkProvider? provider = AudioLink;
+        if (provider is null || !provider.TryGetFrame(out AudioLinkFrame frame))
+            return false;
+
+        XRTexture2D candidate = provider.DataTexture;
+        if (candidate.ImportedColorSpace != ETextureColorSpace.Linear ||
+            candidate.SizedInternalFormat is ESizedInternalFormat.Srgb8 or ESizedInternalFormat.Srgb8Alpha8 ||
+            candidate.Mipmaps.Length == 0 ||
+            candidate.Mipmaps[0].PixelFormat is not
+                (EPixelFormat.Red or EPixelFormat.Rg or EPixelFormat.Rgb or EPixelFormat.Rgba) ||
+            candidate.Mipmaps[0].PixelType is not
+                (EPixelType.UnsignedByte or EPixelType.HalfFloat or EPixelType.Float) ||
+            candidate.Width < 4 || candidate.Height < 1 ||
+            !float.IsFinite(frame.TextureSize.X) || !float.IsFinite(frame.TextureSize.Y) ||
+            frame.TextureSize.X != candidate.Width || frame.TextureSize.Y != candidate.Height)
+            return false;
+
+        texture = candidate;
+        return true;
+    }
+
     public static IMaterialEnvironmentProvider? Environment { get; set; }
 
     public static MaterialViewFlags CurrentViewFlags => _viewFlags;
@@ -46,14 +71,17 @@ public static class UberMaterialRuntimeAdapters
         XRMaterial material,
         bool useAudioLink,
         bool useEnvironment,
-        bool useViewContext)
+        bool useViewContext,
+        out bool audioReady)
     {
         ArgumentNullException.ThrowIfNull(material);
 
-        bool audioAvailable = !useAudioLink || AudioLink is not null;
+        bool hasReadyAudio = TryGetReadyAudioLinkTexture(out XRTexture2D? audioTexture);
+        audioReady = useAudioLink && hasReadyAudio;
+        bool audioAvailable = !useAudioLink || hasReadyAudio;
         bool environmentAvailable = !useEnvironment || Environment is not null;
-        if (useAudioLink && AudioLink is not null)
-            BindStableTexture(material, AudioLink.DataTexture, "_AudioLinkTexture");
+        if (useAudioLink && hasReadyAudio)
+            BindStableTexture(material, audioTexture!, "_AudioLinkTexture");
 
         if (useAudioLink || useEnvironment || useViewContext)
             material.BindingPublishers.Add(new UberMaterialAdapterBinding(useAudioLink, useEnvironment, useViewContext));

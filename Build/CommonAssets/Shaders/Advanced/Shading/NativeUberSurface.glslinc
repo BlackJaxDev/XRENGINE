@@ -197,17 +197,39 @@ float XR_UBER_MatcapMipCount(uint slot)
     return floor(log2(float(max(max(size.x, size.y), 1))));
 }
 
+float XR_UBER_MatcapMaskBlend(float baseMask, float blendMask, int blendType)
+{
+    if (blendType == 0) return clamp(blendMask, 0.0, 1.0);
+    if (blendType == 1) return clamp(baseMask - blendMask, 0.0, 1.0);
+    if (blendType == 2) return clamp(baseMask * blendMask, 0.0, 1.0);
+    if (blendType == 3) return clamp(baseMask / max(blendMask, 0.0001), 0.0, 1.0);
+    if (blendType == 4) return min(baseMask, blendMask);
+    if (blendType == 5) return max(baseMask, blendMask);
+    if (blendType == 6) return clamp((baseMask + blendMask) * 0.5, 0.0, 1.0);
+    return clamp(baseMask + blendMask, 0.0, 1.0);
+}
+
 void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 geometricDy,
     vec3 normal, vec3 normalDx, vec3 normalDy,
     vec3 tangent, vec3 bitangent,
-    vec3 viewDir, vec3 viewDx, vec3 viewDy, mat3 viewMatrix, vec3 lightColor, float lightMap,
-    uint textureSlot, uint maskSlot, uint normalSlot, uint globalMaskSlot,
+    vec3 viewDir, vec3 viewDx, vec3 viewDy, vec3 cameraPosition,
+    mat3 viewMatrix, vec3 lightColor, float lightMap,
+    uint textureSlot, uint maskSlot, uint normalSlot, uvec4 globalMaskSlots,
     vec4 tint, vec4 parameters, vec4 projection, vec4 blend,
-    vec4 source, vec4 maskParams, vec4 uvBlend, vec4 uvControl, vec4 hue,
+    vec4 source, vec4 maskParams, vec4 uvBlend, vec4 uvControl, float rotation, vec4 hue,
+    vec4 audioBands, vec2 audioAlpha, vec2 audioEmission, vec2 audioIntensity,
     vec4 texSt, vec2 texPan, vec4 maskSt, vec2 maskPan, vec4 normalSt, vec2 normalPan,
     inout vec3 color, inout vec3 emission, inout vec3 lightAdd)
 {
-    if (parameters.x <= 0.0 || all(equal(blend, vec4(0.0))) && projection.x == 0.0 && parameters.z == 0.0 && source.z == 0.0) return;
+    bool audioActive = audioBands.x > 0.5 && UBER_I(_AudioLinkAnimToggle) != 0 &&
+        XR_UBER_HasFeature(XR_UBER_FEATURE_AUDIOLINK);
+    bool audioIntensityPossible = audioActive && max(audioIntensity.x, audioIntensity.y) > 0.0;
+    bool audioEmissionPossible = audioActive && max(audioEmission.x, audioEmission.y) > 0.0;
+    if (parameters.x <= 0.0 && !audioIntensityPossible && !audioEmissionPossible)
+        return;
+    if (all(equal(blend, vec4(0.0))) && projection.x == 0.0 &&
+        parameters.z == 0.0 && source.z == 0.0 && !audioEmissionPossible)
+        return;
     float normalStrength = clamp(parameters.w, 0.0, 1.0);
     bool sourceMatcap = UBER_F(_SourceMatcap) > 0.5;
     vec3 projectedNormal = mix(geometric, normal, normalStrength);
@@ -258,7 +280,14 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
         if (source.w > 0.5)
             smoothness *= maskSample[clamp(int(maskParams.z + 0.5), 0, 3)];
         float lod = (1.0 - smoothness) * XR_UBER_MatcapMipCount(textureSlot);
-        uv = uv * texSt.xy + texSt.zw + texPan * (c.time * 0.05);
+        uv += texPan * (c.time * 0.05);
+        float angle = rotation * 3.14159265359;
+        float sine = sin(angle), cosine = cos(angle);
+        mat2 rotationMatrix = mat2(cosine, -sine, sine, cosine);
+        uv = rotationMatrix * (uv - 0.5) + 0.5;
+        dx = rotationMatrix * dx;
+        dy = rotationMatrix * dy;
+        uv = uv * texSt.xy + texSt.zw;
         // Convert procedural source UVs to the imported texture origin.
         uv.y = 1.0 - uv.y;
         dx *= texSt.xy;
@@ -278,7 +307,19 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
                 sampleValue = XR_UBER_Sample(textureSlot, uv, dx, dy, vec4(1.0));
         }
         sampleValue *= tint;
-        sampleValue.rgb *= mix(vec3(1.0), lightColor, clamp(projection.w, 0.0, 1.0)) * max(parameters.x, 0.0);
+        float intensity = parameters.x;
+        float emissionStrength = parameters.z;
+        if (audioBands.x > 0.5 && UBER_I(_AudioLinkAnimToggle) != 0 &&
+            XR_UBER_HasFeature(XR_UBER_FEATURE_AUDIOLINK))
+        {
+            float alphaBand = XR_UBER_AudioBandValue(int(audioBands.y), 0.0);
+            float emissionBand = XR_UBER_AudioBandValue(int(audioBands.z), 0.0);
+            float intensityBand = XR_UBER_AudioBandValue(int(audioBands.w), 0.0);
+            sampleValue.a = clamp(sampleValue.a + mix(audioAlpha.x, audioAlpha.y, alphaBand), 0.0, 1.0);
+            emissionStrength += mix(audioEmission.x, audioEmission.y, emissionBand);
+            intensity = max(0.0, intensity + mix(audioIntensity.x, audioIntensity.y, intensityBand));
+        }
+        sampleValue.rgb *= mix(vec3(1.0), lightColor, clamp(projection.w, 0.0, 1.0)) * max(intensity, 0.0);
         sampleValue.rgb = mix(sampleValue.rgb, sampleValue.rgb * color, clamp(source.y, 0.0, 1.0));
         if (hue.x > 0.5)
         {
@@ -286,25 +327,21 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
             sampleValue.rgb = mix(XR_UBER_hueShiftOklab(sampleValue.rgb, shift),
                 XR_UBER_hueShift(sampleValue.rgb, shift), clamp(hue.w, 0.0, 1.0));
         }
-        mask *= mix(1.0, clamp(lightMap, 0.0, 1.0), clamp(parameters.y, 0.0, 1.0)) * sampleValue.a;
+        mask *= mix(1.0, clamp(lightMap, 0.0, 1.0), clamp(parameters.y, 0.0, 1.0));
         if (uvControl.z > 0.5)
         {
-            vec2 globalUv, globalDx, globalDy;
-            XR_UBER_CoverageUv(c, UBER_I(_GlobalMaskTexture0UV), globalUv, globalDx, globalDy);
-            vec4 globalSt = UBER_V(_GlobalMaskTexture0_ST);
-            globalUv = globalUv * globalSt.xy + globalSt.zw +
-                UBER_V(_GlobalMaskTexture0Pan).xy * (c.time * 0.05);
-            vec4 globalSample = XR_UBER_Sample(globalMaskSlot, globalUv,
-                globalDx * globalSt.xy, globalDy * globalSt.xy, vec4(1.0));
-            mask = clamp(mask - globalSample.r * sampleValue.a, 0.0, 1.0);
+            float globalMask = XR_UBER_GlobalMask(c, int(uvControl.z + 0.5),
+                globalMaskSlots, cameraPosition, normal, viewDir);
+            mask = XR_UBER_MatcapMaskBlend(mask, globalMask, int(uvControl.w + 0.5));
         }
+        mask *= sampleValue.a;
         color = mix(color, sampleValue.rgb, clamp(blend.x * mask * 0.999999, 0.0, 1.0));
         color *= mix(vec3(1.0), sampleValue.rgb, clamp(blend.y * mask, 0.0, 1.0));
         color += sampleValue.rgb * blend.z * mask;
         color = mix(color, XR_UBER_Blend(color, sampleValue.rgb, 6), clamp(blend.w * mask, 0.0, 1.0));
         lightAdd += sampleValue.rgb * source.z * mask;
         color = mix(color, color + color * sampleValue.rgb, clamp(projection.x * mask, 0.0, 1.0));
-        emission += sampleValue.rgb * parameters.z * mask;
+        emission += sampleValue.rgb * emissionStrength * mask;
         return;
     }
     vec4 sampleValue = XR_UBER_Sample(textureSlot, uv, dx, dy, vec4(1.0)) * tint;
@@ -322,7 +359,8 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
 
 void XR_UBER_EmissionSlot(XRUberCoordinates c, uint textureSlot, uint maskSlot,
     vec4 st, vec4 maskSt, vec4 tint, vec4 parameters, vec2 pan, int selector,
-    vec4 modifiers, vec4 sampling, vec3 directColor, inout vec3 base, inout vec3 emission)
+    vec4 modifiers, vec4 sampling, vec3 directColor, vec3 cameraPosition,
+    vec3 normal, vec3 viewDir, inout vec3 base, inout vec3 emission)
 {
     if (parameters.x == 0.0) return;
     vec4 texel = XR_UBER_SurfaceTexture(c, textureSlot, selector, st, pan, vec4(1.0));
@@ -339,7 +377,13 @@ void XR_UBER_EmissionSlot(XRUberCoordinates c, uint textureSlot, uint maskSlot,
     float center = modifiers.y > 0.5 ? smoothstep(0.0, 0.5, abs(fract(uvX + c.time * parameters.z) - 0.5)) : 1.0;
     if (parameters.w != 0.0) source = XR_UBER_hueShift(source, parameters.w * c.time);
     float sourceAlpha = UBER_F(_SourceLayeredEmission) > 0.5 ? texel.a : 1.0;
-    vec3 contribution = source * XR_UBER_Theme(int(modifiers.w + 0.5), tint.rgb) * max(parameters.x, 0.0) * sourceAlpha * mask * pulse * center;
+    float globalMask = modifiers.z > 0.5
+        ? XR_UBER_GlobalMask(c, int(modifiers.z + 0.5),
+            uvec4(UBER_T(_GlobalMaskTexture0), UBER_T(_GlobalMaskTexture1),
+                UBER_T(_GlobalMaskTexture2), UBER_T(_GlobalMaskTexture3)),
+            cameraPosition, normal, viewDir, 1.0)
+        : 1.0;
+    vec3 contribution = source * XR_UBER_Theme(int(modifiers.w + 0.5), tint.rgb) * max(parameters.x, 0.0) * sourceAlpha * mask * pulse * center * globalMask;
     contribution *= xrSourceEmissionFluorescence(directColor, sampling.w);
     emission += contribution;
     base = mix(base, contribution, clamp(modifiers.x, 0.0, 1.0) * mask);

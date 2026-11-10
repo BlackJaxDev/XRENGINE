@@ -477,7 +477,10 @@ namespace XREngine.Components.Scene.Mesh
                 RenderableMeshStageTelemetry.End(RenderableMeshStage.BeforeAddCommandState, tSet);
 
                 long tSync = RenderableMeshStageTelemetry.Begin();
-                SyncMaterialPassCommands(rend, mat, passes.IsShadowPass);
+                // The outline command is shared by all collections of the frame. A shadow collection
+                // skips it at collection and must not change the state that the main views publish.
+                if (!passes.IsShadowPass)
+                    SyncMaterialPassCommands(rend, mat, isShadowCollection: false);
                 RenderableMeshStageTelemetry.End(RenderableMeshStage.BeforeAddMaterialPasses, tSync);
                 long tTail = RenderableMeshStageTelemetry.Begin();
                 ApplyHighlightRenderOptionsOverride(mat);

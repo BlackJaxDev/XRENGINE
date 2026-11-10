@@ -106,8 +106,10 @@ void uberApplyInternalParallax(inout ToonMesh mesh)
 float uberAudioBandValue(int band, float history)
 {
 #ifndef XRENGINE_UBER_DISABLE_AUDIOLINK
+    if (band < 0 || band > 3)
+        return 0.0;
     vec2 size = max(_AudioLinkTextureSize.xy, vec2(1.0));
-    float x = (clamp(float(band), 0.0, 3.0) + 0.5) / size.x;
+    float x = (float(band) + 0.5) / size.x;
     float y = (clamp(history, 0.0, size.y - 1.0) + 0.5) / size.y;
     return texture(_AudioLinkTexture, vec2(x, y)).r;
 #else

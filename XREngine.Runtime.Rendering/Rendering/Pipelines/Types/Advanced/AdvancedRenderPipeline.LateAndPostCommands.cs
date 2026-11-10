@@ -18,7 +18,13 @@ public partial class AdvancedRenderPipeline
     {
         using (commands.AddUsing<VPRC_BindFBOByName>(x =>
             x.SetOptions(ForwardPassFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+        {
+            VPRC_RenderAdvancedMaterialOutline opaqueOutline =
+                commands.Add<VPRC_RenderAdvancedMaterialOutline>();
+            opaqueOutline.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            opaqueOutline.Stereo = Stereo;
             commands.Add<VPRC_RenderAdvancedMaterialOutline>().Stereo = Stereo;
+        }
 
         var late = commands.Add<VPRC_IfElse>();
         late.Label = "AdvancedLateTransparencyAllowed";

@@ -65,6 +65,19 @@
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
 #pragma snippet "ForwardLighting"
 #endif
+#if defined(XRENGINE_OUTLINE_PASS)
+#if defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING)
+layout(location = 22) in float FragViewIndex;
+uniform mat4 LeftEyeInverseViewMatrix;
+uniform mat4 RightEyeInverseViewMatrix;
+#endif
+vec3 XRENGINE_GetOutlineCameraPosition()
+{
+    return FragViewIndex > 0.5
+        ? RightEyeInverseViewMatrix[3].xyz
+        : LeftEyeInverseViewMatrix[3].xyz;
+}
+#endif
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_AMBIENT_OCCLUSION
 #pragma snippet "AmbientOcclusionSampling"
 #endif
@@ -98,12 +111,18 @@
 #define XR_GLITTER_I(name) int(name)
 #define XR_GLITTER_V2(name) name
 #define XR_GLITTER_V4(name) name
+#define XR_GLITTER_HUE_OKLAB(color, shift) hueShiftOklab(color, shift)
+#define XR_GLITTER_HUE_HSV(color, shift) hueShift(color, shift)
+#define XR_GLITTER_HSV_TO_RGB(value) hsvToRgb(value)
 #define XR_GLITTER_SAMPLE(uv, dx, dy) textureGrad(_GlitterTexture, clamp(uv, vec2(0.0), vec2(1.0)), dx, dy)
 #define XR_GLITTER_FRAGMENT_DERIVATIVES
 #include "source_glitter.glsl"
 #undef XR_GLITTER_FRAGMENT_DERIVATIVES
 #undef XR_GLITTER_SAMPLE
 #undef XR_GLITTER_V4
+#undef XR_GLITTER_HUE_OKLAB
+#undef XR_GLITTER_HUE_HSV
+#undef XR_GLITTER_HSV_TO_RGB
 #undef XR_GLITTER_I
 #undef XR_GLITTER_F
 #undef XR_GLITTER_V2
@@ -2043,7 +2062,11 @@ void main() {
 #endif
     mesh.vertexNormal = normalize(FragNorm);
     mesh.vertexColor = FragColor0;
+#if defined(XRENGINE_OUTLINE_PASS)
+    mesh.viewDir = normalize(XRENGINE_GetOutlineCameraPosition() - FragPos);
+#else
     mesh.viewDir = normalize(u_CameraPosition - FragPos);
+#endif
     mesh.isFrontFace = gl_FrontFacing ? 1.0 : -1.0;
 
     float normalFacing = _SourceBackfaceNormals == 0 || _FlipBackfaceNormals != 0
@@ -2183,7 +2206,7 @@ void main() {
     float distanceFade = 1.0;
     if (fadeEnd > fadeStart)
         distanceFade = 1.0 - smoothstep(fadeStart, fadeEnd,
-            length(mesh.worldPos - u_CameraPosition));
+            length(mesh.worldPos - XRENGINE_GetOutlineCameraPosition()));
     outlineColor.a *= fragData.alpha * outlineTexture.a * outlineMask * distanceFade;
     if (outlineColor.a <= 0.0001)
         discard;
@@ -2287,14 +2310,27 @@ void main() {
 #if !defined(XRENGINE_UBER_DISABLE_ADVANCED_PBR) && !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING)
     if (_SourceAnisoSettings.x > 0.5) {
         ToonLight anisoLight = calculateLighting(mesh, mesh.worldNormal, vec3(0.0));
-        xrSourceApplyAnisotropy(mesh.vertexNormal, mesh.worldNormal,
+        vec4 anisoMap = vec4(1.0, 1.0, 1.0, 0.0);
+        if (_SourceAnisoMapSettings.x > 0.5) {
+            vec2 anisoUv = panUV(transformUV(getUV(_AnisoColorMapUV, mesh),
+                _AnisoColorMap_ST), _AnisoColorMapPan, u_Time * 0.05);
+            anisoMap = texture(_AnisoColorMap, anisoUv);
+        }
+        int anisoGlobalMaskIndex = int(_SourceAnisoMapSettings.y + 0.5);
+        float anisoGlobalMask = uberGlobalMask(anisoGlobalMaskIndex, mesh, 0.05);
+        vec2 anisoResponse = xrSourceAnisoResponses(mesh.vertexNormal, mesh.worldNormal,
             mesh.TBN[0], mesh.TBN[1], mesh.viewDir, anisoLight.direction,
-            anisoLight.color, anisoLight.lightMap, _SourceAnisoSettings,
+            anisoLight.lightMap, _SourceAnisoSettings,
             _SourceAnisoMix, _SourceAnisoLayer0, _SourceAnisoLayer1,
+            _SourceAnisoOffsetMapStrength, anisoMap, anisoGlobalMask,
+            int(_SourceAnisoMapSettings.z));
+        xrSourceApplyAnisotropy(anisoResponse, fwidth(anisoResponse), anisoLight.color,
+            _SourceAnisoSettings, _SourceAnisoMix,
+            _SourceAnisoToon0, _SourceAnisoToon1,
             uberResolveThemeColor(int(_SourceAnisoTint0.w + 0.5),
                 _SourceAnisoTint0.rgb),
             uberResolveThemeColor(int(_SourceAnisoTint1.w + 0.5),
-                _SourceAnisoTint1.rgb), fragData.baseColor, matcapLightAdd);
+                _SourceAnisoTint1.rgb), anisoMap.rgb, fragData.baseColor, matcapLightAdd);
     }
 #endif
     PBRData surfacePbr = buildSurfacePbrData(mesh, fragData.baseColor);
@@ -2382,11 +2418,29 @@ void main() {
                 _GlitterColorMap_ST.zw + _GlitterColorMapPan * u_Time * 0.05;
             vec3 colorMap = textureGrad(_GlitterColorMap, colorMapUv,
                 dFdx(colorMapUv), dFdy(colorMapUv)).rgb;
+            vec4 glitterAudio = vec4(0.0);
+            vec4 glitterTint = _GlitterColor;
+            float glitterGlobalMask = 1.0;
+#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+            glitterTint.rgb = uberResolveThemeColor(_GlitterColorThemeIndex, glitterTint.rgb);
+            if (_GlitterGlobalMask.x > 0.5)
+                glitterGlobalMask = uberGlobalMask(int(_GlitterGlobalMask.x + 0.5), mesh, 0.05);
+#endif
+#ifndef XRENGINE_UBER_DISABLE_AUDIOLINK
+            if (_GlitterAudioBands.x > 0.5 && _AudioLinkAnimToggle != 0)
+            {
+                glitterAudio = vec4(
+                    uberAudioBandValue(int(_GlitterAudioBands.y), 0.0),
+                    uberAudioBandValue(int(_GlitterAudioBands.z), 0.0),
+                    uberAudioBandValue(int(_GlitterAudioBands.w), 0.0), 1.0);
+            }
+#endif
             xrApplySourceGlitter(uv, dFdx(uv), dFdy(uv),
                 dFdx(mesh.uv[0]), dFdy(mesh.uv[0]), u_Time, mesh.vertexNormal, mesh.worldNormal,
                 mesh.viewDir, light.direction, light.color,
                 _SourceGlitterVersion == 100 ? ramp * saturate(light.lightMap) : ramp, luminance(light.color),
-                _GlitterColor, colorMap, mask, fragData.baseColor, fragData.emission);
+                glitterTint, colorMap, mask, glitterGlobalMask, glitterAudio,
+                fragData.baseColor, fragData.emission);
         }
         if (_GlitterBlendType == 1) {
             surfacePbr.F0 = mix(vec3(0.04), fragData.baseColor, surfacePbr.metallic);

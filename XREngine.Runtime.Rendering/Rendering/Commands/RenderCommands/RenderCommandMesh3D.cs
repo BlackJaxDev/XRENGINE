@@ -120,6 +120,12 @@ namespace XREngine.Rendering.Commands
 
         internal EMaterialPassIdentity? RenderSupplementalMaterialPass => _renderSupplementalMaterialPass;
 
+        /// <summary>
+        /// Gets the material override of the render-buffer snapshot.
+        /// Render-side decisions use this value, because collection can change the live value at any time.
+        /// </summary>
+        internal XRMaterial? RenderMaterialOverride => _renderMaterialOverride;
+
         internal EMaterialPassIdentity? SupplementalMaterialPass
         {
             get => _supplementalMaterialPass;

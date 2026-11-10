@@ -247,8 +247,11 @@ bool XR_UBER_ApplyCoverage(
     }
     if (UBER_F(_UvTileDiscard) > 0.5 && UBER_I(_UDIMDiscardMode) == 1)
     {
-        vec2 tile = floor(UBER_I(_UDIMDiscardUV) == 1
-            ? coordinates.uv1 : coordinates.uv0);
+        vec2 tileUv;
+        vec2 tileDx;
+        vec2 tileDy;
+        XR_UBER_CoverageUv(coordinates, UBER_I(_UDIMDiscardUV), tileUv, tileDx, tileDy);
+        vec2 tile = floor(tileUv);
         if (all(greaterThanEqual(tile, vec2(0.0))) &&
             all(lessThan(tile, vec2(4.0))))
         {

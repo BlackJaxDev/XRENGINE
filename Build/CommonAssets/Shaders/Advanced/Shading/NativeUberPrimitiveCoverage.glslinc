@@ -92,7 +92,7 @@ bool XR_UBER_KeepOriginalTriangle(
         return false;
     }
 
-    uint shift = UBER_I(_UDIMDiscardUV) == 1 ? 5u : 0u;
+    uint shift = uint(clamp(UBER_I(_UDIMDiscardUV), 0, 3)) * 5u;
     uint tile0 = (vertex0.reserved2 >> shift) & 31u;
     uint tile1 = (vertex1.reserved2 >> shift) & 31u;
     uint tile2 = (vertex2.reserved2 >> shift) & 31u;

@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
@@ -9,12 +10,18 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// <summary>Draws collected material outline companions over native HDR and depth.</summary>
 public sealed class VPRC_RenderAdvancedMaterialOutline : ViewportRenderCommand
 {
-    private const int OutlineRenderPass = (int)EDefaultRenderPass.MaskedForward;
     private readonly Predicate<RenderCommand> _filter;
-    private int _passIndex = OutlineRenderPass;
+    private int _renderPass = (int)EDefaultRenderPass.MaskedForward;
+    private int _passIndex = (int)EDefaultRenderPass.MaskedForward;
     private bool _stereo;
 
     public VPRC_RenderAdvancedMaterialOutline() => _filter = IsEligible;
+
+    public int RenderPass
+    {
+        get => _renderPass;
+        set => SetField(ref _renderPass, value);
+    }
 
     public bool Stereo
     {
@@ -26,7 +33,7 @@ public sealed class VPRC_RenderAdvancedMaterialOutline : ViewportRenderCommand
 
     protected override bool ShouldExecuteThisFrame()
         => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.ActiveMeshRenderCommands
-            .HasRenderingCommands(OutlineRenderPass) == true;
+            .HasRenderingCommands(RenderPass) == true;
 
     protected override void Execute()
     {
@@ -35,7 +42,7 @@ public sealed class VPRC_RenderAdvancedMaterialOutline : ViewportRenderCommand
             throw new InvalidOperationException("Advanced material outlines require the canonical HDR and native depth framebuffer.");
 
         using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_passIndex);
-        ActivePipelineInstance.ActiveMeshRenderCommands.RenderCPUFiltered(OutlineRenderPass, _filter);
+        ActivePipelineInstance.ActiveMeshRenderCommands.RenderCPUFiltered(RenderPass, _filter);
     }
 
     private bool IsEligible(RenderCommand command)
@@ -49,12 +56,21 @@ public sealed class VPRC_RenderAdvancedMaterialOutline : ViewportRenderCommand
             throw new InvalidOperationException("The collected material outline has no matching renderable owner.");
 
         var state = ActivePipelineInstance.RenderState;
-        if (Stereo || state.OverrideMaterial is not null || state.GlobalMaterialOverride is not null ||
+        bool softOutline = meshCommand.RenderMaterialOverride?.EngineSemantic ==
+            EngineMaterialSemanticIdentity.UberSoftOutlineV2;
+        if (softOutline != (RenderPass == (int)EDefaultRenderPass.TransparentForward))
+            return false;
+        if (softOutline &&
+            (!RuntimeEngine.Rendering.State.IsVulkan ||
+             (Stereo && !RuntimeEngine.Rendering.State.HasVulkanMultiviewGeometryShader)))
+            throw new InvalidOperationException("The soft outline needs Vulkan geometry and multiview geometry shader support.");
+
+        if (state.OverrideMaterial is not null || state.GlobalMaterialOverride is not null ||
             state.UseDepthNormalMaterialVariants || state.UseMotionVectorMaterialVariant ||
             state.AdvancedLateTemporalOutput != EAdvancedLateTemporalOutput.None ||
-            (RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa &&
+            (!softOutline && RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa &&
              RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame() > 1u))
-            throw new InvalidOperationException("Advanced material outlines do not support stereo output, material overrides, temporal replay, or multisample output.");
+            throw new InvalidOperationException("Advanced material outlines do not support material overrides, temporal replay, or multisample output.");
 
         if (state.WindowViewport?.MeshSubmissionStrategyOverride is { } strategy && strategy != EMeshSubmissionStrategy.CpuDirect)
             throw new InvalidOperationException("Advanced material outlines require filtered CPU-direct submission.");
@@ -65,11 +81,22 @@ public sealed class VPRC_RenderAdvancedMaterialOutline : ViewportRenderCommand
             materialOverride?.UberOutlineSourceMaterial is not { } source ||
             !source.IsResolvedOutlinePassVariant(materialOverride) ||
             !source.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition pass) ||
-            !pass.Enabled || pass.RenderPass != OutlineRenderPass ||
-            materialOverride?.RenderPass != OutlineRenderPass ||
+            !pass.Enabled || pass.RenderPass != RenderPass ||
+            (softOutline && pass.ShaderBehavior != EngineMaterialSemanticIdentity.UberSoftOutlineV2) ||
+            materialOverride?.RenderPass != RenderPass ||
             !ReferenceEquals(pass.RenderOptions, optionsOverride) ||
             materialOverride?.BillboardMode != EMeshBillboardMode.None)
             throw new InvalidOperationException("The collected material outline has unsupported geometry, material, or pass state.");
+
+        if (!softOutline && Stereo &&
+            (!RuntimeEngine.Rendering.State.IsVulkan ||
+             !RuntimeEngine.Rendering.State.IsStereoPass ||
+             AbstractRenderer.Current is not IRuntimeRendererHost rendererHost ||
+             !rendererHost.TryGetBackendCapability<IRendererMultiviewStateBackendCapability>(out var multiview) ||
+             multiview?.HasActiveMultiviewDrawTarget != true ||
+             multiview.CurrentDrawViewMask != 3u ||
+             !mesh.GetVersion().UsesMultiview))
+            throw new InvalidOperationException("The outline needs an active two-eye Vulkan multiview target and vertex program.");
 
         return true;
     }
@@ -77,7 +104,7 @@ public sealed class VPRC_RenderAdvancedMaterialOutline : ViewportRenderCommand
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
         base.DescribeRenderPass(context);
-        var builder = context.Metadata.ForPass(OutlineRenderPass, "AdvancedMaterialOutline", ERenderGraphPassStage.Graphics);
+        var builder = context.Metadata.ForPass(RenderPass, "AdvancedMaterialOutline", ERenderGraphPassStage.Graphics);
         _passIndex = builder.PassIndex;
         builder.UseEngineDescriptors().UseMaterialDescriptors();
         if (context.CurrentRenderTarget is not { } target)

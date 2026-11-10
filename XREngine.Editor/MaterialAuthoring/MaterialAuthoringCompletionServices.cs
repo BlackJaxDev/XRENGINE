@@ -75,7 +75,7 @@ public static class MaterialTextureArrayBuilder
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     MaterialTextureArrayLayer layer = recipe.Layers[index];
-                    using RuntimeImage image = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(layer.SourcePath));
+                    using RuntimeImage image = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(layer.SourcePath), layer.SourcePath);
                     RuntimeImage selected = image;
                     if (image.Width != (uint)width || image.Height != (uint)height)
                     {

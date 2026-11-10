@@ -22,6 +22,31 @@ float xrGlitterRandom(vec2 seed)
     return fract((value.x + value.y) * value.z);
 }
 
+vec3 xrGlitterRandomColor(vec2 seed)
+{
+    float firstSeed = seed.x + seed.y;
+    vec2 randomPoint = xrGlitterPoint(vec2(firstSeed, firstSeed * 1.3));
+    float secondSeed = randomPoint.x + randomPoint.y;
+    float hue = xrGlitterPoint(vec2(secondSeed, secondSeed * 1.3)).x;
+    vec2 saturation = XR_GLITTER_V2(_GlitterRandomSaturation);
+    vec2 value = XR_GLITTER_V2(_GlitterRandomValue);
+    return XR_GLITTER_HSV_TO_RGB(vec3(hue,
+        mix(saturation.x, saturation.y, randomPoint.x),
+        mix(value.x, value.y, randomPoint.y)));
+}
+
+float xrGlitterMaskBlend(float baseMask, float blendMask, int blendType)
+{
+    if (blendType == 0) return clamp(blendMask, 0.0, 1.0);
+    if (blendType == 1) return clamp(baseMask - blendMask, 0.0, 1.0);
+    if (blendType == 2) return clamp(baseMask * blendMask, 0.0, 1.0);
+    if (blendType == 3) return clamp(baseMask / max(blendMask, 0.0001), 0.0, 1.0);
+    if (blendType == 4) return min(baseMask, blendMask);
+    if (blendType == 5) return max(baseMask, blendMask);
+    if (blendType == 6) return clamp((baseMask + blendMask) * 0.5, 0.0, 1.0);
+    return clamp(baseMask + blendMask, 0.0, 1.0);
+}
+
 // Return the stable random seed and nearest-site distance.
 vec3 xrGlitterCell(vec2 position, float layer, out vec2 displacement)
 {
@@ -77,7 +102,8 @@ void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy,
     vec2 shapeDx, vec2 shapeDy, float time,
     vec3 geometricNormal, vec3 shadingNormal, vec3 viewDirection,
     vec3 lightDirection, vec3 lightColor, float rampedLight, float directLuminance,
-    vec4 tint, vec3 colorMap, float mask, inout vec3 baseColor, inout vec3 emission)
+    vec4 tint, vec3 colorMap, float mask, float globalMask, vec4 audioBands,
+    inout vec3 baseColor, inout vec3 emission)
 {
     float frequency = XR_GLITTER_F(_GlitterFrequency);
     vec2 position = (uv + XR_GLITTER_V2(_GlitterUVPanning) * time * 0.05) * frequency;
@@ -102,15 +128,39 @@ void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy,
         dy /= divisor;
     }
     vec3 normal = mix(geometricNormal, shadingNormal, XR_GLITTER_F(_GlitterUseNormals));
+    bool audioEnabled = XR_GLITTER_V4(_GlitterAudioBands).x > 0.5 && audioBands.w > 0.5;
+    if (audioEnabled)
+    {
+        vec2 range = XR_GLITTER_V2(_GlitterAudioMaskRange);
+        mask = clamp(mask + mix(range.x, range.y, audioBands.z), 0.0, mask);
+    }
     mask *= tint.a * mix(1.0, rampedLight, XR_GLITTER_F(_GlitterHideInShadow)) *
         mix(1.0, directLuminance, XR_GLITTER_F(_GlitterScaleWithLighting));
-    if (mask <= 0.0 || (XR_GLITTER_I(_GlitterBlendType) == 0 && XR_GLITTER_F(_GlitterBrightness) <= 0.0))
+    vec2 globalControl = XR_GLITTER_V2(_GlitterGlobalMask);
+    if (globalControl.x > 0.5)
+        mask = xrGlitterMaskBlend(mask, globalMask, int(globalControl.y + 0.5));
+    float brightness = XR_GLITTER_F(_GlitterBrightness);
+    if (audioEnabled)
+    {
+        vec2 range = XR_GLITTER_V2(_GlitterAudioBrightnessRange);
+        brightness += max(mix(range.x, range.y, audioBands.y), 0.0);
+    }
+    if (mask <= 0.0 || (XR_GLITTER_I(_GlitterBlendType) == 0 && brightness <= 0.0))
         return;
 
     for (int layer = 0; layer < min(XR_GLITTER_I(_GlitterLayers), source10 ? 4 : 8); ++layer)
     {
         vec2 displacement;
         vec3 cell = xrGlitterCell(position, float(layer), displacement);
+        float size = XR_GLITTER_I(_GlitterRandomSize) != 0
+            ? mix(XR_GLITTER_V2(_GlitterMinMaxSize).x, XR_GLITTER_V2(_GlitterMinMaxSize).y,
+                xrGlitterRandom(cell.xy))
+            : XR_GLITTER_F(_GlitterSize);
+        if (audioEnabled)
+        {
+            vec2 range = XR_GLITTER_V2(_GlitterAudioSizeRange);
+            size = clamp(size + mix(range.x, range.y, audioBands.x), 0.0, 1.0);
+        }
         // Re-evaluate adjacent surface samples across cell boundaries. A derivative
         // of only the current site is invalid when many flakes cover one pixel.
         vec2 adjacentDisplacement;
@@ -118,17 +168,26 @@ void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy,
             abs(xrGlitterCell(position + dy, float(layer), adjacentDisplacement).z - cell.z);
         if (source10)
             width = sourceWidth;
-        float alpha = clamp((XR_GLITTER_F(_GlitterSize) - cell.z) / clamp(width, 0.0001, 1.0), 0.0, 1.0);
+        float alpha = clamp((size - cell.z) / clamp(width, 0.0001, 1.0), 0.0, 1.0);
         int mode = XR_GLITTER_I(_GlitterMode);
         float strength;
         vec3 color = tint.rgb * mix(vec3(1.0), baseColor, XR_GLITTER_F(_GlitterUseSurfaceColor)) * colorMap;
-        vec2 shapeUv = clamp(displacement / max(XR_GLITTER_F(_GlitterSize) * 2.0, 1.0e-6) + 0.5,
+        if (XR_GLITTER_I(_GlitterRandomColors) != 0)
+            color *= xrGlitterRandomColor(cell.xy);
+        vec2 shapeUv = clamp(displacement / max(size * 2.0, 1.0e-6) + 0.5,
             vec2(0.0), vec2(1.0));
         vec4 shapeTransform = XR_GLITTER_V4(_GlitterTexture_ST);
         shapeUv = shapeUv * shapeTransform.xy + shapeTransform.zw +
             XR_GLITTER_V2(_GlitterTexturePan) * time * 0.05;
         vec4 shapeSample = XR_GLITTER_SAMPLE(shapeUv, shapeDx, shapeDy);
         color *= shapeSample.rgb;
+        vec4 hueControl = XR_GLITTER_V4(_GlitterHueControl);
+        if (hueControl.x > 0.5)
+        {
+            float shift = hueControl.y + hueControl.z * time * 0.05;
+            color = mix(XR_GLITTER_HUE_OKLAB(color, shift), XR_GLITTER_HUE_HSV(color, shift),
+                clamp(hueControl.w, 0.0, 1.0));
+        }
         float layerMask = mask * shapeSample.a;
         if (mode == 1)
         {
@@ -153,7 +212,6 @@ void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy,
             strength = (XR_GLITTER_F(_GlitterMinBrightness) * alpha * alpha +
                 pow(alignment, XR_GLITTER_F(_GlitterContrast))) * alpha;
         }
-        float brightness = XR_GLITTER_F(_GlitterBrightness);
         if (XR_GLITTER_I(_GlitterBlendType) == 1)
         {
             baseColor = mix(baseColor, strength * color * brightness, strength * layerMask);

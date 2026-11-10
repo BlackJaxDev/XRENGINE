@@ -411,7 +411,7 @@ namespace XREngine.Rendering.Info
                 // a small risk of cross-thread visibility lag.
                 if (!cmd.Enabled ||
                     this is RenderInfo3D { OwnerRenderableMesh: { } mesh } &&
-                    mesh.IsPrimaryCommand(cmd) && !mesh.ShouldCollectPrimaryCommand(passes.IsShadowPass))
+                    !mesh.ShouldCollectCommand(cmd, passes.IsShadowPass))
                     continue;
 
                 cmd.CollectedForRender(camera);

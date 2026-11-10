@@ -15,6 +15,18 @@ public static partial class SerializedMaterialImporter
         if (material.RenderPass != (int)EDefaultRenderPass.TransparentForward)
             return;
 
+        if (SourceToonRenderStateConverter.IsHornsSoftOutlineSource(document))
+        {
+            material.AdvancedLatePassMetadata = new AdvancedLatePassMetadata(
+                EAdvancedLatePassKind.SpecialEffects,
+                writesDepth: material.RenderOptions.DepthTest.UpdateDepth,
+                isOrderDependent: true)
+            {
+                TemporalUnsupportedReason = "The imported material has no coverage-matching temporal shader variants.",
+            };
+            return;
+        }
+
         RenderingParameters options = material.RenderOptions;
         bool requiresSceneColor =
             document.TryGetPositive("_GrabPass") ||

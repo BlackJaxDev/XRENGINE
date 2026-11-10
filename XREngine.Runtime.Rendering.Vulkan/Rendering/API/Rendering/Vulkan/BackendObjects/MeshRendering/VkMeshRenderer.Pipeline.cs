@@ -93,8 +93,13 @@ internal unsafe partial class VkMeshRenderer
 
 			vertexShader = GenerateVertexShader(vsSource);
 			if (programState.TrustedOutlineVariant)
-				vertexShader = ShaderHelper.CreateDefinedShaderVariant(vertexShader, "XRENGINE_OUTLINE_PASS")
+			{
+				string outlineDefine = material.EngineSemantic == EngineMaterialSemanticIdentity.UberSoftOutlineV2
+					? "XRENGINE_SOFT_OUTLINE_PASS"
+					: "XRENGINE_OUTLINE_PASS";
+				vertexShader = ShaderHelper.CreateDefinedShaderVariant(vertexShader, outlineDefine)
 					?? throw new InvalidOperationException("The generated outline vertex shader has no outline variant.");
+			}
 			generatedVertexIdentity = XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(
 				vertexShader.Source?.Text ?? vsSource);
 		}

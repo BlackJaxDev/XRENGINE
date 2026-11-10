@@ -25,13 +25,13 @@ public static partial class SerializedMaterialImporter
         bool vertexEffects = HasVertexEffects(document);
         bool audioLink = document.TryGetPositive("_EnableAudioLink") ||
                          document.ValidKeywords.Contains("POI_AUDIOLINK");
+        SetInt(material, "_AudioLinkAnimToggle", GetInt(document, "_AudioLinkAnimToggle", 1));
         bool environment = HasAnyPositive(document, "_LTCGIEnabled", "_LightVolumeEnabled", "_BlacklightEnabled");
         bool viewContext = HasAnyPositive(document, "_EnableMirrorOptions", "_MirrorTextureEnabled", "_CameraOptionsEnabled");
 
         material.SetUberFeatureEnabled("outline", outlines);
         material.SetUberFeatureEnabled("extended-effects", specialEffects);
         material.SetUberFeatureEnabled("vertex-effects", vertexEffects);
-        material.SetUberFeatureEnabled("audiolink", audioLink && UberMaterialRuntimeAdapters.AudioLink is not null);
         material.SetUberFeatureEnabled("environment-lighting", environment && UberMaterialRuntimeAdapters.Environment is not null);
         material.SetUberFeatureEnabled("view-context", viewContext);
         material.EnsureUberStateInitialized();
@@ -57,10 +57,12 @@ public static partial class SerializedMaterialImporter
             material,
             audioLink,
             environment,
-            viewContext);
+            viewContext,
+            out bool audioReady);
+        material.SetUberFeatureEnabled("audiolink", audioReady);
         if (!adaptersAvailable)
         {
-            if (audioLink && UberMaterialRuntimeAdapters.AudioLink is null)
+            if (audioLink && !audioReady)
                 AddMissingAdapterDiagnostic(diagnostics, warnings, "AudioLink", "_EnableAudioLink");
             if (environment && UberMaterialRuntimeAdapters.Environment is null)
                 AddMissingAdapterDiagnostic(diagnostics, warnings, "LTCGI/light-volume", "_LTCGIEnabled");
@@ -158,8 +160,8 @@ public static partial class SerializedMaterialImporter
             int uv = material.Parameter<ShaderInt>("_UDIMDiscardUV")?.Value ?? 0;
             string? unsupported = mode is not (0 or 1)
                 ? "The active UDIM discard selects an unsupported discard mode."
-                : uv is < 0 or > 1
-                    ? "The active UDIM discard selects a UV channel outside native UV0 and UV1."
+                : uv is < 0 or > 3
+                    ? "The active UDIM discard selects a UV channel outside native UV0 through UV3."
                     : mode == 0
                         ? "Vertex-mode UDIM discard requires native Advanced triangle coverage. Authored late passes do not support this mode."
                         : null;

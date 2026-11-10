@@ -85,10 +85,7 @@ public static class NativeUberMaterialSourceEncoder
                 "forward-shadows" or "forward-contact-shadows") continue;
             // The enabled companion owns hull expansion and outline shading.
             // The native base row must not execute that operation a second time.
-            if (feature.Id == "outline" &&
-                material.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outline) &&
-                outline.Enabled &&
-                outline.RenderPass == (int)EDefaultRenderPass.MaskedForward)
+            if (feature.Id == "outline" && HasOpaqueOutlineCompanion(material))
                 continue;
             int index = NativeUberMaterialSchema.FeatureIndex(feature.Id);
             if (index < 0)
@@ -97,7 +94,7 @@ public static class NativeUberMaterialSourceEncoder
                 reason = $"Native Uber feature '{feature.Id}' has no canonical bit.";
                 return false;
             }
-            if (index > 17 && feature.Id is not ("glitter" or "global-masks-themes" or "layered-decals" or "texture-array-flipbook"))
+            if (index > 17 && feature.Id is not ("glitter" or "global-masks-themes" or "layered-decals" or "texture-array-flipbook" or "audiolink"))
             {
                 compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
                 reason = $"Native Uber feature '{feature.Id}' has no matching native operation.";
@@ -188,7 +185,8 @@ public static class NativeUberMaterialSourceEncoder
             roleTextures[role] = null;
             EAdvancedResourceFallback fallback = name == "_BumpMap"
                 ? EAdvancedResourceFallback.FlatNormal
-                : name.Contains("Emission", StringComparison.Ordinal) ? EAdvancedResourceFallback.Black
+                : name == "_AudioLinkTexture" || name.Contains("Emission", StringComparison.Ordinal)
+                    ? EAdvancedResourceFallback.Black
                 : EAdvancedResourceFallback.White;
             if (!AdvancedGpuResourceSourceEncoder.TryEncode(texture, fallback,
                     out resources[role], out compatibilityReason, out reason))
@@ -243,7 +241,7 @@ public static class NativeUberMaterialSourceEncoder
             reason = "Native Uber array flipbook requires the source playback contract.";
             return false;
         }
-        if (!Allowed(material, "_LightingMode", [0, 1, 2, 5, 6], out reason) ||
+        if (!Allowed(material, "_LightingMode", [0, 1, 2, 4, 5, 6], out reason) ||
             !Allowed(material, "_Mode", [0, 1, 9], out reason) ||
             !Allowed(material, "_MatcapUVMode", [0, 1, 2], out reason) ||
             !Allowed(material, "_RimStyle", [0, 1, 2], out reason) ||
@@ -309,8 +307,29 @@ public static class NativeUberMaterialSourceEncoder
         return false;
     }
 
+    private static bool HasOpaqueOutlineCompanion(XRMaterial material)
+    {
+        if (!material.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition pass) ||
+            !pass.Enabled ||
+            (pass.RenderPass != (int)EDefaultRenderPass.OpaqueForward &&
+             pass.RenderPass != (int)EDefaultRenderPass.MaskedForward) ||
+            pass.SourcePassName != "Outline" ||
+            material.OutlinePassVariant is not { } companion)
+            return false;
+
+        return material.IsResolvedOutlinePassVariant(companion) &&
+               ReferenceEquals(companion.UberOutlineSourceMaterial, material) &&
+               companion.RenderPass == pass.RenderPass &&
+               ReferenceEquals(companion.RenderOptions, pass.RenderOptions);
+    }
+
     private static bool ValidateActiveModifiers(XRMaterial material, out string reason)
     {
+        if (material.IsUberFeatureEnabled("audiolink", false) && IsNonZero(material, "_AudioLinkStrength"))
+        {
+            reason = "Native Uber generic AudioLink strength has no matching native operation.";
+            return false;
+        }
         if (material.IsUberFeatureEnabled("matcap", false) &&
             !material.IsUberFeatureEnabled("layered-matcap-rim", false))
         {
@@ -393,8 +412,9 @@ public static class NativeUberMaterialSourceEncoder
                     return false;
                 Vector4 decalModifiers = material.Parameter<ShaderVector4>(DecalModifiers[slot])?.Value ?? Vector4.Zero;
                 Vector4 decalFx = material.Parameter<ShaderVector4>(DecalFx[slot])?.Value ?? Vector4.Zero;
+                bool supportedGlobalMask = IsSupportedDecalGlobalMask(material, decalModifiers.Y);
                 if (decalModifiers.X is not (0f or 1f or 2f) ||
-                    decalModifiers.Y != 0f ||
+                    !supportedGlobalMask ||
                     decalModifiers.Z is not (0f or 1f) ||
                     decalModifiers.W != 0f ||
                     decalFx.Z != 0f)
@@ -407,9 +427,10 @@ public static class NativeUberMaterialSourceEncoder
             Vector4 modifiers = material.Parameter<ShaderVector4>(EmissionModifiers[slot])?.Value ?? Vector4.Zero;
             if (emission.X > 0f && !Allowed(material, EmissionUvs[slot], [0, 1, 2, 3], out reason))
                 return false;
-            if (emission.X > 0f && modifiers.Z != 0f)
+            if (emission.X > 0f && (!float.IsFinite(modifiers.Z) ||
+                modifiers.Z < 0f || modifiers.Z > 16f || modifiers.Z != MathF.Round(modifiers.Z)))
             {
-                reason = "Native Uber active emission slot has an unsupported global mask.";
+                reason = "Native Uber active emission slot requires a global mask index from 0 through 16.";
                 return false;
             }
         }
@@ -420,13 +441,26 @@ public static class NativeUberMaterialSourceEncoder
         activeUdimCell &= anyUdimCell;
         if (activeUdimCell &&
             (!Allowed(material, "_UDIMDiscardMode", [0, 1], out _) ||
-             !Allowed(material, "_UDIMDiscardUV", [0, 1], out _)))
+             !Allowed(material, "_UDIMDiscardUV", [0, 1, 2, 3], out _)))
         {
-            reason = "Native Uber active UDIM rows require discard mode 0 or 1 and UV set 0 or 1.";
+            reason = "Native Uber active UDIM rows require discard mode 0 or 1 and UV set 0 through 3.";
             return false;
         }
         reason = string.Empty;
         return true;
+    }
+
+    private static bool IsSupportedDecalGlobalMask(XRMaterial material, float encodedIndex)
+    {
+        if (encodedIndex == 0f)
+            return true;
+        if (encodedIndex < 1f || encodedIndex > 16f ||
+            encodedIndex != MathF.Round(encodedIndex))
+            return false;
+
+        Vector4 distance = material.Parameter<ShaderVector4>("_GlobalMaskDistance")?.Value ?? Vector4.Zero;
+        Vector4 modifiers = material.Parameter<ShaderVector4>("_GlobalMaskModifiers")?.Value ?? Vector4.Zero;
+        return distance == Vector4.Zero && modifiers == Vector4.Zero;
     }
 
     private static bool IsNonZero(XRMaterial material, string name)

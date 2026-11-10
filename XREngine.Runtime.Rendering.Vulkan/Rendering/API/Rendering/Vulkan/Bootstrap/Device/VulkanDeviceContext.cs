@@ -13,6 +13,7 @@ internal sealed partial class VulkanDeviceContext
     private VulkanNativeDeviceFault? _firstNativeDeviceFault;
     /// <summary>Logical-device multiview feature actually requested at creation.</summary>
     internal bool AdvancedMultiviewEnabled { get; set; }
+    internal bool AdvancedMultiviewGeometryShaderEnabled { get; set; }
     internal bool AdvancedMultiviewMeshEnabled { get; set; }
     internal bool SampleRateShadingEnabled { get; set; }
     private int _deviceLossDiagnosticsClaimed;

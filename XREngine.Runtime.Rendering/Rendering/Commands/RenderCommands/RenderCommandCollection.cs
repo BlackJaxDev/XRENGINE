@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System.Collections;
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -10,6 +11,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Info;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
@@ -1412,6 +1414,14 @@ namespace XREngine.Rendering.Commands
             {
                 RenderCommand cmd = GetCommandAt(list, commandIndex);
                 if (enforceAdvancedLatePassEligibility &&
+                    cmd is RenderCommandMesh3D
+                    {
+                        RenderSupplementalMaterialPass: EMaterialPassIdentity.Outline,
+                        RenderMaterialOverride: { } outlineMaterial,
+                    } &&
+                    !IsSoftOutlineMaterial(outlineMaterial))
+                    continue;
+                if (enforceAdvancedLatePassEligibility &&
                     !TryAdmitAdvancedLatePassCommand(
                         cmd,
                         renderPass,
@@ -1899,20 +1909,135 @@ namespace XREngine.Rendering.Commands
             int renderPass,
             out string? rejectionReason)
         {
+            if (command is RenderCommandMesh3D
+                {
+                    RenderSupplementalMaterialPass: EMaterialPassIdentity.Outline,
+                } softOutline &&
+                IsSoftOutlineMaterial(softOutline.RenderMaterialOverride))
+                return TryAdmitSoftOutline(softOutline, renderPass, out rejectionReason);
+
             if (command is not IRenderCommandMesh meshCommand)
             {
                 rejectionReason = null;
                 return true;
             }
 
-            XRMaterial? material =
-                meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+            XRMaterial? material;
+            if (command is RenderCommandMesh3D frozenCommand)
+            {
+                if (!frozenCommand.TryGetCpuOcclusionSnapshot(out XRMeshRenderer? mesh, out _,
+                        out XRMaterial? materialOverride, out _, out _))
+                {
+                    rejectionReason = "The late-pass command has no published mesh snapshot.";
+                    return false;
+                }
+                material = materialOverride ?? mesh?.Material;
+            }
+            else
+                material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+            if (!AdvancedLatePassEligibilityValidator.TryValidateLatePass(
+                    material,
+                    renderPass,
+                    out rejectionReason,
+                    AbstractRenderer.Current is IAuthoredUdimTriangleCoverageBackendCapability
+                        { SupportsUdimTriangleCoverage: true }))
+                return false;
+
+            return TryAdmitSoftOutlineBaseWithFin(command, material, renderPass, out rejectionReason);
+        }
+
+        /// <summary>
+        /// Admits a verified soft outline base only when its fin companion is also admitted.
+        /// The opaque base enters the transparent pass only as one half of the pair. The fin
+        /// depends on frame and device state that the material check of the base cannot see,
+        /// so the base uses the decision of the fin. All other materials pass unchanged.
+        /// </summary>
+        private static bool TryAdmitSoftOutlineBaseWithFin(
+            RenderCommand command,
+            XRMaterial? material,
+            int renderPass,
+            out string? rejectionReason)
+        {
+            rejectionReason = null;
+            if (material?.ResolveAdvancedLatePassMetadata() is not { } metadata ||
+                !AdvancedLatePassEligibilityValidator.IsVerifiedSoftOutlineBase(material, renderPass, metadata))
+                return true;
+
+            if (command.OwnerRenderInfo is not RenderInfo3D { OwnerRenderableMesh: { } owner } ||
+                !owner.IsPrimaryCommand(command) ||
+                owner.MaterialOutlineCommand is not RenderCommandMesh3D
+                {
+                    RenderEnabled: true,
+                    RenderSupplementalMaterialPass: EMaterialPassIdentity.Outline,
+                } fin ||
+                !fin.TryGetCpuOcclusionSnapshot(out _, out _, out XRMaterial? finMaterial, out _, out _) ||
+                !IsSoftOutlineMaterial(finMaterial) ||
+                !ReferenceEquals(finMaterial.UberOutlineSourceMaterial, material))
+            {
+                rejectionReason = "The soft outline base has no enabled fin companion for the same source material.";
+                return false;
+            }
+
+            return TryAdmitSoftOutline(fin, renderPass, out rejectionReason);
+        }
+
+        /// <summary>
+        /// Tells if a material is the silhouette fin variant of a soft outline pass.
+        /// The semantic identity is a value type without constants, so patterns cannot match it.
+        /// </summary>
+        private static bool IsSoftOutlineMaterial([NotNullWhen(true)] XRMaterial? material)
+            => material is not null &&
+               material.EngineSemantic == EngineMaterialSemanticIdentity.UberSoftOutlineV2;
+
+        private static bool TryAdmitSoftOutline(
+            RenderCommandMesh3D command,
+            int renderPass,
+            out string? rejectionReason)
+        {
+            rejectionReason = null;
+            if (renderPass != (int)EDefaultRenderPass.TransparentForward ||
+                !RuntimeEngine.Rendering.State.IsVulkan ||
+                !RuntimeEngine.Rendering.State.HasVulkanMultiviewGeometryShader)
+            {
+                rejectionReason = "The soft outline requires the Vulkan transparent pass and geometry shader support.";
+                return false;
+            }
+
+            if (RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa &&
+                RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame() > 1u)
+            {
+                rejectionReason = "The soft outline has no per-sample MSAA fin coverage.";
+                return false;
+            }
+
+            var state = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            if (state is null || state.OverrideMaterial is not null || state.GlobalMaterialOverride is not null ||
+                state.AdvancedLateTemporalOutput != EAdvancedLateTemporalOutput.None)
+            {
+                rejectionReason = "The soft outline does not support material overrides or temporal replay.";
+                return false;
+            }
+
+            if (!command.TryGetCpuOcclusionSnapshot(out XRMeshRenderer? renderer, out _,
+                    out XRMaterial? material, out var options, out _) ||
+                renderer?.Mesh?.HasNormals != true ||
+                renderer.Mesh.Type != EPrimitiveType.Triangles ||
+                renderer.MeshDeformEnabled ||
+                material?.UberOutlineSourceMaterial is not { } source ||
+                !source.IsResolvedOutlinePassVariant(material) ||
+                !source.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition pass) ||
+                !pass.Enabled || pass.RenderPass != renderPass ||
+                pass.ShaderBehavior != EngineMaterialSemanticIdentity.UberSoftOutlineV2 ||
+                !ReferenceEquals(pass.RenderOptions, options) ||
+                command.OwnerRenderInfo is not RenderInfo3D { OwnerRenderableMesh: { } owner } ||
+                !ReferenceEquals(owner.MaterialOutlineCommand, command))
+            {
+                rejectionReason = "The soft outline has no trusted source pass, triangle mesh, or owner.";
+                return false;
+            }
+
             return AdvancedLatePassEligibilityValidator.TryValidateLatePass(
-                material,
-                renderPass,
-                out rejectionReason,
-                AbstractRenderer.Current is IAuthoredUdimTriangleCoverageBackendCapability
-                    { SupportsUdimTriangleCoverage: true });
+                material, renderPass, out rejectionReason);
         }
 
         private static void ReportAdvancedLatePassRejection(
