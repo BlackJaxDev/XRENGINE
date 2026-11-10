@@ -328,6 +328,18 @@ public sealed partial class GaussianBakePipeline
         BakeReport report = run.Report;
         CookedBakeInput input = run.Input!;
         GaussianBakeBudget budget = _budgetFor(options.Kind);
+        if (options.AllowOverBudget)
+        {
+            int targetSplats = Math.Max(budget.MaxSplats, options.SplatCount ?? budget.MaxSplats);
+            budget = budget with
+            {
+                MaxSplats = targetSplats,
+                MaxDriverVertices = Math.Max(budget.MaxDriverVertices, 48_000),
+                Chunk0Bytes = Math.Max(budget.Chunk0Bytes, 2_097_152),
+                MaxCacheBytes = Math.Max(budget.MaxCacheBytes, 536_870_912L),
+            };
+        }
+
         Stopwatch watch = Stopwatch.StartNew();
 
         ContentAnalysis analysis = await AnalyzeAsync(run, budget, cancellationToken).ConfigureAwait(false);

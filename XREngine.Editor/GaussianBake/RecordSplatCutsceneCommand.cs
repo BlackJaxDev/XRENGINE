@@ -17,9 +17,10 @@ namespace XREngine.Editor.GaussianBake;
 
 /// <summary>
 /// Renders a 1080p Gaussian splat cutscene video and matching hero poster from a baked <c>root.asset</c> cache.
-/// The shot scene places a <see cref="GaussianCacheComponent"/>, a perspective <see cref="CameraComponent"/>, and a
-/// screen-space <see cref="UICanvasComponent"/> with two <see cref="UITextComponent"/> nodes under the control of a
-/// <see cref="CutsceneDirectorComponent"/> and records the timeline through <see cref="ViewportSequenceCaptureSession"/>.
+/// The shot scene places a <see cref="GaussianCacheComponent"/>, five perspective <see cref="CameraComponent"/> shot
+/// nodes switched by a <see cref="CameraCutTrack"/>, and a screen-space <see cref="UICanvasComponent"/> with two
+/// <see cref="UITextComponent"/> nodes under the control of a <see cref="CutsceneDirectorComponent"/>, then records
+/// the timeline through <see cref="ViewportSequenceCaptureSession"/>.
 /// </summary>
 public static class RecordSplatCutsceneCommand
 {
@@ -39,9 +40,10 @@ public static class RecordSplatCutsceneCommand
     private const int FrameWidth = 1920;
     private const int FrameHeight = 1080;
     private const string DefaultTitle = "XRENGINE";
-    private const string DefaultSubtitle = "GAUSSIAN SPLAT AVATAR // CUTSCENE PLAYBACK";
-    private const float DefaultDurationSeconds = 8.0f;
+    private const string DefaultSubtitle = "GAUSSIAN SPLAT AVATAR  //  CUTSCENE PLAYBACK";
+    private const float DefaultDurationSeconds = 8.8f;
     private const int DefaultFps = 30;
+    private const int ShotCameraCount = 5;
     private const int WarmupRenderFrames = 45;
     private const int SettleRenderFramesPerStep = 2;
 
@@ -343,22 +345,30 @@ public static class RecordSplatCutsceneCommand
     {
         SceneNode stageNode = GaussianPreviewStage.CreateDefault();
 
-        // 1. GaussianCacheComponent node.
+        // 1. GaussianCacheComponent node configured to render up to 2,000,000 leaf splats.
         SceneNode avatarNode = new("AvatarSplatNode");
         avatarNode.SetTransform<Transform>();
         GaussianCacheComponent cacheComponent = avatarNode.AddComponent<GaussianCacheComponent>("AvatarGaussianCache")
             ?? throw new InvalidOperationException("Failed to add GaussianCacheComponent.");
         cacheComponent.Playing = false;
         cacheComponent.LodThresholdPixels = 0.01f;
-        cacheComponent.MaxRenderedSplats = 200_000;
+        cacheComponent.MaxRenderedSplats = 2_000_000;
 
-        // 2. Cutscene CameraComponent node.
-        SceneNode cameraNode = new("CutsceneCamera");
-        Transform cameraTransform = cameraNode.SetTransform<Transform>();
-        CameraComponent cameraComponent = cameraNode.AddComponent<CameraComponent>("CutsceneCameraComponent")
-            ?? throw new InvalidOperationException("Failed to add CameraComponent.");
-        cameraComponent.CameraParameters = new XRPerspectiveCameraParameters(40.0f, null, 0.05f, 100.0f);
-        cameraComponent.InternalResolutionMode = EInternalResolutionMode.FullResolution;
+        // 2. Multi-shot Cutscene CameraComponent nodes routed through CameraCutTrack jump cuts.
+        SceneNode cameraGroupNode = new("CutsceneCameras");
+        cameraGroupNode.SetTransform<Transform>();
+        ShotCameraRig[] shotCameras = new ShotCameraRig[ShotCameraCount];
+        for (int i = 0; i < ShotCameraCount; i++)
+        {
+            string slotName = $"camera{i}";
+            SceneNode cameraNode = new(cameraGroupNode) { Name = $"CutsceneShotCamera_{i}" };
+            Transform cameraTransform = cameraNode.SetTransform<Transform>();
+            CameraComponent cameraComponent = cameraNode.AddComponent<CameraComponent>($"CutsceneCameraComponent_{i}")
+                ?? throw new InvalidOperationException($"Failed to add CameraComponent {i}.");
+            cameraComponent.CameraParameters = new XRPerspectiveCameraParameters(34.0f, null, 0.03f, 100.0f);
+            cameraComponent.InternalResolutionMode = EInternalResolutionMode.FullResolution;
+            shotCameras[i] = new ShotCameraRig(slotName, cameraNode, cameraTransform, cameraComponent);
+        }
 
         // 3. Screen-space UICanvasComponent with Title and Subtitle UITextComponents.
         SceneNode canvasRoot = new("CutsceneOverlayCanvas");
@@ -387,8 +397,8 @@ public static class RecordSplatCutsceneCommand
             "SubtitleTextNode",
             font,
             subtitleText,
-            fontSize: 30.0f,
-            position: new Vector2(100.0f, 230.0f),
+            fontSize: 28.0f,
+            position: new Vector2(100.0f, 232.0f),
             size: new Vector2(920.0f, 64.0f),
             fillColor: new ColorF4(0.66f, 0.86f, 1.0f, 0.0f),
             outlineColor: new ColorF4(0.03f, 0.06f, 0.14f, 0.0f),
@@ -403,18 +413,19 @@ public static class RecordSplatCutsceneCommand
         director.ResidencyEnabled = false;
         director.TargetViewport = viewport;
 
-        XRScene scene = new("SplatCutsceneScene", stageNode, avatarNode, cameraNode, canvasRoot, directorNode);
+        XRScene scene = new("SplatCutsceneScene", stageNode, avatarNode, cameraGroupNode, canvasRoot, directorNode);
         XRWorld world = new("SplatCutsceneWorld", scene);
         world.Settings.AmbientLightColor = new ColorF3(1.0f, 1.0f, 1.0f);
         world.Settings.AmbientLightIntensity = GaussianPreviewStage.AmbientIntensity;
 
         director.BindingResolver = new WorldCutsceneBindingResolver(world);
-        director.SetRuntimeSlot("camera", cameraNode);
+        for (int i = 0; i < shotCameras.Length; i++)
+            director.SetRuntimeSlot(shotCameras[i].SlotName, shotCameras[i].Node);
         director.SetRuntimeSlot("avatar", avatarNode);
         director.SetRuntimeSlot("title", titleNode);
         director.SetRuntimeSlot("subtitle", subtitleNode);
 
-        // Attach the world to the window and bind the UI canvas to the camera and viewport.
+        // Attach the world to the window and bind the UI canvas to each shot camera and the viewport.
         RuntimeWorld runtimeWorld = Engine.GetOrCreateWorld(world);
         Task beginPlay = RuntimeWorldHostServices.Current?.BeginPlayAsync(runtimeWorld) ?? runtimeWorld.BeginPlayAsync();
         beginPlay.GetAwaiter().GetResult();
@@ -422,22 +433,26 @@ public static class RecordSplatCutsceneCommand
         window.SetWorld(renderWorld);
 
         RenderPipeline renderPipeline = RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline();
-        XRCamera camera = cameraComponent.Camera;
-        camera.RenderPipeline = renderPipeline;
-        camera.AntiAliasingModeOverride = EAntiAliasingMode.None;
-        camera.MsaaSampleCountOverride = 1u;
-        camera.TsrRenderScaleOverride = 1.0f;
+        for (int i = 0; i < shotCameras.Length; i++)
+        {
+            CameraComponent shotCameraComponent = shotCameras[i].Component;
+            XRCamera camera = shotCameraComponent.Camera;
+            camera.RenderPipeline = renderPipeline;
+            camera.AntiAliasingModeOverride = EAntiAliasingMode.None;
+            camera.MsaaSampleCountOverride = 1u;
+            camera.TsrRenderScaleOverride = 1.0f;
+            shotCameraComponent.UserInterface = canvasComponent;
+            shotCameraComponent.SetManualExposure(1.0f);
+            shotCameraComponent.SetBloomEnabled(false);
+        }
 
         viewport.SetRenderPipelineFromCamera = false;
         viewport.AllowAutomaticInternalResolution = false;
         viewport.RenderPipeline = renderPipeline;
         viewport.SetInternalResolution(FrameWidth, FrameHeight, true);
         viewport.AllowUIRender = true;
-        cameraComponent.UserInterface = canvasComponent;
         viewport.ScreenSpaceUserInterfaceOverride = canvasComponent;
-        viewport.CameraComponent = cameraComponent;
-        cameraComponent.SetManualExposure(1.0f);
-        cameraComponent.SetBloomEnabled(false);
+        viewport.CameraComponent = shotCameras[0].Component;
 
         canvasTransform.UpdateLayout();
         canvasTransform.RecalculateMatrixHierarchy(true, true, ELoopType.Sequential);
@@ -446,9 +461,8 @@ public static class RecordSplatCutsceneCommand
             world,
             avatarNode,
             cacheComponent,
-            cameraNode,
-            cameraTransform,
-            cameraComponent,
+            cameraGroupNode,
+            shotCameras,
             canvasRoot,
             canvasComponent,
             titleNode,
@@ -509,262 +523,421 @@ public static class RecordSplatCutsceneCommand
         float centerX = (boundsMin.X + boundsMax.X) * 0.5f;
         float centerZ = (boundsMin.Z + boundsMax.Z) * 0.5f;
 
-        float hintRadius = header.CameraHints?.DefaultRadius ?? 0.0f;
-        float defaultRadius = hintRadius > 0.1f
-            ? hintRadius
-            : MathF.Max(height * 2.2f, 1.5f);
+        float nearZ = Math.Clamp(height * 0.02f, 0.015f, 0.15f);
+        float farZ = MathF.Max(height * 25.0f, 50.0f);
+        for (int i = 0; i < shotScene.ShotCameras.Length; i++)
+            shotScene.ShotCameras[i].Component.CameraParameters = new XRPerspectiveCameraParameters(34.0f, null, nearZ, farZ);
 
-        // Configure near/far planes to fit the avatar cleanly throughout the orbit and close-up push-in.
-        float nearZ = Math.Clamp(defaultRadius * 0.05f, 0.02f, 0.25f);
-        float farZ = MathF.Max(defaultRadius * 8.0f, 50.0f);
-        shotScene.CameraComponent.CameraParameters = new XRPerspectiveCameraParameters(40.0f, null, nearZ, farZ);
+        float frontYawDegrees = (header.CameraHints?.DefaultYawDegrees ?? 0.0f) + 180.0f + yawOffsetDegrees;
+        float frontYawRadians = frontYawDegrees * (MathF.PI / 180.0f);
+        Vector3 avatarForward = new(MathF.Sin(frontYawRadians), 0.0f, MathF.Cos(frontYawRadians));
+        float forwardClipDuration = header.FrameCount > 1 && header.FrameRate > 0.0f
+            ? (header.FrameCount - 1) / header.FrameRate
+            : durationSeconds;
+        CutsceneTime fullDuration = CutsceneTime.FromSeconds(durationSeconds);
 
-        // Sample smooth camera position, rotation, and FOV curves at 60 Hz across the cutscene duration.
-        int sampleCount = Math.Max(120, (int)MathF.Ceiling(durationSeconds * 60.0f) + 1);
+        // Five jump-cut shots moving across the walking avatar's body from boots/legs up to face/ears,
+        // ending on a 3.7s full-body hero push-in shot with unobstructed left-side UI reveal.
+        ShotCameraDefinition[] shotDefinitions =
+        [
+            // Shot 0 (0%..14.2%): Low-angle boots, stockings, and striding thighs.
+            new(
+                StartFraction: 0.000f,
+                EndFraction: 0.142f,
+                StartYawDegrees: frontYawDegrees - 28.0f,
+                EndYawDegrees: frontYawDegrees - 14.0f,
+                StartPitchDegrees: -5.5f,
+                EndPitchDegrees: -2.0f,
+                StartFocusHeightFraction: 0.22f,
+                EndFocusHeightFraction: 0.31f,
+                ForwardFocusBias: 0.22f,
+                StartDistanceFactor: 0.78f,
+                EndDistanceFactor: 0.70f,
+                StartFovDegrees: 30.0f,
+                EndFovDegrees: 28.0f,
+                StartHorizontalLeadFactor: 0.0f,
+                EndHorizontalLeadFactor: 0.0f,
+                CacheStartFraction: 0.02f,
+                CacheEndFraction: 0.41f),
+            // Shot 1 (14.2%..29.0%): Jump cut to 3/4 rear-side swaying hips, shorts, and snow-leopard tail.
+            new(
+                StartFraction: 0.142f,
+                EndFraction: 0.290f,
+                StartYawDegrees: frontYawDegrees - 122.0f,
+                EndYawDegrees: frontYawDegrees - 98.0f,
+                StartPitchDegrees: 5.0f,
+                EndPitchDegrees: 2.5f,
+                StartFocusHeightFraction: 0.44f,
+                EndFocusHeightFraction: 0.50f,
+                ForwardFocusBias: 0.05f,
+                StartDistanceFactor: 0.88f,
+                EndDistanceFactor: 0.80f,
+                StartFovDegrees: 32.0f,
+                EndFovDegrees: 30.0f,
+                StartHorizontalLeadFactor: 0.0f,
+                EndHorizontalLeadFactor: 0.0f,
+                CacheStartFraction: 0.41f,
+                CacheEndFraction: 0.82f),
+            // Shot 2 (29.0%..43.8%): Jump cut to opposing 3/4 front-left mid-torso, outfit, and swinging arms.
+            new(
+                StartFraction: 0.290f,
+                EndFraction: 0.438f,
+                StartYawDegrees: frontYawDegrees + 40.0f,
+                EndYawDegrees: frontYawDegrees + 20.0f,
+                StartPitchDegrees: 4.0f,
+                EndPitchDegrees: 2.0f,
+                StartFocusHeightFraction: 0.56f,
+                EndFocusHeightFraction: 0.66f,
+                ForwardFocusBias: 0.22f,
+                StartDistanceFactor: 0.72f,
+                EndDistanceFactor: 0.64f,
+                StartFovDegrees: 29.0f,
+                EndFovDegrees: 27.0f,
+                StartHorizontalLeadFactor: 0.0f,
+                EndHorizontalLeadFactor: 0.0f,
+                CacheStartFraction: 0.08f,
+                CacheEndFraction: 0.49f),
+            // Shot 3 (43.8%..58.0%): Jump cut to close-up portrait of face, hair, and cat ears.
+            new(
+                StartFraction: 0.438f,
+                EndFraction: 0.580f,
+                StartYawDegrees: frontYawDegrees - 22.0f,
+                EndYawDegrees: frontYawDegrees - 8.0f,
+                StartPitchDegrees: 4.5f,
+                EndPitchDegrees: 2.0f,
+                StartFocusHeightFraction: 0.87f,
+                EndFocusHeightFraction: 0.89f,
+                ForwardFocusBias: 0.22f,
+                StartDistanceFactor: 0.64f,
+                EndDistanceFactor: 0.56f,
+                StartFovDegrees: 27.0f,
+                EndFovDegrees: 25.0f,
+                StartHorizontalLeadFactor: 0.0f,
+                EndHorizontalLeadFactor: 0.0f,
+                CacheStartFraction: 0.49f,
+                CacheEndFraction: 0.88f),
+            // Shot 4 (58.0%..100%): Jump cut to eased orbit-settle + push-in hero shot with left-side UI reveal.
+            new(
+                StartFraction: 0.580f,
+                EndFraction: 1.000f,
+                StartYawDegrees: frontYawDegrees + 32.0f,
+                EndYawDegrees: frontYawDegrees + 15.0f,
+                StartPitchDegrees: 6.5f,
+                EndPitchDegrees: 3.0f,
+                StartFocusHeightFraction: 0.51f,
+                EndFocusHeightFraction: 0.52f,
+                ForwardFocusBias: 0.16f,
+                StartDistanceFactor: 2.02f,
+                EndDistanceFactor: 1.72f,
+                StartFovDegrees: 38.0f,
+                EndFovDegrees: 35.0f,
+                StartHorizontalLeadFactor: 0.30f,
+                EndHorizontalLeadFactor: 0.34f,
+                CacheStartFraction: 0.02f,
+                CacheEndFraction: 0.96f),
+        ];
+
+        List<CutsceneBindingReference> bindings = new(ShotCameraCount + 3);
+        for (int i = 0; i < shotScene.ShotCameras.Length; i++)
+        {
+            bindings.Add(new CutsceneBindingReference
+            {
+                Kind = ECutsceneBindingKind.RuntimeSlot,
+                SlotName = shotScene.ShotCameras[i].SlotName,
+            });
+        }
+
+        int avatarBindingSlot = bindings.Count;
+        bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.RuntimeSlot, SlotName = "avatar" });
+        int titleBindingSlot = bindings.Count;
+        bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.RuntimeSlot, SlotName = "title" });
+        int subtitleBindingSlot = bindings.Count;
+        bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.RuntimeSlot, SlotName = "subtitle" });
+
+        List<CutsceneClip> cameraCutClips = new(shotDefinitions.Length);
+        List<CutsceneClip> cachePlaybackClips = new(shotDefinitions.Length);
+        List<CutsceneTrack> tracks = new(1 + (shotDefinitions.Length * 2) + 9);
+
+        CameraCutTrack cameraCutTrack = new()
+        {
+            Name = "CameraJumpCuts",
+            BindingSlot = 0,
+            WhenFinished = ECutsceneFinishBehavior.KeepState,
+        };
+        tracks.Add(cameraCutTrack);
+
+        for (int shotIndex = 0; shotIndex < shotDefinitions.Length; shotIndex++)
+        {
+            ShotCameraDefinition shot = shotDefinitions[shotIndex];
+            CutsceneTime shotStart = shotIndex == 0
+                ? CutsceneTime.Zero
+                : CutsceneTime.FromSeconds(durationSeconds * shot.StartFraction);
+            CutsceneTime shotEnd = shotIndex == shotDefinitions.Length - 1
+                ? fullDuration
+                : CutsceneTime.FromSeconds(durationSeconds * shot.EndFraction);
+            CutsceneTime shotDuration = new(Math.Max(1L, shotEnd.Flicks - shotStart.Flicks));
+            bool isFinalShot = shotIndex == shotDefinitions.Length - 1;
+
+            cameraCutClips.Add(new CameraCutClip
+            {
+                Start = shotStart,
+                Duration = shotDuration,
+                CameraBindingSlot = shotIndex,
+                Extrapolation = isFinalShot ? ECutsceneClipExtrapolation.Hold : ECutsceneClipExtrapolation.None,
+            });
+
+            CutsceneTime nonOverlappingDuration = isFinalShot
+                ? shotDuration
+                : new CutsceneTime(Math.Max(1L, shotDuration.Flicks - 1L));
+            cachePlaybackClips.Add(new PropertyTrackClip
+            {
+                Start = shotStart,
+                Duration = nonOverlappingDuration,
+                Extrapolation = isFinalShot ? ECutsceneClipExtrapolation.Hold : ECutsceneClipExtrapolation.None,
+                FloatCurve = new CutsceneFloatCurve
+                {
+                    Interpolation = ECutsceneCurveInterpolation.Linear,
+                    Times = [CutsceneTime.Zero, nonOverlappingDuration],
+                    Values =
+                    [
+                        forwardClipDuration * shot.CacheStartFraction,
+                        forwardClipDuration * shot.CacheEndFraction,
+                    ],
+                },
+            });
+
+            BuildShotCameraTracks(
+                shotIndex,
+                shot,
+                shotStart,
+                shotDuration,
+                isFinalShot,
+                centerX,
+                centerZ,
+                avatarForward,
+                boundsMin.Y,
+                height,
+                out TransformTrack shotTransformTrack,
+                out CameraPropertyTrack shotFovTrack);
+            tracks.Add(shotTransformTrack);
+            tracks.Add(shotFovTrack);
+        }
+
+        cameraCutTrack.Clips = cameraCutClips;
+
+        float heroCutSeconds = durationSeconds * shotDefinitions[^1].StartFraction;
+        float titleRevealStart = heroCutSeconds + 0.04f;
+        float titleRevealEnd = Math.Min(heroCutSeconds + 0.52f, durationSeconds - 3.15f);
+        if (titleRevealEnd <= titleRevealStart + 0.2f)
+        {
+            titleRevealStart = Math.Max(0.2f, durationSeconds - 3.65f);
+            titleRevealEnd = Math.Max(titleRevealStart + 0.42f, durationSeconds - 3.15f);
+        }
+
+        float subtitleRevealStart = titleRevealStart + 0.14f;
+        float subtitleRevealEnd = titleRevealEnd + 0.18f;
+
+        // Avatar GaussianCacheComponent.PlaybackTimeSeconds track: advances Sexy Walk forward in every jump cut.
+        tracks.Add(new PropertyTrack
+        {
+            Name = "AvatarCachePlaybackTime",
+            BindingSlot = avatarBindingSlot,
+            ComponentType = nameof(GaussianCacheComponent),
+            MemberPath = nameof(GaussianCacheComponent.PlaybackTimeSeconds),
+            WhenFinished = ECutsceneFinishBehavior.KeepState,
+            Clips = cachePlaybackClips,
+        });
+
+        // Title and Subtitle in-engine native UI tracks: hidden during close-up body cuts, revealed on the hero shot
+        // and held at full readability for over 3.2 seconds through the final hero poster frame.
+        tracks.Add(BuildUiSlideTransformTrack(
+            name: "TitleTransform",
+            bindingSlot: titleBindingSlot,
+            fullDuration: fullDuration,
+            revealStartSeconds: titleRevealStart,
+            revealEndSeconds: titleRevealEnd,
+            startPosition: new Vector3(28.0f, 300.0f, 0.0f),
+            endPosition: new Vector3(96.0f, 300.0f, 0.0f),
+            startScale: new Vector3(0.92f, 0.92f, 1.0f),
+            endScale: Vector3.One));
+        tracks.Add(BuildUiFadePropertyTrack(
+            name: "TitleOpacity",
+            bindingSlot: titleBindingSlot,
+            memberPath: nameof(UITextComponent.Opacity),
+            fullDuration: fullDuration,
+            revealStartSeconds: titleRevealStart,
+            revealEndSeconds: titleRevealEnd,
+            targetValue: 1.0f));
+        tracks.Add(BuildUiFadePropertyTrack(
+            name: "TitleOutlineOpacity",
+            bindingSlot: titleBindingSlot,
+            memberPath: nameof(UITextComponent.OutlineOpacity),
+            fullDuration: fullDuration,
+            revealStartSeconds: titleRevealStart,
+            revealEndSeconds: titleRevealEnd,
+            targetValue: 0.95f));
+        tracks.Add(BuildUiOutlinePulseTrack(
+            name: "TitleOutlineThickness",
+            bindingSlot: titleBindingSlot,
+            fullDuration: fullDuration,
+            revealStartSeconds: titleRevealStart,
+            peakSeconds: Lerp(titleRevealStart, titleRevealEnd, 0.55f),
+            settleSeconds: titleRevealEnd + 0.15f,
+            peakThickness: 4.2f,
+            settledThickness: 2.6f));
+
+        tracks.Add(BuildUiSlideTransformTrack(
+            name: "SubtitleTransform",
+            bindingSlot: subtitleBindingSlot,
+            fullDuration: fullDuration,
+            revealStartSeconds: subtitleRevealStart,
+            revealEndSeconds: subtitleRevealEnd,
+            startPosition: new Vector3(48.0f, 232.0f, 0.0f),
+            endPosition: new Vector3(100.0f, 232.0f, 0.0f),
+            startScale: new Vector3(0.95f, 0.95f, 1.0f),
+            endScale: Vector3.One));
+        tracks.Add(BuildUiFadePropertyTrack(
+            name: "SubtitleOpacity",
+            bindingSlot: subtitleBindingSlot,
+            memberPath: nameof(UITextComponent.Opacity),
+            fullDuration: fullDuration,
+            revealStartSeconds: subtitleRevealStart,
+            revealEndSeconds: subtitleRevealEnd,
+            targetValue: 1.0f));
+        tracks.Add(BuildUiFadePropertyTrack(
+            name: "SubtitleOutlineOpacity",
+            bindingSlot: subtitleBindingSlot,
+            memberPath: nameof(UITextComponent.OutlineOpacity),
+            fullDuration: fullDuration,
+            revealStartSeconds: subtitleRevealStart,
+            revealEndSeconds: subtitleRevealEnd,
+            targetValue: 0.90f));
+        tracks.Add(BuildUiOutlinePulseTrack(
+            name: "SubtitleOutlineThickness",
+            bindingSlot: subtitleBindingSlot,
+            fullDuration: fullDuration,
+            revealStartSeconds: subtitleRevealStart,
+            peakSeconds: Lerp(subtitleRevealStart, subtitleRevealEnd, 0.55f),
+            settleSeconds: subtitleRevealEnd + 0.15f,
+            peakThickness: 3.0f,
+            settledThickness: 1.8f));
+
+        shotScene.Director.Asset = new CutsceneAsset
+        {
+            Duration = fullDuration,
+            Bindings = [.. bindings],
+            Tracks = [.. tracks],
+        };
+    }
+
+    private static void BuildShotCameraTracks(
+        int shotIndex,
+        ShotCameraDefinition shot,
+        CutsceneTime shotStart,
+        CutsceneTime shotDuration,
+        bool isFinalShot,
+        float centerX,
+        float centerZ,
+        Vector3 avatarForward,
+        float minY,
+        float height,
+        out TransformTrack transformTrack,
+        out CameraPropertyTrack fovTrack)
+    {
+        double shotDurationSeconds = shotDuration.ToSeconds();
+        int sampleCount = Math.Max(32, (int)MathF.Ceiling((float)shotDurationSeconds * 60.0f) + 1);
         CutsceneTime[] sampleTimes = new CutsceneTime[sampleCount];
-        Vector3[] cameraPositions = new Vector3[sampleCount];
-        Quaternion[] cameraRotations = new Quaternion[sampleCount];
-        float[] cameraFovs = new float[sampleCount];
-
-        // Orbit phase eases from -108 deg to +15 deg (relative to base yaw) over 0..72% of duration,
-        // while the push-in narrows distance and FOV and shifts framing so the avatar sits on the right-center
-        // of the 16:9 viewport and leaves the left side clear for the title and subtitle.
-        float baseYawDegrees = (header.CameraHints?.DefaultYawDegrees ?? 0.0f) + yawOffsetDegrees;
-        float startYawDegrees = baseYawDegrees + 72.0f;
-        float endYawDegrees = baseYawDegrees + 194.0f;
-
-        float orbitRadius = defaultRadius * 0.86f;
-        float heroRadius = defaultRadius * 0.54f;
-
-        Vector3 orbitFocus = new(centerX, boundsMin.Y + (height * 0.55f), centerZ);
-        Vector3 heroFocus = new(centerX, boundsMin.Y + (height * 0.68f), centerZ);
+        Vector3[] positions = new Vector3[sampleCount];
+        Quaternion[] rotations = new Quaternion[sampleCount];
+        float[] fovs = new float[sampleCount];
+        Vector3 forwardBiasOffset = avatarForward * (height * shot.ForwardFocusBias);
 
         for (int i = 0; i < sampleCount; i++)
         {
             double normalized = i / (double)(sampleCount - 1);
-            double tSeconds = normalized * durationSeconds;
-            sampleTimes[i] = CutsceneTime.FromSeconds(tSeconds);
+            sampleTimes[i] = CutsceneTime.FromSeconds(normalized * shotDurationSeconds);
 
-            // Smooth orbit progression that settles into the hero angle by 78% of the clip.
-            float orbitProgress = SmoothStep01((float)Math.Clamp(normalized / 0.78, 0.0, 1.0));
-            // Subtle secondary settle over the final 22% so motion feels alive before locking the hero frame.
-            float settleProgress = SmoothStep01((float)Math.Clamp((normalized - 0.18) / 0.68, 0.0, 1.0));
+            float eased = isFinalShot
+                ? SmoothStep01((float)Math.Clamp(normalized / 0.78, 0.0, 1.0))
+                : SmoothStep01((float)normalized);
 
-            float yawDegrees = Lerp(startYawDegrees, endYawDegrees, orbitProgress);
-            float pitchDegrees = Lerp(13.0f, 4.5f, settleProgress);
-            float radius = Lerp(orbitRadius, heroRadius, settleProgress);
-            float fovDegrees = Lerp(42.0f, 34.0f, settleProgress);
+            float yawDegrees = Lerp(shot.StartYawDegrees, shot.EndYawDegrees, eased);
+            float pitchDegrees = Lerp(shot.StartPitchDegrees, shot.EndPitchDegrees, eased);
+            float distance = height * Lerp(shot.StartDistanceFactor, shot.EndDistanceFactor, eased);
+            float fovDegrees = Lerp(shot.StartFovDegrees, shot.EndFovDegrees, eased);
+            float focusY = minY + (height * Lerp(shot.StartFocusHeightFraction, shot.EndFocusHeightFraction, eased));
+            float horizontalLead = height * Lerp(shot.StartHorizontalLeadFactor, shot.EndHorizontalLeadFactor, eased);
 
             float yawRadians = yawDegrees * (MathF.PI / 180.0f);
             float pitchRadians = pitchDegrees * (MathF.PI / 180.0f);
-
             Quaternion orbitOrientation = Quaternion.Normalize(
                 Quaternion.CreateFromYawPitchRoll(yawRadians, -pitchRadians, 0.0f));
             Vector3 cameraForward = Vector3.Transform(-Vector3.UnitZ, orbitOrientation);
             Vector3 cameraRight = Vector3.Normalize(Vector3.Cross(cameraForward, Vector3.UnitY));
 
-            // Shift the look-at target toward the camera's left (-cameraRight) so the avatar projects into the
-            // right-center of the 16:9 frame, keeping the left title safe zone completely unobstructed.
-            float horizontalLead = Lerp(height * 0.12f, height * 0.23f, settleProgress);
-            Vector3 focus = Vector3.Lerp(orbitFocus, heroFocus, settleProgress) - (cameraRight * horizontalLead);
-            Vector3 offset = Vector3.Transform(new Vector3(0.0f, 0.0f, radius), orbitOrientation);
+            Vector3 focus = new Vector3(centerX, focusY, centerZ) + forwardBiasOffset - (cameraRight * horizontalLead);
+            Vector3 offset = Vector3.Transform(new Vector3(0.0f, 0.0f, distance), orbitOrientation);
             Vector3 position = focus + offset;
-
             Vector3 lookDirection = Vector3.Normalize(focus - position);
-            Quaternion lookRotation = LookRotation(lookDirection, Vector3.UnitY);
 
-            cameraPositions[i] = position;
-            cameraRotations[i] = lookRotation;
-            cameraFovs[i] = fovDegrees;
+            positions[i] = position;
+            rotations[i] = LookRotation(lookDirection, Vector3.UnitY);
+            fovs[i] = fovDegrees;
         }
 
-        CutsceneTime fullDuration = CutsceneTime.FromSeconds(durationSeconds);
+        ECutsceneClipExtrapolation extrapolation = isFinalShot
+            ? ECutsceneClipExtrapolation.Hold
+            : ECutsceneClipExtrapolation.None;
 
-        CutsceneAsset asset = new()
+        transformTrack = new TransformTrack
         {
-            Duration = fullDuration,
-            Bindings =
+            Name = $"ShotCamera{shotIndex}_Transform",
+            BindingSlot = shotIndex,
+            WhenFinished = ECutsceneFinishBehavior.KeepState,
+            Clips =
             [
-                new CutsceneBindingReference { Kind = ECutsceneBindingKind.RuntimeSlot, SlotName = "camera" },
-                new CutsceneBindingReference { Kind = ECutsceneBindingKind.RuntimeSlot, SlotName = "avatar" },
-                new CutsceneBindingReference { Kind = ECutsceneBindingKind.RuntimeSlot, SlotName = "title" },
-                new CutsceneBindingReference { Kind = ECutsceneBindingKind.RuntimeSlot, SlotName = "subtitle" },
-            ],
-            Tracks =
-            [
-                // Track 0: CameraCutTrack selecting binding slot 0 (camera).
-                new CameraCutTrack
+                new TransformTrackClip
                 {
-                    Name = "CameraCuts",
-                    BindingSlot = 0,
-                    WhenFinished = ECutsceneFinishBehavior.KeepState,
-                    Clips =
-                    [
-                        new CameraCutClip
-                        {
-                            Start = CutsceneTime.Zero,
-                            Duration = fullDuration,
-                            CameraBindingSlot = 0,
-                            Extrapolation = ECutsceneClipExtrapolation.Hold,
-                        },
-                    ],
+                    Start = shotStart,
+                    Duration = shotDuration,
+                    Extrapolation = extrapolation,
+                    Position = new CutsceneVector3Curve
+                    {
+                        Interpolation = ECutsceneCurveInterpolation.Linear,
+                        Times = sampleTimes,
+                        Values = positions,
+                    },
+                    Rotation = new CutsceneQuaternionCurve
+                    {
+                        Interpolation = ECutsceneCurveInterpolation.Linear,
+                        Times = sampleTimes,
+                        Values = rotations,
+                    },
                 },
-                // Track 1: Camera TransformTrack (eased orbit settling into push-in hero shot).
-                new TransformTrack
-                {
-                    Name = "CameraTransform",
-                    BindingSlot = 0,
-                    WhenFinished = ECutsceneFinishBehavior.KeepState,
-                    Clips =
-                    [
-                        new TransformTrackClip
-                        {
-                            Start = CutsceneTime.Zero,
-                            Duration = fullDuration,
-                            Extrapolation = ECutsceneClipExtrapolation.Hold,
-                            Position = new CutsceneVector3Curve
-                            {
-                                Interpolation = ECutsceneCurveInterpolation.Linear,
-                                Times = sampleTimes,
-                                Values = cameraPositions,
-                            },
-                            Rotation = new CutsceneQuaternionCurve
-                            {
-                                Interpolation = ECutsceneCurveInterpolation.Linear,
-                                Times = sampleTimes,
-                                Values = cameraRotations,
-                            },
-                        },
-                    ],
-                },
-                // Track 2: CameraPropertyTrack animating VerticalFieldOfView during push-in.
-                new CameraPropertyTrack
-                {
-                    Name = "CameraFov",
-                    BindingSlot = 0,
-                    WhenFinished = ECutsceneFinishBehavior.KeepState,
-                    Clips =
-                    [
-                        new CameraPropertyClip
-                        {
-                            Start = CutsceneTime.Zero,
-                            Duration = fullDuration,
-                            Extrapolation = ECutsceneClipExtrapolation.Hold,
-                            FieldOfView = new CutsceneFloatCurve
-                            {
-                                Interpolation = ECutsceneCurveInterpolation.Linear,
-                                Times = sampleTimes,
-                                Values = cameraFovs,
-                            },
-                        },
-                    ],
-                },
-                // Track 3: Avatar GaussianCacheComponent.PlaybackTimeSeconds track.
-                new PropertyTrack
-                {
-                    Name = "AvatarCachePlaybackTime",
-                    BindingSlot = 1,
-                    ComponentType = nameof(GaussianCacheComponent),
-                    MemberPath = nameof(GaussianCacheComponent.PlaybackTimeSeconds),
-                    WhenFinished = ECutsceneFinishBehavior.KeepState,
-                    Clips =
-                    [
-                        new PropertyTrackClip
-                        {
-                            Start = CutsceneTime.Zero,
-                            Duration = fullDuration,
-                            Extrapolation = ECutsceneClipExtrapolation.Hold,
-                            FloatCurve = new CutsceneFloatCurve
-                            {
-                                Interpolation = ECutsceneCurveInterpolation.Linear,
-                                Times = [CutsceneTime.Zero, fullDuration],
-                                Values = [0.0f, durationSeconds],
-                            },
-                        },
-                    ],
-                },
-                // Track 4: Title TransformTrack (eased slide-in and scale settle, readable for >5s).
-                BuildUiSlideTransformTrack(
-                    name: "TitleTransform",
-                    bindingSlot: 2,
-                    fullDuration: fullDuration,
-                    revealStartSeconds: 1.4f,
-                    revealEndSeconds: 2.7f,
-                    startPosition: new Vector3(24.0f, 300.0f, 0.0f),
-                    endPosition: new Vector3(96.0f, 300.0f, 0.0f),
-                    startScale: new Vector3(0.92f, 0.92f, 1.0f),
-                    endScale: Vector3.One),
-                // Track 5: Title Opacity PropertyTrack.
-                BuildUiFadePropertyTrack(
-                    name: "TitleOpacity",
-                    bindingSlot: 2,
-                    memberPath: nameof(UITextComponent.Opacity),
-                    fullDuration: fullDuration,
-                    revealStartSeconds: 1.4f,
-                    revealEndSeconds: 2.5f,
-                    targetValue: 1.0f),
-                // Track 6: Title OutlineOpacity PropertyTrack.
-                BuildUiFadePropertyTrack(
-                    name: "TitleOutlineOpacity",
-                    bindingSlot: 2,
-                    memberPath: nameof(UITextComponent.OutlineOpacity),
-                    fullDuration: fullDuration,
-                    revealStartSeconds: 1.4f,
-                    revealEndSeconds: 2.5f,
-                    targetValue: 0.95f),
-                // Track 7: Title OutlineThickness PropertyTrack (subtle stroke pulse during reveal).
-                BuildUiOutlinePulseTrack(
-                    name: "TitleOutlineThickness",
-                    bindingSlot: 2,
-                    fullDuration: fullDuration,
-                    revealStartSeconds: 1.4f,
-                    peakSeconds: 2.1f,
-                    settleSeconds: 2.8f,
-                    peakThickness: 4.2f,
-                    settledThickness: 2.6f),
-                // Track 8: Subtitle TransformTrack (staggered eased slide-in, readable for >4.5s).
-                BuildUiSlideTransformTrack(
-                    name: "SubtitleTransform",
-                    bindingSlot: 3,
-                    fullDuration: fullDuration,
-                    revealStartSeconds: 2.0f,
-                    revealEndSeconds: 3.2f,
-                    startPosition: new Vector3(44.0f, 230.0f, 0.0f),
-                    endPosition: new Vector3(100.0f, 230.0f, 0.0f),
-                    startScale: new Vector3(0.95f, 0.95f, 1.0f),
-                    endScale: Vector3.One),
-                // Track 9: Subtitle Opacity PropertyTrack.
-                BuildUiFadePropertyTrack(
-                    name: "SubtitleOpacity",
-                    bindingSlot: 3,
-                    memberPath: nameof(UITextComponent.Opacity),
-                    fullDuration: fullDuration,
-                    revealStartSeconds: 2.0f,
-                    revealEndSeconds: 3.1f,
-                    targetValue: 1.0f),
-                // Track 10: Subtitle OutlineOpacity PropertyTrack.
-                BuildUiFadePropertyTrack(
-                    name: "SubtitleOutlineOpacity",
-                    bindingSlot: 3,
-                    memberPath: nameof(UITextComponent.OutlineOpacity),
-                    fullDuration: fullDuration,
-                    revealStartSeconds: 2.0f,
-                    revealEndSeconds: 3.1f,
-                    targetValue: 0.90f),
-                // Track 11: Subtitle OutlineThickness PropertyTrack.
-                BuildUiOutlinePulseTrack(
-                    name: "SubtitleOutlineThickness",
-                    bindingSlot: 3,
-                    fullDuration: fullDuration,
-                    revealStartSeconds: 2.0f,
-                    peakSeconds: 2.6f,
-                    settleSeconds: 3.3f,
-                    peakThickness: 3.0f,
-                    settledThickness: 1.8f),
             ],
         };
 
-        shotScene.Director.Asset = asset;
+        fovTrack = new CameraPropertyTrack
+        {
+            Name = $"ShotCamera{shotIndex}_Fov",
+            BindingSlot = shotIndex,
+            WhenFinished = ECutsceneFinishBehavior.KeepState,
+            Clips =
+            [
+                new CameraPropertyClip
+                {
+                    Start = shotStart,
+                    Duration = shotDuration,
+                    Extrapolation = extrapolation,
+                    FieldOfView = new CutsceneFloatCurve
+                    {
+                        Interpolation = ECutsceneCurveInterpolation.Linear,
+                        Times = sampleTimes,
+                        Values = fovs,
+                    },
+                },
+            ],
+        };
     }
 
     private static TransformTrack BuildUiSlideTransformTrack(
@@ -947,7 +1120,7 @@ public static class RecordSplatCutsceneCommand
         player.Seek(CutsceneTime.FromSeconds(timeSeconds), ESeekIntent.Jump);
         shotScene.Director.AdvanceFrame(0.0);
 
-        shotScene.CameraTransform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+        shotScene.CameraGroupNode.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
         shotScene.AvatarNode.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
 
         UICanvasTransform canvasTransform = shotScene.CanvasComponent.CanvasTransform;
@@ -1140,7 +1313,7 @@ public static class RecordSplatCutsceneCommand
         subtitleText = DefaultSubtitle;
         durationSeconds = DefaultDurationSeconds;
         fps = DefaultFps;
-        backend = ERenderLibrary.Vulkan;
+        backend = ERenderLibrary.OpenGL;
         ffmpegPath = "ffmpeg";
         yawOffsetDegrees = 0.0f;
         error = null;
@@ -1233,13 +1406,37 @@ public static class RecordSplatCutsceneCommand
         return true;
     }
 
+    private sealed record ShotCameraRig(
+        string SlotName,
+        SceneNode Node,
+        Transform Transform,
+        CameraComponent Component);
+
+    private readonly record struct ShotCameraDefinition(
+        float StartFraction,
+        float EndFraction,
+        float StartYawDegrees,
+        float EndYawDegrees,
+        float StartPitchDegrees,
+        float EndPitchDegrees,
+        float StartFocusHeightFraction,
+        float EndFocusHeightFraction,
+        float ForwardFocusBias,
+        float StartDistanceFactor,
+        float EndDistanceFactor,
+        float StartFovDegrees,
+        float EndFovDegrees,
+        float StartHorizontalLeadFactor,
+        float EndHorizontalLeadFactor,
+        float CacheStartFraction,
+        float CacheEndFraction);
+
     private sealed record CutsceneShotScene(
         XRWorld World,
         SceneNode AvatarNode,
         GaussianCacheComponent CacheComponent,
-        SceneNode CameraNode,
-        Transform CameraTransform,
-        CameraComponent CameraComponent,
+        SceneNode CameraGroupNode,
+        ShotCameraRig[] ShotCameras,
         SceneNode CanvasRoot,
         UICanvasComponent CanvasComponent,
         SceneNode TitleNode,

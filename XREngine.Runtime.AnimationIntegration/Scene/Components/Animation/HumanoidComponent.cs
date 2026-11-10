@@ -2130,10 +2130,50 @@ namespace XREngine.Components.Animation
         {
             base.AddedToSceneNode(sceneNode);
 
-            if (ShouldDeferSceneNodeInitialization())
+            // Cooked and YAML deserializers attach components to a SceneNode before they
+            // populate its child transforms. Defer initialization until the post-deserialize
+            // pass so a persisted avatar definition does not validate against an empty tree.
+            if (ShouldDeferSceneNodeInitialization()
+                || XRBase.ArePropertyNotificationsSuppressed
+                || sceneNode.IsTransformNull
+                || (HasPersistedAvatarDefinition() && sceneNode.Transform.Children.Count == 0))
+            {
                 return;
+            }
 
             InitializeSceneNodeBindings();
+        }
+
+        /// <summary>
+        /// Rebuilds the subtree world and bind matrices and rebinds persisted semantic bones
+        /// after a cooked or YAML hierarchy finishes deserializing its child transforms.
+        /// </summary>
+        protected override void OwningSceneNodePostDeserialize()
+        {
+            base.OwningSceneNodePostDeserialize();
+
+            if (SceneNode.IsDestroyed || SceneNode.IsTransformNull)
+                return;
+
+            SceneNode.Transform
+                .RecalculateMatrixHierarchy(
+                    forceWorldRecalc: true,
+                    setRenderMatrixNow: true,
+                    childRecalcType: ELoopType.Sequential)
+                .GetAwaiter()
+                .GetResult();
+            SaveSubtreeBindStateRecursive(SceneNode);
+            ReinitializeSceneNodeBindings();
+        }
+
+        private static void SaveSubtreeBindStateRecursive(SceneNode node)
+        {
+            node.Transform.SaveBindState();
+            foreach (TransformBase child in node.Transform.Children)
+            {
+                if (child.SceneNode is SceneNode childNode)
+                    SaveSubtreeBindStateRecursive(childNode);
+            }
         }
 
         public HumanoidComponent() 

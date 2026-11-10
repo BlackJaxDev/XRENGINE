@@ -1,6 +1,10 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
+using XREngine.Animation;
+using XREngine.Animation.Importers;
 using XREngine.Components;
+using XREngine.Components.Animation;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data.Geometry;
@@ -8,19 +12,22 @@ using XREngine.Data.Rendering;
 using XREngine.Imaging;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Gaussian.Baking;
+using XREngine.Rendering.Models.Gaussian.Baking.Budgets;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
 using XREngine.Rendering.Models.Gaussian.Baking.Motion;
+using XREngine.Rendering.Models.Gaussian.Baking.Surface;
 using XREngine.Scene;
 using XREngine.Scene.Importers;
 using XREngine.Scene.Prefabs;
+using YamlDotNet.RepresentationModel;
 
 namespace XREngine.Editor.GaussianBake;
 
 /// <summary>
 /// Imports a Unity <c>.prefab</c> file into an <see cref="XRPrefabSource"/> with
 /// <see cref="SerializedSceneImporter.ImportPrefabWithManifest(string, string?, string?, XREngine.Rendering.Models.FbxImportBackend)"/>,
-/// hydrates active material textures, and cooks the prefab into a <c>.pak</c> archive for
-/// <see cref="BakeSplatPreviewCommand"/>.
+/// hydrates active material textures, optionally binds and confirms a Unity humanoid <c>.anim</c> clip, and cooks the
+/// prefab into a <c>.pak</c> archive for <see cref="BakeSplatPreviewCommand"/>.
 /// </summary>
 public static class CookUnityPrefabCommand
 {
@@ -63,6 +70,7 @@ public static class CookUnityPrefabCommand
                 out string? outputPakPath,
                 out string assetPath,
                 out uint maxTextureSize,
+                out string? animFilePath,
                 out string? error))
         {
             Console.Error.WriteLine($"Unity prefab cook failed: {error}");
@@ -75,8 +83,11 @@ public static class CookUnityPrefabCommand
             string resolvedProjectPath = Path.GetFullPath(unityProjectPath!);
             string resolvedPrefabPath = Path.GetFullPath(prefabPath!);
             string resolvedOutputPakPath = Path.GetFullPath(outputPakPath!);
+            string? expectedClipName = string.IsNullOrWhiteSpace(animFilePath)
+                ? null
+                : Path.GetFileNameWithoutExtension(animFilePath);
 
-            if (! args.Contains("--verify-only", StringComparer.OrdinalIgnoreCase))
+            if (!args.Contains("--verify-only", StringComparer.OrdinalIgnoreCase))
             {
                 Console.WriteLine($"[CookUnityPrefab] Importing '{resolvedPrefabPath}' (project='{resolvedProjectPath}')...");
                 SerializedPrefabConversionResult conversion = SerializedSceneImporter.ImportPrefabWithManifest(
@@ -97,6 +108,9 @@ public static class CookUnityPrefabCommand
                     $"[CookUnityPrefab] Prepared {activeModelCount} active ModelComponent(s), removed {removedInactiveModelCount} " +
                     $"inactive ModelComponent(s), and hydrated {hydratedTextureCount} texture(s) (maxSize={maxTextureSize}).");
 
+                if (!string.IsNullOrWhiteSpace(animFilePath))
+                    expectedClipName = AttachHumanoidAnimationClip(rootNode, conversion.Manifest, animFilePath);
+
                 XRPrefabSource prefab = new()
                 {
                     Name = Path.GetFileNameWithoutExtension(resolvedPrefabPath),
@@ -109,6 +123,57 @@ public static class CookUnityPrefabCommand
             CookedBakeInput verifyInput = CookedBakeInputLoader.Load(resolvedOutputPakPath, assetPath, GaussianBakeKind.Avatar);
             if (!BakeWorldFactory.TryComputeContentBounds(verifyInput, out AABB bounds))
                 throw new InvalidOperationException($"Cooked prefab '{assetPath}' in '{resolvedOutputPakPath}' has no valid content bounds.");
+
+            if (verifyInput.PrefabRoot is { } verifyRoot)
+            {
+                List<string> motionWarnings = [];
+                BakeMotionChoice motionChoice = BakeMotionSelector.ChooseForPrefab(
+                    verifyRoot,
+                    expectedClipName,
+                    GaussianBakeBudget.For(GaussianBakeKind.Avatar),
+                    motionWarnings);
+                try
+                {
+                    Console.WriteLine(
+                        $"[CookUnityPrefab] Verified motion: clip='{motionChoice.ClipName ?? "<still>"}', " +
+                        $"source={motionChoice.Source}, duration={motionChoice.DurationSeconds:F2}s, " +
+                        $"frames={motionChoice.FrameCount}, warnings=[{string.Join(", ", motionWarnings)}].");
+                    if (motionWarnings.Count > 0)
+                    {
+                        verifyRoot.IterateComponents<AnimationClipComponent>(animComp =>
+                        {
+                            if (!string.IsNullOrWhiteSpace(animComp.PlaybackCapabilityDiagnostic))
+                            {
+                                Console.WriteLine(
+                                    $"[CookUnityPrefab] Clip diagnostic ('{animComp.Animation?.Name}'): {animComp.PlaybackCapabilityDiagnostic}");
+                            }
+                        }, iterateChildHierarchy: true);
+                    }
+
+                    if (expectedClipName is not null
+                        && !string.Equals(motionChoice.ClipName, expectedClipName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            $"Cooked prefab did not select requested humanoid clip '{expectedClipName}' " +
+                            $"(selected='{motionChoice.ClipName}', warnings=[{string.Join(", ", motionWarnings)}]).");
+                    }
+
+                    if (motionChoice.FrameCount > 1)
+                    {
+                        float probeTime = Math.Min(0.8f, motionChoice.DurationSeconds * 0.25f);
+                        DeformedSurface surfaceStart = BakeFrameSampler.EvaluateAt(verifyRoot, motionChoice, 0.0f);
+                        DeformedSurface surfaceProbe = BakeFrameSampler.EvaluateAt(verifyRoot, motionChoice, probeTime);
+                        float maxDisplacement = ComputeMaxVertexDisplacement(surfaceStart, surfaceProbe);
+                        Console.WriteLine(
+                            $"[CookUnityPrefab] Verified surface deformation: vertices={surfaceStart.VertexCount}, " +
+                            $"maxDisplacement(0.00s -> {probeTime:F2}s)={maxDisplacement:F4}m.");
+                    }
+                }
+                finally
+                {
+                    BakeMotionSelector.ReleaseTemporaryPlayers(motionChoice);
+                }
+            }
 
             stopwatch.Stop();
             FileInfo pakFileInfo = new(resolvedOutputPakPath);
@@ -332,6 +397,174 @@ public static class CookUnityPrefabCommand
         }
     }
 
+    private static string AttachHumanoidAnimationClip(
+        SceneNode rootNode,
+        SerializedPrefabImportManifest? manifest,
+        string animFilePath)
+    {
+        string resolvedAnimPath = Path.GetFullPath(animFilePath);
+        if (!File.Exists(resolvedAnimPath))
+            throw new FileNotFoundException($"The humanoid animation clip '{resolvedAnimPath}' does not exist.", resolvedAnimPath);
+
+        SceneNode avatarRoot = FindHumanoidTargetNode(rootNode);
+        RemoveExistingAnimationClipComponents(rootNode, out int removedGenericClips);
+
+        (string? fbxPath, string fbxSha256) = ResolvePrimaryModelDependency(manifest);
+        Dictionary<EHumanoidAvatarBoneRole, SceneNode?> explicitMappings = fbxPath is not null
+            ? ResolveMetaHumanoidBoneMappings(avatarRoot, fbxPath + ".meta")
+            : [];
+
+        HumanoidComponent humanoid;
+        using (HumanoidComponent.BeginDeferredSceneNodeInitialization())
+        {
+            humanoid = avatarRoot.GetComponent<HumanoidComponent>()
+                ?? avatarRoot.AddComponent<HumanoidComponent>("Humanoid")
+                ?? throw new InvalidOperationException($"Failed to add HumanoidComponent to '{avatarRoot.Name}'.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(fbxSha256))
+            humanoid.SetSourceModelContentSha256(fbxSha256);
+
+        humanoid.InitializeSceneNodeBindings();
+        if (explicitMappings.Count > 0)
+            humanoid.SetAvatarBoneMappings(explicitMappings, lockEditorCorrections: true);
+
+        if (!humanoid.ConfirmAvatarDefinition(out string confirmDiagnostic))
+            throw new InvalidOperationException($"Humanoid avatar definition confirmation failed: {confirmDiagnostic}");
+
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.AnimatedPose;
+
+        AnimationClip clip = AnimYamlImporter.Import(resolvedAnimPath);
+        if (clip.UsesCyclicSourcePlayback)
+            clip.Looped = true;
+
+        AnimationClipComponent animComponent = avatarRoot.AddComponent<AnimationClipComponent>("HumanoidClip")
+            ?? throw new InvalidOperationException($"Failed to add AnimationClipComponent to '{avatarRoot.Name}'.");
+        animComponent.StartOnActivate = false;
+        animComponent.RootMotionApplicationMode = EHumanoidRootMotionApplicationMode.ExtractOnly;
+        animComponent.Animation = clip;
+
+        if (!animComponent.TryValidatePlaybackCapabilities(out string playbackDiagnostic))
+            throw new InvalidOperationException($"Humanoid clip '{clip.Name}' cannot play on '{avatarRoot.Name}': {playbackDiagnostic}");
+
+        Console.WriteLine(
+            $"[CookUnityPrefab] Attached humanoid clip '{clip.Name}' ({clip.LengthInSeconds:F2}s, looped={clip.Looped}, " +
+            $"mappedRoles={explicitMappings.Count}, removedGenericClips={removedGenericClips}) to '{avatarRoot.Name}'.");
+        return clip.Name ?? Path.GetFileNameWithoutExtension(resolvedAnimPath);
+    }
+
+    private static SceneNode FindHumanoidTargetNode(SceneNode rootNode)
+    {
+        SceneNode? matched = null;
+        rootNode.IterateComponents<HumanoidAuthoredTPoseComponent>(component =>
+        {
+            if (matched is null && component.SceneNode is not null)
+                matched = component.SceneNode;
+        }, iterateChildHierarchy: true);
+        return matched ?? rootNode;
+    }
+
+    private static void RemoveExistingAnimationClipComponents(SceneNode rootNode, out int removedCount)
+    {
+        List<AnimationClipComponent> existing = [];
+        rootNode.IterateComponents<AnimationClipComponent>(existing.Add, iterateChildHierarchy: true);
+        foreach (AnimationClipComponent component in existing)
+        {
+            component.SceneNode?.DetachComponent(component);
+            component.Destroy();
+        }
+
+        removedCount = existing.Count;
+    }
+
+    private static (string? FbxPath, string Sha256) ResolvePrimaryModelDependency(SerializedPrefabImportManifest? manifest)
+    {
+        if (manifest is null)
+            return (null, string.Empty);
+
+        foreach (SourceImportDependencyManifestEntry dependency in manifest.Dependencies)
+        {
+            if (!dependency.NormalizedPath.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            string? resolved = manifest.ResolveDependencySourcePath(dependency.NormalizedPath);
+            string sha256 = !string.IsNullOrWhiteSpace(dependency.Sha256)
+                ? dependency.Sha256
+                : resolved is not null && File.Exists(resolved)
+                    ? ComputeFileSha256(resolved)
+                    : string.Empty;
+            return (resolved, sha256);
+        }
+
+        return (null, string.Empty);
+    }
+
+    private static Dictionary<EHumanoidAvatarBoneRole, SceneNode?> ResolveMetaHumanoidBoneMappings(
+        SceneNode avatarRoot,
+        string metaPath)
+    {
+        Dictionary<EHumanoidAvatarBoneRole, SceneNode?> mappings = [];
+        if (!File.Exists(metaPath))
+            return mappings;
+
+        YamlStream yaml = new();
+        using (StreamReader reader = new(metaPath))
+            yaml.Load(reader);
+
+        if (yaml.Documents.Count == 0
+            || yaml.Documents[0].RootNode is not YamlMappingNode root
+            || TryGetYamlChild(root, "ModelImporter") is not YamlMappingNode importer
+            || TryGetYamlChild(importer, "humanDescription") is not YamlMappingNode humanDescription
+            || TryGetYamlChild(humanDescription, "human") is not YamlSequenceNode humanSequence)
+        {
+            return mappings;
+        }
+
+        Dictionary<string, SceneNode> nodesByName = new(StringComparer.Ordinal);
+        avatarRoot.IterateHierarchy(node =>
+        {
+            if (!string.IsNullOrWhiteSpace(node.Name))
+                nodesByName.TryAdd(node.Name, node);
+        });
+
+        foreach (YamlNode item in humanSequence.Children)
+        {
+            if (item is not YamlMappingNode entry)
+                continue;
+
+            string? boneName = (TryGetYamlChild(entry, "boneName") as YamlScalarNode)?.Value;
+            string? humanName = (TryGetYamlChild(entry, "humanName") as YamlScalarNode)?.Value;
+            if (string.IsNullOrWhiteSpace(boneName) || string.IsNullOrWhiteSpace(humanName))
+                continue;
+
+            string normalizedRoleName = humanName.Replace(" ", string.Empty, StringComparison.Ordinal);
+            if (!Enum.TryParse(normalizedRoleName, ignoreCase: true, out EHumanoidAvatarBoneRole role))
+                continue;
+
+            if (nodesByName.TryGetValue(boneName, out SceneNode? targetNode))
+                mappings[role] = targetNode;
+        }
+
+        return mappings;
+    }
+
+    private static YamlNode? TryGetYamlChild(YamlMappingNode mapping, string key)
+    {
+        foreach ((YamlNode yamlKey, YamlNode value) in mapping.Children)
+        {
+            if (string.Equals((yamlKey as YamlScalarNode)?.Value, key, StringComparison.Ordinal))
+                return value;
+        }
+
+        return null;
+    }
+
+    private static string ComputeFileSha256(string filePath)
+    {
+        using FileStream stream = File.OpenRead(filePath);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
     private static bool TryParseArgs(
         string[] args,
         out string? unityProjectPath,
@@ -339,6 +572,7 @@ public static class CookUnityPrefabCommand
         out string? outputPakPath,
         out string assetPath,
         out uint maxTextureSize,
+        out string? animFilePath,
         out string? error)
     {
         unityProjectPath = null;
@@ -346,12 +580,16 @@ public static class CookUnityPrefabCommand
         outputPakPath = null;
         assetPath = "Avatars/avatar.asset";
         maxTextureSize = DefaultMaxTextureSize;
+        animFilePath = null;
         error = null;
 
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
             if (string.Equals(arg, CommandFlag, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (string.Equals(arg, "--verify-only", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             if (string.Equals(arg, "--unity-project", StringComparison.OrdinalIgnoreCase))
@@ -412,6 +650,18 @@ public static class CookUnityPrefabCommand
 
                 continue;
             }
+
+            if (string.Equals(arg, "--anim", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    error = "Missing path after --anim.";
+                    return false;
+                }
+
+                animFilePath = args[++i];
+                continue;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(unityProjectPath))
@@ -433,5 +683,23 @@ public static class CookUnityPrefabCommand
         }
 
         return true;
+    }
+
+    private static float ComputeMaxVertexDisplacement(DeformedSurface first, DeformedSurface second)
+    {
+        int count = Math.Min(first.Positions.Length, second.Positions.Length) / 3;
+        float maxSquared = 0.0f;
+        for (int i = 0; i < count; i++)
+        {
+            int offset = i * 3;
+            float dx = second.Positions[offset] - first.Positions[offset];
+            float dy = second.Positions[offset + 1] - first.Positions[offset + 1];
+            float dz = second.Positions[offset + 2] - first.Positions[offset + 2];
+            float distSquared = (dx * dx) + (dy * dy) + (dz * dz);
+            if (distSquared > maxSquared)
+                maxSquared = distSquared;
+        }
+
+        return MathF.Sqrt(maxSquared);
     }
 }
