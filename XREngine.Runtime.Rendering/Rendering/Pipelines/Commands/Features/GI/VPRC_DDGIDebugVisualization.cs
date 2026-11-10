@@ -121,15 +121,8 @@ public sealed class VPRC_DDGIDebugVisualization : ViewportRenderCommand
 
     private bool TryResolveRenderGraphPassIndex(string passName, out int passIndex)
     {
-        if (ParentPipeline?.PassMetadata is { } metadata)
-            foreach (RenderPassMetadata pass in metadata)
-                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                {
-                    passIndex = pass.PassIndex;
-                    return true;
-                }
-        passIndex = int.MinValue;
-        return false;
+        passIndex = ResolveActiveRenderGraphPassIndex(passName);
+        return passIndex != int.MinValue;
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)

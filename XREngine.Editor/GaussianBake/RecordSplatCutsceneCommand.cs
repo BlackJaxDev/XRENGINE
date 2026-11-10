@@ -46,6 +46,8 @@ public static class RecordSplatCutsceneCommand
     private const int ShotCameraCount = 5;
     private const int WarmupRenderFrames = 45;
     private const int SettleRenderFramesPerStep = 2;
+    private const long RemoteProxyByteLimit = 2_097_152L;
+    private const long RemoteTargetBytes = 1_650_000L;
 
     /// <summary>
     /// Runs the cutscene recording command when <paramref name="args"/> contains <see cref="CommandFlag"/>.
@@ -329,8 +331,18 @@ public static class RecordSplatCutsceneCommand
         string masterVideoPath = Path.Combine(outputDirectory, "cutscene-1080.mp4");
         await EncodeMp4WithFfmpegAsync(ffmpegPath, snapshot.OutputDirectory, fps, masterVideoPath, cancellationToken).ConfigureAwait(false);
 
+        string remoteVideoPath = Path.Combine(outputDirectory, "cutscene-1080-remote.mp4");
+        await EncodeRemoteSafeMp4WithFfmpegAsync(
+            ffmpegPath,
+            snapshot.OutputDirectory,
+            fps,
+            durationSeconds,
+            remoteVideoPath,
+            cancellationToken).ConfigureAwait(false);
+
         Console.WriteLine($"Hero poster written to: {heroPosterPath}");
         Console.WriteLine($"Cutscene video written to: {masterVideoPath}");
+        Console.WriteLine($"Remote-safe cutscene video written to: {remoteVideoPath} ({new FileInfo(remoteVideoPath).Length} bytes)");
         return 0;
     }
 
@@ -1238,6 +1250,137 @@ public static class RecordSplatCutsceneCommand
             throw new InvalidOperationException($"ffmpeg exited with code {process.ExitCode}: {stderr}");
     }
 
+    private static async Task EncodeRemoteSafeMp4WithFfmpegAsync(
+        string ffmpegPath,
+        string frameDirectory,
+        int fps,
+        float durationSeconds,
+        string outputMp4Path,
+        CancellationToken cancellationToken)
+    {
+        int targetBitrateKbps = Math.Clamp(
+            (int)MathF.Floor((RemoteTargetBytes * 8.0f / 1000.0f) / Math.Max(durationSeconds, 1.0f)),
+            250,
+            4000);
+
+        await RunTwoPassMp4EncodeAsync(
+            ffmpegPath,
+            frameDirectory,
+            fps,
+            targetBitrateKbps,
+            outputMp4Path,
+            cancellationToken).ConfigureAwait(false);
+
+        long encodedBytes = new FileInfo(outputMp4Path).Length;
+        if (encodedBytes < RemoteProxyByteLimit)
+            return;
+
+        int fallbackBitrateKbps = Math.Max(200, (int)(targetBitrateKbps * 0.72f));
+        await RunTwoPassMp4EncodeAsync(
+            ffmpegPath,
+            frameDirectory,
+            fps,
+            fallbackBitrateKbps,
+            outputMp4Path,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task RunTwoPassMp4EncodeAsync(
+        string ffmpegPath,
+        string frameDirectory,
+        int fps,
+        int targetBitrateKbps,
+        string outputMp4Path,
+        CancellationToken cancellationToken)
+    {
+        string inputPattern = Path.Combine(frameDirectory, "frame_%06d.png");
+        if (File.Exists(outputMp4Path))
+            File.Delete(outputMp4Path);
+
+        string passLogDir = Path.Combine(frameDirectory, "_passlog");
+        if (Directory.Exists(passLogDir))
+            Directory.Delete(passLogDir, recursive: true);
+        Directory.CreateDirectory(passLogDir);
+        string passLogPrefix = Path.Combine(passLogDir, "ffmpeg2pass");
+        int maxRateKbps = (int)MathF.Ceiling(targetBitrateKbps * 1.12f);
+        int bufSizeKbps = targetBitrateKbps * 2;
+        string nullSink = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+
+        try
+        {
+            await RunFfmpegArgumentsAsync(
+                ffmpegPath,
+                [
+                    "-hide_banner", "-loglevel", "error", "-y",
+                    "-framerate", fps.ToString(CultureInfo.InvariantCulture),
+                    "-i", inputPattern,
+                    "-c:v", "libx264",
+                    "-preset", "slow",
+                    "-b:v", $"{targetBitrateKbps}k",
+                    "-maxrate", $"{maxRateKbps}k",
+                    "-bufsize", $"{bufSizeKbps}k",
+                    "-pix_fmt", "yuv420p",
+                    "-pass", "1",
+                    "-passlogfile", passLogPrefix,
+                    "-f", "mp4",
+                    nullSink,
+                ],
+                cancellationToken).ConfigureAwait(false);
+
+            await RunFfmpegArgumentsAsync(
+                ffmpegPath,
+                [
+                    "-hide_banner", "-loglevel", "error", "-y",
+                    "-framerate", fps.ToString(CultureInfo.InvariantCulture),
+                    "-i", inputPattern,
+                    "-c:v", "libx264",
+                    "-preset", "slow",
+                    "-b:v", $"{targetBitrateKbps}k",
+                    "-maxrate", $"{maxRateKbps}k",
+                    "-bufsize", $"{bufSizeKbps}k",
+                    "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart",
+                    "-pass", "2",
+                    "-passlogfile", passLogPrefix,
+                    outputMp4Path,
+                ],
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (Directory.Exists(passLogDir))
+                Directory.Delete(passLogDir, recursive: true);
+        }
+    }
+
+    private static async Task RunFfmpegArgumentsAsync(
+        string ffmpegPath,
+        IReadOnlyList<string> arguments,
+        CancellationToken cancellationToken)
+    {
+        ProcessStartInfo startInfo = new()
+        {
+            FileName = ffmpegPath,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        for (int i = 0; i < arguments.Count; i++)
+            startInfo.ArgumentList.Add(arguments[i]);
+
+        using Process process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Failed to start '{ffmpegPath}'.");
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        string stderr = await stderrTask.ConfigureAwait(false);
+        _ = await stdoutTask.ConfigureAwait(false);
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"ffmpeg exited with code {process.ExitCode}: {stderr}");
+    }
+
     private static GameStartupSettings CreateStartupSettings(ERenderLibrary backend)
         => new()
         {
@@ -1313,7 +1456,7 @@ public static class RecordSplatCutsceneCommand
         subtitleText = DefaultSubtitle;
         durationSeconds = DefaultDurationSeconds;
         fps = DefaultFps;
-        backend = ERenderLibrary.OpenGL;
+        backend = ERenderLibrary.Vulkan;
         ffmpegPath = "ffmpeg";
         yawOffsetDegrees = 0.0f;
         error = null;

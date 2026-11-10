@@ -6,7 +6,6 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// <summary>Associates DDGI dispatches with their declared render-graph pass on every backend.</summary>
 public abstract class VPRC_DDGIComputePass : ViewportRenderCommand
 {
-    private int _passIndex = int.MinValue;
     private string? _passName;
     private string? _allocationScopeName;
     protected string PassName => _passName ??= GetType().Name;
@@ -14,14 +13,8 @@ public abstract class VPRC_DDGIComputePass : ViewportRenderCommand
 
     protected sealed override void Execute()
     {
-        if (_passIndex == int.MinValue && ParentPipeline?.PassMetadata is { } metadata)
-            foreach (RenderPassMetadata pass in metadata)
-                if (pass.Name == PassName)
-                {
-                    _passIndex = pass.PassIndex;
-                    break;
-                }
-        if (_passIndex == int.MinValue)
+        int passIndex = ResolveActiveRenderGraphPassIndex(PassName);
+        if (passIndex == int.MinValue)
         {
             Debug.RenderingWarningEvery("DDGI.MissingPassMetadata", TimeSpan.FromSeconds(2),
                 "DDGI cannot submit '{0}' because its render-graph pass is missing.", PassName);
@@ -34,7 +27,7 @@ public abstract class VPRC_DDGIComputePass : ViewportRenderCommand
             ? DDGIManagedAllocationDiagnostics.Begin(AllocationScopeName)
             : default;
 #endif
-        using var scope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_passIndex);
+        using var scope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex);
         ExecuteDDGI();
     }
 

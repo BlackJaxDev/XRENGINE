@@ -802,10 +802,14 @@ internal unsafe partial class VkMeshRenderer(
         RenderingParameters? matOpts = renderOptionsOverride ?? effectiveMaterial.RenderOptions;
 
         SampleCountFlags rasterizationSamples = ResolveRasterizationSamples(target);
+        XRCamera.EDepthMode cameraDepthMode = shadowUniformState.IsShadowPass
+            ? XRCamera.EDepthMode.Normal
+            : (snapshotCamera?.DepthMode ?? XRCamera.EDepthMode.Normal);
         VulkanFixedFunctionStateSnapshot drawState = VulkanMeshDrawFixedState.Resolve(
             matOpts,
             producerState,
-            rasterizationSamples);
+            rasterizationSamples,
+            cameraDepthMode);
         CullModeFlags cullMode = drawState.CullMode;
         FrontFace frontFace = drawState.FrontFace;
         bool depthTestEnabled = drawState.DepthTestEnabled;

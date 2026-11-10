@@ -581,17 +581,10 @@ void main()
 
     private bool TryResolvePassIndex(string passName, out int passIndex)
     {
-        RenderPipeline? pipeline = ParentPipeline;
-        if (pipeline?.PassMetadata is not { Count: > 0 })
-        {
-            passIndex = int.MinValue;
-            return true;
-        }
-
-        if (pipeline.TryGetRenderPassIndex(passName, out passIndex))
+        passIndex = ResolveActiveRenderGraphPassIndex(passName, out bool hasRenderGraphMetadata);
+        if (!hasRenderGraphMetadata || passIndex != int.MinValue)
             return true;
 
-        passIndex = int.MinValue;
         if (_webResources)
             throw new InvalidOperationException($"WebGPU.SMAA.PassMissing: selected pass '{passName}' is absent from the render graph.");
         Debug.RenderingWarningEvery(

@@ -24,8 +24,8 @@ namespace XREngine.Rendering.Gaussian;
 /// </para>
 /// <para>
 /// Call the methods on the render thread. <see cref="Prepare()"/> and <see cref="Draw"/> do not allocate
-/// after the first frame. The draw registers its storage buffers on the quad renderer and binds its parameters
-/// in the quad's uniform callback for both immediate and deferred backend submission.
+/// after the first frame. The draw publishes its storage buffers and scale uniform through a typed deferred
+/// binding publisher on the quad renderer so both immediate and deferred backends capture exact per-draw state.
 /// </para>
 /// </remarks>
 public sealed partial class GaussianSplatRenderer : IDisposable
@@ -57,14 +57,12 @@ public sealed partial class GaussianSplatRenderer : IDisposable
     private const string OrderBufferName = "GaussianSplatOrder";
     private const string ScratchBufferName = "GaussianSplatOrderScratch";
 
-    [ThreadStatic]
-    private static GaussianSplatRenderer? t_drawingRenderer;
-
     private readonly XRDataBuffer _order;
     private readonly XRDataBuffer _scratch;
     private readonly GpuKeyIdRadixSort _sort = new();
-    private readonly XRMeshRenderer.DelSetUniforms _settingUniformsHandler;
-    private XRMeshRenderer? _attachedQuad;
+    private XRMeshRenderer? _cachedQuad;
+    private GaussianSplatQuadBindingPublisher? _cachedPublisher;
+    private ulong _resourceRevision = 1UL;
     private bool _hasOrder;
     private bool _disposed;
 
@@ -79,10 +77,10 @@ public sealed partial class GaussianSplatRenderer : IDisposable
 
         Splats = new XRDataBuffer(SplatsBufferName, EBufferTarget.ShaderStorageBuffer, slots, EComponentType.Struct, SplatStrideBytes, false, false, allocateClientSideSource: false)
         {
-            // Compute producers write the splats. Upload makes a CPU copy only when it is called.
+            // Compute producers write the splats in device-local memory. Upload enables CPU staging only when called.
             GpuProduced = true,
             BindingIndexOverride = SplatsBinding,
-            Usage = EBufferUsage.DynamicDraw,
+            Usage = EBufferUsage.StaticCopy,
             DisposeOnPush = false,
             PadEndingToVec4 = true,
         };
@@ -90,7 +88,6 @@ public sealed partial class GaussianSplatRenderer : IDisposable
         Overflow = CreateCounter(OverflowBufferName, OverflowBinding);
         _order = CreatePairs(OrderBufferName, slots, OrderBinding);
         _scratch = CreatePairs(ScratchBufferName, slots, null);
-        _settingUniformsHandler = OnQuadSettingUniforms;
     }
 
     /// <summary>Number of splat slots in <see cref="Splats"/>.</summary>
@@ -141,19 +138,36 @@ public sealed partial class GaussianSplatRenderer : IDisposable
         if (splats.Length > Capacity)
             throw new ArgumentException($"{splats.Length} splats do not fit in a renderer with capacity {Capacity}.", nameof(splats));
 
+        Splats.GpuProduced = false;
         Splats.EnsureRawCapacity<GaussianSplatGpuSplat>((uint)Capacity, growCapacityGeometrically: false);
         Splats.WriteDataRaw(splats);
         Splats.PushData();
-        SetCounter(VisibleCount, (uint)splats.Length);
-        SetCounter(Overflow, 0u);
+        SetCounterFromCpu(VisibleCount, (uint)splats.Length);
+        SetCounterFromCpu(Overflow, 0u);
+        AdvanceResourceRevision();
     }
 
-    /// <summary>Sets <see cref="VisibleCount"/> and <see cref="Overflow"/> to zero before producers write the splats of a frame.</summary>
+    /// <summary>
+    /// Clears <see cref="VisibleCount"/> and <see cref="Overflow"/> to zero in the GPU command stream before
+    /// compute producers write the splats of a frame. When the reset compute program is not yet linked, falls back
+    /// to a CPU counter write.
+    /// </summary>
     public void ResetCounters()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        SetCounter(VisibleCount, 0u);
-        SetCounter(Overflow, 0u);
+        if (EnsureResetCountersProgramReady())
+        {
+            VisibleCount.GpuProduced = true;
+            Overflow.GpuProduced = true;
+            XRRenderProgram reset = _resetCountersProgram!;
+            reset.BindBuffer(VisibleCount, VisibleCountBinding);
+            reset.BindBuffer(Overflow, OverflowBinding);
+            reset.DispatchCompute(1u, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+            return;
+        }
+
+        SetCounterFromCpu(VisibleCount, 0u);
+        SetCounterFromCpu(Overflow, 0u);
     }
 
     /// <summary>
@@ -197,16 +211,15 @@ public sealed partial class GaussianSplatRenderer : IDisposable
     /// Draws <see cref="Capacity"/> instances of <paramref name="quad"/> in sorted order. Call this in the
     /// TransparentForward pass after <see cref="Prepare()"/>.
     /// </summary>
-    /// <param name="quad">A quad from <see cref="CreateQuadRenderer"/>. The renderer binds its buffers to the quad's program for this draw.</param>
+    /// <param name="quad">A quad from <see cref="CreateQuadRenderer"/>. The renderer publishes its buffers to the quad's program for this draw.</param>
     public void Draw(XRMeshRenderer quad)
     {
         ArgumentNullException.ThrowIfNull(quad);
         if (_disposed || !_hasOrder)
             return;
 
-        AttachTo(quad);
-        GaussianSplatRenderer? previous = t_drawingRenderer;
-        t_drawingRenderer = this;
+        GaussianSplatQuadBindingPublisher publisher = ResolveQuadPublisher(quad);
+        GaussianSplatRenderer? previous = publisher.SetCurrentRenderer(this);
         try
         {
             Matrix4x4 model = ModelMatrix;
@@ -215,7 +228,7 @@ public sealed partial class GaussianSplatRenderer : IDisposable
         }
         finally
         {
-            t_drawingRenderer = previous;
+            _ = publisher.SetCurrentRenderer(previous);
         }
     }
 
@@ -225,7 +238,9 @@ public sealed partial class GaussianSplatRenderer : IDisposable
         if (_disposed)
             return;
         _disposed = true;
-        AttachTo(null);
+        _cachedPublisher?.ReleaseRendererReferences(this);
+        _cachedPublisher = null;
+        _cachedQuad = null;
         _sort.Dispose();
         DisposePrograms();
         Splats.Dispose();
@@ -236,46 +251,19 @@ public sealed partial class GaussianSplatRenderer : IDisposable
         _hasOrder = false;
     }
 
-    /// <summary>
-    /// Subscribes the binding handler and registers the splat storage buffers on the quad that this renderer draws.
-    /// </summary>
-    private void AttachTo(XRMeshRenderer? quad)
+    private void AdvanceResourceRevision()
     {
-        if (ReferenceEquals(_attachedQuad, quad))
-            return;
-        if (_attachedQuad is not null)
+        unchecked
         {
-            _attachedQuad.SettingUniforms -= _settingUniformsHandler;
-            if (_attachedQuad.Buffers.TryGetValue(SplatsBufferName, out XRDataBuffer? existingSplats) && ReferenceEquals(existingSplats, Splats))
-                _attachedQuad.Buffers.Remove(SplatsBufferName);
-            if (_attachedQuad.Buffers.TryGetValue(OrderBufferName, out XRDataBuffer? existingOrder) && ReferenceEquals(existingOrder, _order))
-                _attachedQuad.Buffers.Remove(OrderBufferName);
-            if (_attachedQuad.Buffers.TryGetValue(VisibleCountBufferName, out XRDataBuffer? existingCount) && ReferenceEquals(existingCount, VisibleCount))
-                _attachedQuad.Buffers.Remove(VisibleCountBufferName);
-        }
-        _attachedQuad = quad;
-        if (quad is not null)
-        {
-            quad.Buffers[SplatsBufferName] = Splats;
-            quad.Buffers[OrderBufferName] = _order;
-            quad.Buffers[VisibleCountBufferName] = VisibleCount;
-            quad.SettingUniforms += _settingUniformsHandler;
+            _resourceRevision++;
+            if (_resourceRevision == 0UL)
+                _resourceRevision = 1UL;
         }
     }
 
-    private void OnQuadSettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+    private static void SetCounterFromCpu(XRDataBuffer counter, uint value)
     {
-        if (t_drawingRenderer is not null && !ReferenceEquals(t_drawingRenderer, this))
-            return;
-
-        vertexProgram.BindBuffer(Splats, SplatsBinding);
-        vertexProgram.BindBuffer(_order, OrderBinding);
-        vertexProgram.BindBuffer(VisibleCount, VisibleCountBinding);
-        vertexProgram.Uniform(SplatScaleUniform, SplatScale);
-    }
-
-    private static void SetCounter(XRDataBuffer counter, uint value)
-    {
+        counter.GpuProduced = false;
         counter.SetDataRawAtIndex(0u, value);
         counter.PushSubData();
     }
@@ -283,6 +271,8 @@ public sealed partial class GaussianSplatRenderer : IDisposable
     private static XRDataBuffer CreateCounter(string name, uint binding)
         => new(name, EBufferTarget.ShaderStorageBuffer, 1u, EComponentType.UInt, 1u, false, true)
         {
+            // Compute producers clear and increment counters in the GPU command stream.
+            GpuProduced = true,
             BindingIndexOverride = binding,
             Usage = EBufferUsage.DynamicCopy,
             DisposeOnPush = false,
@@ -292,10 +282,10 @@ public sealed partial class GaussianSplatRenderer : IDisposable
     private static XRDataBuffer CreatePairs(string name, uint slots, uint? binding)
         => new(name, EBufferTarget.ShaderStorageBuffer, slots * GpuKeyIdRadixSort.UIntsPerPair, EComponentType.UInt, 1u, false, true, allocateClientSideSource: false)
         {
-            // The depth key shader writes every pair before the sort reads it.
+            // The depth key shader writes every pair in device-local memory before the sort reads it.
             GpuProduced = true,
             BindingIndexOverride = binding,
-            Usage = EBufferUsage.DynamicCopy,
+            Usage = EBufferUsage.StaticCopy,
             DisposeOnPush = false,
             PadEndingToVec4 = true,
         };

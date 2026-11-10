@@ -136,9 +136,18 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     /// Returns the pass index that backend operations emitted by this command should use.
     /// </summary>
     internal int ResolveRenderGraphPassIndex()
-        => _resolvedRenderGraphPassIndex != int.MinValue
+    {
+        if (!string.IsNullOrWhiteSpace(RenderGraphPassName))
+        {
+            int activePassIndex = ResolveActiveRenderGraphPassIndex(RenderGraphPassName!);
+            if (activePassIndex != int.MinValue)
+                return activePassIndex;
+        }
+
+        return _resolvedRenderGraphPassIndex != int.MinValue
             ? _resolvedRenderGraphPassIndex
             : RenderPass;
+    }
 
     /// <summary>
     /// Declares textures sampled by dynamically selected mesh material variants in this pass.

@@ -19,7 +19,8 @@ public sealed class VPRC_PrecomputeBRDF : ViewportRenderCommand
                 return;
         }
 
-        if (ParentPipeline?.TryGetRenderPassIndex(nameof(VPRC_PrecomputeBRDF), out int passIndex) != true)
+        int passIndex = ResolveActiveRenderGraphPassIndex(nameof(VPRC_PrecomputeBRDF));
+        if (passIndex == int.MinValue)
         {
             Debug.RenderingWarningEvery("BRDF.MissingPassMetadata", TimeSpan.FromSeconds(5),
                 "BRDF lookup initialization requires its declared graphics pass.");

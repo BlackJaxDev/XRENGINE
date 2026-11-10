@@ -23,10 +23,16 @@ internal static class VulkanDrawReadinessTemplate
         XRMaterial material,
         RenderingParameters? renderOptionsOverride)
     {
+        XRCamera.EDepthMode? cameraDepthMode = template.ViewSnapshot is { } viewSnapshot
+            ? (viewSnapshot.ShadowUniformState.IsShadowPass
+                ? XRCamera.EDepthMode.Normal
+                : (viewSnapshot.Camera?.DepthMode ?? XRCamera.EDepthMode.Normal))
+            : null;
         VulkanFixedFunctionStateSnapshot drawState = VulkanMeshDrawFixedState.Resolve(
             renderOptionsOverride ?? material.RenderOptions,
             passState,
-            template.RasterizationSamples);
+            template.RasterizationSamples,
+            cameraDepthMode);
         return template with
         {
             Renderer = renderer,

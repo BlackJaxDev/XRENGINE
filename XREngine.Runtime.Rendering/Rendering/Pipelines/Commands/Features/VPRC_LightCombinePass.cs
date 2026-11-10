@@ -1550,19 +1550,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
-        {
-            RenderPipeline? pipeline = ParentPipeline;
-            if (pipeline?.PassMetadata is not { Count: > 0 })
-            {
-                hasRenderGraphMetadata = false;
-                return int.MinValue;
-            }
-
-            hasRenderGraphMetadata = true;
-            return pipeline.TryGetRenderPassIndex(passName, out int passIndex)
-                ? passIndex
-                : int.MinValue;
-        }
+            => ResolveActiveRenderGraphPassIndex(passName, out hasRenderGraphMetadata);
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {

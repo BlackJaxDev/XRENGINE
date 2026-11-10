@@ -109,8 +109,8 @@ void main()
     vec3 jacobianPoint = viewCenter.xyz;
     if (ProjMatrix_VTX[2][3] != 0.0)
     {
-        float depth = -jacobianPoint.z;
-        vec2 limit = JacobianClampFactor / vec2(ProjMatrix_VTX[0][0], ProjMatrix_VTX[1][1]);
+        float depth = max(-jacobianPoint.z, 1e-6);
+        vec2 limit = JacobianClampFactor / abs(vec2(ProjMatrix_VTX[0][0], ProjMatrix_VTX[1][1]));
         jacobianPoint.xy = clamp(jacobianPoint.xy / depth, -limit, limit) * depth;
     }
     vec4 jacobianClip = ProjMatrix_VTX * vec4(jacobianPoint, 1.0);

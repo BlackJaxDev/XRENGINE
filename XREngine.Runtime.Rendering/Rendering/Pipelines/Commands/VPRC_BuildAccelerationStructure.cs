@@ -140,6 +140,10 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
 
     private int ResolveRenderGraphPassIndex()
     {
+        int activePassIndex = ResolveActiveRenderGraphPassIndex(RenderGraphPassName);
+        if (activePassIndex != int.MinValue)
+            return activePassIndex;
+
         if (_resolvedRenderGraphPassIndex != int.MinValue)
             return _resolvedRenderGraphPassIndex;
 

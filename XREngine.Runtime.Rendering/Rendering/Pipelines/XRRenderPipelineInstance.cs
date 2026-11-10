@@ -3896,6 +3896,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         IReadOnlyCollection<RenderPassMetadata>? metadata =
             ActiveGeneration?.PassMetadata ?? Pipeline?.PassMetadata;
+        if (metadata is RenderPassMetadataSnapshot snapshot)
+            return snapshot.TryGetPassIndex(passName, out passIndex);
+
         if (metadata is not null)
         {
             foreach (RenderPassMetadata pass in metadata)

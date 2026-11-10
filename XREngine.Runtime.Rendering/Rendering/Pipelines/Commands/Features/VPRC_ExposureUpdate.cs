@@ -263,15 +263,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private int ResolvePassIndex(string passName)
-        {
-            if (ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true)
-                return passIndex;
-
-            return RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline
-                ?.TryGetRenderPassIndex(passName, out passIndex) == true
-                ? passIndex
-                : int.MinValue;
-        }
+            => ResolveActiveRenderGraphPassIndex(passName);
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {

@@ -399,19 +399,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <param name="hasRenderGraphMetadata">Indicates whether the render graph metadata is available.</param>
         /// <returns>The index of the render pass if found; otherwise, int.MinValue.</returns>
         protected int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
-        {
-            RenderPipeline? pipeline = ParentPipeline;
-            if (pipeline?.PassMetadata is not { Count: > 0 })
-            {
-                hasRenderGraphMetadata = false;
-                return int.MinValue;
-            }
-
-            hasRenderGraphMetadata = true;
-            return pipeline.TryGetRenderPassIndex(passName, out int passIndex)
-                ? passIndex
-                : int.MinValue;
-        }
+            => ResolveActiveRenderGraphPassIndex(passName, out hasRenderGraphMetadata);
 
         /// <summary>
         /// Describes the render pass for this command in the render graph, 

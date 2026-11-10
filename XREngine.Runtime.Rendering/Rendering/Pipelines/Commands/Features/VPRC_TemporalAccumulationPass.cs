@@ -2033,6 +2033,10 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
                     .UseTransferDestination(MakeFboDepthResource(HistoryColorFBOName));
                 AddTsrHistoryCaptureDependencies(context, depthCopy);
             }
+            else
+            {
+                context.ReserveSyntheticPassIndex(TemporalHistoryDepthCopyPassName);
+            }
             return;
         }
 
@@ -2043,11 +2047,22 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
             ?? ResolveAntiAliasingMode();
         if (ShouldPopulateTemporalInput(antiAliasingMode))
             DescribeTemporalInputCopy(context);
+        else
+            context.ReserveSyntheticPassIndex(TemporalInputCopyPassName);
 
         if (ShouldRunInternalAccumulation(antiAliasingMode))
+        {
             DescribeTaaAccumulation(context);
+            context.ReserveSyntheticPassIndex(TemporalHistoryPassthroughPassName);
+        }
         else
+        {
+            context.ReserveSyntheticPassIndex(TemporalAccumulationResolvePassName);
+            context.ReserveSyntheticPassIndex(TemporalHistoryColorCopyPassName);
+            context.ReserveSyntheticPassIndex(TemporalHistoryDepthCopyPassName);
+            context.ReserveSyntheticPassIndex(TemporalHistoryExposureCopyPassName);
             DescribeHistoryPassthrough(context, copyDepth: !ShouldDeferTsrHistoryDepth(antiAliasingMode));
+        }
     }
 
     private void AddTsrHistoryCaptureDependencies(RenderGraphDescribeContext context, RenderPassBuilder copyPass)

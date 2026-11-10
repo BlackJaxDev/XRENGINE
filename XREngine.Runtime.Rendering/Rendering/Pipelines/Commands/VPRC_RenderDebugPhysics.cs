@@ -36,10 +36,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private int ResolveRenderGraphPassIndex()
         {
-            if (!string.IsNullOrWhiteSpace(RenderGraphPassName) &&
-                ParentPipeline?.TryGetRenderPassIndex(RenderGraphPassName, out int passIndex) == true)
+            if (!string.IsNullOrWhiteSpace(RenderGraphPassName))
             {
-                return passIndex;
+                int passIndex = ResolveActiveRenderGraphPassIndex(RenderGraphPassName!);
+                if (passIndex != int.MinValue)
+                    return passIndex;
             }
 
             return DepthMode == PhysicsDebugDepthMode.DepthTested

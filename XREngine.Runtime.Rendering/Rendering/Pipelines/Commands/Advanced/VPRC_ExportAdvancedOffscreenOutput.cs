@@ -12,6 +12,8 @@ public sealed class VPRC_ExportAdvancedOffscreenOutput : ViewportRenderCommand
 {
     private ERenderPipelineOffscreenOutput _output;
     private int _passIndex = int.MinValue;
+    private ERenderPipelineOffscreenOutput? _cachedPassOutput;
+    private string? _cachedPassName;
 
     /// <summary>
     /// Gets or sets the resource class exported to the bound output framebuffer.
@@ -32,11 +34,12 @@ public sealed class VPRC_ExportAdvancedOffscreenOutput : ViewportRenderCommand
 
         try
         {
-            if (_passIndex == int.MinValue)
+            int passIndex = ResolvePassIndex();
+            if (passIndex == int.MinValue)
                 throw new InvalidOperationException("Advanced offscreen export has no declared transfer pass.");
             // Deferred backends order by the declared graph pass. Inheriting the
             // ambient pre-render pass would copy before shading/background writers.
-            using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_passIndex);
+            using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex);
             ExecuteRequiredExport();
         }
         catch (Exception ex)
@@ -114,6 +117,18 @@ public sealed class VPRC_ExportAdvancedOffscreenOutput : ViewportRenderCommand
             exportPass.UseDepthTransferDestination(RenderGraphResourceNames.OutputRenderTarget);
         else
             exportPass.UseTransferDestination(RenderGraphResourceNames.OutputRenderTarget);
+    }
+
+    private int ResolvePassIndex()
+    {
+        if (_cachedPassOutput != Output || _cachedPassName is null)
+        {
+            _cachedPassOutput = Output;
+            _cachedPassName = $"AdvancedOffscreenExport.{Output}";
+        }
+
+        int activePassIndex = ResolveActiveRenderGraphPassIndex(_cachedPassName);
+        return activePassIndex != int.MinValue ? activePassIndex : _passIndex;
     }
 
     private XRFrameBuffer ResolveSourceFrameBuffer()

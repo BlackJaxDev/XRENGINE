@@ -14,10 +14,12 @@ internal static class VulkanMeshDrawFixedState
     /// <param name="materialOptions">The render options of the draw, or null to use the pass state.</param>
     /// <param name="passState">The fixed-function state of the pass.</param>
     /// <param name="rasterizationSamples">The sample count of the target. Alpha to coverage needs more than one sample.</param>
+    /// <param name="cameraDepthMode">The captured depth mode of the pass camera, or null to read the active rendering camera.</param>
     public static VulkanFixedFunctionStateSnapshot Resolve(
         RenderingParameters? materialOptions,
         in VulkanFixedFunctionStateSnapshot passState,
-        SampleCountFlags rasterizationSamples)
+        SampleCountFlags rasterizationSamples,
+        XRCamera.EDepthMode? cameraDepthMode = null)
     {
         RenderingParameters? matOpts = materialOptions;
 
@@ -36,9 +38,15 @@ internal static class VulkanMeshDrawFixedState
         {
             depthTestEnabled = dt.Enabled == ERenderParamUsage.Enabled;
             depthWriteEnabled = depthTestEnabled && dt.UpdateDepth;
-            depthCompareOp = depthTestEnabled
-                ? VulkanMeshRenderingConventions.ToVulkanCompareOp(RuntimeEngine.Rendering.State.MapDepthComparison(dt.Function))
-                : CompareOp.Always;
+            if (depthTestEnabled)
+            {
+                EComparison mappedComparison = cameraDepthMode is { } capturedDepthMode
+                    ? RuntimeEngine.Rendering.State.MapDepthComparison(dt.Function, capturedDepthMode)
+                    : RuntimeEngine.Rendering.State.MapDepthComparison(dt.Function);
+                depthCompareOp = VulkanMeshRenderingConventions.ToVulkanCompareOp(mappedComparison);
+            }
+            else
+                depthCompareOp = CompareOp.Always;
         }
         else
         {

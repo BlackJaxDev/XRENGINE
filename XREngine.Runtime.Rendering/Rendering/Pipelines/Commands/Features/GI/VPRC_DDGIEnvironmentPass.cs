@@ -13,7 +13,6 @@ namespace XREngine.Rendering.Pipelines.Commands;
 public sealed class VPRC_DDGIEnvironmentPass : ViewportRenderCommand
 {
     private const string AllocationScopeName = "DDGI.VPRC_DDGIEnvironmentPass";
-    private int _passIndex = int.MinValue;
 
     protected override bool ShouldExecuteThisFrame()
         => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
@@ -25,9 +24,8 @@ public sealed class VPRC_DDGIEnvironmentPass : ViewportRenderCommand
         if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.DDGI))
             return;
 
-        if (_passIndex == int.MinValue && ParentPipeline?.TryGetRenderPassIndex(nameof(VPRC_DDGIEnvironmentPass), out int passIndex) == true)
-            _passIndex = passIndex;
-        if (_passIndex == int.MinValue)
+        int passIndex = ResolveActiveRenderGraphPassIndex(nameof(VPRC_DDGIEnvironmentPass));
+        if (passIndex == int.MinValue)
         {
             Debug.RenderingWarningEvery(
                 "DDGI.Environment.MissingPassMetadata",
@@ -46,7 +44,7 @@ public sealed class VPRC_DDGIEnvironmentPass : ViewportRenderCommand
             ? DDGIManagedAllocationDiagnostics.Begin(AllocationScopeName)
             : default;
 #endif
-        using var scope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_passIndex);
+        using var scope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex);
         DDGIEnvironmentResources.Prepare(ActivePipelineInstance, world);
     }
 

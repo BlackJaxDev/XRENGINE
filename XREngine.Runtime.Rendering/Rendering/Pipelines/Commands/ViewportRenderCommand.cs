@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
@@ -158,6 +159,57 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             // Default commands do not contribute metadata; derived commands can override.
         }
+
+        /// <summary>
+        /// Returns the active resource generation's render-graph metadata when present,
+        /// or falls back to the owning pipeline's default metadata.
+        /// </summary>
+        protected IReadOnlyCollection<RenderPassMetadata>? ResolveActiveRenderGraphMetadata()
+        {
+            XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            if (activeInstance?.ActiveGeneration?.PassMetadata is { Count: > 0 } generationMetadata)
+                return generationMetadata;
+
+            RenderPipeline? pipeline = ParentPipeline ?? activeInstance?.Pipeline;
+            return pipeline?.PassMetadata is { Count: > 0 } pipelineMetadata
+                ? pipelineMetadata
+                : null;
+        }
+
+        /// <summary>
+        /// Resolves a named render-graph pass index from the active resource generation so
+        /// profile-dependent pass declarations stay aligned with backend scheduling.
+        /// </summary>
+        protected int ResolveActiveRenderGraphPassIndex(string passName, out bool hasRenderGraphMetadata)
+        {
+            XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            if (activeInstance?.ActiveGeneration?.PassMetadata is { Count: > 0 })
+            {
+                hasRenderGraphMetadata = true;
+                return activeInstance.TryGetActiveRenderPassIndex(passName, out int activePassIndex)
+                    ? activePassIndex
+                    : int.MinValue;
+            }
+
+            RenderPipeline? pipeline = ParentPipeline ?? activeInstance?.Pipeline;
+            if (pipeline?.PassMetadata is { Count: > 0 })
+            {
+                hasRenderGraphMetadata = true;
+                return pipeline.TryGetRenderPassIndex(passName, out int fallbackPassIndex)
+                    ? fallbackPassIndex
+                    : int.MinValue;
+            }
+
+            hasRenderGraphMetadata = false;
+            return int.MinValue;
+        }
+
+        /// <summary>
+        /// Resolves a named render-graph pass index from the active resource generation,
+        /// returning <see cref="int.MinValue"/> when no matching pass exists.
+        /// </summary>
+        protected int ResolveActiveRenderGraphPassIndex(string passName)
+            => ResolveActiveRenderGraphPassIndex(passName, out _);
 
         /// <summary>
         /// Creates a render graph resource name for a color attachment based on the provided framebuffer name.

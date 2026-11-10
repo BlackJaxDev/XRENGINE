@@ -8,6 +8,8 @@ namespace XREngine.Rendering.Gaussian;
 // Shaders, programs, and the quad material of GaussianSplatRenderer.
 public sealed partial class GaussianSplatRenderer
 {
+    /// <summary>Counter clear compute shader, relative to the engine shader folder.</summary>
+    public const string ResetCountersShaderPath = "Gaussian/GaussianSplatResetCounters.comp";
     /// <summary>Depth key compute shader, relative to the engine shader folder.</summary>
     public const string KeysShaderPath = "Gaussian/GaussianSplatKeys.comp";
     /// <summary>Quad vertex shader, relative to the engine shader folder.</summary>
@@ -22,6 +24,7 @@ public sealed partial class GaussianSplatRenderer
 
     private static readonly uint SplatStrideBytes = (uint)Unsafe.SizeOf<GaussianSplatGpuSplat>();
 
+    private XRRenderProgram? _resetCountersProgram;
     private XRRenderProgram? _keysProgram;
 
     /// <summary>
@@ -82,7 +85,22 @@ public sealed partial class GaussianSplatRenderer
         // The material has its own vertex shader that reads the splat buffers.
         renderer.CaptureUniformsOnRender = true;
         renderer.GetDefaultVersion().AllowShaderPipelines = false;
+        renderer.BindingPublishers.Add(new GaussianSplatQuadBindingPublisher());
         return renderer;
+    }
+
+    /// <summary>Creates the counter clear program on the first call and polls its link state.</summary>
+    private bool EnsureResetCountersProgramReady()
+    {
+        _resetCountersProgram ??= new XRRenderProgram(true, false, ShaderHelper.GaussianSplatResetCountersCompute())
+        {
+            Name = "GaussianSplatResetCounters",
+        };
+
+        if (_resetCountersProgram.IsLinked)
+            return true;
+        _resetCountersProgram.Link();
+        return _resetCountersProgram.IsLinked;
     }
 
     /// <summary>Creates the depth key program on the first call and polls its link state.</summary>
@@ -101,6 +119,8 @@ public sealed partial class GaussianSplatRenderer
 
     private void DisposePrograms()
     {
+        _resetCountersProgram?.Destroy();
+        _resetCountersProgram = null;
         _keysProgram?.Destroy();
         _keysProgram = null;
     }
