@@ -11,11 +11,23 @@ public sealed class SourceDependencyEdge
     public required string TargetGuid { get; init; }
     public long TargetFileId { get; init; }
     public string? TargetPath { get; init; }
+    /// <summary>Local file ID of the document that contains this reference.</summary>
+    internal long? ReferringDocumentFileId { get; init; }
+    /// <summary>Unity class ID of the document that contains this reference.</summary>
+    internal int? ReferringDocumentClassId { get; init; }
+    /// <summary>Index of an ordinary renderer material reference.</summary>
+    internal int? ReferringMaterialIndex { get; init; }
     /// <summary>
     /// Local fileID of the source object whose prefab modification owns this
     /// reference. Null for ordinary serialized asset references.
     /// </summary>
     public long? ReferringObjectFileId { get; init; }
+    /// <summary>Identifies the prefab instance that owns this modification.</summary>
+    public long? ReferringPrefabInstanceFileId { get; init; }
+    internal string? ReferringTargetGuid { get; init; }
+    internal bool DeferredPrefabMaterialValidation { get; set; }
+    internal bool DeferredShaderConversionValidation { get; set; }
+    internal bool AmbiguousPrefabModification { get; set; }
     public required string ReferringProperty { get; init; }
     /// <summary>Names the material texture slot that contains the serialized reference.</summary>
     public string? ReferringMaterialTextureSlot { get; init; }

@@ -1230,10 +1230,14 @@ namespace XREngine.Components.Animation
                 && compiled.TryGetRole(node, out _))
                 return compiled.GetNeutralWorldTransform(node);
 
-            return _humanoidBindWorldPoses.TryGetValue(node, out Matrix4x4 worldBindPose)
+            return GetAuthoredHumanoidBindWorldPose(node);
+        }
+
+        // Definition authoring must not depend on whether playback has compiled the skeleton.
+        private Matrix4x4 GetAuthoredHumanoidBindWorldPose(SceneNode node)
+            => _humanoidBindWorldPoses.TryGetValue(node, out Matrix4x4 worldBindPose)
                 ? worldBindPose
                 : node.Transform.BindMatrix;
-        }
 
         private void ApplyHumanoidBindRelativeRotation(SceneNode node, Quaternion deltaRotation)
         {

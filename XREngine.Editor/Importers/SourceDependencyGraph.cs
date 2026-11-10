@@ -13,6 +13,7 @@ public sealed class SourceDependencyGraph
 
     internal void RemovePrefabModificationEdges(
         string sourcePath,
+        long prefabInstanceFileId,
         long referringObjectFileId,
         string entrySourcePath)
     {
@@ -20,13 +21,72 @@ public sealed class SourceDependencyGraph
         if (_nodes.TryGetValue(normalizedSource, out SourceDependencyNode? sourceNode))
         {
             sourceNode.OutgoingEdges.RemoveAll(edge =>
-                edge.ReferringObjectFileId == referringObjectFileId);
+                edge.ReferringPrefabInstanceFileId == prefabInstanceFileId &&
+                edge.ReferringObjectFileId == referringObjectFileId &&
+                edge.DeferredPrefabMaterialValidation);
         }
 
         UnresolvedEdges.RemoveAll(edge =>
             string.Equals(Path.GetFullPath(edge.SourcePath), normalizedSource, StringComparison.OrdinalIgnoreCase) &&
-            edge.ReferringObjectFileId == referringObjectFileId);
+            edge.ReferringPrefabInstanceFileId == prefabInstanceFileId &&
+            edge.ReferringObjectFileId == referringObjectFileId &&
+            edge.DeferredPrefabMaterialValidation);
         PruneUnreachable(entrySourcePath);
+    }
+
+    internal void RemovePrefabMaterialEdgesOutsideArraySize(
+        string sourcePath,
+        long prefabInstanceFileId,
+        long referringObjectFileId,
+        int arraySize,
+        string entrySourcePath)
+    {
+        string normalizedSource = Path.GetFullPath(sourcePath);
+        bool IsOutsideArray(SourceDependencyEdge edge)
+            => edge.DeferredPrefabMaterialValidation &&
+                string.Equals(Path.GetFullPath(edge.SourcePath), normalizedSource, StringComparison.OrdinalIgnoreCase) &&
+                edge.ReferringPrefabInstanceFileId == prefabInstanceFileId &&
+                edge.ReferringObjectFileId == referringObjectFileId &&
+                TryGetMaterialIndex(edge.ReferringProperty, out int index) &&
+                index >= arraySize;
+
+        if (_nodes.TryGetValue(normalizedSource, out SourceDependencyNode? sourceNode))
+            sourceNode.OutgoingEdges.RemoveAll(edge => IsOutsideArray(edge));
+
+        UnresolvedEdges.RemoveAll(edge => IsOutsideArray(edge));
+        PruneUnreachable(entrySourcePath);
+    }
+
+    private static bool TryGetMaterialIndex(string propertyPath, out int index)
+    {
+        const string prefix = "m_Materials.Array.data[";
+        index = -1;
+        if (!propertyPath.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+
+        int close = propertyPath.IndexOf(']', prefix.Length);
+        return close > prefix.Length &&
+            int.TryParse(propertyPath.AsSpan(prefix.Length, close - prefix.Length), out index) &&
+            index >= 0;
+    }
+
+    internal IEnumerable<SourceDependencyEdge> ResolvePrefabModificationEdges(
+        string sourcePath,
+        long prefabInstanceFileId,
+        long referringObjectFileId)
+    {
+        string normalizedSource = Path.GetFullPath(sourcePath);
+        foreach (SourceDependencyEdge edge in UnresolvedEdges)
+        {
+            if (!edge.DeferredPrefabMaterialValidation ||
+                !string.Equals(Path.GetFullPath(edge.SourcePath), normalizedSource, StringComparison.OrdinalIgnoreCase) ||
+                edge.ReferringPrefabInstanceFileId != prefabInstanceFileId ||
+                edge.ReferringObjectFileId != referringObjectFileId)
+                continue;
+
+            edge.DeferredPrefabMaterialValidation = false;
+            yield return edge;
+        }
     }
 
     internal SourceDependencyNode GetOrAdd(

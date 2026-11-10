@@ -47,11 +47,22 @@ public static partial class EditorUnitTests
                 UnityPackageImportProject project = UnityPackageImportSource.PrepareProject(
                     packagePath, cacheRoot, dependencies, ReportProgress);
                 projectRoot = project.ProjectRoot;
+                string? selectedEntry = string.IsNullOrWhiteSpace(settings.PackageEntryPath)
+                    ? null
+                    : settings.PackageEntryPath.Replace('\\', '/');
                 foreach (string path in project.HierarchyPaths)
-                    entries.Add(Path.Combine(projectRoot, path));
+                {
+                    if (selectedEntry is null ||
+                        string.Equals(path.Replace('\\', '/'), selectedEntry, StringComparison.OrdinalIgnoreCase))
+                        entries.Add(Path.Combine(projectRoot, path));
+                }
                 entries.Sort(StringComparer.Ordinal);
                 if (entries.Count == 0)
-                    throw new InvalidDataException($"Unity package '{packagePath}' contains no .unity or .prefab files.");
+                {
+                    throw new InvalidDataException(selectedEntry is null
+                        ? $"Unity package '{packagePath}' contains no .unity or .prefab files."
+                        : $"Unity package '{packagePath}' contains no scene or prefab entry '{selectedEntry}'.");
+                }
 
                 Debug.Meshes($"[UnityPackage] Prepared {entries.Count} scene/prefab root(s) from '{packagePath}'. Source project: '{projectRoot}'.");
                 yield return new JobProgress(1.0f, projectRoot);

@@ -976,6 +976,11 @@
           "type": "boolean",
           "description": "When a VR pawn is active, keeps a desktop editing camera/pawn available."
         },
+        "DesktopView": {
+          "$ref": "#/definitions/EVrDesktopView",
+          "description": "Desktop view at OpenXR startup when AllowDesktopEditing is on. EditorCamera gives mouse and keyboard to the editor camera and pauses VR action input such as thumbstick locomotion; head and hand tracking continue. FirstPerson, Spectator, and TextureOutput keep input on the VR pawn.",
+          "markdownDescription": "Supported values: `FirstPerson`, `Spectator`, `EditorCamera`, `TextureOutput`."
+        },
         "Foveation": {
           "$ref": "#/definitions/UnitTestingVrFoveationSettings",
           "description": "Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback."
@@ -1033,6 +1038,16 @@
         "Full"
       ],
       "markdownDescription": "Supported values: `Off`, `ForwardPlusOracle`, `VisibilityOnlyDebug`, `MaterialCache`, `SharedLighting`, `Full`."
+    },
+    "EVrDesktopView": {
+      "type": "string",
+      "enum": [
+        "FirstPerson",
+        "Spectator",
+        "EditorCamera",
+        "TextureOutput"
+      ],
+      "markdownDescription": "Supported values: `FirstPerson`, `Spectator`, `EditorCamera`, `TextureOutput`."
     },
     "UnitTestingVrFoveationSettings": {
       "type": "object",
@@ -1196,6 +1211,20 @@
         "Path": {
           "type": "string",
           "description": "Model, .prefab, .unity, or .unitypackage path. Packages import each scene and prefab as a separate root."
+        },
+        "PackageEntryPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Selects one scene or prefab by its Assets-relative path inside a Unity package. An empty value imports all scene and prefab entries from the main package."
+        },
+        "SceneRootName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Publishes only the uniquely named top-level node and its children from an imported scene. Animated imports attach the selected startup clip to this node."
         },
         "SourceProjectRoot": {
           "type": [

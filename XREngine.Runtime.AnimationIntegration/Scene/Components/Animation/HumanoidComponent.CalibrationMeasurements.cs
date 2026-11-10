@@ -101,9 +101,9 @@ public partial class HumanoidComponent
     {
         measurements = default;
         if (Head.Node is null || Hips.Node is null || Left.Wrist.Node is null || Right.Wrist.Node is null ||
-            !Matrix4x4.Invert(GetHumanoidBindWorldPose(SceneNode), out Matrix4x4 rootInverse))
+            !Matrix4x4.Invert(GetAuthoredHumanoidBindWorldPose(SceneNode), out Matrix4x4 rootInverse))
             return false;
-        Matrix4x4 head = GetHumanoidBindWorldPose(Head.Node) * rootInverse;
+        Matrix4x4 head = GetAuthoredHumanoidBindWorldPose(Head.Node) * rootInverse;
         Vector3 hips = BindPosition(Hips.Node, rootInverse);
         if (!TryNormalizeCalibrationVector(head.Translation - hips, out Vector3 up))
             return false;
@@ -125,7 +125,7 @@ public partial class HumanoidComponent
     }
 
     private Vector3 BindPosition(SceneNode node, Matrix4x4 inverseRoot)
-        => Vector3.Transform(GetHumanoidBindWorldPose(node).Translation, inverseRoot);
+        => Vector3.Transform(GetAuthoredHumanoidBindWorldPose(node).Translation, inverseRoot);
 
     private float CalibrationArmLength(BodySide side, Matrix4x4 inverseRoot, float eyeHeight, out bool estimated)
     {

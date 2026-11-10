@@ -474,7 +474,13 @@ internal static partial class SerializedSceneImporter
 
         bool isNullMaterial = materialReference.FileId == 0 && string.IsNullOrWhiteSpace(materialReference.Guid);
         SortedDictionary<int, int> sourceSlots = GetDrawableSourceMaterialSlots(component.Model);
-        if (!sourceSlots.TryGetValue(materialIndex, out int sourceSlot))
+        if (!isNullMaterial && !sourceSlots.ContainsKey(materialIndex) &&
+            sourceSlots.Count > 0 && materialIndex > sourceSlots.Keys.Max())
+        {
+            ExpandRendererMaterialSlots(component.Model, materialIndex + 1, state);
+            sourceSlots = GetDrawableSourceMaterialSlots(component.Model);
+        }
+        if (!sourceSlots.ContainsKey(materialIndex))
         {
             if (isNullMaterial)
                 return;
@@ -502,10 +508,13 @@ internal static partial class SerializedSceneImporter
                 $"Required prefab material override '{materialReference.Guid}:{materialReference.FileId}' could not be imported.");
         foreach (SubMesh subMesh in component.Model.Meshes)
         {
-            if (subMesh.ImportedSourceMaterialSlot != sourceSlot)
+            if ((subMesh.ImportedRendererMaterialSlot ?? subMesh.ImportedSourceMaterialSlot) != materialIndex)
                 continue;
             foreach (SubMeshLOD lod in subMesh.LODs)
+            {
                 lod.Material = material;
+                LogSourceToonMeshDiagnostics(material, lod.Mesh);
+            }
         }
     }
 
@@ -799,6 +808,7 @@ internal static partial class SerializedSceneImporter
         {
             10202 => XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f)),
             10207 => XRMesh.Shapes.SolidSphere(Vector3.Zero, 0.5f, 32),
+            10209 => XRMesh.Shapes.SolidPlane(Vector3.Zero, Vector3.UnitY, 10.0f, 10.0f),
             _ => null,
         };
 
@@ -818,6 +828,7 @@ internal static partial class SerializedSceneImporter
         {
             Name = $"UnityBuiltIn_{meshReference.FileId}",
         };
+        ExpandRendererMaterialSlots(model, materialReferences.Count, state, materialReferences);
         return true;
     }
 
@@ -903,9 +914,12 @@ internal static partial class SerializedSceneImporter
             importedSubMeshes.Add(subMesh);
         }
 
-        return importedSubMeshes.Count > 0
-            ? new Model(importedSubMeshes) { Name = meshName }
-            : null;
+        if (importedSubMeshes.Count == 0)
+            return null;
+
+        Model model = new(importedSubMeshes) { Name = meshName };
+        ExpandRendererMaterialSlots(model, materialReferences.Count, state, materialReferences);
+        return model;
     }
 
     private static Model CloneModelForTarget(
@@ -969,10 +983,12 @@ internal static partial class SerializedSceneImporter
             clonedSubMeshes.Add(clonedSubMesh);
         }
 
-        return new Model(clonedSubMeshes)
+        Model model = new(clonedSubMeshes)
         {
             Name = sourceModel.Name,
         };
+        ExpandRendererMaterialSlots(model, materialReferences.Count, state, materialReferences);
+        return model;
     }
 
     private static void ApplySkinnedRendererBindings(

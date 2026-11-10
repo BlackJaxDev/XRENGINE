@@ -175,7 +175,7 @@ public partial class HumanoidComponent
             return;
         }
 
-        Matrix4x4 rootBind = GetHumanoidBindWorldPose(SceneNode);
+        Matrix4x4 rootBind = GetAuthoredHumanoidBindWorldPose(SceneNode);
         // XRE's canonical humanoid convention is +X toward the avatar's left,
         // so anatomical right is the transformed -X axis. Keeping this method
         // anatomically named prevents bilateral roles from being swapped before
@@ -244,7 +244,7 @@ public partial class HumanoidComponent
         Matrix4x4 localBind = _humanoidBindLocalPoses.TryGetValue(node, out Matrix4x4 storedLocal)
             ? storedLocal
             : GetCurrentLocalMatrix(node);
-        Matrix4x4 worldBind = GetHumanoidBindWorldPose(node);
+        Matrix4x4 worldBind = GetAuthoredHumanoidBindWorldPose(node);
         Vector3 position = worldBind.Translation;
         var candidate = new HumanoidAvatarAutoMapCandidate
         {
@@ -1007,8 +1007,8 @@ public partial class HumanoidComponent
             {
                 Node = node,
                 LocalBindTransform = GetCurrentLocalMatrix(node),
-                WorldBindTransform = GetHumanoidBindWorldPose(node),
-                Position = GetHumanoidBindWorldPose(node).Translation,
+                WorldBindTransform = GetAuthoredHumanoidBindWorldPose(node),
+                Position = GetAuthoredHumanoidBindWorldPose(node).Translation,
             },
             confidence,
             0.25f,
@@ -1081,7 +1081,7 @@ public partial class HumanoidComponent
 
     private float CalculateNodeJointAxisScore(SceneNode node)
     {
-        Matrix4x4 worldBind = GetHumanoidBindWorldPose(node);
+        Matrix4x4 worldBind = GetAuthoredHumanoidBindWorldPose(node);
         Vector3 position = worldBind.Translation;
         float score = 0.0f;
         int childCount = 0;
@@ -1093,7 +1093,7 @@ public partial class HumanoidComponent
             score += CalculateJointAxisAlignment(
                 worldBind,
                 position,
-                GetHumanoidBindWorldPose(child).Translation);
+                GetAuthoredHumanoidBindWorldPose(child).Translation);
             childCount++;
         }
         return childCount > 0
