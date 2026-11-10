@@ -320,8 +320,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         get
         {
-            RenderPipeline? pipeline = _pipeline ?? Pipeline;
-            string pipelineName = pipeline?.DebugName ?? DebugName;
+            RenderPipeline? pipeline = GetFullyAppliedPipeline();
+            string pipelineName = pipeline?.DebugName ?? "UnknownPipeline";
 
             XRCamera? cam = RenderState.SceneCamera ?? RenderState.RenderingCamera ?? LastSceneCamera ?? LastRenderingCamera;
             string cameraDescription = cam is { }

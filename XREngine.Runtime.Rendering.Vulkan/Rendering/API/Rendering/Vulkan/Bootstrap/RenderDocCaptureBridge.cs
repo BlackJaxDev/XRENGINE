@@ -131,6 +131,31 @@ public static class RenderDocCaptureBridge
         }
     }
 
+    /// <summary>Reports why a diagnostic capture can or cannot start.</summary>
+    public static string GetCaptureStatus()
+    {
+        if (Volatile.Read(ref _ownsExplicitCapture) != 0)
+            return "An explicit capture owned by this bridge is active.";
+        if (!NativeLibrary.TryLoad("renderdoc.dll", out nint module))
+            return "The RenderDoc module is unavailable to the capture bridge.";
+        try
+        {
+            if (!NativeLibrary.TryGetExport(module, "RENDERDOC_GetAPI", out nint address))
+                return "The loaded module has no RenderDoc API entry point.";
+            int result = Marshal.GetDelegateForFunctionPointer<RenderDocGetApi>(address)(
+                RenderDocApiVersion100, out nint table);
+            if (result != 1 || table == 0)
+                return "The loaded module did not provide the requested RenderDoc API.";
+            return GetEntry<RenderDocIsFrameCapturing>(table, IsFrameCapturingIndex)() != 0
+                ? "RenderDoc is already capturing API work."
+                : "RenderDoc is ready for a presented-frame capture request.";
+        }
+        finally
+        {
+            NativeLibrary.Free(module);
+        }
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int RenderDocGetApi(int version, out nint apiTable);
 

@@ -83,6 +83,13 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
             // family made for the other topology is replaced, never reused.
             : _advancedStageFamily = CreateAdvancedStageFamily();
 
+    /// <summary>Gets the existing stage family when it matches this pipeline's view topology.</summary>
+    public AdvancedRenderPipeline? GetExistingAdvancedStageFamily()
+    {
+        AdvancedRenderPipeline? family = System.Threading.Volatile.Read(ref _advancedStageFamily);
+        return family?.Stereo == Stereo ? family : null;
+    }
+
     // The family owns the scene feature values; this pipeline's feature properties
     // forward to it, so camera-source feature copies reach it directly.
     private AdvancedRenderPipeline CreateAdvancedStageFamily()

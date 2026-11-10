@@ -565,6 +565,19 @@ namespace XREngine.Rendering
                 : _postProcessStates.GetOrCreateState(pipeline);
         }
 
+        /// <summary>Gets the assigned pipeline or an existing default without creating one.</summary>
+        public RenderPipeline? GetConfiguredRenderPipeline()
+            => _renderPipeline ?? _defaultRenderPipeline;
+
+        /// <summary>Gets an existing post-process state without creating or rebinding it.</summary>
+        public PipelinePostProcessState? GetExistingPostProcessState(RenderPipeline? pipeline)
+        {
+            if (pipeline is null || !_postProcessStates.TryGetState(pipeline.ID, out PipelinePostProcessState? state))
+                return null;
+
+            return state?.IsBoundTo(pipeline) == true ? state : null;
+        }
+
         /// <summary>
         /// Gets the active post-process state for the current render pipeline.
         /// Creates a new state if one doesn't exist for the active pipeline.

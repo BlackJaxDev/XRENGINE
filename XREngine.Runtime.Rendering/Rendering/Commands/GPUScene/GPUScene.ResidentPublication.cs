@@ -50,6 +50,15 @@ public partial class GPUScene
     /// <summary>Gets the number of material resolution attempts in the last preflight.</summary>
     public int AdvancedMaterialResolveAttemptCount => _advancedScenePublisher.MaterialResolveAttemptCount;
 
+    /// <summary>Gets the full Uber shader checks in the last whole-scene plan.</summary>
+    public int AdvancedNativeUberLayoutFullCheckCount => _advancedScenePublisher.NativeUberLayoutFullCheckCount;
+
+    /// <summary>Gets the Uber shader proof hits in the last whole-scene plan.</summary>
+    public int AdvancedNativeUberLayoutProofHitCount => _advancedScenePublisher.NativeUberLayoutProofHitCount;
+
+    /// <summary>Gets the retained Uber material proof count in the last whole-scene plan.</summary>
+    public int AdvancedNativeUberLayoutProofCount => _advancedScenePublisher.NativeUberLayoutProofCount;
+
     /// <summary>
     /// Gets the command rows that the last publication reused without the
     /// whole-scene plan. Zero means that the whole-scene plan ran.

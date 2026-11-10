@@ -262,9 +262,10 @@ namespace XREngine.Editor.Mcp
         {
             XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
             AdvancedRenderPipelineOutputBinding binding = instance.AdvancedOutputBinding;
-            AdvancedRenderPipeline? pipeline = instance.Pipeline as AdvancedRenderPipeline
-                ?? (binding.IsBound && instance.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } host
-                    ? host.AdvancedStageFamilyDefinition : null);
+            RenderPipeline? appliedPipeline = instance.GetFullyAppliedPipeline();
+            AdvancedRenderPipeline? pipeline = appliedPipeline as AdvancedRenderPipeline
+                ?? (binding.IsBound && appliedPipeline is RvcRenderPipeline rvc
+                    ? rvc.GetExistingAdvancedStageFamily() : null);
             IRuntimeRendererHost? renderer = viewport.Window?.Renderer ??
                 RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as IRuntimeRendererHost;
             AdvancedRenderPipelineCapabilities capabilities = renderer?
@@ -355,7 +356,7 @@ namespace XREngine.Editor.Mcp
                 },
                 profile = new
                 {
-                    pipeline = instance.Pipeline?.DebugName,
+                    pipeline = appliedPipeline?.DebugName,
                     advancedFamily = pipeline?.DebugName,
                     stereoMode = pipeline?.StereoMode.ToString(),
                     offscreenProfile = pipeline?.OffscreenProfile,
