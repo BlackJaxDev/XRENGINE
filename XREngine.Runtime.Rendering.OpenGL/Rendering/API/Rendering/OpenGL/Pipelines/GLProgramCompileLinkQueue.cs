@@ -279,7 +279,7 @@ namespace XREngine.Rendering.OpenGL
                     if (!HasVaryings)
                         return "TransformFeedback=<none>";
 
-                    return "TransformFeedback=" + BufferMode + ":" + string.Join("|", Varyings!);
+                    return $"TransformFeedback={BufferMode}:{string.Join("|", Varyings!)}";
                 }
             }
 

@@ -14,7 +14,7 @@ internal static partial class ProjectBuilder
     private sealed class BrowserBuildState(BuildContext context)
     {
         private readonly string _stageRoot = Path.Combine(Path.GetDirectoryName(context.BuildRoot)!,
-            "." + Path.GetFileName(context.BuildRoot) + ".browser-stage-" + Guid.NewGuid().ToString("N"));
+            $".{Path.GetFileName(context.BuildRoot)}.browser-stage-{Guid.NewGuid():N}");
         private string? _siteRoot;
         private string? _recipePath;
         private string? _configuration;
@@ -248,7 +248,7 @@ internal static partial class ProjectBuilder
                 throw new InvalidOperationException("Browser output is incomplete; keeping the previous build.");
             }
             RejectBrowserOutputLinks(context.BuildRoot, Path.GetFullPath(context.Project.BuildDirectory!));
-            string backup = context.BuildRoot + ".browser-backup-" + Guid.NewGuid().ToString("N");
+            string backup = $"{context.BuildRoot}.browser-backup-{Guid.NewGuid():N}";
             bool movedPrevious = false;
             try
             {

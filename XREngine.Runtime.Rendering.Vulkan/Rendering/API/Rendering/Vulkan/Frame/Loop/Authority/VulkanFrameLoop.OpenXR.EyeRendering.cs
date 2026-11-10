@@ -982,6 +982,7 @@ internal sealed partial class VulkanFrameLoop
             }
         }
 
+        string stampMismatch = framePlan.DescribeRecordingPlannerStampMismatch(in recordingPlannerKey, in originalStamp);
         throw new VulkanPresentNowReadinessException(
             framePlan.RenderFrameId,
             EVulkanPresentNowReadinessStage.FramePlanSeal,
@@ -996,7 +997,7 @@ internal sealed partial class VulkanFrameLoop
             $"sealedAllocatorOwner={(hasSealedGeneration ? generation.State.ResourceAllocator?.OwnershipId : null)} " +
             $"sealedStateOwner={(hasSealedGeneration ? generation.State.AllocatorOwnershipId : 0)} " +
             $"sameAllocator={hasSealedGeneration && ReferenceEquals(original.ResourceAllocator, generation.State.ResourceAllocator)} " +
-            framePlan.DescribeRecordingPlannerStampMismatch(in recordingPlannerKey, in originalStamp));
+            $"{stampMismatch}");
     }
 
     /// <summary>

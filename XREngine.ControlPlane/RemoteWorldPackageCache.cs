@@ -60,7 +60,7 @@ public sealed class RemoteWorldPackageCache
             for (int index = 0; index < manifest.Files.Count; index++)
             {
                 WorldPackageFile file = manifest.Files[index];
-                string path = ContainedPath("incoming/" + hash + "/" + file.RelativePath);
+                string path = ContainedPath($"incoming/{hash}/{file.RelativePath}");
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 RejectReparsePath(path);
                 Uri uri = new(serviceUrl, $"v1/packages/{Uri.EscapeDataString(manifest.PackageId)}/{hash}/files/{index}");

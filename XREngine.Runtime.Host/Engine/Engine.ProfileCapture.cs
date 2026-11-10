@@ -2385,7 +2385,7 @@ public static partial class Engine
                 return;
             }
 
-            errors.Add(name + " must be a boolean flag, got '" + value + "'");
+            errors.Add($"{name} must be a boolean flag, got '{value}'");
         }
 
         private static void ValidateEnvEnum(List<string> errors, string name, params string[] allowed)
@@ -2398,7 +2398,7 @@ public static partial class Engine
             if (allowed.Any(allowedValue => string.Equals(allowedValue, value, StringComparison.OrdinalIgnoreCase)))
                 return;
 
-            errors.Add(name + " must be one of [" + string.Join(", ", allowed) + "], got '" + value + "'");
+            errors.Add($"{name} must be one of [{string.Join(", ", allowed)}], got '{value}'");
         }
 
         private static void ValidateEnvPositiveDouble(List<string> errors, string name)
@@ -2410,7 +2410,7 @@ public static partial class Engine
             if (TryParsePositiveDouble(raw) is not null)
                 return;
 
-            errors.Add(name + " must be a positive number, got '" + raw.Trim() + "'");
+            errors.Add($"{name} must be a positive number, got '{raw.Trim()}'");
         }
 
         private static bool IsEnvFlagEnabled(string name)

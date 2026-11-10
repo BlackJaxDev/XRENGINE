@@ -517,7 +517,7 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
             _referenceReport = null;
             _loadedReferenceKey = referenceKey;
             _referenceLoadFailed = true;
-            Debug.LogWarning("[HumanoidPoseAuditOverlay] Failed to load reference report '" + referenceKey + "': " + ex.Message, this);
+            Debug.LogWarning($"[HumanoidPoseAuditOverlay] Failed to load reference report '{referenceKey}': {ex.Message}", this);
         }
 
         return _referenceReport;

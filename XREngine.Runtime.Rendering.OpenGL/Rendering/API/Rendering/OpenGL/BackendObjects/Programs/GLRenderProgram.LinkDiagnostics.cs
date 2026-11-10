@@ -234,13 +234,13 @@ namespace XREngine.Rendering.OpenGL
                 string result = success ? "READY" : "FAILED";
                 string programDebugName = GetProgramDebugName();
                 string descriptorKey = GetProgramDescriptorLogKey();
+                string failureSuffix = string.IsNullOrWhiteSpace(failureReason) ? "." : $" failure='{failureReason}'.";
                 Debug.OpenGL(
                     $"[ShaderBackend] {result} program='{programDebugName}' hash={Hash} " +
                     $"backend={_activeBuildBackend ?? "<unknown>"} fingerprint={_activeBuildFingerprint ?? "<none>"} " +
                     $"descriptor={descriptorKey} handleSource={GetCurrentHandleSourceLabel()} " +
                     $"queueMs={queueLatencyMilliseconds:F2} compileMs={compileMilliseconds:F2} linkMs={linkMilliseconds:F2} " +
-                    $"binaryMs={binaryLoadMilliseconds:F2} reflectionMs={reflectionMilliseconds:F2}" +
-                    (string.IsNullOrWhiteSpace(failureReason) ? "." : $" failure='{failureReason}'."));
+                    $"binaryMs={binaryLoadMilliseconds:F2} reflectionMs={reflectionMilliseconds:F2}{failureSuffix}");
                 LogSlowLinkShaderSources(linkMilliseconds, result, failureReason);
                 if (ShouldLogRenderingShaderLinkVerbose())
                 {
@@ -286,13 +286,13 @@ namespace XREngine.Rendering.OpenGL
                 string fingerprint = _activeBuildFingerprint ?? "<none>";
                 int shaderCount = inputs is { Length: > 0 } ? inputs.Length : Data.Shaders.Count;
                 ShaderProgramSourceSummary sourceSummary = CollectShaderProgramSourceSummary(inputs);
+                string failureSuffix = string.IsNullOrWhiteSpace(failureReason) ? "." : $" failure='{failureReason}'.";
                 Debug.OpenGL(
                     $"[ShaderSlowLink] thresholdMs={SlowShaderLinkSourceDumpMilliseconds:F2} linkMs={linkMilliseconds:F2} " +
                     $"result={result} program='{programName}' hash={Hash} backend={backend} fingerprint={fingerprint} " +
                     $"separable={Data.Separable} hazard={IsKnownAsyncLinkHazard} shaderCount={shaderCount} " +
                     $"shaderTypes={sourceSummary.StageList} sourceBytes={sourceSummary.SourceBytes} sourceLines={sourceSummary.SourceLines} " +
-                    $"sourceLabels={sourceSummary.SourceLabels} dumpSources={DumpSlowShaderSources}" +
-                    (string.IsNullOrWhiteSpace(failureReason) ? "." : $" failure='{failureReason}'."));
+                    $"sourceLabels={sourceSummary.SourceLabels} dumpSources={DumpSlowShaderSources}{failureSuffix}");
 
                 if (!DumpSlowShaderSources)
                     return;

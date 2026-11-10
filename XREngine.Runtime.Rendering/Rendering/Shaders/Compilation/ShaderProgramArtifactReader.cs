@@ -493,7 +493,7 @@ public static class ShaderProgramArtifactReader
     };
 
     private static void CheckLimit(ImmutableDictionary<string, int>.Builder limits, string key, int minimum)
-        => Require(minimum == 0 || limits.TryGetValue(key, out int value) && value >= minimum, "requiredLimits." + key + " must be at least " + minimum);
+        => Require(minimum == 0 || limits.TryGetValue(key, out int value) && value >= minimum, $"requiredLimits.{key} must be at least {minimum}");
     private static bool RelativePath(string value) => value.Length is > 0 and <= 240 && !value.Contains('\\') && !value.StartsWith('/') && !value.Contains(':') && !value.Split('/').Any(part => part is "" or "." or "..");
     private static bool Identifier(string value, bool allowDash = false) => value.Length is > 0 and <= 64 && Regex.IsMatch(value, allowDash ? "^[a-zA-Z_][a-zA-Z0-9_-]*$" : "^[a-zA-Z_][a-zA-Z0-9_]*$", RegexOptions.CultureInvariant);
     private static bool ProviderIdentifier(string value)
