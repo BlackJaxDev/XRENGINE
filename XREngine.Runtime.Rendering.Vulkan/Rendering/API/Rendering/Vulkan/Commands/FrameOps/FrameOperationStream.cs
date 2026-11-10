@@ -941,7 +941,8 @@ internal sealed class FrameOperationStream
         DescriptorSet descriptorSet,
         in VulkanAdvancedNativeComputePipelines pipelines)
     {
-        if (!closure.IsValid || descriptorSet.Handle == 0 || !pipelines.IsCurrent ||
+        if (!closure.IsValid || descriptorSet.Handle == 0 ||
+            !pipelines.IsCurrentFor(closure.UsesMultisampleVisibility) ||
             (uint)index >= (uint)_count ||
             _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
             return false;

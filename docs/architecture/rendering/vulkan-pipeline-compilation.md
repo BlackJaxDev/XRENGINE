@@ -18,15 +18,39 @@ frame-loop rules this serves are in [Frame Loop Design](frame-loop-design.md).
   command buffers dirty when the worker finishes, so the next recording can bind
   the completed pipeline.
 
-Background pipeline workers create pipelines without the shared persistent
-`VkPipelineCache`. Vulkan requires host access to a `VkPipelineCache` to be
-externally synchronized, so using no cache on workers allows parallel
-`vkCreateGraphicsPipelines` calls. The synchronous render-thread fallback still
-uses the active persistent cache.
+Each pipeline manager has one persistent native compile worker. Background
+compilation uses a separate synchronized `VkPipelineCache`. Vulkan requires
+external synchronization for host access to a pipeline cache. Foreground
+requests are promoted in the worker queue; they do not create another native
+compile thread.
 
-Set `XRE_VK_PIPELINE_COMPILE_WORKERS` to override the worker count. Valid values
-are `1` through `16`; when unset, the engine uses up to four workers based on CPU
-count.
+`XRE_VK_PIPELINE_COMPILE_WORKERS` controls queue admission capacity. Valid values
+are `1` through `16`, with a default of `1`. This setting does not create more
+native compile workers.
+
+## Synchronous Shader Asset Loads
+
+`ShaderHelper.LoadEngineShader` loads a missing or pending shader asset inline
+when the host supports synchronous shader work. An import job can hold the
+only high-refresh job permit while a parallel child requests a shader. Waiting
+for another queued asset job in that child would prevent both jobs from
+finishing. The asset manager's path lock and cache coordinate inline and queued
+loads. Hosts that require asynchronous work still require a preloaded shader.
+This rule covers shader asset loading, not native pipeline compilation.
+
+## Background Driver Work Admission
+
+`VulkanPipelineCompileTask` holds a background scheduling slice only while it
+claims a queued item. It releases that slice before calling the driver. A
+native pipeline compile cannot be preempted and can take much longer than a
+frame. Holding the slice during that call would make exact foreground readiness
+wait for unrelated compilation before its own readiness watchdog starts.
+
+The persistent compile worker still serializes its native calls. An atomic
+claim prevents a promoted item from running twice. Foreground admission,
+pipeline dependency leases, cache locks, and device retirement drains retain
+their existing rules. This scheduling change does not make cold pipelines
+ready immediately or change GPU resource lifetime.
 
 ## Depth-Only Graphics Pipelines
 

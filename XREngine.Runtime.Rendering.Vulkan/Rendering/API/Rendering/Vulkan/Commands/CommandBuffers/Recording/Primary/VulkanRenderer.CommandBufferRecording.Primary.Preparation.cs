@@ -1538,6 +1538,7 @@ namespace XREngine.Rendering.Vulkan
                     VulkanAdvancedVisibilityPipelineReadiness nativePipelineReadiness =
                         ResourceRuntime.AdvancedVisibilityPipelines
                             .TryGetNativeComputePipelines(
+                                nativeClosure.UsesMultisampleVisibility,
                                 out VulkanAdvancedNativeComputePipelines nativePipelines,
                                 out string nativePipelineReason);
                     nativePipelineProbe.End(S13aAdvancedFamilyStep.NativePipelineLookup);
@@ -1574,10 +1575,13 @@ namespace XREngine.Rendering.Vulkan
                     }
                     S13aPublicationTelemetry.StepProbe nativeAssociationProbe =
                         S13aPublicationTelemetry.BeginAdvancedFamilyStep();
-                    if (nativePipelines.Shade.UsesAddressRoot &&
-                        nativePipelines.Shade.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion)
+                    VulkanAdvancedComputePipeline selectedShade = nativeClosure.UsesMultisampleVisibility
+                        ? nativePipelines.ShadeMultisample
+                        : nativePipelines.Shade;
+                    if (selectedShade.UsesAddressRoot &&
+                        selectedShade.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion)
                         throw new VulkanPlanPreconditionException("The native shading pipeline root ABI is not supported by this recorder.");
-                    if (nativePipelines.Shade.UsesAddressRoot && request.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
+                    if (selectedShade.UsesAddressRoot && request.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
                         !nativeClosure.ShadingAddressRoot.IsValid)
                     {
                         nativeClosure = nativeClosure with
