@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <XREngineRuntimeContractMode>Contracts</XREngineRuntimeContractMode>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="NUnitLite" Version="4.6.1" />
@@ -14,6 +15,11 @@
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Core/GeneratedRuntimeContractTestRegistration.cs" Link="Core/GeneratedRuntimeContractTestRegistration.cs" />
+    <Compile Include="../Core/RuntimeClosedFormatterGeneratorTests.cs" Link="Core/RuntimeClosedFormatterGeneratorTests.cs" />
+    <Compile Include="../Core/RuntimeClosedFormatterTestContracts.cs" Link="Core/RuntimeClosedFormatterTestContracts.cs" />
+    <Compile Include="../Core/RuntimeMemberAccessGeneratorTests.cs" Link="Core/RuntimeMemberAccessGeneratorTests.cs" />
+    <Compile Include="../Core/RuntimeMemberAccessTarget.cs" Link="Core/RuntimeMemberAccessTarget.cs" />
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />
     <Compile Include="../VR/VrTrackerBinderTests.cs" Link="VR/VrTrackerBinderTests.cs" />
     <Compile Include="../Animation/VRIKAdditionalTargetTests.cs" Link="Animation/VRIKAdditionalTargetTests.cs" />
@@ -49,4 +55,5 @@
     <Compile Include="../Animation/VrBodyMeasurementTests.cs" Link="Animation/VrBodyMeasurementTests.cs" />
     <Compile Include="../Animation/VrCalibrationSessionStoreTests.cs" Link="Animation/VrCalibrationSessionStoreTests.cs" />
   </ItemGroup>
+  <Import Project="../../Build/Registration/RuntimeContracts.props" />
 </Project>

@@ -62,6 +62,10 @@ Keep per-frame paths free of heap allocations unless profiling justifies them. F
 
 Use ASD-STE100 Simplified Technical English: short sentences, active voice, and consistent terms. Keep code identifiers and technical names exact.
 
+- Write for a developer who is learning the subsystem. Explain the concrete operation and why the code needs it. Include the relevant input, output, or state change when it helps the reader follow the data flow. Do not repeat obvious syntax.
+- Method and type names are navigation aids, not explanations. State what the named code does and how its result is used. For registrations, name the actual consumer and explain what the registration supplies to it.
+- Replace vague verbs such as "restores," "handles," or "processes" with the specific actions. For example, write "Reads the saved track data, creates an AnimationClip, and fills its animation members" instead of "Restores the animation."
+- Explain unfamiliar subsystem terms where they matter. Distinguish steps such as identifying a type, creating an object, reading its saved values, and applying those values during playback. Keep comments concise, but do not omit the mechanism or reason merely to make them shorter. Verify claims against the implementation.
 - Start XML summaries with the member's action or responsibility.
 - Explain intent, invariants, ordering, ownership, units, side effects, and input limits when needed. Do not narrate obvious syntax.
 - Use `<see cref="..."/>` for symbol references. Add useful `<param>` and `<returns>` text.
