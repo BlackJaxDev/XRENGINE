@@ -327,7 +327,7 @@ public partial class AdvancedRenderPipeline
     /// publishers, so the backend keeps the captured binding snapshot while the
     /// source texture and lens inputs stay the same.
     /// </summary>
-    private sealed class FinalPostProcessBindingPublisher(AdvancedRenderPipeline owner) : IRenderResourceBindingPublisher
+    private sealed class FinalPostProcessBindingPublisher : IRenderResourceBindingPublisher
     {
         private readonly RenderBindingGenerationTracker<FinalPostProcessBindingKey> _generation = new();
 

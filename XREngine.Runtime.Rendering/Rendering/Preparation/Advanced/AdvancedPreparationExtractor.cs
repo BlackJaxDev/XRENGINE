@@ -63,6 +63,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     private ulong _publicationGeneration;
     private long _visibilityContentGeneration;
     private AdvancedGpuScenePublication _preparedScenePublication;
+    private AdvancedGpuScenePublication _buildScenePublication;
     private RenderFrameViewSet? _lastVisibilityViewSet;
     private GPUScene? _temporalScene;
     private ulong _temporalDatabaseEpoch;
@@ -238,6 +239,31 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         EAdvancedPreparationConsumer consumers,
         EMeshSubmissionStrategy submissionStrategy)
     {
+        AdvancedGpuScenePublicationReference reference = world.GpuScene.AdvancedScenePublication;
+        AdvancedGpuScenePublicationLease lease = default;
+        AdvancedGpuScenePublicationSnapshot? snapshot = null;
+        if (reference.IsValid && world.GpuScene.AdvancedSharedDatabase.TryAcquirePublicationLease(
+                reference, EAdvancedGpuScenePublicationPinKind.Package, out lease))
+            world.GpuScene.AdvancedSharedDatabase.TryGetPublicationSnapshot(reference, out snapshot);
+
+        try
+        {
+            return Build(world, viewSet, consumers, submissionStrategy, reference, snapshot);
+        }
+        finally
+        {
+            lease.Dispose();
+        }
+    }
+
+    internal AdvancedPreparationPublication Build(
+        in RenderWorldSnapshot world,
+        RenderFrameViewSet? viewSet,
+        EAdvancedPreparationConsumer consumers,
+        EMeshSubmissionStrategy submissionStrategy,
+        in AdvancedGpuScenePublicationReference publicationReference,
+        AdvancedGpuScenePublicationSnapshot? publicationSnapshot)
+    {
         LastExtractionTicks = 0;
         LastIndirectPlanningTicks = 0;
         LastInitialViewPlanningTicks = 0;
@@ -246,6 +272,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         // arrays tied to the preceding world frame.
         AdvanceVisibilityContentGeneration();
         LastDeferralReason = string.Empty;
+        _buildScenePublication = publicationReference.Publication;
         _preparedSceneIdentity = 0u;
         _preparedScenePublication = default;
         _drawCount = 0;
@@ -256,10 +283,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         if (viewSet is RenderFrameViewSet requestedViews)
             EnsureVisibilityPlanCapacity(in requestedViews);
         ulong frameId = world.FrameId;
-        if (!world.GpuScene.AdvancedSharedDatabase.TryGetPublicationSnapshot(
-                world.GpuScene.AdvancedScenePublication,
-                out AdvancedGpuScenePublicationSnapshot publicationSnapshot) ||
-            publicationSnapshot.Submission.Sequence != world.GpuScene.AdvancedScenePublication.Sequence)
+        if (publicationSnapshot is null ||
+            publicationSnapshot.Submission.Sequence != publicationReference.Sequence)
             return CreateDeferredPublication(world, consumers, 0u,
                 "The exact canonical scene publication is unavailable for advanced preparation.");
 
@@ -296,7 +321,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 _deformedArena.PreviousFrameSlot,
                 _deformedArena.VertexCapacity,
                 world.GpuScene,
-                world.GpuScene.AdvancedScenePublication.Publication.DatabaseEpoch,
+                publicationReference.Publication.DatabaseEpoch,
                 deformationSourceGeneration))
         {
             _deformedArena.EndFrame(frameId);
@@ -331,7 +356,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
 
         ResetDeformationOwnersForGeneration(
             world.GpuScene,
-            world.GpuScene.AdvancedScenePublication.Publication);
+            publicationReference.Publication);
         _deformationJobs.BeginFrame();
         BeginAnimationScheduling(frameId, completedValue);
         _visibilityPlanner.BeginFrame(frameId);
@@ -358,7 +383,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 publicationSnapshot,
                 commandIndex,
                 frameId,
-                world.GpuScene.AdvancedScenePublication.Publication.FrameGeneration);
+                publicationReference.Publication.FrameGeneration);
         }
         if (_deformationArenaPending)
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
@@ -430,7 +455,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
 
         _publicationGeneration++;
         _preparedScenePublication =
-            world.GpuScene.AdvancedScenePublication.Publication;
+            publicationReference.Publication;
         _preparedSceneIdentity = unchecked((uint)RuntimeHelpers.GetHashCode(
             world.GpuScene));
         ulong deformedVertices = 0UL;
@@ -1611,7 +1636,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             SceneIdentity: unchecked((uint)RuntimeHelpers.GetHashCode(
                 world.GpuScene)),
             ScenePublication:
-                world.GpuScene.AdvancedScenePublication.Publication,
+                _buildScenePublication,
             DrawCount: 0u,
             DeformationJobCount: 0u,
             DeformationDispatchCount: 0u,

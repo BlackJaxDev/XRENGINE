@@ -262,6 +262,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 world,
                 state.FrameViewSet,
                 pipeline.RequiredPreparationConsumers,
+                ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage,
                 ActivePipelineInstance.ActiveMeshRenderCommands
                     .RenderingBackendReadyPackage.SubmissionResolution.Resolved);
         bool requiresAmbientOcclusion =

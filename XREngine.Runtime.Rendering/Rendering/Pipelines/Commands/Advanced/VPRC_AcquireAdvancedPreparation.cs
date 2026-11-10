@@ -35,6 +35,7 @@ public sealed class VPRC_AcquireAdvancedPreparation : ViewportRenderCommand
             world,
             state.FrameViewSet,
             consumers,
+            ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage,
             ActivePipelineInstance.ActiveMeshRenderCommands
                 .RenderingBackendReadyPackage.SubmissionResolution.Resolved);
     }

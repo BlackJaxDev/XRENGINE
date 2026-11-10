@@ -8,6 +8,19 @@ namespace XREngine.Rendering.Commands;
 
 public sealed partial class AdvancedGpuScenePublisher
 {
+    private readonly Dictionary<XRMaterial, NativeUberLayoutProof> _nativeUberLayoutProofs =
+        new(64, ReferenceEqualityComparer.Instance);
+    private int _nativeUberLayoutFullCheckCount;
+    private int _nativeUberLayoutProofHitCount;
+
+    /// <summary>Gets the full Uber shader checks in the last whole-scene plan.</summary>
+    public int NativeUberLayoutFullCheckCount => _nativeUberLayoutFullCheckCount;
+
+    /// <summary>Gets the retained Uber shader proof hits in the last whole-scene plan.</summary>
+    public int NativeUberLayoutProofHitCount => _nativeUberLayoutProofHitCount;
+
+    /// <summary>Gets the retained Uber material proof count in the last whole-scene plan.</summary>
+    public int NativeUberLayoutProofCount => _nativeUberLayoutProofs.Count;
     private AdvancedGpuSceneCommandTransition[] _plannedCommands = [];
     private AdvancedGpuSceneMaterialTransition[] _plannedMaterials = [];
     private AdvancedGpuMaterialTransitionRequest[] _plannedMaterialRequests = [];
@@ -787,7 +800,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 out MaterialBindingLayout layout,
                 out AdvancedMaterialLayoutTranslation translation,
                 out EAdvancedMaterialRenderStateClass state,
-                out compatibilityReason))
+                out compatibilityReason,
+                this))
             return false;
 
         materialPlanIndex = FindPlannedMaterial(
@@ -1014,6 +1028,104 @@ public sealed partial class AdvancedGpuScenePublisher
            material.Parameter<ShaderFloat>("ParallaxScale") is { Value: > 0.0f } &&
            material.Parameter<ShaderInt>("NormalMapMode") is { Value: 1 };
 
+    /// <summary>Reuses a strict Uber result only inside the current whole-scene plan.</summary>
+    private bool IsNativeUberForCurrentPlan(XRMaterial material)
+    {
+        if (_nativeUberLayoutProofs.TryGetValue(material, out NativeUberLayoutProof cached) &&
+            cached.IsCurrent(material))
+        {
+            ++_nativeUberLayoutProofHitCount;
+            return true;
+        }
+
+        _nativeUberLayoutProofs.Remove(material);
+        NativeUberLayoutProof? candidate = null;
+        XRShader? active = material.GetShader(EShaderType.Fragment);
+        if (active is not null)
+        {
+            bool generated = UberShaderVariantBuilder.IsGeneratedVariant(active);
+            XRShader? canonicalCandidate = active;
+            UberShaderVariantProvenance? provenance = null;
+            bool hasCanonical = !generated ||
+                UberShaderVariantBuilder.TryGetCanonicalShader(active, out canonicalCandidate);
+            bool hasProvenance = !generated ||
+                UberShaderVariantBuilder.TryGetVariantProvenance(active, out provenance);
+            if (hasCanonical && hasProvenance && canonicalCandidate is not null)
+                candidate = NativeUberLayoutProof.Capture(material, active, canonicalCandidate, provenance);
+        }
+
+        ++_nativeUberLayoutFullCheckCount;
+        if (!material.TryGetUberMaterialState(out XRShader? canonical, out _) || canonical is null)
+            return false;
+
+        if (candidate is NativeUberLayoutProof proof &&
+            ReferenceEquals(proof.CanonicalShader, canonical) &&
+            (proof.VariantProvenance is null || proof.VariantProvenance.IsCurrent) &&
+            proof.IsCurrent(material))
+        {
+            _nativeUberLayoutProofs.Add(material, proof);
+        }
+        return true;
+    }
+
+    private readonly record struct NativeUberLayoutProof(
+        XRShader ActiveShader,
+        XRShader CanonicalShader,
+        UberShaderVariantProvenance? VariantProvenance,
+        UberShaderSourceStamp ActiveSource,
+        UberShaderSourceStamp CanonicalSource,
+        ShaderSourceProviderOwner Owner,
+        object? Service,
+        int ServiceVersion,
+        int AssetVersion,
+        long SnippetVersion,
+        long MaterialShaderRevision,
+        long MaterialUberRevision,
+        long ActiveIdentityRevision,
+        long CanonicalIdentityRevision)
+    {
+        internal static NativeUberLayoutProof Capture(
+            XRMaterial material, XRShader active, XRShader canonical, UberShaderVariantProvenance? provenance)
+        {
+            IRuntimeShaderServices? service = RuntimeShaderServices.Current;
+            return new(active, canonical, provenance,
+                UberShaderSourceStamp.Capture(active), UberShaderSourceStamp.Capture(canonical),
+                ShaderSourceResolver.CaptureOwner(), service, RuntimeShaderServices.ServiceVersion,
+                service?.ShaderAssetCacheVersion ?? 0, ShaderSourceResolver.RegisteredSnippetVersion,
+                material.ShaderStateRevision, material.UberStateRevision,
+                active.SourceIdentityRevision, canonical.SourceIdentityRevision);
+        }
+
+        internal bool IsCurrent(XRMaterial material)
+        {
+            if (material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 ||
+                material.ShaderStateRevision != MaterialShaderRevision ||
+                material.UberStateRevision != MaterialUberRevision ||
+                !ReferenceEquals(material.GetShader(EShaderType.Fragment), ActiveShader) ||
+                !ActiveSource.IsCurrent || !CanonicalSource.IsCurrent ||
+                ActiveShader.SourceIdentityRevision != ActiveIdentityRevision ||
+                CanonicalShader.SourceIdentityRevision != CanonicalIdentityRevision ||
+                !Owner.Equals(ShaderSourceResolver.CaptureOwner()) ||
+                !ReferenceEquals(Service, RuntimeShaderServices.Current) ||
+                ServiceVersion != RuntimeShaderServices.ServiceVersion ||
+                AssetVersion != (RuntimeShaderServices.Current?.ShaderAssetCacheVersion ?? 0) ||
+                SnippetVersion != ShaderSourceResolver.RegisteredSnippetVersion)
+                return false;
+
+            if (!UberShaderVariantBuilder.IsGeneratedVariant(ActiveShader))
+                return ReferenceEquals(ActiveShader, CanonicalShader);
+            return VariantProvenance is not null &&
+                VariantProvenance.Canonical.IsCurrent &&
+                VariantProvenance.Variant.IsCurrent &&
+                VariantProvenance.Owner.Equals(Owner) &&
+                VariantProvenance.SnippetVersion == SnippetVersion &&
+                UberShaderVariantBuilder.TryGetVariantProvenance(ActiveShader, out UberShaderVariantProvenance? provenance) &&
+                ReferenceEquals(provenance, VariantProvenance) &&
+                UberShaderVariantBuilder.TryGetCanonicalShader(ActiveShader, out XRShader? canonical) &&
+                ReferenceEquals(canonical, CanonicalShader);
+        }
+    }
+
     /// <summary>
     /// Selects the canonical layout, coverage, and state class of one command.
     /// Uses the command row and current material state for both publication
@@ -1025,7 +1137,8 @@ public sealed partial class AdvancedGpuScenePublisher
         out MaterialBindingLayout layout,
         out AdvancedMaterialLayoutTranslation translation,
         out EAdvancedMaterialRenderStateClass state,
-        out EAdvancedCanonicalCompatibilityReason compatibilityReason)
+        out EAdvancedCanonicalCompatibilityReason compatibilityReason,
+        AdvancedGpuScenePublisher? planPublisher = null)
     {
         translation = default;
         state = EAdvancedMaterialRenderStateClass.Invalid;
@@ -1065,7 +1178,9 @@ public sealed partial class AdvancedGpuScenePublisher
         }
 
         bool nativeUber = material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
-            material.TryGetUberMaterialState(out _, out _);
+            (planPublisher is null
+                ? material.TryGetUberMaterialState(out _, out _)
+                : planPublisher.IsNativeUberForCurrentPlan(material));
         if (nativeUber)
         {
             bool masked = command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested ||

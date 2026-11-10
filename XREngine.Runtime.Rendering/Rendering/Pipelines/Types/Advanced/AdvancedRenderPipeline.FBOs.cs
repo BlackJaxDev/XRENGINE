@@ -220,7 +220,7 @@ public partial class AdvancedRenderPipeline
             Name = FinalPostProcessFBOName
         };
         if (UseTypedPostProcessPublishers)
-            fbo.FullScreenMesh.BindingPublishers.Add(new FinalPostProcessBindingPublisher(this));
+            fbo.FullScreenMesh.BindingPublishers.Add(new FinalPostProcessBindingPublisher());
         else
             fbo.SettingUniforms += ApplyFinalPostProcessProgramBindings;
         return fbo;
