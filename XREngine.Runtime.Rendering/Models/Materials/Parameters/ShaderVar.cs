@@ -133,15 +133,12 @@ namespace XREngine.Rendering.Models.Materials
         /// Ex: layout (location = 0) uniform float potato;
         /// </summary>
         internal string GetUniformDeclaration(int bindingLocation = -1)
-        {
-            string line = "";
-            if (bindingLocation >= 0)
-                line = string.Format("layout (location = {0}) ", bindingLocation);
-            return line + string.Format("uniform {0};", GetDeclaration());
-        }
+            => bindingLocation >= 0
+                ? $"layout (location = {bindingLocation}) uniform {GetDeclaration()};"
+                : $"uniform {GetDeclaration()};";
 
         internal string GetDeclaration()
-            => string.Format("{0} {1}", TypeName.ToString()[1..], Name);
+            => $"{TypeName.ToString()[1..]} {Name}";
 
         internal abstract string GetShaderValueString();
         /// <summary>

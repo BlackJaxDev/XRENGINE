@@ -1676,7 +1676,7 @@ internal static class NativeFbxSceneImporter
     private static TextureType MapTextureType(string? propertyName, FbxSceneObject textureObject, string filePath)
     {
         string basis = propertyName ?? textureObject.DisplayName;
-        basis = basis + " " + Path.GetFileNameWithoutExtension(filePath);
+        basis = $"{basis} {Path.GetFileNameWithoutExtension(filePath)}";
 
         return basis.ToLowerInvariant() switch
         {

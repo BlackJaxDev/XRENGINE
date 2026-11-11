@@ -300,8 +300,7 @@ namespace XREngine.Rendering.OpenGL
                 Debug.OpenGL(
                     $"[ShaderSourceDump] BEGIN reason=slow-link thresholdMs={SlowShaderLinkSourceDumpMilliseconds:F2} " +
                     $"linkMs={linkMilliseconds:F2} result={result} program='{programName}' hash={Hash} backend={backend} " +
-                    $"fingerprint={fingerprint} separable={Data.Separable} hazard={IsKnownAsyncLinkHazard} shaderCount={shaderCount}" +
-                    (string.IsNullOrWhiteSpace(failureReason) ? "." : $" failure='{failureReason}'."));
+                    $"fingerprint={fingerprint} separable={Data.Separable} hazard={IsKnownAsyncLinkHazard} shaderCount={shaderCount}{(string.IsNullOrWhiteSpace(failureReason) ? "." : $" failure='{failureReason}'.")}");
 
                 if (inputs is { Length: > 0 })
                 {
@@ -326,8 +325,7 @@ namespace XREngine.Rendering.OpenGL
                 source ??= string.Empty;
                 Debug.OpenGL(
                     $"[ShaderSourceDump] SOURCE_BEGIN index={index} count={count} stage={stage} " +
-                    $"bytes={CountUtf8Bytes(source)} lines={CountLines(source)}{Environment.NewLine}" +
-                    source +
+                    $"bytes={CountUtf8Bytes(source)} lines={CountLines(source)}{Environment.NewLine}{source}" +
                     $"{Environment.NewLine}[ShaderSourceDump] SOURCE_END index={index} stage={stage}.");
             }
 

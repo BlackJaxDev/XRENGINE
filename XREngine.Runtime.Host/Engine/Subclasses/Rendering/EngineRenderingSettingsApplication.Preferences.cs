@@ -686,30 +686,16 @@ namespace XREngine
                     : (renderer?.MeshletDispatchUnsupportedReason ?? "No active renderer");
                 string dispatchPath = meshSubmissionStrategy.ToString();
 
-                string fingerprint = string.Format(
-                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) MeshStrategy={5} ForceMeshStrategy={6} ZeroReadbackDrawPath={7} GpuBvh={8}(strategy-driven) Occlusion={9}->{10} SortPolicy={11} QueueOverlap={12}(requested={13}) ImGui={14} DrawIndirectCountExt={15} MeshletDialect={16} MeshletDirectTaskDispatch={17} MeshletIndirectCountDispatch={18} MeshletDispatch={19} MeshletFallbackReason={20} DispatchPath={21}",
-                    configuredProfile,
-                    activeProfile,
-                    effectiveComputePasses,
-                    effectiveGpuDispatch,
-                    requestedGpuDispatch,
-                    meshSubmissionStrategy,
-                    Engine.EffectiveSettings.ForceMeshSubmissionStrategy?.ToString() ?? "<auto>",
-                    zeroReadbackDrawPath,
-                    effectiveGpuBvh,
-                    requestedOcclusion,
-                    effectiveOcclusion,
-                    sortPolicy,
-                    effectiveQueueOverlap,
-                    requestedQueueOverlap,
-                    effectiveImGui,
-                    supportsIndirectCount,
-                    meshShaderDialect,
-                    supportsDirectMeshTaskDispatch,
-                    supportsIndirectCountMeshTaskDispatch,
-                    supportsMeshletDispatch,
-                    meshletFallbackReason,
-                    dispatchPath);
+                string forceMeshStrategy = Engine.EffectiveSettings.ForceMeshSubmissionStrategy?.ToString() ?? "<auto>";
+                string fingerprint =
+                    $"[VulkanProfile] Configured={configuredProfile} Active={activeProfile} ComputePasses={effectiveComputePasses} " +
+                    $"GpuDispatch={effectiveGpuDispatch}(requested={requestedGpuDispatch}) MeshStrategy={meshSubmissionStrategy} " +
+                    $"ForceMeshStrategy={forceMeshStrategy} ZeroReadbackDrawPath={zeroReadbackDrawPath} " +
+                    $"GpuBvh={effectiveGpuBvh}(strategy-driven) Occlusion={requestedOcclusion}->{effectiveOcclusion} " +
+                    $"SortPolicy={sortPolicy} QueueOverlap={effectiveQueueOverlap}(requested={requestedQueueOverlap}) " +
+                    $"ImGui={effectiveImGui} DrawIndirectCountExt={supportsIndirectCount} MeshletDialect={meshShaderDialect} " +
+                    $"MeshletDirectTaskDispatch={supportsDirectMeshTaskDispatch} MeshletIndirectCountDispatch={supportsIndirectCountMeshTaskDispatch} " +
+                    $"MeshletDispatch={supportsMeshletDispatch} MeshletFallbackReason={meshletFallbackReason} DispatchPath={dispatchPath}";
 
                 if (!force && string.Equals(_lastVulkanFeatureFingerprint, fingerprint, StringComparison.Ordinal))
                     return;

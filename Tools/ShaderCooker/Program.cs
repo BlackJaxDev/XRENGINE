@@ -510,11 +510,11 @@ internal static partial class Program
                 if (!unlit && litPlan.SemanticSchemaIdentity == EngineAuthoredTexturedShaderGenerator.Schema)
                     foreach (EngineLitMaterialShaderSource canonical in EngineAuthoredTexturedShaderGenerator.DesktopSources(litPlan.AuthoredTextureFlags))
                         dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot,
-                            EngineAuthoredTexturedShaderGenerator.DesktopStagingDirectory + "/" + canonical.Path))] = canonical.Sha256;
+                            $"{EngineAuthoredTexturedShaderGenerator.DesktopStagingDirectory}/{canonical.Path}"))] = canonical.Sha256;
                 if (!unlit && litPlan.SemanticSchemaIdentity == EngineTexturedAlphaShaderGenerator.Schema)
                     foreach (EngineLitMaterialShaderSource canonical in EngineTexturedAlphaShaderGenerator.RequiredDesktopSources)
                         dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot,
-                            EngineTexturedAlphaShaderGenerator.DesktopStagingDirectory + "/" + canonical.Path))] = canonical.Sha256;
+                            $"{EngineTexturedAlphaShaderGenerator.DesktopStagingDirectory}/{canonical.Path}"))] = canonical.Sha256;
                 sourceMap = new() { ["kind"] = "generated", ["path"] = sourceDependency };
             }
         }
@@ -791,14 +791,14 @@ internal static partial class Program
         if (plan.SemanticSchemaIdentity == EngineAuthoredTexturedShaderGenerator.Schema)
             foreach (EngineLitMaterialShaderSource canonical in EngineAuthoredTexturedShaderGenerator.DesktopSources(plan.AuthoredTextureFlags))
             {
-                byte[] bytes = ReadBounded(ResolveInput(root, EngineAuthoredTexturedShaderGenerator.DesktopStagingDirectory + "/" + canonical.Path), MaxSourceBytes);
+                byte[] bytes = ReadBounded(ResolveInput(root, $"{EngineAuthoredTexturedShaderGenerator.DesktopStagingDirectory}/{canonical.Path}"), MaxSourceBytes);
                 Require(EngineAuthoredTexturedShaderGenerator.NormalizedHash(StrictUtf8.GetString(bytes)) == canonical.Sha256,
                     $"{context}: authored desktop source '{canonical.Path}' differs from its versioned canonical graph.");
             }
         if (plan.SemanticSchemaIdentity == EngineTexturedAlphaShaderGenerator.Schema)
             foreach (EngineLitMaterialShaderSource canonical in EngineTexturedAlphaShaderGenerator.RequiredDesktopSources)
             {
-                byte[] bytes = ReadBounded(ResolveInput(root, EngineTexturedAlphaShaderGenerator.DesktopStagingDirectory + "/" + canonical.Path), MaxSourceBytes);
+                byte[] bytes = ReadBounded(ResolveInput(root, $"{EngineTexturedAlphaShaderGenerator.DesktopStagingDirectory}/{canonical.Path}"), MaxSourceBytes);
                 string actual = EngineTexturedAlphaShaderGenerator.NormalizedHash(StrictUtf8.GetString(bytes));
                 Require(actual == canonical.Sha256,
                     $"{context}: authored desktop source '{canonical.Path}' differs from its versioned canonical graph.");

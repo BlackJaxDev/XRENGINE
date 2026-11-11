@@ -447,7 +447,7 @@ namespace XREngine.Core.Tools
                             result = EvaluateOperation(t1, t2, value1, value2, token);
                             break;
                         default:
-                            throw new Exception(string.Format("Token \"{0}\" not supported.", token));
+                            throw new Exception($"Token \"{token}\" not supported.");
                     }
                     //Push the result back onto the stack
                     stack.Push(result);

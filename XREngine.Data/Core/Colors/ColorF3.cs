@@ -132,7 +132,7 @@ namespace XREngine.Data.Colors
                 left * right.B);
 
         public override readonly string ToString()
-            => string.Format("[R:{0},G:{1},B:{2}]", R, G, B);
+            => $"[R:{R},G:{G},B:{B}]";
 
         public readonly string WriteToString()
             => ToString();

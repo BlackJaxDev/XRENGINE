@@ -10,8 +10,7 @@ internal sealed class VulkanAcceptedFramePlanCapacityException : InvalidOperatio
         string? detail = null)
         : base(
             $"FramePlanCapacityExceeded lane={lane} actual={actualCount} " +
-            $"configured={configuredCapacity} required={actualCount}." +
-            (string.IsNullOrWhiteSpace(detail) ? string.Empty : $" {detail}"))
+            $"configured={configuredCapacity} required={actualCount}.{(string.IsNullOrWhiteSpace(detail) ? string.Empty : $" {detail}")}")
     {
         Lane = lane;
         ConfiguredCapacity = configuredCapacity;

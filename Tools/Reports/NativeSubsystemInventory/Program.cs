@@ -140,7 +140,7 @@ foreach (string project in projectFiles)
             string namespaceName = string.Join(".", namespaceNames);
             string typeName = string.Join("+", containerNames.Append(simpleName +
                 (arity == 0 ? "" : "`" + arity)));
-            string fullName = namespaceName.Length == 0 ? typeName : namespaceName + "." + typeName;
+            string fullName = namespaceName.Length == 0 ? typeName : $"{namespaceName}.{typeName}";
             foreach (string category in matches)
             {
                 var key = (category, fullName);
@@ -240,7 +240,7 @@ WriteJson("native-subsystem-identity.json", new { methodology =
                 : persistedSimpleNames.Contains((x.Category, x.FullName))
                     ? "persisted simple-name candidate" : "not observed" }), evidence });
 
-static string Csv(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
+static string Csv(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
 var csv = new StringBuilder("project,category,file_count\n");
 foreach (CountRow row in counts)
     csv.Append(Csv(row.Project)).Append(',').Append(Csv(row.Category)).Append(',')

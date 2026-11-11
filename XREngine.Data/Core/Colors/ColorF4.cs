@@ -212,6 +212,6 @@ namespace XREngine.Data.Colors
         }
 
         public override readonly string ToString()
-            => string.Format("[R:{0},G:{1},B:{2},A:{3}]", R, G, B, A);
+            => $"[R:{R},G:{G},B:{B},A:{A}]";
     }
 }

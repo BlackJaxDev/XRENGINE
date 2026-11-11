@@ -199,7 +199,7 @@ public sealed partial class WebGpuRendererHost
             [new BrowserColorAttachmentPlan(0, clear: color, store: true, Vector4.Zero)],
             new BrowserDepthStencilAttachmentPlan(-1, clearDepth: depth, depthClearValue: 1));
         int replacement = CreateEngineReplacement(this, ref _engineClearRequests[index], 7,
-            "{\"label\":\"Engine canvas clear\",\"commands\":[{\"type\":\"clear\",\"engineClearValues\":true,\"pass\":" + plan.ToJson() + "}]}");
+            $$"""{"label":"Engine canvas clear","commands":[{"type":"clear","engineClearValues":true,"pass":{{plan.ToJson()}}}]}""");
         _engineClearVariants[index] = replacement;
         SetField(ref _engineClearCommands, replacement, publishNotifications: false);
     }

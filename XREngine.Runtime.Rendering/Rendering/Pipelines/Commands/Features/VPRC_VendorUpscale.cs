@@ -1183,9 +1183,9 @@ void main()
                 return true;
             }
 
-            failureReason = "VR vendor upscale support matrix: " +
-                VrVendorUpscaleSupportMatrix +
-                ". Vendor upscalers are disabled for headset rendering until per-eye/layer dispatch, frame generation ownership, and temporal history isolation are validated.";
+            failureReason =
+                $"VR vendor upscale support matrix: {VrVendorUpscaleSupportMatrix}. " +
+                "Vendor upscalers are disabled for headset rendering until per-eye/layer dispatch, frame generation ownership, and temporal history isolation are validated.";
             return false;
         }
 

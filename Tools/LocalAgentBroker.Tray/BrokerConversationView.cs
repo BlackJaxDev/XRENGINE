@@ -256,5 +256,5 @@ internal sealed class BrokerConversationView : UserControl
     private static string FailureText(BrokerHistoryRecord? record)
         => string.IsNullOrWhiteSpace(record?.FailureSummary) ? ""
             : string.IsNullOrWhiteSpace(record.FailureDetail) ? record.FailureSummary
-            : record.FailureSummary + "\n\n" + record.FailureDetail;
+            : $"{record.FailureSummary}\n\n{record.FailureDetail}";
 }

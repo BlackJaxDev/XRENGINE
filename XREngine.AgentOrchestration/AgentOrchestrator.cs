@@ -586,9 +586,7 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
             bool hasPath = !string.IsNullOrWhiteSpace(result.ImagePath);
             result = result with
             {
-                Content = result.Content
-                    + "\n[inline image omitted by broker budget"
-                    + (hasPath ? "; use the evidence path]" : "]"),
+                Content = $"{result.Content}\n[inline image omitted by broker budget{(hasPath ? "; use the evidence path]" : "]")}",
                 ImageDataUri = null,
                 IsError = result.IsError || !hasPath,
                 IsTruncated = true,

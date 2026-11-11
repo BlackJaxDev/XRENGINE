@@ -35,9 +35,9 @@ public sealed class RemoteWorldPackageCache
             || manifest.TotalBytes < 0 || manifest.TotalBytes > _maximumBytes)
             throw new InvalidDataException("The requested immutable package is invalid or exceeds the cache budget.");
         string hash = WorldAssetIdentity.NormalizeHash(manifest.ManifestHash);
-        string target = ContainedPath("objects/" + hash);
-        string incoming = ContainedPath("incoming/" + hash);
-        string leasePath = ContainedPath("leases/" + hash + ".lock");
+        string target = ContainedPath($"objects/{hash}");
+        string incoming = ContainedPath($"incoming/{hash}");
+        string leasePath = ContainedPath($"leases/{hash}.lock");
         Directory.CreateDirectory(Path.GetDirectoryName(leasePath)!);
         FileStream? lease = null;
         // A cross-process cache mutex serializes writers and eviction. Active package leases are separate.
@@ -156,10 +156,10 @@ public sealed class RemoteWorldPackageCache
         {
             if (used + remaining <= _maximumBytes)
                 break;
-            string path = ContainedPath("objects/" + candidate.Name);
+            string path = ContainedPath($"objects/{candidate.Name}");
             try
             {
-                using var unused = new FileStream(ContainedPath("leases/" + candidate.Name + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                using var unused = new FileStream(ContainedPath($"leases/{candidate.Name}.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
                 long bytes = Measure(path);
                 Directory.Delete(path, recursive: true);
                 used -= bytes;

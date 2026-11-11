@@ -105,8 +105,7 @@ public class AgentSwarmRunnerTests
     {
         string[] paths = ["One.cs", "Two.cs", "Three.cs", "Four.cs", "Five.cs"];
         string payload = new('x', 30_000);
-        string plan = "{\"children\":[" + string.Join(',', paths.Select(path =>
-            $"{{\"objective\":\"{path}\",\"paths\":[\"{path}\"],\"role\":\"leaf\"}}")) + "]}";
+        string plan = $$"""{"children":[{{string.Join(',', paths.Select(path => $$"""{"objective":"{{path}}","paths":["{{path}}"],"role":"leaf"}"""))}}]}""";
         var client = new DelegatingModelClient(request => request.Run.Objective == "root"
             ? Response(plan)
             : Response($"{{\"path\":\"{request.Run.Objective}\",\"base_sha256\":\"hash\",\"old_text\":\"alpha\",\"new_text\":\"{payload}\"}}"));

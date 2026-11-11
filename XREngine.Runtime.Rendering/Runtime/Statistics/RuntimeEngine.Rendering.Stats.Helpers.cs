@@ -44,7 +44,7 @@ namespace XREngine
                     if (string.IsNullOrEmpty(existing))
                         return token.Length <= maxLength ? token : token[..maxLength];
 
-                    string appended = existing + " | " + token;
+                    string appended = $"{existing} | {token}";
                     return appended.Length <= maxLength ? appended : appended[..maxLength];
                 }
 

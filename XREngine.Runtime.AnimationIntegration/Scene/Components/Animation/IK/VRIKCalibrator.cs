@@ -103,12 +103,12 @@ namespace XREngine.Components.Animation
                 {
                     TransformBase? bone = GetSlotBone(ik.Humanoid, slot);
                     if (bone is null)
-                        return VrCalibrationResult.Failure("The avatar has no bone for " + slot + ".");
+                        return VrCalibrationResult.Failure($"The avatar has no bone for {slot}.");
                     bone.RecalculateMatrices(true);
                     targetWorld = bone.WorldMatrix;
                 }
                 if (!VrCalibrationMath.TryCaptureOffset(targetWorld, deviceWorld, out Matrix4x4 offset))
-                    return VrCalibrationResult.Failure(slot + " has a singular or non-finite capture transform.");
+                    return VrCalibrationResult.Failure($"{slot} has a singular or non-finite capture transform.");
                 proposals.Add(new(slot, source, offset));
             }
             try

@@ -846,8 +846,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 out ulong rollbackCursor))
         {
             failure = EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
-            reason = "The advanced-scene allocation cursor is unavailable. " +
-                storageArena.DescribeReservedLaneCursorState(frameSlot, EVulkanFrameDataLane.AdvancedSceneStorage) +
+            reason = $"The advanced-scene allocation cursor is unavailable. {storageArena.DescribeReservedLaneCursorState(frameSlot, EVulkanFrameDataLane.AdvancedSceneStorage)}" +
                 $" PublicationGeneration={slot.FrameGeneration} ActiveUses={slot.ActiveUseCount} Entries={slot.EntryCount}";
             return false;
         }

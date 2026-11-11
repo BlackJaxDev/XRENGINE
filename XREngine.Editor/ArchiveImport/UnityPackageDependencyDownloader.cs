@@ -113,7 +113,7 @@ internal static class UnityPackageDependencyDownloader
         string? requested = dependency.Version?.Trim();
         if (requested?.Length == 0)
             requested = null;
-        string selectionPath = Path.Combine(root, HashText(repository.AbsoluteUri + "\n" + packageId) + ".version");
+        string selectionPath = Path.Combine(root, $"{HashText($"{repository.AbsoluteUri}\n{packageId}")}.version");
         RejectReparsePoints(selectionPath);
         if (string.IsNullOrEmpty(requested) && File.Exists(selectionPath))
             requested = File.ReadAllText(selectionPath).Trim();
@@ -313,7 +313,7 @@ internal static class UnityPackageDependencyDownloader
                 throw new InvalidDataException("The VPM archive does not match zipSHA256.");
             ValidateContent(partial, extension);
             File.Move(partial, file);
-            WriteAtomic(metadata, uri.AbsoluteUri + "\n" + hash);
+            WriteAtomic(metadata, $"{uri.AbsoluteUri}\n{hash}");
             return file;
         }
         finally

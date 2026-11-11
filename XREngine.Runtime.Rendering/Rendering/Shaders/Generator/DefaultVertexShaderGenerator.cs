@@ -726,7 +726,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line($"{FinalPositionName}.xyz += _VertexManipulationLocalTranslation;");
                 if (hasNormals)
                     Line($"{FinalPositionName}.xyz += normalize({FinalNormalName}) * _VertexManipulationHeight;");
-                Line("float xreVertexWavePhase = dot(" + FinalPositionName + ".xyz, _VertexWave.xyz) + EngineTime * _VertexWave.w;");
+                Line($"float xreVertexWavePhase = dot({FinalPositionName}.xyz, _VertexWave.xyz) + EngineTime * _VertexWave.w;");
                 if (hasNormals)
                     Line($"{FinalPositionName}.xyz += normalize({FinalNormalName}) * sin(xreVertexWavePhase) * _VertexWave.w;");
                 Line($"{FinalPositionName}.xyz += (inverse({EEngineUniform.ModelMatrix}) * vec4(_VertexManipulationWorldTranslation, 0.0f)).xyz;");

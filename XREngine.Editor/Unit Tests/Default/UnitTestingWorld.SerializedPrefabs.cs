@@ -363,8 +363,7 @@ public static partial class EditorUnitTests
                 {
                     failures.Add(
                         $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' did not convert to the " +
-                        $"native Uber shader (outcome: {report.Outcome}). " +
-                        string.Join(" ", report.Failures.Count > 0 ? report.Failures : report.Warnings));
+                        $"native Uber shader (outcome: {report.Outcome}). {string.Join(" ", report.Failures.Count > 0 ? report.Failures : report.Warnings)}");
                     continue;
                 }
 

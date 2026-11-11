@@ -172,7 +172,7 @@ public static class Program
             ControlPlaneResult<ReserveManagedAdmissionResult> result = registry.ReserveAdmission(new()
             {
                 InstanceId = id, AccountId = user.UserId, ClientId = request.ClientId,
-                IdempotencyKey = user.UserId + ":" + request.OperationId, BuildVersion = request.BuildVersion,
+                IdempotencyKey = $"{user.UserId}:{request.OperationId}", BuildVersion = request.BuildVersion,
             });
             return result.Success && result.Value is not null
                 ? Results.Json(result.Value.Reservation, statusCode: StatusCodes.Status202Accepted) : Failure(result);

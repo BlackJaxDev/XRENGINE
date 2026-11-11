@@ -25,7 +25,7 @@ internal static class RealtimeWebSocketUpgrade
         if (count == bytes.Length)
             throw new InvalidDataException("Realtime upgrade headers exceed the limit.");
         string[] lines = Encoding.ASCII.GetString(bytes, 0, count).Split("\r\n", StringSplitOptions.None);
-        if (lines[0] != "GET " + RealtimeWebSocketProtocol.Path + " HTTP/1.1")
+        if (lines[0] != $"GET {RealtimeWebSocketProtocol.Path} HTTP/1.1")
             throw new InvalidDataException("Unsupported realtime upgrade route.");
         Dictionary<string, string> headers = new(StringComparer.OrdinalIgnoreCase);
         for (int index = 1; index < lines.Length - 2; index++)

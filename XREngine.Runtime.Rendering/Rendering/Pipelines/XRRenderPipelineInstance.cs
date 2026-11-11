@@ -3634,7 +3634,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             FrameBufferAttachmentDescriptor attachment = attachments[i];
             parts[i] = $"{attachment.Attachment}:{attachment.ResourceName}:mip{attachment.MipLevel}:layer{attachment.LayerIndex}";
         }
-        return "[" + string.Join(",", parts) + "]";
+        return $"[{string.Join(",", parts)}]";
     }
 
     /// <summary>

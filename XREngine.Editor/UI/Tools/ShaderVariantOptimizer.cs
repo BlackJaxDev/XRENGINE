@@ -195,7 +195,7 @@ public sealed partial class ShaderVariantOptimizer : XRBase
     {
         foreach (var pattern in _animatedUniformPatterns)
         {
-            string regex = "^" + Regex.Escape(pattern).Replace("\\*", ".*") + "$";
+            string regex = $"^{Regex.Escape(pattern).Replace("\\*", ".*")}$";
             if (Regex.IsMatch(uniformName, regex, RegexOptions.IgnoreCase))
                 return true;
         }
