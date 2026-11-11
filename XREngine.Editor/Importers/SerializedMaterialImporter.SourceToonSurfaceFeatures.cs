@@ -491,15 +491,32 @@ public static partial class SerializedMaterialImporter
                 GetInt(document, $"{matcapPrefix}MaskUV")));
         }
 
-        MapVector4(document, material, "_Rim2Color", "_Rim2Color", "_Rim2LightColor");
+        bool rim2Enabled = document.TryGetPositive("_EnableRim2Lighting");
+        int rim2Style = GetInt(document, "_Rim2Style");
+        if (rim2Style == 1)
+            MapVector4(document, material, "_Rim2Color", "_Rim2LightColor", "_Rim2Color");
+        else
+            MapVector4(document, material, "_Rim2Color", "_Rim2Color", "_Rim2LightColor");
+
+        float rim2Sharpness = rim2Style == 0
+            ? GetFloat(document, "_Rim2Power", 1.0f)
+            : GetFloat(document, "_Rim2Sharpness", 1.0f);
+        float rim2Intensity = 0.0f;
+        if (rim2Enabled)
+        {
+            rim2Intensity = document.TryGetFloat("_Rim2Intensity", out float authoredRim2Intensity)
+                ? authoredRim2Intensity
+                : GetFloat(document, "_Rim2BlendStrength", 1.0f);
+        }
+
         SetVector4(
             material,
             "_Rim2Params",
             new Vector4(
                 GetFloat(document, "_Rim2Width"),
-                GetFloat(document, "_Rim2Sharpness", 1.0f),
+                rim2Sharpness,
                 GetFloat(document, "_Rim2HideInShadow"),
-                GetFloat(document, "_Rim2Intensity", 1.0f)));
+                rim2Intensity));
     }
 
     private static void BindSourceRimParameters(

@@ -352,7 +352,20 @@ namespace XREngine.Rendering
                     previousFragment, shader, ShaderStateRevision, UberStateRevision, EngineSemantic);
                 SetField(ref _pendingUberShaderTransition, transition, publishNotifications: false, nameof(Shaders));
             }
-            try { Shaders = replacement; }
+            // Cooked-binary reads run post-deserialize hooks inside XRBase.SuppressPropertyNotifications().
+            // In that scope SetField only writes the field, so OnPropertyChanged does not rebuild the
+            // per-stage shader lists or bump ShaderStateRevision. Apply the same change here directly.
+            bool notificationsSuppressed = ArePropertyNotificationsSuppressed;
+            try
+            {
+                Shaders = replacement;
+                if (notificationsSuppressed && ReferenceEquals(Shaders, replacement))
+                {
+                    if (transition is null)
+                        InvalidateEngineSemantic();
+                    ShadersChanged();
+                }
+            }
             finally
             {
                 if (ReferenceEquals(_pendingUberShaderTransition, transition))
@@ -1712,8 +1725,8 @@ namespace XREngine.Rendering
             if (fragmentShader is not null && UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader))
                 return true;
 
-            string? shaderPath = fragmentShader?.Source?.FilePath ?? fragmentShader?.FilePath;
-            return string.Equals(Path.GetFileName(shaderPath), "UberShader.frag", StringComparison.OrdinalIgnoreCase) ||
+            string? shaderPath = fragmentShader is null ? null : ResolveShaderPathOrName(fragmentShader);
+            return HasUberShaderFileName(shaderPath) ||
                    EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 ||
                    UberAuthoredState.Features.Length > 0;
         }

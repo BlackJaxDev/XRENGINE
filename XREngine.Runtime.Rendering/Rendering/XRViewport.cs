@@ -2653,23 +2653,13 @@ namespace XREngine.Rendering
                 using RuntimeTimerFrame.ScopedRenderDeltaOverride renderDeltaScope =
                     PushSceneRenderDeltaScope(consumeSkippedDelta: IsDesktopFacingOutput() && !shadowPass);
 
-                // Visibility-driven compute deformation (skinning/blendshapes).
-                // This runs on the render thread and uses the swapped (rendering) command buffers.
-                // Skip when 3D scene rendering is suppressed, because the stale commands do not
-                // need new skinning. Shadow views and outputs that do not own the deformation
-                // only read the results of the owning output. A two-pass VR eye uses this mono
-                // path, so it passes its eye identity, not the stereo flag.
-                var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-                if (!Suppress3DSceneRendering &&
-                    SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
-                    SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
-
                 LastRenderedTargetFBO = targetFbo;
                 _ = Interlocked.Increment(ref _sceneRenderSequenceId);
                 bool tracksDesktopHistory = !Suppress3DSceneRendering && !shadowPass && IsDesktopFacingOutput();
                 ulong issuedSequence = tracksDesktopHistory
                     ? ConsumeRenderingFrameViewHistorySequence()
                     : 0UL;
+                ulong committedHistorySequence = 0UL;
                 RenderFrameViewDescriptor? frozenDesktopView = null;
                 RenderFrameViewHistoryCandidateToken frozenHistoryCandidate =
                     default;
@@ -2731,6 +2721,29 @@ namespace XREngine.Rendering
                         return false;
                     }
                     frozenDesktopView = capturedView;
+                    RenderFrameViewHistorySnapshot committedSnapshot =
+                        _frameViewHistoryLedger.CaptureSnapshot();
+                    committedHistorySequence = committedSnapshot.CommittedHistoryValid
+                        ? committedSnapshot.CommittedSequence
+                        : 0UL;
+                }
+
+                // Visibility-driven compute deformation (skinning/blendshapes).
+                // Run after history acceptance so rejected frames do not latch cached
+                // deformation outputs, and pass the history ledger sequence so discarded
+                // frames re-dispatch until a frame commits on the GPU.
+                var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+                if (!Suppress3DSceneRendering &&
+                    SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
+                {
+                    using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
+                    {
+                        SkinningPrepassDispatcher.Instance.RunVisible(
+                            activeCommands,
+                            requireCommittedOutput: tracksDesktopHistory && issuedSequence != 0UL,
+                            currentSequence: issuedSequence,
+                            committedSequence: committedHistorySequence);
+                    }
                 }
                 bool recorded;
                 bool outputCompletionAuthoringStarted;

@@ -238,7 +238,7 @@ internal unsafe partial class VkMeshRenderer
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushSkinning"))
 				MeshRenderer.PushBoneMatricesToGPU();
 		}
-		if (Mesh?.HasBlendshapes == true)
+		if (Mesh?.HasBlendshapeDeformation == true)
 		{
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushBlendshapes"))
 				MeshRenderer.PushBlendshapeWeightsToGPU();
@@ -658,7 +658,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (Mesh?.HasSkinning == true)
 			MeshRenderer.PushBoneMatricesToGPU();
-		if (Mesh?.HasBlendshapes == true)
+		if (Mesh?.HasBlendshapeDeformation == true)
 			MeshRenderer.PushBlendshapeWeightsToGPU();
 
 		VulkanPreparedMeshPrimitive primitive0 = default;
@@ -3377,7 +3377,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 		if (Mesh?.HasSkinning == true)
 			return "skinning frame-source descriptors are active";
-		if (Mesh?.HasBlendshapes == true)
+		if (Mesh?.HasBlendshapeDeformation == true)
 			return "blendshape frame-source descriptors are active";
 
 		if (publicationProgram.BindingSchema is not { } bindingSchema)

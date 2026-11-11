@@ -856,7 +856,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             commandBounds.BoundingSphere = instance.BoundsSphere;
             commandBounds.AabbMin = instance.BoundsMin;
             commandBounds.AabbMax = instance.BoundsMax;
-            if (mesh is { HasBlendshapes: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+            if (mesh is { HasBlendshapeDeformation: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
                 visibilityFlags |= EAdvancedVisibilityPreparationFlags.Uncertain | EAdvancedVisibilityPreparationFlags.ConservativeVisible;
         }
         _visibilityCandidates[commandIndex] =

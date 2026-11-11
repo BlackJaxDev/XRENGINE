@@ -94,7 +94,7 @@ public partial class GPUScene
                 if (record.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
                     metadata.Flags |= (uint)GPUIndirectRenderFlags.CpuFallbackOnly;
                 if (mesh.HasSkinning) metadata.Flags |= (uint)GPUIndirectRenderFlags.Skinned;
-                if (mesh.HasBlendshapes) metadata.Flags |= (uint)GPUIndirectRenderFlags.BlendShapes;
+                if (mesh.HasBlendshapeDeformation) metadata.Flags |= (uint)GPUIndirectRenderFlags.BlendShapes;
                 Matrix4x4 currentWorld = record.CurrentWorld;
                 Matrix4x4 previousWorld = record.PreviousWorld;
                 bool unresolvedTransform = record.WorldMatrixIsModelMatrix &&
@@ -122,7 +122,7 @@ public partial class GPUScene
                     SourcePrimitiveCount = Math.Max(1, renderer.Submeshes.Count),
                     SourceBindings = bindings, BillboardMode = material.BillboardMode,
                     AuthoredPrimitiveInstanceCount = renderer.Submeshes.Count == 0 ? 1u : renderer.Submeshes[record.PrimitiveIndex].InstanceCount,
-                    HasSkinning = mesh.HasSkinning, HasBlendshapes = mesh.HasBlendshapes,
+                    HasSkinning = mesh.HasSkinning, HasBlendshapes = mesh.HasBlendshapeDeformation,
                     MeshletPayload = payload, GeometryRevision = mesh.GeometryRevision,
                     PayloadValidationRevision = payload?.ValidationRevision ?? 0,
                     PayloadOwnerGeometryRevision = payload?.OwnerGeometryRevision ?? 0,

@@ -485,7 +485,7 @@ uniform vec4 _Rim2Color;
 uniform sampler2D _Rim2Mask;
 //@property(name="_Rim2Mask_ST", display="Rim 2 Mask Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
 uniform vec4 _Rim2Mask_ST;
-//@property(name="_Rim2Params", display="Rim 2 Params", mode=static, default="vec4(0.5, 1.0, 0.0, 1.0)")
+//@property(name="_Rim2Params", display="Rim 2 Params", mode=static, default="vec4(0.5, 1.0, 0.0, 0.0)")
 uniform vec4 _Rim2Params;
 //@property(name="_DepthRimColor", display="Depth Rim Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _DepthRimColor;

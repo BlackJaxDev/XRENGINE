@@ -180,25 +180,32 @@ void main()
         ellipseOffset.x * sqrt(majorVariance) * majorAxis +
         ellipseOffset.y * sqrt(minorVariance) * minorAxis;
 
-    // Map screen pixel offset back onto the splat's two tangent axes so UV0 and world
-    // position vary smoothly across the quad interior with exact screen-space derivatives.
-    mat2 tangentToPixel = mat2(vec2(tx.x, ty.x), vec2(tx.y, ty.y));
-    float det = tangentToPixel[0][0] * tangentToPixel[1][1] - tangentToPixel[1][0] * tangentToPixel[0][1];
-    vec2 tangentSigmaStep = vec2(0.0);
-    if (abs(det) > 1.0e-4)
+    // Map screen pixel offset back onto the splat's unit-meter tangent axes so UV0 and world
+    // position keep continuous screen-space derivatives without underflowing on dense micro-splats.
+    mat3 unitTangentAxes = mat3(modelView) * localRot;
+    vec3 ux = jacobianX * unitTangentAxes;
+    vec3 uy = jacobianY * unitTangentAxes;
+    mat2 meterToPixel = mat2(vec2(ux.x, uy.x), vec2(ux.y, uy.y));
+    float det = meterToPixel[0][0] * meterToPixel[1][1] - meterToPixel[1][0] * meterToPixel[0][1];
+    vec2 rawWorldTangentOffset = vec2(0.0);
+    if (abs(det) > 1.0e-2)
     {
-        mat2 pixelToTangent = mat2(
-            tangentToPixel[1][1], -tangentToPixel[0][1],
-            -tangentToPixel[1][0], tangentToPixel[0][0]) * (1.0 / det);
-        tangentSigmaStep = clamp(pixelToTangent * pixelOffset, vec2(-QuadExtentSigma), vec2(QuadExtentSigma));
+        mat2 pixelToMeter = mat2(
+            meterToPixel[1][1], -meterToPixel[0][1],
+            -meterToPixel[1][0], meterToPixel[0][0]) * (1.0 / det);
+        rawWorldTangentOffset = pixelToMeter * pixelOffset;
     }
 
-    vec2 worldTangentOffset = tangentSigmaStep * sigma.xy;
-    vec3 worldOffset = normalize(worldRot[0]) * worldTangentOffset.x + normalize(worldRot[1]) * worldTangentOffset.y;
+    vec2 maxPosOffset = sigma.xy * QuadExtentSigma;
+    vec2 posTangentOffset = clamp(rawWorldTangentOffset, -maxPosOffset, maxPosOffset);
+    vec2 maxUvOffset = max(sigma.xy * 8.0, vec2(0.02));
+    vec2 uvTangentOffset = clamp(rawWorldTangentOffset, -maxUvOffset, maxUvOffset);
+
+    vec3 worldOffset = normalize(worldRot[0]) * posTangentOffset.x + normalize(worldRot[1]) * posTangentOffset.y;
     vec3 worldSamplePos = worldCenter + worldOffset;
     vec2 uv0 = surface.uv0Uv1.xy
-        + surface.dUv0LocalXY.xy * worldTangentOffset.x
-        + surface.dUv0LocalXY.zw * worldTangentOffset.y;
+        + surface.dUv0LocalXY.xy * uvTangentOffset.x
+        + surface.dUv0LocalXY.zw * uvTangentOffset.y;
 
     vec4 viewTangent = ViewMatrix_VTX * vec4(worldSamplePos, 1.0);
     viewTangent.z = min(viewTangent.z - uDepthBiasMeters, -1.0e-4);

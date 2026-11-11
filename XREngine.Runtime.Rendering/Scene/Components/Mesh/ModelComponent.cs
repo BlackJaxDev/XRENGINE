@@ -244,6 +244,26 @@ namespace XREngine.Components.Scene.Mesh
                         long generation = _runtimeMeshRebuildGeneration;
                         Model? model = Model;
                         SubMesh[] sources = model is null ? [] : [.. model.Meshes];
+                        Dictionary<SubMesh, XRMaterial>? preservedOverridesBySource = null;
+                        if (!_meshLinks.IsEmpty)
+                        {
+                            foreach ((SubMesh linkedSource, RenderableMesh linkedMesh) in _meshLinks)
+                            {
+                                if (linkedMesh.MaterialOverride is { } materialOverride)
+                                    (preservedOverridesBySource ??= new(ReferenceEqualityComparer.Instance))[linkedSource] = materialOverride;
+                            }
+                        }
+                        else if (sources.Length > 0 &&
+                                 Meshes.Count == sources.Length &&
+                                 (_subscribedModel is null || ReferenceEquals(_subscribedModel, model)))
+                        {
+                            for (int slotIndex = 0; slotIndex < sources.Length; slotIndex++)
+                            {
+                                if (Meshes[slotIndex].MaterialOverride is { } materialOverride)
+                                    (preservedOverridesBySource ??= new(ReferenceEqualityComparer.Instance))[sources[slotIndex]] = materialOverride;
+                            }
+                        }
+
                         if (_subscribedModel is not null)
                             UnsubscribeModelMeshEvents(_subscribedModel);
 
@@ -258,6 +278,12 @@ namespace XREngine.Components.Scene.Mesh
                             foreach (SubMesh source in sources)
                             {
                                 RenderableMesh renderable = CreateRenderableMesh(source);
+                                if (preservedOverridesBySource is not null &&
+                                    preservedOverridesBySource.TryGetValue(source, out XRMaterial? preservedOverride))
+                                {
+                                    renderable.MaterialOverride = preservedOverride;
+                                }
+
                                 prepared.Add((source, renderable));
                                 if (!IsCurrentModelBuild(model, generation, sources))
                                     break;
@@ -786,6 +812,11 @@ namespace XREngine.Components.Scene.Mesh
                 foreach (RenderableMesh.RenderableLOD lod in mesh.GetLodSnapshot())
                     lod.Renderer.SetBlendshapeWeight((uint)index, percentage);
         }
+
+        /// <summary>
+        /// Applies authored default blendshape weights to all active LOD mesh renderers.
+        /// </summary>
+        public void EnsureDefaultBlendShapeWeightsApplied() => ApplyDefaultBlendShapeWeights();
 
         private void ApplyDefaultBlendShapeWeights()
         {

@@ -47,6 +47,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
     private const uint FallbackSlotFlatNormal2D = 2u;
     private const uint FallbackSlotIdentityRamp2D = 3u;
     private const uint FallbackSlotWhiteCube = 0u;
+    private const uint FallbackSlotBlackCube = 1u;
 
     private static readonly Regex UberUniformDeclarationRegex = new(
         @"\buniform\s+(?:(?:lowp|mediump|highp)\s+)?(bool|int|uint|float|vec2|vec3|vec4)\s+([A-Za-z0-9_]+)\s*[;=]",
@@ -70,6 +71,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
     private readonly XRTexture2D _fallbackFlatNormal2D;
     private readonly XRTexture2D _fallbackIdentityRamp2D;
     private readonly XRTextureCube _fallbackWhiteCube;
+    private readonly XRTextureCube _fallbackBlackCube;
 
     private InternedMaterialEntry? _nullMaterialEntry;
     private XRDataBuffer? _materialsBuffer;
@@ -115,13 +117,15 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
             ETextureImportUsage.Color,
             ETexWrapMode.ClampToEdge,
             pixelBytes: [0, 0, 0, 255, 255, 255, 255, 255]);
-        _fallbackWhiteCube = CreateFallbackWhiteCube();
+        _fallbackWhiteCube = CreateFallbackCube("GaussianSplatFallbackWhiteCube", [255, 255, 255, 255]);
+        _fallbackBlackCube = CreateFallbackCube("GaussianSplatFallbackBlackCube", [0, 0, 0, 0]);
 
         _textures2D.Add(_fallbackWhite2D);
         _textures2D.Add(_fallbackBlack2D);
         _textures2D.Add(_fallbackFlatNormal2D);
         _textures2D.Add(_fallbackIdentityRamp2D);
         _texturesCube.Add(_fallbackWhiteCube);
+        _texturesCube.Add(_fallbackBlackCube);
     }
 
     /// <summary>GPU storage buffer bound to <see cref="MaterialsBinding"/>.</summary>
@@ -139,11 +143,14 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
     /// <summary>Number of interned 2D textures including the four shared fallback textures.</summary>
     public int Texture2DCount => _textures2D.Count;
 
-    /// <summary>True when all streamed 2D textures requested by this table have reached mip-0 residency.</summary>
+    /// <summary>True when all interned textures have been uploaded to the active render backend and streamed 2D textures have reached mip-0 residency.</summary>
     public bool AreStreamedTexturesReady
     {
         get
         {
+            if (!Volatile.Read(ref _fallbackTexturesPushed))
+                return false;
+
             if (_residencyTickets.Count == 0)
                 return true;
 
@@ -200,17 +207,33 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         return created.DenseIndex;
     }
 
-    /// <summary>Uploads the packed material headers, constant words, texture-binding records, and fallback ramp data on first render-thread use.</summary>
+    /// <summary>Uploads the packed material headers, constant words, texture-binding records, and interned textures on first render-thread use.</summary>
     public void EnsureBuffersUploaded()
     {
-        if (!_fallbackTexturesPushed)
+        if (!Volatile.Read(ref _fallbackTexturesPushed))
         {
-            _fallbackTexturesPushed = true;
-            _fallbackWhite2D.PushData();
-            _fallbackBlack2D.PushData();
-            _fallbackFlatNormal2D.PushData();
-            _fallbackIdentityRamp2D.PushData();
-            _fallbackWhiteCube.PushData();
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is not null)
+            {
+                for (int i = 0; i < _textures2D.Count; i++)
+                {
+                    XRTexture2D texture = _textures2D[i];
+                    if (texture.IsApiWrapperPublicationReady)
+                        _ = renderer.GetOrCreateAPIRenderObject(texture, generateNow: true);
+                    if (i < 4 || (texture.Mipmaps is { Length: > 0 } mips && mips[0]?.Data is { Length: > 0 }))
+                        texture.PushData();
+                }
+
+                for (int i = 0; i < _texturesCube.Count; i++)
+                {
+                    XRTextureCube cubemap = _texturesCube[i];
+                    if (cubemap.IsApiWrapperPublicationReady)
+                        _ = renderer.GetOrCreateAPIRenderObject(cubemap, generateNow: true);
+                    cubemap.PushData();
+                }
+
+                Volatile.Write(ref _fallbackTexturesPushed, true);
+            }
         }
 
         if (_materialsBuffer is not null && _materialConstantsBuffer is not null && _textureBindingsBuffer is not null)
@@ -243,12 +266,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
     }
 
     /// <summary>
-    /// Creates the <see cref="XRMaterial"/> for the instanced splat quad draw pass, injecting the exact
-    /// <see cref="NativeUberMaterialSchema"/> and <see cref="AdvancedStandardMaterialShaderContract"/> shader
-    /// defines plus the union of active Uber features across interned avatar materials, and populating all 168 sampler slots.
-    /// </summary>
-    /// <summary>
-    /// Creates an instanced quad <see cref="XRMaterial"/> that shades every splat with its source submesh's
+    /// Creates an instanced quad <see cref="XRMaterial"/> that shades each splat with its source submesh's
     /// <c>NativeUber</c> or <c>Standard</c> material and binds all interned avatar textures.
     /// </summary>
     public XRMaterial CreateUberQuadMaterial()
@@ -358,6 +376,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         TryDestroyAsset(_fallbackFlatNormal2D);
         TryDestroyAsset(_fallbackIdentityRamp2D);
         TryDestroyAsset(_fallbackWhiteCube);
+        TryDestroyAsset(_fallbackBlackCube);
     }
 
     private void LoadUberManifestMetadata()
@@ -401,49 +420,96 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
 
     private InternedMaterialEntry EncodeUberMaterial(XRMaterial material)
     {
-        material.EnsureUberStateInitialized();
-
         MaterialBindingLayout layout = NativeUberMaterialSchema.Opaque;
         int rowWordCount = (int)layout.RowWordCount;
         uint[] words = new uint[rowWordCount];
 
-        // Seed world AO strength and manifest defaults, then overlay serialized ShaderVar parameters
-        // and any explicit static literal overrides from UberAuthoredState.
-        WriteFloat(words, "_WorldAmbientOcclusionStrength", 1.0f);
-        ApplyManifestDefaults(words);
+        bool isCanonicalNativeUber =
+            material.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
+            material.TryGetUberMaterialState(out _, out _);
+        if (!isCanonicalNativeUber &&
+            material.ActiveUberVariant.IsEmpty &&
+            material.RequestedUberVariant.IsEmpty &&
+            material.UberAuthoredState.Features.Length == 0 &&
+            material.Parameters.Length == 0)
+        {
+            material.EnsureUberStateInitialized();
+        }
 
-        uint features = ResolveUberFeatureMask(material);
+        uint features;
+        if (isCanonicalNativeUber)
+        {
+            // Match NativeUberMaterialSourceEncoder.TryEncode directly so canonical NativeUberV1
+            // materials preserve composite source vectors (such as _SourceRimSettings,
+            // _SourceLightSettings, and _SourceMochieSettings) without manifest static-literal overrides.
+            WriteFloat(words, "_WorldAmbientOcclusionStrength", 1.0f);
+            foreach (ShaderVar? parameter in material.Parameters)
+            {
+                if (parameter?.Name is not { } name)
+                    continue;
+                int paramIndex = NativeUberMaterialSchema.ParameterIndex(name);
+                if (paramIndex < 0)
+                    continue;
+
+                Span<uint> dst = words.AsSpan(NativeUberMaterialSchema.ParameterWordOffset(paramIndex), 4);
+                TryWriteCanonicalUberParameter(parameter, dst);
+            }
+
+            features = ResolveCanonicalUberFeatureMask(material);
+        }
+        else
+        {
+            // Non-canonical Uber fallback: seed manifest defaults, authored static literals, and
+            // baked variant properties first, then apply runtime material parameters last.
+            ApplyManifestDefaults(words);
+            WriteFloat(words, "_WorldAmbientOcclusionStrength", 1.0f);
+            WriteFloat(words, "_Cutoff", material.AlphaCutoff);
+
+            UberMaterialPropertyState[] authoredProperties = material.UberAuthoredState.Properties;
+            for (int i = 0; i < authoredProperties.Length; i++)
+            {
+                UberMaterialPropertyState property = authoredProperties[i];
+                if (string.IsNullOrWhiteSpace(property.Name) || string.IsNullOrWhiteSpace(property.StaticLiteral))
+                    continue;
+
+                int paramIndex = NativeUberMaterialSchema.ParameterIndex(property.Name);
+                if (paramIndex < 0)
+                    continue;
+
+                Span<uint> dst = words.AsSpan(NativeUberMaterialSchema.ParameterWordOffset(paramIndex), 4);
+                _ = TryWriteGlslLiteralWords(ResolveParameterGlslType(property.Name), property.StaticLiteral, dst);
+            }
+
+            ApplyBakedStaticProperties(
+                material.RequestedUberVariant.StaticProperties,
+                material.RequestedUberVariant.AnimatedProperties,
+                material,
+                words);
+            ApplyBakedStaticProperties(
+                material.ActiveUberVariant.StaticProperties,
+                material.ActiveUberVariant.AnimatedProperties,
+                material,
+                words);
+
+            foreach (ShaderVar? parameter in material.Parameters)
+            {
+                if (parameter?.Name is not { } name)
+                    continue;
+                int paramIndex = NativeUberMaterialSchema.ParameterIndex(name);
+                if (paramIndex < 0)
+                    continue;
+
+                Span<uint> dst = words.AsSpan(NativeUberMaterialSchema.ParameterWordOffset(paramIndex), 4);
+                WriteParameterWords(parameter, ResolveParameterGlslType(name), dst);
+            }
+
+            features = ResolveUberFeatureMask(material, words, isCanonicalNativeUber: false);
+        }
+
         words[NativeUberMaterialSchema.FeatureWordOffset] = features;
         _activeUberFeatureMask |= features;
 
-        foreach (ShaderVar? parameter in material.Parameters)
-        {
-            if (parameter?.Name is not { } name)
-                continue;
-            int paramIndex = NativeUberMaterialSchema.ParameterIndex(name);
-            if (paramIndex < 0)
-                continue;
-
-            Span<uint> dst = words.AsSpan(NativeUberMaterialSchema.ParameterWordOffset(paramIndex), 4);
-            WriteParameterWords(parameter, ResolveParameterGlslType(name), dst);
-        }
-
-        UberMaterialPropertyState[] authoredProps = material.UberAuthoredState.Properties;
-        for (int i = 0; i < authoredProps.Length; i++)
-        {
-            UberMaterialPropertyState propState = authoredProps[i];
-            if (propState.Mode == EShaderUiPropertyMode.Animated || string.IsNullOrWhiteSpace(propState.StaticLiteral))
-                continue;
-
-            int paramIndex = NativeUberMaterialSchema.ParameterIndex(propState.Name);
-            if (paramIndex < 0)
-                continue;
-
-            Span<uint> dst = words.AsSpan(NativeUberMaterialSchema.ParameterWordOffset(paramIndex), 4);
-            _ = TryWriteGlslLiteralWords(ResolveParameterGlslType(propState.Name), propState.StaticLiteral, dst);
-        }
-
-        uint cullMode = ResolveCullMode(material, words);
+        uint cullMode = ResolveCullMode(material, words, isCanonicalNativeUber);
         ResolveUdimDiscard(words, out ushort udimDiscardMask, out int udimDiscardMode, out int udimDiscardUv);
 
         int roleCount = NativeUberMaterialSchema.TextureRoleCount;
@@ -496,23 +562,188 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         return new InternedMaterialEntry(denseIndex, cullMode, udimDiscardMask, udimDiscardMode, udimDiscardUv);
     }
 
-    private uint ResolveUberFeatureMask(XRMaterial material)
+    private void ApplyBakedStaticProperties(
+        IReadOnlyList<string>? staticProperties,
+        IReadOnlyList<string>? animatedProperties,
+        XRMaterial material,
+        Span<uint> words)
     {
+        if (staticProperties is null || staticProperties.Count == 0)
+            return;
+
+        for (int i = 0; i < staticProperties.Count; i++)
+        {
+            string entry = staticProperties[i];
+            if (string.IsNullOrWhiteSpace(entry))
+                continue;
+
+            int eq = entry.IndexOf('=');
+            if (eq <= 0 || eq >= entry.Length - 1)
+                continue;
+
+            string name = entry[..eq].Trim();
+            if (ContainsString(animatedProperties, name) && HasMaterialParameter(material, name))
+                continue;
+
+            int paramIndex = NativeUberMaterialSchema.ParameterIndex(name);
+            if (paramIndex < 0)
+                continue;
+
+            string literal = entry[(eq + 1)..].Trim();
+            Span<uint> dst = words.Slice(NativeUberMaterialSchema.ParameterWordOffset(paramIndex), 4);
+            _ = TryWriteGlslLiteralWords(ResolveParameterGlslType(name), literal, dst);
+        }
+    }
+
+    private static bool ContainsString(IReadOnlyList<string>? values, string target)
+    {
+        if (values is null)
+            return false;
+
+        for (int i = 0; i < values.Count; i++)
+        {
+            if (string.Equals(values[i], target, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool HasBakedStaticProperty(IReadOnlyList<string>? staticProperties, string propertyName)
+    {
+        if (staticProperties is null || staticProperties.Count == 0)
+            return false;
+
+        for (int i = 0; i < staticProperties.Count; i++)
+        {
+            string entry = staticProperties[i];
+            int eq = entry.IndexOf('=');
+            if (eq > 0 && entry.AsSpan(0, eq).Trim().SequenceEqual(propertyName.AsSpan()))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool HasMaterialParameter(XRMaterial material, string name)
+    {
+        foreach (ShaderVar? parameter in material.Parameters)
+        {
+            if (parameter is not null && string.Equals(parameter.Name, name, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static uint ResolveCanonicalUberFeatureMask(XRMaterial material)
+    {
+        uint features = 0u;
+        UberMaterialFeatureState[] authoredFeatures = material.UberAuthoredState.Features;
+        for (int i = 0; i < authoredFeatures.Length; i++)
+        {
+            UberMaterialFeatureState feature = authoredFeatures[i];
+            if (!feature.Enabled || IsExcludedSplatUberFeature(feature.Id))
+                continue;
+
+            int bit = NativeUberMaterialSchema.FeatureIndex(feature.Id);
+            if (bit >= 0 && bit < 32)
+                features |= 1u << bit;
+        }
+
+        return features;
+    }
+
+    private uint ResolveUberFeatureMask(XRMaterial material, ReadOnlySpan<uint> words, bool isCanonicalNativeUber)
+    {
+        if (material.ActiveUberVariant.EnabledFeatures is { Length: > 0 } activeFeatures)
+            return EncodeFeatureIdList(activeFeatures);
+
+        if (material.RequestedUberVariant.EnabledFeatures is { Length: > 0 } requestedFeatures)
+            return EncodeFeatureIdList(requestedFeatures);
+
+        if (isCanonicalNativeUber && material.UberAuthoredState.Features.Length > 0)
+            return ResolveCanonicalUberFeatureMask(material);
+
         uint features = 0u;
         ReadOnlySpan<string> schemaFeatures = NativeUberMaterialSchema.FeatureIds;
         for (int bit = 0; bit < schemaFeatures.Length && bit < 32; bit++)
         {
             string featureId = schemaFeatures[bit];
-            if (featureId is "render-time" or "forward-ambient-occlusion" or "forward-lighting" or
-                "forward-shadows" or "forward-contact-shadows" or "outline" or "vertex-effects")
+            if (IsExcludedSplatUberFeature(featureId))
                 continue;
 
-            bool defaultEnabled = _uberManifestFeatureDefaults.GetValueOrDefault(featureId, false);
-            if (material.IsUberFeatureEnabled(featureId, defaultEnabled))
+            UberMaterialFeatureState? authored = material.UberAuthoredState.GetFeature(featureId);
+            bool enabled;
+            if (authored is { ExplicitlyAuthored: true })
+            {
+                enabled = authored.Enabled;
+            }
+            else
+            {
+                bool defaultEnabled = authored?.Enabled ?? _uberManifestFeatureDefaults.GetValueOrDefault(featureId, false);
+                enabled = ResolveInferredUberFeature(material, words, featureId, defaultEnabled);
+            }
+
+            if (enabled)
                 features |= 1u << bit;
         }
 
         return features;
+    }
+
+    private static uint EncodeFeatureIdList(IReadOnlyList<string> featureIds)
+    {
+        uint features = 0u;
+        for (int i = 0; i < featureIds.Count; i++)
+        {
+            string featureId = featureIds[i];
+            if (IsExcludedSplatUberFeature(featureId))
+                continue;
+
+            int bit = NativeUberMaterialSchema.FeatureIndex(featureId);
+            if (bit >= 0 && bit < 32)
+                features |= 1u << bit;
+        }
+
+        return features;
+    }
+
+    private static bool IsExcludedSplatUberFeature(string featureId)
+        => featureId is "render-time" or "forward-ambient-occlusion" or "forward-lighting" or
+           "forward-shadows" or "forward-contact-shadows" or "outline" or "vertex-effects";
+
+    private static bool ResolveInferredUberFeature(
+        XRMaterial material,
+        ReadOnlySpan<uint> words,
+        string featureId,
+        bool defaultEnabled)
+    {
+        if (string.Equals(featureId, "alpha-masks", StringComparison.Ordinal))
+            return ReadInt(words, "_MainAlphaMaskMode") > 0 || HasAuthoredSampler(material, "_AlphaMask");
+
+        if (string.Equals(featureId, "normal-map", StringComparison.Ordinal))
+            return IsParameterEnabled(words, "_BumpScale", 1.0e-6f) || HasAuthoredSampler(material, "_BumpMap");
+
+        return defaultEnabled;
+    }
+
+    private static bool HasAuthoredSampler(XRMaterial material, string samplerName)
+    {
+        for (int i = 0; i < material.Textures.Count; i++)
+        {
+            XRTexture? texture = material.Textures[i];
+            if (texture is null ||
+                IsGeneratedPlaceholderTexture(texture, samplerName) ||
+                !string.Equals(texture.ResolveSamplerName(i), samplerName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     private void ApplyManifestDefaults(Span<uint> words)
@@ -601,7 +832,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
                 return CreateTextureBinding(cubeSlot, EAdvancedResourceFallback.Zero);
             }
 
-            return CreateTextureBinding(FallbackSlotWhiteCube, EAdvancedResourceFallback.White);
+            return CreateTextureBinding(FallbackSlotBlackCube, EAdvancedResourceFallback.Zero);
         }
 
         if (authoredTexture is XRTexture2D tex2D)
@@ -638,9 +869,14 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         _textures2D.Add(texture);
         _texture2DSlots.Add(texture, slot);
 
-        ImportedTextureStreamingManager manager = ImportedTextureStreamingManager.Instance;
-        if (manager.TryGetSourceMaxDimension(texture, out _))
+        bool hasHydratedCpuMips = texture.Mipmaps is { Length: > 0 } mips && mips[0]?.Data is { Length: > 4 };
+        if (hasHydratedCpuMips)
         {
+            texture.AllowAutomaticImportedTextureStreaming = false;
+        }
+        else
+        {
+            ImportedTextureStreamingManager manager = ImportedTextureStreamingManager.Instance;
             manager.SetBudgetProfile(ETextureStreamingBudgetProfile.Cutscene);
             TextureResidencyTicket ticket = manager.RequestResidency(
                 texture,
@@ -661,7 +897,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
             return existing;
 
         if (_texturesCube.Count >= MaxTexturesCube)
-            return FallbackSlotWhiteCube;
+            return FallbackSlotBlackCube;
 
         uint slot = (uint)_texturesCube.Count;
         _texturesCube.Add(texture);
@@ -689,10 +925,11 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
             return;
         }
 
-        if (string.Equals(roleName, "_AudioLinkTexture", StringComparison.Ordinal) ||
-            string.Equals(roleName, "_PBRMetallicMaps", StringComparison.Ordinal) ||
+        if (string.Equals(roleName, "_PBRMetallicMaps", StringComparison.Ordinal) ||
             string.Equals(roleName, "_ColorMaskTexture", StringComparison.Ordinal) ||
-            string.Equals(roleName, "_DissolveDetailNoise", StringComparison.Ordinal))
+            string.Equals(roleName, "_DissolveDetailNoise", StringComparison.Ordinal) ||
+            string.Equals(roleName, "_AudioLinkTexture", StringComparison.Ordinal) ||
+            roleName.Contains("Emission", StringComparison.Ordinal))
         {
             fallbackSlot = FallbackSlotBlack2D;
             fallbackKind = EAdvancedResourceFallback.Black;
@@ -724,15 +961,38 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         return unchecked((int)words[NativeUberMaterialSchema.ParameterWordOffset(index)]);
     }
 
-    private static float ReadFloat(ReadOnlySpan<uint> words, string parameterName)
-        => ReadFloatOffset(words, parameterName, 0);
-
-    private static float ReadFloatOffset(ReadOnlySpan<uint> words, string parameterName, int component)
+    private static void TryWriteCanonicalUberParameter(ShaderVar parameter, Span<uint> words)
     {
-        int index = NativeUberMaterialSchema.ParameterIndex(parameterName);
-        if (index < 0)
-            return 0.0f;
-        return BitConverter.UInt32BitsToSingle(words[NativeUberMaterialSchema.ParameterWordOffset(index) + component]);
+        switch (parameter)
+        {
+            case ShaderFloat sf when float.IsFinite(sf.Value):
+                words[0] = BitConverter.SingleToUInt32Bits(sf.Value);
+                break;
+            case ShaderInt si:
+                words[0] = unchecked((uint)si.Value);
+                break;
+            case ShaderUInt sui:
+                words[0] = sui.Value;
+                break;
+            case ShaderBool sb:
+                words[0] = sb.Value ? 1u : 0u;
+                break;
+            case ShaderVector2 sv2 when float.IsFinite(sv2.Value.X) && float.IsFinite(sv2.Value.Y):
+                words[0] = BitConverter.SingleToUInt32Bits(sv2.Value.X);
+                words[1] = BitConverter.SingleToUInt32Bits(sv2.Value.Y);
+                break;
+            case ShaderVector3 sv3 when float.IsFinite(sv3.Value.X) && float.IsFinite(sv3.Value.Y) && float.IsFinite(sv3.Value.Z):
+                words[0] = BitConverter.SingleToUInt32Bits(sv3.Value.X);
+                words[1] = BitConverter.SingleToUInt32Bits(sv3.Value.Y);
+                words[2] = BitConverter.SingleToUInt32Bits(sv3.Value.Z);
+                break;
+            case ShaderVector4 sv4 when float.IsFinite(sv4.Value.X) && float.IsFinite(sv4.Value.Y) && float.IsFinite(sv4.Value.Z) && float.IsFinite(sv4.Value.W):
+                words[0] = BitConverter.SingleToUInt32Bits(sv4.Value.X);
+                words[1] = BitConverter.SingleToUInt32Bits(sv4.Value.Y);
+                words[2] = BitConverter.SingleToUInt32Bits(sv4.Value.Z);
+                words[3] = BitConverter.SingleToUInt32Bits(sv4.Value.W);
+                break;
+        }
     }
 
     private static bool TryWriteGlslLiteralWords(string? glslType, string literal, Span<uint> dst)
@@ -915,7 +1175,8 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
     private static bool IsGeneratedPlaceholderTexture(XRTexture texture, string roleName)
         => string.IsNullOrEmpty(texture.FilePath) &&
            string.Equals(texture.Name, roleName, StringComparison.Ordinal) &&
-           texture is XRTexture2D { Width: <= 2, Height: <= 2 };
+           (texture is XRTexture2D { Width: <= 2, Height: <= 2 } ||
+            texture is XRTextureCube { Extent: <= 2 });
 
     private static bool HasAuthoredStaticLiteral(UberMaterialAuthoredState authoredState, string propertyName)
     {
@@ -929,12 +1190,17 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         return false;
     }
 
-    private static uint ResolveCullMode(XRMaterial material, ReadOnlySpan<uint> words)
+    private static uint ResolveCullMode(XRMaterial material, ReadOnlySpan<uint> words, bool isCanonicalNativeUber)
     {
+        if (isCanonicalNativeUber)
+            return ResolveStandardCullMode(material);
+
         if (NativeUberMaterialSchema.ParameterIndex("_Cull") >= 0 &&
             (material.Parameter<ShaderInt>("_Cull") is not null ||
              material.Parameter<ShaderFloat>("_Cull") is not null ||
-             HasAuthoredStaticLiteral(material.UberAuthoredState, "_Cull")))
+             HasAuthoredStaticLiteral(material.UberAuthoredState, "_Cull") ||
+             HasBakedStaticProperty(material.ActiveUberVariant.StaticProperties, "_Cull") ||
+             HasBakedStaticProperty(material.RequestedUberVariant.StaticProperties, "_Cull")))
         {
             int cull = ReadInt(words, "_Cull");
             return cull switch
@@ -961,6 +1227,23 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         };
     }
 
+    private static bool IsParameterEnabled(ReadOnlySpan<uint> words, string parameterName, float floatThreshold)
+    {
+        int index = NativeUberMaterialSchema.ParameterIndex(parameterName);
+        if (index < 0)
+            return false;
+
+        uint raw = words[NativeUberMaterialSchema.ParameterWordOffset(index)];
+        if (raw == 0u)
+            return false;
+
+        float asFloat = BitConverter.UInt32BitsToSingle(raw);
+        if (float.IsFinite(asFloat) && MathF.Abs(asFloat) <= 1024.0f && MathF.Abs(asFloat) >= 1.0e-6f)
+            return asFloat > floatThreshold;
+
+        return unchecked((int)raw) > 0;
+    }
+
     private static void ResolveUdimDiscard(
         ReadOnlySpan<uint> words,
         out ushort udimDiscardMask,
@@ -971,7 +1254,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         udimDiscardMode = 0;
         udimDiscardUv = 0;
 
-        if (ReadFloat(words, "_UvTileDiscard") <= 0.5f)
+        if (!IsParameterEnabled(words, "_UvTileDiscard", 0.5f))
             return;
 
         udimDiscardMode = ReadInt(words, "_UDIMDiscardMode");
@@ -981,7 +1264,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
             for (int col = 0; col < 4; col++)
             {
                 string cellName = string.Create(CultureInfo.InvariantCulture, $"_UDIMDiscardRow{row}_{col}");
-                if (ReadFloat(words, cellName) > 0.001f)
+                if (IsParameterEnabled(words, cellName, 0.001f))
                     udimDiscardMask |= (ushort)(1 << ((row * 4) + col));
             }
         }
@@ -1051,7 +1334,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         return texture;
     }
 
-    private static XRTextureCube CreateFallbackWhiteCube()
+    private static XRTextureCube CreateFallbackCube(string name, byte[] faceRgba)
     {
         XRTextureCube cube = new(
             1u,
@@ -1061,14 +1344,14 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
             allocateData: true,
             mipCount: 1)
         {
-            Name = "GaussianSplatFallbackWhiteCube",
+            Name = name,
             MagFilter = ETexMagFilter.Linear,
             MinFilter = ETexMinFilter.Linear,
             AutoGenerateMipmaps = false,
             Resizable = false,
         };
         for (int face = 0; face < cube.Mipmaps[0].Sides.Length; face++)
-            cube.Mipmaps[0].Sides[face].Data = new DataSource([255, 255, 255, 255]);
+            cube.Mipmaps[0].Sides[face].Data = new DataSource(faceRgba);
         return cube;
     }
 

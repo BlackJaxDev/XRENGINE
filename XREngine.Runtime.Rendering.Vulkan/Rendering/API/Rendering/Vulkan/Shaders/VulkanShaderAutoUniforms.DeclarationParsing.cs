@@ -213,7 +213,7 @@ internal static partial class VulkanShaderAutoUniforms
         if (count <= 0)
             return [];
 
-        HashSet<uint> usedBindings = CollectLayoutBindings(source);
+        HashSet<uint> usedBindings = CollectLayoutBindings(source, VulkanDescriptorManager.GlobalsSetIndex);
         uint candidate = GetAutoUniformBindingBase(shaderType);
         uint[] bindings = new uint[count];
         for (int index = 0; index < count; index++)

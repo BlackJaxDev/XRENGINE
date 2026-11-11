@@ -8,6 +8,7 @@ using XREngine.Cutscenes;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Editor.Mcp;
+using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Gaussian.Baking;
@@ -16,6 +17,8 @@ using XREngine.Rendering.Models.Gaussian.Baking.Input;
 using XREngine.Rendering.Models.Gaussian.Baking.Motion;
 using XREngine.Rendering.Models.Gaussian.Baking.Surface;
 using XREngine.Rendering.Models.Gaussian.Cache;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Residency;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -45,6 +48,7 @@ public static class RecordSplatCutsceneCommand
     private const string BackendFlag = "--backend";
     private const string FfmpegFlag = "--ffmpeg";
     private const string YawOffsetFlag = "--yaw-offset";
+    private const string TrianglesOnlyFlag = "--triangles-only";
 
     private const int FrameWidth = 1920;
     private const int FrameHeight = 1080;
@@ -55,10 +59,18 @@ public static class RecordSplatCutsceneCommand
     private const string DefaultTitle = "XRENGINE";
     private const string DefaultSubtitle = "GAUSSIAN SPLAT AVATAR  //  CUTSCENE PLAYBACK";
     private const float DefaultDurationSeconds = 8.8f;
-    private const int DefaultFps = 30;
+    private const int DefaultFps = 60;
+    /// <summary>
+    /// Upper frame limit for one cutscene recording. The recorder splits longer runs into capture segments
+    /// because one <see cref="ViewportSequenceCaptureSession"/> accepts at most
+    /// <see cref="ViewportSequenceCaptureOptions.MaximumFrames"/> frames.
+    /// </summary>
+    private const int MaximumCutsceneFrames = 3600;
     private const int ShotCameraCount = 5;
-    private const int WarmupRenderFrames = 45;
+    private const int WarmupRenderFrames = 60;
+    private const int ShotWarmupRenderFrames = 20;
     private const int SettleRenderFramesPerStep = 2;
+    private static readonly float[] ShotWarmupFractions = [0.07f, 0.21f, 0.36f, 0.50f, 0.78f];
     private const int PhysicsSubstepsPerCapturedFrame = 2;
     private const int PhysicsGravitySettleSubsteps = 30;
     private const float PhysicsLeadInWindowSeconds = 0.45f;
@@ -112,18 +124,18 @@ public static class RecordSplatCutsceneCommand
         }
 
         Directory.CreateDirectory(options.OutputDirectory);
-        int totalFrames = Math.Clamp((int)MathF.Round(options.DurationSeconds * options.Fps), 60, ViewportSequenceCaptureOptions.MaximumFrames);
+        int totalFrames = Math.Clamp((int)MathF.Round(options.DurationSeconds * options.Fps), 60, MaximumCutsceneFrames);
         float effectiveDurationSeconds = totalFrames / (float)options.Fps;
 
         string sourceSummary = options.UseLiveAvatarSplats
-            ? $"pak='{options.PakPath}', asset='{options.AssetPath}', clip='{options.ClipName}', splats={options.SplatCount}"
+            ? $"pak='{options.PakPath}', asset='{options.AssetPath}', clip='{options.ClipName}', splats={(options.TrianglesOnly ? 0 : options.SplatCount)}, trianglesOnly={options.TrianglesOnly}"
             : $"cache='{options.CacheAssetPath}'";
         Console.WriteLine(
             $"Recording splat cutscene: {sourceSummary}, output='{options.OutputDirectory}', " +
             $"backend={options.Backend}, frames={totalFrames}, fps={options.Fps}, duration={effectiveDurationSeconds:F2}s.");
 
         int exitCode = 1;
-        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(20));
+        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(90));
 
         void AfterWindowsCreated(GameStartupSettings settings, GameState state)
         {
@@ -191,25 +203,55 @@ public static class RecordSplatCutsceneCommand
             $"framebuffer={window.EffectiveFramebufferSize.X}x{window.EffectiveFramebufferSize.Y}, " +
             $"viewport={viewport.Width}x{viewport.Height}.");
 
-        // Prewarm the default UI font on this background thread before building the scene on the update thread.
+        // Prewarm the default UI font and cooked avatar materials on this worker thread before building the scene
+        // on the update thread, because ShaderSourceResolver blocks synchronous host-file reads on the update thread.
         FontGlyphSet defaultFont = FontGlyphSet.LoadDefaultUIFont();
-
-        CutsceneShotScene? shotScene = null;
-        await RunOnUpdateThreadAsync(() =>
-        {
-            shotScene = BuildCutsceneShotScene(
-                window,
-                viewport,
-                defaultFont,
-                options,
-                durationSeconds);
-        }, cancellationToken).ConfigureAwait(false);
-
-        if (shotScene is null)
-            throw new InvalidOperationException("Failed to construct the cutscene shot scene.");
+        CookedBakeInput? cookedAvatarInput = null;
+        HashSet<XRTexture2D> requestedStreamedTextures = new(ReferenceEqualityComparer.Instance);
+        List<TextureResidencyHandle> residencyHandles = [];
+        IDisposable? cutsceneBudgetLease = options.TrianglesOnly
+            ? TextureResidencyRequests.Shared.AcquireBudgetProfile(ETextureStreamingBudgetProfile.Cutscene)
+            : null;
 
         try
         {
+            if (options.UseLiveAvatarSplats)
+            {
+                XRShader canonicalUberShader = ShaderHelper.UberFragForward();
+                _ = canonicalUberShader.GetUiManifest();
+                cookedAvatarInput = CookedBakeInputLoader.Load(options.PakPath, options.AssetPath, GaussianBakeKind.Avatar);
+                if (cookedAvatarInput.PrefabRoot is { } prewarmPrefabRoot)
+                {
+                    (int totalMaterials, int nativeUberCount, int readyVariants) = PrepareAvatarMaterialsForCapture(
+                        prewarmPrefabRoot,
+                        prepareUberVariants: options.TrianglesOnly,
+                        options.TrianglesOnly ? requestedStreamedTextures : null,
+                        options.TrianglesOnly ? residencyHandles : null);
+                    Console.WriteLine(
+                        $"Prepared cooked avatar materials on worker thread: materials={totalMaterials}, " +
+                        $"nativeUberV1={nativeUberCount}, activeVariants={readyVariants}, streamedTextures={residencyHandles.Count}.");
+                }
+            }
+
+            CutsceneShotScene? shotScene = null;
+            await RunOnUpdateThreadAsync(() =>
+            {
+                shotScene = BuildCutsceneShotScene(
+                    window,
+                    viewport,
+                    defaultFont,
+                    cookedAvatarInput,
+                    options,
+                    durationSeconds,
+                    options.TrianglesOnly ? requestedStreamedTextures : null,
+                    options.TrianglesOnly ? residencyHandles : null);
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (shotScene is null)
+                throw new InvalidOperationException("Failed to construct the cutscene shot scene.");
+
+            try
+            {
             AABB avatarBounds;
             float defaultYawDegrees = 0.0f;
             float forwardClipDuration = durationSeconds;
@@ -272,8 +314,8 @@ public static class RecordSplatCutsceneCommand
                 SeekAndEvaluateCutscene(shotScene, 0.0, captureFrameIndex: 0);
             }, cancellationToken).ConfigureAwait(false);
 
-            // Wait until the GPU splat buffers and initial radix depth sort finish and warm up pipelines.
-            await WaitForWarmupAsync(shotScene, WarmupRenderFrames, cancellationToken).ConfigureAwait(false);
+            // Prewarm GPU buffers, pipelines, and per-shot mesh visibility before capture starts.
+            await WaitForWarmupAsync(viewport, shotScene, WarmupRenderFrames, cancellationToken).ConfigureAwait(false);
 
             // Prepare the sequence capture directory so ViewportSequenceCaptureManager writes into a clean folder.
             string sequenceRootDir = Path.Combine(options.OutputDirectory, "sequence");
@@ -281,125 +323,89 @@ public static class RecordSplatCutsceneCommand
                 Directory.Delete(sequenceRootDir, recursive: true);
             Directory.CreateDirectory(sequenceRootDir);
 
-            if (!ViewportSequenceCaptureOptions.TryCreate(
-                    frameCount: totalFrames,
-                    durationSeconds: null,
-                    frameStride: 1,
-                    captureFramesPerSecond: null,
-                    maxFrames: totalFrames,
-                    outputScale: 1.0,
-                    maxInFlightReadbacks: 4,
-                    overflowPolicy: "drop",
-                    preserveAlpha: false,
-                    createContactSheet: true,
-                    contactSheetColumns: 6,
-                    contactSheetThumbnailWidth: 320,
-                    computeFrameDifferences: true,
-                    outputDirectory: sequenceRootDir,
-                    out ViewportSequenceCaptureOptions? captureOptions,
-                    out string? optionsError) ||
-                captureOptions is null)
-            {
-                throw new InvalidOperationException($"Invalid ViewportSequenceCaptureOptions: {optionsError}");
-            }
-
-            // Step the cutscene timeline in deterministic lockstep with ViewportSequenceCaptureSession.
+            // One capture session accepts at most ViewportSequenceCaptureOptions.MaximumFrames frames and a fixed
+            // pixel budget. Record the cutscene in consecutive segments, keep one global frame index for the
+            // cutscene lockstep, and move every segment frame into one combined frame directory for ffmpeg.
+            string combinedFrameDir = Path.Combine(sequenceRootDir, "frames");
+            Directory.CreateDirectory(combinedFrameDir);
             CutsceneLockstepController lockstep = new(viewport, shotScene, totalFrames, options.Fps);
-            ViewportSequenceCaptureSession? session = null;
-
-            await RunOnUpdateThreadAsync(() =>
+            int segmentCount = (totalFrames + ViewportSequenceCaptureOptions.MaximumFrames - 1) / ViewportSequenceCaptureOptions.MaximumFrames;
+            int completedFrames = 0;
+            for (int segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++)
             {
-                lockstep.Attach();
-                if (!ViewportSequenceCaptureManager.Instance.TryStart(
-                        viewport,
-                        captureOptions,
-                        out session,
-                        out string? startError) ||
-                    session is null)
+                int segmentStart = segmentIndex * ViewportSequenceCaptureOptions.MaximumFrames;
+                int segmentFrames = Math.Min(ViewportSequenceCaptureOptions.MaximumFrames, totalFrames - segmentStart);
+                string segmentRootDir = Path.Combine(sequenceRootDir, $"segment_{segmentIndex:D2}");
+                Directory.CreateDirectory(segmentRootDir);
+
+                ViewportSequenceCaptureSnapshot snapshot = await CaptureSegmentAsync(
+                    viewport,
+                    lockstep,
+                    segmentStart,
+                    segmentFrames,
+                    segmentRootDir,
+                    cancellationToken).ConfigureAwait(false);
+
+                for (int localFrame = 0; localFrame < segmentFrames; localFrame++)
                 {
-                    lockstep.Detach();
-                    throw new InvalidOperationException($"Failed to start ViewportSequenceCaptureSession: {startError}");
+                    string sourceFrame = Path.Combine(snapshot.OutputDirectory, $"frame_{localFrame:D6}.png");
+                    string targetFrame = Path.Combine(combinedFrameDir, $"frame_{segmentStart + localFrame:D6}.png");
+                    File.Move(sourceFrame, targetFrame, overwrite: true);
                 }
 
-                session.ShouldCaptureFrame = lockstep.ShouldCaptureFrame;
-                session.FrameScheduled = lockstep.OnFrameScheduled;
-            }, cancellationToken).ConfigureAwait(false);
-
-            Stopwatch captureWatch = Stopwatch.StartNew();
-            try
-            {
-                while (!session!.IsTerminal)
+                File.Copy(snapshot.ManifestPath, Path.Combine(options.OutputDirectory, $"manifest-segment-{segmentIndex:D2}.json"), overwrite: true);
+                if (!string.IsNullOrWhiteSpace(snapshot.ContactSheetPath) && File.Exists(snapshot.ContactSheetPath))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (captureWatch.Elapsed > TimeSpan.FromMinutes(15))
-                    {
-                        ViewportSequenceCaptureSnapshot timeoutSnapshot = session.CreateSnapshot(includeFrames: false);
-                        throw new TimeoutException(
-                            $"Timed out waiting for ViewportSequenceCapture (scheduled={timeoutSnapshot.ScheduledFrameCount}, " +
-                            $"completed={timeoutSnapshot.CompletedFrameCount}).");
-                    }
-
-                    await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                    File.Copy(
+                        snapshot.ContactSheetPath,
+                        Path.Combine(options.OutputDirectory, segmentCount == 1 ? "contact-sheet.png" : $"contact-sheet-segment-{segmentIndex:D2}.png"),
+                        overwrite: true);
                 }
-            }
-            finally
-            {
-                await RunOnUpdateThreadAsync(lockstep.Detach, CancellationToken.None).ConfigureAwait(false);
+
+                completedFrames += segmentFrames;
             }
 
-            ViewportSequenceCaptureSnapshot snapshot = session.CreateSnapshot(includeFrames: true);
             Console.WriteLine(
-                $"ViewportSequenceCapture finished: state={snapshot.State}, stopReason={snapshot.StopReason}, " +
-                $"scheduled={snapshot.ScheduledFrameCount}, completed={snapshot.CompletedFrameCount}, " +
-                $"failed={snapshot.FailedFrameCount}, outputDir='{snapshot.OutputDirectory}'.");
+                $"Cutscene capture finished: segments={segmentCount}, frames={completedFrames}/{totalFrames}, outputDir='{combinedFrameDir}'.");
 
-            if (!string.Equals(snapshot.State, "completed", StringComparison.OrdinalIgnoreCase) ||
-                snapshot.CompletedFrameCount != totalFrames)
-            {
-                throw new InvalidOperationException(
-                    $"ViewportSequenceCapture did not complete all {totalFrames} frames " +
-                    $"(state={snapshot.State}, completed={snapshot.CompletedFrameCount}, error={snapshot.Error}).");
-            }
-
-            // Copy the manifest, contact sheet, and final hero frame to top-level output paths.
-            string manifestDestPath = Path.Combine(options.OutputDirectory, "manifest.json");
-            File.Copy(snapshot.ManifestPath, manifestDestPath, overwrite: true);
-
-            if (!string.IsNullOrWhiteSpace(snapshot.ContactSheetPath) && File.Exists(snapshot.ContactSheetPath))
-            {
-                string contactSheetDestPath = Path.Combine(options.OutputDirectory, "contact-sheet.png");
-                File.Copy(snapshot.ContactSheetPath, contactSheetDestPath, overwrite: true);
-            }
-
-            string heroFrameSourcePath = Path.Combine(snapshot.OutputDirectory, $"frame_{totalFrames - 1:D6}.png");
+            string heroFrameSourcePath = Path.Combine(combinedFrameDir, $"frame_{totalFrames - 1:D6}.png");
             string heroPosterPath = Path.Combine(options.OutputDirectory, "hero-poster-1080.png");
             File.Copy(heroFrameSourcePath, heroPosterPath, overwrite: true);
 
             string masterVideoPath = Path.Combine(options.OutputDirectory, "cutscene-1080.mp4");
-            await EncodeMp4WithFfmpegAsync(options.FfmpegPath, snapshot.OutputDirectory, options.Fps, masterVideoPath, cancellationToken).ConfigureAwait(false);
+            await EncodeMp4WithFfmpegAsync(options.FfmpegPath, combinedFrameDir, options.Fps, masterVideoPath, cancellationToken).ConfigureAwait(false);
 
             string remoteVideoPath = Path.Combine(options.OutputDirectory, "cutscene-1080-remote.mp4");
             await EncodeRemoteSafeMp4WithFfmpegAsync(
                 options.FfmpegPath,
-                snapshot.OutputDirectory,
+                combinedFrameDir,
                 options.Fps,
                 durationSeconds,
                 remoteVideoPath,
                 cancellationToken).ConfigureAwait(false);
 
-            Console.WriteLine($"Hero poster written to: {heroPosterPath}");
-            Console.WriteLine($"Cutscene video written to: {masterVideoPath}");
-            Console.WriteLine($"Remote-safe cutscene video written to: {remoteVideoPath} ({new FileInfo(remoteVideoPath).Length} bytes)");
-            return 0;
+                Console.WriteLine($"Hero poster written to: {heroPosterPath}");
+                Console.WriteLine($"Cutscene video written to: {masterVideoPath}");
+                Console.WriteLine($"Remote-safe cutscene video written to: {remoteVideoPath} ({new FileInfo(remoteVideoPath).Length} bytes)");
+                return 0;
+            }
+            finally
+            {
+                if (shotScene.MotionChoice is { } motionChoice)
+                {
+                    await RunOnUpdateThreadAsync(
+                        () => BakeMotionSelector.ReleaseTemporaryPlayers(motionChoice),
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+            }
         }
         finally
         {
-            if (shotScene.MotionChoice is { } motionChoice)
-            {
-                await RunOnUpdateThreadAsync(
-                    () => BakeMotionSelector.ReleaseTemporaryPlayers(motionChoice),
-                    CancellationToken.None).ConfigureAwait(false);
-            }
+            for (int i = 0; i < residencyHandles.Count; i++)
+                residencyHandles[i].Dispose();
+            residencyHandles.Clear();
+            requestedStreamedTextures.Clear();
+            cutsceneBudgetLease?.Dispose();
         }
     }
 
@@ -407,8 +413,11 @@ public static class RecordSplatCutsceneCommand
         XRWindow window,
         XRViewport viewport,
         FontGlyphSet font,
+        CookedBakeInput? preloadedAvatarInput,
         CutsceneCommandOptions options,
-        float durationSeconds)
+        float durationSeconds,
+        HashSet<XRTexture2D>? requestedStreamedTextures,
+        List<TextureResidencyHandle>? residencyHandles)
     {
         SceneNode stageNode = GaussianPreviewStage.CreateDefault();
         if (stageNode.Transform is Transform stageTransform)
@@ -426,11 +435,12 @@ public static class RecordSplatCutsceneCommand
 
         if (options.UseLiveAvatarSplats)
         {
-            CookedBakeInput input = CookedBakeInputLoader.Load(options.PakPath, options.AssetPath, GaussianBakeKind.Avatar);
+            CookedBakeInput input = preloadedAvatarInput
+                ?? throw new InvalidOperationException("Live avatar splat capture requires a worker-preloaded CookedBakeInput.");
             avatarPrefabRoot = input.PrefabRoot
                 ?? throw new InvalidOperationException($"The cooked asset '{options.AssetPath}' has no prefab root node.");
 
-            EnsureAvatarRuntimeMeshes(avatarPrefabRoot);
+            EnsureAvatarRuntimeMeshes(avatarPrefabRoot, requestedStreamedTextures, residencyHandles);
 
             List<string> motionWarnings = [];
             motionChoice = BakeMotionSelector.ChooseForPrefab(
@@ -443,13 +453,10 @@ public static class RecordSplatCutsceneCommand
 
             liveAvatarBounds = ComputeAvatarMotionBounds(input, avatarPrefabRoot, motionChoice);
 
-            // Sample dense surface splats and intern all NativeUber / Standard submesh materials in rest pose.
             avatarSplatComponent = avatarNode.AddComponent<GaussianAvatarSplatComponent>("AvatarLiveUberSplats")
                 ?? throw new InvalidOperationException("Failed to add GaussianAvatarSplatComponent.");
-            avatarSplatComponent.InitializeFromAvatar(avatarPrefabRoot, options.SplatCount);
 
             ConfigureAvatarAnimationAndPhysicsChains(avatarPrefabRoot, motionChoice, physicsChains);
-            HideAvatarTriangleMeshes(avatarPrefabRoot);
         }
         else
         {
@@ -540,9 +547,19 @@ public static class RecordSplatCutsceneCommand
 
         if (avatarPrefabRoot is not null)
         {
-            // Keep source ModelComponents active for GPU compute skinning while rejecting triangle draw collection,
-            // and pause automatic world play so lockstep capture advances animation and physics chains deterministically.
-            HideAvatarTriangleMeshes(avatarPrefabRoot);
+            PrepareAvatarMaterialsForCapture(
+                avatarPrefabRoot,
+                prepareUberVariants: false,
+                requestedStreamedTextures,
+                residencyHandles);
+
+            // Sample surface splats after World attachment so ModelComponent has built its final runtime renderers
+            // and applied authored default blendshape weights, then suppress triangle draw collection.
+            if (!options.TrianglesOnly && avatarSplatComponent is not null)
+                avatarSplatComponent.InitializeFromAvatar(avatarPrefabRoot, options.SplatCount);
+
+            if (!options.TrianglesOnly)
+                HideAvatarTriangleMeshes(avatarPrefabRoot);
             runtimeWorld.PausePlay();
         }
 
@@ -594,10 +611,15 @@ public static class RecordSplatCutsceneCommand
             subtitleComponent,
             director,
             durationSeconds,
-            options.YawOffsetDegrees);
+            options.YawOffsetDegrees,
+            options.TrianglesOnly,
+            residencyHandles);
     }
 
-    private static void EnsureAvatarRuntimeMeshes(SceneNode avatarPrefabRoot)
+    private static void EnsureAvatarRuntimeMeshes(
+        SceneNode avatarPrefabRoot,
+        HashSet<XRTexture2D>? requestedStreamedTextures,
+        List<TextureResidencyHandle>? residencyHandles)
     {
         avatarPrefabRoot.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
         avatarPrefabRoot.IterateComponents<RenderableComponent>(component =>
@@ -605,9 +627,130 @@ public static class RecordSplatCutsceneCommand
             if (!BakeMotionSelector.IsEnabled(component, avatarPrefabRoot))
                 return;
 
-            if (component is ModelComponent { Meshes.Count: 0 } modelComponent)
-                modelComponent.RebuildRuntimeMeshes();
+            if (component is ModelComponent modelComponent)
+            {
+                if (modelComponent.Meshes.Count == 0)
+                    modelComponent.RebuildRuntimeMeshes();
+                modelComponent.EnsureDefaultBlendShapeWeightsApplied();
+            }
         }, iterateChildHierarchy: true);
+
+        PrepareAvatarMaterialsForCapture(
+            avatarPrefabRoot,
+            prepareUberVariants: false,
+            requestedStreamedTextures,
+            residencyHandles);
+    }
+
+    private static (int TotalMaterials, int NativeUberCount, int ReadyVariants) PrepareAvatarMaterialsForCapture(
+        SceneNode avatarPrefabRoot,
+        bool prepareUberVariants,
+        HashSet<XRTexture2D>? requestedStreamedTextures = null,
+        List<TextureResidencyHandle>? residencyHandles = null)
+    {
+        HashSet<XRMaterial> visited = new(ReferenceEqualityComparer.Instance);
+        int nativeUberCount = 0;
+        int readyVariants = 0;
+
+        void ProcessMaterial(XRMaterial? material)
+        {
+            if (material is null || !visited.Add(material))
+                return;
+
+            PrepareCaptureMaterial(material, prepareUberVariants, requestedStreamedTextures, residencyHandles);
+            if (material.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1)
+                nativeUberCount++;
+            if (!material.ActiveUberVariant.IsEmpty)
+                readyVariants++;
+        }
+
+        avatarPrefabRoot.IterateComponents<ModelComponent>(modelComponent =>
+        {
+            if (!BakeMotionSelector.IsEnabled(modelComponent, avatarPrefabRoot))
+                return;
+
+            foreach (RenderableMesh renderableMesh in modelComponent.Meshes)
+            {
+                ProcessMaterial(renderableMesh.MaterialOverride);
+                foreach (var lod in renderableMesh.LODs)
+                    ProcessMaterial(lod?.Renderer?.Material);
+            }
+
+            if (modelComponent.Model is { } model)
+            {
+                for (int subMeshIndex = 0; subMeshIndex < model.Meshes.Count; subMeshIndex++)
+                {
+                    var subMesh = model.Meshes[subMeshIndex];
+                    if (subMesh is null)
+                        continue;
+
+                    foreach (var lod in subMesh.LODs)
+                        ProcessMaterial(lod?.Material);
+                }
+            }
+        }, iterateChildHierarchy: true);
+
+        return (visited.Count, nativeUberCount, readyVariants);
+    }
+
+    private static void PrepareCaptureMaterial(
+        XRMaterial? material,
+        bool prepareUberVariants,
+        HashSet<XRTexture2D>? requestedStreamedTextures,
+        List<TextureResidencyHandle>? residencyHandles)
+    {
+        if (material is null)
+            return;
+
+        RequestStreamedMaterialTextureResidency(material, requestedStreamedTextures, residencyHandles);
+
+        if (!RuntimeWorkScheduler.IsCallerThread)
+        {
+            material.EnsureUberStateInitialized();
+            RequestStreamedMaterialTextureResidency(material, requestedStreamedTextures, residencyHandles);
+        }
+
+        // The canonical UberShader.frag compiles with default-off feature modules (matcap, rim lighting, emission,
+        // and more) removed. Triangle rendering freezes current parameter values into a static per-material variant
+        // and prewarms enabled companion passes on the worker thread.
+        if (prepareUberVariants)
+        {
+            material.FreezeUberPropertiesForStaticCapture();
+            material.PrewarmUberPassSetImmediately();
+        }
+    }
+
+    private static void RequestStreamedMaterialTextureResidency(
+        XRMaterial material,
+        HashSet<XRTexture2D>? requestedStreamedTextures,
+        List<TextureResidencyHandle>? residencyHandles)
+    {
+        foreach (XRTexture? texture in material.Textures)
+        {
+            if (texture is not XRTexture2D texture2D)
+                continue;
+
+            texture2D.PreferSynchronousGpuUpload = true;
+            if (requestedStreamedTextures is null || residencyHandles is null)
+                continue;
+
+            bool hasHydratedCpuMips = texture2D.Mipmaps is { Length: > 0 } mips && mips[0]?.Data is { Length: > 4 };
+            if (hasHydratedCpuMips ||
+                (string.IsNullOrWhiteSpace(texture2D.OriginalPath) && string.IsNullOrWhiteSpace(texture2D.FilePath)) ||
+                !requestedStreamedTextures.Add(texture2D))
+            {
+                continue;
+            }
+
+            TextureResidencyHandle? handle = TextureResidencyRequests.Shared.RequestResidency(
+                texture2D,
+                targetMip: 0,
+                deadlineFrame: 0L,
+                priority: JobPriority.Highest,
+                generation: 1);
+            if (handle is not null)
+                residencyHandles.Add(handle);
+        }
     }
 
     private static AABB ComputeAvatarMotionBounds(
@@ -1384,6 +1527,12 @@ public static class RecordSplatCutsceneCommand
 
         shotScene.CameraGroupNode.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
         shotScene.AvatarNode.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+        if (shotScene.AvatarPrefabRoot is { } avatarPrefabRoot)
+        {
+            avatarPrefabRoot.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+            if (shotScene.TrianglesOnly)
+                RefreshAvatarTriangleSkinning(avatarPrefabRoot);
+        }
 
         UICanvasTransform canvasTransform = shotScene.CanvasComponent.CanvasTransform;
         canvasTransform.InvalidateLayout();
@@ -1495,9 +1644,155 @@ public static class RecordSplatCutsceneCommand
         return wrapped >= lengthSeconds ? 0.0f : (float)wrapped;
     }
 
+    /// <summary>
+    /// Records one capture segment: global cutscene frames <paramref name="segmentStart"/> up to
+    /// <paramref name="segmentStart"/> + <paramref name="segmentFrames"/> - 1. The method starts one
+    /// <see cref="ViewportSequenceCaptureSession"/>, attaches the lockstep controller at the segment offset,
+    /// waits until the session ends, and returns the final snapshot. It throws when a frame is missing.
+    /// </summary>
+    private static async Task<ViewportSequenceCaptureSnapshot> CaptureSegmentAsync(
+        XRViewport viewport,
+        CutsceneLockstepController lockstep,
+        int segmentStart,
+        int segmentFrames,
+        string segmentRootDir,
+        CancellationToken cancellationToken)
+    {
+        if (!ViewportSequenceCaptureOptions.TryCreate(
+                frameCount: segmentFrames,
+                durationSeconds: null,
+                frameStride: 1,
+                captureFramesPerSecond: null,
+                maxFrames: segmentFrames,
+                outputScale: 1.0,
+                maxInFlightReadbacks: 4,
+                overflowPolicy: "drop",
+                preserveAlpha: false,
+                createContactSheet: true,
+                contactSheetColumns: 6,
+                contactSheetThumbnailWidth: 320,
+                computeFrameDifferences: true,
+                outputDirectory: segmentRootDir,
+                out ViewportSequenceCaptureOptions? captureOptions,
+                out string? optionsError) ||
+            captureOptions is null)
+        {
+            throw new InvalidOperationException($"Invalid ViewportSequenceCaptureOptions: {optionsError}");
+        }
+
+        ViewportSequenceCaptureSession? session = null;
+        await RunOnUpdateThreadAsync(() =>
+        {
+            lockstep.Attach(segmentStart, segmentFrames);
+            if (!ViewportSequenceCaptureManager.Instance.TryStart(
+                    viewport,
+                    captureOptions,
+                    out session,
+                    out string? startError) ||
+                session is null)
+            {
+                lockstep.Detach();
+                throw new InvalidOperationException($"Failed to start ViewportSequenceCaptureSession: {startError}");
+            }
+
+            session.ShouldCaptureFrame = lockstep.ShouldCaptureFrame;
+            session.FrameScheduled = lockstep.OnFrameScheduled;
+        }, cancellationToken).ConfigureAwait(false);
+
+        Stopwatch captureWatch = Stopwatch.StartNew();
+        try
+        {
+            while (!session!.IsTerminal)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (captureWatch.Elapsed > TimeSpan.FromMinutes(30))
+                {
+                    ViewportSequenceCaptureSnapshot timeoutSnapshot = session.CreateSnapshot(includeFrames: false);
+                    throw new TimeoutException(
+                        $"Timed out waiting for ViewportSequenceCapture segment at frame {segmentStart} " +
+                        $"(scheduled={timeoutSnapshot.ScheduledFrameCount}, completed={timeoutSnapshot.CompletedFrameCount}).");
+                }
+
+                await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            await RunOnUpdateThreadAsync(lockstep.Detach, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        ViewportSequenceCaptureSnapshot snapshot = session.CreateSnapshot(includeFrames: true);
+        Console.WriteLine(
+            $"ViewportSequenceCapture segment finished: start={segmentStart}, state={snapshot.State}, stopReason={snapshot.StopReason}, " +
+            $"scheduled={snapshot.ScheduledFrameCount}, completed={snapshot.CompletedFrameCount}, failed={snapshot.FailedFrameCount}.");
+
+        if (!string.Equals(snapshot.State, "completed", StringComparison.OrdinalIgnoreCase) ||
+            snapshot.CompletedFrameCount != segmentFrames)
+        {
+            throw new InvalidOperationException(
+                $"ViewportSequenceCapture segment at frame {segmentStart} did not complete all {segmentFrames} frames " +
+                $"(state={snapshot.State}, completed={snapshot.CompletedFrameCount}, error={snapshot.Error}).");
+        }
+
+        return snapshot;
+    }
+
+    private static void RefreshAvatarTriangleSkinning(SceneNode avatarPrefabRoot)
+    {
+        avatarPrefabRoot.IterateComponents<ModelComponent>(modelComponent =>
+        {
+            if (!BakeMotionSelector.IsEnabled(modelComponent, avatarPrefabRoot))
+                return;
+
+            foreach (RenderableMesh renderableMesh in modelComponent.Meshes)
+            {
+                foreach (var lod in renderableMesh.LODs)
+                {
+                    XRMeshRenderer? renderer = lod?.Renderer;
+                    if (renderer?.Mesh?.HasSkinning == true && renderer.EnsureSkinningBuffers(logWarnings: false))
+                        renderer.RefreshBoneMatricesFromRenderState();
+                }
+            }
+        }, iterateChildHierarchy: true);
+    }
+
     private static async Task WaitForWarmupAsync(
+        XRViewport viewport,
         CutsceneShotScene shotScene,
         int warmupFrames,
+        CancellationToken cancellationToken)
+    {
+        if (shotScene.TrianglesOnly)
+        {
+            for (int shotIndex = 0; shotIndex < ShotWarmupFractions.Length; shotIndex++)
+            {
+                double shotTimeSeconds = shotScene.DurationSeconds * ShotWarmupFractions[shotIndex];
+                int warmupStepIndex = -(shotIndex + 10);
+                await RunOnUpdateThreadAsync(
+                    () => SeekAndEvaluateCutscene(shotScene, shotTimeSeconds, warmupStepIndex),
+                    cancellationToken).ConfigureAwait(false);
+                await WaitForViewportReadyFramesAsync(viewport, shotScene, ShotWarmupRenderFrames, cancellationToken).ConfigureAwait(false);
+            }
+
+            await RunOnUpdateThreadAsync(() =>
+            {
+                shotScene.LastSteppedCaptureFrame = -1;
+                SeekAndEvaluateCutscene(shotScene, 0.0, captureFrameIndex: 0);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+
+        await WaitForViewportReadyFramesAsync(viewport, shotScene, warmupFrames, cancellationToken).ConfigureAwait(false);
+
+        await RunOnUpdateThreadAsync(() =>
+        {
+            shotScene.LastSteppedCaptureFrame = -1;
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task WaitForViewportReadyFramesAsync(
+        XRViewport viewport,
+        CutsceneShotScene shotScene,
+        int requiredReadyFrames,
         CancellationToken cancellationToken)
     {
         ulong startFrame = RuntimeEngine.Rendering.State.RenderFrameId;
@@ -1507,20 +1802,31 @@ public static class RecordSplatCutsceneCommand
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            bool ready = shotScene.IsGpuDataReady;
+            bool gpuReady = shotScene.IsGpuDataReady;
+            bool readbackReady = false;
+            if (gpuReady && viewport.TryEnterRenderPipelineReadbackScope(out IDisposable? probeScope))
+            {
+                probeScope?.Dispose();
+                readbackReady = true;
+            }
+
             ulong currentFrame = RuntimeEngine.Rendering.State.RenderFrameId;
-            if (ready)
+            if (gpuReady && readbackReady)
             {
                 if (readyStartFrame == 0)
                     readyStartFrame = currentFrame;
-                else if (currentFrame >= readyStartFrame + (ulong)warmupFrames)
+                else if (currentFrame >= readyStartFrame + (ulong)requiredReadyFrames)
                     return;
             }
+            else
+            {
+                readyStartFrame = 0;
+            }
 
-            if (currentFrame > startFrame + 1800)
+            if (currentFrame > startFrame + 3600)
             {
                 throw new TimeoutException(
-                    $"Timed out waiting for Gaussian splat GPU readiness (IsGpuDataReady={ready}).");
+                    $"Timed out waiting for recording viewport readiness (IsGpuDataReady={gpuReady}, ReadbackReady={readbackReady}).");
             }
 
             await Task.Delay(16, cancellationToken).ConfigureAwait(false);
@@ -1808,6 +2114,7 @@ public static class RecordSplatCutsceneCommand
         ERenderLibrary backend = ERenderLibrary.Vulkan;
         string ffmpegPath = "ffmpeg";
         float yawOffsetDegrees = 0.0f;
+        bool trianglesOnly = false;
         error = null;
 
         for (int i = 0; i < args.Count; i++)
@@ -1815,6 +2122,20 @@ public static class RecordSplatCutsceneCommand
             string arg = args[i] ?? string.Empty;
             if (string.Equals(arg, CommandFlag, StringComparison.OrdinalIgnoreCase))
                 continue;
+            if (string.Equals(arg, TrianglesOnlyFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 < args.Count && bool.TryParse(args[i + 1], out bool parsedTrianglesOnly))
+                {
+                    trianglesOnly = parsedTrianglesOnly;
+                    i++;
+                }
+                else
+                {
+                    trianglesOnly = true;
+                }
+
+                continue;
+            }
 
             if (i + 1 >= args.Count)
             {
@@ -1924,7 +2245,8 @@ public static class RecordSplatCutsceneCommand
             fps,
             backend,
             ffmpegPath,
-            yawOffsetDegrees);
+            yawOffsetDegrees,
+            trianglesOnly);
         return true;
     }
 
@@ -1941,7 +2263,8 @@ public static class RecordSplatCutsceneCommand
         int Fps,
         ERenderLibrary Backend,
         string FfmpegPath,
-        float YawOffsetDegrees)
+        float YawOffsetDegrees,
+        bool TrianglesOnly)
     {
         public bool UseLiveAvatarSplats => !string.IsNullOrWhiteSpace(PakPath);
     }
@@ -1991,7 +2314,9 @@ public static class RecordSplatCutsceneCommand
         UITextComponent subtitleComponent,
         CutsceneDirectorComponent director,
         float durationSeconds,
-        float yawOffsetDegrees)
+        float yawOffsetDegrees,
+        bool trianglesOnly,
+        IReadOnlyList<TextureResidencyHandle>? residencyHandles)
     {
         public XRWorld World { get; } = world;
         public RuntimeWorld RuntimeWorld { get; } = runtimeWorld;
@@ -2013,12 +2338,44 @@ public static class RecordSplatCutsceneCommand
         public CutsceneDirectorComponent Director { get; } = director;
         public float DurationSeconds { get; } = durationSeconds;
         public float YawOffsetDegrees { get; } = yawOffsetDegrees;
+        public bool TrianglesOnly { get; } = trianglesOnly;
         public float LastAppliedAnimTimeSeconds { get; set; }
         public int LastSteppedCaptureFrame { get; set; } = -1;
 
-        public bool IsGpuDataReady => AvatarSplatComponent is { } liveSplats
-            ? liveSplats.IsGpuDataReady
-            : (CacheComponent?.Cache?.IsComplete ?? false) && (CacheComponent?.IsGpuDataReady ?? false);
+        public bool IsGpuDataReady => TrianglesOnly
+            ? AreTriangleMeshesAndTexturesReady(residencyHandles)
+            : AvatarSplatComponent is { } liveSplats
+                ? liveSplats.IsGpuDataReady
+                : (CacheComponent?.Cache?.IsComplete ?? false) && (CacheComponent?.IsGpuDataReady ?? false);
+
+        private static bool AreTriangleMeshesAndTexturesReady(IReadOnlyList<TextureResidencyHandle>? handles)
+        {
+            if (XRTexture2D.ActiveProgressiveUploadCount > 0 ||
+                XRTexture2D.QueuedProgressiveUploadCount > 0 ||
+                TextureResidencyRequests.Shared.AreStreamedTexturesImporting)
+            {
+                return false;
+            }
+
+            if (handles is not null)
+            {
+                for (int i = 0; i < handles.Count; i++)
+                {
+                    if (handles[i].State == ETextureResidencyRequestState.Pending)
+                        return false;
+                }
+            }
+
+            if (AbstractRenderer.Current is IRuntimeRendererHost host &&
+                host.TryGetBackendCapability<IRendererStartupWarmupBackendCapability>(out var warmup) &&
+                warmup is not null &&
+                (warmup.PendingStartupWorkCount > 0 || warmup.HasPendingAsyncPrograms))
+            {
+                return false;
+            }
+
+            return true;
+        }
     }
 
     private sealed class WorldCutsceneBindingResolver(XRWorld world) : ICutsceneBindingResolver
@@ -2049,10 +2406,14 @@ public static class RecordSplatCutsceneCommand
 
     /// <summary>
     /// Coordinates deterministic frame-by-frame cutscene evaluation and render-thread readback scheduling.
+    /// Capture indexes from a session are local to the active segment; the controller adds the segment
+    /// offset to get the global cutscene frame, so consecutive segments continue one timeline.
     /// </summary>
     private sealed class CutsceneLockstepController(XRViewport viewport, CutsceneShotScene shotScene, int totalFrames, int fps)
     {
         private readonly object _gate = new();
+        private int _segmentOffset;
+        private int _segmentFrames;
         private int _targetFrameIndex;
         private int _appliedFrameIndex = -1;
         private int _pendingApplyFrame = -1;
@@ -2061,11 +2422,13 @@ public static class RecordSplatCutsceneCommand
         private bool _readyToCapture;
         private bool _detached;
 
-        public void Attach()
+        public void Attach(int segmentOffset, int segmentFrames)
         {
             lock (_gate)
             {
                 _detached = false;
+                _segmentOffset = segmentOffset;
+                _segmentFrames = Math.Min(segmentFrames, totalFrames - segmentOffset);
                 _targetFrameIndex = 0;
                 _appliedFrameIndex = -1;
                 _pendingApplyFrame = -1;
@@ -2134,7 +2497,7 @@ public static class RecordSplatCutsceneCommand
                 _readyToCapture = false;
                 int nextFrame = captureIndex + 1;
                 _targetFrameIndex = nextFrame;
-                if (_detached || nextFrame >= totalFrames)
+                if (_detached || nextFrame >= _segmentFrames)
                 {
                     _pendingApplyFrame = -1;
                     return;
@@ -2149,14 +2512,16 @@ public static class RecordSplatCutsceneCommand
 
         private void ApplyFrameOnUpdateThread(int frameToApply)
         {
+            int globalFrame;
             lock (_gate)
             {
-                if (_detached || frameToApply >= totalFrames || _appliedFrameIndex == frameToApply)
+                if (_detached || frameToApply >= _segmentFrames || _appliedFrameIndex == frameToApply)
                     return;
+                globalFrame = _segmentOffset + frameToApply;
             }
 
-            double timeSeconds = frameToApply / (double)fps;
-            SeekAndEvaluateCutscene(shotScene, timeSeconds, frameToApply);
+            double timeSeconds = globalFrame / (double)fps;
+            SeekAndEvaluateCutscene(shotScene, timeSeconds, globalFrame);
 
             lock (_gate)
             {

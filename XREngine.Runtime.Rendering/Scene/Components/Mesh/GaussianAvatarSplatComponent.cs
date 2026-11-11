@@ -34,7 +34,7 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
     public const uint SurfacesBinding = 60u;
 
     /// <summary>Storage buffer binding for <see cref="AdvancedLightRecord"/> elements.</summary>
-    public const uint LightsBinding = 64u;
+    public const uint LightsBinding = 65u;
 
     private const uint ComputeLocalSize = 256u;
     private const int MaxSceneLights = 16;
@@ -360,14 +360,14 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
     private uint UpdateLightsBuffer(out Vector3 globalAmbient, out Vector3 skyColor, out Vector3 groundColor)
     {
         RuntimeWorld? runtimeWorld = World as RuntimeWorld;
-        XRWorld? world = runtimeWorld?.TargetWorld;
+        XRWorld? world = runtimeWorld?.TargetWorld ?? World as XRWorld;
         if (world is not null)
         {
             Vector3 ambientColor = new(
                 world.Settings.AmbientLightColor.R,
                 world.Settings.AmbientLightColor.G,
                 world.Settings.AmbientLightColor.B);
-            globalAmbient = ambientColor * MathF.Max(world.Settings.AmbientLightIntensity, 0.05f);
+            globalAmbient = ambientColor * MathF.Max(world.Settings.AmbientLightIntensity, 0.0f);
         }
         else
         {
@@ -381,22 +381,23 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
         _lightTraversalStack.Clear();
         if (runtimeWorld is not null)
         {
-            foreach (SceneNode root in runtimeWorld.RootNodes)
+            IReadOnlyList<SceneNode> roots = runtimeWorld.RootNodes;
+            for (int r = roots.Count - 1; r >= 0; r--)
             {
-                if (root.IsActiveSelf)
+                if (roots[r] is { IsActiveSelf: true } root)
                     _lightTraversalStack.Add(root);
             }
         }
         else if (world is not null)
         {
             IReadOnlyList<XRScene> scenes = world.Scenes;
-            for (int s = 0; s < scenes.Count; s++)
+            for (int s = scenes.Count - 1; s >= 0; s--)
             {
                 XRScene? scene = scenes[s];
                 if (scene is null)
                     continue;
                 IReadOnlyList<SceneNode> roots = scene.RootNodes;
-                for (int r = 0; r < roots.Count; r++)
+                for (int r = roots.Count - 1; r >= 0; r--)
                 {
                     if (roots[r] is { IsActiveSelf: true } root)
                         _lightTraversalStack.Add(root);
@@ -426,6 +427,7 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
                         StableLightId = (uint)count,
                         Generation = 1u,
                         Type = EAdvancedLightType.Directional,
+                        Flags = EAdvancedLightRecordFlags.Enabled,
                         DirectionAndOuterCone = new Vector4(forward, 0.0f),
                         ColorAndIntensity = new Vector4(dirLight.Color.R, dirLight.Color.G, dirLight.Color.B, dirLight.DiffuseIntensity),
                         LayerMask = 0xFFFFFFFFu,
@@ -437,15 +439,17 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
                     Vector3 forward = Vector3.TransformNormal(-Vector3.UnitZ, spotLight.Transform.RenderMatrix);
                     forward = forward.LengthSquared() > 1.0e-8f ? Vector3.Normalize(forward) : new Vector3(0.0f, 0.0f, -1.0f);
                     Vector3 pos = spotLight.Transform.RenderTranslation;
+                    float localBrightness = spotLight.Brightness == 0.0f ? 1.0f : spotLight.Brightness;
                     _lightsScratch[count++] = new AdvancedLightRecord
                     {
                         StableLightId = (uint)count,
                         Generation = 1u,
                         Type = EAdvancedLightType.Spot,
+                        Flags = EAdvancedLightRecordFlags.Enabled,
                         PositionAndRadius = new Vector4(pos, MathF.Max(spotLight.Distance, 0.01f)),
-                        DirectionAndOuterCone = new Vector4(forward, spotLight.OuterCutoff),
-                        ColorAndIntensity = new Vector4(spotLight.Color.R, spotLight.Color.G, spotLight.Color.B, spotLight.DiffuseIntensity),
-                        ShapeAndInnerCone = new Vector4(0.0f, 0.0f, 0.0f, spotLight.InnerCutoff),
+                        DirectionAndOuterCone = new Vector4(forward, MathF.Cos(spotLight.OuterCutoffAngleDegrees * (MathF.PI / 180.0f))),
+                        ColorAndIntensity = new Vector4(spotLight.Color.R, spotLight.Color.G, spotLight.Color.B, spotLight.DiffuseIntensity * localBrightness),
+                        ShapeAndInnerCone = new Vector4(0.0f, 0.0f, 0.0f, MathF.Cos(spotLight.InnerCutoffAngleDegrees * (MathF.PI / 180.0f))),
                         LayerMask = 0xFFFFFFFFu,
                         ViewMaskLo = 0xFFFFFFFFu,
                     };
@@ -453,13 +457,15 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
                 else if (comp is PointLightComponent pointLight)
                 {
                     Vector3 pos = pointLight.Transform.RenderTranslation;
+                    float localBrightness = pointLight.Brightness == 0.0f ? 1.0f : pointLight.Brightness;
                     _lightsScratch[count++] = new AdvancedLightRecord
                     {
                         StableLightId = (uint)count,
                         Generation = 1u,
                         Type = EAdvancedLightType.Point,
+                        Flags = EAdvancedLightRecordFlags.Enabled,
                         PositionAndRadius = new Vector4(pos, MathF.Max(pointLight.Radius, 0.01f)),
-                        ColorAndIntensity = new Vector4(pointLight.Color.R, pointLight.Color.G, pointLight.Color.B, pointLight.DiffuseIntensity),
+                        ColorAndIntensity = new Vector4(pointLight.Color.R, pointLight.Color.G, pointLight.Color.B, pointLight.DiffuseIntensity * localBrightness),
                         LayerMask = 0xFFFFFFFFu,
                         ViewMaskLo = 0xFFFFFFFFu,
                     };
@@ -473,6 +479,21 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
                     _lightTraversalStack.Add(childNode);
             }
         }
+
+        // Place the strongest directional light first so ShadeNativeUber selects the key light as primary.
+        int bestDirIdx = -1;
+        float bestDirIntensity = -1.0f;
+        for (int i = 0; i < count; i++)
+        {
+            if (_lightsScratch[i].Type == EAdvancedLightType.Directional &&
+                _lightsScratch[i].ColorAndIntensity.W > bestDirIntensity)
+            {
+                bestDirIntensity = _lightsScratch[i].ColorAndIntensity.W;
+                bestDirIdx = i;
+            }
+        }
+        if (bestDirIdx > 0)
+            (_lightsScratch[0], _lightsScratch[bestDirIdx]) = (_lightsScratch[bestDirIdx], _lightsScratch[0]);
 
         if (count == 0)
         {

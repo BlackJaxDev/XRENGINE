@@ -70,6 +70,33 @@ public class PhysicsChainColliderBase : XRComponent
 
     public EBound _bound = EBound.Outside;
 
+    /// <summary>
+    /// Local axis along which capsule or plane colliders orient before <see cref="LocalRotationOffset"/> applies.
+    /// </summary>
+    public Direction Axis
+    {
+        get => _direction;
+        set => SetField(ref _direction, value);
+    }
+
+    /// <summary>
+    /// Local-space position offset of the collider relative to its effective transform.
+    /// </summary>
+    public Vector3 Center
+    {
+        get => _center;
+        set => SetField(ref _center, value);
+    }
+
+    /// <summary>
+    /// Selects whether particles stay outside or inside the collider boundary.
+    /// </summary>
+    public EBound Bound
+    {
+        get => _bound;
+        set => SetField(ref _bound, value);
+    }
+
     public int PrepareFrame { set; get; }
 
     public virtual void Start()

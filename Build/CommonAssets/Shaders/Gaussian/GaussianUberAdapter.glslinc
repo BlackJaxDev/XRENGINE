@@ -49,7 +49,7 @@ layout(std430, binding = 63) readonly buffer SplatMaterialTextureBindingsBuffer
     XRAdvancedMaterialTextureBinding records[];
 } XR_ADV_MaterialTextureBindings;
 
-layout(std430, binding = 64) readonly buffer SplatLightsBuffer
+layout(std430, binding = 65) readonly buffer SplatLightsBuffer
 {
     XRAdvancedLightRecord records[];
 } XR_ADV_Lights;
@@ -212,19 +212,32 @@ XRAdvancedMaterialTextureBinding XR_ADV_LoadMaterialTextureBinding(XRAdvancedMat
     return XR_ADV_MaterialTextureBindings.records[index];
 }
 
+vec4 XR_ADV_TextureFallback(uint fallbackKind)
+{
+    if (fallbackKind == 1u || fallbackKind == 5u)
+        return vec4(1.0);
+    if (fallbackKind == 3u)
+        return vec4(0.5, 0.5, 1.0, 1.0);
+    if (fallbackKind == 4u)
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    return vec4(0.0);
+}
+
 bool XR_ADV_TryResolveTextureReference(
     XRAdvancedMaterialTextureBinding binding,
     out XRAdvancedEncodedTextureReference reference)
 {
     reference.payload0 = binding.textureReference.handle.index;
     reference.payload1 = binding.textureReference.handle.generation;
-    reference.payload2 = 0u;
+    reference.payload2 = binding.textureReference.fallback;
     reference.flags = binding.textureReference.fallback != 0u ? XR_ADV_RESOURCE_FLAG_FALLBACK : 0u;
     return true;
 }
 
 vec4 XR_ADV_SampleTexture2DGrad(XRAdvancedEncodedTextureReference reference, vec2 uv, vec2 dx, vec2 dy)
 {
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(reference.payload2);
     uint slot = min(reference.payload0, 159u);
     uint bank = slot >> 5u;
     uint idx = slot & 31u;
@@ -241,6 +254,8 @@ vec4 XR_ADV_SampleTexture2DGrad(XRAdvancedEncodedTextureReference reference, vec
 
 vec4 XR_ADV_SampleTexture2DLod(XRAdvancedEncodedTextureReference reference, vec2 uv, float lod)
 {
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(reference.payload2);
     uint slot = min(reference.payload0, 159u);
     uint bank = slot >> 5u;
     uint idx = slot & 31u;
@@ -257,6 +272,8 @@ vec4 XR_ADV_SampleTexture2DLod(XRAdvancedEncodedTextureReference reference, vec2
 
 ivec2 XR_ADV_Texture2DSize(XRAdvancedEncodedTextureReference reference)
 {
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return ivec2(1);
     uint slot = min(reference.payload0, 159u);
     uint bank = slot >> 5u;
     uint idx = slot & 31u;
@@ -283,6 +300,8 @@ ivec3 XR_ADV_Texture2DArraySize(XRAdvancedEncodedTextureReference reference)
 
 vec4 XR_ADV_SampleTextureCubeLod(XRAdvancedEncodedTextureReference reference, vec3 direction, float lod)
 {
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(reference.payload2);
     uint slot = min(reference.payload0, 7u);
     return textureLod(uSplatTexturesCube[XR_SPLAT_NONUNIFORM(slot)], direction, lod);
 }
@@ -311,7 +330,7 @@ float XR_ADV_EvaluateShadow(
 
 vec3 XR_ADV_WorldAmbient(uint viewIndex)
 {
-    return max(GlobalAmbient, vec3(0.08));
+    return GlobalAmbient;
 }
 
 bool XR_ADV_SourceSH(

@@ -678,14 +678,26 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_MatcapMaskChannel", SourceToonEnumMapper.TextureChannel(document, "_MatcapMaskChannel", 0, diagnostics));
         MapFloat(document, material, "_MatcapMaskInvert", "_MatcapMaskInvert");
 
-        MapVector4(document, material, "_RimLightColor", "_RimLightColor", "_RimColor");
+        int rimStyle = SourceToonEnumMapper.RimStyle(document, diagnostics);
+        if (rimStyle == 1)
+            MapVector4(document, material, "_RimLightColor", "_RimLightColor", "_RimColor");
+        else
+            MapVector4(document, material, "_RimLightColor", "_RimColor", "_RimLightColor");
         MapFloat(document, material, "_RimWidth", "_RimWidth");
         MapFloat(document, material, "_RimSharpness", "_RimSharpness");
         MapFloat(document, material, "_RimLightColorBias", "_RimLightColorBias", "_RimBiasIntensity");
-        MapFloat(document, material, "_RimEmission", "_RimStrength", "_RimEmission");
         MapFloat(document, material, "_RimHideInShadow", "_RimHideInShadow");
-        SetInt(material, "_RimStyle", SourceToonEnumMapper.RimStyle(document, diagnostics));
-        MapFloat(document, material, "_RimBlendStrength", "_RimBlendStrength", "_RimMainStrength");
+        SetInt(material, "_RimStyle", rimStyle);
+        if (document.TryGetFloat("_EnableRimLighting", out _) && !document.TryGetPositive("_EnableRimLighting"))
+        {
+            SetFloat(material, "_RimEmission", 0.0f);
+            SetFloat(material, "_RimBlendStrength", 0.0f);
+        }
+        else
+        {
+            MapFloat(document, material, "_RimEmission", "_RimStrength", "_RimEmission");
+            MapFloat(document, material, "_RimBlendStrength", "_RimBlendStrength", "_RimMainStrength");
+        }
         SetInt(material, "_RimBlendMode", SourceToonEnumMapper.RimBlendMode(document, diagnostics));
         SetInt(material, "_RimMaskChannel", SourceToonEnumMapper.TextureChannel(document, "_RimMaskChannel", 0, diagnostics));
 

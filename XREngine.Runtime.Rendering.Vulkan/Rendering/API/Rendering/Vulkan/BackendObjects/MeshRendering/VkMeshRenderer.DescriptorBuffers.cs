@@ -32,7 +32,8 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		out DescriptorBufferInfo bufferInfo,
 		out XRDataBuffer? retainedPipelineBuffer,
-		ComputeDispatchSnapshot? bindingSnapshot = null)
+		ComputeDispatchSnapshot? bindingSnapshot = null,
+		VkRenderProgram? programOverride = null)
 	{
 		bufferInfo = default;
 		retainedPipelineBuffer = null;
@@ -107,7 +108,7 @@ internal unsafe partial class VkMeshRenderer
 			// vary by compiler/optimization path.
 			if (binding.DescriptorType == DescriptorType.StorageBuffer)
 			{
-				if (TryResolveProgramBoundBuffer(binding, out buffer))
+				if (TryResolveProgramBoundBuffer(binding, out buffer, programOverride))
 					goto BufferResolved;
 
 				lock (_bufferStateSync)
@@ -131,7 +132,7 @@ internal unsafe partial class VkMeshRenderer
 			// before resorting to the generic cache scan. This prevents an
 			// unrelated SSBO (e.g. LinesBuffer) from being returned for a UBO
 			// binding that should resolve to an auto-uniform block.
-			if (TryResolveAutoUniformBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo))
+			if (TryResolveAutoUniformBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo, programOverride))
 				return true;
 
 			if (TryResolveEngineUniformBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo))
@@ -311,10 +312,14 @@ internal unsafe partial class VkMeshRenderer
 			or EBufferTarget.DrawIndirectBuffer
 			or EBufferTarget.DispatchIndirectBuffer;
 
-	private bool TryResolveProgramBoundBuffer(DescriptorBindingInfo binding, out VkDataBuffer? buffer)
+	private bool TryResolveProgramBoundBuffer(
+		DescriptorBindingInfo binding,
+		out VkDataBuffer? buffer,
+		VkRenderProgram? programOverride = null)
 	{
 		buffer = null;
-		if (_program is null || !_program.TryGetBoundBuffer(binding.Binding, out XRDataBuffer? dataBuffer) || dataBuffer is null)
+		VkRenderProgram? program = programOverride ?? _program;
+		if (program is null || !program.TryGetBoundBuffer(binding.Binding, out XRDataBuffer? dataBuffer) || dataBuffer is null)
 			return false;
 
 		bool targetMatches = binding.DescriptorType switch

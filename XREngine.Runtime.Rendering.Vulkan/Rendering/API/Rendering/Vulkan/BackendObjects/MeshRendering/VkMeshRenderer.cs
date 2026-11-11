@@ -541,7 +541,7 @@ internal unsafe partial class VkMeshRenderer(
                 billboardMode != EMeshBillboardMode.None ||
                 MeshRenderer.MeshDeformEnabled ||
                 mesh.HasSkinning ||
-                mesh.HasBlendshapes;
+                mesh.HasBlendshapeDeformation;
             shadowCasterRelevance =
                 shadowUniformState.CalculateCasterTargetRelevance(
                     mesh.Bounds,

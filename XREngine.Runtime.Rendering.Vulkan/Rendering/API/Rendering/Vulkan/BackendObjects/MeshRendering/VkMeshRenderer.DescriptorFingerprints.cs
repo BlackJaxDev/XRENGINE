@@ -139,8 +139,10 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		bool usesSharedMaterialTier,
 		ComputeDispatchSnapshot? bindingSnapshot = null,
-		bool includeFrameSourceDescriptors = true)
+		bool includeFrameSourceDescriptors = true,
+		VkRenderProgram? programOverride = null)
 	{
+		VkRenderProgram? activeProgram = programOverride ?? _program;
 		if (TryComputePublishedDescriptorResourceFingerprint(
 			material,
 			frameCount,
@@ -148,7 +150,8 @@ internal unsafe partial class VkMeshRenderer
 			usesSharedMaterialTier,
 			bindingSnapshot,
 			includeFrameSourceDescriptors,
-			out ulong publishedFingerprint))
+			out ulong publishedFingerprint,
+			activeProgram))
 		{
 			return publishedFingerprint;
 		}
@@ -160,7 +163,7 @@ internal unsafe partial class VkMeshRenderer
 		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 		{
 			DescriptorBindingInfo binding = bindings[bindingIndex];
-			if (_program?.IsDescriptorSetExternallyOwned(binding.Set) == true)
+			if (activeProgram?.IsDescriptorSetExternallyOwned(binding.Set) == true)
 				continue;
 			if ((usesSharedMaterialTier && binding.Set == VulkanMeshRenderingConventions.DescriptorSetMaterial) ||
 				(excludesGlobalTextureArray && binding.Set == VulkanBindlessMaterialDescriptors.TextureArraySet))
@@ -188,7 +191,8 @@ internal unsafe partial class VkMeshRenderer
 								drawUniformSlot,
 								out DescriptorBufferInfo info,
 								out retainedPipelineBuffer,
-								bindingSnapshot);
+								bindingSnapshot,
+								activeProgram);
 							hash.Add(resolved);
 							if (!resolved)
 								continue;
@@ -221,12 +225,16 @@ internal unsafe partial class VkMeshRenderer
 						break;
 					}
 
+					bool usesNamedArrayElements = descriptorCount > 1 && !string.IsNullOrWhiteSpace(binding.Name);
 					for (int arrayIndex = 0; arrayIndex < descriptorCount; arrayIndex++)
 					{
+						DescriptorBindingInfo elementBinding = usesNamedArrayElements
+							? binding with { Name = ResolveDescriptorArrayElementName(binding.Name, arrayIndex) }
+							: binding;
 						bool resolved = TryResolveImage(
-							binding,
+							elementBinding,
 							material,
-							binding.DescriptorType,
+							elementBinding.DescriptorType,
 							out DescriptorImageInfo info,
 							out XRTexture? retainedTexture,
 							arrayIndex,
@@ -312,7 +320,8 @@ internal unsafe partial class VkMeshRenderer
 		bool usesSharedMaterialTier,
 		ComputeDispatchSnapshot? bindingSnapshot,
 		bool includeFrameSourceDescriptors,
-		out ulong fingerprint)
+		out ulong fingerprint,
+		VkRenderProgram? programOverride = null)
 	{
 		fingerprint = 0UL;
 		// Immutable storage is hashed below by its lowered slice. A material set outside the
@@ -323,7 +332,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		if (bindingSnapshot is not
 			{ HasPublishedBindingLayoutSignatures: true } ||
-			_program is not { } program ||
+			(programOverride ?? _program) is not { } program ||
 			BackendContext.Resources.MappedFrameArena is not
 				{ IsActive: true } frameArena)
 		{
@@ -783,10 +792,14 @@ internal unsafe partial class VkMeshRenderer
 			int retainedTextureCount = 0;
 			try
 			{
+				bool usesNamedArrayElements = descriptorCount > 1 && !string.IsNullOrWhiteSpace(binding.Name);
 				for (int arrayIndex = 0; arrayIndex < (int)descriptorCount; arrayIndex++)
 				{
+					DescriptorBindingInfo elementBinding = usesNamedArrayElements
+						? binding with { Name = ResolveDescriptorArrayElementName(binding.Name, arrayIndex) }
+						: binding;
 					bool resolved = TryResolveImage(
-						binding, material, binding.DescriptorType,
+						elementBinding, material, elementBinding.DescriptorType,
 						out imageInfos[arrayIndex], out XRTexture? retainedTexture,
 						arrayIndex, snapshot);
 					if (retainedTexture is not null)

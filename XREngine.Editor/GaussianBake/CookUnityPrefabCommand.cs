@@ -117,10 +117,20 @@ public static class CookUnityPrefabCommand
                     RootNode = rootNode,
                 };
 
+                (int cookMaterials, int cookNativeUber) = CountActiveMaterialSemantics(rootNode);
+                Console.WriteLine(
+                    $"[CookUnityPrefab] Material semantics before write: materials={cookMaterials}, nativeUberV1={cookNativeUber}.");
+
                 WriteCookedPrefabPak(prefab, resolvedOutputPakPath, assetPath);
             }
 
             CookedBakeInput verifyInput = CookedBakeInputLoader.Load(resolvedOutputPakPath, assetPath, GaussianBakeKind.Avatar);
+            if (verifyInput.PrefabRoot is { } semanticRoot)
+            {
+                (int loadedMaterials, int loadedNativeUber) = CountActiveMaterialSemantics(semanticRoot);
+                Console.WriteLine(
+                    $"[CookUnityPrefab] Material semantics after load: materials={loadedMaterials}, nativeUberV1={loadedNativeUber}.");
+            }
             if (!BakeWorldFactory.TryComputeContentBounds(verifyInput, out AABB bounds))
                 throw new InvalidOperationException($"Cooked prefab '{assetPath}' in '{resolvedOutputPakPath}' has no valid content bounds.");
 
@@ -214,16 +224,72 @@ public static class CookUnityPrefabCommand
         removedCount = inactiveModels.Count;
     }
 
+    /// <summary>
+    /// Counts the distinct materials on active model submeshes and how many of them carry
+    /// <see cref="EngineMaterialSemanticIdentity.NativeUberV1"/>. The cook prints the counts before
+    /// the pak write and after the verify load, so a lost semantic shows which side dropped it.
+    /// </summary>
+    private static (int Total, int NativeUber) CountActiveMaterialSemantics(SceneNode rootNode)
+    {
+        HashSet<XRMaterial> materials = new(ReferenceEqualityComparer.Instance);
+        int nativeUber = 0;
+        rootNode.IterateComponents<ModelComponent>(modelComponent =>
+        {
+            if (!BakeMotionSelector.IsEnabled(modelComponent, rootNode) || modelComponent.Model is not { } model)
+                return;
+
+            foreach (var subMesh in model.Meshes)
+            {
+                if (subMesh is null)
+                    continue;
+
+                foreach (var lod in subMesh.LODs)
+                {
+                    if (lod?.Material is not { } material || !materials.Add(material))
+                        continue;
+
+                    if (material.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1)
+                        nativeUber++;
+                }
+            }
+        }, iterateChildHierarchy: true);
+
+        return (materials.Count, nativeUber);
+    }
+
     private static int HydrateActiveModelTexturesAndMeshes(SceneNode rootNode, uint maxTextureSize)
     {
         IRuntimeImageCodec codec = RuntimeImageCodecs.Require();
         HashSet<XRTexture2D> processedTextures = new(ReferenceEqualityComparer.Instance);
+        HashSet<XRMaterial> processedMaterials = new(ReferenceEqualityComparer.Instance);
         int hydratedCount = 0;
+
+        void HydrateMaterial(XRMaterial? material)
+        {
+            if (material is null || !processedMaterials.Add(material))
+                return;
+
+            foreach (XRTexture? texture in material.Textures)
+            {
+                if (texture is not XRTexture2D texture2D || !processedTextures.Add(texture2D))
+                    continue;
+
+                if (TryHydrateTextureFromSource(texture2D, codec, maxTextureSize))
+                    hydratedCount++;
+            }
+
+            // Initialize authored Uber state while keeping canonical UberShader.frag in the cooked pak
+            // so deserialization preserves EngineSemantic = NativeUberV1 without variant source bloat.
+            material.EnsureUberStateInitialized();
+        }
 
         rootNode.IterateComponents<ModelComponent>(modelComponent =>
         {
             if (!BakeMotionSelector.IsEnabled(modelComponent, rootNode))
                 return;
+
+            foreach (var renderableMesh in modelComponent.Meshes)
+                HydrateMaterial(renderableMesh?.MaterialOverride);
 
             if (modelComponent.Model is { } model)
             {
@@ -233,22 +299,7 @@ public static class CookUnityPrefabCommand
                         continue;
 
                     foreach (var lod in subMesh.LODs)
-                    {
-                        XRMaterial? material = lod?.Material;
-                        if (material is null)
-                            continue;
-
-                        foreach (XRTexture? texture in material.Textures)
-                        {
-                            if (texture is not XRTexture2D texture2D || !processedTextures.Add(texture2D))
-                                continue;
-
-                            if (TryHydrateTextureFromSource(texture2D, codec, maxTextureSize))
-                                hydratedCount++;
-                        }
-
-                        material.PrepareUberVariantImmediately();
-                    }
+                        HydrateMaterial(lod?.Material);
                 }
             }
 

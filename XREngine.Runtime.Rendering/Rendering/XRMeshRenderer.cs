@@ -3793,7 +3793,12 @@ namespace XREngine.Rendering
 
         private bool _boneSeedDiagnosticsLogged;
 
-        internal void RefreshBoneMatricesFromRenderState()
+        /// <summary>
+        /// Reads the current render matrix of each utilized bone, writes the updated bone and
+        /// skin-palette entries, and marks the skinned output dirty so the next frame dispatches
+        /// deformation with the latest pose.
+        /// </summary>
+        public void RefreshBoneMatricesFromRenderState()
         {
             BoneResourceSnapshot resources = CaptureBoneResources();
             XRDataBuffer? boneMatrices = resources.BoneMatrices;

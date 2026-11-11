@@ -254,9 +254,11 @@ public sealed partial class AdvancedGpuDeformationResources
         bool hasBlendshapes = XRMeshBlendshapeActiveListReader.TryCreate(
             mesh,
             out XRMeshBlendshapeActiveListReader blendshapes);
-        int blendshapeCount = policy == EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs
-            ? mesh.BlendshapeNames.Length
-            : hasBlendshapes ? blendshapes.ShapeCount : 0;
+        int blendshapeCount = !mesh.HasBlendshapeDeformation
+            ? 0
+            : policy == EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs
+                ? mesh.BlendshapeNames.Length
+                : hasBlendshapes ? blendshapes.ShapeCount : 0;
         PendingGpuDeformationMeshPreparation pending = new()
         {
             Mesh = mesh,

@@ -450,10 +450,41 @@ internal static partial class UberShaderVariantBuilder
                 return false;
             previousCanonical = canonical;
         }
+        else if (!ReferenceEquals(previous, next) && IsExactCookedCanonicalUberCopy(previous, next))
+        {
+            return true;
+        }
         if (IsGeneratedVariant(next))
             return HasCurrentProvenance(next) && TryGetCanonicalShader(next, out XRShader? canonical) &&
                 ReferenceEquals(previousCanonical, canonical);
         return !ReferenceEquals(previous, previousCanonical) && ReferenceEquals(previousCanonical, next);
+    }
+
+    /// <summary>
+    /// Checks whether <paramref name="previous"/> is a cooked binary copy of the canonical Uber fragment shader
+    /// whose host <c>FilePath</c> was not serialized, and whether <paramref name="next"/> is the matching host
+    /// canonical <c>UberShader.frag</c> with identical source text.
+    /// </summary>
+    private static bool IsExactCookedCanonicalUberCopy(XRShader previous, XRShader next)
+    {
+        if (IsGeneratedVariant(previous) || IsGeneratedVariant(next))
+            return false;
+        if (previous.Type != next.Type || previous.SourceLanguage != next.SourceLanguage ||
+            previous.GeneratedUberVariantHash != 0 || next.GeneratedUberVariantHash != 0 ||
+            !string.Equals(previous.EntryPoint, "main", StringComparison.Ordinal) ||
+            !string.Equals(next.EntryPoint, "main", StringComparison.Ordinal))
+            return false;
+        if (!string.IsNullOrWhiteSpace(previous.Source?.FilePath) || !string.IsNullOrWhiteSpace(previous.FilePath))
+            return false;
+
+        string? nextPath = next.Source?.FilePath ?? next.FilePath;
+        if (!Path.GetFileName(nextPath.AsSpan()).Equals("UberShader.frag", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string? previousText = previous.Source?.Text;
+        string? nextText = next.Source?.Text;
+        return !string.IsNullOrEmpty(previousText) &&
+               string.Equals(previousText, nextText, StringComparison.Ordinal);
     }
 
     /// <summary>

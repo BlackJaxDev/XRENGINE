@@ -335,7 +335,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         public ulong OutputChangeSequence { get; set; }
 
         public bool HasCurrentFrameOutput(ulong frameId)
-            => LastComputePrepassFrameId == frameId && _hasValidOutput;
+            => LastDispatchedFrameId == frameId && _hasValidOutput;
     }
 
     /// <summary>
@@ -571,29 +571,36 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             if (requireCommittedOutput)
             {
                 if (!canReuseOutput)
+                {
                     resources.OutputChangeSequence = currentSequence;
+                }
                 else if (resources.OutputChangeSequence == 0UL || committedSequence < resources.OutputChangeSequence)
+                {
                     canReuseOutput = false;
+                    resources.OutputChangeSequence = currentSequence;
+                }
             }
 
             if (canReuseOutput)
             {
-                resources.LastComputePrepassFrameId = frameId;
-                RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
-                    0L,
-                    0L,
-                    skippedSkinningDispatches: doSkinning ? 1 : 0,
-                    skippedBlendshapeDispatches: doBlendshapes ? 1 : 0,
-                    reusedSkinnedOutputBuffers: 1,
-                    blendshapeAuthoredShapeCount: doBlendshapes ? (int)mesh.BlendshapeCount : 0,
-                    blendshapeActiveShapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
-                    blendshapeAffectedVertexCount: doBlendshapes ? mesh.BlendshapeAffectedVertexCount : 0,
-                    compactedActiveBlendshapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
-                    liveBlendshapeShaderPermutations: doBlendshapes && mesh.BlendshapeShaderVariant != BlendshapeShaderVariant.None ? 1 : 0);
+                if (resources.LastComputePrepassFrameId != frameId)
+                {
+                    resources.LastComputePrepassFrameId = frameId;
+                    RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
+                        0L,
+                        0L,
+                        skippedSkinningDispatches: doSkinning ? 1 : 0,
+                        skippedBlendshapeDispatches: doBlendshapes ? 1 : 0,
+                        reusedSkinnedOutputBuffers: 1,
+                        blendshapeAuthoredShapeCount: doBlendshapes ? (int)mesh.BlendshapeCount : 0,
+                        blendshapeActiveShapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
+                        blendshapeAffectedVertexCount: doBlendshapes ? mesh.BlendshapeAffectedVertexCount : 0,
+                        compactedActiveBlendshapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
+                        liveBlendshapeShaderPermutations: doBlendshapes && mesh.BlendshapeShaderVariant != BlendshapeShaderVariant.None ? 1 : 0);
+                }
+
                 return;
             }
-
-            resources.LastComputePrepassFrameId = frameId;
 
             // One-shot: re-seed the per-renderer skin palette from the CURRENT bone render
             // state before the first real dispatch. The palette is initially seeded in the
@@ -722,7 +729,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 EMemoryBarrierMask barrierMask = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray;
 
                 activeProgram.DispatchCompute(groupsX, 1u, 1u, barrierMask);
-                resources.MarkOutputValid(doSkinning, doBlendshapes, usePrecombinedBlendshapes, dispatchedVersion);
+                resources.MarkOutputValid(frameId, doSkinning, doBlendshapes, usePrecombinedBlendshapes, dispatchedVersion);
                 if (updateLiveBounds)
                     resources.MarkSkinnedBoundsValid();
                 else if (needsLiveSkinnedBounds)
@@ -1043,7 +1050,16 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         return vrEyeRender == vrOwnsDeformation;
     }
 
-    public void RunVisible(RenderCommandCollection commands)
+    [ThreadStatic]
+    private static HashSet<XRMeshRenderer>? _runVisibleDispatched;
+    [ThreadStatic]
+    private static List<XRMeshRenderer>? _runVisibleRenderers;
+
+    public void RunVisible(
+        RenderCommandCollection commands,
+        bool requireCommittedOutput = false,
+        ulong currentSequence = 0UL,
+        ulong committedSequence = 0UL)
     {
         if (commands is null)
             return;
@@ -1071,8 +1087,11 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return;
         }
 
-        var dispatched = new HashSet<XRMeshRenderer>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-        var renderers = new List<XRMeshRenderer>();
+        HashSet<XRMeshRenderer> dispatched = _runVisibleDispatched ??=
+            new HashSet<XRMeshRenderer>(ReferenceEqualityComparer.Instance);
+        List<XRMeshRenderer> renderers = _runVisibleRenderers ??= [];
+        dispatched.Clear();
+        renderers.Clear();
         foreach (var meshCmd in commands.EnumerateRenderingMeshCommands())
         {
             if (meshCmd.Mesh is not XRMeshRenderer renderer)
@@ -1085,53 +1104,74 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
 
         if (renderers.Count == 0)
-            return;
-
-        // Optionally pre-pack all visible renderers into global buffers for this frame.
-        bool globalSkinPalette = RuntimeEngine.Rendering.Settings.UseGlobalSkinPaletteBufferForComputeSkinning;
-        bool globalBlend = false;
-        if (globalSkinPalette || globalBlend)
         {
-            lock (_syncRoot)
-            {
-                _globalInputs.BeginFrame(State.RenderFrameId);
-                bool anyChanged = false;
-                foreach (var renderer in renderers)
-                {
-                    var mesh = renderer.Mesh;
-                    if (mesh is null)
-                        continue;
-
-                    bool skinningInCompute = computeSkinningEnabledForBackend
-                        && mesh.HasSkinning
-                        && RuntimeEngine.Rendering.Settings.AllowSkinning;
-                    bool needsSkinPalette = globalSkinPalette
-                        && !renderer.HasExternalSkinPaletteSource
-                        && !renderer.HasGpuDrivenBoneSource
-                        && skinningInCompute;
-                    bool blendshapePathRequested = mesh.HasBlendshapeDeformation
-                        && RuntimeEngine.Rendering.Settings.AllowBlendshapes
-                        && (computeBlendshapesEnabledForBackend
-                            || skinningInCompute
-                            || precombineEnabledForBackend);
-                    if (blendshapePathRequested)
-                        renderer.EnsureBlendshapeBuffers(logWarnings: false);
-                    bool needsBlend = globalBlend
-                        && blendshapePathRequested
-                        && renderer.HasActiveBlendshapes;
-                    if (!needsSkinPalette && !needsBlend)
-                        continue;
-
-                    anyChanged |= _globalInputs.EnsurePackedForRenderer(renderer, needsSkinPalette, needsBlend);
-                }
-
-                if (anyChanged)
-                    _globalInputs.PushIfDirty(pushSkinPalette: globalSkinPalette, pushBlendshapeWeights: globalBlend);
-            }
+            dispatched.Clear();
+            return;
         }
 
-        foreach (var renderer in renderers)
-            Run(renderer);
+        try
+        {
+            // Optionally pre-pack all visible renderers into global buffers for this frame.
+            bool globalSkinPalette = RuntimeEngine.Rendering.Settings.UseGlobalSkinPaletteBufferForComputeSkinning;
+            bool globalBlend = false;
+            if (globalSkinPalette || globalBlend)
+            {
+                lock (_syncRoot)
+                {
+                    _globalInputs.BeginFrame(State.RenderFrameId);
+                    bool anyChanged = false;
+                    foreach (var renderer in renderers)
+                    {
+                        var mesh = renderer.Mesh;
+                        if (mesh is null)
+                            continue;
+
+                        bool skinningInCompute = computeSkinningEnabledForBackend
+                            && mesh.HasSkinning
+                            && RuntimeEngine.Rendering.Settings.AllowSkinning;
+                        bool needsSkinPalette = globalSkinPalette
+                            && !renderer.HasExternalSkinPaletteSource
+                            && !renderer.HasGpuDrivenBoneSource
+                            && skinningInCompute;
+                        bool blendshapePathRequested = mesh.HasBlendshapeDeformation
+                            && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+                            && (computeBlendshapesEnabledForBackend
+                                || skinningInCompute
+                                || precombineEnabledForBackend);
+                        if (blendshapePathRequested)
+                            renderer.EnsureBlendshapeBuffers(logWarnings: false);
+                        bool needsBlend = globalBlend
+                            && blendshapePathRequested
+                            && renderer.HasActiveBlendshapes;
+                        if (!needsSkinPalette && !needsBlend)
+                            continue;
+
+                        anyChanged |= _globalInputs.EnsurePackedForRenderer(renderer, needsSkinPalette, needsBlend);
+                    }
+
+                    if (anyChanged)
+                        _globalInputs.PushIfDirty(pushSkinPalette: globalSkinPalette, pushBlendshapeWeights: globalBlend);
+                }
+            }
+
+            foreach (var renderer in renderers)
+            {
+                Run(
+                    renderer,
+                    forceSkinning: false,
+                    forceBlendshapes: false,
+                    requireLiveBounds: true,
+                    requireCommittedOutput: requireCommittedOutput,
+                    currentSequence: currentSequence,
+                    committedSequence: committedSequence,
+                    allowOutputReuse: true);
+            }
+        }
+        finally
+        {
+            dispatched.Clear();
+            renderers.Clear();
+        }
     }
 
     private void EnsureProgram()

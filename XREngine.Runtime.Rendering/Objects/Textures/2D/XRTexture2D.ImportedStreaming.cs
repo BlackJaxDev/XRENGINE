@@ -174,7 +174,9 @@ public partial class XRTexture2D
     /// </returns>
     public bool TryRestoreImportedTextureStreamingSource()
     {
+        bool hasHydratedResidentMips = Mipmaps is { Length: > 0 } mips && mips[0]?.Data is { Length: > 4 };
         if (!AllowAutomaticImportedTextureStreaming
+            || (PreferSynchronousGpuUpload && hasHydratedResidentMips)
             || !RuntimeRenderingHostServices.HasConcreteHost
             || !RuntimeTextureSourceAccess.CanAccessHostFiles
             || string.IsNullOrWhiteSpace(OriginalPath)

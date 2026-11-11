@@ -189,7 +189,7 @@ void main()
 
     float r2 = dot(FragEllipseOffset, FragEllipseOffset);
 #if defined(XR_SPLAT_DEPTH_OCCLUSION_PASS)
-    if (r2 > 1.3225 || FragBaseOpacity < 0.5)
+    if (r2 > 1.96 || FragBaseOpacity < 0.5)
         discard;
 
     vec3 cameraPosition = InverseViewMatrix[3].xyz;

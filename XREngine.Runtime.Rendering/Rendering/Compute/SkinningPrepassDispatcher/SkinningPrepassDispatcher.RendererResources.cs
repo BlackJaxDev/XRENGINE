@@ -36,6 +36,7 @@ internal sealed partial class SkinningPrepassDispatcher
         private int _lastDispatchedPoseHash;
 
         public ulong LastComputePrepassFrameId;
+        public ulong LastDispatchedFrameId;
 
         /// <summary>
         /// Gets the output buffer containing skinned positions.
@@ -127,7 +128,7 @@ internal sealed partial class SkinningPrepassDispatcher
         }
 
         public bool HasFrameOutput(ulong frameId, bool doSkinning, bool doBlendshapes, bool usePrecombinedBlendshapes)
-            => LastComputePrepassFrameId == frameId
+            => LastDispatchedFrameId == frameId
                 && _hasValidOutput
                 && _lastDidSkinning == doSkinning
                 && _lastDidBlendshapes == doBlendshapes
@@ -158,8 +159,10 @@ internal sealed partial class SkinningPrepassDispatcher
             return doSkinning || doBlendshapes;
         }
 
-        public void MarkOutputValid(bool doSkinning, bool doBlendshapes, bool usePrecombinedBlendshapes, ulong dispatchedVersion)
+        public void MarkOutputValid(ulong frameId, bool doSkinning, bool doBlendshapes, bool usePrecombinedBlendshapes, ulong dispatchedVersion)
         {
+            LastComputePrepassFrameId = frameId;
+            LastDispatchedFrameId = frameId;
             _hasValidOutput = true;
             _lastDidSkinning = doSkinning;
             _lastDidBlendshapes = doBlendshapes;
@@ -322,6 +325,8 @@ internal sealed partial class SkinningPrepassDispatcher
                 _lastUsedPrecombinedBlendshapes = false;
                 _lastOutputVersion = 0;
                 _lastDispatchedPoseHash = 0;
+                LastComputePrepassFrameId = 0;
+                LastDispatchedFrameId = 0;
             }
             finally
             {

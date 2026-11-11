@@ -49,8 +49,12 @@ internal static class GaussianAvatarSplatSampler
             if (!IsComponentRendered(component, avatarRoot))
                 return;
 
-            if (component is ModelComponent { Meshes.Count: 0 } modelComponent)
-                modelComponent.RebuildRuntimeMeshes();
+            if (component is ModelComponent modelComponent)
+            {
+                if (modelComponent.Meshes.Count == 0)
+                    modelComponent.RebuildRuntimeMeshes();
+                modelComponent.EnsureDefaultBlendShapeWeightsApplied();
+            }
 
             Vector3 worldScale = Vector3.Abs(component.Transform.LossyWorldScale);
             float unskinnedAreaScale = MathF.Max(worldScale.X * worldScale.Y, MathF.Max(worldScale.Y * worldScale.Z, worldScale.X * worldScale.Z));
@@ -105,9 +109,15 @@ internal static class GaussianAvatarSplatSampler
                     Vector3 p0 = GetRestPosition(mesh, deformedRestPositions, i0);
                     Vector3 p1 = GetRestPosition(mesh, deformedRestPositions, i1);
                     Vector3 p2 = GetRestPosition(mesh, deformedRestPositions, i2);
-                    float restDoubleArea = Vector3.Cross(p1 - p0, p2 - p0).Length() * areaMultiplier;
-                    if (!float.IsFinite(restDoubleArea) || restDoubleArea <= 1.0e-11f)
+                    Vector3 e1 = p1 - p0;
+                    Vector3 e2 = p2 - p0;
+                    Vector3 e3 = p2 - p1;
+                    float maxEdgeSq = MathF.Max(e1.LengthSquared(), MathF.Max(e2.LengthSquared(), e3.LengthSquared()));
+                    float rawDoubleArea = Vector3.Cross(e1, e2).Length();
+                    if (!float.IsFinite(rawDoubleArea) || rawDoubleArea <= 1.0e-11f || rawDoubleArea < 0.004f * maxEdgeSq)
                         continue;
+
+                    float restDoubleArea = rawDoubleArea * areaMultiplier;
 
                     double triArea = 0.5 * restDoubleArea;
                     submeshArea += triArea;
@@ -282,7 +292,17 @@ internal static class GaussianAvatarSplatSampler
 
                 if (submesh.UdimDiscardMask != 0 && submesh.UdimDiscardMode == 1)
                 {
-                    Vector2 discardUv = submesh.UdimDiscardUv == 1 ? uv1 : uv0;
+                    uint discardChannel = (uint)Math.Max(submesh.UdimDiscardUv, 0);
+                    Vector2 discardUv = discardChannel switch
+                    {
+                        0u => uv0,
+                        1u => uv1,
+                        _ when discardChannel < mesh.TexCoordCount =>
+                            (b0 * mesh.GetTexCoord(tri.Index0, discardChannel)) +
+                            (b1 * mesh.GetTexCoord(tri.Index1, discardChannel)) +
+                            (b2 * mesh.GetTexCoord(tri.Index2, discardChannel)),
+                        _ => uv0,
+                    };
                     if (IsUvInDiscardedTile(discardUv, submesh.UdimDiscardMask))
                         continue;
                 }

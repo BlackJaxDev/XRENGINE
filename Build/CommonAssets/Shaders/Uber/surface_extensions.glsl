@@ -657,12 +657,14 @@ vec3 uberApplySecondRim(ToonMesh mesh, ToonLight light)
 #ifdef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
     return vec3(0.0);
 #else
+    if (_Rim2Params.w <= 0.0)
+        return vec3(0.0);
     float fresnel = pow(1.0 - saturate(dot(mesh.worldNormal, mesh.viewDir)),
         max(_Rim2Params.y, EPSILON));
     float rim = smoothstep(1.0 - _Rim2Params.x, 1.0, fresnel);
     rim *= texture(_Rim2Mask, transformUV(mesh.uv[0], _Rim2Mask_ST)).r;
     rim *= mix(1.0, saturate(light.lightMap), saturate(_Rim2Params.z));
-    return _Rim2Color.rgb * rim * max(_Rim2Params.w, 0.0);
+    return _Rim2Color.rgb * rim * _Rim2Params.w;
 #endif
 }
 

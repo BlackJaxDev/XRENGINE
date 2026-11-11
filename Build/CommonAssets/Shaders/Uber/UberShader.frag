@@ -2602,7 +2602,6 @@ void main() {
 #endif
     vec3 secondRim = uberApplySecondRim(mesh, light);
     fragData.finalColor += secondRim;
-    fragData.emission += secondRim;
     fragData.finalColor += uberApplyDepthRim(mesh);
 
     // Engine-authored glitter contributes to emission once.

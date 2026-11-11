@@ -44,7 +44,7 @@ internal sealed partial class SkinningPrepassDispatcher
             if (_seededFromRenderState && _seedInputsSettled)
                 return;
 
-            if (!_seededFromRenderState)
+            if (!_seededFromRenderState && RenderDiagnosticsFlags.SkinningPrepassDiag)
                 _renderer.LogBoneSeedStalenessDiagnostics("FirstDispatch");
 
             bool inputsResident = AreSkinningInputsNaturallyResident(

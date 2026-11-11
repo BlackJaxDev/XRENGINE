@@ -169,8 +169,8 @@ vec2 XR_UBER_MatcapUv(vec3 normal, vec3 viewDir, mat3 viewMatrix, vec4 projectio
     if (mode == 2) return reflect(-viewDir, normal).xy * border + 0.5;
     if (UBER_F(_SourceMatcap) > 0.5)
     {
-        vec3 detail = (viewMatrix * normal) * vec3(-1.0, -1.0, 1.0);
-        vec3 base = (viewMatrix * viewDir) * vec3(-1.0, -1.0, 1.0) + vec3(0.0, 0.0, 1.0);
+        vec3 detail = (normal * viewMatrix) * vec3(-1.0, -1.0, 1.0);
+        vec3 base = (viewDir * viewMatrix) * vec3(-1.0, -1.0, 1.0) + vec3(0.0, 0.0, 1.0);
         vec3 corrected = base * (dot(base, detail) / base.z) - detail;
         return corrected.xy * border + 0.5;
     }

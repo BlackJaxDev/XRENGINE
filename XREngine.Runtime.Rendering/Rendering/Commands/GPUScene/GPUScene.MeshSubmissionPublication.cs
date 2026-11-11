@@ -148,7 +148,7 @@ public partial class GPUScene
             WorldMatrixIsModelMatrix = snapshot.WorldMatrixIsModelMatrix,
             ForceCpuRendering = snapshot.ForceCpuRendering,
             HasSkinning = mesh.HasSkinning,
-            HasBlendshapes = mesh.HasBlendshapes,
+            HasBlendshapes = mesh.HasBlendshapeDeformation,
             BillboardMode = material.BillboardMode,
             ForceNoStereo = _commandIndexLookup[index].command is RenderCommandMesh2D,
             DisableMeshletCulling = snapshot.DisableMeshletCulling || !snapshot.Owner.Is3D

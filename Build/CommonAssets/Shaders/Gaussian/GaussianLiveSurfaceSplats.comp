@@ -234,10 +234,12 @@ void main()
     vec3 axisY = normalize(cross(axisZ, axisX));
 
     // Scale rest-pose tangent sigmas by the live triangle stretch ratio so joints and
-    // stretched cloth never open pinholes during animation, and cull triangles collapsed
-    // to near-zero area by clothing shrink blendshapes.
+    // stretched cloth never open pinholes during animation, and cull collapsed or extreme
+    // needle-sliver spike triangles so stray bone weights never emit floating splat dots.
     uint outSlot = s.triAndSlot.w;
-    if (liveDoubleArea <= 1.0e-11)
+    vec3 e3 = p2 - p1;
+    float maxEdgeSq = max(dot(e1, e1), max(dot(e2, e2), dot(e3, e3)));
+    if (liveDoubleArea <= 1.0e-11 || liveDoubleArea < 0.004 * maxEdgeSq)
     {
         GaussianSplat culledSplat;
         culledSplat.centerOpacity = vec4(center, -1.0);
@@ -252,7 +254,7 @@ void main()
     if (s.baryAndArea.z > 0.0)
     {
         float rawStretch = sqrt(liveDoubleArea) * s.baryAndArea.z;
-        if (rawStretch < 0.05)
+        if (rawStretch < 0.05 || rawStretch > 3.0)
         {
             GaussianSplat culledSplat;
             culledSplat.centerOpacity = vec4(center, -1.0);
