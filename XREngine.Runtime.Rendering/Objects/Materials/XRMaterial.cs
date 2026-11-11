@@ -1709,8 +1709,13 @@ namespace XREngine.Rendering
         private bool IsUberShaderMaterial()
         {
             XRShader? fragmentShader = GetShader(EShaderType.Fragment);
+            if (fragmentShader is not null && UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader))
+                return true;
+
             string? shaderPath = fragmentShader?.Source?.FilePath ?? fragmentShader?.FilePath;
-            return string.Equals(Path.GetFileName(shaderPath), "UberShader.frag", StringComparison.OrdinalIgnoreCase);
+            return string.Equals(Path.GetFileName(shaderPath), "UberShader.frag", StringComparison.OrdinalIgnoreCase) ||
+                   EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 ||
+                   UberAuthoredState.Features.Length > 0;
         }
 
         private static bool ShouldPreserveUberParameter(string? parameterName)

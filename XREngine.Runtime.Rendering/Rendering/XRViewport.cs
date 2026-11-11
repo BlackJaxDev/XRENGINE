@@ -3705,6 +3705,20 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Reapplies this viewport's aspect ratio when its active camera replaces its lens parameters.
+        /// </summary>
+        internal void SynchronizeAspectRatioFromCamera(XRCamera camera)
+        {
+            if (_destroyed || !ReferenceEquals(ActiveCamera, camera))
+                return;
+
+            if (_region.Width <= 0 || _region.Height <= 0)
+                return;
+
+            SetAspectRatioToCamera();
+        }
+
+        /// <summary>
         /// Updates the selected UI overlay canvas dimensions to match the viewport.
         /// Called internally when the viewport resizes or its UI owner changes.
         /// Ensures screen-space UI elements are correctly positioned and scaled.

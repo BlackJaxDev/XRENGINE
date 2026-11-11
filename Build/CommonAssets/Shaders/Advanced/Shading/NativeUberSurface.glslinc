@@ -191,6 +191,8 @@ float XR_UBER_MatcapMipCount(uint slot)
     ivec2 size = textureSize(sampler2D(XR_ADV_TextureDescriptors[textureIndex], XR_ADV_SamplerDescriptors[samplerIndex]), 0);
 #elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
     ivec2 size = textureSize(XR_ADV_TextureArray, 0).xy;
+#elif defined(XR_GAUSSIAN_UBER_ADAPTER_GLSLINC)
+    ivec2 size = XR_ADV_Texture2DSize(reference);
 #else
     ivec2 size = ivec2(1);
 #endif

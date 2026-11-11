@@ -21,6 +21,10 @@ bool XR_UBER_IsMaterial(XRAdvancedMaterialRecord material)
 
 bool XR_UBER_HasFeature(uint feature)
 {
+#ifdef XR_SPLAT_ACTIVE_UBER_FEATURES
+    if ((feature & XR_SPLAT_ACTIVE_UBER_FEATURES) == 0u)
+        return false;
+#endif
     return (XR_ADV_LoadMaterialConstant(XR_UBER_Material, XR_UBER_FEATURES_WORD) & feature) != 0u;
 }
 

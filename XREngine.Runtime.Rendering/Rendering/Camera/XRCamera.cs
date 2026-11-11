@@ -697,6 +697,10 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Parameters):
+                    SynchronizeAspectRatioWithViewports();
+                    RefreshObliqueProjectionMatrix();
+                    InvalidateProjectionMatrices();
+                    break;
                 case nameof(DepthMode):
                     RefreshObliqueProjectionMatrix();
                     InvalidateProjectionMatrices();
@@ -710,6 +714,12 @@ namespace XREngine.Rendering
                     SynchronizeRenderPipelineWithViewports();
                     break;
             }
+        }
+
+        private void SynchronizeAspectRatioWithViewports()
+        {
+            for (int i = 0; i < Viewports.Count; i++)
+                Viewports[i].SynchronizeAspectRatioFromCamera(this);
         }
 
         private void SynchronizeRenderPipelineWithViewports()

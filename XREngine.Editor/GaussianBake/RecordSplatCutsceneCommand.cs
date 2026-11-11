@@ -2,12 +2,19 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Animation;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Cutscenes;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Editor.Mcp;
 using XREngine.Rendering;
+using XREngine.Rendering.Info;
+using XREngine.Rendering.Models.Gaussian.Baking;
+using XREngine.Rendering.Models.Gaussian.Baking.Budgets;
+using XREngine.Rendering.Models.Gaussian.Baking.Input;
+using XREngine.Rendering.Models.Gaussian.Baking.Motion;
+using XREngine.Rendering.Models.Gaussian.Baking.Surface;
 using XREngine.Rendering.Models.Gaussian.Cache;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -16,17 +23,19 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Editor.GaussianBake;
 
 /// <summary>
-/// Renders a 1080p Gaussian splat cutscene video and matching hero poster from a baked <c>root.asset</c> cache.
-/// The shot scene places a <see cref="GaussianCacheComponent"/>, five perspective <see cref="CameraComponent"/> shot
-/// nodes switched by a <see cref="CameraCutTrack"/>, and a screen-space <see cref="UICanvasComponent"/> with two
-/// <see cref="UITextComponent"/> nodes under the control of a <see cref="CutsceneDirectorComponent"/>, then records
-/// the timeline through <see cref="ViewportSequenceCaptureSession"/>.
+/// Renders a 1080p Gaussian splat cutscene video and matching hero poster.
+/// Supports live Uber-shaded avatar surface splats from a cooked <c>.pak</c> archive (with live skeletal animation and
+/// <see cref="PhysicsChainComponent"/> simulation) as well as baked <see cref="GaussianCacheComponent"/> playback.
 /// </summary>
 public static class RecordSplatCutsceneCommand
 {
     /// <summary>The command line flag that selects this command.</summary>
     public const string CommandFlag = "--record-splat-cutscene";
 
+    private const string PakFlag = "--pak";
+    private const string AssetFlag = "--asset";
+    private const string ClipFlag = "--clip";
+    private const string SplatsFlag = "--splats";
     private const string CacheFlag = "--cache";
     private const string OutputDirFlag = "--output-dir";
     private const string TitleFlag = "--title";
@@ -39,6 +48,10 @@ public static class RecordSplatCutsceneCommand
 
     private const int FrameWidth = 1920;
     private const int FrameHeight = 1080;
+    private const float ViewportAspectRatio = FrameWidth / (float)FrameHeight;
+    private const string DefaultAssetPath = "Avatars/avatar.asset";
+    private const string DefaultClipName = "Sexy Walk";
+    private const int DefaultLiveSplatCount = 2_400_000;
     private const string DefaultTitle = "XRENGINE";
     private const string DefaultSubtitle = "GAUSSIAN SPLAT AVATAR  //  CUTSCENE PLAYBACK";
     private const float DefaultDurationSeconds = 8.8f;
@@ -46,8 +59,13 @@ public static class RecordSplatCutsceneCommand
     private const int ShotCameraCount = 5;
     private const int WarmupRenderFrames = 45;
     private const int SettleRenderFramesPerStep = 2;
+    private const int PhysicsSubstepsPerCapturedFrame = 2;
+    private const int PhysicsGravitySettleSubsteps = 30;
+    private const float PhysicsLeadInWindowSeconds = 0.45f;
     private const long RemoteProxyByteLimit = 2_097_152L;
     private const long RemoteTargetBytes = 1_650_000L;
+
+    private static readonly RenderInfo.DelAddRenderCommandsCallback RejectAllRenderPassesCallback = static (_, _, _) => false;
 
     /// <summary>
     /// Runs the cutscene recording command when <paramref name="args"/> contains <see cref="CommandFlag"/>.
@@ -67,45 +85,45 @@ public static class RecordSplatCutsceneCommand
 
     /// <summary>
     /// Parses the options, starts the engine with the requested graphics backend, records the cutscene sequence,
-    /// copies the hero poster frame, and encodes the MP4 cutscene clip with ffmpeg.
+    /// copies the hero poster frame, and encodes the MP4 cutscene clips with ffmpeg.
     /// </summary>
     public static int Run(IReadOnlyList<string> args)
     {
         ArgumentNullException.ThrowIfNull(args);
 
-        if (!TryParseOptions(
-                args,
-                out string cacheAssetPath,
-                out string outputDirectory,
-                out string titleText,
-                out string subtitleText,
-                out float durationSeconds,
-                out int fps,
-                out ERenderLibrary backend,
-                out string ffmpegPath,
-                out float yawOffsetDegrees,
-                out string? error))
+        if (!TryParseOptions(args, out CutsceneCommandOptions? options, out string? error) || options is null)
         {
             Console.Error.WriteLine($"Splat cutscene recording failed: {error}");
             return 2;
         }
 
-        if (!File.Exists(cacheAssetPath))
+        if (options.UseLiveAvatarSplats)
         {
-            Console.Error.WriteLine($"Splat cutscene recording failed: the cache root asset '{cacheAssetPath}' does not exist.");
+            if (!File.Exists(options.PakPath))
+            {
+                Console.Error.WriteLine($"Splat cutscene recording failed: the cooked pak '{options.PakPath}' does not exist.");
+                return 2;
+            }
+        }
+        else if (!File.Exists(options.CacheAssetPath))
+        {
+            Console.Error.WriteLine($"Splat cutscene recording failed: the cache root asset '{options.CacheAssetPath}' does not exist.");
             return 2;
         }
 
-        Directory.CreateDirectory(outputDirectory);
-        int totalFrames = Math.Clamp((int)MathF.Round(durationSeconds * fps), 60, ViewportSequenceCaptureOptions.MaximumFrames);
-        float effectiveDurationSeconds = totalFrames / (float)fps;
+        Directory.CreateDirectory(options.OutputDirectory);
+        int totalFrames = Math.Clamp((int)MathF.Round(options.DurationSeconds * options.Fps), 60, ViewportSequenceCaptureOptions.MaximumFrames);
+        float effectiveDurationSeconds = totalFrames / (float)options.Fps;
 
+        string sourceSummary = options.UseLiveAvatarSplats
+            ? $"pak='{options.PakPath}', asset='{options.AssetPath}', clip='{options.ClipName}', splats={options.SplatCount}"
+            : $"cache='{options.CacheAssetPath}'";
         Console.WriteLine(
-            $"Recording splat cutscene: cache='{cacheAssetPath}', output='{outputDirectory}', " +
-            $"backend={backend}, frames={totalFrames}, fps={fps}, duration={effectiveDurationSeconds:F2}s.");
+            $"Recording splat cutscene: {sourceSummary}, output='{options.OutputDirectory}', " +
+            $"backend={options.Backend}, frames={totalFrames}, fps={options.Fps}, duration={effectiveDurationSeconds:F2}s.");
 
         int exitCode = 1;
-        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(8));
+        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(20));
 
         void AfterWindowsCreated(GameStartupSettings settings, GameState state)
         {
@@ -116,15 +134,9 @@ public static class RecordSplatCutsceneCommand
                 try
                 {
                     exitCode = await ExecuteRecordingAsync(
-                        cacheAssetPath,
-                        outputDirectory,
-                        titleText,
-                        subtitleText,
+                        options,
                         effectiveDurationSeconds,
-                        fps,
                         totalFrames,
-                        ffmpegPath,
-                        yawOffsetDegrees,
                         cts.Token).ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -143,12 +155,12 @@ public static class RecordSplatCutsceneCommand
             });
         }
 
-        Engine.SetSessionSetting((UserSettings userSettings) => userSettings.PreferredRenderBackend, backend);
+        Engine.SetSessionSetting((UserSettings userSettings) => userSettings.PreferredRenderBackend, options.Backend);
         Engine.SetSessionSetting((UserSettings userSettings) => userSettings.VSync, EVSyncMode.Off);
         Engine.AfterCreateWindows += AfterWindowsCreated;
         try
         {
-            Engine.Run(CreateStartupSettings(backend), new GameState(), beginPlayingAllWorlds: true);
+            Engine.Run(CreateStartupSettings(options.Backend), new GameState(), beginPlayingAllWorlds: true);
         }
         finally
         {
@@ -161,15 +173,9 @@ public static class RecordSplatCutsceneCommand
     }
 
     private static async Task<int> ExecuteRecordingAsync(
-        string cacheAssetPath,
-        string outputDirectory,
-        string titleText,
-        string subtitleText,
+        CutsceneCommandOptions options,
         float durationSeconds,
-        int fps,
         int totalFrames,
-        string ffmpegPath,
-        float yawOffsetDegrees,
         CancellationToken cancellationToken)
     {
         if (RuntimeEngine.Windows.Count == 0)
@@ -195,178 +201,266 @@ public static class RecordSplatCutsceneCommand
                 window,
                 viewport,
                 defaultFont,
-                titleText,
-                subtitleText,
-                durationSeconds,
-                yawOffsetDegrees);
+                options,
+                durationSeconds);
         }, cancellationToken).ConfigureAwait(false);
 
         if (shotScene is null)
             throw new InvalidOperationException("Failed to construct the cutscene shot scene.");
 
-        // Load all chunks of the baked Gaussian cache and wait until the GPU buffers and initial sort are ready.
-        await shotScene.CacheComponent.LoadAsync(cacheAssetPath, cancellationToken).ConfigureAwait(false);
-        GaussianCache cache = shotScene.CacheComponent.Cache
-            ?? throw new InvalidOperationException("GaussianCacheComponent.LoadAsync completed without a cache instance.");
-
-        Console.WriteLine(
-            $"Loaded Gaussian cache: nodes={cache.Header.SplatLevelCounts.Sum()}, levels={cache.Header.SplatLevelCounts.Length}, " +
-            $"frames={cache.Header.FrameCount}, fps={cache.Header.FrameRate}, " +
-            $"bounds=({cache.Header.Bounds.Min} .. {cache.Header.Bounds.Max}).");
-
-        // Now that the cache header is loaded, rebuild the camera trajectory from the exact avatar bounds and open the cutscene.
-        await RunOnUpdateThreadAsync(() =>
-        {
-            ConfigureCutsceneFromBounds(shotScene, cache.Header, durationSeconds, yawOffsetDegrees);
-            shotScene.Director.OpenAsync(cancellationToken).GetAwaiter().GetResult();
-            if (!shotScene.Director.IsOpen || shotScene.Director.Player is null)
-            {
-                string diag = string.Join("; ", shotScene.Director.Diagnostics.Select(static d => d.Message));
-                throw new InvalidOperationException($"CutsceneDirectorComponent failed to open the cutscene: {diag}");
-            }
-
-            if (shotScene.Director.Diagnostics.Count > 0)
-            {
-                foreach (CutsceneCompileDiagnostic diagnostic in shotScene.Director.Diagnostics)
-                    Console.WriteLine($"[Cutscene diagnostic] {diagnostic.Message}");
-            }
-
-            SeekAndEvaluateCutscene(shotScene, 0.0);
-        }, cancellationToken).ConfigureAwait(false);
-
-        // Wait until the cache GPU uploads and initial splat sort finish and warm up pipelines for WarmupRenderFrames.
-        await WaitForWarmupAsync(shotScene, WarmupRenderFrames, cancellationToken).ConfigureAwait(false);
-
-        // Prepare the sequence capture directory so ViewportSequenceCaptureManager writes into a clean folder.
-        string sequenceRootDir = Path.Combine(outputDirectory, "sequence");
-        if (Directory.Exists(sequenceRootDir))
-            Directory.Delete(sequenceRootDir, recursive: true);
-        Directory.CreateDirectory(sequenceRootDir);
-
-        if (!ViewportSequenceCaptureOptions.TryCreate(
-                frameCount: totalFrames,
-                durationSeconds: null,
-                frameStride: 1,
-                captureFramesPerSecond: null,
-                maxFrames: totalFrames,
-                outputScale: 1.0,
-                maxInFlightReadbacks: 4,
-                overflowPolicy: "drop",
-                preserveAlpha: false,
-                createContactSheet: true,
-                contactSheetColumns: 6,
-                contactSheetThumbnailWidth: 320,
-                computeFrameDifferences: true,
-                outputDirectory: sequenceRootDir,
-                out ViewportSequenceCaptureOptions? captureOptions,
-                out string? optionsError) ||
-            captureOptions is null)
-        {
-            throw new InvalidOperationException($"Invalid ViewportSequenceCaptureOptions: {optionsError}");
-        }
-
-        // Step the cutscene timeline in deterministic lockstep with ViewportSequenceCaptureSession.
-        CutsceneLockstepController lockstep = new(shotScene, totalFrames, fps);
-        ViewportSequenceCaptureSession? session = null;
-
-        await RunOnUpdateThreadAsync(() =>
-        {
-            lockstep.Attach();
-            if (!ViewportSequenceCaptureManager.Instance.TryStart(
-                    viewport,
-                    captureOptions,
-                    out session,
-                    out string? startError) ||
-                session is null)
-            {
-                lockstep.Detach();
-                throw new InvalidOperationException($"Failed to start ViewportSequenceCaptureSession: {startError}");
-            }
-
-            session.ShouldCaptureFrame = lockstep.ShouldCaptureFrame;
-            session.FrameScheduled = lockstep.OnFrameScheduled;
-        }, cancellationToken).ConfigureAwait(false);
-
         try
         {
-            while (!session!.IsTerminal)
+            AABB avatarBounds;
+            float defaultYawDegrees = 0.0f;
+            float forwardClipDuration = durationSeconds;
+
+            if (shotScene.AvatarSplatComponent is { } liveSplats)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                avatarBounds = shotScene.LiveAvatarBounds;
+                forwardClipDuration = shotScene.MotionChoice is { DurationSeconds: > 0.01f } motion
+                    ? motion.DurationSeconds
+                    : durationSeconds;
+                Console.WriteLine(
+                    $"Initialized live Uber avatar splats: splats={liveSplats.TotalSplats}, slices={liveSplats.SubmeshSliceCount}, " +
+                    $"materials={liveSplats.MaterialCount}, textures2D={liveSplats.Texture2DCount}, " +
+                    $"clip='{shotScene.MotionChoice?.ClipName ?? "none"}' ({forwardClipDuration:F2}s), " +
+                    $"physicsChains={shotScene.PhysicsChains.Count}, bounds=({avatarBounds.Min} .. {avatarBounds.Max}).");
             }
+            else if (shotScene.CacheComponent is { } cacheComponent)
+            {
+                await cacheComponent.LoadAsync(options.CacheAssetPath, cancellationToken).ConfigureAwait(false);
+                GaussianCache cache = cacheComponent.Cache
+                    ?? throw new InvalidOperationException("GaussianCacheComponent.LoadAsync completed without a cache instance.");
+
+                avatarBounds = cache.Header.Bounds;
+                defaultYawDegrees = cache.Header.CameraHints?.DefaultYawDegrees ?? 0.0f;
+                forwardClipDuration = cache.Header.FrameCount > 1 && cache.Header.FrameRate > 0.0f
+                    ? (cache.Header.FrameCount - 1) / cache.Header.FrameRate
+                    : durationSeconds;
+                Console.WriteLine(
+                    $"Loaded Gaussian cache: nodes={cache.Header.SplatLevelCounts.Sum()}, levels={cache.Header.SplatLevelCounts.Length}, " +
+                    $"frames={cache.Header.FrameCount}, fps={cache.Header.FrameRate}, " +
+                    $"bounds=({avatarBounds.Min} .. {avatarBounds.Max}).");
+            }
+            else
+            {
+                throw new InvalidOperationException("CutsceneShotScene has neither a live avatar splat component nor a cache component.");
+            }
+
+            await RunOnUpdateThreadAsync(() =>
+            {
+                ConfigureCutsceneFromBounds(
+                    shotScene,
+                    avatarBounds,
+                    defaultYawDegrees,
+                    forwardClipDuration,
+                    durationSeconds,
+                    options.YawOffsetDegrees);
+                shotScene.Director.OpenAsync(cancellationToken).GetAwaiter().GetResult();
+                if (!shotScene.Director.IsOpen || shotScene.Director.Player is null)
+                {
+                    string diag = string.Join("; ", shotScene.Director.Diagnostics.Select(static d => d.Message));
+                    throw new InvalidOperationException($"CutsceneDirectorComponent failed to open the cutscene: {diag}");
+                }
+
+                if (shotScene.Director.Diagnostics.Count > 0)
+                {
+                    foreach (CutsceneCompileDiagnostic diagnostic in shotScene.Director.Diagnostics)
+                        Console.WriteLine($"[Cutscene diagnostic] {diagnostic.Message}");
+                }
+
+                SeekAndEvaluateCutscene(shotScene, 0.0, captureFrameIndex: 0);
+            }, cancellationToken).ConfigureAwait(false);
+
+            // Wait until the GPU splat buffers and initial radix depth sort finish and warm up pipelines.
+            await WaitForWarmupAsync(shotScene, WarmupRenderFrames, cancellationToken).ConfigureAwait(false);
+
+            // Prepare the sequence capture directory so ViewportSequenceCaptureManager writes into a clean folder.
+            string sequenceRootDir = Path.Combine(options.OutputDirectory, "sequence");
+            if (Directory.Exists(sequenceRootDir))
+                Directory.Delete(sequenceRootDir, recursive: true);
+            Directory.CreateDirectory(sequenceRootDir);
+
+            if (!ViewportSequenceCaptureOptions.TryCreate(
+                    frameCount: totalFrames,
+                    durationSeconds: null,
+                    frameStride: 1,
+                    captureFramesPerSecond: null,
+                    maxFrames: totalFrames,
+                    outputScale: 1.0,
+                    maxInFlightReadbacks: 4,
+                    overflowPolicy: "drop",
+                    preserveAlpha: false,
+                    createContactSheet: true,
+                    contactSheetColumns: 6,
+                    contactSheetThumbnailWidth: 320,
+                    computeFrameDifferences: true,
+                    outputDirectory: sequenceRootDir,
+                    out ViewportSequenceCaptureOptions? captureOptions,
+                    out string? optionsError) ||
+                captureOptions is null)
+            {
+                throw new InvalidOperationException($"Invalid ViewportSequenceCaptureOptions: {optionsError}");
+            }
+
+            // Step the cutscene timeline in deterministic lockstep with ViewportSequenceCaptureSession.
+            CutsceneLockstepController lockstep = new(viewport, shotScene, totalFrames, options.Fps);
+            ViewportSequenceCaptureSession? session = null;
+
+            await RunOnUpdateThreadAsync(() =>
+            {
+                lockstep.Attach();
+                if (!ViewportSequenceCaptureManager.Instance.TryStart(
+                        viewport,
+                        captureOptions,
+                        out session,
+                        out string? startError) ||
+                    session is null)
+                {
+                    lockstep.Detach();
+                    throw new InvalidOperationException($"Failed to start ViewportSequenceCaptureSession: {startError}");
+                }
+
+                session.ShouldCaptureFrame = lockstep.ShouldCaptureFrame;
+                session.FrameScheduled = lockstep.OnFrameScheduled;
+            }, cancellationToken).ConfigureAwait(false);
+
+            Stopwatch captureWatch = Stopwatch.StartNew();
+            try
+            {
+                while (!session!.IsTerminal)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (captureWatch.Elapsed > TimeSpan.FromMinutes(15))
+                    {
+                        ViewportSequenceCaptureSnapshot timeoutSnapshot = session.CreateSnapshot(includeFrames: false);
+                        throw new TimeoutException(
+                            $"Timed out waiting for ViewportSequenceCapture (scheduled={timeoutSnapshot.ScheduledFrameCount}, " +
+                            $"completed={timeoutSnapshot.CompletedFrameCount}).");
+                    }
+
+                    await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                await RunOnUpdateThreadAsync(lockstep.Detach, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            ViewportSequenceCaptureSnapshot snapshot = session.CreateSnapshot(includeFrames: true);
+            Console.WriteLine(
+                $"ViewportSequenceCapture finished: state={snapshot.State}, stopReason={snapshot.StopReason}, " +
+                $"scheduled={snapshot.ScheduledFrameCount}, completed={snapshot.CompletedFrameCount}, " +
+                $"failed={snapshot.FailedFrameCount}, outputDir='{snapshot.OutputDirectory}'.");
+
+            if (!string.Equals(snapshot.State, "completed", StringComparison.OrdinalIgnoreCase) ||
+                snapshot.CompletedFrameCount != totalFrames)
+            {
+                throw new InvalidOperationException(
+                    $"ViewportSequenceCapture did not complete all {totalFrames} frames " +
+                    $"(state={snapshot.State}, completed={snapshot.CompletedFrameCount}, error={snapshot.Error}).");
+            }
+
+            // Copy the manifest, contact sheet, and final hero frame to top-level output paths.
+            string manifestDestPath = Path.Combine(options.OutputDirectory, "manifest.json");
+            File.Copy(snapshot.ManifestPath, manifestDestPath, overwrite: true);
+
+            if (!string.IsNullOrWhiteSpace(snapshot.ContactSheetPath) && File.Exists(snapshot.ContactSheetPath))
+            {
+                string contactSheetDestPath = Path.Combine(options.OutputDirectory, "contact-sheet.png");
+                File.Copy(snapshot.ContactSheetPath, contactSheetDestPath, overwrite: true);
+            }
+
+            string heroFrameSourcePath = Path.Combine(snapshot.OutputDirectory, $"frame_{totalFrames - 1:D6}.png");
+            string heroPosterPath = Path.Combine(options.OutputDirectory, "hero-poster-1080.png");
+            File.Copy(heroFrameSourcePath, heroPosterPath, overwrite: true);
+
+            string masterVideoPath = Path.Combine(options.OutputDirectory, "cutscene-1080.mp4");
+            await EncodeMp4WithFfmpegAsync(options.FfmpegPath, snapshot.OutputDirectory, options.Fps, masterVideoPath, cancellationToken).ConfigureAwait(false);
+
+            string remoteVideoPath = Path.Combine(options.OutputDirectory, "cutscene-1080-remote.mp4");
+            await EncodeRemoteSafeMp4WithFfmpegAsync(
+                options.FfmpegPath,
+                snapshot.OutputDirectory,
+                options.Fps,
+                durationSeconds,
+                remoteVideoPath,
+                cancellationToken).ConfigureAwait(false);
+
+            Console.WriteLine($"Hero poster written to: {heroPosterPath}");
+            Console.WriteLine($"Cutscene video written to: {masterVideoPath}");
+            Console.WriteLine($"Remote-safe cutscene video written to: {remoteVideoPath} ({new FileInfo(remoteVideoPath).Length} bytes)");
+            return 0;
         }
         finally
         {
-            await RunOnUpdateThreadAsync(lockstep.Detach, CancellationToken.None).ConfigureAwait(false);
+            if (shotScene.MotionChoice is { } motionChoice)
+            {
+                await RunOnUpdateThreadAsync(
+                    () => BakeMotionSelector.ReleaseTemporaryPlayers(motionChoice),
+                    CancellationToken.None).ConfigureAwait(false);
+            }
         }
-
-        ViewportSequenceCaptureSnapshot snapshot = session.CreateSnapshot(includeFrames: true);
-        Console.WriteLine(
-            $"ViewportSequenceCapture finished: state={snapshot.State}, stopReason={snapshot.StopReason}, " +
-            $"scheduled={snapshot.ScheduledFrameCount}, completed={snapshot.CompletedFrameCount}, " +
-            $"failed={snapshot.FailedFrameCount}, outputDir='{snapshot.OutputDirectory}'.");
-
-        if (!string.Equals(snapshot.State, "completed", StringComparison.OrdinalIgnoreCase) ||
-            snapshot.CompletedFrameCount != totalFrames)
-        {
-            throw new InvalidOperationException(
-                $"ViewportSequenceCapture did not complete all {totalFrames} frames " +
-                $"(state={snapshot.State}, completed={snapshot.CompletedFrameCount}, error={snapshot.Error}).");
-        }
-
-        // Copy the manifest, contact sheet, and final hero frame to top-level output paths.
-        string manifestDestPath = Path.Combine(outputDirectory, "manifest.json");
-        File.Copy(snapshot.ManifestPath, manifestDestPath, overwrite: true);
-
-        if (!string.IsNullOrWhiteSpace(snapshot.ContactSheetPath) && File.Exists(snapshot.ContactSheetPath))
-        {
-            string contactSheetDestPath = Path.Combine(outputDirectory, "contact-sheet.png");
-            File.Copy(snapshot.ContactSheetPath, contactSheetDestPath, overwrite: true);
-        }
-
-        string heroFrameSourcePath = Path.Combine(snapshot.OutputDirectory, $"frame_{totalFrames - 1:D6}.png");
-        string heroPosterPath = Path.Combine(outputDirectory, "hero-poster-1080.png");
-        File.Copy(heroFrameSourcePath, heroPosterPath, overwrite: true);
-
-        string masterVideoPath = Path.Combine(outputDirectory, "cutscene-1080.mp4");
-        await EncodeMp4WithFfmpegAsync(ffmpegPath, snapshot.OutputDirectory, fps, masterVideoPath, cancellationToken).ConfigureAwait(false);
-
-        string remoteVideoPath = Path.Combine(outputDirectory, "cutscene-1080-remote.mp4");
-        await EncodeRemoteSafeMp4WithFfmpegAsync(
-            ffmpegPath,
-            snapshot.OutputDirectory,
-            fps,
-            durationSeconds,
-            remoteVideoPath,
-            cancellationToken).ConfigureAwait(false);
-
-        Console.WriteLine($"Hero poster written to: {heroPosterPath}");
-        Console.WriteLine($"Cutscene video written to: {masterVideoPath}");
-        Console.WriteLine($"Remote-safe cutscene video written to: {remoteVideoPath} ({new FileInfo(remoteVideoPath).Length} bytes)");
-        return 0;
     }
 
     private static CutsceneShotScene BuildCutsceneShotScene(
         XRWindow window,
         XRViewport viewport,
         FontGlyphSet font,
-        string titleText,
-        string subtitleText,
-        float durationSeconds,
-        float yawOffsetDegrees)
+        CutsceneCommandOptions options,
+        float durationSeconds)
     {
         SceneNode stageNode = GaussianPreviewStage.CreateDefault();
+        if (stageNode.Transform is Transform stageTransform)
+            stageTransform.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI);
 
-        // 1. GaussianCacheComponent node configured to render up to 2,000,000 leaf splats.
         SceneNode avatarNode = new("AvatarSplatNode");
         avatarNode.SetTransform<Transform>();
-        GaussianCacheComponent cacheComponent = avatarNode.AddComponent<GaussianCacheComponent>("AvatarGaussianCache")
-            ?? throw new InvalidOperationException("Failed to add GaussianCacheComponent.");
-        cacheComponent.Playing = false;
-        cacheComponent.LodThresholdPixels = 0.01f;
-        cacheComponent.MaxRenderedSplats = 2_000_000;
 
-        // 2. Multi-shot Cutscene CameraComponent nodes routed through CameraCutTrack jump cuts.
+        GaussianCacheComponent? cacheComponent = null;
+        GaussianAvatarSplatComponent? avatarSplatComponent = null;
+        SceneNode? avatarPrefabRoot = null;
+        BakeMotionChoice? motionChoice = null;
+        List<PhysicsChainComponent> physicsChains = [];
+        AABB liveAvatarBounds = default;
+
+        if (options.UseLiveAvatarSplats)
+        {
+            CookedBakeInput input = CookedBakeInputLoader.Load(options.PakPath, options.AssetPath, GaussianBakeKind.Avatar);
+            avatarPrefabRoot = input.PrefabRoot
+                ?? throw new InvalidOperationException($"The cooked asset '{options.AssetPath}' has no prefab root node.");
+
+            EnsureAvatarRuntimeMeshes(avatarPrefabRoot);
+
+            List<string> motionWarnings = [];
+            motionChoice = BakeMotionSelector.ChooseForPrefab(
+                avatarPrefabRoot,
+                options.ClipName,
+                GaussianBakeBudget.For(GaussianBakeKind.Avatar),
+                motionWarnings);
+            if (motionWarnings.Count > 0)
+                Console.WriteLine($"[Avatar motion warnings] {string.Join(", ", motionWarnings)}");
+
+            liveAvatarBounds = ComputeAvatarMotionBounds(input, avatarPrefabRoot, motionChoice);
+
+            // Sample dense surface splats and intern all NativeUber / Standard submesh materials in rest pose.
+            avatarSplatComponent = avatarNode.AddComponent<GaussianAvatarSplatComponent>("AvatarLiveUberSplats")
+                ?? throw new InvalidOperationException("Failed to add GaussianAvatarSplatComponent.");
+            avatarSplatComponent.InitializeFromAvatar(avatarPrefabRoot, options.SplatCount);
+
+            ConfigureAvatarAnimationAndPhysicsChains(avatarPrefabRoot, motionChoice, physicsChains);
+            HideAvatarTriangleMeshes(avatarPrefabRoot);
+        }
+        else
+        {
+            cacheComponent = avatarNode.AddComponent<GaussianCacheComponent>("AvatarGaussianCache")
+                ?? throw new InvalidOperationException("Failed to add GaussianCacheComponent.");
+            cacheComponent.Playing = false;
+            cacheComponent.LodThresholdPixels = 0.01f;
+            cacheComponent.MaxRenderedSplats = 2_000_000;
+        }
+
+        // Multi-shot Cutscene CameraComponent nodes routed through CameraCutTrack jump cuts.
         SceneNode cameraGroupNode = new("CutsceneCameras");
         cameraGroupNode.SetTransform<Transform>();
         ShotCameraRig[] shotCameras = new ShotCameraRig[ShotCameraCount];
@@ -377,12 +471,12 @@ public static class RecordSplatCutsceneCommand
             Transform cameraTransform = cameraNode.SetTransform<Transform>();
             CameraComponent cameraComponent = cameraNode.AddComponent<CameraComponent>($"CutsceneCameraComponent_{i}")
                 ?? throw new InvalidOperationException($"Failed to add CameraComponent {i}.");
-            cameraComponent.CameraParameters = new XRPerspectiveCameraParameters(34.0f, null, 0.03f, 100.0f);
+            cameraComponent.CameraParameters = new XRPerspectiveCameraParameters(34.0f, ViewportAspectRatio, 0.03f, 100.0f);
             cameraComponent.InternalResolutionMode = EInternalResolutionMode.FullResolution;
             shotCameras[i] = new ShotCameraRig(slotName, cameraNode, cameraTransform, cameraComponent);
         }
 
-        // 3. Screen-space UICanvasComponent with Title and Subtitle UITextComponents.
+        // Screen-space UICanvasComponent with Title and Subtitle UITextComponents.
         SceneNode canvasRoot = new("CutsceneOverlayCanvas");
         UICanvasComponent canvasComponent = canvasRoot.AddComponent<UICanvasComponent>("CutsceneUICanvas")
             ?? throw new InvalidOperationException("Failed to add UICanvasComponent.");
@@ -395,7 +489,7 @@ public static class RecordSplatCutsceneCommand
             canvasRoot,
             "TitleTextNode",
             font,
-            titleText,
+            options.TitleText,
             fontSize: 72.0f,
             position: new Vector2(96.0f, 300.0f),
             size: new Vector2(920.0f, 110.0f),
@@ -408,7 +502,7 @@ public static class RecordSplatCutsceneCommand
             canvasRoot,
             "SubtitleTextNode",
             font,
-            subtitleText,
+            options.SubtitleText,
             fontSize: 28.0f,
             position: new Vector2(100.0f, 232.0f),
             size: new Vector2(920.0f, 64.0f),
@@ -417,7 +511,7 @@ public static class RecordSplatCutsceneCommand
             outlineThickness: 0.0f,
             out UITextComponent subtitleComponent);
 
-        // 4. CutsceneDirectorComponent node.
+        // CutsceneDirectorComponent node.
         SceneNode directorNode = new("CutsceneDirector");
         directorNode.SetTransform<Transform>();
         CutsceneDirectorComponent director = directorNode.AddComponent<CutsceneDirectorComponent>("CutsceneDirector")
@@ -425,7 +519,9 @@ public static class RecordSplatCutsceneCommand
         director.ResidencyEnabled = false;
         director.TargetViewport = viewport;
 
-        XRScene scene = new("SplatCutsceneScene", stageNode, avatarNode, cameraGroupNode, canvasRoot, directorNode);
+        XRScene scene = avatarPrefabRoot is not null
+            ? new("SplatCutsceneScene", stageNode, avatarPrefabRoot, avatarNode, cameraGroupNode, canvasRoot, directorNode)
+            : new("SplatCutsceneScene", stageNode, avatarNode, cameraGroupNode, canvasRoot, directorNode);
         XRWorld world = new("SplatCutsceneWorld", scene);
         world.Settings.AmbientLightColor = new ColorF3(1.0f, 1.0f, 1.0f);
         world.Settings.AmbientLightIntensity = GaussianPreviewStage.AmbientIntensity;
@@ -441,6 +537,15 @@ public static class RecordSplatCutsceneCommand
         RuntimeWorld runtimeWorld = Engine.GetOrCreateWorld(world);
         Task beginPlay = RuntimeWorldHostServices.Current?.BeginPlayAsync(runtimeWorld) ?? runtimeWorld.BeginPlayAsync();
         beginPlay.GetAwaiter().GetResult();
+
+        if (avatarPrefabRoot is not null)
+        {
+            // Keep source ModelComponents active for GPU compute skinning while rejecting triangle draw collection,
+            // and pause automatic world play so lockstep capture advances animation and physics chains deterministically.
+            HideAvatarTriangleMeshes(avatarPrefabRoot);
+            runtimeWorld.PausePlay();
+        }
+
         IRuntimeRenderWorld renderWorld = Engine.GetOrCreateRenderWorld(world);
         window.SetWorld(renderWorld);
 
@@ -471,8 +576,14 @@ public static class RecordSplatCutsceneCommand
 
         return new CutsceneShotScene(
             world,
+            runtimeWorld,
             avatarNode,
+            avatarPrefabRoot,
             cacheComponent,
+            avatarSplatComponent,
+            motionChoice,
+            physicsChains,
+            liveAvatarBounds,
             cameraGroupNode,
             shotCameras,
             canvasRoot,
@@ -483,7 +594,118 @@ public static class RecordSplatCutsceneCommand
             subtitleComponent,
             director,
             durationSeconds,
-            yawOffsetDegrees);
+            options.YawOffsetDegrees);
+    }
+
+    private static void EnsureAvatarRuntimeMeshes(SceneNode avatarPrefabRoot)
+    {
+        avatarPrefabRoot.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+        avatarPrefabRoot.IterateComponents<RenderableComponent>(component =>
+        {
+            if (!BakeMotionSelector.IsEnabled(component, avatarPrefabRoot))
+                return;
+
+            if (component is ModelComponent { Meshes.Count: 0 } modelComponent)
+                modelComponent.RebuildRuntimeMeshes();
+        }, iterateChildHierarchy: true);
+    }
+
+    private static AABB ComputeAvatarMotionBounds(
+        CookedBakeInput input,
+        SceneNode avatarPrefabRoot,
+        BakeMotionChoice motionChoice)
+    {
+        Vector3 min = new(float.PositiveInfinity);
+        Vector3 max = new(float.NegativeInfinity);
+        bool anyVertex = false;
+
+        if (motionChoice.FrameCount > 0)
+        {
+            BakeFrameSampler.ForEachFrame(avatarPrefabRoot, motionChoice, (_, surface) =>
+            {
+                float[] positions = surface.Positions;
+                for (int offset = 0; offset + 2 < positions.Length; offset += 3)
+                {
+                    Vector3 p = new(positions[offset], positions[offset + 1], positions[offset + 2]);
+                    if (!float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z))
+                        continue;
+
+                    min = Vector3.Min(min, p);
+                    max = Vector3.Max(max, p);
+                    anyVertex = true;
+                }
+            });
+        }
+
+        if (anyVertex)
+            return new AABB(min, max);
+
+        if (BakeWorldFactory.TryComputeContentBounds(input, out AABB contentBounds) && contentBounds.IsValid)
+            return contentBounds;
+
+        return new AABB(new Vector3(-0.5f, 0.0f, -0.5f), new Vector3(0.5f, 1.8f, 0.5f));
+    }
+
+    private static void ConfigureAvatarAnimationAndPhysicsChains(
+        SceneNode avatarPrefabRoot,
+        BakeMotionChoice motionChoice,
+        List<PhysicsChainComponent> physicsChains)
+    {
+        IReadOnlyList<AnimationClipComponent> selectedPlayers = motionChoice.Players;
+        for (int i = 0; i < selectedPlayers.Count; i++)
+            selectedPlayers[i].StartOnActivate = false;
+
+        avatarPrefabRoot.IterateComponents(component =>
+        {
+            if (component is AnimStateMachineComponent)
+            {
+                component.IsActive = false;
+                return;
+            }
+
+            if (component is AnimationClipComponent clipComponent && !ContainsPlayer(selectedPlayers, clipComponent))
+            {
+                clipComponent.StartOnActivate = false;
+                clipComponent.IsActive = false;
+                return;
+            }
+
+            if (component is PhysicsChainComponent chain && BakeMotionSelector.IsEnabled(chain, avatarPrefabRoot))
+            {
+                chain.UseGPU = false;
+                chain.Multithread = false;
+                chain.InterpolationMode = PhysicsChainComponent.EInterpolationMode.Discrete;
+                chain.UpdateMode = PhysicsChainComponent.EUpdateMode.FixedUpdate;
+                chain.QualityTier = PhysicsChainQualityTier.Strict;
+                chain.TransformMirrorPolicy = PhysicsChainOutputControl.EverySimulationStep;
+                chain.OffscreenBehavior = PhysicsChainOffscreenBehavior.Simulate;
+                chain.EnableAutomaticSleep = false;
+                chain.DistantDisable = false;
+                chain.SetRuntimeVisibility(true);
+                physicsChains.Add(chain);
+            }
+        }, iterateChildHierarchy: true);
+    }
+
+    private static bool ContainsPlayer(IReadOnlyList<AnimationClipComponent> players, AnimationClipComponent candidate)
+    {
+        for (int i = 0; i < players.Count; i++)
+        {
+            if (ReferenceEquals(players[i], candidate))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static void HideAvatarTriangleMeshes(SceneNode avatarPrefabRoot)
+    {
+        avatarPrefabRoot.IterateComponents<RenderableComponent>(component =>
+        {
+            component.MeshCastsShadows = false;
+            foreach (RenderableMesh mesh in component.Meshes)
+                mesh.RenderInfo.SetCameraIndependentPreCollectCommandsCallback(RejectAllRenderPassesCallback);
+        }, iterateChildHierarchy: true);
     }
 
     private static SceneNode CreateTextNode(
@@ -524,12 +746,14 @@ public static class RecordSplatCutsceneCommand
 
     private static void ConfigureCutsceneFromBounds(
         CutsceneShotScene shotScene,
-        GaussianCacheHeader header,
+        AABB bounds,
+        float defaultYawDegrees,
+        float forwardClipDuration,
         float durationSeconds,
         float yawOffsetDegrees)
     {
-        Vector3 boundsMin = header.Bounds.Min;
-        Vector3 boundsMax = header.Bounds.Max;
+        Vector3 boundsMin = bounds.Min;
+        Vector3 boundsMax = bounds.Max;
         Vector3 boundsSize = boundsMax - boundsMin;
         float height = MathF.Max(boundsSize.Y, 0.4f);
         float centerX = (boundsMin.X + boundsMax.X) * 0.5f;
@@ -538,14 +762,17 @@ public static class RecordSplatCutsceneCommand
         float nearZ = Math.Clamp(height * 0.02f, 0.015f, 0.15f);
         float farZ = MathF.Max(height * 25.0f, 50.0f);
         for (int i = 0; i < shotScene.ShotCameras.Length; i++)
-            shotScene.ShotCameras[i].Component.CameraParameters = new XRPerspectiveCameraParameters(34.0f, null, nearZ, farZ);
+        {
+            shotScene.ShotCameras[i].Component.CameraParameters = new XRPerspectiveCameraParameters(
+                34.0f,
+                ViewportAspectRatio,
+                nearZ,
+                farZ);
+        }
 
-        float frontYawDegrees = (header.CameraHints?.DefaultYawDegrees ?? 0.0f) + 180.0f + yawOffsetDegrees;
+        float frontYawDegrees = defaultYawDegrees + 180.0f + yawOffsetDegrees;
         float frontYawRadians = frontYawDegrees * (MathF.PI / 180.0f);
         Vector3 avatarForward = new(MathF.Sin(frontYawRadians), 0.0f, MathF.Cos(frontYawRadians));
-        float forwardClipDuration = header.FrameCount > 1 && header.FrameRate > 0.0f
-            ? (header.FrameCount - 1) / header.FrameRate
-            : durationSeconds;
         CutsceneTime fullDuration = CutsceneTime.FromSeconds(durationSeconds);
 
         // Five jump-cut shots moving across the walking avatar's body from boots/legs up to face/ears,
@@ -667,7 +894,7 @@ public static class RecordSplatCutsceneCommand
         bindings.Add(new CutsceneBindingReference { Kind = ECutsceneBindingKind.RuntimeSlot, SlotName = "subtitle" });
 
         List<CutsceneClip> cameraCutClips = new(shotDefinitions.Length);
-        List<CutsceneClip> cachePlaybackClips = new(shotDefinitions.Length);
+        List<CutsceneClip> avatarPlaybackClips = new(shotDefinitions.Length);
         List<CutsceneTrack> tracks = new(1 + (shotDefinitions.Length * 2) + 9);
 
         CameraCutTrack cameraCutTrack = new()
@@ -701,7 +928,7 @@ public static class RecordSplatCutsceneCommand
             CutsceneTime nonOverlappingDuration = isFinalShot
                 ? shotDuration
                 : new CutsceneTime(Math.Max(1L, shotDuration.Flicks - 1L));
-            cachePlaybackClips.Add(new PropertyTrackClip
+            avatarPlaybackClips.Add(new PropertyTrackClip
             {
                 Start = shotStart,
                 Duration = nonOverlappingDuration,
@@ -720,6 +947,7 @@ public static class RecordSplatCutsceneCommand
 
             BuildShotCameraTracks(
                 shotIndex,
+                shotScene.ShotCameras[shotIndex],
                 shot,
                 shotStart,
                 shotDuration,
@@ -742,22 +970,31 @@ public static class RecordSplatCutsceneCommand
         float titleRevealEnd = Math.Min(heroCutSeconds + 0.52f, durationSeconds - 3.15f);
         if (titleRevealEnd <= titleRevealStart + 0.2f)
         {
-            titleRevealStart = Math.Max(0.2f, durationSeconds - 3.65f);
-            titleRevealEnd = Math.Max(titleRevealStart + 0.42f, durationSeconds - 3.15f);
+            titleRevealStart = Math.Max(heroCutSeconds + 0.02f, durationSeconds - 3.65f);
+            float maxRevealDuration = Math.Max(0.08f, (durationSeconds - titleRevealStart) * 0.35f);
+            titleRevealEnd = Math.Min(
+                durationSeconds - 0.04f,
+                Math.Max(titleRevealStart + Math.Min(0.42f, maxRevealDuration), durationSeconds - 3.15f));
         }
 
-        float subtitleRevealStart = titleRevealStart + 0.14f;
-        float subtitleRevealEnd = titleRevealEnd + 0.18f;
+        float subtitleRevealStart = Math.Min(titleRevealStart + 0.14f, Math.Max(titleRevealStart + 0.02f, durationSeconds - 0.12f));
+        float subtitleRevealEnd = Math.Min(titleRevealEnd + 0.18f, Math.Max(subtitleRevealStart + 0.04f, durationSeconds - 0.02f));
 
-        // Avatar GaussianCacheComponent.PlaybackTimeSeconds track: advances Sexy Walk forward in every jump cut.
+        string avatarPlaybackComponentType = shotScene.AvatarSplatComponent is not null
+            ? nameof(GaussianAvatarSplatComponent)
+            : nameof(GaussianCacheComponent);
+        string avatarPlaybackMemberPath = shotScene.AvatarSplatComponent is not null
+            ? nameof(GaussianAvatarSplatComponent.PlaybackTimeSeconds)
+            : nameof(GaussianCacheComponent.PlaybackTimeSeconds);
+
         tracks.Add(new PropertyTrack
         {
-            Name = "AvatarCachePlaybackTime",
+            Name = "AvatarPlaybackTime",
             BindingSlot = avatarBindingSlot,
-            ComponentType = nameof(GaussianCacheComponent),
-            MemberPath = nameof(GaussianCacheComponent.PlaybackTimeSeconds),
+            ComponentType = avatarPlaybackComponentType,
+            MemberPath = avatarPlaybackMemberPath,
             WhenFinished = ECutsceneFinishBehavior.KeepState,
-            Clips = cachePlaybackClips,
+            Clips = avatarPlaybackClips,
         });
 
         // Title and Subtitle in-engine native UI tracks: hidden during close-up body cuts, revealed on the hero shot
@@ -844,6 +1081,7 @@ public static class RecordSplatCutsceneCommand
 
     private static void BuildShotCameraTracks(
         int shotIndex,
+        ShotCameraRig shotCameraRig,
         ShotCameraDefinition shot,
         CutsceneTime shotStart,
         CutsceneTime shotDuration,
@@ -897,9 +1135,18 @@ public static class RecordSplatCutsceneCommand
             fovs[i] = fovDegrees;
         }
 
-        ECutsceneClipExtrapolation extrapolation = isFinalShot
-            ? ECutsceneClipExtrapolation.Hold
-            : ECutsceneClipExtrapolation.None;
+        shotCameraRig.Transform.Translation = positions[0];
+        shotCameraRig.Transform.Rotation = rotations[0];
+        if (shotCameraRig.Component.CameraParameters is XRPerspectiveCameraParameters initialParams)
+        {
+            shotCameraRig.Component.CameraParameters = new XRPerspectiveCameraParameters(
+                fovs[0],
+                initialParams.AspectRatio,
+                initialParams.NearZ,
+                initialParams.FarZ);
+        }
+
+        const ECutsceneClipExtrapolation extrapolation = ECutsceneClipExtrapolation.Hold;
 
         transformTrack = new TransformTrack
         {
@@ -1123,7 +1370,7 @@ public static class RecordSplatCutsceneCommand
         };
     }
 
-    private static void SeekAndEvaluateCutscene(CutsceneShotScene shotScene, double timeSeconds)
+    private static void SeekAndEvaluateCutscene(CutsceneShotScene shotScene, double timeSeconds, int captureFrameIndex)
     {
         CutscenePlayer? player = shotScene.Director.Player;
         if (player is null)
@@ -1132,6 +1379,9 @@ public static class RecordSplatCutsceneCommand
         player.Seek(CutsceneTime.FromSeconds(timeSeconds), ESeekIntent.Jump);
         shotScene.Director.AdvanceFrame(0.0);
 
+        if (shotScene.AvatarSplatComponent is { } liveSplats && shotScene.AvatarPrefabRoot is not null)
+            StepLiveAvatarAndPhysicsChains(shotScene, captureFrameIndex, liveSplats.PlaybackTimeSeconds);
+
         shotScene.CameraGroupNode.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
         shotScene.AvatarNode.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
 
@@ -1139,6 +1389,110 @@ public static class RecordSplatCutsceneCommand
         canvasTransform.InvalidateLayout();
         canvasTransform.UpdateLayout();
         canvasTransform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+    }
+
+    private static void StepLiveAvatarAndPhysicsChains(
+        CutsceneShotScene shotScene,
+        int captureFrameIndex,
+        float targetAnimTimeSeconds)
+    {
+        if (shotScene.AvatarPrefabRoot is not { } avatarPrefabRoot)
+            return;
+
+        if (shotScene.LastSteppedCaptureFrame == captureFrameIndex)
+            return;
+
+        bool needsPreRoll = shotScene.LastSteppedCaptureFrame < 0
+            || targetAnimTimeSeconds < shotScene.LastAppliedAnimTimeSeconds - 1e-3f;
+
+        if (needsPreRoll)
+        {
+            float leadInStart = MathF.Max(0.0f, targetAnimTimeSeconds - PhysicsLeadInWindowSeconds);
+            EvaluateAvatarAnimationAtTime(shotScene, leadInStart);
+
+            if (shotScene.PhysicsChains.Count > 0)
+            {
+                for (int i = 0; i < shotScene.PhysicsChains.Count; i++)
+                {
+                    PhysicsChainComponent chain = shotScene.PhysicsChains[i];
+                    chain.SetRuntimeVisibility(true);
+                    chain.ResetSimulationToCurrentPose();
+                }
+
+                // Consume the requested pose reset on the late tick, then let gravity settle the chains smoothly.
+                shotScene.RuntimeWorld.TickGroup(ETickGroup.Late);
+                avatarPrefabRoot.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+                for (int settleStep = 0; settleStep < PhysicsGravitySettleSubsteps; settleStep++)
+                    TickPhysicsChainsOneSubstep(shotScene);
+            }
+
+            float leadInSpan = targetAnimTimeSeconds - leadInStart;
+            int leadInSubsteps = Math.Max(4, (int)MathF.Round(leadInSpan * 60.0f));
+            for (int step = 1; step <= leadInSubsteps; step++)
+            {
+                float u = step / (float)leadInSubsteps;
+                EvaluateAvatarAnimationAtTime(shotScene, Lerp(leadInStart, targetAnimTimeSeconds, u));
+                TickPhysicsChainsOneSubstep(shotScene);
+            }
+        }
+        else
+        {
+            float startAnimTime = shotScene.LastAppliedAnimTimeSeconds;
+            for (int step = 1; step <= PhysicsSubstepsPerCapturedFrame; step++)
+            {
+                float u = step / (float)PhysicsSubstepsPerCapturedFrame;
+                EvaluateAvatarAnimationAtTime(shotScene, Lerp(startAnimTime, targetAnimTimeSeconds, u));
+                TickPhysicsChainsOneSubstep(shotScene);
+            }
+        }
+
+        shotScene.LastAppliedAnimTimeSeconds = targetAnimTimeSeconds;
+        shotScene.LastSteppedCaptureFrame = captureFrameIndex;
+    }
+
+    private static void EvaluateAvatarAnimationAtTime(CutsceneShotScene shotScene, float timeSeconds)
+    {
+        if (shotScene.AvatarPrefabRoot is not { } avatarPrefabRoot)
+            return;
+
+        if (shotScene.MotionChoice is { } motionChoice)
+        {
+            IReadOnlyList<AnimationClipComponent> players = motionChoice.Players;
+            for (int i = 0; i < players.Count; i++)
+            {
+                AnimationClipComponent player = players[i];
+                float clipLength = player.Animation?.LengthInSeconds ?? 0.0f;
+                float wrappedTime = WrapClipTime(timeSeconds, clipLength);
+                player.EvaluateAtTime(wrappedTime, dispatchEvents: false);
+            }
+        }
+
+        avatarPrefabRoot.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+    }
+
+    private static void TickPhysicsChainsOneSubstep(CutsceneShotScene shotScene)
+    {
+        if (shotScene.PhysicsChains.Count == 0 || shotScene.AvatarPrefabRoot is not { } avatarPrefabRoot)
+            return;
+
+        for (int i = 0; i < shotScene.PhysicsChains.Count; i++)
+            shotScene.PhysicsChains[i].SetRuntimeVisibility(true);
+
+        shotScene.RuntimeWorld.TickGroup(ETickGroup.PostPhysics);
+        shotScene.RuntimeWorld.TickGroup(ETickGroup.Late);
+        avatarPrefabRoot.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+    }
+
+    private static float WrapClipTime(float timeSeconds, float lengthSeconds)
+    {
+        if (!(lengthSeconds > 0.0f) || timeSeconds <= 0.0f)
+            return 0.0f;
+        if (timeSeconds < lengthSeconds)
+            return timeSeconds;
+
+        double wrapped = timeSeconds - (Math.Floor((double)timeSeconds / lengthSeconds) * lengthSeconds);
+        return wrapped >= lengthSeconds ? 0.0f : (float)wrapped;
     }
 
     private static async Task WaitForWarmupAsync(
@@ -1153,8 +1507,7 @@ public static class RecordSplatCutsceneCommand
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            bool isCacheComplete = shotScene.CacheComponent.Cache?.IsComplete ?? false;
-            bool ready = isCacheComplete && shotScene.CacheComponent.IsGpuDataReady;
+            bool ready = shotScene.IsGpuDataReady;
             ulong currentFrame = RuntimeEngine.Rendering.State.RenderFrameId;
             if (ready)
             {
@@ -1167,8 +1520,7 @@ public static class RecordSplatCutsceneCommand
             if (currentFrame > startFrame + 1800)
             {
                 throw new TimeoutException(
-                    $"Timed out waiting for GaussianCacheComponent GPU readiness " +
-                    $"(IsComplete={isCacheComplete}, IsGpuDataReady={shotScene.CacheComponent.IsGpuDataReady}).");
+                    $"Timed out waiting for Gaussian splat GPU readiness (IsGpuDataReady={ready}).");
             }
 
             await Task.Delay(16, cancellationToken).ConfigureAwait(false);
@@ -1439,26 +1791,23 @@ public static class RecordSplatCutsceneCommand
 
     private static bool TryParseOptions(
         IReadOnlyList<string> args,
-        out string cacheAssetPath,
-        out string outputDirectory,
-        out string titleText,
-        out string subtitleText,
-        out float durationSeconds,
-        out int fps,
-        out ERenderLibrary backend,
-        out string ffmpegPath,
-        out float yawOffsetDegrees,
+        out CutsceneCommandOptions? options,
         out string? error)
     {
-        cacheAssetPath = string.Empty;
-        outputDirectory = string.Empty;
-        titleText = DefaultTitle;
-        subtitleText = DefaultSubtitle;
-        durationSeconds = DefaultDurationSeconds;
-        fps = DefaultFps;
-        backend = ERenderLibrary.Vulkan;
-        ffmpegPath = "ffmpeg";
-        yawOffsetDegrees = 0.0f;
+        options = null;
+        string pakPath = string.Empty;
+        string assetPath = DefaultAssetPath;
+        string clipName = DefaultClipName;
+        int splatCount = DefaultLiveSplatCount;
+        string cacheAssetPath = string.Empty;
+        string outputDirectory = string.Empty;
+        string titleText = DefaultTitle;
+        string subtitleText = DefaultSubtitle;
+        float durationSeconds = DefaultDurationSeconds;
+        int fps = DefaultFps;
+        ERenderLibrary backend = ERenderLibrary.Vulkan;
+        string ffmpegPath = "ffmpeg";
+        float yawOffsetDegrees = 0.0f;
         error = null;
 
         for (int i = 0; i < args.Count; i++)
@@ -1474,7 +1823,23 @@ public static class RecordSplatCutsceneCommand
             }
 
             string value = args[++i] ?? string.Empty;
-            if (string.Equals(arg, CacheFlag, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(arg, PakFlag, StringComparison.OrdinalIgnoreCase))
+                pakPath = Path.GetFullPath(value);
+            else if (string.Equals(arg, AssetFlag, StringComparison.OrdinalIgnoreCase))
+                assetPath = value;
+            else if (string.Equals(arg, ClipFlag, StringComparison.OrdinalIgnoreCase))
+                clipName = value;
+            else if (string.Equals(arg, SplatsFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out splatCount) ||
+                    splatCount < 10_000 ||
+                    splatCount > 8_000_000)
+                {
+                    error = $"The {SplatsFlag} value '{value}' must be between 10000 and 8000000.";
+                    return false;
+                }
+            }
+            else if (string.Equals(arg, CacheFlag, StringComparison.OrdinalIgnoreCase))
                 cacheAssetPath = Path.GetFullPath(value);
             else if (string.Equals(arg, OutputDirFlag, StringComparison.OrdinalIgnoreCase))
                 outputDirectory = Path.GetFullPath(value);
@@ -1534,9 +1899,9 @@ public static class RecordSplatCutsceneCommand
             }
         }
 
-        if (string.IsNullOrWhiteSpace(cacheAssetPath))
+        if (string.IsNullOrWhiteSpace(pakPath) && string.IsNullOrWhiteSpace(cacheAssetPath))
         {
-            error = $"Missing required option {CacheFlag}.";
+            error = $"Missing required option {PakFlag} (or {CacheFlag}).";
             return false;
         }
 
@@ -1546,7 +1911,39 @@ public static class RecordSplatCutsceneCommand
             return false;
         }
 
+        options = new CutsceneCommandOptions(
+            pakPath,
+            assetPath,
+            clipName,
+            splatCount,
+            cacheAssetPath,
+            outputDirectory,
+            titleText,
+            subtitleText,
+            durationSeconds,
+            fps,
+            backend,
+            ffmpegPath,
+            yawOffsetDegrees);
         return true;
+    }
+
+    private sealed record CutsceneCommandOptions(
+        string PakPath,
+        string AssetPath,
+        string ClipName,
+        int SplatCount,
+        string CacheAssetPath,
+        string OutputDirectory,
+        string TitleText,
+        string SubtitleText,
+        float DurationSeconds,
+        int Fps,
+        ERenderLibrary Backend,
+        string FfmpegPath,
+        float YawOffsetDegrees)
+    {
+        public bool UseLiveAvatarSplats => !string.IsNullOrWhiteSpace(PakPath);
     }
 
     private sealed record ShotCameraRig(
@@ -1574,21 +1971,55 @@ public static class RecordSplatCutsceneCommand
         float CacheStartFraction,
         float CacheEndFraction);
 
-    private sealed record CutsceneShotScene(
-        XRWorld World,
-        SceneNode AvatarNode,
-        GaussianCacheComponent CacheComponent,
-        SceneNode CameraGroupNode,
-        ShotCameraRig[] ShotCameras,
-        SceneNode CanvasRoot,
-        UICanvasComponent CanvasComponent,
-        SceneNode TitleNode,
-        UITextComponent TitleComponent,
-        SceneNode SubtitleNode,
-        UITextComponent SubtitleComponent,
-        CutsceneDirectorComponent Director,
-        float DurationSeconds,
-        float YawOffsetDegrees);
+    private sealed class CutsceneShotScene(
+        XRWorld world,
+        RuntimeWorld runtimeWorld,
+        SceneNode avatarNode,
+        SceneNode? avatarPrefabRoot,
+        GaussianCacheComponent? cacheComponent,
+        GaussianAvatarSplatComponent? avatarSplatComponent,
+        BakeMotionChoice? motionChoice,
+        List<PhysicsChainComponent> physicsChains,
+        AABB liveAvatarBounds,
+        SceneNode cameraGroupNode,
+        ShotCameraRig[] shotCameras,
+        SceneNode canvasRoot,
+        UICanvasComponent canvasComponent,
+        SceneNode titleNode,
+        UITextComponent titleComponent,
+        SceneNode subtitleNode,
+        UITextComponent subtitleComponent,
+        CutsceneDirectorComponent director,
+        float durationSeconds,
+        float yawOffsetDegrees)
+    {
+        public XRWorld World { get; } = world;
+        public RuntimeWorld RuntimeWorld { get; } = runtimeWorld;
+        public SceneNode AvatarNode { get; } = avatarNode;
+        public SceneNode? AvatarPrefabRoot { get; } = avatarPrefabRoot;
+        public GaussianCacheComponent? CacheComponent { get; } = cacheComponent;
+        public GaussianAvatarSplatComponent? AvatarSplatComponent { get; } = avatarSplatComponent;
+        public BakeMotionChoice? MotionChoice { get; } = motionChoice;
+        public List<PhysicsChainComponent> PhysicsChains { get; } = physicsChains;
+        public AABB LiveAvatarBounds { get; } = liveAvatarBounds;
+        public SceneNode CameraGroupNode { get; } = cameraGroupNode;
+        public ShotCameraRig[] ShotCameras { get; } = shotCameras;
+        public SceneNode CanvasRoot { get; } = canvasRoot;
+        public UICanvasComponent CanvasComponent { get; } = canvasComponent;
+        public SceneNode TitleNode { get; } = titleNode;
+        public UITextComponent TitleComponent { get; } = titleComponent;
+        public SceneNode SubtitleNode { get; } = subtitleNode;
+        public UITextComponent SubtitleComponent { get; } = subtitleComponent;
+        public CutsceneDirectorComponent Director { get; } = director;
+        public float DurationSeconds { get; } = durationSeconds;
+        public float YawOffsetDegrees { get; } = yawOffsetDegrees;
+        public float LastAppliedAnimTimeSeconds { get; set; }
+        public int LastSteppedCaptureFrame { get; set; } = -1;
+
+        public bool IsGpuDataReady => AvatarSplatComponent is { } liveSplats
+            ? liveSplats.IsGpuDataReady
+            : (CacheComponent?.Cache?.IsComplete ?? false) && (CacheComponent?.IsGpuDataReady ?? false);
+    }
 
     private sealed class WorldCutsceneBindingResolver(XRWorld world) : ICutsceneBindingResolver
     {
@@ -1619,12 +2050,14 @@ public static class RecordSplatCutsceneCommand
     /// <summary>
     /// Coordinates deterministic frame-by-frame cutscene evaluation and render-thread readback scheduling.
     /// </summary>
-    private sealed class CutsceneLockstepController(CutsceneShotScene shotScene, int totalFrames, int fps)
+    private sealed class CutsceneLockstepController(XRViewport viewport, CutsceneShotScene shotScene, int totalFrames, int fps)
     {
         private readonly object _gate = new();
         private int _targetFrameIndex;
         private int _appliedFrameIndex = -1;
+        private int _pendingApplyFrame = -1;
         private ulong _appliedRenderFrameId;
+        private ulong _scheduledAtRenderFrameId;
         private bool _readyToCapture;
         private bool _detached;
 
@@ -1635,6 +2068,8 @@ public static class RecordSplatCutsceneCommand
                 _detached = false;
                 _targetFrameIndex = 0;
                 _appliedFrameIndex = -1;
+                _pendingApplyFrame = -1;
+                _scheduledAtRenderFrameId = 0UL;
                 _readyToCapture = false;
             }
 
@@ -1646,36 +2081,70 @@ public static class RecordSplatCutsceneCommand
             lock (_gate)
             {
                 _detached = true;
+                _pendingApplyFrame = -1;
                 _readyToCapture = false;
             }
         }
 
         public bool ShouldCaptureFrame(int scheduledFrameCount)
         {
+            int frameToEnqueue = -1;
             lock (_gate)
             {
-                if (_detached || !_readyToCapture || scheduledFrameCount != _targetFrameIndex)
+                if (_detached)
                     return false;
 
                 ulong currentRenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
-                return currentRenderFrameId >= _appliedRenderFrameId + (ulong)SettleRenderFramesPerStep
-                    && shotScene.CacheComponent.IsGpuDataReady;
+                if (_pendingApplyFrame >= 0 && currentRenderFrameId > _scheduledAtRenderFrameId)
+                {
+                    frameToEnqueue = _pendingApplyFrame;
+                    _pendingApplyFrame = -1;
+                }
+
+                if (frameToEnqueue < 0)
+                {
+                    if (!_readyToCapture ||
+                        scheduledFrameCount != _targetFrameIndex ||
+                        _appliedFrameIndex != scheduledFrameCount ||
+                        currentRenderFrameId < _appliedRenderFrameId + (ulong)SettleRenderFramesPerStep ||
+                        !shotScene.IsGpuDataReady)
+                    {
+                        return false;
+                    }
+                }
             }
+
+            if (frameToEnqueue >= 0)
+            {
+                Engine.EnqueueUpdateThreadTask(() => ApplyFrameOnUpdateThread(frameToEnqueue));
+                return false;
+            }
+
+            if (!viewport.TryEnterRenderPipelineReadbackScope(out IDisposable? probeScope))
+                return false;
+
+            probeScope?.Dispose();
+            return true;
         }
 
         public void OnFrameScheduled(int captureIndex)
         {
-            int nextFrame;
             lock (_gate)
             {
                 _readyToCapture = false;
-                nextFrame = captureIndex + 1;
+                int nextFrame = captureIndex + 1;
                 _targetFrameIndex = nextFrame;
                 if (_detached || nextFrame >= totalFrames)
+                {
+                    _pendingApplyFrame = -1;
                     return;
-            }
+                }
 
-            Engine.EnqueueUpdateThreadTask(() => ApplyFrameOnUpdateThread(nextFrame));
+                // Defer advancing the cutscene until the next render frame begins so end-of-frame UI compositing
+                // and readback on the current render frame continue reading the active shot camera's render target.
+                _pendingApplyFrame = nextFrame;
+                _scheduledAtRenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            }
         }
 
         private void ApplyFrameOnUpdateThread(int frameToApply)
@@ -1687,7 +2156,7 @@ public static class RecordSplatCutsceneCommand
             }
 
             double timeSeconds = frameToApply / (double)fps;
-            SeekAndEvaluateCutscene(shotScene, timeSeconds);
+            SeekAndEvaluateCutscene(shotScene, timeSeconds, frameToApply);
 
             lock (_gate)
             {

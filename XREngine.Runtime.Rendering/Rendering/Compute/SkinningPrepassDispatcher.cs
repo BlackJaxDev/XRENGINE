@@ -289,6 +289,46 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
     }
 
+    /// <summary>
+    /// Runs compute deformation for live surface splat emission and returns the current frame's
+    /// deformed vertex buffers when skinning or active blendshapes wrote output for this frame.
+    /// </summary>
+    internal bool TryRunForLiveSurfaceSplats(
+        XRMeshRenderer renderer,
+        out XRMeshRenderer.SkinnedOutputResourceSnapshot outputs,
+        out string? diagnostic)
+    {
+        ArgumentNullException.ThrowIfNull(renderer);
+        outputs = default;
+        diagnostic = null;
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
+        {
+            diagnostic = "The active backend does not expose canonical compute deformation buffers.";
+            return false;
+        }
+
+        Run(renderer, forceSkinning: true, forceBlendshapes: true);
+
+        lock (_syncRoot)
+        {
+            if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
+                !resources.HasCurrentFrameOutput(State.RenderFrameId))
+            {
+                diagnostic = "Compute deformation did not produce output for the current render frame.";
+                return false;
+            }
+
+            outputs = renderer.CaptureSkinnedOutputResources();
+            if (outputs.Positions is null && outputs.Interleaved is null)
+            {
+                diagnostic = "Compute deformation output contains no position buffer.";
+                return false;
+            }
+
+            return true;
+        }
+    }
+
     private sealed partial class RendererResources
     {
         /// <summary>History sequence of the frame that last dispatched changed input, or zero when it is not tracked.</summary>
