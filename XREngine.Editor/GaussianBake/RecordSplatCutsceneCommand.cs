@@ -49,6 +49,7 @@ public static class RecordSplatCutsceneCommand
     private const string FfmpegFlag = "--ffmpeg";
     private const string YawOffsetFlag = "--yaw-offset";
     private const string TrianglesOnlyFlag = "--triangles-only";
+    private const string VideoEncoderFlag = "--video-encoder";
 
     private const int FrameWidth = 1920;
     private const int FrameHeight = 1080;
@@ -69,13 +70,23 @@ public static class RecordSplatCutsceneCommand
     private const int ShotCameraCount = 5;
     private const int WarmupRenderFrames = 60;
     private const int ShotWarmupRenderFrames = 20;
-    private const int SettleRenderFramesPerStep = 2;
     private static readonly float[] ShotWarmupFractions = [0.07f, 0.21f, 0.36f, 0.50f, 0.78f];
     private const int PhysicsSubstepsPerCapturedFrame = 2;
     private const int PhysicsGravitySettleSubsteps = 30;
     private const float PhysicsLeadInWindowSeconds = 0.45f;
     private const long RemoteProxyByteLimit = 2_097_152L;
     private const long RemoteTargetBytes = 1_650_000L;
+    private const int RemoteEncodeAttempts = 3;
+    private const int ContactSheetColumns = 6;
+    private const int ContactSheetThumbnailWidth = 320;
+    private const int MaximumContactSheetThumbnails = 66;
+
+    /// <summary>The build configuration of this executable. The recorder prints it because Debug builds render much slower.</summary>
+#if DEBUG
+    private const string BuildConfigurationName = "Debug";
+#else
+    private const string BuildConfigurationName = "Release";
+#endif
 
     private static readonly RenderInfo.DelAddRenderCommandsCallback RejectAllRenderPassesCallback = static (_, _, _) => false;
 
@@ -102,6 +113,7 @@ public static class RecordSplatCutsceneCommand
     public static int Run(IReadOnlyList<string> args)
     {
         ArgumentNullException.ThrowIfNull(args);
+        long runStartTimestamp = Stopwatch.GetTimestamp();
 
         if (!TryParseOptions(args, out CutsceneCommandOptions? options, out string? error) || options is null)
         {
@@ -132,7 +144,8 @@ public static class RecordSplatCutsceneCommand
             : $"cache='{options.CacheAssetPath}'";
         Console.WriteLine(
             $"Recording splat cutscene: {sourceSummary}, output='{options.OutputDirectory}', " +
-            $"backend={options.Backend}, frames={totalFrames}, fps={options.Fps}, duration={effectiveDurationSeconds:F2}s.");
+            $"backend={options.Backend}, frames={totalFrames}, fps={options.Fps}, duration={effectiveDurationSeconds:F2}s, " +
+            $"videoEncoder={options.VideoEncoder}, build={BuildConfigurationName}.");
 
         int exitCode = 1;
         using CancellationTokenSource cts = new(TimeSpan.FromMinutes(90));
@@ -149,6 +162,7 @@ public static class RecordSplatCutsceneCommand
                         options,
                         effectiveDurationSeconds,
                         totalFrames,
+                        runStartTimestamp,
                         cts.Token).ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -188,6 +202,7 @@ public static class RecordSplatCutsceneCommand
         CutsceneCommandOptions options,
         float durationSeconds,
         int totalFrames,
+        long runStartTimestamp,
         CancellationToken cancellationToken)
     {
         if (RuntimeEngine.Windows.Count == 0)
@@ -316,18 +331,31 @@ public static class RecordSplatCutsceneCommand
 
             // Prewarm GPU buffers, pipelines, and per-shot mesh visibility before capture starts.
             await WaitForWarmupAsync(viewport, shotScene, WarmupRenderFrames, cancellationToken).ConfigureAwait(false);
+            double startupSeconds = Stopwatch.GetElapsedTime(runStartTimestamp).TotalSeconds;
 
-            // Prepare the sequence capture directory so ViewportSequenceCaptureManager writes into a clean folder.
-            string sequenceRootDir = Path.Combine(options.OutputDirectory, "sequence");
-            if (Directory.Exists(sequenceRootDir))
-                Directory.Delete(sequenceRootDir, recursive: true);
-            Directory.CreateDirectory(sequenceRootDir);
+            // Session manifests go to one clean folder. Frame pixels go straight to ffmpeg and never touch the disk.
+            string captureRootDir = Path.Combine(options.OutputDirectory, "capture");
+            DeleteDirectoryIfPresent(captureRootDir);
+            DeleteDirectoryIfPresent(Path.Combine(options.OutputDirectory, "sequence"));
+            Directory.CreateDirectory(captureRootDir);
+
+            string heroPosterPath = Path.Combine(options.OutputDirectory, "hero-poster-1080.png");
+            string masterVideoPath = Path.Combine(options.OutputDirectory, "cutscene-1080.mp4");
+            await using FfmpegRawVideoPipe videoPipe = new(
+                options.FfmpegPath,
+                FrameWidth,
+                FrameHeight,
+                options.Fps,
+                totalFrames,
+                options.VideoEncoder,
+                masterVideoPath,
+                posterFrameIndex: totalFrames - 1,
+                heroPosterPath);
 
             // One capture session accepts at most ViewportSequenceCaptureOptions.MaximumFrames frames and a fixed
-            // pixel budget. Record the cutscene in consecutive segments, keep one global frame index for the
-            // cutscene lockstep, and move every segment frame into one combined frame directory for ffmpeg.
-            string combinedFrameDir = Path.Combine(sequenceRootDir, "frames");
-            Directory.CreateDirectory(combinedFrameDir);
+            // pixel budget. Record the cutscene in consecutive segments. The segments share one global frame index
+            // for the cutscene lockstep and one ffmpeg pipe for the master video.
+            long captureStartTimestamp = Stopwatch.GetTimestamp();
             CutsceneLockstepController lockstep = new(viewport, shotScene, totalFrames, options.Fps);
             int segmentCount = (totalFrames + ViewportSequenceCaptureOptions.MaximumFrames - 1) / ViewportSequenceCaptureOptions.MaximumFrames;
             int completedFrames = 0;
@@ -335,58 +363,60 @@ public static class RecordSplatCutsceneCommand
             {
                 int segmentStart = segmentIndex * ViewportSequenceCaptureOptions.MaximumFrames;
                 int segmentFrames = Math.Min(ViewportSequenceCaptureOptions.MaximumFrames, totalFrames - segmentStart);
-                string segmentRootDir = Path.Combine(sequenceRootDir, $"segment_{segmentIndex:D2}");
+                string segmentRootDir = Path.Combine(captureRootDir, $"segment_{segmentIndex:D2}");
                 Directory.CreateDirectory(segmentRootDir);
 
+                videoPipe.SegmentOffset = segmentStart;
                 ViewportSequenceCaptureSnapshot snapshot = await CaptureSegmentAsync(
                     viewport,
                     lockstep,
+                    videoPipe,
                     segmentStart,
                     segmentFrames,
                     segmentRootDir,
                     cancellationToken).ConfigureAwait(false);
 
-                for (int localFrame = 0; localFrame < segmentFrames; localFrame++)
-                {
-                    string sourceFrame = Path.Combine(snapshot.OutputDirectory, $"frame_{localFrame:D6}.png");
-                    string targetFrame = Path.Combine(combinedFrameDir, $"frame_{segmentStart + localFrame:D6}.png");
-                    File.Move(sourceFrame, targetFrame, overwrite: true);
-                }
-
                 File.Copy(snapshot.ManifestPath, Path.Combine(options.OutputDirectory, $"manifest-segment-{segmentIndex:D2}.json"), overwrite: true);
-                if (!string.IsNullOrWhiteSpace(snapshot.ContactSheetPath) && File.Exists(snapshot.ContactSheetPath))
-                {
-                    File.Copy(
-                        snapshot.ContactSheetPath,
-                        Path.Combine(options.OutputDirectory, segmentCount == 1 ? "contact-sheet.png" : $"contact-sheet-segment-{segmentIndex:D2}.png"),
-                        overwrite: true);
-                }
-
                 completedFrames += segmentFrames;
             }
 
+            await videoPipe.CompleteAsync(cancellationToken).ConfigureAwait(false);
+            double captureSeconds = Stopwatch.GetElapsedTime(captureStartTimestamp).TotalSeconds;
             Console.WriteLine(
-                $"Cutscene capture finished: segments={segmentCount}, frames={completedFrames}/{totalFrames}, outputDir='{combinedFrameDir}'.");
+                $"Cutscene capture finished: segments={segmentCount}, frames={completedFrames}/{totalFrames}, " +
+                $"pipedFrames={videoPipe.FramesWritten}, captureSeconds={captureSeconds:F1}, " +
+                $"capturedFps={completedFrames / Math.Max(captureSeconds, 0.001):F2}, {lockstep.FormatStatistics()}.");
+            DeleteDirectoryIfPresent(captureRootDir);
 
-            string heroFrameSourcePath = Path.Combine(combinedFrameDir, $"frame_{totalFrames - 1:D6}.png");
-            string heroPosterPath = Path.Combine(options.OutputDirectory, "hero-poster-1080.png");
-            File.Copy(heroFrameSourcePath, heroPosterPath, overwrite: true);
-
-            string masterVideoPath = Path.Combine(options.OutputDirectory, "cutscene-1080.mp4");
-            await EncodeMp4WithFfmpegAsync(options.FfmpegPath, combinedFrameDir, options.Fps, masterVideoPath, cancellationToken).ConfigureAwait(false);
-
+            long remoteStartTimestamp = Stopwatch.GetTimestamp();
             string remoteVideoPath = Path.Combine(options.OutputDirectory, "cutscene-1080-remote.mp4");
             await EncodeRemoteSafeMp4WithFfmpegAsync(
                 options.FfmpegPath,
-                combinedFrameDir,
-                options.Fps,
+                options.VideoEncoder,
+                masterVideoPath,
                 durationSeconds,
                 remoteVideoPath,
                 cancellationToken).ConfigureAwait(false);
+            double remoteSeconds = Stopwatch.GetElapsedTime(remoteStartTimestamp).TotalSeconds;
+
+            long contactSheetStartTimestamp = Stopwatch.GetTimestamp();
+            string contactSheetPath = Path.Combine(options.OutputDirectory, "contact-sheet.png");
+            await WriteContactSheetFromVideoAsync(
+                options.FfmpegPath,
+                masterVideoPath,
+                totalFrames,
+                contactSheetPath,
+                cancellationToken).ConfigureAwait(false);
+            double contactSheetSeconds = Stopwatch.GetElapsedTime(contactSheetStartTimestamp).TotalSeconds;
 
                 Console.WriteLine($"Hero poster written to: {heroPosterPath}");
                 Console.WriteLine($"Cutscene video written to: {masterVideoPath}");
                 Console.WriteLine($"Remote-safe cutscene video written to: {remoteVideoPath} ({new FileInfo(remoteVideoPath).Length} bytes)");
+                Console.WriteLine($"Contact sheet written to: {contactSheetPath}");
+                Console.WriteLine(
+                    $"[CutsceneTiming] startup={startupSeconds:F1}s, capture+masterEncode={captureSeconds:F1}s, " +
+                    $"remoteEncode={remoteSeconds:F1}s, contactSheet={contactSheetSeconds:F1}s, " +
+                    $"total={Stopwatch.GetElapsedTime(runStartTimestamp).TotalSeconds:F1}s.");
                 return 0;
             }
             finally
@@ -1647,17 +1677,19 @@ public static class RecordSplatCutsceneCommand
     /// <summary>
     /// Records one capture segment: global cutscene frames <paramref name="segmentStart"/> up to
     /// <paramref name="segmentStart"/> + <paramref name="segmentFrames"/> - 1. The method starts one
-    /// <see cref="ViewportSequenceCaptureSession"/>, attaches the lockstep controller at the segment offset,
+    /// <see cref="ViewportSequenceCaptureSession"/> with the lockstep gate and <paramref name="frameSink"/> already set,
     /// waits until the session ends, and returns the final snapshot. It throws when a frame is missing.
     /// </summary>
     private static async Task<ViewportSequenceCaptureSnapshot> CaptureSegmentAsync(
         XRViewport viewport,
         CutsceneLockstepController lockstep,
+        IViewportSequenceFrameSink frameSink,
         int segmentStart,
         int segmentFrames,
         string segmentRootDir,
         CancellationToken cancellationToken)
     {
+        // The frame sink receives the pixels, so the session writes no PNG files, contact sheet, or difference data.
         if (!ViewportSequenceCaptureOptions.TryCreate(
                 frameCount: segmentFrames,
                 durationSeconds: null,
@@ -1668,10 +1700,10 @@ public static class RecordSplatCutsceneCommand
                 maxInFlightReadbacks: 4,
                 overflowPolicy: "drop",
                 preserveAlpha: false,
-                createContactSheet: true,
-                contactSheetColumns: 6,
-                contactSheetThumbnailWidth: 320,
-                computeFrameDifferences: true,
+                createContactSheet: false,
+                contactSheetColumns: ContactSheetColumns,
+                contactSheetThumbnailWidth: ContactSheetThumbnailWidth,
+                computeFrameDifferences: false,
                 outputDirectory: segmentRootDir,
                 out ViewportSequenceCaptureOptions? captureOptions,
                 out string? optionsError) ||
@@ -1681,6 +1713,7 @@ public static class RecordSplatCutsceneCommand
         }
 
         ViewportSequenceCaptureSession? session = null;
+        long segmentStartTimestamp = Stopwatch.GetTimestamp();
         await RunOnUpdateThreadAsync(() =>
         {
             lockstep.Attach(segmentStart, segmentFrames);
@@ -1688,15 +1721,18 @@ public static class RecordSplatCutsceneCommand
                     viewport,
                     captureOptions,
                     out session,
-                    out string? startError) ||
+                    out string? startError,
+                    configure: created =>
+                    {
+                        created.ShouldCaptureFrame = lockstep.ShouldCaptureFrame;
+                        created.FrameScheduled = lockstep.OnFrameScheduled;
+                        created.FrameSink = frameSink;
+                    }) ||
                 session is null)
             {
                 lockstep.Detach();
                 throw new InvalidOperationException($"Failed to start ViewportSequenceCaptureSession: {startError}");
             }
-
-            session.ShouldCaptureFrame = lockstep.ShouldCaptureFrame;
-            session.FrameScheduled = lockstep.OnFrameScheduled;
         }, cancellationToken).ConfigureAwait(false);
 
         Stopwatch captureWatch = Stopwatch.StartNew();
@@ -1722,9 +1758,11 @@ public static class RecordSplatCutsceneCommand
         }
 
         ViewportSequenceCaptureSnapshot snapshot = session.CreateSnapshot(includeFrames: true);
+        double segmentSeconds = Stopwatch.GetElapsedTime(segmentStartTimestamp).TotalSeconds;
         Console.WriteLine(
             $"ViewportSequenceCapture segment finished: start={segmentStart}, state={snapshot.State}, stopReason={snapshot.StopReason}, " +
-            $"scheduled={snapshot.ScheduledFrameCount}, completed={snapshot.CompletedFrameCount}, failed={snapshot.FailedFrameCount}.");
+            $"scheduled={snapshot.ScheduledFrameCount}, completed={snapshot.CompletedFrameCount}, failed={snapshot.FailedFrameCount}, " +
+            $"dropped={snapshot.DroppedFrameCount}, seconds={segmentSeconds:F1}, capturedFps={snapshot.CompletedFrameCount / Math.Max(segmentSeconds, 0.001):F2}.");
 
         if (!string.Equals(snapshot.State, "completed", StringComparison.OrdinalIgnoreCase) ||
             snapshot.CompletedFrameCount != segmentFrames)
@@ -1857,107 +1895,76 @@ public static class RecordSplatCutsceneCommand
         return tcs.Task.WaitAsync(cancellationToken);
     }
 
-    private static async Task EncodeMp4WithFfmpegAsync(
-        string ffmpegPath,
-        string frameDirectory,
-        int fps,
-        string outputMp4Path,
-        CancellationToken cancellationToken)
-    {
-        string inputPattern = Path.Combine(frameDirectory, "frame_%06d.png");
-        if (File.Exists(outputMp4Path))
-            File.Delete(outputMp4Path);
-
-        ProcessStartInfo startInfo = new()
-        {
-            FileName = ffmpegPath,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-hide_banner");
-        startInfo.ArgumentList.Add("-loglevel");
-        startInfo.ArgumentList.Add("error");
-        startInfo.ArgumentList.Add("-y");
-        startInfo.ArgumentList.Add("-framerate");
-        startInfo.ArgumentList.Add(fps.ToString(CultureInfo.InvariantCulture));
-        startInfo.ArgumentList.Add("-i");
-        startInfo.ArgumentList.Add(inputPattern);
-        startInfo.ArgumentList.Add("-c:v");
-        startInfo.ArgumentList.Add("libx264");
-        startInfo.ArgumentList.Add("-preset");
-        startInfo.ArgumentList.Add("slow");
-        startInfo.ArgumentList.Add("-crf");
-        startInfo.ArgumentList.Add("16");
-        startInfo.ArgumentList.Add("-pix_fmt");
-        startInfo.ArgumentList.Add("yuv420p");
-        startInfo.ArgumentList.Add("-movflags");
-        startInfo.ArgumentList.Add("+faststart");
-        startInfo.ArgumentList.Add(outputMp4Path);
-
-        using Process process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException($"Failed to start '{ffmpegPath}'.");
-        Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        string stderr = await stderrTask.ConfigureAwait(false);
-        _ = await stdoutTask.ConfigureAwait(false);
-
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"ffmpeg exited with code {process.ExitCode}: {stderr}");
-    }
-
+    /// <summary>
+    /// Encodes <paramref name="sourceMp4Path"/> again into a video that stays strictly below
+    /// <see cref="RemoteProxyByteLimit"/>, so that a Remote Control session can transfer it. The bit rate starts at
+    /// <see cref="RemoteTargetBytes"/> over the clip duration. When a result is still too large, the method lowers the
+    /// bit rate and tries again, up to <see cref="RemoteEncodeAttempts"/> times, and then throws.
+    /// </summary>
     private static async Task EncodeRemoteSafeMp4WithFfmpegAsync(
         string ffmpegPath,
-        string frameDirectory,
-        int fps,
+        ECutsceneVideoEncoder encoder,
+        string sourceMp4Path,
         float durationSeconds,
         string outputMp4Path,
         CancellationToken cancellationToken)
     {
-        int targetBitrateKbps = Math.Clamp(
+        int bitrateKbps = Math.Clamp(
             (int)MathF.Floor((RemoteTargetBytes * 8.0f / 1000.0f) / Math.Max(durationSeconds, 1.0f)),
             250,
             4000);
 
-        await RunTwoPassMp4EncodeAsync(
-            ffmpegPath,
-            frameDirectory,
-            fps,
-            targetBitrateKbps,
-            outputMp4Path,
-            cancellationToken).ConfigureAwait(false);
+        long encodedBytes = 0L;
+        for (int attempt = 1; attempt <= RemoteEncodeAttempts; attempt++)
+        {
+            if (encoder == ECutsceneVideoEncoder.Nvenc)
+                await RunNvencBitrateEncodeAsync(ffmpegPath, sourceMp4Path, bitrateKbps, outputMp4Path, cancellationToken).ConfigureAwait(false);
+            else
+                await RunTwoPassX264EncodeAsync(ffmpegPath, sourceMp4Path, bitrateKbps, outputMp4Path, cancellationToken).ConfigureAwait(false);
 
-        long encodedBytes = new FileInfo(outputMp4Path).Length;
-        if (encodedBytes < RemoteProxyByteLimit)
-            return;
+            encodedBytes = new FileInfo(outputMp4Path).Length;
+            if (encodedBytes < RemoteProxyByteLimit)
+                return;
 
-        int fallbackBitrateKbps = Math.Max(200, (int)(targetBitrateKbps * 0.72f));
-        await RunTwoPassMp4EncodeAsync(
-            ffmpegPath,
-            frameDirectory,
-            fps,
-            fallbackBitrateKbps,
-            outputMp4Path,
-            cancellationToken).ConfigureAwait(false);
+            Console.WriteLine(
+                $"Remote-safe encode attempt {attempt} produced {encodedBytes} bytes at {bitrateKbps} kbps; " +
+                $"the limit is {RemoteProxyByteLimit} bytes.");
+            bitrateKbps = Math.Max(200, (int)(bitrateKbps * 0.72f));
+        }
+
+        throw new InvalidOperationException(
+            $"The remote-safe video '{outputMp4Path}' is still {encodedBytes} bytes after {RemoteEncodeAttempts} attempts; " +
+            $"it must be smaller than {RemoteProxyByteLimit} bytes.");
     }
 
-    private static async Task RunTwoPassMp4EncodeAsync(
+    private static Task RunNvencBitrateEncodeAsync(
         string ffmpegPath,
-        string frameDirectory,
-        int fps,
+        string sourceMp4Path,
         int targetBitrateKbps,
         string outputMp4Path,
         CancellationToken cancellationToken)
     {
-        string inputPattern = Path.Combine(frameDirectory, "frame_%06d.png");
         if (File.Exists(outputMp4Path))
             File.Delete(outputMp4Path);
 
-        string passLogDir = Path.Combine(frameDirectory, "_passlog");
-        if (Directory.Exists(passLogDir))
-            Directory.Delete(passLogDir, recursive: true);
+        List<string> arguments = ["-hide_banner", "-loglevel", "error", "-y", "-i", sourceMp4Path];
+        arguments.AddRange(CutsceneVideoEncoderArguments.ForNvencBitrate(targetBitrateKbps));
+        arguments.AddRange(["-pix_fmt", "yuv420p", "-movflags", "+faststart", outputMp4Path]);
+        return RunFfmpegArgumentsAsync(ffmpegPath, arguments, cancellationToken);
+    }
+
+    private static async Task RunTwoPassX264EncodeAsync(
+        string ffmpegPath,
+        string sourceMp4Path,
+        int targetBitrateKbps,
+        string outputMp4Path,
+        CancellationToken cancellationToken)
+    {
+        if (File.Exists(outputMp4Path))
+            File.Delete(outputMp4Path);
+
+        string passLogDir = Path.Combine(Path.GetDirectoryName(outputMp4Path) ?? Path.GetTempPath(), "_passlog");
+        DeleteDirectoryIfPresent(passLogDir);
         Directory.CreateDirectory(passLogDir);
         string passLogPrefix = Path.Combine(passLogDir, "ffmpeg2pass");
         int maxRateKbps = (int)MathF.Ceiling(targetBitrateKbps * 1.12f);
@@ -1970,9 +1977,8 @@ public static class RecordSplatCutsceneCommand
                 ffmpegPath,
                 [
                     "-hide_banner", "-loglevel", "error", "-y",
-                    "-framerate", fps.ToString(CultureInfo.InvariantCulture),
-                    "-i", inputPattern,
-                    "-c:v", "libx264",
+                    "-i", sourceMp4Path,
+                    "-c:v", CutsceneVideoEncoderArguments.X264Codec,
                     "-preset", "slow",
                     "-b:v", $"{targetBitrateKbps}k",
                     "-maxrate", $"{maxRateKbps}k",
@@ -1989,9 +1995,8 @@ public static class RecordSplatCutsceneCommand
                 ffmpegPath,
                 [
                     "-hide_banner", "-loglevel", "error", "-y",
-                    "-framerate", fps.ToString(CultureInfo.InvariantCulture),
-                    "-i", inputPattern,
-                    "-c:v", "libx264",
+                    "-i", sourceMp4Path,
+                    "-c:v", CutsceneVideoEncoderArguments.X264Codec,
                     "-preset", "slow",
                     "-b:v", $"{targetBitrateKbps}k",
                     "-maxrate", $"{maxRateKbps}k",
@@ -2006,9 +2011,48 @@ public static class RecordSplatCutsceneCommand
         }
         finally
         {
-            if (Directory.Exists(passLogDir))
-                Directory.Delete(passLogDir, recursive: true);
+            DeleteDirectoryIfPresent(passLogDir);
         }
+    }
+
+    /// <summary>
+    /// Writes one contact sheet PNG from evenly spaced frames of <paramref name="videoPath"/>. The sheet has
+    /// <see cref="ContactSheetColumns"/> columns of <see cref="ContactSheetThumbnailWidth"/>-pixel thumbnails and at most
+    /// <see cref="MaximumContactSheetThumbnails"/> thumbnails, so a reviewer can check every shot in one image.
+    /// </summary>
+    private static Task WriteContactSheetFromVideoAsync(
+        string ffmpegPath,
+        string videoPath,
+        int totalFrames,
+        string contactSheetPath,
+        CancellationToken cancellationToken)
+    {
+        int frameStep = Math.Max(1, (totalFrames + MaximumContactSheetThumbnails - 1) / MaximumContactSheetThumbnails);
+        int thumbnailCount = (totalFrames + frameStep - 1) / frameStep;
+        int rows = (thumbnailCount + ContactSheetColumns - 1) / ContactSheetColumns;
+        string filter = string.Create(
+            CultureInfo.InvariantCulture,
+            $"select='not(mod(n\\,{frameStep}))',scale={ContactSheetThumbnailWidth}:-2,tile={ContactSheetColumns}x{rows}");
+
+        if (File.Exists(contactSheetPath))
+            File.Delete(contactSheetPath);
+
+        return RunFfmpegArgumentsAsync(
+            ffmpegPath,
+            [
+                "-hide_banner", "-loglevel", "error", "-y",
+                "-i", videoPath,
+                "-vf", filter,
+                "-frames:v", "1",
+                contactSheetPath,
+            ],
+            cancellationToken);
+    }
+
+    private static void DeleteDirectoryIfPresent(string directory)
+    {
+        if (Directory.Exists(directory))
+            Directory.Delete(directory, recursive: true);
     }
 
     private static async Task RunFfmpegArgumentsAsync(
@@ -2115,6 +2159,7 @@ public static class RecordSplatCutsceneCommand
         string ffmpegPath = "ffmpeg";
         float yawOffsetDegrees = 0.0f;
         bool trianglesOnly = false;
+        ECutsceneVideoEncoder videoEncoder = ECutsceneVideoEncoder.Nvenc;
         error = null;
 
         for (int i = 0; i < args.Count; i++)
@@ -2204,6 +2249,14 @@ public static class RecordSplatCutsceneCommand
             }
             else if (string.Equals(arg, FfmpegFlag, StringComparison.OrdinalIgnoreCase))
                 ffmpegPath = value;
+            else if (string.Equals(arg, VideoEncoderFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!CutsceneVideoEncoderArguments.TryParse(value, out videoEncoder))
+                {
+                    error = $"The {VideoEncoderFlag} value '{value}' must be 'nvenc' or 'x264'.";
+                    return false;
+                }
+            }
             else if (string.Equals(arg, YawOffsetFlag, StringComparison.OrdinalIgnoreCase))
             {
                 if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out yawOffsetDegrees) ||
@@ -2246,7 +2299,8 @@ public static class RecordSplatCutsceneCommand
             backend,
             ffmpegPath,
             yawOffsetDegrees,
-            trianglesOnly);
+            trianglesOnly,
+            videoEncoder);
         return true;
     }
 
@@ -2264,7 +2318,8 @@ public static class RecordSplatCutsceneCommand
         ERenderLibrary Backend,
         string FfmpegPath,
         float YawOffsetDegrees,
-        bool TrianglesOnly)
+        bool TrianglesOnly,
+        ECutsceneVideoEncoder VideoEncoder)
     {
         public bool UseLiveAvatarSplats => !string.IsNullOrWhiteSpace(PakPath);
     }
@@ -2409,8 +2464,21 @@ public static class RecordSplatCutsceneCommand
     /// Capture indexes from a session are local to the active segment; the controller adds the segment
     /// offset to get the global cutscene frame, so consecutive segments continue one timeline.
     /// </summary>
+    /// <remarks>
+    /// A frame is captured only after the render thread shows the applied cutscene state. The update thread applies
+    /// the state, then the controller records the latest requested visibility-collect generation. The capture waits
+    /// for a render frame that started after the apply and that consumed a collect generation requested after it.
+    /// This fence replaces a fixed number of settle frames: it waits exactly as long as the frame pipeline needs.
+    /// The controller also counts the render frames that each gate rejected, so a slow capture shows its bottleneck.
+    /// </remarks>
     private sealed class CutsceneLockstepController(XRViewport viewport, CutsceneShotScene shotScene, int totalFrames, int fps)
     {
+        /// <summary>
+        /// Settle frames for a host that reports no visibility-collect generations. Two render frames cover one
+        /// collect pass that overlapped the apply and one collect pass that started after it.
+        /// </summary>
+        private const ulong FallbackSettleRenderFrames = 2UL;
+
         private readonly object _gate = new();
         private int _segmentOffset;
         private int _segmentFrames;
@@ -2418,9 +2486,19 @@ public static class RecordSplatCutsceneCommand
         private int _appliedFrameIndex = -1;
         private int _pendingApplyFrame = -1;
         private ulong _appliedRenderFrameId;
+        private long _appliedCollectGeneration;
         private ulong _scheduledAtRenderFrameId;
         private bool _readyToCapture;
         private bool _detached;
+
+        private long _capturedFrames;
+        private long _applyWaitRenderFrames;
+        private long _visibilityWaitRenderFrames;
+        private long _gpuDataWaitRenderFrames;
+        private long _readbackWaitRenderFrames;
+        private long _applyTicks;
+        private long _maxApplyTicks;
+        private bool _usedFallbackSettle;
 
         public void Attach(int segmentOffset, int segmentFrames)
         {
@@ -2468,12 +2546,27 @@ public static class RecordSplatCutsceneCommand
                 {
                     if (!_readyToCapture ||
                         scheduledFrameCount != _targetFrameIndex ||
-                        _appliedFrameIndex != scheduledFrameCount ||
-                        currentRenderFrameId < _appliedRenderFrameId + (ulong)SettleRenderFramesPerStep ||
-                        !shotScene.IsGpuDataReady)
+                        _appliedFrameIndex != scheduledFrameCount)
                     {
+                        _applyWaitRenderFrames++;
                         return false;
                     }
+
+                    if (!HasRenderedAppliedState(currentRenderFrameId))
+                    {
+                        _visibilityWaitRenderFrames++;
+                        return false;
+                    }
+
+                    if (!shotScene.IsGpuDataReady)
+                    {
+                        _gpuDataWaitRenderFrames++;
+                        return false;
+                    }
+                }
+                else
+                {
+                    _applyWaitRenderFrames++;
                 }
             }
 
@@ -2484,9 +2577,15 @@ public static class RecordSplatCutsceneCommand
             }
 
             if (!viewport.TryEnterRenderPipelineReadbackScope(out IDisposable? probeScope))
+            {
+                lock (_gate)
+                    _readbackWaitRenderFrames++;
                 return false;
+            }
 
             probeScope?.Dispose();
+            lock (_gate)
+                _capturedFrames++;
             return true;
         }
 
@@ -2510,6 +2609,45 @@ public static class RecordSplatCutsceneCommand
             }
         }
 
+        /// <summary>
+        /// Formats the gate statistics of every segment so far: the captured frame count, the average number of
+        /// render frames that each gate rejected per captured frame, and the apply time on the update thread.
+        /// </summary>
+        public string FormatStatistics()
+        {
+            lock (_gate)
+            {
+                double captured = Math.Max(1L, _capturedFrames);
+                double applyMs = _applyTicks * 1000.0 / Stopwatch.Frequency;
+                double maxApplyMs = _maxApplyTicks * 1000.0 / Stopwatch.Frequency;
+                return string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"lockstep(captured={_capturedFrames}, waitPerFrame[apply={_applyWaitRenderFrames / captured:F2}, " +
+                    $"visibility={_visibilityWaitRenderFrames / captured:F2}, gpuData={_gpuDataWaitRenderFrames / captured:F2}, " +
+                    $"readback={_readbackWaitRenderFrames / captured:F2}], applyMsAvg={applyMs / captured:F1}, " +
+                    $"applyMsMax={maxApplyMs:F1}, fence={(_usedFallbackSettle ? "settle-frames" : "collect-generation")})");
+            }
+        }
+
+        /// <summary>
+        /// Returns true when the render frame that just finished shows the applied cutscene state: it started after
+        /// the apply finished, and its visible-object package comes from a collect pass that the host requested after
+        /// the apply. A host without collect generations uses <see cref="FallbackSettleRenderFrames"/> instead.
+        /// </summary>
+        private bool HasRenderedAppliedState(ulong currentRenderFrameId)
+        {
+            if (currentRenderFrameId <= _appliedRenderFrameId)
+                return false;
+
+            if (_appliedCollectGeneration <= 0L)
+            {
+                _usedFallbackSettle = true;
+                return currentRenderFrameId >= _appliedRenderFrameId + FallbackSettleRenderFrames;
+            }
+
+            return RuntimeEngine.Rendering.Stats.FrameLifecycle.ConsumedCollectGeneration > _appliedCollectGeneration;
+        }
+
         private void ApplyFrameOnUpdateThread(int frameToApply)
         {
             int globalFrame;
@@ -2520,8 +2658,10 @@ public static class RecordSplatCutsceneCommand
                 globalFrame = _segmentOffset + frameToApply;
             }
 
+            long applyStart = Stopwatch.GetTimestamp();
             double timeSeconds = globalFrame / (double)fps;
             SeekAndEvaluateCutscene(shotScene, timeSeconds, globalFrame);
+            long applyTicks = Stopwatch.GetTimestamp() - applyStart;
 
             lock (_gate)
             {
@@ -2530,6 +2670,10 @@ public static class RecordSplatCutsceneCommand
 
                 _appliedFrameIndex = frameToApply;
                 _appliedRenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                // A collect pass requests its generation just before it starts, so any later generation began after this apply.
+                _appliedCollectGeneration = RuntimeEngine.Rendering.Stats.FrameLifecycle.RequestedCollectGeneration;
+                _applyTicks += applyTicks;
+                _maxApplyTicks = Math.Max(_maxApplyTicks, applyTicks);
                 _readyToCapture = true;
             }
         }

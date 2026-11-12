@@ -772,26 +772,26 @@ internal static partial class SerializedSceneImporter
         {
             Model? model = LoadSerializedSourceMeshModel(assetPath, node, hierarchy, materialReferences, skinnedMeshRenderer, state);
             if (model is null && state.Context.AllowPartialImport)
-                ReportSkippedMesh(assetPath, meshReference, state);
+                ReportSkippedMesh(assetPath, node, meshReference, state);
             return model;
         }
 
         if (SupportedExternalModelExtensions.Contains(Path.GetExtension(assetPath)))
         {
-            Model? model = LoadExternalModelForNode(assetPath, node, materialReferences, state);
+            Model? model = LoadExternalModelForNode(assetPath, node, hierarchy, materialReferences, skinnedMeshRenderer, state);
             if (model is null && state.Context.AllowPartialImport)
-                ReportSkippedMesh(assetPath, meshReference, state);
+                ReportSkippedMesh(assetPath, node, meshReference, state);
             return model;
         }
 
         if (state.Context.AllowPartialImport)
-            ReportSkippedMesh(assetPath, meshReference, state);
+            ReportSkippedMesh(assetPath, node, meshReference, state);
         return null;
     }
 
-    private static void ReportSkippedMesh(string assetPath, SourceReference meshReference, ImportState state)
+    private static void ReportSkippedMesh(string assetPath, SceneNode node, SourceReference meshReference, ImportState state)
         => state.Context.ReportPartialImport("UNITYPARTIAL0006",
-            $"Unity mesh '{assetPath}' could not produce a model. Its renderer has no mesh.",
+            $"Unity mesh '{assetPath}' (file ID {meshReference.FileId.ToString(CultureInfo.InvariantCulture)}) could not produce a model for renderer node '{node.Name}'. The renderer has no mesh.",
             state.EntryFilePath, "m_Mesh", ToIdentity(meshReference, SourceAssetObjectKind.Mesh));
 
     private static bool TryResolveBuiltInPrimitiveModel(
@@ -835,7 +835,9 @@ internal static partial class SerializedSceneImporter
     private static Model? LoadExternalModelForNode(
         string assetPath,
         SceneNode targetNode,
+        ImportedHierarchy hierarchy,
         IReadOnlyList<SourceReference> materialReferences,
+        ParsedSkinnedMeshRenderer? skinnedMeshRenderer,
         ImportState state)
     {
         AssetManager? assets = Engine.Assets;
@@ -855,15 +857,157 @@ internal static partial class SerializedSceneImporter
         if (targetNodeName.Length == 0)
             return null;
 
-        SceneNode? sourceNode = string.Equals(sourceRoot.Name, targetNodeName, StringComparison.Ordinal)
-            ? sourceRoot
-            : sourceRoot.FindDescendantByName(targetNodeName, StringComparison.Ordinal);
+        SceneNode? sourceNode = FindSourceModelNodeByName(sourceRoot, targetNodeName);
+        if (sourceNode is null && skinnedMeshRenderer is not null)
+            sourceNode = FindSourceModelNodeBySkinBones(
+                sourceRoot, targetNode, hierarchy, skinnedMeshRenderer, materialReferences.Count, assetPath, state);
         if (sourceNode?.TryGetComponent<ModelComponent>(out ModelComponent? sourceModelComponent) != true ||
             sourceModelComponent is null ||
             sourceModelComponent.Model is null)
             return null;
 
         return CloneModelForTarget(sourceRoot, sourceNode, sourceModelComponent.Model, targetNode, materialReferences, isFbx, state);
+    }
+
+    /// <summary>
+    /// Finds the source model node that has the same name as the Unity renderer node. When no node has the exact
+    /// name, the method compares names without leading or trailing spaces: Unity YAML readers strip trailing spaces
+    /// from plain scalars, but FBX node names keep them.
+    /// </summary>
+    private static SceneNode? FindSourceModelNodeByName(SceneNode sourceRoot, string targetNodeName)
+    {
+        if (string.Equals(sourceRoot.Name, targetNodeName, StringComparison.Ordinal))
+            return sourceRoot;
+
+        SceneNode? exact = sourceRoot.FindDescendantByName(targetNodeName, StringComparison.Ordinal);
+        if (exact is not null)
+            return exact;
+
+        string trimmedTarget = targetNodeName.Trim();
+        SceneNode? trimmedMatch = null;
+        sourceRoot.IterateHierarchy(node =>
+        {
+            if (trimmedMatch is null &&
+                node.Name is { } name &&
+                string.Equals(name.Trim(), trimmedTarget, StringComparison.Ordinal) &&
+                node.TryGetComponent<ModelComponent>(out ModelComponent? modelComponent) &&
+                modelComponent?.Model is not null)
+            {
+                trimmedMatch = node;
+            }
+        });
+        return trimmedMatch;
+    }
+
+    /// <summary>
+    /// Finds the source model of a renamed skinned renderer. Unity finds an FBX mesh by its file ID, so a prefab can
+    /// rename the renderer GameObject and still show the mesh. This importer finds FBX meshes by node name, so it
+    /// compares skin bones instead: it selects the source model whose skin bone names best match the bones of the
+    /// renderer and whose submesh count equals the renderer material slot count. Source nodes whose name matches
+    /// another node in the target hierarchy are excluded, because that node takes them by name. The match must be
+    /// nearly exact and clearly better than the next candidate; otherwise the method returns null.
+    /// </summary>
+    private static SceneNode? FindSourceModelNodeBySkinBones(
+        SceneNode sourceRoot,
+        SceneNode targetNode,
+        ImportedHierarchy hierarchy,
+        ParsedSkinnedMeshRenderer skinnedMeshRenderer,
+        int materialSlotCount,
+        string assetPath,
+        ImportState state)
+    {
+        const double MinimumBoneMatch = 0.95;
+        const double MinimumLeadOverNext = 0.02;
+
+        HashSet<string> rendererBones = new(StringComparer.Ordinal);
+        foreach (long boneTransformId in skinnedMeshRenderer.BoneTransformFileIds)
+        {
+            if (hierarchy.NodesByTransformId.TryGetValue(boneTransformId, out SceneNode? bone) &&
+                !string.IsNullOrWhiteSpace(bone.Name))
+            {
+                rendererBones.Add(bone.Name);
+            }
+        }
+
+        if (rendererBones.Count == 0)
+            return null;
+
+        HashSet<string> targetNodeNames = new(StringComparer.Ordinal);
+        GetHierarchyRoot(targetNode).IterateHierarchy(node =>
+        {
+            if (!string.IsNullOrWhiteSpace(node.Name))
+                targetNodeNames.Add(node.Name.Trim());
+        });
+
+        SceneNode? best = null;
+        double bestScore = 0.0;
+        double secondScore = 0.0;
+        HashSet<string> modelBones = new(StringComparer.Ordinal);
+        sourceRoot.IterateHierarchy(node =>
+        {
+            if (!node.TryGetComponent<ModelComponent>(out ModelComponent? modelComponent) ||
+                modelComponent?.Model is not { } model ||
+                string.IsNullOrWhiteSpace(node.Name) ||
+                targetNodeNames.Contains(node.Name.Trim()) ||
+                (materialSlotCount > 0 && model.Meshes.Count != materialSlotCount))
+            {
+                return;
+            }
+
+            modelBones.Clear();
+            foreach (SubMesh subMesh in model.Meshes)
+            {
+                foreach (SubMeshLOD lod in subMesh.LODs)
+                {
+                    if (lod.Mesh is not { } mesh)
+                        continue;
+
+                    foreach ((TransformBase boneTransform, Matrix4x4 _) in mesh.UtilizedBones)
+                    {
+                        string? boneName = boneTransform.SceneNode?.Name ?? boneTransform.Name;
+                        if (!string.IsNullOrEmpty(boneName))
+                            modelBones.Add(boneName);
+                    }
+                }
+            }
+
+            if (modelBones.Count == 0)
+                return;
+
+            int shared = 0;
+            foreach (string boneName in modelBones)
+            {
+                if (rendererBones.Contains(boneName))
+                    shared++;
+            }
+
+            double score = shared / (double)(rendererBones.Count + modelBones.Count - shared);
+            if (score > bestScore)
+            {
+                secondScore = bestScore;
+                bestScore = score;
+                best = node;
+            }
+            else if (score > secondScore)
+            {
+                secondScore = score;
+            }
+        });
+
+        if (best is null || bestScore < MinimumBoneMatch || bestScore - secondScore < MinimumLeadOverNext)
+            return null;
+
+        state.Context.AddDiagnostic(
+            "UNITYMESH0010",
+            SourceImportDiagnosticSeverity.Info,
+            SourceImportDiagnosticCategory.PrefabOverride,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"Renderer node '{targetNode.Name}' has no source node with the same name in '{assetPath}'. " +
+                $"The importer used source model '{best.Name}', whose skin bones match {bestScore:P1} (next best {secondScore:P1})."),
+            state.EntryFilePath,
+            "m_Mesh");
+        return best;
     }
 
     private static Model? LoadSerializedSourceMeshModel(
@@ -1067,10 +1211,32 @@ internal static partial class SerializedSceneImporter
         mesh.ReplaceSkinningBoneBindings(reboundBones);
     }
 
+    /// <summary>
+    /// Finds the transform in <paramref name="targetRoot"/> that corresponds to <paramref name="sourceTransform"/>
+    /// in <paramref name="sourceRoot"/>. Cached FBX meshes store detached carrier transforms whose
+    /// <see cref="TransformBase.SceneNode"/> is null; for those carriers, the method locates the matching node in
+    /// <paramref name="sourceRoot"/> by serialized reference ID and maps its relative path or bone name into
+    /// <paramref name="targetRoot"/>.
+    /// </summary>
     private static TransformBase? MapSourceTransformToTarget(TransformBase? sourceTransform, SceneNode sourceRoot, SceneNode targetRoot)
     {
-        if (sourceTransform?.SceneNode is not SceneNode sourceNode)
-            return sourceTransform;
+        if (sourceTransform is null)
+            return null;
+
+        SceneNode? sourceNode = sourceTransform.SceneNode;
+        if (sourceNode is null && sourceTransform.EffectiveSerializedReferenceId != Guid.Empty)
+            sourceNode = sourceRoot.Transform.FindSelfOrDescendantBySerializedReferenceId(sourceTransform.EffectiveSerializedReferenceId)?.SceneNode;
+
+        if (sourceNode is null)
+        {
+            if (string.IsNullOrWhiteSpace(sourceTransform.Name))
+                return sourceTransform;
+
+            if (string.Equals(sourceTransform.Name, sourceRoot.Name, StringComparison.Ordinal))
+                return targetRoot.Transform;
+
+            return targetRoot.FindDescendantByName(sourceTransform.Name, StringComparison.Ordinal)?.Transform ?? sourceTransform;
+        }
 
         if (ReferenceEquals(sourceNode, sourceRoot))
             return targetRoot.Transform;

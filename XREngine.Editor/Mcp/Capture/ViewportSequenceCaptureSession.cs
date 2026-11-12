@@ -103,6 +103,13 @@ internal sealed partial class ViewportSequenceCaptureSession
     /// </summary>
     internal Action<int>? FrameScheduled { get; set; }
 
+    /// <summary>
+    /// Optional destination for the captured pixels. When set, the session sends each read-back frame to the sink
+    /// and writes no PNG file. Frame analysis and the contact sheet need PNG files, so the session skips them.
+    /// Set this property before <see cref="Start"/>.
+    /// </summary>
+    internal IViewportSequenceFrameSink? FrameSink { get; set; }
+
     public DateTimeOffset StartedAtUtc
     {
         get

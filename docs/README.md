@@ -92,6 +92,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
 - [Poiyomi Toon Material Conversion](developer-guides/rendering/poiyomi-toon-material-conversion.md)
 - [Maintaining Poiyomi Toon Support](developer-guides/rendering/poiyomi-toon-maintenance.md)
+- [Gaussian Splat Cutscene Capture](developer-guides/rendering/gaussian-splat-cutscene-capture.md)
 - [Vulkan OBS Hook Compatibility](developer-guides/rendering/vulkan-obs-hook-compatibility.md)
 - [Surface Detail And Forward Shadows](developer-guides/rendering/shadows/surface-detail-forward-shadows.md)
 - [OpenXR Runtime](developer-guides/vr/openxr-runtime.md)

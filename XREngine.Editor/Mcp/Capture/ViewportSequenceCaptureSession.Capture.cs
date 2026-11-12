@@ -280,7 +280,15 @@ internal sealed partial class ViewportSequenceCaptureSession
         {
             using (image)
             {
-                if (image.Width != (uint)frame.OutputWidth || image.Height != (uint)frame.OutputHeight)
+                if (FrameSink is { } frameSink)
+                {
+                    if (image.Width != (uint)frame.OutputWidth || image.Height != (uint)frame.OutputHeight)
+                        throw new InvalidOperationException(
+                            $"The frame sink needs {frame.OutputWidth}x{frame.OutputHeight} pixels, but the readback returned {image.Width}x{image.Height}.");
+
+                    frameSink.WriteFrame(frame.CaptureIndex, image);
+                }
+                else if (image.Width != (uint)frame.OutputWidth || image.Height != (uint)frame.OutputHeight)
                 {
                     using RuntimeImage resized = RuntimeImageCodecs.Require().Resize(image,
                         (uint)frame.OutputWidth, (uint)frame.OutputHeight, RuntimeImageResizeMode.Standard);
