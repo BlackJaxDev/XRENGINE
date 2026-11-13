@@ -37,6 +37,13 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
     /// </summary>
     internal VulkanAdvancedComputePipeline ShadeMultisampleCombined { get; init; }
 
+    /// <summary>
+    /// Occlusion-culled bounds overlay kernel. It is requested only while the
+    /// overlay is on and is not part of <see cref="IsCurrent"/>. While it compiles,
+    /// shading records no overlay.
+    /// </summary>
+    internal VulkanAdvancedComputePipeline OcclusionCulledBounds { get; init; }
+
     internal bool IsCurrent => Classify.IsCurrent && BuildArguments.IsCurrent && AmbientOcclusion.IsCurrent &&
         BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent &&
         RvcShadeletTelemetry.IsCurrent && FoveatedQuadFill.IsCurrent;

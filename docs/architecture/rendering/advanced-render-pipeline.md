@@ -612,6 +612,41 @@ collection alone does not draw a box. `VPRC_RenderDebugShapes` declares each pas
 to the render graph. The `DebugOverlays` capture policy excludes this work from
 shadow and light-probe outputs.
 
+### Debug views for meshlets and occlusion
+
+Two debug views help to check meshlet culling. Both toggles are in the camera
+`Debug Visualization` post-process stage (`gpuBvhDebug`), and the MCP tools
+`set_meshlet_debug_display` and `set_camera_post_process_parameter` can set them.
+When they are off, no pass, buffer, program or allocation exists for them.
+
+- **Meshlet colors** (`Meshlet Debug Display`, or `ShadingDebugView = MeshletId`).
+  `VPRC_AdvancedRenderStage` requests the `MeshletId` shading debug view while the
+  pipeline selects no other view. Native shading then writes a color from a hash
+  of the global meshlet index in the visibility identity instead of the material
+  result, so a meshlet keeps its color from frame to frame. Pixels of indexed
+  producers (CPU-direct, GPU indirect, and indexed ranges of meshlet frames such
+  as parallax ranges) have no meshlet and are neutral grey. The submission strategy does not change. It works
+  for each view, so stereo eyes show it too.
+- **Occlusion-culled bounds** (`Occlusion-Culled Bounds`). After native opaque
+  shading, the optional kernel `OcclusionCulledBounds.comp` draws box edges into
+  the shaded HDR color of each view, and marks those pixels reactive so temporal
+  resolve does not blend them. It only reads culling results; the culling shaders
+  do not change.
+  - Orange: draws that passed the frustum test and failed the late Hi-Z draw
+    test (`FLAG_OCCLUDED` in the persistent state). The box is the world AABB of
+    the candidate that the test used.
+  - Cyan: meshlets of static meshlet draws that reached the late raster, passed
+    the frustum and cone tests, were not drawn early, and have no current-frame
+    history bit. The late task stage sets that bit for each meshlet that passes
+    all of its tests, so a missing bit means that the late Hi-Z test removed the
+    meshlet. The box encloses the cooked bounding sphere that the test used.
+  - Frustum-culled and cone-culled units are not drawn.
+  - The program is created on first use and is not part of family admission.
+    While it compiles, shading records no overlay.
+  - The Advanced CPU-direct path has no occlusion test, so the overlay has no
+    data there. The editor debug panel states the source of the boxes, or their
+    absence, for the current frame's effective strategy.
+
 ### Selected GPU chain debug
 
 `AppendAdvancedPhysicsDebugCommands` runs after late scene work and before

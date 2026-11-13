@@ -384,6 +384,16 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return false;
         }
 
+        // The camera post-process stage owns the per-camera debug toggles. The
+        // meshlet display maps to the meshlet shading debug view when the pipeline
+        // selects no other view.
+        XRCamera? debugCamera = ActivePipelineInstance.RenderState.SceneCamera
+            ?? ActivePipelineInstance.RenderState.RenderingCamera;
+        EAdvancedShadingDebugView shadingDebugView =
+            pipeline.ShadingDebugView == EAdvancedShadingDebugView.Disabled &&
+            GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(debugCamera, pipeline)
+                ? EAdvancedShadingDebugView.MeshletId
+                : pipeline.ShadingDebugView;
         string rawMetadata = packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.MetadataMultisample;
         string rawSelection = packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.SelectionMultisample;
         request = new(
@@ -402,7 +412,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             multisampleRaster ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil,
             useNeutralWebAmbientOcclusion ? AdvancedRenderPipeline.WebPostProcessNeutralTextureName : AdvancedAmbientOcclusionContract.ResourceName,
             AdvancedVisibilityResourceNames.CurrentDepthPyramid,
-            pipeline.ShadingDebugView,
+            shadingDebugView,
             RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required ||
             binding.Request.OffscreenIntent.HasValue,
             enableBuiltInAmbientOcclusion,
@@ -431,6 +441,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             RecordRvcShadeletTelemetry = requiresNativeOpaqueShading &&
                 pipeline.DeclaresRvcShadeletTelemetry &&
                 ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcShadeletTelemetryEnabled: true },
+            ShowOcclusionCulledBounds = requiresNativeOpaqueShading &&
+                GpuBvhDebugSettings.IsOcclusionCulledBoundsEnabled(
+                    ActivePipelineInstance.RenderState.SceneCamera ?? ActivePipelineInstance.RenderState.RenderingCamera,
+                    pipeline),
             RvcFoveatedQuadShading = requiresNativeOpaqueShading && samples <= 1u &&
                 ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcFoveatedQuadShadingEnabled: true },
             DecalBufferEnabled = stageBackend.SupportsAdvancedSurfaceDecalBuffer &&

@@ -1,0 +1,222 @@
+#version 450
+// Debug overlay: draws the bounds of the units that the GPU occlusion test
+// removed in this frame, on top of the shaded HDR color of one view.
+// - Draw boxes (orange): draws that passed the frustum test and failed the
+//   late Hi-Z draw test. LateVisibility.comp marks them FLAG_OCCLUDED in the
+//   persistent state. The box is the world AABB that the test used.
+// - Meshlet boxes (cyan): meshlets of static meshlet draws that reached the
+//   late raster, passed the frustum and cone tests, were not drawn early, and
+//   did not get a current-frame history bit. The late task stage sets that bit
+//   for every meshlet that passes all of its tests, so a missing bit means the
+//   late Hi-Z test removed the meshlet. The box encloses the cooked bounding
+//   sphere that the test used.
+// Frustum-culled and cone-culled units are not drawn. The kernel only reads
+// culling results; it runs only while the overlay is on.
+#include "Advanced/Shading/AdvancedShadingInterface.glslinc"
+#include "Advanced/Visibility/VisibilityMeshletCulling.glslinc"
+
+#if !defined(XR_ADV_BACKEND_VULKAN) || defined(XR_ADV_VISIBILITY_ARRAY)
+#error "The occlusion-culled bounds overlay binds one Vulkan view layer per dispatch."
+#endif
+
+// One workgroup tests one draw candidate of the view.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+XR_ADV_SHADING_IMAGE(rgba16f, 15) uniform image2D HDRSceneColor;
+XR_ADV_SHADING_IMAGE(r8, 17) uniform image2D ReactiveMask;
+
+// Persistent-state flags. They match LateVisibility.comp.
+const uint XR_ADV_OVERLAY_FLAG_EARLY_VISIBLE = 1u << 5u;
+const uint XR_ADV_OVERLAY_FLAG_LATE_VISIBLE = 1u << 7u;
+const uint XR_ADV_OVERLAY_FLAG_OCCLUDED = 1u << 8u;
+const uint XR_ADV_OVERLAY_VIEW_FLAG_TEXTURE_Y_DOWN = 1u << 6u;
+// Workgroups per row of the 2D dispatch grid.
+const uint XR_ADV_OVERLAY_GROUPS_PER_ROW = 4096u;
+// Longest edge, in pixels, that one invocation draws.
+const int XR_ADV_OVERLAY_MAX_EDGE_PIXELS = 4096;
+
+// Line colors in scene-linear HDR. They stay near 1.0, so the lines do not pull
+// auto exposure down or bloom strongly.
+const vec4 XR_ADV_OVERLAY_DRAW_COLOR = vec4(1.0, 0.35, 0.0, 1.0);
+const vec4 XR_ADV_OVERLAY_MESHLET_COLOR = vec4(0.0, 0.55, 1.0, 1.0);
+
+// The dispatch passes the payload capacity of one view in kernelIndex. The
+// persistent state of view v starts at v * payloadCapacity.
+uint XR_ADV_OverlayPayloadCapacity()
+{
+    return u_Push.kernelIndex;
+}
+
+bool XR_ADV_OverlayProjectToPixel(vec4 clip, out vec2 pixel)
+{
+    pixel = vec2(0.0);
+    if (clip.w <= 0.00001)
+        return false;
+    vec2 ndc = clip.xy / clip.w;
+    vec2 uv = ndc * 0.5 + 0.5;
+    XRAdvancedViewRecord view = XR_ADV_LoadView(u_Push.viewIndex);
+    if ((view.flags & XR_ADV_OVERLAY_VIEW_FLAG_TEXTURE_Y_DOWN) != 0u)
+        uv.y = 1.0 - uv.y;
+    pixel = uv * vec2(u_Push.screenExtent);
+    return true;
+}
+
+// Draws one world-space edge. The part behind the near plane (clip.w near 0)
+// is cut off first.
+void XR_ADV_OverlayDrawEdge(vec3 a, vec3 b, mat4 viewProjection, vec4 color)
+{
+    vec4 clipA = vec4(a, 1.0) * viewProjection;
+    vec4 clipB = vec4(b, 1.0) * viewProjection;
+    const float nearW = 0.001;
+    if (clipA.w < nearW && clipB.w < nearW)
+        return;
+    if (clipA.w < nearW)
+        clipA = mix(clipA, clipB, (nearW - clipA.w) / (clipB.w - clipA.w));
+    else if (clipB.w < nearW)
+        clipB = mix(clipB, clipA, (nearW - clipB.w) / (clipA.w - clipB.w));
+    vec2 pixelA, pixelB;
+    if (!XR_ADV_OverlayProjectToPixel(clipA, pixelA) ||
+        !XR_ADV_OverlayProjectToPixel(clipB, pixelB))
+        return;
+    vec2 extent = vec2(u_Push.screenExtent);
+    // Clamp far-off endpoints so the step count stays bounded.
+    pixelA = clamp(pixelA, -extent, 2.0 * extent);
+    pixelB = clamp(pixelB, -extent, 2.0 * extent);
+    vec2 delta = pixelB - pixelA;
+    int steps = min(int(ceil(max(abs(delta.x), abs(delta.y)))), XR_ADV_OVERLAY_MAX_EDGE_PIXELS);
+    for (int step = 0; step <= steps; ++step)
+    {
+        vec2 position = pixelA + delta * (steps == 0 ? 0.0 : float(step) / float(steps));
+        ivec2 pixel = ivec2(floor(position));
+        if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, ivec2(u_Push.screenExtent))))
+            continue;
+        imageStore(HDRSceneColor, pixel, color);
+        // The line is new content in this frame: temporal resolve must not
+        // blend it with history.
+        imageStore(ReactiveMask, pixel, vec4(1.0));
+    }
+}
+
+// Draws edge number edgeIndex (0..11) of an axis-aligned box.
+void XR_ADV_OverlayDrawBoxEdge(vec3 boxMin, vec3 boxMax, uint edgeIndex, mat4 viewProjection, vec4 color)
+{
+    // Each edge varies one axis; the other two axes are fixed at min or max.
+    uint axis = edgeIndex / 4u;
+    uint corner = edgeIndex & 3u;
+    vec3 a = boxMin;
+    vec3 b = boxMin;
+    uint fixedAxisA = (axis + 1u) % 3u;
+    uint fixedAxisB = (axis + 2u) % 3u;
+    if ((corner & 1u) != 0u)
+    {
+        a[fixedAxisA] = boxMax[fixedAxisA];
+        b[fixedAxisA] = boxMax[fixedAxisA];
+    }
+    if ((corner & 2u) != 0u)
+    {
+        a[fixedAxisB] = boxMax[fixedAxisB];
+        b[fixedAxisB] = boxMax[fixedAxisB];
+    }
+    b[axis] = boxMax[axis];
+    XR_ADV_OverlayDrawEdge(a, b, viewProjection, color);
+}
+
+void main()
+{
+    uint candidateIndex = gl_WorkGroupID.x + gl_WorkGroupID.y * XR_ADV_OVERLAY_GROUPS_PER_ROW;
+    uint lane = gl_LocalInvocationID.x;
+    uint viewIndex = u_Push.viewIndex;
+    uint payloadCapacity = XR_ADV_OverlayPayloadCapacity();
+    if (candidateIndex >= payloadCapacity ||
+        viewIndex >= uint(XR_ADV_Views.records.length()) ||
+        candidateIndex >= uint(XR_ADV_VisibilityCandidates.records.length()) / 20u ||
+        candidateIndex >= uint(XR_ADV_VisibilityPayloads.records.length()))
+        return;
+    uint persistentWord = (viewIndex * payloadCapacity + candidateIndex) * 8u;
+    if (persistentWord + 7u >= uint(XR_ADV_VisibilityPersistentState.records.length()))
+        return;
+    uint flags = XR_ADV_VisibilityPersistentState.records[persistentWord + 7u];
+    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+    mat4 viewProjection = view.viewProjectionJittered;
+
+    // Whole draw removed by the late Hi-Z draw test.
+    if ((flags & XR_ADV_OVERLAY_FLAG_OCCLUDED) != 0u)
+    {
+        if (lane >= 12u)
+            return;
+        uint base = candidateIndex * 20u;
+        vec3 boxMin = uintBitsToFloat(uvec3(
+            XR_ADV_VisibilityCandidates.records[base + 8u],
+            XR_ADV_VisibilityCandidates.records[base + 9u],
+            XR_ADV_VisibilityCandidates.records[base + 10u]));
+        vec3 boxMax = uintBitsToFloat(uvec3(
+            XR_ADV_VisibilityCandidates.records[base + 12u],
+            XR_ADV_VisibilityCandidates.records[base + 13u],
+            XR_ADV_VisibilityCandidates.records[base + 14u]));
+        if (any(isnan(boxMin)) || any(isnan(boxMax)) || any(greaterThan(boxMin, boxMax)))
+            return;
+        XR_ADV_OverlayDrawBoxEdge(boxMin, boxMax, lane, viewProjection, XR_ADV_OVERLAY_DRAW_COLOR);
+        return;
+    }
+
+    // Only static meshlet draws that reached the late raster have meshlet
+    // occlusion results.
+    bool earlyVisible = (flags & XR_ADV_OVERLAY_FLAG_EARLY_VISIBLE) != 0u;
+    bool lateVisible = (flags & XR_ADV_OVERLAY_FLAG_LATE_VISIBLE) != 0u;
+    if (!earlyVisible ||
+        XR_ADV_VisibilityProducers.records[candidateIndex] != XR_ADV_VIS_PRODUCER_STATIC_MESHLET ||
+        !XR_ADV_MeshletHistoryAvailable(viewIndex))
+        return;
+    // A draw drawn in the early raster comes back as a recheck draw. A deferred
+    // draw that passed the late draw test has both flags and drew nothing early.
+    bool recheckDraw = !lateVisible;
+
+    XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[candidateIndex];
+    uint drawDense = XR_ADV_ResolveVisibilityHandle(payload.draw, VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    if (drawDense == XR_ADV_INVALID_DENSE_INDEX)
+        return;
+    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    uint transformDense = XR_ADV_ResolveVisibilityHandle(draw.currentTransform, VisibilityTransformLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    if (transformDense == XR_ADV_INVALID_DENSE_INDEX)
+        return;
+    XRAdvancedTransformRecord transform = XR_ADV_LoadTransform(transformDense);
+    XRAdvancedMeshletDrawCullState drawState = XR_ADV_MeshletDrawCullState(
+        transform.world, payload.cullMode, XR_ADV_VIS_PRODUCER_STATIC_MESHLET);
+    bool historyTrusted = XR_ADV_MeshletViewHistoryValid(view);
+    uint previousSet = XR_ADV_MeshletHistoryParity(viewIndex);
+    uint meshletTableLength = uint(XR_ADV_VisibilityMeshlets.records.length());
+
+    for (uint local = lane; local < payload.meshletCount; local += gl_WorkGroupSize.x)
+    {
+        uint meshletIndex = payload.meshletOffset + local;
+        if (meshletIndex < payload.meshletOffset ||
+            meshletIndex >= meshletTableLength ||
+            meshletIndex >= XR_ADV_MESHLET_HISTORY_MESHLET_CAPACITY)
+            break;
+        XRAdvancedVisibilityMeshletDescriptor meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
+        uint reason = XR_ADV_ClassifyVisibilityMeshlet(
+            meshlet,
+            drawState,
+            XR_ADV_VIS_PRODUCER_STATIC_MESHLET,
+            view.viewProjectionUnjittered,
+            view.cameraPositionAndNear.xyz);
+        if (reason != XR_ADV_MESHLET_CULL_NONE)
+            continue;
+        uint bit = 1u << (meshletIndex & 31u);
+        bool visibleLastFrame = !historyTrusted ||
+            (XR_ADV_VisibilityMeshletHistory.words[
+                XR_ADV_MeshletHistoryWord(viewIndex, previousSet, meshletIndex)] & bit) != 0u;
+        bool drawnEarly = recheckDraw && visibleLastFrame;
+        bool passedLate = (XR_ADV_VisibilityMeshletHistory.words[
+            XR_ADV_MeshletHistoryWord(viewIndex, previousSet ^ 1u, meshletIndex)] & bit) != 0u;
+        if (drawnEarly || passedLate)
+            continue;
+        vec4 sphere = XR_ADV_MeshletWorldSphere(meshlet, drawState);
+        if (any(isnan(sphere)) || sphere.w < 0.0)
+            continue;
+        vec3 boxMin = sphere.xyz - vec3(sphere.w);
+        vec3 boxMax = sphere.xyz + vec3(sphere.w);
+        for (uint edge = 0u; edge < 12u; ++edge)
+            XR_ADV_OverlayDrawBoxEdge(boxMin, boxMax, edge, viewProjection, XR_ADV_OVERLAY_MESHLET_COLOR);
+    }
+}

@@ -51,6 +51,29 @@ float shadowVisibility = 1.0;
 vec3 directDiffuse = vec3(0.0);
 vec3 directSpecular = vec3(0.0);
 
+// EAdvancedShadingDebugView.MeshletId.
+#define XR_ADV_SHADING_DEBUG_MESHLET_ID 11u
+
+// Returns a stable color for the meshlet of a visibility sample. Meshlet
+// producers store (global meshlet index << 8) | local triangle in identity.y, so
+// the color depends only on the meshlet index and does not change between
+// frames. Samples of indexed producers have no meshlet and get neutral grey.
+vec3 XR_ADV_MeshletDebugColor(uvec2 identity, uint metadata)
+{
+    uint producer = metadata & XR_ADV_VIS_PRODUCER_MASK;
+    if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
+        producer != XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
+        return vec3(0.18);
+    // PCG hash of the meshlet index, mapped to a saturated hue.
+    uint state = (identity.y >> 8u) * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    word = (word >> 22u) ^ word;
+    float hue = float(word & 0xFFFFu) / 65535.0;
+    vec3 rgb = clamp(abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    float value = 0.55 + 0.45 * float((word >> 16u) & 255u) / 255.0;
+    return rgb * value;
+}
+
 bool XR_ADV_ExportsMaterialSurfaceInputs()
 {
     return (u_Push.flags & 16u) != 0u;
@@ -453,6 +476,16 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         result.diagnostics = rejection |
             ((surface.invalidReason & 255u) << 20u) |
             (nonFiniteAttribute << 28u);
+        return;
+    }
+
+    // Meshlet debug view: replaces the material result for every material
+    // family, so the meshlet layout shows on all opaque surfaces.
+    if (((u_Push.flags >> 8u) & 255u) == XR_ADV_SHADING_DEBUG_MESHLET_ID)
+    {
+        result.radiance = XR_ADV_MeshletDebugColor(identity, metadata);
+        result.opacity = 1.0;
+        result.velocity = surface.motionNdc;
         return;
     }
 

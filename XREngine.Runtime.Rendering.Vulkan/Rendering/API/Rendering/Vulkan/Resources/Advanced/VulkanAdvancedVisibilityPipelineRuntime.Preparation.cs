@@ -658,7 +658,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         // The optional Uber kernels are created after admission, only for scenes that need
         // them. Their lazy creation must not invalidate the admitted family.
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
-            if (!IsOptionalNativeShadingProgram(i) && i != ShadeStandardMultisampleProgramIndex)
+            if (!IsOptionalNativeProgram(i) && i != ShadeStandardMultisampleProgramIndex)
                 AddProgramIdentity(ref hash, _nativeComputePrograms[i]);
         return hash.ToHashCode();
     }
@@ -702,7 +702,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             return false;
         }
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
-            if (!IsOptionalNativeShadingProgram(i) && i != ShadeStandardMultisampleProgramIndex &&
+            if (!IsOptionalNativeProgram(i) && i != ShadeStandardMultisampleProgramIndex &&
                 !IsProgramCurrent(_nativeComputePrograms[i], compute: true))
                 return false;
         if (!IsProgramCurrent(_opaqueRasterProgram, compute: false) ||

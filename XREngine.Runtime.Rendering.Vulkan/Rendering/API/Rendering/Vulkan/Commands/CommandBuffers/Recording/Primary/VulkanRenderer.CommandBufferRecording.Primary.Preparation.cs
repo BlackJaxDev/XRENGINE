@@ -1573,6 +1573,17 @@ namespace XREngine.Rendering.Vulkan
                             ShadeMultisampleCombined = combinedMultisampleShade,
                         };
                     }
+                    // The overlay kernel compiles on first use. Until it is ready,
+                    // shading records no overlay; it never delays admission.
+                    if (request.ShowOcclusionCulledBounds &&
+                        request.Stage == EAdvancedRenderStage.NativeOpaqueShading)
+                    {
+                        nativePipelines = nativePipelines with
+                        {
+                            OcclusionCulledBounds =
+                                ResourceRuntime.AdvancedVisibilityPipelines.TryGetOcclusionCulledBoundsPipeline(),
+                        };
+                    }
                     S13aPublicationTelemetry.StepProbe nativeAssociationProbe =
                         S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                     VulkanAdvancedComputePipeline selectedShade = nativeClosure.UsesMultisampleVisibility

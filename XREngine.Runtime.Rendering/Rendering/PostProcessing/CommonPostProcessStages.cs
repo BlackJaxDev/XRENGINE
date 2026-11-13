@@ -1716,6 +1716,12 @@ public static class CommonPostProcessStages
             displayName: "Meshlet Debug Display");
 
         stage.AddParameter(
+            nameof(GpuBvhDebugSettings.OcclusionCulledBoundsEnabled),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Occlusion-Culled Bounds");
+
+        stage.AddParameter(
             nameof(GpuBvhDebugSettings.Enabled),
             PostProcessParameterKind.Bool,
             false,

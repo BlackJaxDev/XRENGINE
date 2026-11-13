@@ -49,6 +49,12 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// </summary>
     internal bool RecordRvcShadeletTelemetry { get; init; }
 
+    /// <summary>
+    /// Draws the occlusion-culled bounds overlay after native opaque shading.
+    /// It is a per-frame diagnostic and is not part of the family identity.
+    /// </summary>
+    internal bool ShowOcclusionCulledBounds { get; init; }
+
     /// <summary>Shades one pixel per peripheral block of the same primitive, then fills the rest.</summary>
     internal bool RvcFoveatedQuadShading { get; init; }
 

@@ -57,6 +57,12 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     public bool RecordRvcShadeletTelemetry { get; init; }
 
     /// <summary>
+    /// True when native opaque shading also draws the occlusion-culled bounds
+    /// overlay. It is a per-frame diagnostic and is not part of the family identity.
+    /// </summary>
+    public bool ShowOcclusionCulledBounds { get; init; }
+
+    /// <summary>
     /// True when native opaque shading shades one pixel per peripheral 2x2 or 4x4
     /// block of the same primitive and fills the rest. Only RVC eyes without MSAA set it.
     /// </summary>

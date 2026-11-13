@@ -16,6 +16,9 @@ internal sealed partial class VulkanCommandRuntime
     private static readonly string[] NativeOpaqueGpuProfilerPath = ["Advanced", "Shading", "NativeOpaque"];
     private static readonly string[] NativeOpaqueRepairGpuProfilerPath = ["Advanced", "Shading", "GpuOverflowRepair"];
     private static readonly string[] NativeOpaqueUberGpuProfilerPath = ["Advanced", "Shading", "NativeOpaqueUber"];
+    private static readonly string[] OcclusionCulledBoundsGpuProfilerPath = ["Advanced", "Shading", "OcclusionCulledBounds"];
+    // Matches XR_ADV_OVERLAY_GROUPS_PER_ROW in OcclusionCulledBounds.comp.
+    private const uint OcclusionCulledBoundsGroupsPerRow = 4096u;
     // Matches XR_ADV_SHADING_UBER_FALLBACK in ShadeNativeOpaqueEvaluator.glslinc.
     private const uint NativeUberFallbackShadingFlag = 1u << 29;
     // Matches XR_ADV_SHADING_DECAL_BUFFER in ShadeNativeOpaqueEvaluator.glslinc.
@@ -276,6 +279,8 @@ internal sealed partial class VulkanCommandRuntime
                 in push, tilesX, tilesY, 1, "Rvc.FoveatedQuadFill", FoveatedQuadFillGpuProfilerPath);
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
         }
+        if (payload.Request.ShowOcclusionCulledBounds && payload.NativeComputePipelines.OcclusionCulledBounds.IsCurrent)
+            RecordOcclusionCulledBoundsOverlay(state.CommandBuffer, in payload, in push);
         VulkanFrozenBufferBarrier lightingCounters = closure.LightingCounters;
         VulkanAdvancedVisibilityStageRequest lightingRequest = payload.Request;
         _ = AdvancedCounterDiagnosticCopy?.Invoke(
@@ -335,6 +340,38 @@ internal sealed partial class VulkanCommandRuntime
             checked((int)request.BackendPackage.CanonicalFrame.FrameGeneration),
             uint.MaxValue, EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry) == true;
         RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryDispatch(readbackAttached);
+    }
+
+    /// <summary>
+    /// Draws the occlusion-culled bounds overlay into the shaded HDR color of this
+    /// view. One workgroup tests one draw candidate. The kernel reads the late
+    /// culling results: the per-draw persistent state (written by late compute) and
+    /// the meshlet history (written by the late task stage), so a barrier first makes
+    /// those writes visible to compute reads.
+    /// </summary>
+    private unsafe void RecordOcclusionCulledBoundsOverlay(CommandBuffer commandBuffer,
+        in VulkanAdvancedVisibilityOperationPayload payload, in VulkanAdvancedNativeShadingPushConstants push)
+    {
+        uint candidates = payload.State.PayloadCapacity;
+        if (candidates == 0u)
+            return;
+        MemoryBarrier barrier = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.ShaderWriteBit,
+            DstAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+        };
+        PipelineStageFlags sourceStages = PipelineStageFlags.ComputeShaderBit |
+            (DeviceContext.SupportsMeshTaskIndirectCount ? PipelineStageFlags.TaskShaderBitExt : 0);
+        CmdPipelineBarrierTracked(commandBuffer, sourceStages, PipelineStageFlags.ComputeShaderBit,
+            DependencyFlags.None, 1, &barrier, 0, null, 0, null);
+        // The kernel reads the payload capacity of one view from kernelIndex.
+        VulkanAdvancedNativeShadingPushConstants overlayPush = push with { KernelIndex = candidates };
+        uint groupsX = Math.Min(candidates, OcclusionCulledBoundsGroupsPerRow);
+        uint groupsY = DivideRoundUp(candidates, OcclusionCulledBoundsGroupsPerRow);
+        RecordNativeDispatch(commandBuffer, in payload, payload.NativeComputePipelines.OcclusionCulledBounds,
+            in overlayPush, groupsX, groupsY, 1, "Advanced.OcclusionCulledBounds", OcclusionCulledBoundsGpuProfilerPath);
+        EmitMemoryBarrierMask(commandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
     }
 
     private void RecordNativeDispatch(CommandBuffer commandBuffer,

@@ -13,13 +13,15 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private const int ShadeStandardMultisampleProgramIndex = 6;
     private const int ShadeUberProgramIndex = 9;
     private const int ShadeCombinedMultisampleProgramIndex = 10;
+    private const int OcclusionCulledBoundsProgramIndex = 11;
+    private const string OcclusionCulledBoundsShaderPath = "Advanced/Visibility/OcclusionCulledBounds.comp";
     private const string ShadeShaderPath = "Advanced/Shading/ShadeNativeOpaque.comp";
     private const string ShadeMultisampleShaderPath = "Advanced/Shading/ShadeNativeOpaqueMsaa.comp";
     // Matches XR_ADV_NATIVE_SHADING_FAMILY_* in ShadeNativeOpaqueEvaluator.glslinc.
     private const string StandardFamilyPreamble = "#define XR_ADV_NATIVE_SHADING_FAMILY 1\n";
     private const string UberFamilyPreamble = "#define XR_ADV_NATIVE_SHADING_FAMILY 2\n";
 
-    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[11];
+    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[12];
 
     /// <summary>
     /// By default the native Uber kernel compiles in the background after the standard
@@ -55,6 +57,17 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             uber = default;
     }
 
+    /// <summary>
+    /// Returns the occlusion-culled bounds overlay kernel. The first call creates the
+    /// program and requests its compile; it does not wait. A kernel that is not ready
+    /// returns default, and shading then records no overlay for that frame.
+    /// </summary>
+    internal VulkanAdvancedComputePipeline TryGetOcclusionCulledBoundsPipeline()
+        => TryGetNativeComputePipeline(OcclusionCulledBoundsProgramIndex, OcclusionCulledBoundsShaderPath,
+            out VulkanAdvancedComputePipeline pipeline, out _) == VulkanAdvancedVisibilityPipelineReadiness.Ready
+            ? pipeline
+            : default;
+
     /// <summary>Program name and preamble prefix for one native program slot.</summary>
     private static (string Name, string Preamble) ResolveNativeProgramIdentity(int index, string path)
         => index switch
@@ -66,9 +79,13 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             _ => (path, string.Empty),
         };
 
-    /// <summary>Uber kernel slots: optional, created lazily, and never part of admission.</summary>
-    private static bool IsOptionalNativeShadingProgram(int index)
-        => index is ShadeUberProgramIndex or ShadeCombinedMultisampleProgramIndex;
+    /// <summary>
+    /// Optional slots (the Uber kernels and the occlusion-culled bounds overlay): created
+    /// lazily and never part of admission.
+    /// </summary>
+    private static bool IsOptionalNativeProgram(int index)
+        => index is ShadeUberProgramIndex or ShadeCombinedMultisampleProgramIndex or
+            OcclusionCulledBoundsProgramIndex;
 
     private static bool IsNativeShadingProgram(int index)
         => index is ShadeStandardProgramIndex or ShadeStandardMultisampleProgramIndex or
