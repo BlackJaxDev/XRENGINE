@@ -187,6 +187,11 @@ void clearMeshletHistory()
 // against this frame's depth pyramid, records the result in the meshlet
 // history, and draws only the meshlets that the early raster did not draw.
 // A draw is either early or deferred, so the late range capacity holds both.
+// First the whole draw is tested against the pyramid. This is the draw-level
+// occlusion test of an early static meshlet draw: EarlyVisibility does not send
+// these draws to the deferred list for a periodic retest. The early raster drew
+// the draw, so its own depth cannot occlude its bounds. An occluded draw is
+// marked FLAG_OCCLUDED, so the next frame defers it, and it gets no recheck.
 void emitEarlyMeshletRecheck(uint earlyIndex)
 {
     uint candidateIndex = XR_ADV_VisibilityVisibleIndices.records[
@@ -221,6 +226,34 @@ void emitEarlyMeshletRecheck(uint earlyIndex)
         return;
     uint drawIndex = rangeBegin + rangeLocal;
     uint argumentBase = drawIndex * 3u;
+#if !defined(XR_ADV_DISABLE_HZB_OCCLUSION)
+    uint base = candidateIndex * 20u;
+    if (base + 19u < uint(XR_ADV_VisibilityCandidates.records.length()))
+    {
+        uint candidateFlags = XR_ADV_VisibilityCandidates.records[base + 19u];
+        bool forceVisible = (candidateFlags &
+            (FLAG_NEW | FLAG_RESIZED | FLAG_INVALID_HISTORY | FLAG_UNCERTAIN)) != 0u;
+        vec4 boundsMinimum = uintBitsToFloat(uvec4(
+            XR_ADV_VisibilityCandidates.records[base + 8u], XR_ADV_VisibilityCandidates.records[base + 9u],
+            XR_ADV_VisibilityCandidates.records[base + 10u], XR_ADV_VisibilityCandidates.records[base + 11u]));
+        vec4 boundsMaximum = uintBitsToFloat(uvec4(
+            XR_ADV_VisibilityCandidates.records[base + 12u], XR_ADV_VisibilityCandidates.records[base + 13u],
+            XR_ADV_VisibilityCandidates.records[base + 14u], XR_ADV_VisibilityCandidates.records[base + 15u]));
+        if (!forceVisible && currentDepthOccludes(
+                boundsMinimum, boundsMaximum, XR_ADV_LoadView(XR_ADV_VisibilityPush.viewIndex)))
+        {
+            // The reserved slot keeps an empty launch: zero task workgroups.
+            XR_ADV_VisibilityLateMeshArguments.records[argumentBase] = 0u;
+            XR_ADV_VisibilityLateMeshArguments.records[argumentBase + 1u] = 1u;
+            XR_ADV_VisibilityLateMeshArguments.records[argumentBase + 2u] = 1u;
+            XR_ADV_VisibilityLateMeshPayloads.records[drawIndex] = candidateIndex;
+            uvec2 draw = uvec2(XR_ADV_VisibilityCandidates.records[base],
+                XR_ADV_VisibilityCandidates.records[base + 1u]);
+            storeVisibilityState(candidateIndex, draw, FLAG_OCCLUDED);
+            return;
+        }
+    }
+#endif
     XR_ADV_VisibilityLateMeshArguments.records[argumentBase] =
         (payload.meshletCount + (XR_ADV_TASK_MESHLETS_PER_GROUP - 1u)) /
         XR_ADV_TASK_MESHLETS_PER_GROUP;

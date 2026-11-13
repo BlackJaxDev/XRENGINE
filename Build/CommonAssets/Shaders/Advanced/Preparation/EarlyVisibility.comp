@@ -223,12 +223,25 @@ void main()
     uint retestAge = (state.Flags & RETEST_AGE_MASK) >> RETEST_AGE_SHIFT;
     bool conservativeVisible =
         (candidate.Flags & FLAG_CONSERVATIVE) != 0u;
+    uint producer = XR_ADV_VisibilityProducers.records[candidateIndex];
+    // An early-visible draw is sent to the deferred list every few frames, so
+    // the late Hi-Z test can find it occluded. Static meshlet draws on Vulkan do
+    // not need that: LateVisibility tests every early static meshlet draw in each
+    // frame when it sends the draw back for the meshlet recheck. Taking a large
+    // occluder out of the early raster would also leave a hole in this frame's
+    // depth pyramid, so the meshlets behind it would pass the late test, be drawn,
+    // and be drawn early again in the next frame for no visible result.
+#if defined(XR_ADV_BACKEND_VULKAN)
+    bool ageRetest = retestAge >= RETEST_AGE_LIMIT &&
+        producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET;
+#else
+    bool ageRetest = retestAge >= RETEST_AGE_LIMIT;
+#endif
     bool forceRetest = !conservativeVisible &&
         (!wasEarlyVisible ||
          (candidate.Flags & (FLAG_NEW | FLAG_RESIZED |
              FLAG_INVALID_HISTORY | FLAG_UNCERTAIN)) != 0u ||
-         retestAge >= RETEST_AGE_LIMIT);
-    uint producer = XR_ADV_VisibilityProducers.records[candidateIndex];
+         ageRetest);
     bool cpuDirect = producer == PRODUCER_CPU_DIRECT_STATIC_INDEXED ||
         producer == PRODUCER_CPU_DIRECT_PRE_SKINNED;
     if (cpuDirect)

@@ -561,6 +561,17 @@ Static meshlets also use two-phase occlusion culling. Two task variants share
   only the meshlets that pass now and were not drawn early. Deferred draws
   (culled early at draw level) have no recheck flag, so all of their passing
   meshlets draw.
+- **Draw-level test of early meshlet draws.** Before the recheck, LateVisibility
+  tests the AABB of each early static meshlet draw against this frame's pyramid.
+  The early raster drew the draw, so its own depth cannot occlude it. An occluded
+  draw gets `FLAG_OCCLUDED` and an empty late launch, and the next frame defers
+  it. For this reason EarlyVisibility does not send early static meshlet draws to
+  the deferred list for the periodic age retest that other producers use. That
+  retest took large occluders out of the early raster in their retest frame. The
+  pyramid then had holes, so the meshlets behind those occluders passed the late
+  test, were drawn, and were drawn early again in the next frame without a
+  visible result. Depending on how the retest frames of the large draws lined up
+  at startup, the atrium late raster settled at about 2 ms or about 8 ms.
 - **History.** Binding 71 of set 1 holds the meshlet history: an 8-word header
   with one parity bit for each view, then two bit sets for each view (previous
   and current), one bit for each global meshlet index. The capacity is 8 views
