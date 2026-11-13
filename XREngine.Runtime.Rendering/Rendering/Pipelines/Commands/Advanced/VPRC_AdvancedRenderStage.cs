@@ -456,6 +456,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         "Instrumented meshlet frames are not validated for the directional shadow lane; cascade groups stay on the generic path.";
     private const string UnsupportedCasterReason =
         "The frozen directional shadow submission strategy has no supported caster producer.";
+    private const string DirectionalShadowLaneLogFileName = "advanced-directional-shadow-lane.log";
     private const string MeshletCasterLogMessage =
         "Advanced directional shadow lane: a meshlet frame draws its casters through CPU-masked indexed draws (CpuMaskedIndexed). A GPU caster cull for meshlet frames does not exist yet.";
 
@@ -577,8 +578,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         if (!ReferenceEquals(casterProducer, _lastDirectionalShadowCasterProducer))
         {
             _lastDirectionalShadowCasterProducer = casterProducer;
+            // An auxiliary log, so Release sessions also record the entry.
             if (ReferenceEquals(casterProducer, CpuMaskedIndexedCasterProducer))
-                Debug.Out(MeshletCasterLogMessage);
+                Debug.WriteAuxiliaryLog(DirectionalShadowLaneLogFileName, MeshletCasterLogMessage);
         }
         atlas.NotifyAdvancedDirectionalShadowLaneConsumer(
             renderFrameId,
