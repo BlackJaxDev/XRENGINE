@@ -47,7 +47,9 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
     uint RangeCapacity,
     uint IndexedInstanceGroupCount,
     uint IndirectArgumentCapacity,
-    AdvancedVisibilityFamilyReservation Reservation = default)
+    AdvancedVisibilityFamilyReservation Reservation = default,
+    VkBufferHandle MeshletHistoryBuffer = default,
+    ulong MeshletHistoryByteLength = 0u)
 {
     internal bool IsValid
     {
@@ -59,6 +61,7 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
                 PersistentStateBuffer.Handle != 0 && PersistentStateByteLength != 0u &&
                 PersistentStateTopologyGeneration != 0u &&
                 PersistentStateContentGeneration != 0u &&
+                MeshletHistoryBuffer.Handle != 0 && MeshletHistoryByteLength != 0u &&
                 DeferredIndices.IsValid && VisibleIndices.IsValid && Producers.IsValid &&
                 RangeIndices.IsValid && RangeOffsets.IsValid && RangeCounts.IsValid &&
                 Counters.IsValid && IndirectArguments.IsValid && MeshArguments.IsValid &&

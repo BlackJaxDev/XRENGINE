@@ -124,6 +124,17 @@ bool appendDeferred(uint candidateIndex)
 void main()
 {
     uint candidateIndex = gl_GlobalInvocationID.x;
+#if defined(XR_ADV_BACKEND_VULKAN)
+    // Start a new meshlet history frame for this view: the set that the last
+    // late raster wrote becomes the previous-frame set. This dispatch runs once
+    // per view and frame before the early raster, and only invocation 0 writes
+    // the parity word, so the flip has one writer.
+    if (candidateIndex == 0u &&
+        XR_ADV_MeshletHistoryAvailable(XR_ADV_VisibilityPush.viewIndex))
+    {
+        XR_ADV_VisibilityMeshletHistory.words[XR_ADV_VisibilityPush.viewIndex] ^= 1u;
+    }
+#endif
     uint candidateCount =
         uint(XR_ADV_VisibilityCandidates.records.length()) / 20u;
     if (candidateIndex >= candidateCount ||

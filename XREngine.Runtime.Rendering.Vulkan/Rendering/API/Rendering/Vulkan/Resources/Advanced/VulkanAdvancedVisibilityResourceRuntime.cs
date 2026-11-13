@@ -27,11 +27,23 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
     private const uint PersistentStateRecordByteLength = 32u;
     private const ulong PersistentStateCapacityBytes = 16UL * 1024UL * 1024UL;
     private readonly string PersistentStateOwner;
+    // Meshlet occlusion history. Layout (32-bit words): an 8-word header that
+    // holds one parity bit for each view, then two bit sets for each view
+    // (previous and current), one bit for each global meshlet index. The
+    // shaders use the same constants (XR_ADV_MESHLET_HISTORY_*).
+    private const uint MeshletHistoryHeaderWords = 8u;
+    private const uint MeshletHistoryMaxViews = 8u;
+    private const uint MeshletHistoryMeshletCapacity = 2u * 1024u * 1024u;
+    private const uint MeshletHistorySetWords = MeshletHistoryMeshletCapacity / 32u;
+    private const ulong MeshletHistoryByteLength =
+        (MeshletHistoryHeaderWords + MeshletHistoryMaxViews * 2UL * MeshletHistorySetWords) * sizeof(uint);
+    private readonly string MeshletHistoryOwner;
     private readonly ulong _outputBankId;
     private AdvancedVisibilityFamilyReservation _assignedReservation;
     // The bounded Phase 5.2 pyramid is one tile-local level. Do not update a
     // descriptor set already captured by a recorded command buffer.
-    private const uint LateDescriptorSetsPerView = 2u;
+    // Roles: 0 = pyramid build, 1 = late compute test, 2 = late meshlet raster.
+    private const uint LateDescriptorSetsPerView = 3u;
     private const uint MaxLateVisibilityViews = RenderFrameViewSet.MaxViewCount;
     // A frame plan has a bounded number of independently sealed late passes.
     // Each pass owns its descriptor table family for the entire frame
@@ -66,6 +78,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
     private DeviceMemory _persistentStateMemory;
     private ulong _persistentStateTopologyGeneration;
     private ulong _persistentStateContentGeneration;
+    private VkBufferHandle _meshletHistoryBuffer;
+    private DeviceMemory _meshletHistoryMemory;
     private bool _ready;
     private string _availabilityReason =
         "The Vulkan advanced-visibility resource runtime has not been initialized.";
@@ -79,6 +93,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
         _gate = resources.AdvancedVisibilityStorageGate;
         _outputBankId = outputBankId;
         PersistentStateOwner = $"AdvancedVisibility.OutputBank{outputBankId}.PersistentState";
+        MeshletHistoryOwner = $"AdvancedVisibility.OutputBank{outputBankId}.MeshletHistory";
         if (frameSlotCount <= 0)
             throw new ArgumentOutOfRangeException(nameof(frameSlotCount));
 
@@ -161,6 +176,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
 
             _device = device;
             if (!TryCreatePersistentStateStorage(out reason) ||
+                !TryCreateMeshletHistoryStorage(out reason) ||
                 !TryCreateDescriptorStorage(device, out reason))
             {
                 RetireNativeStorageNoLock();
@@ -521,6 +537,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 PersistentStateByteLength: PersistentStateCapacityBytes,
                 PersistentStateTopologyGeneration: _persistentStateTopologyGeneration,
                 PersistentStateContentGeneration: ++_persistentStateContentGeneration,
+                MeshletHistoryBuffer: _meshletHistoryBuffer,
+                MeshletHistoryByteLength: MeshletHistoryByteLength,
                 DeferredIndices: deferredIndices, VisibleIndices: visibleIndices,
                 Producers: producers, RangeIndices: rangeIndices, RangeOffsets: rangeOffsets,
                 RangeCounts: rangeCounts, Counters: counters,
@@ -703,6 +721,73 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
         }
     }
 
+    /// <summary>
+    /// Creates the meshlet occlusion history buffer and writes its first-use
+    /// contents. The buffer has one copy for each output bank, shared by all
+    /// frame slots, so the GPU reads and writes it in submission order.
+    /// </summary>
+    private bool TryCreateMeshletHistoryStorage(out string reason)
+    {
+        VulkanBackendObjectContext? context = _resources.BackendObjectContext;
+        if (context is null || !context.IsDeviceOperational)
+        {
+            reason = "The Vulkan backend context is unavailable for meshlet history allocation.";
+            return false;
+        }
+
+        try
+        {
+            (_meshletHistoryBuffer, _meshletHistoryMemory) = _resources.Buffers.CreateDedicatedRaw(
+                context,
+                MeshletHistoryByteLength,
+                BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferDstBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                owner: MeshletHistoryOwner);
+        }
+        catch (Exception exception)
+        {
+            reason = $"The meshlet history buffer could not be created: {exception.Message}";
+            return false;
+        }
+
+        return TryInitializeMeshletHistoryNoLock(out reason);
+    }
+
+    /// <summary>
+    /// Writes the first-use history: parity 0 for every view and every bit set
+    /// in both sets. A set bit means "visible last frame", so a view that has
+    /// no recorded history draws every meshlet that passes the frustum and
+    /// cone tests in the early raster. The caller must prove that no GPU work
+    /// that uses the buffer is in flight.
+    /// </summary>
+    private bool TryInitializeMeshletHistoryNoLock(out string reason)
+    {
+        VulkanBackendObjectContext? context = _resources.BackendObjectContext;
+        if (context is null || !context.IsDeviceOperational ||
+            _meshletHistoryBuffer.Handle == 0 ||
+            !_resources.Buffers.TryCreateMappedSlice(
+                context,
+                _meshletHistoryBuffer,
+                _meshletHistoryMemory,
+                0u,
+                MeshletHistoryByteLength,
+                out VulkanMappedMemorySlice slice) ||
+            !_resources.Buffers.TryAcquireWrite(context, in slice, out VulkanMappedMemoryWriteLease lease))
+        {
+            reason = "The meshlet history buffer could not be mapped for initialization.";
+            return false;
+        }
+
+        using (lease)
+        {
+            Span<uint> words = MemoryMarshal.Cast<byte, uint>(lease.Bytes);
+            words[..(int)MeshletHistoryHeaderWords].Clear();
+            words[(int)MeshletHistoryHeaderWords..].Fill(uint.MaxValue);
+        }
+        reason = "Ready";
+        return true;
+    }
+
     private static bool TryWritePayloads<T>(
         VulkanFrameDataArena arena,
         in VulkanFrameDataSlice destination,
@@ -803,7 +888,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsMetadataBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityIndexedInstanceGroupsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding];
         ReadOnlySpan<uint> nativeStorageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeActiveTilesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeKernelTilesBinding,
@@ -872,7 +958,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 .VisibilityDepthPyramidSampledBinding,
             DescriptorType = DescriptorType.CombinedImageSampler,
             DescriptorCount = 1u,
-            StageFlags = ShaderStageFlags.ComputeBit,
+            // The late meshlet task variant reads the pyramid for its Hi-Z test.
+            StageFlags = ShaderStageFlags.ComputeBit |
+                (device.SupportsMeshTaskIndirectCount ? ShaderStageFlags.TaskBitExt : 0),
         };
         bindings[storageBindingNumbers.Length + 1] = new DescriptorSetLayoutBinding
         {
@@ -1199,7 +1287,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             state.Geometry.Indices, state.Counters,
             state.BoundsRoutes, state.BoundsRoutes, state.BoundsRoutes,
             state.IndexedInstanceGroups, state.EarlyIndexedGroupCounts,
-            state.LateIndexedGroupCounts
+            state.LateIndexedGroupCounts, default
         };
         ReadOnlySpan<uint> storageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.VisibilityCandidatesBinding,
@@ -1234,7 +1322,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsMetadataBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityIndexedInstanceGroupsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding];
         if (slices.Length != storageBindingNumbers.Length)
         {
             reason = "The advanced-visibility storage binding map is incomplete.";
@@ -1279,6 +1368,14 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                     Offset = state.BoundsMetadata.Offset,
                     Range = state.BoundsMetadata.Length,
                 },
+                _ when storageBindingNumbers[index] ==
+                    VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding =>
+                    new DescriptorBufferInfo
+                    {
+                        Buffer = state.MeshletHistoryBuffer,
+                        Offset = 0u,
+                        Range = state.MeshletHistoryByteLength,
+                    },
                 _ => new DescriptorBufferInfo
                 {
                     Buffer = slices[index].Buffer,
@@ -2452,6 +2549,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
 
         using (lease)
             lease.Bytes.Clear();
+        if (!TryInitializeMeshletHistoryNoLock(out reason))
+            return false;
         for (int index = 0; index < _states.Length; index++)
             _states[index] = _states[index] with
             {
@@ -2517,6 +2616,16 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             _persistentStateMemory = default;
             _persistentStateTopologyGeneration = 0u;
             _persistentStateContentGeneration = 0u;
+        }
+        if (_meshletHistoryBuffer.Handle != 0 && _resources.BackendObjectContext is { } historyContext)
+        {
+            _resources.Buffers.Destroy(
+                historyContext,
+                _meshletHistoryBuffer,
+                _meshletHistoryMemory,
+                MeshletHistoryOwner);
+            _meshletHistoryBuffer = default;
+            _meshletHistoryMemory = default;
         }
         _states.AsSpan().Clear();
         _familySeals.AsSpan().Clear();

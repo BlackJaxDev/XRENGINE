@@ -532,6 +532,70 @@ in front of `VisibilityRaster.mesh`.
 - `EmitAdvancedVisibilityRasterReadBarrier` includes the task stage, so the task
   stage sees the preparation writes in frames without indexed instance groups.
 
+Static meshlets also use two-phase occlusion culling. Two task variants share
+`VisibilityRaster.task`. They share the frustum and cone tests in
+`VisibilityMeshletCulling.glslinc`.
+- **Early variant** (no define). It draws a meshlet that passes the frustum and
+  cone tests only when the meshlet was visible last frame. It reads the meshlet
+  history and writes nothing to it. It does not declare the depth pyramid,
+  because the pyramid has no read-only layout during the early raster.
+- **Late variant** (`XR_ADV_VISIBILITY_LATE_TASK`, added to the task stage only).
+  It adds a Hi-Z test of the meshlet bounding sphere against this frame's depth
+  pyramid. The late compute pass leaves the pyramid in `GENERAL`, and the late
+  raster samples it in that layout, so the late raster adds no layout
+  transition. The late compute operation seals three tables for each view:
+  role 0 builds the pyramid, role 1 runs the late compute test with the pyramid
+  in `SHADER_READ_ONLY_OPTIMAL`, and role 2 is for the late raster with the
+  pyramid in `GENERAL`. Preparation copies the sealed closure to the late raster
+  operation of the same family. Each table holds the same storage bindings as
+  the frame-slot table plus the view's pyramid layer. The task stage does not
+  declare the storage pyramid binding, which only compute stages can see. The stable-bin stream
+  prepares a separate `LateRasterPipeline` for each meshlet bin. A meshlet bin
+  without that pipeline or table fails the late raster. There is no fallback to
+  the early variant.
+- **Recheck.** `LateVisibility.comp` sends every static meshlet draw of the
+  early raster to the late raster again, with the recheck flag in the late mesh
+  payload. For a recheck draw, the late variant computes "drawn early" from the
+  same inputs as the early variant: the same frustum and cone result, the same
+  previous-frame bit and the same history-valid flag of the view. It launches
+  only the meshlets that pass now and were not drawn early. Deferred draws
+  (culled early at draw level) have no recheck flag, so all of their passing
+  meshlets draw.
+- **History.** Binding 71 of set 1 holds the meshlet history: an 8-word header
+  with one parity bit for each view, then two bit sets for each view (previous
+  and current), one bit for each global meshlet index. The capacity is 8 views
+  and 2,097,152 meshlets. A meshlet above the capacity, and every skinned
+  meshlet, has no history and is never culled by history.
+  - `EarlyVisibility.comp` flips the parity of its view at the start of the
+    frame. The previous set is then read-only for the whole frame.
+  - `LateVisibility.comp` clears the current set of its view one time, before
+    the late raster.
+  - The late variant sets the bit of each meshlet that passes all of its tests,
+    with `atomicOr` only. A clear and set-only writes make the result
+    independent of the order of draws and invocations. A meshlet that two draws
+    share is "visible" when at least one instance passes.
+  - **Stereo:** the bits are indexed by the push view index of the eye stream,
+    so one eye never reads or writes the bits of the other eye.
+  - **Frame slots:** one history buffer exists for each output bank. All
+    in-flight frame slots share it, so the GPU reads and writes it in queue
+    submission order.
+  - **Barriers:** the parity flip and the clear are compute writes. The raster
+    read barrier (compute to task, shader read and write) makes them visible to
+    the task stage. The in-frame storage barriers, whose source scope includes
+    all graphics stages, order the late task writes of one frame before the
+    parity flip, the clear and the early reads of the next frame.
+- **Conservative cases.** `RenderFrameViewHistoryLedger` clears the
+  history-valid flag of a view for a first observation, a camera change, a
+  camera cut (a teleport is a pose discontinuity), an output change and a frame
+  gap (the view skipped a frame). The early variant then draws every meshlet
+  that passes the frustum and cone tests, and ignores the stale bits. The buffer
+  starts with every bit set, and it is set again for a new output owner. Stale
+  bits also never remove a meshlet from the image: a clear bit only moves the
+  meshlet to the late raster, which tests it against this frame's real depth.
+- MSAA frames build no depth pyramid. Their late payloads carry the no-Hi-Z flag,
+  so the late variant keeps only the frustum and cone tests.
+- The counters do not change: counter words 13-15 count only the early raster.
+
 Initial native visibility raster clears both depth and stencil. Late raster
 loads both attachments to preserve values written in the current frame. MSAA
 resolve clears the canonical stencil target because the depth resolve does not

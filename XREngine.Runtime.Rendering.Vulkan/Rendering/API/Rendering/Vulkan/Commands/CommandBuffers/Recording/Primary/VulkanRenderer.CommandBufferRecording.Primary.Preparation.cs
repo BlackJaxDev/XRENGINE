@@ -1695,7 +1695,9 @@ namespace XREngine.Rendering.Vulkan
                             return false;
                         }
 
-                        int lateSetCount = checked(2 * (int)familyState.ViewCount);
+                        int lateSetCount = checked(
+                            VulkanAdvancedVisibilityLateTargetClosure.DescriptorRolesPerView *
+                            (int)familyState.ViewCount);
                         DescriptorSet[] lateSets = lateStorage.DescriptorSets;
                         lateSets.AsSpan(0, lateSetCount).Clear();
                         for (uint viewIndex = 0u; viewIndex < familyState.ViewCount; ++viewIndex)
@@ -1742,6 +1744,27 @@ namespace XREngine.Rendering.Vulkan
                                     $"Advanced visibility operation is Unsupported: immutable late-visibility descriptor sealing failed: {lateDescriptorReason}.";
                                 return false;
                             }
+                            // The late meshlet raster samples the pyramid after the
+                            // late compute pass returned it to GENERAL. Its table
+                            // describes that layout, so no transition is needed.
+                            DescriptorImageInfo rasterSampledDescriptor = lateSampledDescriptor;
+                            rasterSampledDescriptor.ImageLayout = ImageLayout.General;
+                            if (!familyResources
+                                    .TryAcquireLateDepthPyramidDescriptorSet(
+                                        in familyState,
+                                        operationIndex,
+                                        viewIndex,
+                                        2u,
+                                        in rasterSampledDescriptor,
+                                        in lateStorageDescriptor,
+                                        out lateSets[lateClosure.DescriptorIndex(
+                                            viewIndex, 2)],
+                                        out string rasterDescriptorReason))
+                            {
+                                recordingState.RecordingDeferredReason =
+                                    $"Advanced visibility operation is Unsupported: immutable late raster descriptor sealing failed: {rasterDescriptorReason}.";
+                                return false;
+                            }
                         }
                         if (!recordingState.Ops.Stream.TrySealAdvancedVisibilityLateDescriptors(
                                 operationIndex,
@@ -1759,6 +1782,16 @@ namespace XREngine.Rendering.Vulkan
                         lateStorage.ReleaseAcquiredViews(ResourceRuntime.Images);
                     }
                     lateProbe.End(S13aAdvancedFamilyStep.LateClosure);
+                }
+                else if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)
+                {
+                    // The late meshlet task stage binds the per-view late raster
+                    // tables sealed by the late compute operation above. A
+                    // family without meshlet bins does not read them, so a
+                    // missing closure fails only when a meshlet bin records.
+                    _ = recordingState.Ops.Stream.TryAttachAdvancedVisibilityLateRasterClosure(
+                        operationIndex,
+                        in request);
                 }
             }
 

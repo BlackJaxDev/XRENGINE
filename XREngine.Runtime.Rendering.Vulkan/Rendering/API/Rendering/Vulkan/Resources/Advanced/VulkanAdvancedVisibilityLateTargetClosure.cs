@@ -20,6 +20,14 @@ internal readonly record struct VulkanAdvancedVisibilityLateTargetClosure(
     int DescriptorSetCount = 0,
     uint ViewCount = 1u)
 {
+    /// <summary>
+    /// Descriptor tables for each view: 0 = pyramid build, 1 = late compute
+    /// test (pyramid in <c>SHADER_READ_ONLY_OPTIMAL</c>), 2 = late meshlet
+    /// raster (pyramid in <c>GENERAL</c>, the layout the late compute pass
+    /// leaves for the rest of the frame).
+    /// </summary>
+    internal const int DescriptorRolesPerView = 3;
+
     internal bool IsValid
         => DepthGroup is { IsAllocated: true } &&
            PyramidGroup is { IsAllocated: true } &&
@@ -38,10 +46,10 @@ internal readonly record struct VulkanAdvancedVisibilityLateTargetClosure(
 
     internal bool IsRecordingReady
         => IsValid && DescriptorSets is { } sets &&
-           DescriptorSetCount == checked(2 * (int)ViewCount) &&
+           DescriptorSetCount == checked(DescriptorRolesPerView * (int)ViewCount) &&
            sets.Length >= DescriptorSetCount;
 
-    /// <summary>Returns the immutable build (0) or test (1) table for a view.</summary>
+    /// <summary>Returns the immutable build (0), test (1) or late raster (2) table for a view.</summary>
     internal int DescriptorIndex(uint viewIndex, int operationIndex)
-        => checked((int)viewIndex * 2 + operationIndex);
+        => checked((int)viewIndex * DescriptorRolesPerView + operationIndex);
 }

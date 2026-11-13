@@ -1112,7 +1112,17 @@ internal sealed partial class VulkanCommandRuntime
                     "A non-empty visibility bin has no sealed raster pipeline and submission plan.");
             }
 
-            VulkanVisibilityRasterPipeline raster = decalLane ? header.DecalRasterPipeline : header.RasterPipeline;
+            // Late meshlet bins use the late task variant: it adds the Hi-Z test
+            // and writes the meshlet occlusion history for the next frame.
+            bool lateMeshlet = lateSegment && !decalLane && header.RasterPipeline.IsMeshShaderPipeline;
+            if (lateMeshlet && !header.HasLateMeshletRaster)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "A late meshlet visibility bin has no sealed late task pipeline.");
+            }
+            VulkanVisibilityRasterPipeline raster = decalLane
+                ? header.DecalRasterPipeline
+                : lateMeshlet ? header.LateRasterPipeline : header.RasterPipeline;
             if (!raster.IsValid || raster.TargetClosure != payload.TargetClosure ||
                 raster.Program.LinkGeneration != raster.ProgramLinkGeneration)
             {
@@ -1194,11 +1204,33 @@ internal sealed partial class VulkanCommandRuntime
                     state.CommandBuffer,
                     PipelineBindPoint.Graphics,
                     raster.Pipeline);
-                BindAdvancedVisibilityDescriptorSets(
-                    state.CommandBuffer,
-                    PipelineBindPoint.Graphics,
-                    raster.PipelineLayout,
-                    in payload);
+                if (lateMeshlet)
+                {
+                    // The per-view late raster table holds the same storage
+                    // bindings as the frame-slot table plus this view's depth
+                    // pyramid layer in GENERAL, the layout the late compute pass
+                    // leaves. The late task stage samples it.
+                    if (payload.LateTargetClosure is not { IsRecordingReady: true } lateClosure ||
+                        viewIndex >= lateClosure.ViewCount)
+                    {
+                        throw new VulkanPlanPreconditionException(
+                            "A late meshlet visibility bin has no sealed late depth-pyramid table for its view.");
+                    }
+                    BindAdvancedVisibilityDescriptorSets(
+                        state.CommandBuffer,
+                        PipelineBindPoint.Graphics,
+                        raster.PipelineLayout,
+                        in payload,
+                        lateClosure.DescriptorSets![lateClosure.DescriptorIndex(viewIndex, 2)]);
+                }
+                else
+                {
+                    BindAdvancedVisibilityDescriptorSets(
+                        state.CommandBuffer,
+                        PipelineBindPoint.Graphics,
+                        raster.PipelineLayout,
+                        in payload);
+                }
             }
 
             VulkanResidentDrawTemplateNativeState native = decalLane ? header.DecalNativeState : header.NativeState;

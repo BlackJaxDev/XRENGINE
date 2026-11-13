@@ -20,7 +20,7 @@ internal sealed class VulkanAdvancedVisibilityLateClosureStorage
     internal DescriptorImageInfo[] LateStorage { get; } =
         new DescriptorImageInfo[MaxViews];
     internal DescriptorSet[] DescriptorSets { get; } =
-        new DescriptorSet[MaxViews * 2];
+        new DescriptorSet[MaxViews * VulkanAdvancedVisibilityLateTargetClosure.DescriptorRolesPerView];
     private readonly VulkanInternedImageViewReference[] _acquiredViews =
         new VulkanInternedImageViewReference[MaxViews * 2];
     private int _acquiredViewCount;
