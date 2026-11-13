@@ -700,8 +700,17 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return program;
     }
 
+    /// <summary>
+    /// Links the task, mesh and fragment stages of one meshlet visibility raster
+    /// program. The indirect arguments launch one task workgroup per 32 meshlets of a
+    /// draw. The task stage culls those meshlets against the view frustum and their
+    /// normal cones and launches one mesh workgroup per surviving meshlet.
+    /// </summary>
     private XRRenderProgram CreateMeshRasterProgram(string fragmentPath, string name, bool multiview, string additionalPreamble = "")
     {
+        XRShader taskAsset = XRShader.EngineShader(
+            AdvancedVisibilityShaderLibrary.Task,
+            EShaderType.Task);
         XRShader meshAsset = XRShader.EngineShader(
             AdvancedVisibilityShaderLibrary.Mesh,
             EShaderType.Mesh);
@@ -715,6 +724,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         XRRenderProgram program = new(
             linkNow: false,
             separable: false,
+            CreateShaderWithPreamble(taskAsset, preamble, name + ".task"),
             CreateShaderWithPreamble(meshAsset, preamble, name + ".mesh"),
             CreateShaderWithPreamble(fragmentAsset, preamble, name + ".frag"))
         {

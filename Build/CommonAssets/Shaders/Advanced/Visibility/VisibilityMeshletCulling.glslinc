@@ -1,0 +1,128 @@
+#ifndef XR_ADVANCED_VISIBILITY_MESHLET_CULLING_GLSLINC
+#define XR_ADVANCED_VISIBILITY_MESHLET_CULLING_GLSLINC
+
+// Shared ABI and tests of the meshlet task stage. Include after
+// VisibilityInterface.glslinc. Advanced matrices use the row-vector convention
+// (position * matrix), so a basis axis of a world matrix is one matrix row and
+// one clip coordinate is the dot product with one matrix column.
+
+// XR_ADV_TASK_MESHLETS_PER_GROUP is defined in VisibilityInterface.glslinc,
+// because the preparation shaders also use it.
+
+// Task-to-mesh payload: the visibility payload row and the surviving global
+// meshlet indices in lane order. 132 bytes.
+struct XRAdvancedVisibilityTaskPayload
+{
+    uint payloadIndex;
+    uint meshletIndex[XR_ADV_TASK_MESHLETS_PER_GROUP];
+};
+
+#define XR_ADV_MESHLET_CULL_NONE 0u
+#define XR_ADV_MESHLET_CULL_FRUSTUM 1u
+#define XR_ADV_MESHLET_CULL_CONE 2u
+#define XR_ADV_MESHLET_CULL_INVALID 3u
+
+// A non-uniform scale changes normal directions, so the cone no longer bounds
+// them. Scales within this relative tolerance count as uniform.
+#define XR_ADV_MESHLET_CONE_UNIFORM_SCALE_TOLERANCE 0.01
+
+bool XR_ADV_MeshletSphereInsidePlane(vec3 center, float radius, vec4 plane)
+{
+    float normalLength = length(plane.xyz);
+    return normalLength > 0.0 &&
+        dot(plane, vec4(center, 1.0)) >= -radius * normalLength;
+}
+
+// Conservative sphere test against the Vulkan 0..w clip volume, formed from
+// the columns of the unjittered view-projection matrix (the same planes as
+// EarlyVisibility.comp). Malformed spheres count as visible here: the draw
+// already passed its own bounds test, and the mesh stage validates the record.
+bool XR_ADV_MeshletSphereInsideFrustum(vec4 sphere, mat4 viewProjection)
+{
+    if (any(isnan(sphere)) || any(isinf(sphere)) || sphere.w < 0.0)
+        return true;
+    vec4 clipX = viewProjection[0];
+    vec4 clipY = viewProjection[1];
+    vec4 clipZ = viewProjection[2];
+    vec4 clipW = viewProjection[3];
+    return XR_ADV_MeshletSphereInsidePlane(sphere.xyz, sphere.w, clipW + clipX) &&
+        XR_ADV_MeshletSphereInsidePlane(sphere.xyz, sphere.w, clipW - clipX) &&
+        XR_ADV_MeshletSphereInsidePlane(sphere.xyz, sphere.w, clipW + clipY) &&
+        XR_ADV_MeshletSphereInsidePlane(sphere.xyz, sphere.w, clipW - clipY) &&
+        XR_ADV_MeshletSphereInsidePlane(sphere.xyz, sphere.w, clipZ) &&
+        XR_ADV_MeshletSphereInsidePlane(sphere.xyz, sphere.w, clipW - clipZ);
+}
+
+// Per-draw transform facts that every meshlet of the draw shares.
+struct XRAdvancedMeshletDrawCullState
+{
+    mat4 world;
+    float maxScale;
+    bool coneAllowed;
+};
+
+// Builds the per-draw state. The cone test is allowed only for back-face
+// culled (single-sided), static, unmirrored, uniformly scaled draws.
+XRAdvancedMeshletDrawCullState XR_ADV_MeshletDrawCullState(
+    mat4 world,
+    uint cullMode,
+    uint producer)
+{
+    XRAdvancedMeshletDrawCullState state;
+    state.world = world;
+    vec3 axisX = vec3(world[0][0], world[1][0], world[2][0]);
+    vec3 axisY = vec3(world[0][1], world[1][1], world[2][1]);
+    vec3 axisZ = vec3(world[0][2], world[1][2], world[2][2]);
+    float scaleX = length(axisX);
+    float scaleY = length(axisY);
+    float scaleZ = length(axisZ);
+    state.maxScale = max(scaleX, max(scaleY, scaleZ));
+    float minScale = min(scaleX, min(scaleY, scaleZ));
+    float determinant = dot(axisX, cross(axisY, axisZ));
+    bool uniformScale = minScale > 0.0 &&
+        (state.maxScale - minScale) <= state.maxScale * XR_ADV_MESHLET_CONE_UNIFORM_SCALE_TOLERANCE;
+    state.coneAllowed =
+        cullMode != 0u &&
+        producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
+        determinant > 0.0 &&
+        uniformScale;
+    return state;
+}
+
+// Classifies one meshlet. Skinned meshlets are never culled here: their cooked
+// bounds and cones describe the bind pose, not the deformed vertices.
+uint XR_ADV_ClassifyVisibilityMeshlet(
+    XRAdvancedVisibilityMeshletDescriptor meshlet,
+    XRAdvancedMeshletDrawCullState draw,
+    uint producer,
+    mat4 viewProjection,
+    vec3 cameraPosition)
+{
+    if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET)
+        return XR_ADV_MESHLET_CULL_NONE;
+
+    vec3 center = (vec4(meshlet.boundsSphere.xyz, 1.0) * draw.world).xyz;
+    vec4 sphere = vec4(center, meshlet.boundsSphere.w * draw.maxScale);
+    if (!XR_ADV_MeshletSphereInsideFrustum(sphere, viewProjection))
+        return XR_ADV_MESHLET_CULL_FRUSTUM;
+
+    // meshoptimizer cone: every triangle faces away from a camera with
+    // dot(normalize(apex - camera), axis) >= cutoff. A zero cone has no data.
+    bool hasCone = meshlet.packedCone != 0u || dot(meshlet.cone.xyz, meshlet.cone.xyz) != 0.0;
+    if (draw.coneAllowed && hasCone && meshlet.cone.w < 1.0)
+    {
+        vec3 apex = (vec4(meshlet.coneApex.xyz, 1.0) * draw.world).xyz;
+        vec3 axis = meshlet.cone.xyz * mat3(draw.world);
+        float axisLength = length(axis);
+        vec3 toApex = apex - cameraPosition;
+        float apexDistance = length(toApex);
+        if (axisLength > 0.0 && apexDistance > 0.0 &&
+            dot(toApex / apexDistance, axis / axisLength) >= meshlet.cone.w)
+        {
+            return XR_ADV_MESHLET_CULL_CONE;
+        }
+    }
+    return XR_ADV_MESHLET_CULL_NONE;
+}
+
+#endif

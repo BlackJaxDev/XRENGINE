@@ -29,6 +29,12 @@ void main()
         XR_ADV_VisibilityCounters.depthPyramidBuilds = 0u;
     else if (index == 10u)
         XR_ADV_VisibilityCounters.unsupportedDisplacement = 0u;
-    else
+    else if (index == 11u || index == 12u)
         XR_ADV_VisibilityCounters.reserved[index - 11u] = 0u;
+    else if (index == 13u)
+        XR_ADV_VisibilityCounters.meshletEarlyVisible = 0u;
+    else if (index == 14u)
+        XR_ADV_VisibilityCounters.meshletEarlyFrustumCulled = 0u;
+    else
+        XR_ADV_VisibilityCounters.meshletEarlyConeCulled = 0u;
 }

@@ -861,7 +861,10 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 DescriptorCount = 1u,
                 StageFlags = ShaderStageFlags.ComputeBit | ShaderStageFlags.VertexBit |
                     ShaderStageFlags.FragmentBit |
-                    (device.SupportsMeshTaskIndirectCount ? ShaderStageFlags.MeshBitExt : 0),
+                    // The meshlet task stage reads payloads, views and meshlets.
+                    (device.SupportsMeshTaskIndirectCount
+                        ? ShaderStageFlags.TaskBitExt | ShaderStageFlags.MeshBitExt
+                        : 0),
             };
         bindings[storageBindingNumbers.Length] = new DescriptorSetLayoutBinding
         {

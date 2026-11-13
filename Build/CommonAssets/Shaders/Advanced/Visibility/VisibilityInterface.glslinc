@@ -14,6 +14,10 @@
 #define XR_ADV_VIS_PRODUCER_CPU_STATIC_INDEXED 3u
 #define XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED 4u
 
+// One meshlet task workgroup tests this many consecutive meshlets of one draw.
+// The preparation shaders launch ceil(meshletCount / this value) task groups
+// for a meshlet draw.
+#define XR_ADV_TASK_MESHLETS_PER_GROUP 32u
 #define XR_ADV_VIS_PRODUCER_MASK 0x7u
 #define XR_ADV_VIS_ORIGIN_SHIFT 3u
 #define XR_ADV_VIS_MASKED_SHIFT 4u
@@ -221,7 +225,13 @@ struct XRAdvancedVisibilityCounterRecord
     uint decodeOutOfBounds;
     uint depthPyramidBuilds;
     uint unsupportedDisplacement;
-    uint reserved[5];
+    // Words 11 and 12 belong to PatchPhysicsChainBounds.comp.
+    uint reserved[2];
+    // Early-raster meshlet task-stage results. The late-compute counter copy
+    // runs after the early raster, so the delayed receipt holds these words.
+    uint meshletEarlyVisible;
+    uint meshletEarlyFrustumCulled;
+    uint meshletEarlyConeCulled;
     uvec2 drawLookupSegment;
     uvec2 instanceLookupSegment;
     uvec2 transformLookupSegment;

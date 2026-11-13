@@ -23,6 +23,11 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
 #define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityRasterPush.viewIndex
 #define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
 #include "VisibilityInterface.glslinc"
+#include "VisibilityMeshletCulling.glslinc"
+
+// VisibilityRaster.task writes the payload row and the surviving global meshlet
+// indices. Each mesh workgroup draws one surviving meshlet.
+taskPayloadSharedEXT XRAdvancedVisibilityTaskPayload XR_ADV_TaskPayload;
 
 // Opaque visibility programs define XR_ADV_VISIBILITY_IDENTITY_ONLY. Their
 // fragment stage reads only the flat identity values, so this stage does not
@@ -93,22 +98,9 @@ void main()
         return;
     }
 #endif
-    uint drawArgumentIndex = XR_ADV_VisibilityRasterPush.meshArgumentBase + uint(gl_DrawID);
-    bool late = (XR_ADV_VisibilityRasterPush.producerAndOrigin & 8u) != 0u;
-    uint payloadTableLength = late
-        ? uint(XR_ADV_VisibilityLateMeshPayloads.records.length())
-        : uint(XR_ADV_VisibilityMeshPayloads.records.length());
-    if (drawArgumentIndex < XR_ADV_VisibilityRasterPush.meshArgumentBase ||
-        drawArgumentIndex >= payloadTableLength)
-    {
-        SetMeshOutputsEXT(0u, 0u);
-        return;
-    }
-
-    uint payloadIndex = late
-        ? XR_ADV_VisibilityLateMeshPayloads.records[drawArgumentIndex]
-        : XR_ADV_VisibilityMeshPayloads.records[drawArgumentIndex];
-    if (payloadIndex >= uint(XR_ADV_VisibilityPayloads.records.length()))
+    uint payloadIndex = XR_ADV_TaskPayload.payloadIndex;
+    if (payloadIndex >= uint(XR_ADV_VisibilityPayloads.records.length()) ||
+        gl_WorkGroupID.x >= XR_ADV_TASK_MESHLETS_PER_GROUP)
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         SetMeshOutputsEXT(0u, 0u);
@@ -117,8 +109,8 @@ void main()
 
     XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
     uint producer = XR_ADV_VisibilityProducers.records[payloadIndex];
-    uint meshletIndex = payload.meshletOffset + gl_WorkGroupID.x;
-    if (meshletIndex < payload.meshletOffset || gl_WorkGroupID.x >= payload.meshletCount ||
+    uint meshletIndex = XR_ADV_TaskPayload.meshletIndex[gl_WorkGroupID.x];
+    if (meshletIndex < payload.meshletOffset || meshletIndex - payload.meshletOffset >= payload.meshletCount ||
         meshletIndex >= uint(XR_ADV_VisibilityMeshlets.records.length()) || meshletIndex > 0xFFFFFFu)
     {
         atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);

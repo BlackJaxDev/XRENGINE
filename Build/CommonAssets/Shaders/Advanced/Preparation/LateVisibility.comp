@@ -312,7 +312,10 @@ void main()
                 return;
             }
             uint argumentBase = drawIndex * 3u;
-            XR_ADV_VisibilityLateMeshArguments.records[argumentBase] = payload.meshletCount;
+            // One task workgroup per XR_ADV_TASK_MESHLETS_PER_GROUP meshlets.
+            XR_ADV_VisibilityLateMeshArguments.records[argumentBase] =
+                (payload.meshletCount + (XR_ADV_TASK_MESHLETS_PER_GROUP - 1u)) /
+                XR_ADV_TASK_MESHLETS_PER_GROUP;
             XR_ADV_VisibilityLateMeshArguments.records[argumentBase + 1u] = 1u;
             XR_ADV_VisibilityLateMeshArguments.records[argumentBase + 2u] = 1u;
             XR_ADV_VisibilityLateMeshPayloads.records[drawIndex] = candidateIndex;

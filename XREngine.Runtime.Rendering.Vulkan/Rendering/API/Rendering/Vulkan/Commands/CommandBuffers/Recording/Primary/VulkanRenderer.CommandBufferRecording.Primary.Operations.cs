@@ -1384,8 +1384,10 @@ internal sealed partial class VulkanCommandRuntime
         PipelineStageFlags destinationStages = PipelineStageFlags.DrawIndirectBit |
             PipelineStageFlags.VertexShaderBit |
             PipelineStageFlags.FragmentShaderBit;
+        // The meshlet task stage reads the payload table and meshlet records that
+        // preparation compute wrote.
         if (DeviceContext.SupportsMeshTaskIndirectCount)
-            destinationStages |= PipelineStageFlags.MeshShaderBitExt;
+            destinationStages |= PipelineStageFlags.TaskShaderBitExt | PipelineStageFlags.MeshShaderBitExt;
         CmdPipelineBarrierTracked(
             state.CommandBuffer,
             PipelineStageFlags.ComputeShaderBit |

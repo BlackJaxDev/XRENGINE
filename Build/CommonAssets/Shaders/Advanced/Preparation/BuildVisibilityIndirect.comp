@@ -156,7 +156,11 @@ void main()
         producer == PRODUCER_SKINNED_MESHLET)
     {
         DrawMeshTasksIndirect argument;
-        argument.GroupCountX = payload.meshletCount;
+        // One task workgroup culls up to XR_ADV_TASK_MESHLETS_PER_GROUP meshlets
+        // and launches one mesh workgroup per surviving meshlet.
+        argument.GroupCountX =
+            (payload.meshletCount + (XR_ADV_TASK_MESHLETS_PER_GROUP - 1u)) /
+            XR_ADV_TASK_MESHLETS_PER_GROUP;
         argument.GroupCountY = 1u;
         argument.GroupCountZ = 1u;
         XR_ADV_VisibilityMeshArguments.records[outputIndex * 3u] = argument.GroupCountX;

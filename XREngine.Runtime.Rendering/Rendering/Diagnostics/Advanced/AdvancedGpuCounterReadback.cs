@@ -23,6 +23,18 @@ public sealed record AdvancedGpuCounterReadback(
     public uint PhysicsChainBoundsNumericRejected
         => IsVisibilityReceipt && Values.Length > 12 ? Values[12] : 0u;
 
+    /// <summary>Gets the meshlets that the early-raster task stage launched for this view.</summary>
+    public uint MeshletEarlyVisible
+        => IsVisibilityReceipt && Values.Length > 13 ? Values[13] : 0u;
+
+    /// <summary>Gets the meshlets that the early-raster task stage culled against the view frustum.</summary>
+    public uint MeshletEarlyFrustumCulled
+        => IsVisibilityReceipt && Values.Length > 14 ? Values[14] : 0u;
+
+    /// <summary>Gets the meshlets that the early-raster task stage culled with their normal cone.</summary>
+    public uint MeshletEarlyConeCulled
+        => IsVisibilityReceipt && Values.Length > 15 ? Values[15] : 0u;
+
     private bool IsVisibilityReceipt
         => Source.StartsWith("AdvancedVisibilityCounters", StringComparison.Ordinal);
 }

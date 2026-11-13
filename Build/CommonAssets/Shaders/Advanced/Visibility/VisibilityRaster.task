@@ -1,0 +1,150 @@
+#version 460 core
+#extension GL_EXT_mesh_shader : require
+#extension GL_ARB_shader_draw_parameters : require
+#extension GL_GOOGLE_include_directive : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+
+// One task workgroup tests up to 32 consecutive meshlets of one visible draw.
+// Each lane tests one meshlet against the view frustum and its normal cone.
+// The surviving meshlet indices are compacted in lane order into the task
+// payload, and the group launches one mesh workgroup per survivor.
+layout(local_size_x = 32) in;
+
+// Matches the mesh-shader visibility ABI.
+layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
+{
+    uint meshArgumentBase;
+    uint producerAndOrigin;
+    uint viewIndex;
+    uint flags;
+} XR_ADV_VisibilityRasterPush;
+
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityRasterPush.viewIndex
+#define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
+#include "VisibilityInterface.glslinc"
+#include "VisibilityMeshletCulling.glslinc"
+
+taskPayloadSharedEXT XRAdvancedVisibilityTaskPayload XR_ADV_TaskPayload;
+
+shared uint XR_ADV_TaskSurvivorFlags[XR_ADV_TASK_MESHLETS_PER_GROUP];
+shared uint XR_ADV_TaskCullReasons[XR_ADV_TASK_MESHLETS_PER_GROUP];
+
+void main()
+{
+    uint lane = gl_LocalInvocationID.x;
+    bool late = (XR_ADV_VisibilityRasterPush.producerAndOrigin & 8u) != 0u;
+    uint drawArgumentIndex = XR_ADV_VisibilityRasterPush.meshArgumentBase + uint(gl_DrawID);
+    uint payloadTableLength = late
+        ? uint(XR_ADV_VisibilityLateMeshPayloads.records.length())
+        : uint(XR_ADV_VisibilityMeshPayloads.records.length());
+
+    // Every lane reaches EmitMeshTasksEXT exactly once. Invalid work emits no
+    // mesh groups; the mesh stage repeats the full record validation.
+    bool groupValid =
+        drawArgumentIndex >= XR_ADV_VisibilityRasterPush.meshArgumentBase &&
+        drawArgumentIndex < payloadTableLength;
+    uint payloadIndex = XR_ADV_VIS_INVALID;
+    if (groupValid)
+    {
+        payloadIndex = late
+            ? XR_ADV_VisibilityLateMeshPayloads.records[drawArgumentIndex]
+            : XR_ADV_VisibilityMeshPayloads.records[drawArgumentIndex];
+        groupValid = payloadIndex < uint(XR_ADV_VisibilityPayloads.records.length());
+    }
+
+    uint cullReason = XR_ADV_MESHLET_CULL_INVALID;
+    uint meshletIndex = XR_ADV_VIS_INVALID;
+    if (groupValid)
+    {
+        // Draw-level records are the same for every lane of the group.
+        XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
+        uint producer = XR_ADV_VisibilityRasterPush.producerAndOrigin & XR_ADV_VIS_PRODUCER_MASK;
+        uint drawDense = XR_ADV_ResolveVisibilityHandle(payload.draw, VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+        uint transformDense = XR_ADV_INVALID_DENSE_INDEX;
+        if (drawDense != XR_ADV_INVALID_DENSE_INDEX)
+        {
+            XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+            transformDense = XR_ADV_ResolveVisibilityHandle(draw.currentTransform, VisibilityTransformLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+        }
+        uint local = gl_WorkGroupID.x * XR_ADV_TASK_MESHLETS_PER_GROUP + lane;
+        meshletIndex = payload.meshletOffset + local;
+        if (transformDense != XR_ADV_INVALID_DENSE_INDEX &&
+            XR_ADV_VisibilityRasterPush.viewIndex < uint(XR_ADV_Views.records.length()) &&
+            local < payload.meshletCount &&
+            meshletIndex >= payload.meshletOffset &&
+            meshletIndex < uint(XR_ADV_VisibilityMeshlets.records.length()) &&
+            meshletIndex <= 0xFFFFFFu)
+        {
+            XRAdvancedTransformRecord transform = XR_ADV_LoadTransform(transformDense);
+            XRAdvancedViewRecord view = XR_ADV_LoadView(XR_ADV_VisibilityRasterPush.viewIndex);
+            XRAdvancedMeshletDrawCullState drawState =
+                XR_ADV_MeshletDrawCullState(transform.world, payload.cullMode, producer);
+            cullReason = XR_ADV_ClassifyVisibilityMeshlet(
+                XR_ADV_VisibilityMeshlets.records[meshletIndex],
+                drawState,
+                producer,
+                view.viewProjectionUnjittered,
+                view.cameraPositionAndNear.xyz);
+        }
+    }
+
+    bool visible = cullReason == XR_ADV_MESHLET_CULL_NONE;
+    uint survivorSlot;
+    uint survivorCount;
+    if (gl_SubgroupSize >= XR_ADV_TASK_MESHLETS_PER_GROUP)
+    {
+        // The whole workgroup is one subgroup. The exclusive ballot count keeps
+        // the survivors in lane order, so the mesh launch order is stable.
+        uvec4 ballot = subgroupBallot(visible);
+        survivorSlot = subgroupBallotExclusiveBitCount(ballot);
+        survivorCount = subgroupBallotBitCount(ballot);
+    }
+    else
+    {
+        // Narrow subgroups: the same lane-order compaction through shared memory.
+        XR_ADV_TaskSurvivorFlags[lane] = visible ? 1u : 0u;
+        barrier();
+        survivorSlot = 0u;
+        survivorCount = 0u;
+        for (uint other = 0u; other < XR_ADV_TASK_MESHLETS_PER_GROUP; ++other)
+        {
+            uint flag = XR_ADV_TaskSurvivorFlags[other];
+            survivorSlot += other < lane ? flag : 0u;
+            survivorCount += flag;
+        }
+    }
+    if (visible)
+        XR_ADV_TaskPayload.meshletIndex[survivorSlot] = meshletIndex;
+    if (lane == 0u)
+        XR_ADV_TaskPayload.payloadIndex = payloadIndex;
+
+    // Early-phase telemetry for the delayed counter receipt. One atomic per
+    // counter per group. The late raster runs after that receipt is copied.
+    if (!late)
+    {
+        XR_ADV_TaskCullReasons[lane] = cullReason;
+        barrier();
+        if (lane == 0u)
+        {
+            uint visibleCount = 0u;
+            uint frustumCount = 0u;
+            uint coneCount = 0u;
+            for (uint other = 0u; other < XR_ADV_TASK_MESHLETS_PER_GROUP; ++other)
+            {
+                uint reason = XR_ADV_TaskCullReasons[other];
+                visibleCount += reason == XR_ADV_MESHLET_CULL_NONE ? 1u : 0u;
+                frustumCount += reason == XR_ADV_MESHLET_CULL_FRUSTUM ? 1u : 0u;
+                coneCount += reason == XR_ADV_MESHLET_CULL_CONE ? 1u : 0u;
+            }
+            if (visibleCount != 0u)
+                atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyVisible, visibleCount);
+            if (frustumCount != 0u)
+                atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyFrustumCulled, frustumCount);
+            if (coneCount != 0u)
+                atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyConeCulled, coneCount);
+        }
+    }
+
+    EmitMeshTasksEXT(survivorCount, 1u, 1u);
+}

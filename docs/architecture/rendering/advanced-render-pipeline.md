@@ -497,6 +497,41 @@ the flat identity values that `VisibilityRaster.frag` reads (locations 0-5 and
 keep the interpolated coverage attributes (locations 6 and 11-16). OpenGL does
 not set the define.
 
+The Vulkan meshlet visibility raster has a task stage, `VisibilityRaster.task`,
+in front of `VisibilityRaster.mesh`.
+- `BuildVisibilityIndirect.comp` and `LateVisibility.comp` write
+  `ceil(meshletCount / XR_ADV_TASK_MESHLETS_PER_GROUP)` task workgroups per
+  visible meshlet draw. The constant is 32 and is defined in
+  `VisibilityInterface.glslinc`.
+- Each task invocation tests one meshlet. The frustum test uses the cooked
+  bounding sphere against the planes of the unjittered view-projection matrix
+  of the push view.
+- The cone test uses the cooked normal cone. It runs only for static,
+  back-face culled draws with a positive-determinant, uniformly scaled world
+  matrix and a non-degenerate cone. Skinned meshlets are never culled, because
+  their cooked bounds describe the bind pose.
+- The survivors are compacted in lane order into the task payload: the payload
+  row plus up to 32 global meshlet indices. The task stage launches one mesh
+  workgroup per survivor, and the mesh stage reads its meshlet index from that
+  payload.
+- The task stage cannot read `gl_ViewIndex`, so it culls with the push view
+  index of the eye stream. Under multiview the mesh stage keeps its per-view
+  discard.
+- **Invariant:** task-stage output must rasterize only into views that the
+  task stage tested. Today only the push view rasterizes: the mesh stage
+  discards every other hardware view. This holds whether the driver runs the
+  task stage once per draw or once per view. If a stereo mode lets one draw
+  rasterize into more than one view, the task stage must cull a meshlet only
+  when every receiving view rejects it: the frustum test against each view,
+  and the cone test against each eye position. The task stage must never test
+  against one eye for output that two eyes use.
+- The early raster adds its launched, frustum-culled and cone-culled meshlet
+  counts to counter words 13-15 (`meshletEarlyVisible`,
+  `meshletEarlyFrustumCulled`, `meshletEarlyConeCulled`). The delayed
+  Advanced counter receipt reports them. Late-raster task work is not counted.
+- `EmitAdvancedVisibilityRasterReadBarrier` includes the task stage, so the task
+  stage sees the preparation writes in frames without indexed instance groups.
+
 Initial native visibility raster clears both depth and stencil. Late raster
 loads both attachments to preserve values written in the current frame. MSAA
 resolve clears the canonical stencil target because the depth resolve does not

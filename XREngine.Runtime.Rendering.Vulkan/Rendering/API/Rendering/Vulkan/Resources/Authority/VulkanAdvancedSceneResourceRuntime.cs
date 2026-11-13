@@ -2464,8 +2464,9 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             ShaderStageFlags.VertexBit |
             ShaderStageFlags.FragmentBit |
             ShaderStageFlags.ComputeBit |
+            // The meshlet visibility task stage reads draw, transform and view records.
             (device.SupportsMeshTaskIndirectCount
-                ? ShaderStageFlags.MeshBitExt
+                ? ShaderStageFlags.TaskBitExt | ShaderStageFlags.MeshBitExt
                 : 0);
         ReadOnlySpan<uint> globalBindingNumbers =
             VulkanAdvancedSceneProgramBindingContract.RequiredGlobalStorageBindings;
