@@ -2826,6 +2826,32 @@ namespace XREngine.Components.Lights
             count += 8;
         }
 
+        /// <summary>
+        /// Number of steps that the depth range of a cascade is divided into for the
+        /// depth snap in <see cref="QuantizeCascadeDepthRange"/>.
+        /// </summary>
+        private const float CascadeDepthRangeSteps = 16.0f;
+
+        /// <summary>
+        /// Snaps the light-space depth center of a cascade to a step of 1/16 of its depth
+        /// range and widens the depth half extent by half a step. The X/Y center is
+        /// snapped to texels, but without this the depth range followed the camera in
+        /// every frame. The cascade matrix then changed in every moving frame, the
+        /// content hash changed, and every cascade re-rendered its whole caster set.
+        /// The step depends only on the depth range, which the rounded sphere radius
+        /// keeps constant, so the snap grid is stable. The snapped range contains the
+        /// original range (it only grows outward) and has a constant size, so the
+        /// world-space depth bias, which is scaled by the range, does not change.
+        /// </summary>
+        private static void QuantizeCascadeDepthRange(ref Vector3 centerLS, ref Vector3 halfExtents)
+        {
+            float step = halfExtents.Z * 2.0f / CascadeDepthRangeSteps;
+            if (!float.IsFinite(step) || step <= 0.0f || !float.IsFinite(centerLS.Z))
+                return;
+            centerLS.Z = MathF.Round(centerLS.Z / step) * step;
+            halfExtents.Z += step * 0.5f;
+        }
+
         private static void SnapCascadeCenterToTexels(ref Vector3 centerLS, Vector3 halfExtents, uint resolution)
         {
             float texelX = MathF.Max(halfExtents.X * 2.0f / MathF.Max(1.0f, resolution), 1e-6f);
@@ -3663,6 +3689,7 @@ namespace XREngine.Components.Lights
 
                     Vector3 halfExtents = Vector3.Max((max - min) * 0.5f, new Vector3(1e-3f, 1e-3f, NearZ + 1e-3f));
                     Vector3 centerLS = (min + max) * 0.5f;
+                    QuantizeCascadeDepthRange(ref centerLS, ref halfExtents);
                     uint fitResolution = GetCascadeFitResolution(source, resourceSlot, cascadeTexture);
                     uint biasResolution = UsesDirectionalShadowAtlasForCurrentEncoding
                         ? GetDesiredShadowAtlasResolution()

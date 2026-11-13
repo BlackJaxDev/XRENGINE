@@ -97,6 +97,7 @@ The render thread never mutates planner-owned collections.
 
 - The depth content hash includes the light, projection, cascade index, source, encoding, movement version, resolution, caster membership revision, and the caster command-set signature.
 - Directional matrices are hashed as `view × projection`, quantized to `clipTexel / 4096`. Sub-texel jitter does not dirty a cascade.
+- The cascade fit snaps the light-space X/Y center to texels and the depth center to 1/16 of the depth range (`QuantizeCascadeDepthRange`). The depth range grows by half a step, so it always contains the fitted range and keeps a constant size. Without the depth snap, the cascade matrix changed in every frame while the camera moved, and every cascade re-rendered.
 - Receiver-only sampling state (soft shadow mode and bias) has a separate hash. A change republishes sampling data without a depth redraw.
 
 ### Sample payload and stale tiles
