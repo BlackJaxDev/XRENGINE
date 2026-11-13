@@ -722,9 +722,15 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
     }
 
     /// <summary>
-    /// Creates the meshlet occlusion history buffer and writes its first-use
-    /// contents. The buffer has one copy for each output bank, shared by all
-    /// frame slots, so the GPU reads and writes it in submission order.
+    /// Creates the meshlet occlusion history buffer in device-local memory. The
+    /// early task stage reads it and the late task stage sets bits in it with
+    /// atomics in every frame, so it must not live in host memory. The buffer has
+    /// one copy for each output bank, shared by all frame slots, so the GPU reads
+    /// and writes it in submission order.
+    /// Its first contents are undefined, and no initialization is needed: a clear
+    /// bit only moves a meshlet to the late raster, which tests it against this
+    /// frame's depth; a set bit only draws a meshlet in the early raster; and a
+    /// view without valid temporal history ignores the bits.
     /// </summary>
     private bool TryCreateMeshletHistoryStorage(out string reason)
     {
@@ -740,8 +746,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             (_meshletHistoryBuffer, _meshletHistoryMemory) = _resources.Buffers.CreateDedicatedRaw(
                 context,
                 MeshletHistoryByteLength,
-                BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                BufferUsageFlags.StorageBufferBit,
+                MemoryPropertyFlags.DeviceLocalBit,
                 owner: MeshletHistoryOwner);
         }
         catch (Exception exception)
@@ -750,40 +756,6 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             return false;
         }
 
-        return TryInitializeMeshletHistoryNoLock(out reason);
-    }
-
-    /// <summary>
-    /// Writes the first-use history: parity 0 for every view and every bit set
-    /// in both sets. A set bit means "visible last frame", so a view that has
-    /// no recorded history draws every meshlet that passes the frustum and
-    /// cone tests in the early raster. The caller must prove that no GPU work
-    /// that uses the buffer is in flight.
-    /// </summary>
-    private bool TryInitializeMeshletHistoryNoLock(out string reason)
-    {
-        VulkanBackendObjectContext? context = _resources.BackendObjectContext;
-        if (context is null || !context.IsDeviceOperational ||
-            _meshletHistoryBuffer.Handle == 0 ||
-            !_resources.Buffers.TryCreateMappedSlice(
-                context,
-                _meshletHistoryBuffer,
-                _meshletHistoryMemory,
-                0u,
-                MeshletHistoryByteLength,
-                out VulkanMappedMemorySlice slice) ||
-            !_resources.Buffers.TryAcquireWrite(context, in slice, out VulkanMappedMemoryWriteLease lease))
-        {
-            reason = "The meshlet history buffer could not be mapped for initialization.";
-            return false;
-        }
-
-        using (lease)
-        {
-            Span<uint> words = MemoryMarshal.Cast<byte, uint>(lease.Bytes);
-            words[..(int)MeshletHistoryHeaderWords].Clear();
-            words[(int)MeshletHistoryHeaderWords..].Fill(uint.MaxValue);
-        }
         reason = "Ready";
         return true;
     }
@@ -2549,8 +2521,6 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
 
         using (lease)
             lease.Bytes.Clear();
-        if (!TryInitializeMeshletHistoryNoLock(out reason))
-            return false;
         for (int index = 0; index < _states.Length; index++)
             _states[index] = _states[index] with
             {

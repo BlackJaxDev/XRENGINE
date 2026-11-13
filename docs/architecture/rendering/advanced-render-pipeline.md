@@ -588,10 +588,11 @@ Static meshlets also use two-phase occlusion culling. Two task variants share
   history-valid flag of a view for a first observation, a camera change, a
   camera cut (a teleport is a pose discontinuity), an output change and a frame
   gap (the view skipped a frame). The early variant then draws every meshlet
-  that passes the frustum and cone tests, and ignores the stale bits. The buffer
-  starts with every bit set, and it is set again for a new output owner. Stale
-  bits also never remove a meshlet from the image: a clear bit only moves the
-  meshlet to the late raster, which tests it against this frame's real depth.
+  that passes the frustum and cone tests, and ignores the stale bits. Stale or
+  undefined bits also never remove a meshlet from the image: a clear bit only
+  moves the meshlet to the late raster, which tests it against this frame's real
+  depth, and a set bit only draws the meshlet early. So the buffer is
+  device-local, is not initialized, and keeps its bits for a new output owner.
 - MSAA frames build no depth pyramid. Their late payloads carry the no-Hi-Z flag,
   so the late variant keeps only the frustum and cone tests.
 - The counters do not change: counter words 13-15 count only the early raster.
