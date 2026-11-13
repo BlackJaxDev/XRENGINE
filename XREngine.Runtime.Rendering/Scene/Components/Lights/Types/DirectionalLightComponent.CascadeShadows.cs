@@ -4449,7 +4449,7 @@ namespace XREngine.Components.Lights
                 !EnableCascadedShadows ||
                 !CanRenderDirectionalCascadesForCurrentBackend() ||
                 World is null ||
-                group.CascadeCount <= 1 ||
+                group.CascadeCount < 1 ||
                 group.Members is null ||
                 group.Members.Length < group.CascadeCount)
             {
@@ -4745,7 +4745,7 @@ namespace XREngine.Components.Lights
                 !CanRenderDirectionalCascadesForCurrentBackend() ||
                 World is null)
                 return DeclineCascadeAtlasRender(out declineReason, "Cascaded shadows are disabled for this light or backend.");
-            if (group.CascadeCount <= 1 ||
+            if (group.CascadeCount < 1 ||
                 group.Members is null ||
                 group.Members.Length < group.CascadeCount)
                 return DeclineCascadeAtlasRender(out declineReason, "The grouped cascade allocation is incomplete.");

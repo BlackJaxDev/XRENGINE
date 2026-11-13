@@ -121,8 +121,11 @@ The render thread never mutates planner-owned collections.
 
 ### Group publication
 
-- All cascades of one `(light, source, encoding)` form one generation. A cascade group renders completely or fails as a unit.
-- Completed group members commit together through `CommitRenderedCascadeAtlasSlots`. The lighting pass never mixes cascade generations of one light and source.
+- A cascade group holds the cascades of one `(light, source, encoding, atlas page)` that render in this frame: the requests with no forced skip that are dirty or cannot reuse the previous frame. This is the same rule that marks a cascade for caster collection. The group's members render completely or fail as a unit.
+- A group can hold one member when the light has more cascades. A light with only one cascade uses the per-tile path.
+- If any cascade of the light has a new, moved or resized allocation, or its dirty reason reports an allocation or encoding change, the group holds all cascades. A stale tile is only valid in its previous slot.
+- A cascade that does not render keeps its committed tile and its rendered sample. Receivers sample that stale tile with its own committed matrix. A point outside the stale tile uses the next cascade. The stale-age limit forces the refresh.
+- Completed group members commit together through `CommitRenderedCascadeAtlasSlots`. Each slot's texture and its matrix always come from the same draw, so the lighting pass never samples a tile with the matrix of another generation.
 - The `DirectionalCascade.MixedGenerationPrevented` counter records prevented mixes.
 
 ## Generations

@@ -287,6 +287,12 @@ public sealed partial class ShadowAtlasManager
     private readonly List<ShadowAtlasAllocation> _frameAllocations;
     private readonly List<ShadowAtlasGroupedDirectionalCascadeAllocation> _directionalCascadeGroups = new();
     private readonly Dictionary<DirectionalCascadeGroupKey, List<ShadowAtlasGroupedAllocationMember>> _directionalCascadeGroupMembersByKey = new();
+    // Groups whose light has a cascade with a new, moved or resized allocation in this
+    // frame. Such a group keeps all cascades, because a stale tile is only valid in
+    // its previous slot.
+    private readonly HashSet<DirectionalCascadeGroupKey> _directionalCascadeFullGroupKeys = new();
+    // Number of eligible cascades of each group key before the render filter.
+    private readonly Dictionary<DirectionalCascadeGroupKey, int> _directionalCascadeEligibleCounts = new();
     private readonly List<DirectionalCascadeGroupKey> _directionalCascadeGroupKeyScratch = new(16);
     private readonly Dictionary<ShadowRequestKey, int> _directionalCascadeGroupIndexByRequest = new();
     private readonly Dictionary<DirectionalCascadeSolveGroupKey, int> _directionalCascadeSolveGroupCounts = new();
@@ -976,6 +982,36 @@ public sealed partial class ShadowAtlasManager
         if (!ShouldBuildGroupedAtlasRenderPlanEntries())
             return;
 
+        // A group holds only the cascades that render in this frame. A cascade that
+        // does not render keeps its committed tile and matrix, and the receivers
+        // sample that stale tile. When a cascade of the light has a new, moved or
+        // resized allocation, every cascade renders in one full group instead.
+        _directionalCascadeFullGroupKeys.Clear();
+        _directionalCascadeEligibleCounts.Clear();
+        for (int i = 0; i < _requests.Count; i++)
+        {
+            ShadowMapRequest request = _requests[i];
+            if (request.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+                GetAtlasKind(request.ProjectionType) != EShadowAtlasKind.Directional ||
+                !_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation allocation) ||
+                !CanDirectionalCascadeJoinGroup(allocation))
+            {
+                continue;
+            }
+
+            DirectionalCascadeGroupKey key = new(
+                request.Key.LightId,
+                request.Key.Domain,
+                request.Key.Source,
+                request.Encoding,
+                allocation.AtlasId,
+                allocation.PageIndex);
+            _directionalCascadeEligibleCounts[key] =
+                _directionalCascadeEligibleCounts.GetValueOrDefault(key) + 1;
+            if (HasDirectionalCascadeAllocationMoved(request, allocation))
+                _directionalCascadeFullGroupKeys.Add(key);
+        }
+
         for (int i = 0; i < _requests.Count; i++)
         {
             ShadowMapRequest request = _requests[i];
@@ -1000,6 +1036,11 @@ public sealed partial class ShadowAtlasManager
                 request.Encoding,
                 allocation.AtlasId,
                 allocation.PageIndex);
+            if (!_directionalCascadeFullGroupKeys.Contains(key) &&
+                !DirectionalCascadeRequestRenders(request))
+            {
+                continue;
+            }
 
             if (!_directionalCascadeGroupMembersByKey.TryGetValue(key, out List<ShadowAtlasGroupedAllocationMember>? members))
             {
@@ -1025,7 +1066,10 @@ public sealed partial class ShadowAtlasManager
             DirectionalCascadeGroupKey key = _directionalCascadeGroupKeyScratch[i];
             List<ShadowAtlasGroupedAllocationMember> members = _directionalCascadeGroupMembersByKey[key];
             _solveDiagnostics.DirectionalGroupSeedCount++;
-            if (members.Count <= 1)
+            // A one-member group is valid when the light has more cascades: the other
+            // cascades keep their tiles. A light with one cascade keeps the tile path.
+            if (members.Count == 0 ||
+                (members.Count == 1 && _directionalCascadeEligibleCounts.GetValueOrDefault(key) <= 1))
                 continue;
 
             members.Sort(GroupedAllocationMemberComparer.Instance);
@@ -1068,6 +1112,35 @@ public sealed partial class ShadowAtlasManager
                 members.Clear();
 
         _directionalCascadeGroupKeyScratch.Clear();
+    }
+
+    /// <summary>
+    /// True when the cascade request renders in this frame: the same rule that marks
+    /// the cascade for caster collection (<c>MarkDirectionalCascadeAtlasRequest</c>).
+    /// </summary>
+    private static bool DirectionalCascadeRequestRenders(ShadowMapRequest request)
+        => request.ForcedSkipReason == SkipReason.None &&
+            (request.IsDirty || !request.CanReusePreviousFrame);
+
+    /// <summary>
+    /// True when the cascade has no resident allocation from the previous frame, or
+    /// its page, rectangle, resolution or atlas changed, or its dirty reason reports
+    /// an allocation or encoding change. A stale tile is not valid in a new slot.
+    /// </summary>
+    private bool HasDirectionalCascadeAllocationMoved(ShadowMapRequest request, ShadowAtlasAllocation allocation)
+    {
+        if ((request.DirtyReason & (ShadowDirtyReason.AllocationMissing |
+                ShadowDirtyReason.AllocationChanged | ShadowDirtyReason.EncodingChanged)) != 0)
+            return true;
+        if (!TryGetResidentAllocation(request.Key, out ShadowAtlasAllocation prior))
+            return true;
+        return prior.PageIndex != allocation.PageIndex ||
+            prior.PixelRect.X != allocation.PixelRect.X ||
+            prior.PixelRect.Y != allocation.PixelRect.Y ||
+            prior.PixelRect.Width != allocation.PixelRect.Width ||
+            prior.PixelRect.Height != allocation.PixelRect.Height ||
+            prior.Resolution != allocation.Resolution ||
+            prior.AtlasId != allocation.AtlasId;
     }
 
     private static bool CanDirectionalCascadeJoinGroup(ShadowAtlasAllocation allocation)
@@ -3699,6 +3772,19 @@ public sealed partial class ShadowAtlasManager
             prior.ContentVersion != request.ContentHash;
     }
 
+    /// <summary>
+    /// Number of cascade viewports that the sequential path must prepare for a group:
+    /// one more than the highest member cascade index. A group can hold only some
+    /// cascades, so its member count is not the highest index.
+    /// </summary>
+    private static int ResolveDirectionalGroupViewportCount(in ShadowAtlasGroupedDirectionalCascadeAllocation group)
+    {
+        int count = 0;
+        for (int i = 0; i < group.CascadeCount && i < group.Members.Length; i++)
+            count = Math.Max(count, group.Members[i].CascadeIndex + 1);
+        return count;
+    }
+
     private bool TryGetDirectionalCascadeGroupContainingRequest(
         ShadowMapRequest request,
         out ShadowAtlasGroupedDirectionalCascadeAllocation group)
@@ -3929,7 +4015,7 @@ public sealed partial class ShadowAtlasManager
         {
             if (!light.PrepareSequentialCascadeShadowAtlasCommands(
                 entry.DirectionalGroup.Source,
-                entry.DirectionalGroup.CascadeCount,
+                ResolveDirectionalGroupViewportCount(entry.DirectionalGroup),
                 out declineReason))
                 return false;
             collectVisibleNow = false;
