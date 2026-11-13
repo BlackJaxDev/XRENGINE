@@ -249,6 +249,18 @@ fallback counters, and GPU readback/mapped-buffer totals. `XRE_PROFILE_AUTO_DUMP
 also dumps all GPU render-pipeline timing histories on graceful shutdown; it is
 enabled automatically when `XRE_PROFILE_CAPTURE=1`.
 
+`XRE_PROFILE_VULKAN_GPU_DRIVEN_PROFILE` selects the Vulkan GPU-driven profile for
+one process. The accepted values are the `EVulkanGpuDrivenProfile` names `Auto`,
+`ShippingFast`, `DevParity` and `Diagnostics` (case is ignored). Any other value is
+ignored. The profile capture contract reads it at startup
+(`Engine.ProfileCapture.ApplyPerformanceProfileContract`). The effective setting
+`VulkanGpuDrivenProfile` uses it before the project and engine settings, in
+non-published builds only. With `Diagnostics`, a forced
+`XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuMeshletInstrumented` stays instrumented. With
+any other profile, and with GPU indirect debug logging off, the strategy resolver
+changes it to `GpuMeshletZeroReadback`, so the delayed Advanced visibility counter
+receipts are not recorded.
+
 The game-loop/default-pipeline harness reports both capture-window `Samples` and
 process-lifetime `AllSamples`. If a GPU path freezes during warmup and never reaches
 the timed capture window, the summary still records the final sample timestamp,
