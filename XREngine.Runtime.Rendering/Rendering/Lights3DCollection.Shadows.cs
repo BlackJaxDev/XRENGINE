@@ -1016,6 +1016,8 @@ namespace XREngine.Scene
                         hasPrevious,
                         previous,
                         dirtyReason,
+                        in directionalCascadeSample,
+                        desiredResolution,
                         out forcedFreshByCadence))
                 {
                     effectiveForcedSkipReason = SkipReason.StaleTileReused;
@@ -1077,6 +1079,8 @@ namespace XREngine.Scene
             bool hasPrevious,
             in ShadowAtlasAllocation previous,
             ShadowDirtyReason dirtyReason,
+            in DirectionalCascadeSampleState currentSample,
+            uint desiredResolution,
             out bool forcedFresh)
         {
             forcedFresh = false;
@@ -1090,6 +1094,10 @@ namespace XREngine.Scene
                 return false;
             }
 
+            // Forced refreshes count toward the per-frame limit but always render.
+            int refreshLimit = RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeRefreshesPerFrame;
+            if ((dirtyReason & ShadowDirtyReason.StaleContentAgeLimitReached) != 0)
+                light.TryGrantDirectionalCascadeRefresh(source, refreshLimit, force: true);
             if ((dirtyReason & ShadowDirtyReason.StaleContentAgeLimitReached) != 0)
             {
                 forcedFresh = true;
@@ -1103,18 +1111,35 @@ namespace XREngine.Scene
             bool hasRenderedSample = light.TryGetRenderedDirectionalCascadeSampleState(
                 source,
                 cascadeIndex,
-                out _);
+                out DirectionalCascadeSampleState renderedSample);
             if (!hasRenderedSample)
             {
+                light.TryGrantDirectionalCascadeRefresh(source, refreshLimit, force: true);
+                forcedFresh = true;
+                return false;
+            }
+
+            // A light rotation or a camera cut moves the cascade far from its rendered
+            // fit. A stale tile then shows the wrong light direction or covers the
+            // wrong area, so the cascade renders now, past the per-frame limit.
+            if (IsLargeDirectionalCascadeMatrixJump(currentSample, renderedSample, desiredResolution))
+            {
+                light.TryGrantDirectionalCascadeRefresh(source, refreshLimit, force: true);
                 forcedFresh = true;
                 return false;
             }
 
             // The moving-camera hold is opt-in. Without it, a cascade whose content changed
             // refreshes in this frame, so it keeps full resolution and coverage while the
-            // camera moves.
+            // camera moves. Every cascade draws the whole caster set that reaches its
+            // volume, so the refreshes of one frame are limited: cascades are submitted
+            // nearest first, and a cascade over the limit keeps its stale tile. Shading
+            // reprojects that tile with its rendered matrix, and a point outside the tile
+            // uses the next cascade. The stale-age limit then forces the refresh.
             if (!RuntimeEngine.Rendering.Settings.HoldDirectionalCascadesWhileCameraMoves)
             {
+                if (!light.TryGrantDirectionalCascadeRefresh(source, refreshLimit, force: false))
+                    return true;
                 forcedFresh = true;
                 return false;
             }

@@ -738,6 +738,7 @@ public static partial class RuntimeEngine
                 private float _maxShadowRenderMilliseconds = 2.0f;
                 private int _maxDirectionalCascadeAtlasStaleFrames = 4;
                 private bool _holdDirectionalCascadesWhileCameraMoves;
+                private int _maxDirectionalCascadeRefreshesPerFrame = 1;
                 private uint _minShadowAtlasTileResolution = 128u;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
@@ -950,6 +951,21 @@ public static partial class RuntimeEngine
                 {
                     get => _holdDirectionalCascadesWhileCameraMoves;
                     set => SetField(ref _holdDirectionalCascadesWhileCameraMoves, value);
+                }
+
+                [Category("Shadows")]
+                [Description("Maximum number of content-changed directional cascades of one light and source that refresh in one frame. The nearest dirty cascades refresh first; the others keep their stale tiles, which shading reprojects with the matrix they were rendered with, until a later frame or the stale limit. A cascade at the stale limit or without a rendered tile always refreshes. 0 removes the limit.")]
+                public int MaxDirectionalCascadeRefreshesPerFrame
+                {
+                    get => Volatile.Read(ref _maxDirectionalCascadeRefreshesPerFrame);
+                    set
+                    {
+                        int clamped = Math.Clamp(value, 0, 8);
+                        if (!SetField(ref _maxDirectionalCascadeRefreshesPerFrame, clamped))
+                            return;
+
+                        Volatile.Write(ref _maxDirectionalCascadeRefreshesPerFrame, clamped);
+                    }
                 }
 
                 [Category("Shadows")]

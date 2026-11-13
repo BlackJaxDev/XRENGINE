@@ -139,6 +139,9 @@ namespace XREngine.Components.Lights
             public readonly ulong[] PreviousAtlasRequestContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly int[] StableAtlasRequestFrameCounts = new int[MaxCascadeRenderCount];
             public readonly int[] AtlasCascadeStaleFrameCounts = new int[MaxCascadeRenderCount];
+            // Content-changed cascade refreshes granted in the current request frame.
+            // BeginDirectionalCascadeAtlasRequestFrame resets it.
+            public int AtlasCascadeRefreshesThisFrame;
             public readonly ulong[] AtlasCollectedContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeRenderRequested = new bool[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeCollectVisibleNeeded = new bool[MaxCascadeRenderCount];
@@ -1704,6 +1707,7 @@ namespace XREngine.Components.Lights
             lock (_cascadeDataLock)
             {
                 DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                state.AtlasCascadeRefreshesThisFrame = 0;
                 int count = Math.Clamp(activeCascadeCount, 0, MaxCascadeRenderCount);
                 for (int i = 0; i < MaxCascadeRenderCount; i++)
                 {
@@ -1720,6 +1724,29 @@ namespace XREngine.Components.Lights
                     state.StableAtlasRequestFrameCounts[i] = 0;
                     state.AtlasCascadeStaleFrameCounts[i] = 0;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Counts one content-changed cascade refresh of this light and source in the
+        /// current request frame. Returns false, and counts nothing, when the frame
+        /// already has <paramref name="limit"/> refreshes. A limit of 0 or less has no
+        /// limit. With <paramref name="force"/> the refresh is counted and always
+        /// granted: a cascade at the stale limit or without a rendered tile must render.
+        /// </summary>
+        internal bool TryGrantDirectionalCascadeRefresh(ShadowRequestSource source, int limit, bool force)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                if (!force && limit > 0 && state.AtlasCascadeRefreshesThisFrame >= limit)
+                    return false;
+                state.AtlasCascadeRefreshesThisFrame++;
+                return true;
             }
         }
 
