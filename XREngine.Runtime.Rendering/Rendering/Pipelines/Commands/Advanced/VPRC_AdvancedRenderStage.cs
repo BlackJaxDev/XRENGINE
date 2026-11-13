@@ -443,6 +443,68 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         return true;
     }
 
+    private const string CpuDirectIndexedCasterProducer = "CpuDirectIndexed";
+    private const string GpuIndexedCasterProducer = "GpuIndexed";
+    private const string CpuMaskedIndexedCasterProducer = "CpuMaskedIndexed";
+    private const string CpuDirectCasterReason =
+        "CPU-direct frame: casters draw the frozen indexed arguments with CPU cascade masks.";
+    private const string GpuIndexedCasterReason =
+        "Strict indexed frame: casters are selected per cascade on the GPU.";
+    private const string MeshletCasterReason =
+        "Meshlet frame: the meshlet raster has no shadow producer, so casters draw the frozen indexed arguments of the same canonical geometry with CPU cascade masks.";
+    private const string InstrumentedMeshletCasterReason =
+        "Instrumented meshlet frames are not validated for the directional shadow lane; cascade groups stay on the generic path.";
+    private const string UnsupportedCasterReason =
+        "The frozen directional shadow submission strategy has no supported caster producer.";
+    private const string MeshletCasterLogMessage =
+        "Advanced directional shadow lane: a meshlet frame draws its casters through CPU-masked indexed draws (CpuMaskedIndexed). A GPU caster cull for meshlet frames does not exist yet.";
+
+    /// <summary>
+    /// Caster producer of the last directional shadow stage execution. A change
+    /// to <see cref="CpuMaskedIndexedCasterProducer"/> writes one log entry.
+    /// </summary>
+    private string? _lastDirectionalShadowCasterProducer;
+
+    /// <summary>
+    /// Selects the caster producer of the directional shadow lane for one frozen
+    /// submission strategy. CPU-direct frames use the frozen indexed arguments.
+    /// Strict indexed frames select casters on the GPU. Meshlet frames have no
+    /// meshlet shadow producer: every sealed record still holds frozen indexed
+    /// arguments of its canonical geometry, so the lane draws those with CPU
+    /// cascade masks. All outputs are constant strings, so the per-frame call
+    /// does not allocate.
+    /// </summary>
+    /// <returns>False when the strategy has no supported caster producer.</returns>
+    private static bool TryResolveDirectionalShadowCasterProducer(
+        EMeshSubmissionStrategy? strategy,
+        out string? producer,
+        out string reason)
+    {
+        switch (strategy)
+        {
+            case EMeshSubmissionStrategy.CpuDirect:
+                producer = CpuDirectIndexedCasterProducer;
+                reason = CpuDirectCasterReason;
+                return true;
+            case EMeshSubmissionStrategy.GpuIndirectZeroReadback:
+                producer = GpuIndexedCasterProducer;
+                reason = GpuIndexedCasterReason;
+                return true;
+            case EMeshSubmissionStrategy.GpuMeshletZeroReadback:
+                producer = CpuMaskedIndexedCasterProducer;
+                reason = MeshletCasterReason;
+                return true;
+            case EMeshSubmissionStrategy.GpuMeshletInstrumented:
+                producer = null;
+                reason = InstrumentedMeshletCasterReason;
+                return false;
+            default:
+                producer = null;
+                reason = UnsupportedCasterReason;
+                return false;
+        }
+    }
+
     /// <summary>
     /// Consumes the directional cascade groups the shadow atlas deferred during
     /// this frame's scheduled-tile pass and records each one as a depth-only
@@ -467,6 +529,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         }
 
         string? unavailableReason = null;
+        string? casterProducer = null;
+        string? casterProducerReason = null;
         ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         RenderCommandCollection commands = ActivePipelineInstance.ActiveMeshRenderCommands;
         using var renderingBufferScope = commands.EnterRenderingBufferReadScope();
@@ -492,11 +556,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             ready = false;
         }
-        else if (template.BackendReadyPackage?.SubmissionResolution.Resolved is not
-            (EMeshSubmissionStrategy.CpuDirect or EMeshSubmissionStrategy.GpuIndirectZeroReadback))
+        else if (!TryResolveDirectionalShadowCasterProducer(
+                     template.BackendReadyPackage?.SubmissionResolution.Resolved,
+                     out casterProducer,
+                     out casterProducerReason))
         {
             ready = false;
-            unavailableReason = "The frozen directional shadow submission strategy has no supported caster producer.";
+            unavailableReason = casterProducerReason;
         }
         else if (!stageAuthority.Matches(viewport!, ActivePipelineInstance,
                      commands, package, renderFrameId) ||
@@ -507,10 +573,19 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             unavailableReason = "The directional shadow stage does not own this frame's frozen desktop command package.";
         }
 
+        // Log only when the resolved caster producer changes, never per frame.
+        if (!ReferenceEquals(casterProducer, _lastDirectionalShadowCasterProducer))
+        {
+            _lastDirectionalShadowCasterProducer = casterProducer;
+            if (ReferenceEquals(casterProducer, CpuMaskedIndexedCasterProducer))
+                Debug.Out(MeshletCasterLogMessage);
+        }
         atlas.NotifyAdvancedDirectionalShadowLaneConsumer(
             renderFrameId,
             ready,
-            unavailableReason);
+            unavailableReason,
+            casterProducer,
+            casterProducerReason);
 
         int accepted = 0;
         int rejected = 0;

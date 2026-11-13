@@ -255,6 +255,8 @@ namespace XREngine.Editor.Mcp
                 unconsumedGroups = lane.UnconsumedGroups,
                 genericGroups = lane.GenericGroups,
                 lastDeclineReason = lane.LastDeclineReason,
+                casterProducer = lane.CasterProducer,
+                casterProducerReason = lane.CasterProducerReason,
             };
         }
 

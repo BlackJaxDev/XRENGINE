@@ -1884,9 +1884,10 @@ internal sealed partial class VulkanPreparedStableBinStream
     /// <summary>
     /// Prepares one depth-only directional shadow pipeline per sealed bin header
     /// for the directional shadow lane's atlas-page closure. The visibility
-    /// raster must already have sealed the bins and retained their templates;
-    /// only CPU-direct bins are admitted because the lane issues the frozen
-    /// indexed arguments itself.
+    /// raster must already have sealed the bins and retained their templates.
+    /// CPU-direct bins, strict indexed bins, and the static meshlet and indexed
+    /// bins of a meshlet frame are admitted. The lane issues the frozen indexed
+    /// arguments itself in CPU-direct and meshlet frames.
     /// </summary>
     internal VulkanAdvancedVisibilityPipelineReadiness TryPrepareDirectionalShadowRasterPipelines(
         VulkanAdvancedVisibilityPipelineRuntime visibilityPipelines,
@@ -1910,7 +1911,30 @@ internal sealed partial class VulkanPreparedStableBinStream
             ref readonly VulkanPreparedStableBinHeader header = ref _headers[headerIndex];
             if (!header.IsRasterReady)
                 continue;
-            if (header.SubmissionPlan!.ResolvedStrategy != strategy ||
+            if (strategy == EMeshSubmissionStrategy.GpuMeshletZeroReadback)
+            {
+                // A meshlet frame also seals indexed ranges (for example
+                // fragment-depth draws). The lane draws every bin with the frozen
+                // indexed arguments of its records, so both range kinds qualify.
+                // Skinned meshlet bins have no indexed shadow producer: the whole
+                // group then stays on the generic path.
+                EMeshSubmissionStrategy binStrategy = header.SubmissionPlan!.ResolvedStrategy;
+                EAdvancedGeometryProducer binProducer = header.IndirectRange.Key.Producer;
+                if (binProducer == EAdvancedGeometryProducer.SkinnedMeshlet)
+                {
+                    reason = "skinned meshlet casters have no indexed shadow producer";
+                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                }
+                if (!(binStrategy == EMeshSubmissionStrategy.GpuMeshletZeroReadback &&
+                        binProducer == EAdvancedGeometryProducer.StaticMeshlet) &&
+                    !(binStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+                        binProducer == EAdvancedGeometryProducer.IndirectIndexed))
+                {
+                    reason = "a meshlet-frame directional shadow bin is neither a static meshlet nor an indexed range";
+                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                }
+            }
+            else if (header.SubmissionPlan!.ResolvedStrategy != strategy ||
                 strategy is not (EMeshSubmissionStrategy.CpuDirect or
                     EMeshSubmissionStrategy.GpuIndirectZeroReadback))
             {

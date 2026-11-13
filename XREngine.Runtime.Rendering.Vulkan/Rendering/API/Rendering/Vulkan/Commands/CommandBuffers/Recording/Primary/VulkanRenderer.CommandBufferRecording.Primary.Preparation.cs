@@ -2141,8 +2141,8 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Prepares one deferred cascade group for recording: the family's sealed
         /// bins receive depth-only pipelines for the atlas-page closure.
-        /// CPU-direct work derives record masks. Strict indexed work keeps
-        /// caster selection on the GPU and rejects an incomplete frame.
+        /// CPU-direct and meshlet work derives record masks. Strict indexed work
+        /// keeps caster selection on the GPU and rejects an incomplete frame.
         /// </summary>
         private bool TryPrepareDirectionalShadowLane(
             scoped ref PrimaryCommandBufferRecordingState recordingState,
@@ -2157,10 +2157,11 @@ namespace XREngine.Rendering.Vulkan
             if (!request.BackendPackage.TryGetCurrent(out BackendReadyFramePackage package) ||
                 package.SubmissionResolution.Resolved is not
                     (EMeshSubmissionStrategy.CpuDirect or
-                     EMeshSubmissionStrategy.GpuIndirectZeroReadback))
+                     EMeshSubmissionStrategy.GpuIndirectZeroReadback or
+                     EMeshSubmissionStrategy.GpuMeshletZeroReadback))
             {
                 recordingState.RecordingDeferredReason =
-                    "Advanced directional shadow preparation has no frozen CPU-direct or strict indexed strategy.";
+                    "Advanced directional shadow preparation has no frozen CPU-direct, strict indexed or meshlet strategy.";
                 recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
                 return false;
             }
@@ -2192,7 +2193,11 @@ namespace XREngine.Rendering.Vulkan
                 shadowProbe.End(S13aAdvancedFamilyStep.RasterPipelines);
                 if (shadowReadiness == VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 {
-                    if (strategy == EMeshSubmissionStrategy.CpuDirect)
+                    // CPU-direct and meshlet frames draw the frozen indexed arguments of
+                    // each record. They need CPU cascade masks. Strict indexed frames
+                    // select casters on the GPU instead.
+                    if (strategy is EMeshSubmissionStrategy.CpuDirect or
+                        EMeshSubmissionStrategy.GpuMeshletZeroReadback)
                     {
                         VulkanDirectionalShadowLaneCulling.ComputeRecordMasks(
                             familyBins.Records,

@@ -165,11 +165,29 @@ internal sealed partial class VulkanCommandRuntime
                         "A directional shadow pipeline closure changed after frame-plan sealing.");
                 }
                 VulkanSealedBinSubmissionPlan plan = header.SubmissionPlan!;
-                if (plan.ResolvedStrategy != EMeshSubmissionStrategy.CpuDirect)
+                EAdvancedGeometryProducer binProducer = header.IndirectRange.Key.Producer;
+                // This branch draws frozen indexed arguments with CPU cascade masks:
+                // CPU-direct bins, and the static meshlet and indexed bins of a
+                // meshlet frame (shadow preparation admitted only those).
+                bool frozenIndexedBin =
+                    plan.ResolvedStrategy == EMeshSubmissionStrategy.CpuDirect ||
+                    (plan.ResolvedStrategy == EMeshSubmissionStrategy.GpuMeshletZeroReadback &&
+                     binProducer == EAdvancedGeometryProducer.StaticMeshlet) ||
+                    (plan.ResolvedStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+                     binProducer == EAdvancedGeometryProducer.IndirectIndexed);
+                if (!frozenIndexedBin)
                 {
                     throw new VulkanPlanPreconditionException(
-                        "The directional shadow lane reached recording with a non-CPU-direct bin.");
+                        "The directional shadow lane reached CPU-masked recording with a bin that has no frozen indexed arguments.");
                 }
+                // The shadow vertex stage reads the payload row from the base instance
+                // for every producer except IndirectIndexed, which reads it from the
+                // GPU-written mesh payload table. A frozen indexed draw sets the base
+                // instance to the payload row, so an indexed range of a meshlet frame
+                // is pushed as a CPU-direct static range.
+                uint pushedProducer = binProducer == EAdvancedGeometryProducer.IndirectIndexed
+                    ? (uint)EAdvancedGeometryProducer.CpuDirectStaticIndexed
+                    : (uint)binProducer;
 
                 // Skip the bind when no record of this bin reaches the cascade.
                 int firstRecord = -1;
@@ -229,7 +247,7 @@ internal sealed partial class VulkanCommandRuntime
                         0u,
                         new AdvancedDirectionalShadowRasterPushConstants(
                             header.IndirectRange.FirstPayloadIndex,
-                            (uint)header.IndirectRange.Key.Producer,
+                            pushedProducer,
                             (uint)cascade,
                             1u,
                             in viewProjections[cascade]));

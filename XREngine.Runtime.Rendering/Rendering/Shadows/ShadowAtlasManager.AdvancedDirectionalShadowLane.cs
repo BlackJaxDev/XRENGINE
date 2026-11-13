@@ -28,6 +28,8 @@ public sealed partial class ShadowAtlasManager
     private XRFrameBuffer? _advancedLaneTargetFrameBuffer;
     private bool _advancedLaneConsumerReady;
     private string? _advancedLaneConsumerReason;
+    private string? _advancedLaneCasterProducer;
+    private string? _advancedLaneCasterProducerReason;
     private AdvancedDirectionalShadowConsumerAuthority _advancedLaneAuthority;
     private ulong _advancedLaneAuthorityFrameId;
     private bool _advancedLaneOwnerExpected;
@@ -79,22 +81,33 @@ public sealed partial class ShadowAtlasManager
             _advancedLaneRejectedGroups,
             _advancedLaneUnconsumedGroups,
             _advancedLaneGenericGroups,
-            _advancedLaneLastDeclineReason ?? _advancedLaneConsumerReason);
+            _advancedLaneLastDeclineReason ?? _advancedLaneConsumerReason,
+            _advancedLaneCasterProducer,
+            _advancedLaneCasterProducerReason);
 
     /// <summary>
     /// Called by the Advanced directional shadow stage every time it executes.
     /// Groups are deferred in a later frame only while the consumer keeps
     /// reporting itself ready. A strict GPU request stays dirty without it.
+    /// <paramref name="casterProducer"/> names the producer that draws the
+    /// casters of this frame's submission strategy, and
+    /// <paramref name="casterProducerReason"/> tells why. Diagnostics show both, so
+    /// a reader can see, for example, that a meshlet frame draws indexed casters.
+    /// The stage passes constant strings, so this call does not allocate.
     /// </summary>
     public void NotifyAdvancedDirectionalShadowLaneConsumer(
         ulong renderFrameId,
         bool ready,
-        string? reason)
+        string? reason,
+        string? casterProducer = null,
+        string? casterProducerReason = null)
     {
         AssertRenderThread();
         _advancedLaneConsumerFrameId = renderFrameId;
         _advancedLaneConsumerReady = ready;
         _advancedLaneConsumerReason = ready ? null : reason;
+        _advancedLaneCasterProducer = casterProducer;
+        _advancedLaneCasterProducerReason = casterProducerReason;
     }
 
     /// <summary>Publishes the desktop consumer selected before shadow scheduling.</summary>
@@ -455,4 +468,6 @@ public readonly record struct AdvancedDirectionalShadowLaneDiagnostics(
     long RejectedGroups,
     long UnconsumedGroups,
     long GenericGroups,
-    string? LastDeclineReason);
+    string? LastDeclineReason,
+    string? CasterProducer,
+    string? CasterProducerReason);

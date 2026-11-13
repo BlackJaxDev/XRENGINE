@@ -219,6 +219,11 @@ void main()
     ShadowCoverageLocalPosition = localPosition;
     ShadowMaterialDenseIndex = materialDense;
     ShadowDrawIndex = payload.draw.index;
-    ShadowProducer = producer;
+    // The shadow lane draws a static meshlet payload with the frozen indexed
+    // arguments of its canonical geometry. gl_PrimitiveID then counts index-buffer
+    // triangles, so the coverage decode must use the indexed encoding.
+    ShadowProducer = producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET
+        ? XR_ADV_VIS_PRODUCER_CPU_STATIC_INDEXED
+        : producer;
     ShadowPrimitiveBase = payload.firstIndex / 3u;
 }

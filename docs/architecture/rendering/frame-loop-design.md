@@ -411,11 +411,30 @@ holds two variants: about 320 extra descriptor sets, created once at the first
 cascade refresh after load, with no growth afterwards.
 
 **The directional shadow lane records cascades from the canonical bins.** On
-Vulkan with the Advanced pipeline and CpuDirect submission, the desktop
-family's sealed stable bins already hold every canonical draw with its geometry
-closure and scene sets. The `DirectionalShadowRaster` stage, which follows the
-late visibility raster, records those bins a second time into the directional
-atlas page:
+Vulkan with the Advanced pipeline, the desktop family's sealed stable bins
+already hold every canonical draw with its geometry closure and scene sets. The
+`DirectionalShadowRaster` stage, which follows the late visibility raster,
+records those bins a second time into the directional atlas page. The frozen
+submission strategy selects the caster producer:
+
+- `CpuDirect`: the lane draws the frozen indexed arguments of each record with
+  CPU cascade masks (`CpuDirectIndexed`).
+- `GpuIndirectZeroReadback`: `CullDirectionalShadowCasters` selects the casters
+  per cascade on the GPU and writes indexed arguments (`GpuIndexed`).
+- `GpuMeshletZeroReadback`: the meshlet raster has no shadow producer. Every
+  sealed record still holds the frozen indexed arguments of its canonical
+  geometry, so the lane draws static meshlet bins and the indexed bins of the
+  frame with CPU cascade masks (`CpuMaskedIndexed`). So meshlet frames draw
+  directional shadow casters through CPU-masked indexed draws. A GPU caster
+  cull for meshlet frames does not exist yet. The stage writes one log entry
+  when it first resolves a meshlet frame to this producer. The shadow vertex stage
+  reports a static meshlet payload as an indexed producer, so masked coverage
+  decodes index-buffer triangles. A skinned meshlet bin has no indexed shadow
+  producer and rejects the group, which then stays on the generic path.
+- `GpuMeshletInstrumented` and every other strategy keep the generic path with
+  an explicit reason.
+
+The lane then works as follows:
 
 - `ShadowAtlasManager.RenderScheduledTiles` still allocates, tracks dirtiness,
   applies budgets and owns completion receipts. A depth-only desktop cascade
@@ -443,11 +462,13 @@ atlas page:
   holds the lane closed for 60 frames. A lane preparation fault rejects the
   fresh frame with failed receipts, preserves dirty keys for generic retry,
   and reports the stage not ready for 5 s.
-- Moment-encoded pages, HMD sources, GPU-driven submission strategies and
+- Moment-encoded pages, HMD sources, unsupported submission strategies and
   sequential cascade renders keep the generic path with an explicit decline
-  reason. `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` disables the lane;
+  reason. `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` disables the lane.
   `get_advanced_profile_diagnostics.directionalShadowLane` reports the
-  counters and the last decline reason.
+  counters (`genericGroups` counts the groups that stayed on the generic
+  path), the last decline reason, and `casterProducer` with
+  `casterProducerReason` for the frame's strategy.
 
 
 ## Play-Mode Restores Must Rebuild The Same Derived State
