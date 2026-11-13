@@ -1,12 +1,67 @@
 #ifndef XR_NATIVE_UBER_GLOBAL_MASKS_GLSLINC
 #define XR_NATIVE_UBER_GLOBAL_MASKS_GLSLINC
 
+uint XR_UBER_GlobalMaskOverrideBits = 0u;
+vec4 XR_UBER_GlobalMaskOverrides[4];
+
+void XR_UBER_ResetGlobalMaskOverrides()
+{
+    XR_UBER_GlobalMaskOverrideBits = 0u;
+    XR_UBER_GlobalMaskOverrides[0] = vec4(1.0);
+    XR_UBER_GlobalMaskOverrides[1] = vec4(1.0);
+    XR_UBER_GlobalMaskOverrides[2] = vec4(1.0);
+    XR_UBER_GlobalMaskOverrides[3] = vec4(1.0);
+}
+
+float XR_UBER_ReadGlobalMaskOverride(int zeroBased)
+{
+    int slot = clamp(zeroBased / 4, 0, 3);
+    int ch = zeroBased % 4;
+    vec4 v = slot == 0 ? XR_UBER_GlobalMaskOverrides[0]
+        : (slot == 1 ? XR_UBER_GlobalMaskOverrides[1]
+        : (slot == 2 ? XR_UBER_GlobalMaskOverrides[2] : XR_UBER_GlobalMaskOverrides[3]));
+    return ch == 0 ? v.r : (ch == 1 ? v.g : (ch == 2 ? v.b : v.a));
+}
+
+void XR_UBER_WriteGlobalMaskOverride(int zeroBased, float value)
+{
+    int clamped = clamp(zeroBased, 0, 15);
+    XR_UBER_GlobalMaskOverrideBits |= 1u << uint(clamped);
+    int slot = clamped / 4;
+    int ch = clamped % 4;
+    vec4 v = slot == 0 ? XR_UBER_GlobalMaskOverrides[0]
+        : (slot == 1 ? XR_UBER_GlobalMaskOverrides[1]
+        : (slot == 2 ? XR_UBER_GlobalMaskOverrides[2] : XR_UBER_GlobalMaskOverrides[3]));
+    if (ch == 0) v.r = value;
+    else if (ch == 1) v.g = value;
+    else if (ch == 2) v.b = value;
+    else v.a = value;
+    if (slot == 0) XR_UBER_GlobalMaskOverrides[0] = v;
+    else if (slot == 1) XR_UBER_GlobalMaskOverrides[1] = v;
+    else if (slot == 2) XR_UBER_GlobalMaskOverrides[2] = v;
+    else XR_UBER_GlobalMaskOverrides[3] = v;
+}
+
+float XR_UBER_BlendMask(float baseMask, float blendMask, int blendType)
+{
+    if (blendType == 0) return clamp(blendMask, 0.0, 1.0);
+    if (blendType == 1) return clamp(baseMask - blendMask, 0.0, 1.0);
+    if (blendType == 2) return clamp(baseMask * blendMask, 0.0, 1.0);
+    if (blendType == 3) return clamp(baseMask / max(blendMask, 0.0001), 0.0, 1.0);
+    if (blendType == 4) return min(baseMask, blendMask);
+    if (blendType == 5) return max(baseMask, blendMask);
+    if (blendType == 6) return clamp((baseMask + blendMask) * 0.5, 0.0, 1.0);
+    return clamp(baseMask + blendMask, 0.0, 1.0);
+}
+
 float XR_UBER_GlobalMask(XRUberCoordinates c, int encodedIndex,
     uvec4 slots, vec3 cameraPosition, vec3 normal, vec3 viewDir, float timeScale)
 {
     if (encodedIndex <= 0 || !XR_UBER_HasFeature(XR_UBER_FEATURE_GLOBAL_MASKS_THEMES))
         return 1.0;
     int zeroBased = clamp(encodedIndex - 1, 0, 15);
+    if ((XR_UBER_GlobalMaskOverrideBits & (1u << uint(zeroBased))) != 0u)
+        return XR_UBER_ReadGlobalMaskOverride(zeroBased);
     int textureIndex = zeroBased / 4;
     int selector;
     vec4 st;

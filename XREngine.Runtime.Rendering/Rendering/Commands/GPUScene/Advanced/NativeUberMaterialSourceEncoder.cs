@@ -42,7 +42,7 @@ public static class NativeUberMaterialSourceEncoder
         }
         if (material.IsUberFeatureEnabled("dissolve", false))
             return true;
-        return material.Parameter<ShaderInt>("_Mode") is { Value: 1 };
+        return material.Parameter<ShaderInt>("_Mode") is { Value: 1 or 9 };
     }
 
     public static bool TryEncode(
@@ -113,9 +113,19 @@ public static class NativeUberMaterialSourceEncoder
             return false;
         }
         words[NativeUberMaterialSchema.FeatureWordOffset] = features;
-        // A material without this parameter receives world AO in full.
+        // Materials without explicit overrides receive full world AO, neutral global-mask range, and neutral post-process scaling.
         words[NativeUberMaterialSchema.ParameterWordOffset(
             NativeUberMaterialSchema.ParameterIndex("_WorldAmbientOcclusionStrength"))] = BitConverter.SingleToUInt32Bits(1.0f);
+        uint oneBits = BitConverter.SingleToUInt32Bits(1.0f);
+        Span<uint> globalMaskMax = words.Slice(
+            NativeUberMaterialSchema.ParameterWordOffset(NativeUberMaterialSchema.ParameterIndex("_GlobalMaskMax")), 4);
+        globalMaskMax.Fill(oneBits);
+        Span<uint> sourcePostProcess = words.Slice(
+            NativeUberMaterialSchema.ParameterWordOffset(NativeUberMaterialSchema.ParameterIndex("_SourcePostProcess")), 4);
+        sourcePostProcess[0] = 0u;
+        sourcePostProcess[1] = oneBits;
+        sourcePostProcess[2] = oneBits;
+        sourcePostProcess[3] = oneBits;
 
         foreach (ShaderVar parameter in material.Parameters)
         {
@@ -185,7 +195,7 @@ public static class NativeUberMaterialSourceEncoder
             roleTextures[role] = null;
             EAdvancedResourceFallback fallback = name == "_BumpMap"
                 ? EAdvancedResourceFallback.FlatNormal
-                : name == "_AudioLinkTexture" || name.Contains("Emission", StringComparison.Ordinal)
+                : name == "_AudioLinkTexture"
                     ? EAdvancedResourceFallback.Black
                 : EAdvancedResourceFallback.White;
             if (!AdvancedGpuResourceSourceEncoder.TryEncode(texture, fallback,
@@ -348,7 +358,7 @@ public static class NativeUberMaterialSourceEncoder
             }
         }
         if (material.IsUberFeatureEnabled("surface-extensions", false) &&
-            (IsNonZero(material, "_DistanceFade") || IsNonZero(material, "_AlphaFresnel") ||
+            (IsNonZero(material, "_DistanceFade") ||
              IsNonZero(material, "_AlphaAngular") || IsNonZero(material, "_AlphaDither") ||
              IsNonZero(material, "_DepthAlphaEnabled")))
         {
@@ -365,12 +375,6 @@ public static class NativeUberMaterialSourceEncoder
              IsNonZero(material, "_LightingForceColor")))
         {
             reason = "Native Uber forced light direction or color has no matching native operation.";
-            return false;
-        }
-        if (material.IsUberFeatureEnabled("layered-matcap-rim", false) &&
-            IsNonZero(material, "_Rim2Enable"))
-        {
-            reason = "Native Uber second rim layer has no matching native operation.";
             return false;
         }
         if (material.IsUberFeatureEnabled("layered-emission", false) &&
@@ -398,7 +402,8 @@ public static class NativeUberMaterialSourceEncoder
              IsNonZero(material, "_ProximityStrength") ||
              IsNonZero(material, "_TouchGlowStrength") ||
              IsNonZero(material, "_VideoBlend") ||
-             IsNonZero(material, "_ProceduralMode")))
+             (IsNonZero(material, "_ProceduralMode") &&
+              material.Parameter<ShaderInt>("_ProceduralMode") is not { Value: 6 })))
         {
             reason = "Native Uber active extended effect has no matching native operation.";
             return false;
@@ -415,7 +420,7 @@ public static class NativeUberMaterialSourceEncoder
                 bool supportedGlobalMask = IsSupportedDecalGlobalMask(material, decalModifiers.Y);
                 if (decalModifiers.X is not (0f or 1f or 2f) ||
                     !supportedGlobalMask ||
-                    decalModifiers.Z is not (0f or 1f) ||
+                    decalModifiers.Z is not (0f or 1f or 2f) ||
                     decalModifiers.W != 0f ||
                     decalFx.Z != 0f)
                 {

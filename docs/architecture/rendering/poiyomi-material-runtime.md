@@ -59,21 +59,34 @@ blend, depth, stencil, and cull state is independent from the base pass.
 - Reusable reference implementations whose live behavior remains inline:
   `backface.glsl`, `details.glsl`, `emission.glsl`, `matcap.glsl`, `pbr.glsl`,
   `specular.glsl`, and `subsurface.glsl`.
-- Dormant for its later parity phase: `decals.glsl`.
+- Inline surface-extension contracts own four-slot decals alongside
+  `decals.glsl` reference helpers.
 - Reusable legacy references: `outline.vert` and `outline.frag`.
 - Obsolete and superseded by the canonical pass branch: `outlines.glsl`.
 
 A helper file is not evidence that a feature is supported. Support requires a
 reachable canonical render-pass path. The variant builder prunes disabled
-feature guards and sampler declarations and now computes transitive feature
+feature guards and sampler declarations and computes transitive feature
 dependency closure before generating the variant.
 
-## Repeated Slots
+## Locked Shader Reconciliation And Cooked Textures
 
-`UberMaterialSlotSchemas` owns the reusable contracts for four decals, four
-matcaps, four emissions, and two rims. Each schema defines its feature owner,
-field suffixes, sampler roles, and maximum specialized slot count. Counts remain
-compile-time axes; inactive families do not retain unrelated samplers.
+`SourceToonLockedShaderReconciler` reconciles locked source toon materials against
+their compiled base-pass HLSL before material conversion:
+
+- Matches `[ThryToggle(KEYWORD)]` and `[ThryToggle(KEYWORD, true|false)]`
+  attribute forms so locked pass defines update section toggles and keywords.
+- Strips samplers whose `PROP_*` define is absent under `OPTIMIZER_ENABLED` and
+  applies inline baked scalar and vector constants unless the property remains
+  animated.
+- Preserves Unity `.meta` mipmap generation (`SmallestAllowedMipmapLevel` set
+  to `1000` when mipmaps are enabled) and trilinear filter state when cooking
+  hydrated prefab textures into `.pak` archives.
+- Rebinds pathless cooked `NativeUberV1` fragment shader copies to the canonical
+  host `UberShader.frag` during `XRMaterial.EnsureUberStateInitialized` and
+  `UberShaderVariantBuilder` compilation when host shader files are accessible,
+  so cooked `.pak` materials use current engine shader sources without
+  re-cooking.
 
 ## Resource Limits And Binding Ladder
 
@@ -92,6 +105,12 @@ uniform storage for both OpenGL 4.6 and Vulkan 1.0; Vulkan also records the
 The planner never silently drops a texture. `UberSamplerFallbacks` supplies
 role-aware color, normal, white/black mask, zero-data, neutral-height, and black
 emission defaults.
+
+`GaussianAvatarSplatMaterialTable` packs `NativeUber` material records for live
+Gaussian avatar surface splats within a 128-slot 2D texture table. It skips
+sampler roles whose owning Uber feature bit is disabled and reuses existing
+1-based slot indices when multiple materials or roles reference the same
+`XRTexture2D` or source file path.
 
 ## Validation
 

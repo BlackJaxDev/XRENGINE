@@ -36,10 +36,11 @@ public partial class XRMaterial
     /// <see cref="TransparencyMode"/> for a plain blended material.
     /// </summary>
     /// <remarks>
-    /// Derivation covers only <see cref="ETransparencyMode.AlphaBlend"/> in the transparent
-    /// forward pass (sorted alpha) and <see cref="ETransparencyMode.WeightedBlendedOit"/> in the
-    /// weighted blended OIT pass. Derived metadata never requests the scene color snapshot, so
-    /// a material that samples scene color must still author its metadata. The derived records
+    /// Derivation covers standard blended forward modes (<see cref="ETransparencyMode.AlphaBlend"/>,
+    /// <see cref="ETransparencyMode.PremultipliedAlpha"/>, and <see cref="ETransparencyMode.Additive"/>)
+    /// in the transparent forward pass (sorted alpha) and <see cref="ETransparencyMode.WeightedBlendedOit"/>
+    /// in the weighted blended OIT pass. Derived metadata never requests the scene color snapshot,
+    /// so a material that samples scene color must still author its metadata. The derived records
     /// are shared and immutable, so this call does not allocate.
     /// </remarks>
     public AdvancedLatePassMetadata? ResolveAdvancedLatePassMetadata()
@@ -49,7 +50,10 @@ public partial class XRMaterial
 
         return TransparencyMode switch
         {
-            ETransparencyMode.AlphaBlend when RenderPass == (int)EDefaultRenderPass.TransparentForward
+            (ETransparencyMode.AlphaBlend
+                or ETransparencyMode.PremultipliedAlpha
+                or ETransparencyMode.Additive)
+                when RenderPass == (int)EDefaultRenderPass.TransparentForward
                 => s_derivedSortedAlphaMetadata,
             ETransparencyMode.WeightedBlendedOit when RenderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward
                 => s_derivedWeightedBlendedOitMetadata,

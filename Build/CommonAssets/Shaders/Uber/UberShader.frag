@@ -196,7 +196,7 @@ float XRE_ComputeOitWeight(float alpha)
 }
 
 // Writes both MRT outputs used by the weighted-blended resolve pass.
-void XRE_WriteWeightedBlendedOit(vec4 shadedColor)
+void XRE_WriteWeightedBlendedOit(vec4 shadedColor, bool alreadyPremultiplied)
 {
     float alpha = clamp(shadedColor.a, 0.0, 1.0);
     // Fully transparent fragments contribute nothing; discard so we don't
@@ -205,7 +205,7 @@ void XRE_WriteWeightedBlendedOit(vec4 shadedColor)
         discard;
 
     float weight = XRE_ComputeOitWeight(alpha);
-    vec3 premultiplied = shadedColor.rgb * alpha;
+    vec3 premultiplied = alreadyPremultiplied ? shadedColor.rgb : shadedColor.rgb * alpha;
     OutAccum = vec4(premultiplied * weight, alpha * weight);
     OutRevealage = vec4(alpha);
 }
@@ -224,10 +224,10 @@ void XRENGINE_BeginForwardFragmentOutput()
 
 // Single dispatch point for the final color so the rest of the shader is
 // indifferent to which transparency technique this variant uses.
-void XRENGINE_WriteForwardFragment(vec4 shadedColor)
+void XRENGINE_WriteForwardFragment(vec4 shadedColor, bool alreadyPremultiplied)
 {
 #if defined(XRENGINE_FORWARD_WEIGHTED_OIT)
-    XRE_WriteWeightedBlendedOit(shadedColor);
+    XRE_WriteWeightedBlendedOit(shadedColor, alreadyPremultiplied);
 #elif defined(XRENGINE_FORWARD_PPLL)
     XRE_StorePerPixelLinkedListFragment(shadedColor);
 #elif defined(XRENGINE_DEPTH_NORMAL_PREPASS) || defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
@@ -236,6 +236,11 @@ void XRENGINE_WriteForwardFragment(vec4 shadedColor)
 #else
     FragColor = shadedColor;
 #endif
+}
+
+void XRENGINE_WriteForwardFragment(vec4 shadedColor)
+{
+    XRENGINE_WriteForwardFragment(shadedColor, false);
 }
 
 // ============================================
@@ -472,7 +477,7 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
     color = mix(vec3(lum), color, 1.0 + _Saturation * adjustMask.b);
     
     // Brightness adjustment
-    color += _MainBrightness * adjustMask.g;
+    color = clamp(mix(color, color * (_MainBrightness + 1.0), adjustMask.g), 0.0, 1.0);
     
     // Hue shift
     if (_MainHueShiftToggle > 0.5) {
@@ -1919,10 +1924,10 @@ vec3 calculateSourceClearCoat(ToonMesh mesh, vec3 normal, ToonLight primaryLight
     return vec3(0.0);
 #else
     if (_SourceClearCoat.x <= 0.5) return vec3(0.0);
-    vec4 packed = texture(_SourceClearCoatMaps,
+    vec4 clearCoatPacked = texture(_SourceClearCoatMaps,
         transformUV(mesh.uv[0], _SourceClearCoatMaps_ST));
-    float smoothness = _SourceClearCoat.y * packed.g;
-    float specularMask = _SourceClearCoat.w * packed.a;
+    float smoothness = _SourceClearCoat.y * clearCoatPacked.g;
+    float specularMask = _SourceClearCoat.w * clearCoatPacked.a;
     float materialAo = sampleMaterialAmbientOcclusion(mesh);
     vec3 normalDx = dFdx(normal), normalDy = dFdy(normal);
     vec3 direct = xrSourceGgxLobe(normal, mesh.viewDir, primaryLight.direction,
@@ -2031,10 +2036,10 @@ vec3 calculateSourceClearCoat(ToonMesh mesh, vec3 normal, ToonLight primaryLight
         xrSourcePerceptualRoughness(smoothness, normalDx, normalDy,
             _SourceClearCoatGsaa));
     vec3 reflection = xrSourceClearCoatReflection(rawReflection,
-        primaryLight.color, smoothness, _SourceClearCoat.z * packed.b,
+        primaryLight.color, smoothness, _SourceClearCoat.z * clearCoatPacked.b,
         materialAo, abs(dot(normal, mesh.viewDir)), normalDx, normalDy,
         _SourceClearCoatGsaa, _SourceClearCoatReflection);
-    return clamp((direct + reflection) * packed.r * _SourceClearCoatGsaa.w,
+    return clamp((direct + reflection) * clearCoatPacked.r * _SourceClearCoatGsaa.w,
         vec3(0.0), vec3(1.0));
 #endif
 }
@@ -2051,6 +2056,7 @@ vec3 calculateSourceClearCoat(ToonMesh mesh, vec3 normal, ToonLight primaryLight
 void main() {
     // ---- 1. Build ToonMesh --------------------------------------------------
     ToonMesh mesh;
+    uberResetGlobalMaskOverrides();
     mesh.uv[0] = FragUV0;
     mesh.uv[1] = FragUV1;
     mesh.uv[2] = FragUV2;
@@ -2080,7 +2086,7 @@ void main() {
     // fallback for meshes that did not provide usable tangents.
     // Initialize to an identity-like frame so downstream helpers that touch
     // TBN directly (rare) still see a well-formed matrix.
-#if !defined(XRENGINE_UBER_DISABLE_NORMAL_MAP) || !defined(XRENGINE_UBER_DISABLE_DETAIL_TEXTURES) || !defined(XRENGINE_UBER_DISABLE_PARALLAX)
+#if !defined(XRENGINE_UBER_DISABLE_NORMAL_MAP) || !defined(XRENGINE_UBER_DISABLE_DETAIL_TEXTURES) || !defined(XRENGINE_UBER_DISABLE_PARALLAX) || !defined(XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS)
     {
         mesh.TBN = computeImportedOrFallbackWorldTbn(mesh.vertexNormal,
             FragTan * frameFacing, FragBinorm * frameFacing, mesh.worldPos, mesh.uv[0]);
@@ -2177,7 +2183,7 @@ void main() {
 #endif
 
     // Test final alpha after decals and dissolve in every coverage pass.
-    if (_Mode == BLEND_MODE_CUTOUT && fragData.alpha < _Cutoff)
+    if ((_Mode == BLEND_MODE_CUTOUT || _Mode == 9) && fragData.alpha < _Cutoff)
         discard;
 
 #if defined(XRENGINE_OUTLINE_PASS)
@@ -2246,6 +2252,31 @@ void main() {
         fragData.baseColor = mix(fragData.baseColor, uberBlendRgb(fragData.baseColor, detailColor, _DetailTexBlendMode), detailStrength);
     }
 #endif
+    fragData.alpha = uberApplyDepthIntersectionAlpha(fragData.alpha, mesh);
+    bool grabPassBlendActive = false;
+    vec3 grabTransmission = vec3(0.0);
+    float diffusePremultiplyScale = 1.0;
+    float finalOutputAlpha = fragData.alpha;
+    bool oitPremultiplied = false;
+#if !defined(XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS) && !defined(XRENGINE_FORWARD_PPLL)
+    if (_Mode != BLEND_MODE_OPAQUE && _Mode != BLEND_MODE_CUTOUT) {
+        if (_SourceGrabPassBlendMode > 0.5) {
+            float grabB = clamp(_SourceGrabPassBlendFactor, 0.0, 1.0) * (1.0 - saturate(fragData.alpha));
+            float grabSa = 1.0 - grabB;
+            int grabMode = int(_SourceGrabPassBlendMode + 0.5);
+            float grabForegroundScale = grabMode == 1
+                ? (1.0 - grabB * grabB)
+                : (grabMode == 2 ? grabSa : 1.0);
+            fragData.baseColor *= grabForegroundScale;
+            grabTransmission = vec3(grabB * grabB);
+            grabPassBlendActive = true;
+            oitPremultiplied = true;
+        } else if (_AlphaPremultiply > 0.5) {
+            diffusePremultiplyScale = saturate(fragData.alpha);
+            oitPremultiplied = true;
+        }
+    }
+#endif
     
     // PBR and stylized feature overlays share this surface/light context even
     // when a pass disables direct forward lighting. Keep it defined for those
@@ -2265,7 +2296,7 @@ void main() {
                 clamp(_ShadowStrength * sampleLightingShadowMask(mesh), 0.0, 1.0));
         }
 #endif
-        uberApplyMatcapSlots(fragData.baseColor, fragData.emission, matcapLightAdd, mesh, matcapLight);
+        uberApplyMatcapSlotsWithTransmission(fragData.baseColor, fragData.emission, matcapLightAdd, grabTransmission, mesh, matcapLight);
     }
 #endif
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_PBR
@@ -2300,9 +2331,34 @@ void main() {
         vec3 rimColor = rimTexel.rgb * uberResolveThemeColor(_RimLightColorThemeIndex,
             _RimLightColor.rgb) * mix(vec3(1.0), fragData.baseColor,
             _SourceRimColorSettings.x) * _SourceRimColorSettings.y;
-        fragData.baseColor = xrSourceRimBlend(fragData.baseColor, rimColor,
-            rim * _RimBlendStrength, int(_SourceRimColorSettings.z + 0.5));
+        int rimBlendMode = int(_SourceRimColorSettings.z + 0.5);
+        float rimBlendAmount = rim * _RimBlendStrength;
+        fragData.baseColor = xrSourceRimBlend(fragData.baseColor, rimColor, rimBlendAmount, rimBlendMode);
+        grabTransmission *= xrSourceRimTransmissionScale(rimColor, rimBlendAmount, rimBlendMode);
         fragData.emission += rimColor * rim * _RimEmission;
+    }
+#endif
+#ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
+    if (_Rim2Enable != 0 && _SourceRim2Settings.x > 0.5) {
+        vec2 rim2Uv = panUV(transformUV(getUV(_Rim2ColorTextureUV, mesh), _Rim2ColorTexture_ST),
+            _Rim2ColorTexturePan, u_Time * 0.05);
+        vec4 rim2Texel = texture(_Rim2ColorTexture, rim2Uv);
+        vec2 rim2MaskUv = panUV(transformUV(getUV(_Rim2MaskUV, mesh), _Rim2Mask_ST),
+            _Rim2MaskPan, u_Time * 0.05);
+        float rim2Mask = texture(_Rim2Mask, rim2MaskUv)[clamp(_Rim2MaskChannel, 0, 3)];
+        bool rim2UsesBlur = _SourceRim2ColorSettings.w > 0.5;
+        float rim2Sharpness = rim2UsesBlur ? _SourceRim2ColorSettings.w - 1.0 : _SourceRim2Params.y;
+        float rim2Amount = xrSourceRimAmount(mesh.vertexNormal, mesh.worldNormal, mesh.viewDir,
+            _SourceRim2Params.x, rim2Sharpness, _SourceRim2Settings, rim2UsesBlur) *
+            _Rim2Color.a * _Rim2Color.a * rim2Texel.a * rim2Mask;
+        vec3 rim2Color = rim2Texel.rgb * uberResolveThemeColor(_Rim2LightColorThemeIndex,
+            _Rim2Color.rgb) * mix(vec3(1.0), fragData.baseColor,
+            _SourceRim2ColorSettings.x) * _SourceRim2ColorSettings.y;
+        int rim2BlendMode = int(_SourceRim2ColorSettings.z + 0.5);
+        float rim2BlendAmount = rim2Amount * _SourceRim2Params.z;
+        fragData.baseColor = xrSourceRimBlend(fragData.baseColor, rim2Color, rim2BlendAmount, rim2BlendMode);
+        grabTransmission *= xrSourceRimTransmissionScale(rim2Color, rim2BlendAmount, rim2BlendMode);
+        fragData.emission += rim2Color * rim2Amount * _SourceRim2Params.w;
     }
 #endif
     // Source hair anisotropy changes base color before diffuse shading and
@@ -2352,6 +2408,30 @@ void main() {
     float materialAmbientOcclusion = 1.0;
 #endif
     float combinedAmbientOcclusion = saturate(screenAmbientOcclusion * materialAmbientOcclusion);
+#ifndef XRENGINE_UBER_DISABLE_ADVANCED_PBR
+    if (_SourceUtsSettings.x > 0.0001) {
+        ToonLight utsLight = calculateLighting(mesh, mesh.worldNormal, vec3(0.0));
+        float utsRampedMap = utsLight.lightMap;
+#ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+        if (_SourceLightMode != 0 && _LightingMode == 0) {
+            vec2 utsRampUv = vec2(clamp(utsLight.lightMap + _ShadowOffset, 0.0, 1.0),
+                getUV(_ToonRampUV, mesh).y);
+            utsRampUv = utsRampUv * _ToonRamp_ST.xy + _ToonRamp_ST.zw + _ToonRampPan * u_Time;
+            utsRampedMap = mix(1.0, texture(_ToonRamp, utsRampUv).r,
+                clamp(_ShadowStrength * sampleLightingShadowMask(mesh), 0.0, 1.0));
+        }
+#endif
+        float utsSpecArea = xrSourceUtsSpecArea(mesh.vertexNormal, mesh.worldNormal,
+            _SourceUtsSettings.y, mesh.viewDir, utsLight.direction);
+        xrSourceApplyUtsSpecular(utsSpecArea, fwidth(utsSpecArea), utsLight.color,
+            utsRampedMap, saturate(utsLight.nDotL), utsLight.attenuation,
+            combinedAmbientOcclusion, _SourceUtsSettings, _SourceUtsLayer1,
+            _SourceUtsLayer2, uberResolveThemeColor(int(_SourceUtsColor.w + 0.5),
+                _SourceUtsColor.rgb), _SourceUtsFlags, fragData.baseColor, matcapLightAdd);
+        surfacePbr.F0 = mix(vec3(0.04), fragData.baseColor, surfacePbr.metallic);
+        surfacePbr.diffuseColor = fragData.baseColor * (1.0 - surfacePbr.metallic);
+    }
+#endif
     vec3 ambientLighting = calculateForwardAmbientLightingWithProbe(mesh,
         fragData.baseColor, mesh.worldNormal, surfacePbr,
         combinedAmbientOcclusion, sourceProbeDiffuse, sourceProbeSpecular);
@@ -2493,13 +2573,25 @@ void main() {
 #endif
 #endif
 
+    if (grabPassBlendActive)
+        finalOutputAlpha = saturate(1.0 - dot(clamp(grabTransmission, vec3(0.0), vec3(1.0)), vec3(0.299, 0.587, 0.114)));
+    sourceDiffuseBase *= diffusePremultiplyScale;
+    sourceProbeDiffuse *= diffusePremultiplyScale;
+    vec3 pbrDiffuseBaseColor = fragData.baseColor * diffusePremultiplyScale;
+    if (diffusePremultiplyScale != 1.0) {
+        surfacePbr.diffuseColor *= diffusePremultiplyScale;
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
+        ambientLighting = (ambientLighting - sourceProbeSpecular) * diffusePremultiplyScale + sourceProbeSpecular;
+#endif
+    }
+
     // Evaluate local shadows once. Keep each directional response separate.
 #ifdef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
-    fragData.finalColor = fragData.baseColor;
+    fragData.finalColor = pbrDiffuseBaseColor;
 #else
     vec3 primaryStylizedLighting = vec3(0.0);
     vec3 directionalLighting;
-    vec3 localBaseColor = fragData.baseColor;
+    vec3 localBaseColor = pbrDiffuseBaseColor;
 #ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     if (_LightingMode != 6) {
         localBaseColor = sourceDiffuseBase;
@@ -2509,7 +2601,7 @@ void main() {
         localBaseColor, surfacePbr);
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     directionalLighting = calculateForwardDirectionalLighting(mesh, mesh.worldNormal,
-        fragData.baseColor, surfacePbr, false);
+        pbrDiffuseBaseColor, surfacePbr, false);
 #else
     // Direct, braced dispatch lets static variants remove unused directionals.
     if (_LightingMode != 6) {
@@ -2524,7 +2616,7 @@ void main() {
             sourceDiffuseBase, mesh.worldNormal);
     } else {
         directionalLighting = calculateForwardDirectionalLighting(mesh, mesh.worldNormal,
-            fragData.baseColor, surfacePbr, false);
+            pbrDiffuseBaseColor, surfacePbr, false);
     }
 #endif
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
@@ -2538,9 +2630,9 @@ void main() {
 #endif
 #endif
 
-#if !defined(XRENGINE_UBER_DISABLE_STYLIZED_SHADING) && !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING)
-    if (_SourceLightMode != 0 && _LightingMode != 6)
-        fragData.finalColor += sourceProbeSpecular + (SourceSHEnabled ? vec3(0.0) : sourceProbeDiffuse);
+#if !defined(XRENGINE_UBER_DISABLE_STYLIZED_SHADING) && !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING) && !defined(XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR)
+    if (_SourceLightMode != 0 && _LightingMode != 6 && _SourceMochieSecond.w > 0.5)
+        fragData.finalColor += sourceProbeSpecular;
 #endif
 
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
@@ -2649,8 +2741,8 @@ void main() {
     // Final composite: emission is always added on top of lit color so it
     // remains bright through tonemap and bloom.
     fragData.finalColor += fragData.emission;
+    fragData.finalColor = uberApplySourcePostProcess(fragData.finalColor);
     fragData.finalColor = uberApplyPostEffects(mesh, fragData.finalColor);
-    fragData.alpha = uberApplyDepthIntersectionAlpha(fragData.alpha, mesh);
 
     // ---- 8. Final write -----------------------------------------------------
     vec4 shadedColor = vec4(fragData.finalColor, fragData.alpha);
@@ -2661,11 +2753,13 @@ void main() {
     if (_Mode == BLEND_MODE_OPAQUE || _Mode == BLEND_MODE_CUTOUT) {
         shadedColor.a = 1.0;
     } else {
-#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
-        shadedColor.rgb = mix(shadedColor.rgb, shadedColor.rgb * shadedColor.a, saturate(_AlphaPremultiply));
+#if !defined(XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS) && !defined(XRENGINE_FORWARD_PPLL)
+        if (_SourceGrabPassBlendMode > 0.5) {
+            shadedColor.a = finalOutputAlpha;
+        }
 #endif
     }
 
-    XRENGINE_WriteForwardFragment(shadedColor);
+    XRENGINE_WriteForwardFragment(shadedColor, oitPremultiplied);
 #endif
 }

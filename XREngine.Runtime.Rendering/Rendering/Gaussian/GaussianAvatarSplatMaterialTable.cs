@@ -55,6 +55,8 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
 
     private readonly Dictionary<XRMaterial, InternedMaterialEntry> _internedMaterials = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<XRTexture2D, uint> _texture2DSlots = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<TextureContentKey, uint> _texture2DContentSlots = [];
+    private readonly Dictionary<string, uint> _texture2DSourceSlots = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<XRTextureCube, uint> _textureCubeSlots = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, ShaderUiProperty> _uberManifestProperties = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _uberUniformGlslTypes = new(StringComparer.Ordinal);
@@ -78,6 +80,10 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
     private XRDataBuffer? _materialConstantsBuffer;
     private XRDataBuffer? _textureBindingsBuffer;
     private uint _activeUberFeatureMask;
+    private int _texture2DReuseCount;
+    private int _constantTextureBindingCount;
+    private int _disabledRoleTextureCount;
+    private int _texture2DOverflowCount;
     private bool _fallbackTexturesPushed;
     private bool _disposed;
 
@@ -142,6 +148,27 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
 
     /// <summary>Number of interned 2D textures including the four shared fallback textures.</summary>
     public int Texture2DCount => _textures2D.Count;
+
+    /// <summary>
+    /// Number of material texture references that use an already interned slot because a different texture object
+    /// has the same pixels or the same source file. Separately deserialized copies of one texture use one slot.
+    /// </summary>
+    public int Texture2DReuseCount => _texture2DReuseCount;
+
+    /// <summary>
+    /// Number of texture bindings that point to a shared fallback slot because the authored texture is a 1x1 or 2x2
+    /// solid white, black, or flat-normal texture. These textures do not use their own slot.
+    /// </summary>
+    public int ConstantTextureBindingCount => _constantTextureBindingCount;
+
+    /// <summary>Number of authored textures that are not interned because the feature that samples them is off.</summary>
+    public int DisabledRoleTextureCount => _disabledRoleTextureCount;
+
+    /// <summary>
+    /// Number of texture bindings that use the role default fallback because all <see cref="MaxTextures2D"/> slots
+    /// were full. A value above zero means that some materials render without one or more authored textures.
+    /// </summary>
+    public int Texture2DOverflowCount => _texture2DOverflowCount;
 
     /// <summary>True when all interned textures have been uploaded to the active render backend and streamed 2D textures have reached mip-0 residency.</summary>
     public bool AreStreamedTexturesReady
@@ -418,6 +445,18 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         return null;
     }
 
+    private static void SeedNativeUberVectorDefaults(uint[] words)
+    {
+        WriteFloat(words, "_WorldAmbientOcclusionStrength", 1.0f);
+        Span<uint> globalMaskMax = words.AsSpan(
+            NativeUberMaterialSchema.ParameterWordOffset(NativeUberMaterialSchema.ParameterIndex("_GlobalMaskMax")), 4);
+        globalMaskMax.Fill(BitConverter.SingleToUInt32Bits(1.0f));
+        _ = TryWriteGlslLiteralWords(
+            "vec4",
+            "vec4(0.0, 1.0, 1.0, 1.0)",
+            words.AsSpan(NativeUberMaterialSchema.ParameterWordOffset(NativeUberMaterialSchema.ParameterIndex("_SourcePostProcess")), 4));
+    }
+
     private InternedMaterialEntry EncodeUberMaterial(XRMaterial material)
     {
         MaterialBindingLayout layout = NativeUberMaterialSchema.Opaque;
@@ -442,7 +481,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
             // Match NativeUberMaterialSourceEncoder.TryEncode directly so canonical NativeUberV1
             // materials preserve composite source vectors (such as _SourceRimSettings,
             // _SourceLightSettings, and _SourceMochieSettings) without manifest static-literal overrides.
-            WriteFloat(words, "_WorldAmbientOcclusionStrength", 1.0f);
+            SeedNativeUberVectorDefaults(words);
             foreach (ShaderVar? parameter in material.Parameters)
             {
                 if (parameter?.Name is not { } name)
@@ -462,7 +501,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
             // Non-canonical Uber fallback: seed manifest defaults, authored static literals, and
             // baked variant properties first, then apply runtime material parameters last.
             ApplyManifestDefaults(words);
-            WriteFloat(words, "_WorldAmbientOcclusionStrength", 1.0f);
+            SeedNativeUberVectorDefaults(words);
             WriteFloat(words, "_Cutoff", material.AlphaCutoff);
 
             UberMaterialPropertyState[] authoredProperties = material.UberAuthoredState.Properties;
@@ -533,6 +572,13 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
             XRTexture? candidate = roleTextures[role];
             if (candidate is not null && IsGeneratedPlaceholderTexture(candidate, roleName))
                 candidate = null;
+
+            // A disabled feature never samples its roles, so its textures must not use one of the shared slots.
+            if (candidate is not null && !IsTextureRoleFeatureEnabled(roleName, features))
+            {
+                _disabledRoleTextureCount++;
+                candidate = null;
+            }
 
             _textureBindings.Add(EncodeUberTextureRole(roleName, candidate));
         }
@@ -837,8 +883,20 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
 
         if (authoredTexture is XRTexture2D tex2D)
         {
-            uint slot2D = InternTexture2D(tex2D);
-            return CreateTextureBinding(slot2D, EAdvancedResourceFallback.Zero);
+            // Solid 1x1 or 2x2 textures, such as importer placeholders for unassigned Unity samplers, sample the
+            // same value as a shared fallback texture. Bind that fallback instead of using a slot per copy.
+            if (TryResolveConstantFallback(tex2D, out uint constantSlot, out EAdvancedResourceFallback constantKind))
+            {
+                _constantTextureBindingCount++;
+                return CreateTextureBinding(constantSlot, constantKind);
+            }
+
+            if (TryInternTexture2D(tex2D, out uint slot2D))
+                return CreateTextureBinding(slot2D, EAdvancedResourceFallback.Zero);
+
+            // All slots are full. The role default keeps the neutral value of the role. A white fallback would
+            // turn multiply decals, masks, and emission maps fully on.
+            _texture2DOverflowCount++;
         }
 
         ResolveDefaultRoleFallback(roleName, out uint fallbackSlot, out EAdvancedResourceFallback fallbackKind);
@@ -851,26 +909,58 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         EAdvancedResourceFallback fallbackKind)
     {
         if (texture is XRTexture2D tex2D)
-            return CreateTextureBinding(InternTexture2D(tex2D), EAdvancedResourceFallback.Zero);
+        {
+            if (TryInternTexture2D(tex2D, out uint slot2D))
+                return CreateTextureBinding(slot2D, EAdvancedResourceFallback.Zero);
+
+            _texture2DOverflowCount++;
+        }
 
         return CreateTextureBinding(fallbackSlot, fallbackKind);
     }
 
-    private uint InternTexture2D(XRTexture2D texture)
+    /// <summary>
+    /// Finds the 2D slot of <paramref name="texture"/> or adds the texture to the next free slot.
+    /// Textures that hold CPU pixels share a slot when their size, format, wrap modes, and pixels are equal.
+    /// Textures that stream their pixels share a slot when they use the same source file and sampler state.
+    /// Returns false when the texture needs a new slot and all <see cref="MaxTextures2D"/> slots are full.
+    /// </summary>
+    private bool TryInternTexture2D(XRTexture2D texture, out uint slot)
     {
-        if (_texture2DSlots.TryGetValue(texture, out uint existing))
-            return existing;
+        if (_texture2DSlots.TryGetValue(texture, out slot))
+            return true;
+
+        ReadOnlySpan<byte> pixels = GetMip0Pixels(texture);
+        bool hasContentKey = !pixels.IsEmpty;
+        TextureContentKey contentKey = hasContentKey ? CreateContentKey(texture, pixels) : default;
+        string? sourceKey = hasContentKey ? null : CreateSourceKey(texture);
+
+        if (hasContentKey &&
+            _texture2DContentSlots.TryGetValue(contentKey, out uint contentSlot) &&
+            GetMip0Pixels(_textures2D[(int)contentSlot]).SequenceEqual(pixels))
+        {
+            return ReuseSlot(texture, contentSlot, out slot);
+        }
+
+        if (sourceKey is not null && _texture2DSourceSlots.TryGetValue(sourceKey, out uint sourceSlot))
+            return ReuseSlot(texture, sourceSlot, out slot);
 
         if (_textures2D.Count >= MaxTextures2D)
-            return FallbackSlotWhite2D;
+        {
+            slot = 0u;
+            return false;
+        }
 
         texture.PreferSynchronousGpuUpload = true;
-        uint slot = (uint)_textures2D.Count;
+        slot = (uint)_textures2D.Count;
         _textures2D.Add(texture);
         _texture2DSlots.Add(texture, slot);
+        if (hasContentKey)
+            _texture2DContentSlots.TryAdd(contentKey, slot);
+        else if (sourceKey is not null)
+            _texture2DSourceSlots.TryAdd(sourceKey, slot);
 
-        bool hasHydratedCpuMips = texture.Mipmaps is { Length: > 0 } mips && mips[0]?.Data is { Length: > 4 };
-        if (hasHydratedCpuMips)
+        if (hasContentKey)
         {
             texture.AllowAutomaticImportedTextureStreaming = false;
         }
@@ -888,7 +978,138 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
                 _residencyTickets.Add(ticket);
         }
 
-        return slot;
+        return true;
+    }
+
+    private bool ReuseSlot(XRTexture2D texture, uint sharedSlot, out uint slot)
+    {
+        _texture2DSlots.Add(texture, sharedSlot);
+        _texture2DReuseCount++;
+        slot = sharedSlot;
+        return true;
+    }
+
+    /// <summary>
+    /// Returns the CPU pixels of mip 0, or an empty span when the texture streams its pixels or holds only a
+    /// placeholder of four bytes or less.
+    /// </summary>
+    private static ReadOnlySpan<byte> GetMip0Pixels(XRTexture2D texture)
+    {
+        if (texture.Mipmaps is not { Length: > 0 } mips ||
+            mips[0]?.Data is not { Length: > 4 } data ||
+            data.IsDisposed)
+        {
+            return default;
+        }
+
+        return data.AsReadOnlySpan();
+    }
+
+    private static TextureContentKey CreateContentKey(XRTexture2D texture, ReadOnlySpan<byte> pixels)
+    {
+        HashCode hash = new();
+        hash.AddBytes(pixels);
+        return new TextureContentKey(
+            texture.Width,
+            texture.Height,
+            texture.SizedInternalFormat,
+            texture.UWrap,
+            texture.VWrap,
+            pixels.Length,
+            hash.ToHashCode());
+    }
+
+    private static string? CreateSourceKey(XRTexture2D texture)
+    {
+        string? path = !string.IsNullOrWhiteSpace(texture.OriginalPath)
+            ? texture.OriginalPath
+            : texture.FilePath;
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{path}|{texture.SizedInternalFormat}|{texture.UWrap}|{texture.VWrap}");
+    }
+
+    /// <summary>
+    /// Maps a 1x1 or 2x2 texture whose pixels all hold solid white, solid black, or the flat tangent normal
+    /// to the matching shared fallback slot. Other textures return false and use their own slot.
+    /// </summary>
+    private static bool TryResolveConstantFallback(
+        XRTexture2D texture,
+        out uint slot,
+        out EAdvancedResourceFallback kind)
+    {
+        slot = FallbackSlotWhite2D;
+        kind = EAdvancedResourceFallback.White;
+        if (texture.Width > 2 || texture.Height > 2 ||
+            texture.Mipmaps is not { Length: > 0 } mips ||
+            mips[0] is not { PixelType: EPixelType.UnsignedByte } mip ||
+            mip.Data is not { Length: > 0 } data ||
+            data.IsDisposed)
+        {
+            return false;
+        }
+
+        int stride = mip.PixelFormat switch
+        {
+            EPixelFormat.Rgba => 4,
+            EPixelFormat.Rgb => 3,
+            _ => 0,
+        };
+        ReadOnlySpan<byte> pixels = data.AsReadOnlySpan();
+        if (stride == 0 || pixels.Length < stride || pixels.Length % stride != 0)
+            return false;
+
+        ReadOnlySpan<byte> first = pixels[..stride];
+        for (int offset = stride; offset < pixels.Length; offset += stride)
+        {
+            if (!pixels.Slice(offset, stride).SequenceEqual(first))
+                return false;
+        }
+
+        byte r = first[0];
+        byte g = first[1];
+        byte b = first[2];
+        byte a = stride == 4 ? first[3] : (byte)255;
+        if (a < 254)
+            return false;
+
+        if (r >= 254 && g >= 254 && b >= 254)
+            return true;
+
+        if (r <= 1 && g <= 1 && b <= 1)
+        {
+            slot = FallbackSlotBlack2D;
+            kind = EAdvancedResourceFallback.Black;
+            return true;
+        }
+
+        if (Math.Abs(r - 128) <= 2 && Math.Abs(g - 128) <= 2 && b >= 254)
+        {
+            slot = FallbackSlotFlatNormal2D;
+            kind = EAdvancedResourceFallback.FlatNormal;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns false when the canonical Uber manifest declares <paramref name="roleName"/> inside a feature guard
+    /// and that feature bit is off in <paramref name="features"/>. Roles without a feature guard always return true.
+    /// </summary>
+    private bool IsTextureRoleFeatureEnabled(string roleName, uint features)
+    {
+        if (!_uberManifestProperties.TryGetValue(roleName, out ShaderUiProperty? property) ||
+            string.IsNullOrWhiteSpace(property.FeatureId))
+        {
+            return true;
+        }
+
+        int bit = NativeUberMaterialSchema.FeatureIndex(property.FeatureId);
+        return bit is < 0 or >= 32 || (features & (1u << bit)) != 0u;
     }
 
     private uint InternTextureCube(XRTextureCube texture)
@@ -928,8 +1149,7 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         if (string.Equals(roleName, "_PBRMetallicMaps", StringComparison.Ordinal) ||
             string.Equals(roleName, "_ColorMaskTexture", StringComparison.Ordinal) ||
             string.Equals(roleName, "_DissolveDetailNoise", StringComparison.Ordinal) ||
-            string.Equals(roleName, "_AudioLinkTexture", StringComparison.Ordinal) ||
-            roleName.Contains("Emission", StringComparison.Ordinal))
+            string.Equals(roleName, "_AudioLinkTexture", StringComparison.Ordinal))
         {
             fallbackSlot = FallbackSlotBlack2D;
             fallbackKind = EAdvancedResourceFallback.Black;
@@ -1367,6 +1587,19 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         {
         }
     }
+
+    /// <summary>
+    /// Identifies a texture by its size, format, wrap modes, and a hash of its mip-0 pixels. Two textures with an
+    /// equal key share a slot only after a byte comparison confirms that the pixels are equal.
+    /// </summary>
+    private readonly record struct TextureContentKey(
+        uint Width,
+        uint Height,
+        ESizedInternalFormat Format,
+        ETexWrapMode UWrap,
+        ETexWrapMode VWrap,
+        int ByteLength,
+        int ContentHash);
 
     private readonly record struct InternedMaterialEntry(
         uint DenseIndex,

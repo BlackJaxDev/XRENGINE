@@ -10,9 +10,10 @@ layout(location = 2) in vec3 FragLocalPosition;
 layout(location = 3) in vec3 FragWorldNormal;
 layout(location = 4) in vec3 FragWorldTangent;
 layout(location = 5) in vec4 FragUv0Uv1;
-layout(location = 6) flat in float FragTangentHandedness;
-layout(location = 7) flat in float FragBaseOpacity;
-layout(location = 8) flat in uvec2 FragMaterialAndColor;
+layout(location = 6) in vec4 FragUv2Uv3;
+layout(location = 7) flat in float FragTangentHandedness;
+layout(location = 8) flat in float FragBaseOpacity;
+layout(location = 9) flat in uvec2 FragMaterialAndColor;
 
 layout(location = 0) out vec4 OutColor;
 
@@ -186,6 +187,10 @@ void main()
     vec2 uv0Dy = dFdy(FragUv0Uv1.xy);
     vec2 uv1Dx = dFdx(FragUv0Uv1.zw);
     vec2 uv1Dy = dFdy(FragUv0Uv1.zw);
+    vec2 uv2Dx = dFdx(FragUv2Uv3.xy);
+    vec2 uv2Dy = dFdy(FragUv2Uv3.xy);
+    vec2 uv3Dx = dFdx(FragUv2Uv3.zw);
+    vec2 uv3Dy = dFdy(FragUv2Uv3.zw);
 
     float r2 = dot(FragEllipseOffset, FragEllipseOffset);
 #if defined(XR_SPLAT_DEPTH_OCCLUSION_PASS)
@@ -209,16 +214,16 @@ void main()
         XRUberCoordinates coords;
         coords.uv0 = FragUv0Uv1.xy;
         coords.uv1 = FragUv0Uv1.zw;
-        coords.uv2 = FragUv0Uv1.xy;
-        coords.uv3 = FragUv0Uv1.zw;
+        coords.uv2 = FragUv2Uv3.xy;
+        coords.uv3 = FragUv2Uv3.zw;
         coords.uv0Dx = uv0Dx;
         coords.uv0Dy = uv0Dy;
         coords.uv1Dx = uv1Dx;
         coords.uv1Dy = uv1Dy;
-        coords.uv2Dx = uv0Dx;
-        coords.uv2Dy = uv0Dy;
-        coords.uv3Dx = uv1Dx;
-        coords.uv3Dy = uv1Dy;
+        coords.uv2Dx = uv2Dx;
+        coords.uv2Dy = uv2Dy;
+        coords.uv3Dx = uv3Dx;
+        coords.uv3Dy = uv3Dy;
         coords.worldPosition = FragWorldPosition;
         coords.localPosition = FragLocalPosition;
         coords.flatNormal = vec3(0.0);
@@ -299,6 +304,8 @@ void main()
         XR_ADV_ATTRIBUTE_TANGENT |
         XR_ADV_ATTRIBUTE_TEXCOORD0 |
         XR_ADV_ATTRIBUTE_TEXCOORD1 |
+        XR_ADV_ATTRIBUTE_TEXCOORD2 |
+        XR_ADV_ATTRIBUTE_TEXCOORD3 |
         XR_ADV_ATTRIBUTE_COLOR0 |
         XR_ADV_ATTRIBUTE_ANALYTICAL_DERIVATIVES;
     surface.worldPosition = FragWorldPosition;
@@ -315,10 +322,16 @@ void main()
     surface.bitangent = bitangent;
     surface.texCoord0 = FragUv0Uv1.xy;
     surface.texCoord1 = FragUv0Uv1.zw;
+    surface.texCoord2 = FragUv2Uv3.xy;
+    surface.texCoord3 = FragUv2Uv3.zw;
     surface.texCoord0Dx = uv0Dx;
     surface.texCoord0Dy = uv0Dy;
     surface.texCoord1Dx = uv1Dx;
     surface.texCoord1Dy = uv1Dy;
+    surface.texCoord2Dx = uv2Dx;
+    surface.texCoord2Dy = uv2Dy;
+    surface.texCoord3Dx = uv3Dx;
+    surface.texCoord3Dy = uv3Dy;
     surface.color0 = unpackUnorm4x8(FragMaterialAndColor.y);
     surface.tangentHandedness = handedness;
     surface.flags =
@@ -352,17 +365,58 @@ void main()
         discard;
 
     float coverageAlpha = clamp(shaded.opacity, 0.0, 1.0);
-    if (isUber)
+    float splatWeight = clamp(FragBaseOpacity * gaussianWeight, 0.0, 1.0);
+    int uberBlendMode = isUber ? UBER_I(_Mode) : (material.coverageMode == 1u ? 1 : 0);
+    if (uberBlendMode == 0 || uberBlendMode == 1)
     {
-        int uberBlendMode = UBER_I(_Mode);
-        if (uberBlendMode == 0 || uberBlendMode == 1)
-            coverageAlpha = 1.0;
+        float opaqueAlpha = splatWeight;
+        if (opaqueAlpha < MinAlpha)
+            discard;
+
+        OutColor = vec4(shaded.radiance * opaqueAlpha, opaqueAlpha);
     }
+    else
+    {
+        // Surface-sampled avatar splats overlap with mean kernel sum Omega ~= 7.91 and
+        // second moment Omega2 ~= 4.35. Solve per-splat opacity scale s(coverageAlpha) so
+        // accumulated sheet transmittance Prod(1 - s * w_i) equals (1 - coverageAlpha),
+        // and scale premultiplied radiance so accumulated sheet color equals shaded.radiance.
+        const float kSplatOverlapSum = 7.91;
+        const float kSplatOverlapSqSum = 4.35;
+        const float kMaxOpticalDepth = kSplatOverlapSum + 0.5 * kSplatOverlapSqSum;
 
-    float alpha = clamp(coverageAlpha * FragBaseOpacity * gaussianWeight, 0.0, 1.0);
-    if (alpha < MinAlpha)
-        discard;
+        if (uberBlendMode == 4)
+        {
+            vec3 addColor = shaded.radiance * (coverageAlpha * splatWeight / kSplatOverlapSum);
+            if (max(addColor.r, max(addColor.g, addColor.b)) < (1.0 / 2048.0))
+                discard;
 
-    OutColor = vec4(shaded.radiance * alpha, alpha);
+            OutColor = vec4(addColor, 0.0);
+        }
+        else
+        {
+            bool isPremultiplied = isUber &&
+                (UBER_F(_AlphaPremultiply) > 0.5 || UBER_F(_SourceGrabPassBlendMode) > 0.5);
+            float opticalDepth = coverageAlpha >= 0.99995
+                ? kMaxOpticalDepth
+                : min(-log(max(1.0 - coverageAlpha, 1.0e-6)), kMaxOpticalDepth);
+            float alphaScale = clamp(
+                (-kSplatOverlapSum + sqrt(kSplatOverlapSum * kSplatOverlapSum + 2.0 * kSplatOverlapSqSum * opticalDepth)) / kSplatOverlapSqSum,
+                0.0,
+                1.0);
+            float alpha = clamp(alphaScale * splatWeight, 0.0, 1.0);
+            float premultScale = coverageAlpha > 1.0e-4 ? (alphaScale / coverageAlpha) : (1.0 / kSplatOverlapSum);
+            vec3 premultipliedColor = isPremultiplied
+                ? shaded.radiance * (premultScale * splatWeight)
+                : shaded.radiance * alpha;
+            if (alpha < (1.0 / 2048.0) &&
+                max(premultipliedColor.r, max(premultipliedColor.g, premultipliedColor.b)) < (1.0 / 2048.0))
+            {
+                discard;
+            }
+
+            OutColor = vec4(premultipliedColor, alpha);
+        }
+    }
 #endif
 }

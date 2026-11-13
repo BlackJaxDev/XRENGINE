@@ -38,7 +38,7 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
 
     private const uint ComputeLocalSize = 256u;
     private const int MaxSceneLights = 16;
-    private const float DepthOcclusionBiasMeters = 0.0003f;
+    private const float DepthOcclusionBiasMeters = 0.0035f;
     private static readonly uint SurfaceStrideBytes = (uint)Unsafe.SizeOf<GaussianSplatGpuSurface>();
 
     private readonly RenderInfo3D _renderInfo;
@@ -96,6 +96,32 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
     [Browsable(false)]
     [YamlIgnore]
     public int Texture2DCount => _materialTable?.Texture2DCount ?? 0;
+
+    /// <summary>
+    /// Number of material texture references that share an interned 2D slot with an equal texture.
+    /// Diagnostic output uses this value to show how many slots the table saved.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public int Texture2DReuseCount => _materialTable?.Texture2DReuseCount ?? 0;
+
+    /// <summary>Number of texture bindings that point to a shared solid white, black, or flat-normal fallback slot.</summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public int ConstantTextureBindingCount => _materialTable?.ConstantTextureBindingCount ?? 0;
+
+    /// <summary>Number of authored textures that the table did not intern because the feature that samples them is off.</summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public int DisabledRoleTextureCount => _materialTable?.DisabledRoleTextureCount ?? 0;
+
+    /// <summary>
+    /// Number of texture bindings that use the role default because all 2D slots were full.
+    /// A value above zero means that some splat materials are missing authored textures.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public int Texture2DOverflowCount => _materialTable?.Texture2DOverflowCount ?? 0;
 
     /// <summary>Number of sampled avatar submesh slices.</summary>
     [Browsable(false)]

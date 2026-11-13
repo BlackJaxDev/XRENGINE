@@ -9,6 +9,34 @@ namespace XREngine.Rendering.OpenGL
         public partial class GLRenderProgram
         {
             #region Samplers
+            private static readonly string[] s_directionalShadowMapNames =
+            [
+                "DirectionalShadowMaps[0]",
+                "DirectionalShadowMaps[1]",
+            ];
+
+            private static readonly string[] s_directionalShadowMapArrayNames =
+            [
+                "DirectionalShadowMapArrays[0]",
+                "DirectionalShadowMapArrays[1]",
+            ];
+
+            private static readonly string[] s_pointLightShadowMapNames =
+            [
+                "PointLightShadowMaps[0]",
+                "PointLightShadowMaps[1]",
+                "PointLightShadowMaps[2]",
+                "PointLightShadowMaps[3]",
+            ];
+
+            private static readonly string[] s_spotLightShadowMapNames =
+            [
+                "SpotLightShadowMaps[0]",
+                "SpotLightShadowMaps[1]",
+                "SpotLightShadowMaps[2]",
+                "SpotLightShadowMaps[3]",
+            ];
+
             private void RememberSamplerBindingName(string name)
             {
                 if (string.IsNullOrWhiteSpace(name))
@@ -103,22 +131,39 @@ namespace XREngine.Rendering.OpenGL
             {
                 bool canBindUniform = MarkSamplerBinding(location);
 
+                texture.PreSampling();
+                if (!TryResolveSamplerTextureUnit(location, texture, textureUnit, samplerName, out int resolvedTextureUnit, out bool reusedExistingUnit))
+                {
+                    texture.PostSampling();
+                    if (location >= 0)
+                    {
+                        string programName = Data.Name ?? BindingId.ToString();
+                        string resolvedName = samplerName ?? "<unnamed>";
+                        Debug.OpenGLErrorEvery(
+                            $"GLSamplerNoUnit:{programName}:{resolvedName}",
+                            TimeSpan.FromSeconds(30),
+                            $"[Shader Texture Binding] No fragment texture unit available for active sampler '{resolvedName}' in program '{programName}' (maxUnits={Renderer.MaxFragmentTextureImageUnits}, boundUnits={_boundSamplerUnits.Count}).");
+                    }
+
+                    return;
+                }
+
                 if (location >= 0)
                     _boundSamplerLocations.Add(location);
 
-                texture.PreSampling();
-                if (!TryResolveSamplerTextureUnit(location, texture, textureUnit, samplerName, out int resolvedTextureUnit))
+                if (reusedExistingUnit)
                 {
+                    if (canBindUniform && location >= 0)
+                        Uniform(location, resolvedTextureUnit);
                     texture.PostSampling();
                     return;
                 }
 
-                _boundSamplerUnits[resolvedTextureUnit] = new SamplerUnitBinding(texture.BindingId, texture.TextureTarget);
                 Renderer.SetActiveTextureUnit(resolvedTextureUnit);
 
                 // Unbind stale texture targets on this unit that conflict with the
                 // new binding (e.g. a cubemap left from a previous pass when this
-                // shader expects sampler2D).  Prevents NVIDIA GL_INVALID_OPERATION
+                // shader expects sampler2D). Prevents NVIDIA GL_INVALID_OPERATION
                 // "program texture usage" errors.
                 Renderer.ClearConflictingTextureTargets(texture.TextureTarget);
 
@@ -126,22 +171,31 @@ namespace XREngine.Rendering.OpenGL
                     Uniform(location, resolvedTextureUnit);
 
                 texture.Bind();
+                _boundSamplerUnits[resolvedTextureUnit] = new SamplerUnitBinding(texture.BindingId, texture.TextureTarget, texture);
                 texture.PostSampling();
             }
 
-            private bool TryResolveSamplerTextureUnit(int location, IGLTexture texture, int requestedTextureUnit, string? samplerName, out int resolvedTextureUnit)
+            private bool TryResolveSamplerTextureUnit(
+                int location,
+                IGLTexture texture,
+                int requestedTextureUnit,
+                string? samplerName,
+                out int resolvedTextureUnit,
+                out bool reusedExistingUnit)
             {
                 int maxTextureUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
+                reusedExistingUnit = false;
 
                 // Multiple uniforms frequently reference the same engine placeholder (shadow
-                // arrays, environment maps, or material fallback textures). OpenGL permits
-                // compatible sampler uniforms to share a unit, so reuse the exact existing
-                // texture/target binding before consuming another fragment texture unit. This
-                // is essential for feature-rich Uber variants, whose real material samplers and
-                // engine samplers can otherwise exhaust the guaranteed unit budget even though
-                // many of those bindings are duplicates.
+                // arrays, environment maps, or material fallback textures) or distinct material
+                // slots that hold identical 1x1 defaults or cooked image data. OpenGL permits
+                // compatible sampler uniforms to share a unit, so reuse an existing compatible
+                // binding before consuming another fragment texture unit.
                 if (location >= 0 && TryFindExistingSamplerTextureUnit(texture, out resolvedTextureUnit))
+                {
+                    reusedExistingUnit = true;
                     return true;
+                }
 
                 bool requestedTextureUnitAvailable = requestedTextureUnit >= 0
                     && requestedTextureUnit < maxTextureUnits
@@ -149,10 +203,16 @@ namespace XREngine.Rendering.OpenGL
 
                 if (requestedTextureUnitAvailable)
                 {
-                    if (!_boundSamplerUnits.TryGetValue(requestedTextureUnit, out SamplerUnitBinding existing)
-                        || IsSameSamplerBinding(existing, texture))
+                    if (!_boundSamplerUnits.TryGetValue(requestedTextureUnit, out SamplerUnitBinding existing))
                     {
                         resolvedTextureUnit = requestedTextureUnit;
+                        return true;
+                    }
+
+                    if (IsSameSamplerBinding(existing, texture))
+                    {
+                        resolvedTextureUnit = requestedTextureUnit;
+                        reusedExistingUnit = true;
                         return true;
                     }
 
@@ -205,7 +265,19 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private static bool IsSameSamplerBinding(SamplerUnitBinding binding, IGLTexture texture)
-                => binding.TextureId == texture.BindingId && binding.Target == texture.TextureTarget;
+            {
+                if (binding.Target != texture.TextureTarget)
+                    return false;
+
+                if (binding.TextureId != GLObjectBase.InvalidBindingId && binding.TextureId == texture.BindingId)
+                    return true;
+
+                return binding.TextureId != GLObjectBase.InvalidBindingId
+                    && binding.Target == ETextureTarget.Texture2D
+                    && binding.Texture is GLTexture2D existingTex2D
+                    && texture is GLTexture2D candidateTex2D
+                    && existingTex2D.IsSamplingEquivalentTo(candidateTex2D);
+            }
 
             private bool IsTextureUnitReservedForDifferentActiveSampler(int textureUnit, string? samplerName)
             {
@@ -224,17 +296,17 @@ namespace XREngine.Rendering.OpenGL
                     case 13:
                         return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.PbrReflectionCube);
                     case 15:
-                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ShadowMap, "DirectionalShadowMaps", 0);
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ShadowMap, "DirectionalShadowMaps", s_directionalShadowMapNames, 0);
                     case 16:
-                        return IsReservedForDifferentActiveSampler(samplerName, "DirectionalShadowMaps", 1);
+                        return IsReservedForDifferentActiveSampler(samplerName, "DirectionalShadowMaps", s_directionalShadowMapNames, 1);
                     case 17:
-                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ShadowMapArray, "DirectionalShadowMapArrays", 0);
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ShadowMapArray, "DirectionalShadowMapArrays", s_directionalShadowMapArrayNames, 0);
                     case 18:
-                        return IsReservedForDifferentActiveSampler(samplerName, "DirectionalShadowMapArrays", 1);
+                        return IsReservedForDifferentActiveSampler(samplerName, "DirectionalShadowMapArrays", s_directionalShadowMapArrayNames, 1);
                     case >= 19 and <= 22:
-                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.PointLightShadowMaps, textureUnit - 19);
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.PointLightShadowMaps, s_pointLightShadowMapNames, textureUnit - 19);
                     case >= 23 and <= 26:
-                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.SpotLightShadowMaps, textureUnit - 23);
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.SpotLightShadowMaps, s_spotLightShadowMapNames, textureUnit - 23);
                     case 27:
                         return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.AmbientOcclusionTexture);
                     case 28:
@@ -258,28 +330,60 @@ namespace XREngine.Rendering.OpenGL
 
             private bool IsReservedForDifferentActiveSampler(string? samplerName, string reservedSamplerName)
             {
-                if (!HasActiveSamplerUniform(reservedSamplerName))
+                if (!IsUnboundActiveSamplerUniform(reservedSamplerName))
                     return false;
 
                 return !string.Equals(samplerName, reservedSamplerName, StringComparison.Ordinal);
             }
 
-            private bool IsReservedForDifferentActiveSampler(string? samplerName, string reservedSamplerName, string reservedArraySamplerName, int reservedArrayElementIndex)
+            private bool IsReservedForDifferentActiveSampler(
+                string? samplerName,
+                string reservedSamplerName,
+                string reservedArraySamplerName,
+                string[] reservedArrayElementNames,
+                int reservedArrayElementIndex)
             {
                 if (string.Equals(samplerName, reservedSamplerName, StringComparison.Ordinal)
                     || IsSamplerArrayElementName(samplerName, reservedArraySamplerName, reservedArrayElementIndex))
+                {
                     return false;
+                }
 
-                return HasActiveSamplerUniform(reservedSamplerName)
-                    || HasActiveSamplerUniform(reservedArraySamplerName);
+                return IsUnboundActiveSamplerUniform(reservedSamplerName)
+                    || IsUnboundActiveSamplerArrayElement(reservedArraySamplerName, reservedArrayElementNames, reservedArrayElementIndex);
             }
 
-            private bool IsReservedForDifferentActiveSampler(string? samplerName, string reservedArraySamplerName, int reservedArrayElementIndex)
+            private bool IsReservedForDifferentActiveSampler(
+                string? samplerName,
+                string reservedArraySamplerName,
+                string[] reservedArrayElementNames,
+                int reservedArrayElementIndex)
             {
                 if (IsSamplerArrayElementName(samplerName, reservedArraySamplerName, reservedArrayElementIndex))
                     return false;
 
-                return HasActiveSamplerUniform(reservedArraySamplerName);
+                return IsUnboundActiveSamplerArrayElement(reservedArraySamplerName, reservedArrayElementNames, reservedArrayElementIndex);
+            }
+
+            private bool IsUnboundActiveSamplerUniform(string name)
+            {
+                if (!HasActiveSamplerUniform(name))
+                    return false;
+
+                int location = GetUniformLocation(name);
+                return location >= 0 && !_boundSamplerLocations.Contains(location);
+            }
+
+            private bool IsUnboundActiveSamplerArrayElement(string arrayName, string[] elementNames, int elementIndex)
+            {
+                if (!HasActiveSamplerUniform(arrayName)
+                    || (uint)elementIndex >= (uint)elementNames.Length)
+                {
+                    return false;
+                }
+
+                int location = GetUniformLocation(elementNames[elementIndex]);
+                return location >= 0 && !_boundSamplerLocations.Contains(location);
             }
 
             private bool HasActiveSamplerUniform(string name)

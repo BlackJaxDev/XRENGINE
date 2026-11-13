@@ -410,8 +410,9 @@ vec3 XR_UBER_SourceEnviroRim(XRUberCoordinates c, vec3 N, vec3 V,
     vec4 settings = UBER_V(_SourceEnviroRim);
     if (settings.x < 0.5 || UBER_F(_RimEnviroIntensity) <= 0.0) return vec3(0.0);
     float width = UBER_F(_RimEnviroWidth);
-    float edge = clamp(1.0 - smoothstep(min(UBER_F(_RimEnviroSharpness), width),
-        width, abs(dot(N, V))), 0.0, 1.0);
+    float edge0 = min(UBER_F(_RimEnviroSharpness), width);
+    float edge = clamp(1.0 - smoothstep(edge0,
+        max(width, edge0 + 1.0e-5), abs(dot(N, V))), 0.0, 1.0);
     float mask = UBER_SAMPLE(c, _RimEnviroMask, vec4(1.0))[
         clamp(int(settings.w + 0.5), 0, 3)];
     return max((probeRadiance - vec3(settings.z)) * baseColor, vec3(0.0)) *

@@ -221,7 +221,7 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
     vec4 source, vec4 maskParams, vec4 uvBlend, vec4 uvControl, float rotation, vec4 hue,
     vec4 audioBands, vec2 audioAlpha, vec2 audioEmission, vec2 audioIntensity,
     vec4 texSt, vec2 texPan, vec4 maskSt, vec2 maskPan, vec4 normalSt, vec2 normalPan,
-    inout vec3 color, inout vec3 emission, inout vec3 lightAdd)
+    inout vec3 color, inout vec3 emission, inout vec3 lightAdd, inout vec3 grabTransmission)
 {
     bool audioActive = audioBands.x > 0.5 && UBER_I(_AudioLinkAnimToggle) != 0 &&
         XR_UBER_HasFeature(XR_UBER_FEATURE_AUDIOLINK);
@@ -337,12 +337,20 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
             mask = XR_UBER_MatcapMaskBlend(mask, globalMask, int(uvControl.w + 0.5));
         }
         mask *= sampleValue.a;
-        color = mix(color, sampleValue.rgb, clamp(blend.x * mask * 0.999999, 0.0, 1.0));
-        color *= mix(vec3(1.0), sampleValue.rgb, clamp(blend.y * mask, 0.0, 1.0));
+        float replaceFactor = clamp(blend.x * mask * 0.999999, 0.0, 1.0);
+        float multiplyFactor = clamp(blend.y * mask, 0.0, 1.0);
+        float screenFactor = clamp(blend.w * mask, 0.0, 1.0);
+        float mixedFactor = clamp(projection.x * mask, 0.0, 1.0);
+        color = mix(color, sampleValue.rgb, replaceFactor);
+        color *= mix(vec3(1.0), sampleValue.rgb, multiplyFactor);
         color += sampleValue.rgb * blend.z * mask;
-        color = mix(color, XR_UBER_Blend(color, sampleValue.rgb, 6), clamp(blend.w * mask, 0.0, 1.0));
+        color = mix(color, XR_UBER_Blend(color, sampleValue.rgb, 6), screenFactor);
         lightAdd += sampleValue.rgb * source.z * mask;
-        color = mix(color, color + color * sampleValue.rgb, clamp(projection.x * mask, 0.0, 1.0));
+        color = mix(color, color + color * sampleValue.rgb, mixedFactor);
+        grabTransmission *= (1.0 - replaceFactor);
+        grabTransmission *= mix(vec3(1.0), sampleValue.rgb, multiplyFactor);
+        grabTransmission *= (1.0 - clamp(sampleValue.rgb, 0.0, 1.0) * screenFactor);
+        grabTransmission *= (1.0 + sampleValue.rgb * mixedFactor);
         emission += sampleValue.rgb * emissionStrength * mask;
         return;
     }
@@ -352,40 +360,99 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
     sampleValue.rgb *= mix(vec3(1.0), lightColor, clamp(projection.w, 0.0, 1.0)) * max(parameters.x, 0.0);
     emission += sampleValue.rgb * max(parameters.z, 0.0) * mask;
     mask = clamp(mask, 0.0, 1.0);
-    color = mix(color, sampleValue.rgb, clamp(blend.x, 0.0, 1.0) * mask * 0.999999);
-    color *= mix(vec3(1.0), sampleValue.rgb, clamp(blend.y, 0.0, 1.0) * mask);
+    float replaceFactor = clamp(blend.x, 0.0, 1.0) * mask * 0.999999;
+    float multiplyFactor = clamp(blend.y, 0.0, 1.0) * mask;
+    float screenFactor = clamp(blend.w, 0.0, 1.0) * mask;
+    float mixedFactor = clamp(projection.x, 0.0, 1.0) * mask;
+    color = mix(color, sampleValue.rgb, replaceFactor);
+    color *= mix(vec3(1.0), sampleValue.rgb, multiplyFactor);
     color += sampleValue.rgb * max(blend.z, 0.0) * mask;
-    color = mix(color, XR_UBER_Blend(color, sampleValue.rgb, 6), clamp(blend.w, 0.0, 1.0) * mask);
-    color = mix(color, color + color * sampleValue.rgb, clamp(projection.x, 0.0, 1.0) * mask);
+    color = mix(color, XR_UBER_Blend(color, sampleValue.rgb, 6), screenFactor);
+    color = mix(color, color + color * sampleValue.rgb, mixedFactor);
+    grabTransmission *= (1.0 - replaceFactor);
+    grabTransmission *= mix(vec3(1.0), sampleValue.rgb, multiplyFactor);
+    grabTransmission *= (1.0 - clamp(sampleValue.rgb, 0.0, 1.0) * screenFactor);
+    grabTransmission *= (1.0 + sampleValue.rgb * mixedFactor);
 }
 
 void XR_UBER_EmissionSlot(XRUberCoordinates c, uint textureSlot, uint maskSlot,
-    vec4 st, vec4 maskSt, vec4 tint, vec4 parameters, vec2 pan, int selector,
-    vec4 modifiers, vec4 sampling, vec3 directColor, vec3 cameraPosition,
+    vec4 st, vec4 maskSt, vec4 tint, vec4 parameters, vec2 pan, vec2 maskPan, int selector,
+    vec4 modifiers, vec4 sampling, vec4 extra, vec3 directColor, vec3 cameraPosition,
     vec3 normal, vec3 viewDir, inout vec3 base, inout vec3 emission)
 {
     if (parameters.x == 0.0) return;
-    vec4 texel = XR_UBER_SurfaceTexture(c, textureSlot, selector, st, pan, vec4(1.0));
-    vec4 maskValue = XR_UBER_SurfaceTexture(c, maskSlot, selector, maskSt, vec2(0.0), vec4(1.0));
+    bool isSourceEmission = UBER_F(_SourceLayeredEmission) > 0.5;
+    float timeScale = isSourceEmission ? 0.05 : 1.0;
+
+    vec2 baseUv, baseDx, baseDy;
+    XR_UBER_CoverageUv(c, selector, baseUv, baseDx, baseDy);
+    vec2 uv, uvDx, uvDy;
+    if (isSourceEmission)
+    {
+        vec2 unityUv = vec2(baseUv.x, 1.0 - baseUv.y) * st.xy + st.zw + pan * (c.time * timeScale);
+        uv = vec2(unityUv.x, 1.0 - unityUv.y);
+        uvDx = baseDx * st.xy;
+        uvDy = baseDy * st.xy;
+    }
+    else
+    {
+        uv = baseUv * st.xy + st.zw + pan * c.time;
+        uvDx = baseDx * st.xy;
+        uvDy = baseDy * st.xy;
+    }
+
+    int maskSelector = isSourceEmission ? int(extra.z + 0.5) : selector;
+    vec2 maskBaseUv, maskBaseDx, maskBaseDy;
+    XR_UBER_CoverageUv(c, maskSelector, maskBaseUv, maskBaseDx, maskBaseDy);
+    vec2 maskUv;
+    if (isSourceEmission)
+    {
+        vec2 unityMaskUv = vec2(maskBaseUv.x, 1.0 - maskBaseUv.y) * maskSt.xy + maskSt.zw + maskPan * (c.time * timeScale);
+        maskUv = vec2(unityMaskUv.x, 1.0 - unityMaskUv.y);
+    }
+    else
+    {
+        maskUv = maskBaseUv * maskSt.xy + maskSt.zw + maskPan * c.time;
+    }
+
+    vec4 texel;
+    if (isSourceEmission && modifiers.y > 0.5)
+    {
+        float nDotV = abs(dot(normal, viewDir));
+        vec2 centerUv = (0.5 + nDotV * 0.5) * st.xy + vec2(c.time * timeScale * parameters.z);
+        texel = XR_UBER_Sample(textureSlot, vec2(centerUv.x, 1.0 - centerUv.y), vec2(0.0), vec2(0.0), vec4(1.0));
+    }
+    else
+    {
+        texel = XR_UBER_Sample(textureSlot, uv, uvDx, uvDy, vec4(1.0));
+    }
+
+    vec4 maskValue = XR_UBER_Sample(maskSlot, maskUv, maskBaseDx * maskSt.xy, maskBaseDy * maskSt.xy, vec4(1.0));
     float mask = maskValue[int(clamp(sampling.y, 0.0, 3.0) + 0.5)];
     mask = mix(mask, 1.0 - mask, clamp(sampling.z, 0.0, 1.0));
     float pulse = mix(1.0, 0.5 + 0.5 * sin(c.time * parameters.z), clamp(parameters.y, 0.0, 1.0));
-    vec3 source = UBER_F(_SourceLayeredEmission) > 0.5
+    vec3 source = isSourceEmission
         ? texel.rgb * mix(vec3(1.0), base, clamp(sampling.x, 0.0, 1.0))
         : mix(texel.rgb, base, clamp(sampling.x, 0.0, 1.0));
-    vec2 sourceUv, sourceDx, sourceDy;
-    XR_UBER_CoverageUv(c, selector, sourceUv, sourceDx, sourceDy);
-    float uvX = sourceUv.x * st.x + st.z + pan.x * c.time;
-    float center = modifiers.y > 0.5 ? smoothstep(0.0, 0.5, abs(fract(uvX + c.time * parameters.z) - 0.5)) : 1.0;
-    if (parameters.w != 0.0) source = XR_UBER_hueShift(source, parameters.w * c.time);
-    float sourceAlpha = UBER_F(_SourceLayeredEmission) > 0.5 ? texel.a : 1.0;
-    float globalMask = modifiers.z > 0.5
-        ? XR_UBER_GlobalMask(c, int(modifiers.z + 0.5),
+    float center = (!isSourceEmission && modifiers.y > 0.5)
+        ? smoothstep(0.0, 0.5, abs(fract(uv.x + c.time * parameters.z) - 0.5))
+        : 1.0;
+    float hueOffset = isSourceEmission ? extra.y + parameters.w * (c.time * timeScale) : parameters.w * c.time;
+    if (extra.y != 0.0 || parameters.w != 0.0)
+        source = XR_UBER_hueShift(source, hueOffset);
+    int globalMaskIndex = int(modifiers.z + 0.5);
+    if (globalMaskIndex > 0)
+    {
+        float globalMask = XR_UBER_GlobalMask(c, globalMaskIndex,
             uvec4(UBER_T(_GlobalMaskTexture0), UBER_T(_GlobalMaskTexture1),
                 UBER_T(_GlobalMaskTexture2), UBER_T(_GlobalMaskTexture3)),
-            cameraPosition, normal, viewDir, 1.0)
-        : 1.0;
-    vec3 contribution = source * XR_UBER_Theme(int(modifiers.w + 0.5), tint.rgb) * max(parameters.x, 0.0) * sourceAlpha * mask * pulse * center * globalMask;
+            cameraPosition, normal, viewDir, timeScale);
+        mask = isSourceEmission
+            ? XR_UBER_BlendMask(mask, globalMask, int(extra.x + 0.5))
+            : mask * globalMask;
+    }
+    float sourceAlpha = isSourceEmission ? texel.a : 1.0;
+    vec3 contribution = source * XR_UBER_Theme(int(modifiers.w + 0.5), tint.rgb) * max(parameters.x, 0.0) * sourceAlpha * mask * pulse * center;
     contribution *= xrSourceEmissionFluorescence(directColor, sampling.w);
     emission += contribution;
     base = mix(base, contribution, clamp(modifiers.x, 0.0, 1.0) * mask);
@@ -404,5 +471,33 @@ vec3 XR_UBER_Rim(XRUberCoordinates c, vec3 N, vec3 V, vec3 lightColor, float lig
     rim *= mix(1.0, lightMap, UBER_F(_RimHideInShadow));
     vec3 color = XR_UBER_Theme(UBER_I(_RimLightColorThemeIndex), UBER_V(_RimLightColor).rgb) * UBER_SAMPLE(c, _RimColorTexture, vec4(1.0)).rgb * rim;
     return mix(color, color * lightColor, UBER_F(_RimLightColorBias));
+}
+
+vec3 XR_UBER_ApplySourcePostProcess(vec3 color)
+{
+    vec4 pp = UBER_V(_SourcePostProcess);
+    if (pp.x <= 0.5)
+        return color;
+
+    vec4 ppHue = UBER_V(_SourcePostProcessHue);
+    vec3 col = color;
+    if (ppHue.x != 0.0)
+        col = ppHue.w < 0.5
+            ? XR_UBER_hueShiftOklab(col, ppHue.x)
+            : XR_UBER_hueShift(col, ppHue.x);
+    col = mix(vec3(dot(col, vec3(0.3, 0.59, 0.11))), col, pp.w);
+    if (ppHue.z != 0.0)
+    {
+        vec3 clampedCol = max(col, vec3(0.0));
+        vec3 hdrCol = vec3(
+            clampedCol.r <= 0.04045 ? clampedCol.r / 12.92 : pow((clampedCol.r + 0.055) / 1.055, 2.4),
+            clampedCol.g <= 0.04045 ? clampedCol.g / 12.92 : pow((clampedCol.g + 0.055) / 1.055, 2.4),
+            clampedCol.b <= 0.04045 ? clampedCol.b / 12.92 : pow((clampedCol.b + 0.055) / 1.055, 2.4));
+        col = mix(col, hdrCol, ppHue.z);
+    }
+    col = mix(vec3(0.5), col, pp.z);
+    col *= pp.y;
+    col += vec3(ppHue.y);
+    return col;
 }
 #endif

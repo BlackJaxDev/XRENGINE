@@ -16,6 +16,7 @@ struct GaussianSplat
 struct GaussianSplatSurface
 {
     vec4 uv0Uv1;
+    vec4 uv2Uv3;
     vec4 dUv0LocalXY;
     vec4 worldNormalAndSign;
     vec4 worldTangentPad;
@@ -29,6 +30,7 @@ struct GaussianLiveSurfaceSample
     vec4 baryAndArea;
     uvec4 meta;
     vec4 uv0Uv1;
+    vec4 uv2Uv3;
     vec4 localPosAndSign;
     vec4 uv0Edges;
 };
@@ -304,6 +306,7 @@ void main()
 
     GaussianSplatSurface outSurface;
     outSurface.uv0Uv1 = s.uv0Uv1;
+    outSurface.uv2Uv3 = s.uv2Uv3;
     outSurface.dUv0LocalXY = vec4(dUvAxisX, dUvAxisY);
     outSurface.worldNormalAndSign = vec4(shadingNormal, s.localPosAndSign.w);
     outSurface.worldTangentPad = vec4(shadingTangent, 0.0);

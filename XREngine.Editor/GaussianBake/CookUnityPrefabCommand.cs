@@ -420,6 +420,9 @@ public static class CookUnityPrefabCommand
         ETexWrapMode uWrap = texture.UWrap;
         ETexWrapMode vWrap = texture.VWrap;
         string? samplerName = texture.SamplerName;
+        bool generateMipmaps = texture.AutoGenerateMipmaps;
+        ETexMinFilter minFilter = texture.MinFilter;
+        ETexMagFilter magFilter = texture.MagFilter;
 
         byte[] encodedBytes = File.ReadAllBytes(sourcePath);
         using RuntimeImage decoded = codec.Decode(encodedBytes, sourcePath);
@@ -439,17 +442,27 @@ public static class CookUnityPrefabCommand
         texture.AlphaAsTransparency = alphaAsTransparency;
         texture.UWrap = uWrap;
         texture.VWrap = vWrap;
-        ConfigureSynchronousSampling(texture);
+        ConfigureSynchronousSampling(texture, generateMipmaps, minFilter, magFilter);
         return true;
     }
 
-    private static void ConfigureSynchronousSampling(XRTexture2D texture)
+    /// <summary>
+    /// Sets the upload and sampling state of a cooked texture. The cook stores only mip 0, so a texture that the
+    /// source import marked for mipmaps generates its mip chain on the GPU after upload. Without that chain a
+    /// minified high-frequency texture, such as a face, hair, or fishnet texture, aliases into bright and dark
+    /// pixel noise. Textures that the source import did not mark for mipmaps sample mip 0 with linear filtering.
+    /// </summary>
+    private static void ConfigureSynchronousSampling(
+        XRTexture2D texture,
+        bool generateMipmaps = false,
+        ETexMinFilter minFilter = ETexMinFilter.Linear,
+        ETexMagFilter magFilter = ETexMagFilter.Linear)
     {
-        texture.AutoGenerateMipmaps = false;
-        texture.MinFilter = ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
+        texture.AutoGenerateMipmaps = generateMipmaps;
+        texture.MinFilter = generateMipmaps ? minFilter : ETexMinFilter.Linear;
+        texture.MagFilter = magFilter;
         texture.LargestMipmapLevel = 0;
-        texture.SmallestAllowedMipmapLevel = 0;
+        texture.SmallestAllowedMipmapLevel = generateMipmaps ? 1000 : 0;
         texture.Resizable = false;
         texture.PreferSynchronousGpuUpload = true;
     }

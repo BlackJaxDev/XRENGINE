@@ -5,13 +5,16 @@ namespace XREngine.Rendering.Gaussian;
 
 /// <summary>
 /// Per-splat surface shading payload written by <c>GaussianLiveSurfaceSplats.comp</c> and read by
-/// <c>GaussianSplatUberQuad.vs</c>. The layout is std430 and 96 bytes.
+/// <c>GaussianSplatUberQuad.vs</c>. The layout is std430 and 112 bytes.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct GaussianSplatGpuSurface
 {
     /// <summary>Interpolated primary and secondary texture coordinates (UV0 in XY, UV1 in ZW).</summary>
     public Vector4 Uv0Uv1;
+
+    /// <summary>Interpolated tertiary texture coordinates (UV2 in XY, UV3 in ZW).</summary>
+    public Vector4 Uv2Uv3;
 
     /// <summary>Affine UV0 partial derivatives along the splat's local +X tangent axis (XY) and +Y tangent axis (ZW).</summary>
     public Vector4 DUv0LocalXY;

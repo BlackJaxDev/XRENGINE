@@ -17,9 +17,9 @@ public static class SourceToonFeatureLossNormalizer
     private static readonly IReadOnlyDictionary<string, string[]> DiscardedFeaturePrefixes =
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["Grab Pass"] = ["_GrabPass", "_Grabpass"],
+            ["Grab Pass"] = ["_GrabPass", "_Grabpass", "_Grab", "_EnableGrabpass"],
             ["Refraction"] = ["_Refraction", "_Refract"],
-            ["Blur"] = ["_Blur"],
+            ["Blur"] = ["_Blur", "_EnableBlur"],
             ["Touch Effects"] = ["_Touch"],
             ["Pro Integrations"] = ["_ProIntegration", "_ProLTCGI", "_ProAudio"],
             ["Pro Vertex Effects"] = ["_ProVertex"],
@@ -35,6 +35,16 @@ public static class SourceToonFeatureLossNormalizer
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(diagnostics);
 
+        bool grabPassAbsent = IsGrabPassAbsentFromLockedShader(source, resolvedShaderPath, isLockedShader);
+        bool alphaGrabPassConverted = TryResolveExactAlphaGrabPass(
+            source,
+            grabPassAbsent,
+            out float grabPassBlendMode,
+            out float grabPassBlendFactor);
+        int customRenderQueue = alphaGrabPassConverted && source.CustomRenderQueue is >= 0 and < 2500
+            ? 3000
+            : source.CustomRenderQueue;
+
         var result = new SerializedMaterialDocument
         {
             Name = source.Name,
@@ -43,7 +53,7 @@ public static class SourceToonFeatureLossNormalizer
             SerializedVersion = source.SerializedVersion,
             SavedPropertiesSerializedVersion = source.SavedPropertiesSerializedVersion,
             Shader = source.Shader,
-            CustomRenderQueue = source.CustomRenderQueue,
+            CustomRenderQueue = customRenderQueue,
         };
 
         CopySet(source.ValidKeywords, result.ValidKeywords);
@@ -51,15 +61,93 @@ public static class SourceToonFeatureLossNormalizer
         CopySet(source.DisabledShaderPasses, result.DisabledShaderPasses);
         CopyDictionary(source.OverrideTags, result.OverrideTags);
         var reportedGroups = new HashSet<string>(StringComparer.Ordinal);
-        bool grabPassAbsent = IsGrabPassAbsentFromLockedShader(source, resolvedShaderPath, isLockedShader);
-        CopyFiltered(source.Textures, result.Textures, source, diagnostics, reportedGroups, grabPassAbsent);
-        CopyFiltered(source.Floats, result.Floats, source, diagnostics, reportedGroups, grabPassAbsent);
-        CopyFiltered(source.Ints, result.Ints, source, diagnostics, reportedGroups, grabPassAbsent);
-        CopyFiltered(source.Vectors, result.Vectors, source, diagnostics, reportedGroups, grabPassAbsent);
-        CopyFiltered(source.Strings, result.Strings, source, diagnostics, reportedGroups, grabPassAbsent);
+        bool suppressGrabPassWarning = grabPassAbsent || alphaGrabPassConverted;
+        CopyFiltered(source.Textures, result.Textures, source, diagnostics, reportedGroups, suppressGrabPassWarning);
+        CopyFiltered(source.Floats, result.Floats, source, diagnostics, reportedGroups, suppressGrabPassWarning);
+        CopyFiltered(source.Ints, result.Ints, source, diagnostics, reportedGroups, suppressGrabPassWarning);
+        CopyFiltered(source.Vectors, result.Vectors, source, diagnostics, reportedGroups, suppressGrabPassWarning);
+        CopyFiltered(source.Strings, result.Strings, source, diagnostics, reportedGroups, suppressGrabPassWarning);
         CopyDictionary(source.UnknownSerializedFields, result.UnknownSerializedFields);
         CopyDictionary(source.UnknownSavedProperties, result.UnknownSavedProperties);
+        if (alphaGrabPassConverted)
+            ApplyExactAlphaGrabPassState(result, grabPassBlendMode, grabPassBlendFactor);
         return result;
+    }
+
+    /// <summary>
+    /// Detects unrefracted, unblurred source toon Pro GrabPass alpha-blend configurations whose
+    /// per-pixel composite reduces algebraically to hardware premultiplied alpha blending.
+    /// </summary>
+    private static bool TryResolveExactAlphaGrabPass(
+        SerializedMaterialDocument source,
+        bool grabPassAbsent,
+        out float grabPassBlendMode,
+        out float grabPassBlendFactor)
+    {
+        grabPassBlendMode = 0.0f;
+        grabPassBlendFactor = 1.0f;
+        if (grabPassAbsent)
+            return false;
+        if (!source.TryGetPositive("_EnableGrabpass") && !source.TryGetPositive("_GrabPass"))
+            return false;
+        if (source.TryGetPositive("_RefractionEnabled") ||
+            source.TryGetPositive("_Refraction") ||
+            source.TryGetPositive("_Refract"))
+            return false;
+        if (source.TryGetPositive("_EnableBlur") &&
+            source.TryGetFloat("_GrabBlurDistance", out float blurDistance) &&
+            blurDistance > 0.0001f)
+            return false;
+        if (!source.TryGetPositive("_GrabPassUseAlpha"))
+            return false;
+
+        int dstBlend = source.TryGetFloat("_GrabDstBlend", out float rawDst)
+            ? (int)MathF.Round(rawDst)
+            : source.TryGetInt("_GrabDstBlend", out int rawDstInt) ? rawDstInt : 10;
+        if (dstBlend != 10)
+            return false;
+
+        int srcBlend = source.TryGetFloat("_GrabSrcBlend", out float rawSrc)
+            ? (int)MathF.Round(rawSrc)
+            : source.TryGetInt("_GrabSrcBlend", out int rawSrcInt) ? rawSrcInt : 5;
+        if (srcBlend is not (0 or 1 or 5))
+            return false;
+
+        grabPassBlendFactor = source.TryGetFloat("_GrabPassBlendFactor", out float rawFactor)
+            ? Math.Clamp(rawFactor, 0.0f, 1.0f)
+            : 1.0f;
+        grabPassBlendMode = srcBlend switch
+        {
+            0 => 2.0f,
+            1 => 3.0f,
+            _ => 1.0f,
+        };
+        return true;
+    }
+
+    private static void ApplyExactAlphaGrabPassState(
+        SerializedMaterialDocument result,
+        float grabPassBlendMode,
+        float grabPassBlendFactor)
+    {
+        result.Ints.Remove("_Mode");
+        result.Ints.Remove("_SrcBlend");
+        result.Ints.Remove("_DstBlend");
+        result.Ints.Remove("_SrcBlendAlpha");
+        result.Ints.Remove("_DstBlendAlpha");
+        result.Ints.Remove("_ZWrite");
+        result.Floats["_Mode"] = 3.0f;
+        result.Floats["_SrcBlend"] = 1.0f;
+        result.Floats["_DstBlend"] = 10.0f;
+        result.Floats["_SrcBlendAlpha"] = 1.0f;
+        result.Floats["_DstBlendAlpha"] = 10.0f;
+        result.Floats["_ZWrite"] = 0.0f;
+        result.Floats["_AlphaForceOpaque"] = 0.0f;
+        result.Floats["_AlphaPremultiply"] = 1.0f;
+        result.Floats["_SourceGrabPassBlendMode"] = grabPassBlendMode;
+        result.Floats["_SourceGrabPassBlendFactor"] = grabPassBlendFactor;
+        result.OverrideTags["RenderType"] = "Transparent";
+        result.OverrideTags["Queue"] = "Transparent";
     }
 
     private static void CopyFiltered<T>(

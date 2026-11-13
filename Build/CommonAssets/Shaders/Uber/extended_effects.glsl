@@ -1,11 +1,19 @@
 #ifndef XRENGINE_EXTENDED_EFFECTS_GLSL
 #define XRENGINE_EXTENDED_EFFECTS_GLSL
 
-#if defined(XRENGINE_VULKAN) && !defined(XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS)
+#ifndef XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS
+#include "lost_eye.glsl"
+#ifdef XRENGINE_VULKAN
 layout(std430, set = 0, binding = 78) readonly buffer SourceUdimTriangleCoverage
 {
     uvec4 sourceUdimTriangleMasks[];
 };
+#else
+layout(std430, binding = 78) readonly buffer SourceUdimTriangleCoverage
+{
+    uvec4 sourceUdimTriangleMasks[];
+};
+#endif
 uniform int u_SourceUdimTriangleCount; // XRENGINE_FREQUENCY(Object)
 
 uint uberEnabledUdimTileMask()
@@ -48,7 +56,7 @@ bool uberApplyCoverageEffects(in ToonMesh mesh)
 
     if (_UvTileDiscard > 0.5 && _UDIMDiscardMode == 0)
     {
-#if defined(XRENGINE_VULKAN) && !defined(XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS)
+#ifndef XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS
         uint enabled = uberEnabledUdimTileMask();
         if (enabled != 0u)
         {
@@ -160,6 +168,9 @@ void uberApplySurfaceEffects(
         vec4 video = texture(_VideoTexture, videoUv);
         color = mix(color, video.rgb, saturate(_VideoBlend * video.a));
     }
+
+    if (_ProceduralMode == 6)
+        alpha = xrLostEyeCoverageAlpha(mesh.uv[0], _MainTex_ST, _LostEyeParams3);
 #endif
 
 #ifndef XRENGINE_UBER_DISABLE_AUDIOLINK
@@ -220,6 +231,24 @@ vec3 uberApplyPostEffects(in ToonMesh mesh, vec3 color)
         float flip = step(0.5, uberHash12(floor(mesh.uv[0] * max(_ProceduralParams.xy, vec2(1.0)))));
         float arc = flip < 0.5 ? abs(length(tile) - 0.5) : abs(length(tile - 1.0) - 0.5);
         color = mix(color, _ProceduralColor.rgb, smoothstep(0.08, 0.0, arc) * _ProceduralColor.a);
+    }
+    else if (mode == 6)
+    {
+        vec3 tangentView = transpose(mesh.TBN) * mesh.viewDir;
+        float viewLen = length(tangentView);
+        vec3 tangentViewNorm = viewLen > 1.0e-5 ? tangentView / viewLen : vec3(0.0, 0.0, 1.0);
+        // Engine bitangent points along +v_engine = -v_unity.
+        tangentViewNorm.y = -tangentViewNorm.y;
+        return xrEvaluateLostEye(
+            mesh.uv[0],
+            _MainTex_ST,
+            tangentViewNorm,
+            _ProceduralColor.rgb,
+            _LostEyeParams0,
+            _LostEyeParams1,
+            _LostEyeParams2,
+            _LostEyeParams3,
+            u_Time);
     }
 #endif
     return color;

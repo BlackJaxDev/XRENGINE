@@ -20,6 +20,8 @@ internal sealed partial class VulkanFrameLoop
     private int _presentNowRecoveryProbeAttempts;
     private int _presentNowAutomaticRecoveryPending;
     private int _presentNowRecoveryProbeActive;
+    private ulong _presentNowPreAcquireRetryLastFrame;
+    private long _presentNowPreAcquireRetryStreakStartTicks;
 
     /// <summary>
     /// Publishes a cold-path recovery edge for a failure explicitly classified as
@@ -105,6 +107,7 @@ internal sealed partial class VulkanFrameLoop
                 return EDesktopFrameFlow.Stop;
             }
             attempt.PresentNowReadinessCompleted = true;
+            _presentNowPreAcquireRetryStreakStartTicks = 0L;
             if (VulkanFrameDiagnosticsTraceEnabled)
             {
                 Debug.VulkanEvery(
@@ -1198,6 +1201,28 @@ internal sealed partial class VulkanFrameLoop
         // canonical publication pinned until the publication ring is full.
         DiscardSkippedDesktopFrameWork();
         attempt.PresentNowReadinessRetry = retry;
+        long now = Stopwatch.GetTimestamp();
+        bool consecutive = _presentNowPreAcquireRetryLastFrame != 0UL &&
+            attempt.FrameNumber == _presentNowPreAcquireRetryLastFrame + 1UL;
+        _presentNowPreAcquireRetryLastFrame = attempt.FrameNumber;
+        if (!consecutive || _presentNowPreAcquireRetryStreakStartTicks == 0L)
+        {
+            _presentNowPreAcquireRetryStreakStartTicks = now;
+        }
+        else if (now - _presentNowPreAcquireRetryStreakStartTicks >= 2L * Stopwatch.Frequency)
+        {
+            double retrySeconds = (now - _presentNowPreAcquireRetryStreakStartTicks) / (double)Stopwatch.Frequency;
+            Debug.VulkanWarningEvery(
+                "Vulkan.PresentNow.PreAcquireRetryStreak",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan][PresentNow][PreAcquireRetryStreak] frame={0} retrySeconds={1:F1} stage={2} ticket={3} detail={4}",
+                retry.FrameId,
+                retrySeconds,
+                retry.Stage,
+                retry.ActiveTicket,
+                retry.Detail);
+        }
+
         Debug.VulkanEvery(
             $"Vulkan.PresentNow.FrameRetry.{retry.Stage}.{GetHashCode()}",
             TimeSpan.FromSeconds(1),
@@ -1217,6 +1242,9 @@ internal sealed partial class VulkanFrameLoop
         StorePresentNowTerminalFailure(ref attempt, failure);
         ResetIncompleteAcceptedPresentNowPlan(ref attempt);
         DiscardPausedPresentNowSceneWork();
+        FailPendingCompositedScreenshots(
+            $"The Vulkan renderer paused desktop presentation before composited capture " +
+            $"(stage={failure.Stage}, ticket='{failure.ActiveTicket}'): {failure.Message}");
         attempt.DeferredFailure = _presentNowTerminalFailure;
         attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
     }

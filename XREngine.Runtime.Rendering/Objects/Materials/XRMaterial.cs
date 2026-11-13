@@ -346,7 +346,7 @@ namespace XREngine.Rendering
             if (internalUberReplacement && shader is not null && HasEngineSemantic &&
                 GetShaderCount(EShaderType.Fragment) == 1 &&
                 GetShader(EShaderType.Fragment) is { } previousFragment &&
-                UberShaderVariantBuilder.IsCompatibleInternalReplacement(previousFragment, shader))
+                UberShaderVariantBuilder.IsCompatibleInternalReplacement(previousFragment, shader, EngineSemantic))
             {
                 transition = new(Shaders, replacement, [.. Shaders], [.. replacement],
                     previousFragment, shader, ShaderStateRevision, UberStateRevision, EngineSemantic);

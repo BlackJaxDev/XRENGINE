@@ -213,6 +213,8 @@ internal static class GaussianAvatarSplatSampler
 
         bool hasTexCoord0 = mesh.TexCoordCount > 0;
         bool hasTexCoord1 = mesh.TexCoordCount > 1;
+        bool hasTexCoord2 = mesh.TexCoordCount > 2;
+        bool hasTexCoord3 = mesh.TexCoordCount > 3;
         bool hasColors = mesh.ColorCount > 0;
         bool hasTangents = mesh.HasTangents;
 
@@ -234,9 +236,17 @@ internal static class GaussianAvatarSplatSampler
             Vector2 uv0B = hasTexCoord0 ? mesh.GetTexCoord(tri.Index1, 0u) : Vector2.Zero;
             Vector2 uv0C = hasTexCoord0 ? mesh.GetTexCoord(tri.Index2, 0u) : Vector2.Zero;
 
-            Vector2 uv1A = hasTexCoord1 ? mesh.GetTexCoord(tri.Index0, 1u) : uv0A;
-            Vector2 uv1B = hasTexCoord1 ? mesh.GetTexCoord(tri.Index1, 1u) : uv0B;
-            Vector2 uv1C = hasTexCoord1 ? mesh.GetTexCoord(tri.Index2, 1u) : uv0C;
+            Vector2 uv1A = hasTexCoord1 ? mesh.GetTexCoord(tri.Index0, 1u) : Vector2.Zero;
+            Vector2 uv1B = hasTexCoord1 ? mesh.GetTexCoord(tri.Index1, 1u) : Vector2.Zero;
+            Vector2 uv1C = hasTexCoord1 ? mesh.GetTexCoord(tri.Index2, 1u) : Vector2.Zero;
+
+            Vector2 uv2A = hasTexCoord2 ? mesh.GetTexCoord(tri.Index0, 2u) : Vector2.Zero;
+            Vector2 uv2B = hasTexCoord2 ? mesh.GetTexCoord(tri.Index1, 2u) : Vector2.Zero;
+            Vector2 uv2C = hasTexCoord2 ? mesh.GetTexCoord(tri.Index2, 2u) : Vector2.Zero;
+
+            Vector2 uv3A = hasTexCoord3 ? mesh.GetTexCoord(tri.Index0, 3u) : Vector2.Zero;
+            Vector2 uv3B = hasTexCoord3 ? mesh.GetTexCoord(tri.Index1, 3u) : Vector2.Zero;
+            Vector2 uv3C = hasTexCoord3 ? mesh.GetTexCoord(tri.Index2, 3u) : Vector2.Zero;
 
             Vector4 c0 = hasColors ? mesh.GetColor(tri.Index0, 0u) : Vector4.One;
             Vector4 c1 = hasColors ? mesh.GetColor(tri.Index1, 0u) : Vector4.One;
@@ -289,6 +299,8 @@ internal static class GaussianAvatarSplatSampler
                 float b0 = MathF.Max(0.0f, 1.0f - b1 - b2);
                 Vector2 uv0 = (b0 * uv0A) + (b1 * uv0B) + (b2 * uv0C);
                 Vector2 uv1 = (b0 * uv1A) + (b1 * uv1B) + (b2 * uv1C);
+                Vector2 uv2 = (b0 * uv2A) + (b1 * uv2B) + (b2 * uv2C);
+                Vector2 uv3 = (b0 * uv3A) + (b1 * uv3B) + (b2 * uv3C);
 
                 if (submesh.UdimDiscardMask != 0 && submesh.UdimDiscardMode == 1)
                 {
@@ -297,11 +309,13 @@ internal static class GaussianAvatarSplatSampler
                     {
                         0u => uv0,
                         1u => uv1,
+                        2u => uv2,
+                        3u => uv3,
                         _ when discardChannel < mesh.TexCoordCount =>
                             (b0 * mesh.GetTexCoord(tri.Index0, discardChannel)) +
                             (b1 * mesh.GetTexCoord(tri.Index1, discardChannel)) +
                             (b2 * mesh.GetTexCoord(tri.Index2, discardChannel)),
-                        _ => uv0,
+                        _ => Vector2.Zero,
                     };
                     if (IsUvInDiscardedTile(discardUv, submesh.UdimDiscardMask))
                         continue;
@@ -325,6 +339,7 @@ internal static class GaussianAvatarSplatSampler
                     restSigma,
                     restSigma,
                     new Vector4(uv0.X, uv0.Y, uv1.X, uv1.Y),
+                    new Vector4(uv2.X, uv2.Y, uv3.X, uv3.Y),
                     localPos,
                     tangentSign,
                     uv0Edges));
@@ -404,9 +419,7 @@ internal static class GaussianAvatarSplatSampler
     {
         uint channel = (uint)Math.Max(uvChannel, 0);
         if (mesh.TexCoordCount <= channel)
-            channel = 0u;
-        if (mesh.TexCoordCount == 0)
-            return false;
+            return IsUvInDiscardedTile(Vector2.Zero, mask);
 
         return IsUvInDiscardedTile(mesh.GetTexCoord(i0, channel), mask) &&
                IsUvInDiscardedTile(mesh.GetTexCoord(i1, channel), mask) &&

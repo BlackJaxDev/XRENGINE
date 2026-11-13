@@ -9,7 +9,7 @@ public static class NativeUberMaterialSchema
     private const string ScalarNames = "_AlphaMaskBlendStrength _AlphaMaskInvert _AlphaMaskValue _AlphaMod _BackFaceAlpha _BackFaceColor _BackFaceEmission _BumpScale _Color _ColorMaskEnabled _ColorThemeIndex _CubeMapBlendAmount _CubeMapBlendType _CubeMapEmissionStrength _CubeMapLightMask _CubeMapUvMode _DepthAlphaEnabled _DetailBrightness _DetailNormalMapScale _DetailTexIntensity _DetailTint _DissolveContinuous _DissolveCoordinateSpace _DissolveCutoff _DissolveDetailStrength _DissolveEdgeColor _DissolveEdgeEmission _DissolveEdgeWidth _DissolveEndPoint _DissolveHueShift _DissolveInvert _DissolveMaskInvert _DissolveNoiseStrength _DissolveProgress _DissolveStartPoint _DissolveTileGrid _DissolveType _EmissionColor _EmissionColorThemeIndex _EmissionMapPan _EmissionScrollingSpeed _EmissionScrollingVertexColor _EmissionStrength _FaceDiscard _FlipbookColumns _FlipbookCrossfade _FlipbookFrameRate _FlipbookManualFrame _FlipbookRows _ForceFlatRampedLightmap _GlitterBrightness _GlitterColor _GlitterDensity _GlitterMaxAngle _GlitterMinAngle _GlitterRainbow _GlitterSize _GlitterSpeed _InternalParallaxParams _InternalParallaxStrength _LightDataAOStrengthR _LightingCap _LightingCapEnabled _LightingColorMode _LightingDirectionMode _LightingGradientEnd _LightingGradientStart _LightingIgnoreAmbientColor _LightingIndirectUsesNormals _LightingMapMode _LightingMinLightBrightness _LightingMode _LightingMonochromatic _LightingShadowColor _LightingShadowMaskStrengthR _LightingWrappedNormalization _LightingWrappedWrap _MainAlphaMaskMode _MainBrightness _MainHueShift _MainHueShiftColorSpace _MainHueShiftReplace _MainHueShiftSpeed _MainHueShiftToggle _MainUseVertexColorAlpha _MainVertexColoring _MainVertexColoringEnabled _MainVertexColoringLinearSpace _MatcapAdd _MatcapBorder _MatcapColor _MatcapEmissionStrength _MatcapIntensity _MatcapLightMask _MatcapMaskChannel _MatcapMaskInvert _MatcapMultiply _MatcapNormal _MatcapReplace _MatcapUVMode _OutlineDropShadowOffset _OutlineExpansionMode _OutlineFixedSize _OutlineHueShift _OutlineHueShiftSpeed _OutlineMaskPan _OutlineMaskUV _OutlinePersonaDirection _OutlineShadowStrength _OutlineSpace _OutlineTexturePan _OutlineTextureUV _OutlineUseVertexColors _OutlineZOffset _ParallaxMapChannel _ParallaxMaxSamples _ParallaxMinSamples _ParallaxMode _ParallaxOffset _ParallaxStrength _PathingColor _PathingParams _PathingStrength _PBRMetallicMapInvert _PBRMetallicMapsMetallicChannel _PBRMetallicMultiplier _PBRRoughnessMultiplier _PBRSmoothnessMapInvert _PBRSmoothnessMapsChannel _ProceduralColor _ProceduralMode _ProceduralParams _ProximityColor _ProximityParams _ProximityStrength _Rim2Color _RimBlendMode _RimBlendStrength _RimEmission _RimHideInShadow _RimLightColor _RimLightColorBias _RimMaskChannel _RimSharpness _RimStyle _RimWidth _Saturation _ShadowBlur _ShadowBorder _ShadowColor _ShadowOffset _ShadowStrength _SpecularSmoothness _SpecularStrength _SpecularTint _SpecularType _SSSAmbient _SSSColor _SSSDistortion _SSSPower _SSSScale _TouchGlowColor _TouchGlowParams _TouchGlowStrength _UvTileDiscard _UvTileDiscardGrid _UvTileDiscardRange _VertexBarrelAlpha _VertexBarrelHeight _VertexBarrelMode _VertexBarrelWidth _VertexColorNormalOffset _VertexColorPositionOffset _VertexConservativeBounds _VertexDepthBulge _VertexEffectsEnabled _VertexEquation _VertexGlitch _VertexLookAtAxis _VertexLookAtWeight _VertexManipulationHeight _VertexManipulationLocalRotation _VertexManipulationLocalRotationSpeed _VertexManipulationLocalScale _VertexManipulationLocalTranslation _VertexManipulationWorldTranslation _VertexRoundingDivision _VertexRoundingEnabled _VertexWave _VideoBlend";
     private const string SamplerNames = "_MainTex _BumpMap _AlphaMask _BackFaceNormalMap _BackFaceTexture _BacklightMask _ColorMaskTexture _CubeMapMask _DecalMask _DecalTexture _DetailMask _DetailNormalMap _DetailShadowMap _DetailTex _DissolveDetailNoise _DissolveEdgeGradient _DissolveEdgeTexture _DissolveMask _DissolveNoiseTexture _Emission0Mask _Emission0Tex _Emission1Mask _Emission1Tex _Emission2Mask _Emission2Tex _Emission3Mask _Emission3Tex _EmissionMap _FirstShadeMap _FlipbookMask _FlipbookTexture _GlitterMask _LightingAOMaps _LightingSDFMap _LightingShadowMasks _MainColorAdjustTexture _MainTexDistortionMap _MainTexDistortionMask _Matcap _Matcap0Mask _Matcap0Tex _Matcap1Mask _Matcap1Tex _Matcap2Mask _Matcap2Tex _Matcap3Mask _Matcap3Tex _MatcapMask _OutlineMask _OutlineTexture _ParallaxMap _PBRMetallicMaps _PBRSmoothnessMaps _Rim2Mask _RimColorTexture _RimMask _SecondShadeMap _ShadowColorTex _Specular2Map _SpecularMap _SSSThicknessMap _ToonRamp _VideoTexture _CubeMap _LightingDetailShadowMap _DecalTexture1 _DecalTexture2 _DecalTexture3 _GlobalMaskTexture0 _GlobalMaskTexture1 _GlobalMaskTexture2 _GlobalMaskTexture3";
 
-    private static readonly string[] Samplers = [.. SamplerNames.Split(' '), "_SourceClearCoatMaps", "_RimEnviroMask", "_Shadow2ndColorTex", "_Shadow3rdColorTex", "_MultilayerMathBlurMap", "_ShadowStrengthMask", "_ShadowBorderMask", "_SourceShadowBorderMaskLod", "_GlitterTexture", "_Matcap1NormalMap", "_GlitterColorMap", "_FlipbookTexArray", "_AudioLinkTexture", "_AnisoColorMap"];
+    private static readonly string[] Samplers = [.. SamplerNames.Split(' '), "_SourceClearCoatMaps", "_RimEnviroMask", "_Shadow2ndColorTex", "_Shadow3rdColorTex", "_MultilayerMathBlurMap", "_ShadowStrengthMask", "_ShadowBorderMask", "_SourceShadowBorderMaskLod", "_GlitterTexture", "_Matcap1NormalMap", "_GlitterColorMap", "_FlipbookTexArray", "_AudioLinkTexture", "_AnisoColorMap", "_Rim2ColorTexture"];
     private static readonly string[] Names = BuildParameterNames();
     private static readonly string[] UdimCells = BuildUdimCells();
     private static readonly string[] Features = [
@@ -135,6 +135,8 @@ public static class NativeUberMaterialSchema
             Add("_DecalSlotModifiers" + index);
             Add("_DecalSlotFx" + index);
             Add("_DecalBlendParams" + index);
+            Add("_DecalSlotMask" + index);
+            Add("_DecalSlotGlobalMask" + index);
             Add("_MatcapSlotParams" + index);
             Add("_MatcapSlotBlend" + index);
             Add("_MatcapSlotExtra" + index);
@@ -156,6 +158,8 @@ public static class NativeUberMaterialSchema
             Add("_EmissionSlotUv" + index);
             Add("_EmissionSlotModifiers" + index);
             Add("_EmissionSlotSampling" + index);
+            Add("_EmissionSlotExtra" + index);
+            Add("_LostEyeParams" + index);
         }
         for (int index = 0; index < 4; ++index)
         {
@@ -163,10 +167,25 @@ public static class NativeUberMaterialSchema
             Add("_DecalColor" + suffix);
             Add("_DecalPosition" + suffix);
             Add("_DecalScale" + suffix);
+            Add("_DecalSideOffset" + suffix);
             Add("_DecalTexturePan" + suffix);
             Add("_DecalRotation" + suffix);
             Add("_DecalRotationSpeed" + suffix);
         }
+        Add("_AlphaPremultiply");
+        Add("_AlphaFresnel");
+        Add("_AlphaFresnelAlpha");
+        Add("_AlphaFresnelSharpness");
+        Add("_AlphaFresnelWidth");
+        Add("_AlphaFresnelInvert");
+        Add("_SourceGrabPassBlendMode");
+        Add("_SourceGrabPassBlendFactor");
+        Add("_Rim2Params");
+        Add("_Rim2MaskChannel");
+        Add("_Rim2LightColorThemeIndex");
+        Add("_SourceRim2Settings");
+        Add("_SourceRim2ColorSettings");
+        Add("_SourceRim2Params");
         Add("_SourceAnisoSettings");
         Add("_SourceAnisoMix");
         Add("_SourceAnisoMapSettings");
@@ -177,6 +196,13 @@ public static class NativeUberMaterialSchema
             Add("_SourceAnisoTint" + index);
             Add("_SourceAnisoToon" + index);
         }
+        Add("_SourceUtsSettings");
+        Add("_SourceUtsLayer1");
+        Add("_SourceUtsLayer2");
+        Add("_SourceUtsColor");
+        Add("_SourceUtsFlags");
+        Add("_SourcePostProcess");
+        Add("_SourcePostProcessHue");
         return [.. names];
 
         void Add(string name) { if (seen.Add(name)) names.Add(name); }

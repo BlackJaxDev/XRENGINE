@@ -47,9 +47,10 @@ public partial class OpenGLRenderer
 
             return RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy switch
             {
-                // Auto creates the shared-context queue as a fallback lane, but the
-                // selector only uses it when the driver-parallel startup probe fails.
+                // Auto and DriverParallel keep the shared-context queue available for
+                // single-stage separable hazards and oversized generated shader sources.
                 EOpenGLShaderLinkStrategy.Auto => true,
+                EOpenGLShaderLinkStrategy.DriverParallel => true,
                 EOpenGLShaderLinkStrategy.SharedContext => true,
                 _ => false,
             };

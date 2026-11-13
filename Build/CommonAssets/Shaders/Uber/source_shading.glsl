@@ -444,7 +444,8 @@ float xrSourceRimAmount(vec3 vertexNormal, vec3 pixelNormal, vec3 view,
         float borderMin = clamp(border - sharpness, 0.0, 1.0);
         return 1.0 - clamp((angle - borderMin) / max(border - borderMin, 1.0e-4), 0.0, 1.0);
     }
-    return 1.0 - smoothstep(min(sharpness, border), border, angle);
+    float edge0 = min(sharpness, border);
+    return 1.0 - smoothstep(edge0, max(border, edge0 + 1.0e-5), angle);
 }
 
 vec3 xrSourceRimBlend(vec3 baseColor, vec3 rimColor, float amount, int mode)
@@ -455,6 +456,15 @@ vec3 xrSourceRimBlend(vec3 baseColor, vec3 rimColor, float amount, int mode)
     if (mode == 4)
         return mix(baseColor, 1.0 - (1.0 - baseColor) * (1.0 - rimColor), amount);
     return baseColor + rimColor * amount;
+}
+
+vec3 xrSourceRimTransmissionScale(vec3 rimColor, float amount, int mode)
+{
+    if (mode == 1) return vec3(1.0 - amount);
+    if (mode == 2) return mix(vec3(1.0), rimColor, amount);
+    if (mode == 3) return vec3(1.0) + rimColor * amount;
+    if (mode == 4) return vec3(1.0) - clamp(rimColor, 0.0, 1.0) * amount;
+    return vec3(1.0);
 }
 
 float xrSourceAnisoLayerResponse(vec3 tangent, vec3 binormal, vec3 normal,
@@ -663,5 +673,75 @@ vec3 xrSourceMultilayerDiffuse(vec3 base, vec3 direct, vec3 indirect,
         strength *= data.strengthMask;
     shade = mix(direct, shade, strength);
     return base * mix(shade, direct, bands.x);
+}
+
+float xrSourceUtsSpecArea(vec3 geometricNormal, vec3 mappedNormal,
+    float normalStrength, vec3 view, vec3 light)
+{
+    vec3 halfVector = light + view;
+    float halfLenSq = dot(halfVector, halfVector);
+    halfVector = halfLenSq > 1e-8 ? halfVector * inversesqrt(halfLenSq) : vec3(0.0, 1.0, 0.0);
+    vec3 blendedNormal = mix(geometricNormal, mappedNormal, normalStrength);
+    return 0.5 * dot(blendedNormal, halfVector) + 0.5;
+}
+
+float xrSourceUtsEdgeNonLinear(float value, float border, float blur, float footprint)
+{
+    float borderMin = clamp(border - blur * 0.5, 0.0, 1.0);
+    float borderMax = clamp(border + blur * 0.5, 0.0, 1.0);
+    float edge0 = borderMin - footprint;
+    float edge1 = max(borderMax + footprint, edge0 + 1e-6);
+    return clamp(smoothstep(edge0, edge1, value), 0.0, 1.0);
+}
+
+void xrSourceApplyUtsSpecular(float specArea, float specAreaFootprint,
+    vec3 directLightColor, float rampedLightMap, float nDotLSaturated,
+    float lightAttenuation, float occlusion, vec4 settings, vec4 layer1,
+    vec4 layer2, vec3 highColor, vec4 flags, inout vec3 baseColor,
+    inout vec3 lightAdd)
+{
+    if (settings.x <= 0.0001)
+        return;
+
+    float clampedArea = max(specArea, 0.0);
+    float specMask1 = 0.0;
+    float specMask2 = 0.0;
+    if (settings.z > 0.5)
+    {
+        specMask1 = pow(clampedArea, exp2(mix(11.0, 1.0, layer1.x))) * layer1.z;
+        specMask2 = pow(clampedArea, exp2(mix(11.0, 1.0, layer2.x))) * layer2.z;
+    }
+    else
+    {
+        float p1 = layer1.x * layer1.x;
+        float border1 = 1.0 - p1 * p1 * layer1.x;
+        float p2 = layer2.x * layer2.x;
+        float border2 = 1.0 - p2 * p2 * layer2.x;
+        specMask1 = xrSourceUtsEdgeNonLinear(specArea, border1, layer1.y, specAreaFootprint) * layer1.z;
+        specMask2 = xrSourceUtsEdgeNonLinear(specArea, border2, layer2.y, specAreaFootprint) * layer2.z;
+    }
+
+    float specularMask = flags.w > 0.5 ? 0.0 : 1.0;
+    specularMask = clamp(specularMask + layer2.w, 0.0, 1.0);
+
+    float specMask = clamp(specMask1 + specMask2, 0.0, 1.0) * specularMask *
+        mix(rampedLightMap, 1.0, clamp(flags.x, 0.0, 1.0));
+    float attenuation = min(
+        mix(clamp(nDotLSaturated, 0.0, 1.0), 1.0, clamp(flags.y, 0.0, 1.0)),
+        mix(mix(clamp(lightAttenuation, 0.0, 1.0), 1.0, clamp(flags.z, 0.0, 1.0)), 1.0, clamp(flags.x, 0.0, 1.0)));
+    float finalSpecMask = clamp(min(min(specMask, clamp(occlusion, 0.0, 1.0)), attenuation) * settings.x, 0.0, 1.0);
+    if (finalSpecMask <= 0.0001)
+        return;
+
+    vec3 tint = highColor * mix(vec3(1.0), directLightColor, clamp(layer1.w, 0.0, 1.0));
+    int blendMode = int(settings.w + 0.5);
+    if (blendMode == 1)
+        lightAdd += max(vec3(0.0), tint * finalSpecMask);
+    else if (blendMode == 2)
+        baseColor = mix(baseColor, vec3(1.0) - (vec3(1.0) - baseColor) * (vec3(1.0) - tint), finalSpecMask);
+    else if (blendMode == 3)
+        baseColor = mix(baseColor, baseColor * tint, finalSpecMask);
+    else
+        baseColor = mix(baseColor, tint, finalSpecMask);
 }
 #endif

@@ -465,6 +465,36 @@ ImGui rendering happens within the viewport render callback, managed by the base
   waits, compile/link/binary-load/reflection timings, ready/failure state, and
   failure reasons.
 
+### Fragment Sampler Unit Allocation
+
+OpenGL 4.6 provides a bounded set of fragment texture image units (typically 32
+units, `0..31`). `GLMaterial` and `GLRenderProgram` share that budget across
+engine lighting samplers and material textures:
+
+- **Engine-first binding order**: `GLMaterial.SetUniforms` runs
+  `SetEngineUniforms` before `SetTextureUniforms` so unused shadow, ambient
+  occlusion, and environment samplers deduplicate onto shared engine placeholder
+  textures (`DummyShadowMap`, `DummyShadowMapArray`, `DummyPointShadowMap`, and
+  `DummyPbrTextureArray`) first.
+- **Nominal unit release**: `GLRenderProgram` tracks bound sampler uniform names
+  and locations per draw batch. After an active engine sampler or sampler-array
+  element binds to a deduplicated unit, `IsReservedForDifferentActiveSampler`
+  releases its unused nominal unit (`6..9`, `12..13`, `15..31`) for material
+  samplers.
+- **Active-first named material binding**: For Uber materials where every slot
+  specifies a sampler uniform name, `GLMaterial.SetTextureUniforms` binds active
+  named samplers (`GetUniformLocation >= 0`) first and skips fixed-unit fallback
+  bindings for inactive slots.
+- **Sampling-equivalent 2D unit sharing**: `GLTexture2D.IsSamplingEquivalentTo`
+  (`GLTexture2D.SamplingEquivalence.cs`) caches a zero-allocation
+  `SamplingEquivalenceSignature` for immutable 2D textures. Uniform `1x1` and
+  `2x2` binary RGBA fallback textures and static 2D textures with matching
+  dimensions, format, sampler parameters, and mip-0 bytes reuse one bound texture
+  unit across distinct `XRTexture2D` slot wrappers.
+- **Exhaustion diagnostics**: When `TryResolveSamplerTextureUnit` cannot allocate
+  a unit for an active sampler (`location >= 0`), `GLRenderProgram` logs a
+  rate-limited `GLSamplerNoUnit` error through `Debug.OpenGLErrorEvery`.
+
 ## Backend-Neutral Physics Compute
 
 OpenGL physics chains implement the same narrow compute contract as Vulkan:

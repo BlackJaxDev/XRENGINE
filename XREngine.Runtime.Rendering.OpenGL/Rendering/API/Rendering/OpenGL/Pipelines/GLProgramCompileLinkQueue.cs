@@ -30,6 +30,7 @@ namespace XREngine.Rendering.OpenGL
         {
             private readonly GLSharedContext[] _workers;
             private readonly bool _completionStatusPollingEnabled;
+            private readonly nint _khrMaxShaderCompilerThreadsEntryPoint;
             private readonly SemaphoreSlim _programLinkGate;
             private readonly bool _serializeProgramLinkDriverCalls;
             private readonly ConcurrentDictionary<uint, CompileResult> _completed = new();
@@ -69,7 +70,17 @@ namespace XREngine.Rendering.OpenGL
             private static bool DisableCompletionPollingForSharedContextWorkerPrograms
                 => XREnvironment.IsEnabled(XREngineEnvironmentVariables.SharedContextDisableCompletionPolling);
             private static bool SuppressParallelCompileForSingleStageWorkerPrograms
-                => XREnvironment.IsEnabled(XREngineEnvironmentVariables.SharedContextHazardDisableParallel);
+            {
+                get
+                {
+                    string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.SharedContextHazardDisableParallel);
+                    if (string.IsNullOrWhiteSpace(value))
+                        return true;
+
+                    return !string.Equals(value, "0", StringComparison.OrdinalIgnoreCase) &&
+                           !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
+                }
+            }
             private static bool DisableProgramLinkSerialization
                 => XREnvironment.IsEnabled(XREngineEnvironmentVariables.SharedContextDisableLinkSerialization);
 
@@ -98,7 +109,10 @@ namespace XREngine.Rendering.OpenGL
             {
             }
 
-            internal GLProgramCompileLinkQueue(IReadOnlyList<GLSharedContext> sharedContexts, bool completionStatusPollingEnabled)
+            internal GLProgramCompileLinkQueue(
+                IReadOnlyList<GLSharedContext> sharedContexts,
+                bool completionStatusPollingEnabled,
+                nint khrMaxShaderCompilerThreadsEntryPoint = 0)
             {
                 if (sharedContexts is null || sharedContexts.Count == 0)
                     throw new ArgumentException("At least one shared context is required.", nameof(sharedContexts));
@@ -110,6 +124,7 @@ namespace XREngine.Rendering.OpenGL
                 _completionStatusPollingEnabled =
                     completionStatusPollingEnabled &&
                     !DisableCompletionPollingForSharedContextWorkerPrograms;
+                _khrMaxShaderCompilerThreadsEntryPoint = khrMaxShaderCompilerThreadsEntryPoint;
                 _serializeProgramLinkDriverCalls = _workers.Length > 1 && !DisableProgramLinkSerialization;
                 _programLinkGate = new SemaphoreSlim(_serializeProgramLinkDriverCalls ? 1 : Math.Max(1, _workers.Length));
             }
@@ -490,6 +505,9 @@ namespace XREngine.Rendering.OpenGL
                 {
                     bool nativeCompileStarted = false;
                     bool sourceCompilationGateHeld = false;
+                    uint configuredWorkerCompilerThreads = ResolveParallelShaderCompilerThreadCount();
+                    ArbParallelShaderCompile? hazardArbExt = null;
+                    bool hazardKhrSuppressed = false;
                     try
                     {
                         lock (SourceCompilationAdmissionGate)
@@ -567,26 +585,50 @@ namespace XREngine.Rendering.OpenGL
                         // stall unrelated render-thread GL calls (for example glCreateProgram).
                         // Poll GL_COMPLETION_STATUS first so status queries are only issued
                         // after the driver says the compile/link is finished.
-                        bool useWorkerCompletionPolling = _completionStatusPollingEnabled;
                         bool hazardSuppressParallel = ShouldSuppressParallelCompileForWorkerProgram(shaders);
-                        uint configuredWorkerCompilerThreads = ResolveParallelShaderCompilerThreadCount();
-                        ArbParallelShaderCompile? hazardArbExt = null;
-                        if (hazardSuppressParallel && gl.TryGetExtension(out ArbParallelShaderCompile arbForHazard))
+                        if (hazardSuppressParallel)
                         {
-                            hazardArbExt = arbForHazard;
-                            try
+                            if (gl.TryGetExtension(out ArbParallelShaderCompile arbForHazard))
                             {
-                                MeasureRenderingWorkerGlCall(
-                                    "glMaxShaderCompilerThreadsARB",
-                                    programId,
-                                    0,
-                                    null,
-                                    () => arbForHazard.MaxShaderCompilerThreads(0u),
-                                    "worker=source-compile-thread-suppression threads=0");
+                                hazardArbExt = arbForHazard;
+                                try
+                                {
+                                    MeasureRenderingWorkerGlCall(
+                                        "glMaxShaderCompilerThreadsARB",
+                                        programId,
+                                        0,
+                                        null,
+                                        () => arbForHazard.MaxShaderCompilerThreads(0u),
+                                        "worker=source-compile-thread-suppression threads=0");
+                                }
+                                catch
+                                {
+                                    hazardArbExt = null;
+                                }
                             }
-                            catch { hazardArbExt = null; }
+                            else if (_khrMaxShaderCompilerThreadsEntryPoint != 0)
+                            {
+                                nint khrEntry = _khrMaxShaderCompilerThreadsEntryPoint;
+                                try
+                                {
+                                    MeasureRenderingWorkerGlCall(
+                                        "glMaxShaderCompilerThreadsKHR",
+                                        programId,
+                                        0,
+                                        null,
+                                        () => InvokeGlMaxShaderCompilerThreads(khrEntry, 0u),
+                                        "worker=source-compile-thread-suppression threads=0");
+                                    hazardKhrSuppressed = true;
+                                }
+                                catch
+                                {
+                                    hazardKhrSuppressed = false;
+                                }
+                            }
                         }
-                        bool workerCompilerThreadsSuppressed = hazardArbExt is not null;
+
+                        bool workerCompilerThreadsSuppressed = hazardArbExt is not null || hazardKhrSuppressed;
+                        bool useWorkerCompletionPolling = _completionStatusPollingEnabled && !workerCompilerThreadsSuppressed;
 
                         long compileStartTimestamp = Stopwatch.GetTimestamp();
                         uint[] shaderIds = new uint[shaders.Length];
@@ -741,21 +783,11 @@ namespace XREngine.Rendering.OpenGL
                                 new CompileResult(CompileStatus.CompileFailed, errorLog, compileMilliseconds, 0.0));
                             Interlocked.Increment(ref _failedCount);
 
-                            // Restore compiler thread count if the legacy suppression path changed it.
-                            if (hazardArbExt is not null)
-                            {
-                                try
-                                {
-                                    MeasureRenderingWorkerGlCall(
-                                        "glMaxShaderCompilerThreadsARB",
-                                        programId,
-                                        0,
-                                        null,
-                                        () => hazardArbExt.MaxShaderCompilerThreads(configuredWorkerCompilerThreads),
-                                        "worker=source-compile-thread-restore threads=configured");
-                                }
-                                catch { /* best-effort restore */ }
-                            }
+                            RestoreSuppressedWorkerCompilerThreads(
+                                programId,
+                                configuredWorkerCompilerThreads,
+                                ref hazardArbExt,
+                                ref hazardKhrSuppressed);
                             return;
                         }
 
@@ -939,21 +971,11 @@ namespace XREngine.Rendering.OpenGL
                             if (linkStatus != 0 && setBinaryRetrievableHint)
                                 programBinary = CaptureProgramBinary(gl, programId, "worker=source-link-binary-cache-capture");
 
-                            // Restore compiler thread count if the legacy suppression path changed it.
-                            if (hazardArbExt is not null)
-                            {
-                                try
-                                {
-                                    MeasureRenderingWorkerGlCall(
-                                        "glMaxShaderCompilerThreadsARB",
-                                        programId,
-                                        0,
-                                        null,
-                                        () => hazardArbExt.MaxShaderCompilerThreads(configuredWorkerCompilerThreads),
-                                        "worker=source-compile-thread-restore threads=configured");
-                                }
-                                catch { /* best-effort restore */ }
-                            }
+                            RestoreSuppressedWorkerCompilerThreads(
+                                programId,
+                                configuredWorkerCompilerThreads,
+                                ref hazardArbExt,
+                                ref hazardKhrSuppressed);
 
                             // Detach and delete shader objects — no longer needed after linking.
                             for (int i = 0; i < shaderIds.Length; i++)
@@ -1055,11 +1077,66 @@ namespace XREngine.Rendering.OpenGL
                     }
                     finally
                     {
+                        RestoreSuppressedWorkerCompilerThreads(
+                            programId,
+                            configuredWorkerCompilerThreads,
+                            ref hazardArbExt,
+                            ref hazardKhrSuppressed);
                         if (sourceCompilationGateHeld && !_nativeWorkIncompleteProgramIds.ContainsKey(programId))
                             SourceCompilationGate.Release();
                     }
                 }, $"ProgramSourceCompile:{programId}", priority);
                 return true;
+            }
+
+            private void RestoreSuppressedWorkerCompilerThreads(
+                uint programId,
+                uint configuredWorkerCompilerThreads,
+                ref ArbParallelShaderCompile? hazardArbExt,
+                ref bool hazardKhrSuppressed)
+            {
+                ArbParallelShaderCompile? arbToRestore = hazardArbExt;
+                hazardArbExt = null;
+                if (arbToRestore is not null)
+                {
+                    try
+                    {
+                        MeasureRenderingWorkerGlCall(
+                            "glMaxShaderCompilerThreadsARB",
+                            programId,
+                            0,
+                            null,
+                            () => arbToRestore.MaxShaderCompilerThreads(configuredWorkerCompilerThreads),
+                            "worker=source-compile-thread-restore threads=configured");
+                    }
+                    catch
+                    {
+                        // Best-effort restore on the worker context.
+                    }
+                }
+
+                if (!hazardKhrSuppressed)
+                    return;
+
+                hazardKhrSuppressed = false;
+                nint khrEntry = _khrMaxShaderCompilerThreadsEntryPoint;
+                if (khrEntry == 0)
+                    return;
+
+                try
+                {
+                    MeasureRenderingWorkerGlCall(
+                        "glMaxShaderCompilerThreadsKHR",
+                        programId,
+                        0,
+                        null,
+                        () => InvokeGlMaxShaderCompilerThreads(khrEntry, configuredWorkerCompilerThreads),
+                        "worker=source-compile-thread-restore threads=configured");
+                }
+                catch
+                {
+                    // Best-effort restore on the worker context.
+                }
             }
 
             private static void ApplyTransformFeedbackVaryings(GL gl, uint programId, TransformFeedbackLinkInfo transformFeedback, string phase)
@@ -1686,7 +1763,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
-            /// True when the legacy worker-side parallel compile suppression path is explicitly requested.
+            /// Returns true when the worker should set the driver shader compiler thread count to zero around a single-stage separable program build.
             /// </summary>
             private static bool ShouldSuppressParallelCompileForWorkerProgram(ReadOnlySpan<ShaderInput> shaders)
                 => SuppressParallelCompileForSingleStageWorkerPrograms && IsSingleStageSeparableGraphicsHazard(shaders);

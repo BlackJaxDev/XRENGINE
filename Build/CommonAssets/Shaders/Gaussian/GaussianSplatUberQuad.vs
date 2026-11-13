@@ -16,6 +16,7 @@ struct GaussianSplat
 struct GaussianSplatSurface
 {
     vec4 uv0Uv1;
+    vec4 uv2Uv3;
     vec4 dUv0LocalXY;
     vec4 worldNormalAndSign;
     vec4 worldTangentPad;
@@ -57,9 +58,10 @@ layout(location = 2) out vec3 FragLocalPosition;
 layout(location = 3) out vec3 FragWorldNormal;
 layout(location = 4) out vec3 FragWorldTangent;
 layout(location = 5) out vec4 FragUv0Uv1;
-layout(location = 6) flat out float FragTangentHandedness;
-layout(location = 7) flat out float FragBaseOpacity;
-layout(location = 8) flat out uvec2 FragMaterialAndColor;
+layout(location = 6) out vec4 FragUv2Uv3;
+layout(location = 7) flat out float FragTangentHandedness;
+layout(location = 8) flat out float FragBaseOpacity;
+layout(location = 9) flat out uvec2 FragMaterialAndColor;
 
 const uint CulledKey = 0xFFFFFFFFu;
 const float QuadExtentSigma = 2.2;
@@ -75,6 +77,7 @@ void Collapse()
     FragWorldNormal = vec3(0.0, 1.0, 0.0);
     FragWorldTangent = vec3(1.0, 0.0, 0.0);
     FragUv0Uv1 = vec4(0.0);
+    FragUv2Uv3 = vec4(0.0);
     FragTangentHandedness = 1.0;
     FragBaseOpacity = 0.0;
     FragMaterialAndColor = uvec2(0u);
@@ -220,6 +223,7 @@ void main()
     FragWorldNormal = surface.worldNormalAndSign.xyz;
     FragWorldTangent = surface.worldTangentPad.xyz;
     FragUv0Uv1 = vec4(uv0, surface.uv0Uv1.zw);
+    FragUv2Uv3 = surface.uv2Uv3;
     FragTangentHandedness = surface.worldNormalAndSign.w;
     FragBaseOpacity = splat.centerOpacity.w;
     FragMaterialAndColor = uvec2(

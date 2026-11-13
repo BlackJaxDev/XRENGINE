@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Gaussian;
 /// Static surface-sample descriptor bound to one triangle of an avatar submesh. Each frame,
 /// <c>GaussianLiveSurfaceSplats.comp</c> reads the live deformed vertices of this triangle and emits one
 /// <see cref="GaussianSplatGpuSplat"/> and one <see cref="GaussianSplatGpuSurface"/> at <see cref="SplatSlot"/>.
-/// The layout is std430 and 96 bytes.
+/// The layout is std430 and 112 bytes.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct GaussianLiveSurfaceGpuSample
@@ -43,6 +43,9 @@ public struct GaussianLiveSurfaceGpuSample
     /// <summary>Interpolated UV0 (XY) and UV1 (ZW) coordinates at the sample point.</summary>
     public Vector4 Uv0Uv1;
 
+    /// <summary>Interpolated UV2 (XY) and UV3 (ZW) coordinates at the sample point.</summary>
+    public Vector4 Uv2Uv3;
+
     /// <summary>Rest-pose local position (XYZ) and tangent handedness sign (+1 or -1 in W).</summary>
     public Vector4 LocalPosAndSign;
 
@@ -64,6 +67,7 @@ public struct GaussianLiveSurfaceGpuSample
         float restSigmaX,
         float restSigmaY,
         Vector4 uv0Uv1,
+        Vector4 uv2Uv3,
         Vector3 localPosition,
         float tangentSign,
         Vector4 uv0Edges)
@@ -78,6 +82,7 @@ public struct GaussianLiveSurfaceGpuSample
         RestSigmaXBits = BitConverter.SingleToUInt32Bits(restSigmaX);
         RestSigmaYBits = BitConverter.SingleToUInt32Bits(restSigmaY);
         Uv0Uv1 = uv0Uv1;
+        Uv2Uv3 = uv2Uv3;
         LocalPosAndSign = new Vector4(localPosition, tangentSign);
         Uv0Edges = uv0Edges;
     }

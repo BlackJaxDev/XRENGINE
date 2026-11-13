@@ -1485,11 +1485,16 @@ public partial class XRMaterial
         {
             if (string.IsNullOrWhiteSpace(fragmentShader.Source?.FilePath) &&
                 string.IsNullOrWhiteSpace(fragmentShader.FilePath) &&
+                HasUberShaderFileName(ResolveShaderPathOrName(fragmentShader)) &&
                 ShaderSourceResolver.CanAccessHostShaderFiles)
             {
                 XRShader hostCanonical = ShaderHelper.UberFragForward();
+                // Cooked NativeUberV1 archives omit FilePath on the serialized canonical shader.
+                // Rebind to the host UberShader.frag even when engine shader edits changed its text
+                // after cook time so top-level Uber source and host #include files stay synchronized.
                 if (!string.IsNullOrEmpty(fragmentShader.Source?.Text) &&
-                    string.Equals(fragmentShader.Source.Text, hostCanonical.Source?.Text, StringComparison.Ordinal))
+                    (EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 ||
+                     string.Equals(fragmentShader.Source.Text, hostCanonical.Source?.Text, StringComparison.Ordinal)))
                 {
                     SetField(ref _uberCanonicalFragmentShader, hostCanonical, publishNotifications: false);
                     return hostCanonical;

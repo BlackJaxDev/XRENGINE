@@ -600,7 +600,7 @@ public static class SourceToonRenderStateConverter
         return preset switch
         {
             SourceToonRenderPreset.Opaque => ETransparencyMode.Opaque,
-            SourceToonRenderPreset.Cutout or SourceToonRenderPreset.TransClipping => ETransparencyMode.Masked,
+            SourceToonRenderPreset.Cutout => ETransparencyMode.Masked,
             SourceToonRenderPreset.Transparent => ETransparencyMode.PremultipliedAlpha,
             SourceToonRenderPreset.Additive => ETransparencyMode.Additive,
             _ => ETransparencyMode.AlphaBlend,
@@ -609,7 +609,7 @@ public static class SourceToonRenderStateConverter
 
     private static int ResolveRenderPass(SourceToonRenderPreset preset, bool alphaToCoverage)
     {
-        if (alphaToCoverage || preset is SourceToonRenderPreset.Cutout or SourceToonRenderPreset.TransClipping)
+        if (alphaToCoverage || preset == SourceToonRenderPreset.Cutout)
             return (int)EDefaultRenderPass.MaskedForward;
         if (preset == SourceToonRenderPreset.Opaque)
             return (int)EDefaultRenderPass.OpaqueForward;

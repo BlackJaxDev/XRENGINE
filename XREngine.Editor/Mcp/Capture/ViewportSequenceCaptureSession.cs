@@ -138,6 +138,15 @@ internal sealed partial class ViewportSequenceCaptureSession
     }
 
     /// <summary>
+    /// Reads the current scheduled, completed, and failed frame counts under the session lock without allocating a snapshot.
+    /// </summary>
+    internal (int Scheduled, int Completed, int Failed) GetProgressCounts()
+    {
+        lock (_sync)
+            return (_scheduledFrameCount, _completedFrameCount, _failedFrameCount);
+    }
+
+    /// <summary>
     /// Attaches the session to the target window. This method must run on the main/render thread.
     /// </summary>
     public void Start()

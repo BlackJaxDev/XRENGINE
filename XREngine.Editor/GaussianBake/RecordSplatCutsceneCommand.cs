@@ -1,16 +1,19 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Numerics;
+using System.Text;
 using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Cutscenes;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Editor.Mcp;
 using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Budgets;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
@@ -18,6 +21,7 @@ using XREngine.Rendering.Models.Gaussian.Baking.Motion;
 using XREngine.Rendering.Models.Gaussian.Baking.Surface;
 using XREngine.Rendering.Models.Gaussian.Cache;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.Residency;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -224,9 +228,7 @@ public static class RecordSplatCutsceneCommand
         CookedBakeInput? cookedAvatarInput = null;
         HashSet<XRTexture2D> requestedStreamedTextures = new(ReferenceEqualityComparer.Instance);
         List<TextureResidencyHandle> residencyHandles = [];
-        IDisposable? cutsceneBudgetLease = options.TrianglesOnly
-            ? TextureResidencyRequests.Shared.AcquireBudgetProfile(ETextureStreamingBudgetProfile.Cutscene)
-            : null;
+        IDisposable? cutsceneBudgetLease = TextureResidencyRequests.Shared.AcquireBudgetProfile(ETextureStreamingBudgetProfile.Cutscene);
 
         try
         {
@@ -258,8 +260,8 @@ public static class RecordSplatCutsceneCommand
                     cookedAvatarInput,
                     options,
                     durationSeconds,
-                    options.TrianglesOnly ? requestedStreamedTextures : null,
-                    options.TrianglesOnly ? residencyHandles : null);
+                    requestedStreamedTextures,
+                    residencyHandles);
             }, cancellationToken).ConfigureAwait(false);
 
             if (shotScene is null)
@@ -280,6 +282,8 @@ public static class RecordSplatCutsceneCommand
                 Console.WriteLine(
                     $"Initialized live Uber avatar splats: splats={liveSplats.TotalSplats}, slices={liveSplats.SubmeshSliceCount}, " +
                     $"materials={liveSplats.MaterialCount}, textures2D={liveSplats.Texture2DCount}, " +
+                    $"texture2DReuse={liveSplats.Texture2DReuseCount}, constantTextureBindings={liveSplats.ConstantTextureBindingCount}, " +
+                    $"disabledRoleTextures={liveSplats.DisabledRoleTextureCount}, texture2DOverflow={liveSplats.Texture2DOverflowCount}, " +
                     $"clip='{shotScene.MotionChoice?.ClipName ?? "none"}' ({forwardClipDuration:F2}s), " +
                     $"physicsChains={shotScene.PhysicsChains.Count}, bounds=({avatarBounds.Min} .. {avatarBounds.Max}).");
             }
@@ -331,6 +335,8 @@ public static class RecordSplatCutsceneCommand
 
             // Prewarm GPU buffers, pipelines, and per-shot mesh visibility before capture starts.
             await WaitForWarmupAsync(viewport, shotScene, WarmupRenderFrames, cancellationToken).ConfigureAwait(false);
+            if (options.TrianglesOnly && shotScene.AvatarPrefabRoot is { } triangleAvatarRoot)
+                VerifyAvatarTriangleShadersReady(triangleAvatarRoot, options.Backend);
             double startupSeconds = Stopwatch.GetElapsedTime(runStartTimestamp).TotalSeconds;
 
             // Session manifests go to one clean folder. Frame pixels go straight to ffmpeg and never touch the disk.
@@ -580,8 +586,8 @@ public static class RecordSplatCutsceneCommand
             PrepareAvatarMaterialsForCapture(
                 avatarPrefabRoot,
                 prepareUberVariants: false,
-                requestedStreamedTextures,
-                residencyHandles);
+                options.TrianglesOnly ? requestedStreamedTextures : null,
+                options.TrianglesOnly ? residencyHandles : null);
 
             // Sample surface splats after World attachment so ModelComponent has built its final runtime renderers
             // and applied authored default blendshape weights, then suppress triangle draw collection.
@@ -592,6 +598,17 @@ public static class RecordSplatCutsceneCommand
                 HideAvatarTriangleMeshes(avatarPrefabRoot);
             runtimeWorld.PausePlay();
         }
+
+        // Pin stage and UI font atlas textures at mip 0 so texture streaming does not change generations mid-capture.
+        PrepareAvatarMaterialsForCapture(
+            stageNode,
+            prepareUberVariants: false,
+            requestedStreamedTextures,
+            residencyHandles);
+        if (titleComponent.Mesh?.Material is { } titleMaterial)
+            RequestStreamedMaterialTextureResidency(titleMaterial, requestedStreamedTextures, residencyHandles);
+        if (subtitleComponent.Mesh?.Material is { } subtitleMaterial)
+            RequestStreamedMaterialTextureResidency(subtitleMaterial, requestedStreamedTextures, residencyHandles);
 
         IRuntimeRenderWorld renderWorld = Engine.GetOrCreateRenderWorld(world);
         window.SetWorld(renderWorld);
@@ -622,6 +639,7 @@ public static class RecordSplatCutsceneCommand
         canvasTransform.RecalculateMatrixHierarchy(true, true, ELoopType.Sequential);
 
         return new CutsceneShotScene(
+            window,
             world,
             runtimeWorld,
             avatarNode,
@@ -721,6 +739,103 @@ public static class RecordSplatCutsceneCommand
         }, iterateChildHierarchy: true);
 
         return (visited.Count, nativeUberCount, readyVariants);
+    }
+
+    /// <summary>
+    /// Checks all active avatar Uber materials after warmup and fails the capture if any variant or OpenGL backend program failed to compile or link.
+    /// </summary>
+    private static void VerifyAvatarTriangleShadersReady(SceneNode avatarPrefabRoot, ERenderLibrary backend)
+    {
+        HashSet<XRMaterial> visited = new(ReferenceEqualityComparer.Instance);
+        List<string> failures = [];
+        int uberCount = 0;
+        int readyOpenGlPrograms = 0;
+        int unvisitedOpenGlPrograms = 0;
+        bool checkOpenGlSeparable = backend == ERenderLibrary.OpenGL && RuntimeEngine.Rendering.Settings.AllowShaderPipelines;
+
+        void InspectMaterial(XRMaterial? material)
+        {
+            if (material is null || !visited.Add(material))
+                return;
+
+            if (material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 &&
+                !material.TryGetUberMaterialState(out _, out _))
+            {
+                return;
+            }
+
+            uberCount++;
+            string materialName = material.Name ?? "<unnamed>";
+            UberMaterialVariantStatus variantStatus = material.UberVariantStatus;
+            if (variantStatus.Stage == EUberMaterialVariantStage.Failed || material.ActiveUberVariant.IsEmpty)
+            {
+                failures.Add($"{materialName}: UberVariant stage={variantStatus.Stage}, reason='{variantStatus.FailureReason ?? "<none>"}'");
+                return;
+            }
+
+            if (!checkOpenGlSeparable)
+                return;
+
+            if (material.ShaderPipelineProgram is not { } pipelineProgram)
+            {
+                unvisitedOpenGlPrograms++;
+                return;
+            }
+
+            XRRenderProgram.ShaderProgramBackendStatus backendStatus = pipelineProgram.ShaderMetadata.Backend;
+            if (backendStatus.Stage is XRRenderProgram.EShaderProgramBackendStage.Ready
+                or XRRenderProgram.EShaderProgramBackendStage.BinaryUploadReady)
+            {
+                readyOpenGlPrograms++;
+                return;
+            }
+
+            if (backendStatus.Stage == XRRenderProgram.EShaderProgramBackendStage.None)
+            {
+                unvisitedOpenGlPrograms++;
+                return;
+            }
+
+            failures.Add(
+                $"{materialName}: OpenGL stage={backendStatus.Stage}, backend={backendStatus.Backend ?? "<none>"}, " +
+                $"detail='{backendStatus.Detail ?? "<none>"}', reason='{backendStatus.FailureReason ?? "<none>"}'");
+        }
+
+        avatarPrefabRoot.IterateComponents<ModelComponent>(modelComponent =>
+        {
+            if (!BakeMotionSelector.IsEnabled(modelComponent, avatarPrefabRoot))
+                return;
+
+            foreach (RenderableMesh renderableMesh in modelComponent.Meshes)
+            {
+                InspectMaterial(renderableMesh.MaterialOverride);
+                foreach (var lod in renderableMesh.LODs)
+                    InspectMaterial(lod?.Renderer?.Material);
+            }
+
+            if (modelComponent.Model is { } model)
+            {
+                for (int subMeshIndex = 0; subMeshIndex < model.Meshes.Count; subMeshIndex++)
+                {
+                    var subMesh = model.Meshes[subMeshIndex];
+                    if (subMesh is null)
+                        continue;
+
+                    foreach (var lod in subMesh.LODs)
+                        InspectMaterial(lod?.Material);
+                }
+            }
+        }, iterateChildHierarchy: true);
+
+        if (checkOpenGlSeparable && uberCount > 0 && readyOpenGlPrograms == 0 && failures.Count == 0)
+            failures.Add($"Zero OpenGL separable Uber programs reached Ready across {uberCount} materials (unvisited={unvisitedOpenGlPrograms}).");
+
+        if (failures.Count > 0)
+            throw new InvalidOperationException($"Avatar triangle Uber shader readiness failed ({failures.Count} error(s)): {string.Join(" | ", failures)}");
+
+        Console.WriteLine(
+            $"Verified avatar triangle Uber shaders ready: backend={backend}, uberMaterials={uberCount}, " +
+            $"openGlReady={readyOpenGlPrograms}, openGlUnvisited={unvisitedOpenGlPrograms}.");
     }
 
     private static void PrepareCaptureMaterial(
@@ -1736,17 +1851,30 @@ public static class RecordSplatCutsceneCommand
         }, cancellationToken).ConfigureAwait(false);
 
         Stopwatch captureWatch = Stopwatch.StartNew();
+        long lastProgressTimestamp = Stopwatch.GetTimestamp();
+        int lastSettledCount = -1;
         try
         {
             while (!session!.IsTerminal)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (captureWatch.Elapsed > TimeSpan.FromMinutes(30))
+                (int scheduledCount, int completedCount, int failedCount) = session.GetProgressCounts();
+                int settledCount = completedCount + failedCount;
+                if (settledCount != lastSettledCount)
                 {
+                    lastSettledCount = settledCount;
+                    lastProgressTimestamp = Stopwatch.GetTimestamp();
+                }
+
+                TimeSpan sinceLastProgress = Stopwatch.GetElapsedTime(lastProgressTimestamp);
+                if (captureWatch.Elapsed > TimeSpan.FromMinutes(30) || sinceLastProgress > TimeSpan.FromSeconds(90))
+                {
+                    _ = session.Cancel();
                     ViewportSequenceCaptureSnapshot timeoutSnapshot = session.CreateSnapshot(includeFrames: false);
                     throw new TimeoutException(
                         $"Timed out waiting for ViewportSequenceCapture segment at frame {segmentStart} " +
-                        $"(scheduled={timeoutSnapshot.ScheduledFrameCount}, completed={timeoutSnapshot.CompletedFrameCount}).");
+                        $"(scheduled={scheduledCount}, completed={completedCount}, failed={failedCount}, " +
+                        $"dropped={timeoutSnapshot.DroppedFrameCount}, noProgressSeconds={sinceLastProgress.TotalSeconds:F1}).");
                 }
 
                 await Task.Delay(50, cancellationToken).ConfigureAwait(false);
@@ -1800,24 +1928,21 @@ public static class RecordSplatCutsceneCommand
         int warmupFrames,
         CancellationToken cancellationToken)
     {
-        if (shotScene.TrianglesOnly)
+        for (int shotIndex = 0; shotIndex < ShotWarmupFractions.Length; shotIndex++)
         {
-            for (int shotIndex = 0; shotIndex < ShotWarmupFractions.Length; shotIndex++)
-            {
-                double shotTimeSeconds = shotScene.DurationSeconds * ShotWarmupFractions[shotIndex];
-                int warmupStepIndex = -(shotIndex + 10);
-                await RunOnUpdateThreadAsync(
-                    () => SeekAndEvaluateCutscene(shotScene, shotTimeSeconds, warmupStepIndex),
-                    cancellationToken).ConfigureAwait(false);
-                await WaitForViewportReadyFramesAsync(viewport, shotScene, ShotWarmupRenderFrames, cancellationToken).ConfigureAwait(false);
-            }
-
-            await RunOnUpdateThreadAsync(() =>
-            {
-                shotScene.LastSteppedCaptureFrame = -1;
-                SeekAndEvaluateCutscene(shotScene, 0.0, captureFrameIndex: 0);
-            }, cancellationToken).ConfigureAwait(false);
+            double shotTimeSeconds = shotScene.DurationSeconds * ShotWarmupFractions[shotIndex];
+            int warmupStepIndex = -(shotIndex + 10);
+            await RunOnUpdateThreadAsync(
+                () => SeekAndEvaluateCutscene(shotScene, shotTimeSeconds, warmupStepIndex),
+                cancellationToken).ConfigureAwait(false);
+            await WaitForViewportReadyFramesAsync(viewport, shotScene, ShotWarmupRenderFrames, cancellationToken).ConfigureAwait(false);
         }
+
+        await RunOnUpdateThreadAsync(() =>
+        {
+            shotScene.LastSteppedCaptureFrame = -1;
+            SeekAndEvaluateCutscene(shotScene, 0.0, captureFrameIndex: 0);
+        }, cancellationToken).ConfigureAwait(false);
 
         await WaitForViewportReadyFramesAsync(viewport, shotScene, warmupFrames, cancellationToken).ConfigureAwait(false);
 
@@ -1833,8 +1958,8 @@ public static class RecordSplatCutsceneCommand
         int requiredReadyFrames,
         CancellationToken cancellationToken)
     {
-        ulong startFrame = RuntimeEngine.Rendering.State.RenderFrameId;
-        ulong readyStartFrame = 0;
+        long waitStartTimestamp = Stopwatch.GetTimestamp();
+        long? readyStartSequence = null;
 
         while (true)
         {
@@ -1848,23 +1973,25 @@ public static class RecordSplatCutsceneCommand
                 readbackReady = true;
             }
 
-            ulong currentFrame = RuntimeEngine.Rendering.State.RenderFrameId;
+            long currentSequence = shotScene.Window.LastCompletedRenderWindowInterval.Sequence;
             if (gpuReady && readbackReady)
             {
-                if (readyStartFrame == 0)
-                    readyStartFrame = currentFrame;
-                else if (currentFrame >= readyStartFrame + (ulong)requiredReadyFrames)
+                if (readyStartSequence is null)
+                    readyStartSequence = currentSequence;
+                else if (currentSequence >= readyStartSequence.Value + requiredReadyFrames)
                     return;
             }
             else
             {
-                readyStartFrame = 0;
+                readyStartSequence = null;
             }
 
-            if (currentFrame > startFrame + 3600)
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(waitStartTimestamp);
+            if (elapsed > TimeSpan.FromMinutes(10))
             {
                 throw new TimeoutException(
-                    $"Timed out waiting for recording viewport readiness (IsGpuDataReady={gpuReady}, ReadbackReady={readbackReady}).");
+                    $"Timed out after {elapsed.TotalSeconds:F1}s waiting for recording viewport readiness " +
+                    $"(IsGpuDataReady={gpuReady}, ReadbackReady={readbackReady}, {shotScene.DescribeReadinessState()}).");
             }
 
             await Task.Delay(16, cancellationToken).ConfigureAwait(false);
@@ -2350,6 +2477,7 @@ public static class RecordSplatCutsceneCommand
         float CacheEndFraction);
 
     private sealed class CutsceneShotScene(
+        XRWindow window,
         XRWorld world,
         RuntimeWorld runtimeWorld,
         SceneNode avatarNode,
@@ -2373,6 +2501,7 @@ public static class RecordSplatCutsceneCommand
         bool trianglesOnly,
         IReadOnlyList<TextureResidencyHandle>? residencyHandles)
     {
+        public XRWindow Window { get; } = window;
         public XRWorld World { get; } = world;
         public RuntimeWorld RuntimeWorld { get; } = runtimeWorld;
         public SceneNode AvatarNode { get; } = avatarNode;
@@ -2397,13 +2526,43 @@ public static class RecordSplatCutsceneCommand
         public float LastAppliedAnimTimeSeconds { get; set; }
         public int LastSteppedCaptureFrame { get; set; } = -1;
 
-        public bool IsGpuDataReady => TrianglesOnly
-            ? AreTriangleMeshesAndTexturesReady(residencyHandles)
-            : AvatarSplatComponent is { } liveSplats
+        public bool IsGpuDataReady => AreSceneTexturesAndShadersReady(residencyHandles) && (TrianglesOnly
+            || (AvatarSplatComponent is { } liveSplats
                 ? liveSplats.IsGpuDataReady
-                : (CacheComponent?.Cache?.IsComplete ?? false) && (CacheComponent?.IsGpuDataReady ?? false);
+                : (CacheComponent?.Cache?.IsComplete ?? false) && (CacheComponent?.IsGpuDataReady ?? false)));
 
-        private static bool AreTriangleMeshesAndTexturesReady(IReadOnlyList<TextureResidencyHandle>? handles)
+        public string DescribeReadinessState()
+        {
+            int pendingHandles = 0;
+            if (residencyHandles is not null)
+            {
+                for (int i = 0; i < residencyHandles.Count; i++)
+                {
+                    if (residencyHandles[i].State == ETextureResidencyRequestState.Pending)
+                        pendingHandles++;
+                }
+            }
+
+            int pendingStartupWork = 0;
+            bool hasPendingAsyncPrograms = false;
+            IRuntimeRendererHost? host = (Window.Renderer as IRuntimeRendererHost) ?? (AbstractRenderer.Current as IRuntimeRendererHost);
+            if (host is not null &&
+                host.TryGetBackendCapability<IRendererStartupWarmupBackendCapability>(out var warmup) &&
+                warmup is not null)
+            {
+                pendingStartupWork = warmup.PendingStartupWorkCount;
+                hasPendingAsyncPrograms = warmup.HasPendingAsyncPrograms;
+            }
+
+            return $"activeUploads={XRTexture2D.ActiveProgressiveUploadCount}, " +
+                   $"queuedUploads={XRTexture2D.QueuedProgressiveUploadCount}, " +
+                   $"streamImporting={TextureResidencyRequests.Shared.AreStreamedTexturesImporting}, " +
+                   $"pendingHandles={pendingHandles}/{residencyHandles?.Count ?? 0}, " +
+                   $"pendingStartupWork={pendingStartupWork}, " +
+                   $"pendingAsyncPrograms={hasPendingAsyncPrograms}";
+        }
+
+        private bool AreSceneTexturesAndShadersReady(IReadOnlyList<TextureResidencyHandle>? handles)
         {
             if (XRTexture2D.ActiveProgressiveUploadCount > 0 ||
                 XRTexture2D.QueuedProgressiveUploadCount > 0 ||
@@ -2421,7 +2580,8 @@ public static class RecordSplatCutsceneCommand
                 }
             }
 
-            if (AbstractRenderer.Current is IRuntimeRendererHost host &&
+            IRuntimeRendererHost? host = (Window.Renderer as IRuntimeRendererHost) ?? (AbstractRenderer.Current as IRuntimeRendererHost);
+            if (host is not null &&
                 host.TryGetBackendCapability<IRendererStartupWarmupBackendCapability>(out var warmup) &&
                 warmup is not null &&
                 (warmup.PendingStartupWorkCount > 0 || warmup.HasPendingAsyncPrograms))
