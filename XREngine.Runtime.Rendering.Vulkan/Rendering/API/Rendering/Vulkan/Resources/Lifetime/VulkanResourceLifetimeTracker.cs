@@ -498,7 +498,9 @@ internal sealed partial class VulkanResourceLifetimeTracker
                 out VulkanResourceLifetimeRecord? resource))
         {
             nativeBufferPublicationChanged =
-                key.Type == ObjectType.Buffer && resource.PublishedGeneration != generation;
+                key.Type == ObjectType.Buffer &&
+                !resource.ExcludedFromNativeBufferBindingRevision &&
+                resource.PublishedGeneration != generation;
             resource.PublishedGeneration = generation;
         }
 
@@ -525,7 +527,7 @@ internal sealed partial class VulkanResourceLifetimeTracker
         }
 
         resource.Generation = generation;
-        if (resource.Key.Type == ObjectType.Buffer)
+        if (resource.Key.Type == ObjectType.Buffer && !resource.ExcludedFromNativeBufferBindingRevision)
             IncrementNativeBufferBindingRevisionNoLock();
         resource.Slot = new VulkanResourceSlotHandle(
             resource.Slot.Index,
@@ -555,7 +557,7 @@ internal sealed partial class VulkanResourceLifetimeTracker
 
         _ = ResourceLifetimes.Remove(key);
         PublishedResourceGenerations.TryRemove(key, out _);
-        if (key.Type == ObjectType.Buffer)
+        if (key.Type == ObjectType.Buffer && !resource.ExcludedFromNativeBufferBindingRevision)
             IncrementNativeBufferBindingRevisionNoLock();
         if (resource.Key.Type == ObjectType.DescriptorSet)
             PublishedDescriptorSets.TryRemove(resource.Key.Handle, out _);
@@ -604,7 +606,7 @@ internal sealed partial class VulkanResourceLifetimeTracker
         }
 
         PublishedResourceGenerations.TryRemove(key, out _);
-        if (key.Type == ObjectType.Buffer)
+        if (key.Type == ObjectType.Buffer && !resource.ExcludedFromNativeBufferBindingRevision)
             IncrementNativeBufferBindingRevisionNoLock();
         resource.PublishedGeneration = 0UL;
         resource.PublishedDescriptorSnapshot = null;
@@ -798,6 +800,27 @@ internal sealed partial class VulkanResourceLifetimeTracker
             if ((resource.State & EVulkanResourceLifetimeState.PendingRetirement) == 0)
                 SetPublishedGenerationNoLock(key, 0UL);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Marks a registered buffer that can never be bound (a staging or readback buffer with
+    /// only transfer usage), so that its later recycling, retirement and destruction leave
+    /// <see cref="NativeBufferBindingRevision"/> unchanged. Consumers of that revision cache
+    /// binding artifacts, descriptor fingerprints and barrier plans; a texture upload that
+    /// recycles a staging buffer in every frame otherwise invalidated all of them.
+    /// </summary>
+    internal void ExcludeFromNativeBufferBindingRevision(VulkanResourceLifetimeKey key)
+    {
+        if (!key.IsValid || key.Type != ObjectType.Buffer)
+            return;
+
+        using (VulkanFrameLockScope.Enter(
+                   SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+        {
+            if (ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+                resource.ExcludedFromNativeBufferBindingRevision = true;
         }
     }
 
