@@ -2996,12 +2996,25 @@ namespace XREngine.Components.Lights
         /// texel size every frame and made shadow edges shimmer. The radius is rounded up
         /// to a fixed step so float noise cannot change it from frame to frame either.
         /// </summary>
-        private static void ApplySphereFit(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, ref Vector3 min, ref Vector3 max)
+        /// <summary>
+        /// Replaces the slice box with the box of a sphere that holds the slice corners.
+        /// The sphere is centred on the slice centroid, or with <paramref name="cameraCentred"/>
+        /// on the camera position: the mean of the near-plane corners of all source frusta
+        /// (the head for a stereo source). The radius reaches the farthest slice corner and
+        /// is rounded up, so the fit does not change size when the camera turns. A
+        /// camera-centred sphere also keeps its centre when the camera turns.
+        /// </summary>
+        private static void ApplySphereFit(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, bool cameraCentred, ref Vector3 min, ref Vector3 max)
         {
             Vector3 centerLS = Vector3.Zero;
             int cornerCount = 0;
             for (int i = 0; i < cameraFrusta.Length; i++)
-                AccumulateCascadeCentroid(cameraFrusta[i], nearT, farT, worldToLight, ref centerLS, ref cornerCount);
+            {
+                if (cameraCentred)
+                    AccumulateCascadeCentroid(cameraFrusta[i], 0.0f, 0.0f, worldToLight, ref centerLS, ref cornerCount);
+                else
+                    AccumulateCascadeCentroid(cameraFrusta[i], nearT, farT, worldToLight, ref centerLS, ref cornerCount);
+            }
             if (cornerCount == 0)
                 return;
             centerLS /= cornerCount;
@@ -3152,7 +3165,7 @@ namespace XREngine.Components.Lights
             centerLS.Y = MathF.Round(centerLS.Y / texelY) * texelY;
         }
 
-        private static void GetCascadeBoundsInLightSpace(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, out Vector3 min, out Vector3 max)
+        private static void GetCascadeBoundsInLightSpace(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, bool cameraCentred, out Vector3 min, out Vector3 max)
         {
             min = new Vector3(float.MaxValue);
             max = new Vector3(float.MinValue);
@@ -3160,7 +3173,7 @@ namespace XREngine.Components.Lights
             for (int i = 0; i < cameraFrusta.Length; i++)
                 IncludeCascadeBoundsInLightSpace(cameraFrusta[i], nearT, farT, worldToLight, ref min, ref max);
 
-            ApplySphereFit(cameraFrusta, nearT, farT, worldToLight, ref min, ref max);
+            ApplySphereFit(cameraFrusta, nearT, farT, worldToLight, cameraCentred, ref min, ref max);
         }
 
         private void BuildLightSpaceBasis(out Matrix4x4 worldToLight, out Matrix4x4 lightToWorld, out Quaternion lightRotation, out Vector3 lightDir)
@@ -3947,6 +3960,9 @@ namespace XREngine.Components.Lights
             float cumulative = 0.0f;
             int resourceSlot = 0;
             float refitMargin = RuntimeEngine.Rendering.Settings.DirectionalCascadeRefitMarginFraction;
+            bool cameraCentredFit = (source == ShadowRequestSource.Hmd
+                ? RuntimeEngine.Rendering.Settings.HmdDirectionalCascadeFitCentre
+                : RuntimeEngine.Rendering.Settings.DesktopDirectionalCascadeFitCentre) == EDirectionalCascadeFitCentre.CameraPosition;
 
             try
             {
@@ -3967,7 +3983,7 @@ namespace XREngine.Components.Lights
                     float nearT = Math.Clamp((expandedStart - cameraNear) / sourceFrustumDepth, 0.0f, 1.0f);
                     float farT = Math.Clamp((expandedEnd - cameraNear) / sourceFrustumDepth, 0.0f, 1.0f);
 
-                    GetCascadeBoundsInLightSpace(cascadeFrusta, nearT, farT, worldToLight, out Vector3 min, out Vector3 max);
+                    GetCascadeBoundsInLightSpace(cascadeFrusta, nearT, farT, worldToLight, cameraCentredFit, out Vector3 min, out Vector3 max);
 
                     // With the -Z forward convention, positive light-space Z points toward
                     // the light source. Extend max.Z to capture shadow casters upstream.

@@ -5,6 +5,7 @@ using System.Threading;
 using System.Linq;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
@@ -740,6 +741,8 @@ public static partial class RuntimeEngine
                 private bool _holdDirectionalCascadesWhileCameraMoves;
                 private int _maxDirectionalCascadeRefreshesPerFrame = 1;
                 private float _directionalCascadeRefitMarginFraction = 0.1f;
+                private EDirectionalCascadeFitCentre _desktopDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
+                private EDirectionalCascadeFitCentre _hmdDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
                 private uint _minShadowAtlasTileResolution = 128u;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
@@ -982,6 +985,22 @@ public static partial class RuntimeEngine
 
                         Volatile.Write(ref _directionalCascadeRefitMarginFraction, clamped);
                     }
+                }
+
+                [Category("Shadows")]
+                [Description("Centre of the directional cascade fit for the desktop camera. CameraPosition centres each cascade sphere on the camera, so turning the camera does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the camera: finer texels, but a turn refits the cascades.")]
+                public EDirectionalCascadeFitCentre DesktopDirectionalCascadeFitCentre
+                {
+                    get => _desktopDirectionalCascadeFitCentre;
+                    set => SetField(ref _desktopDirectionalCascadeFitCentre, value);
+                }
+
+                [Category("Shadows")]
+                [Description("Centre of the directional cascade fit for the HMD (both eyes share the cascades). CameraPosition centres each cascade sphere on the head, so head rotation does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the head: finer texels, but every head turn refits the cascades.")]
+                public EDirectionalCascadeFitCentre HmdDirectionalCascadeFitCentre
+                {
+                    get => _hmdDirectionalCascadeFitCentre;
+                    set => SetField(ref _hmdDirectionalCascadeFitCentre, value);
                 }
 
                 [Category("Shadows")]
