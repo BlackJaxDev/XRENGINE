@@ -490,9 +490,18 @@ namespace XREngine.Scene
 
         #region Shadow Atlas Requests
 
+        // Shadow caster changes drained for the current plan pass, and the read index of this
+        // collection in the scene's change ring.
+        private readonly AABB[] _shadowCasterChanges = new AABB[4096];
+        private int _shadowCasterChangeCount;
+        private bool _shadowCasterChangesOverflowed;
+        private long _shadowCasterChangeReadIndex;
+
         private void PlanShadowAtlasRequests(ShadowScratch scratch)
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.UpdateShadowAtlasRequests");
+            _shadowCasterChangeCount = World.VisualScene.DrainShadowCasterChanges(
+                _shadowCasterChanges, ref _shadowCasterChangeReadIndex, out _shadowCasterChangesOverflowed);
 
             SynchronizeDirectionalShadowAtlasMode();
             PopulateShadowAtlasActiveCameras(scratch);
@@ -856,6 +865,10 @@ namespace XREngine.Scene
                 return;
 
             light.BeginDirectionalCascadeAtlasRequestFrame(source, activeCascadeCount);
+            light.MarkDirectionalCascadeCasterChanges(
+                source,
+                _shadowCasterChanges.AsSpan(0, _shadowCasterChangeCount),
+                _shadowCasterChangesOverflowed);
             GrantDirectionalCascadeRefreshes(light, source, encoding, activeCascadeCount);
             for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
             {
@@ -2079,7 +2092,8 @@ namespace XREngine.Scene
             Add(ref hash, World.VisualScene.ShadowCasterMembershipRevision);
             Add(ref hash, light.GetShadowCasterCommandSetSignature(
                 projectionType, source, faceOrCascadeIndex));
-            if (World.VisualScene.TryGetCoveredShadowCasterOutputRevision(
+            if (projectionType != EShadowProjectionType.DirectionalCascade &&
+                World.VisualScene.TryGetCoveredShadowCasterOutputRevision(
                     cameraLayerMask, out ulong outputRevision))
                 Add(ref hash, outputRevision);
             if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary)
@@ -2115,7 +2129,8 @@ namespace XREngine.Scene
             Add(ref hash, World.VisualScene.ShadowCasterMembershipRevision);
             Add(ref hash, light.GetShadowCasterCommandSetSignature(
                 projectionType, source, faceOrCascadeIndex));
-            if (World.VisualScene.TryGetCoveredShadowCasterOutputRevision(
+            if (projectionType != EShadowProjectionType.DirectionalCascade &&
+                World.VisualScene.TryGetCoveredShadowCasterOutputRevision(
                     cameraLayerMask, out ulong outputRevision))
                 Add(ref hash, outputRevision);
             return hash;

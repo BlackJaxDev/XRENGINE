@@ -154,6 +154,24 @@ namespace XREngine.Components.Lights
             public readonly ulong[] RequestedCasterStateHashes = new ulong[MaxCascadeRenderCount];
             // Shadow atlas frame of the last request that asked to render each cascade.
             public readonly ulong[] RequestedRefreshFrames = new ulong[MaxCascadeRenderCount];
+            // Caster change epoch of each cascade. It advances when a changed shadow caster
+            // box meets the cascade volume, and it is the cascade's caster command signature.
+            public readonly ulong[] CascadeCasterEpochs = new ulong[MaxCascadeRenderCount];
+            // Light-space bounds of the receiver slice of each cascade (the frustum slice
+            // corners, before the sphere fit), per slice index, and the light basis they use.
+            public readonly Vector3[] ReceiverFootprintMinLS = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] ReceiverFootprintMaxLS = new Vector3[MaxCascadeRenderCount];
+            public Matrix4x4 ReceiverFootprintWorldToLight = Matrix4x4.Identity;
+            // Light-space X/Y convex hull of the receiver slice corners of each cascade
+            // (counter-clockwise), ReceiverHullCapacity points per cascade.
+            public readonly Vector2[] ReceiverHullPoints = new Vector2[MaxCascadeRenderCount * ReceiverHullCapacity];
+            public readonly int[] ReceiverHullCounts = new int[MaxCascadeRenderCount];
+            // Light-space union of the caster changes that met a cascade's tile but not its
+            // receiver footprint since the cascade last rendered. A footprint that later moves
+            // over this region marks the cascade, so no sampled texel keeps stale casters.
+            public readonly Vector3[] PendingDirtyMinLS = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] PendingDirtyMaxLS = new Vector3[MaxCascadeRenderCount];
+            public readonly bool[] PendingDirtyValid = new bool[MaxCascadeRenderCount];
             public readonly ulong[] AtlasCollectedContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeRenderRequested = new bool[MaxCascadeRenderCount];
             // Matrices that the Advanced capture published for planned refreshes. The
@@ -1977,6 +1995,9 @@ namespace XREngine.Components.Lights
                 {
                     state.RequestedCasterStateHashes[index] = casterStateHash;
                     state.RequestedRefreshFrames[index] = requestFrameId;
+                    // The render collects the present casters, so earlier changes outside the
+                    // footprint are in the new tile.
+                    state.PendingDirtyValid[index] = false;
                 }
             }
         }
@@ -3941,6 +3962,11 @@ namespace XREngine.Components.Lights
             CascadeShadowBiasOverride[] biasOverrideSnapshot = _cascadeBiasOverrides;
             CascadeShadowSlice[] nextShadowSlices = ArrayPool<CascadeShadowSlice>.Shared.Rent(maxCascadeCount);
             CascadedShadowAabb[] nextCascadeAabbs = ArrayPool<CascadedShadowAabb>.Shared.Rent(maxCascadeCount);
+            Span<Vector3> footprintMin = stackalloc Vector3[MaxCascadeRenderCount];
+            Span<Vector3> footprintMax = stackalloc Vector3[MaxCascadeRenderCount];
+            Span<Vector2> hullPoints = stackalloc Vector2[MaxCascadeRenderCount * ReceiverHullCapacity];
+            Span<int> hullCounts = stackalloc int[MaxCascadeRenderCount];
+            Span<Vector2> cornerScratch = stackalloc Vector2[ReceiverHullCapacity];
 
             float cameraNear = playerCamera.NearZ;
             float sourceCameraFar = playerCamera.FarZ;
@@ -3984,6 +4010,11 @@ namespace XREngine.Components.Lights
                     float farT = Math.Clamp((expandedEnd - cameraNear) / sourceFrustumDepth, 0.0f, 1.0f);
 
                     GetCascadeBoundsInLightSpace(cascadeFrusta, nearT, farT, worldToLight, cameraCentredFit, out Vector3 min, out Vector3 max);
+                    // Receiver footprint: the slice corners in light space, before the sphere fit.
+                    Vector3 receiverMin = new(float.MaxValue);
+                    Vector3 receiverMax = new(float.MinValue);
+                    for (int f = 0; f < cascadeFrusta.Length; f++)
+                        IncludeCascadeBoundsInLightSpace(cascadeFrusta[f], nearT, farT, worldToLight, ref receiverMin, ref receiverMax);
 
                     // With the -Z forward convention, positive light-space Z points toward
                     // the light source. Extend max.Z to capture shadow casters upstream.
@@ -4040,6 +4071,14 @@ namespace XREngine.Components.Lights
                     };
 
                     nextCascadeAabbs[resourceSlot] = new CascadedShadowAabb(0, cascadeIndex, centerWS, halfExtents, lightRotation);
+                    footprintMin[resourceSlot] = receiverMin;
+                    footprintMax[resourceSlot] = receiverMax;
+                    int cornerCount = 0;
+                    for (int f = 0; f < cascadeFrusta.Length && cornerCount + 8 <= ReceiverHullCapacity; f++)
+                        AppendSliceCornersXY(cascadeFrusta[f], nearT, farT, worldToLight, cornerScratch, ref cornerCount);
+                    hullCounts[resourceSlot] = BuildConvexHull(
+                        cornerScratch[..cornerCount],
+                        hullPoints.Slice(resourceSlot * ReceiverHullCapacity, ReceiverHullCapacity));
                     resourceSlot++;
                 }
 
@@ -4052,6 +4091,15 @@ namespace XREngine.Components.Lights
                     state.Aabbs.Clear();
                     for (int i = 0; i < resourceSlot; i++)
                         state.Aabbs.Add(nextCascadeAabbs[i]);
+                    for (int i = 0; i < resourceSlot && i < MaxCascadeRenderCount; i++)
+                    {
+                        state.ReceiverFootprintMinLS[i] = footprintMin[i];
+                        state.ReceiverFootprintMaxLS[i] = footprintMax[i];
+                        state.ReceiverHullCounts[i] = hullCounts[i];
+                        hullPoints.Slice(i * ReceiverHullCapacity, hullCounts[i])
+                            .CopyTo(state.ReceiverHullPoints.AsSpan(i * ReceiverHullCapacity, ReceiverHullCapacity));
+                    }
+                    state.ReceiverFootprintWorldToLight = worldToLight;
 
                     state.RangeNear = cameraNear;
                     state.RangeFar = effectiveCascadeFar;
@@ -4466,13 +4514,239 @@ namespace XREngine.Components.Lights
                 if ((uint)faceOrCascadeIndex >= (uint)cascadeCount)
                     return 0u;
 
-                int commandViewportIndex = ShouldPrepareAtlasGroupedCascadeCollection(cascadeCount)
-                    ? 0
-                    : faceOrCascadeIndex;
-                return (uint)commandViewportIndex < (uint)viewports.Length
-                    ? viewports[commandViewportIndex].RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature
-                    : 0u;
+                // The caster change epoch of this cascade. The command set of the collection
+                // viewport is the union of the cascades that collect in this frame, so it
+                // changes when only a cascade volume moves; the epoch changes only when a
+                // changed caster box meets this cascade (MarkDirectionalCascadeCasterChanges).
+                return state.CascadeCasterEpochs[faceOrCascadeIndex];
             }
+        }
+
+        /// <summary>
+        /// Advances the caster change epoch of every cascade of <paramref name="source"/> whose
+        /// sampled texels one of the <paramref name="changes"/> can affect. The changes are world
+        /// boxes of shadow casters that moved, got a new deformation pose, or started or stopped
+        /// casting. A cascade is marked when a change can shadow a receiver of its frustum slice
+        /// (<see cref="ReceiverFootprintMeets"/>), when a change in the border band of the
+        /// previous cascade's tile can shadow that cascade's receivers (shading blends into the
+        /// next cascade near a tile border), or when the slice now covers a pending region: a
+        /// change that met the tile but not the footprint since the cascade last rendered. The
+        /// fit sphere alone is not used: a camera-centred fit holds the camera area in every
+        /// cascade, so a caster near the camera would mark every cascade. With
+        /// <paramref name="allChanged"/> (a lost record) every cascade advances.
+        /// </summary>
+        internal void MarkDirectionalCascadeCasterChanges(ShadowRequestSource source, ReadOnlySpan<AABB> changes, bool allChanged)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                Matrix4x4 worldToLight = state.ReceiverFootprintWorldToLight;
+                int count = Math.Min(state.Slices.Count, MaxCascadeRenderCount);
+                for (int i = 0; i < count; i++)
+                {
+                    Vector3 footprintMin = state.ReceiverFootprintMinLS[i];
+                    Vector3 footprintMax = state.ReceiverFootprintMaxLS[i];
+                    ReadOnlySpan<Vector2> hull = state.ReceiverHullPoints.AsSpan(i * ReceiverHullCapacity, state.ReceiverHullCounts[i]);
+                    bool mark = allChanged ||
+                        (state.PendingDirtyValid[i] &&
+                         ReceiverFootprintMeets(footprintMin, footprintMax, hull, state.PendingDirtyMinLS[i], state.PendingDirtyMaxLS[i]));
+
+                    CascadeShadowSlice slice = state.Slices[i];
+                    Vector3 tileCenter = Vector3.Transform(slice.Center, worldToLight);
+                    Vector3 tileMin = tileCenter - slice.HalfExtents;
+                    Vector3 tileMax = tileCenter + slice.HalfExtents;
+                    bool hasPrevious = i > 0;
+                    Vector3 previousFootprintMin = hasPrevious ? state.ReceiverFootprintMinLS[i - 1] : default;
+                    Vector3 previousFootprintMax = hasPrevious ? state.ReceiverFootprintMaxLS[i - 1] : default;
+                    ReadOnlySpan<Vector2> previousHull = hasPrevious
+                        ? state.ReceiverHullPoints.AsSpan((i - 1) * ReceiverHullCapacity, state.ReceiverHullCounts[i - 1])
+                        : default;
+                    Vector3 previousInnerMin = default;
+                    Vector3 previousInnerMax = default;
+                    if (hasPrevious)
+                    {
+                        CascadeShadowSlice previous = state.Slices[i - 1];
+                        Vector3 previousCenter = Vector3.Transform(previous.Center, worldToLight);
+                        Vector3 inner = previous.HalfExtents * (1.0f - CascadeBorderBandFraction);
+                        previousInnerMin = previousCenter - inner;
+                        previousInnerMax = previousCenter + inner;
+                    }
+
+                    for (int b = 0; b < changes.Length && !mark; b++)
+                    {
+                        LightSpaceBounds(changes[b], worldToLight, out Vector3 min, out Vector3 max);
+                        if (ReceiverFootprintMeets(footprintMin, footprintMax, hull, min, max))
+                        {
+                            mark = true;
+                        }
+                        else if (hasPrevious &&
+                            ReceiverFootprintMeets(previousFootprintMin, previousFootprintMax, previousHull, min, max) &&
+                            !(min.X >= previousInnerMin.X && max.X <= previousInnerMax.X &&
+                              min.Y >= previousInnerMin.Y && max.Y <= previousInnerMax.Y))
+                        {
+                            mark = true;
+                        }
+                        else if (min.X <= tileMax.X && max.X >= tileMin.X &&
+                            min.Y <= tileMax.Y && max.Y >= tileMin.Y &&
+                            max.Z >= tileMin.Z)
+                        {
+                            if (state.PendingDirtyValid[i])
+                            {
+                                state.PendingDirtyMinLS[i] = Vector3.Min(state.PendingDirtyMinLS[i], min);
+                                state.PendingDirtyMaxLS[i] = Vector3.Max(state.PendingDirtyMaxLS[i], max);
+                            }
+                            else
+                            {
+                                state.PendingDirtyMinLS[i] = min;
+                                state.PendingDirtyMaxLS[i] = max;
+                                state.PendingDirtyValid[i] = true;
+                            }
+                        }
+                    }
+
+                    if (mark)
+                        state.CascadeCasterEpochs[i]++;
+                }
+            }
+        }
+
+        /// <summary>Filter margin of the receiver footprint test, as a fraction of the footprint size.</summary>
+        private const float ReceiverFootprintMarginFraction = 0.02f;
+
+        /// <summary>
+        /// Width of the border band of a cascade tile, as a fraction of its half extents. Shading
+        /// near the border of a tile blends into the next cascade, so a change in this band also
+        /// marks the next cascade.
+        /// </summary>
+        private const float CascadeBorderBandFraction = 0.1f;
+
+        /// <summary>Light-space bounds of a world box (its eight corners moved into light space).</summary>
+        private static void LightSpaceBounds(AABB box, Matrix4x4 worldToLight, out Vector3 min, out Vector3 max)
+        {
+            min = new(float.MaxValue);
+            max = new(float.MinValue);
+            for (int corner = 0; corner < 8; corner++)
+            {
+                Vector3 world = new(
+                    (corner & 1) == 0 ? box.Min.X : box.Max.X,
+                    (corner & 2) == 0 ? box.Min.Y : box.Max.Y,
+                    (corner & 4) == 0 ? box.Min.Z : box.Max.Z);
+                Vector3 local = Vector3.Transform(world, worldToLight);
+                min = Vector3.Min(min, local);
+                max = Vector3.Max(max, local);
+            }
+        }
+
+        /// <summary>Maximum number of slice corners (8 per source frustum) and hull points per cascade.</summary>
+        private const int ReceiverHullCapacity = 32;
+
+        /// <summary>Appends the light-space X/Y of the eight slice corners of one source frustum.</summary>
+        private static void AppendSliceCornersXY(Frustum frustum, float nearT, float farT, Matrix4x4 worldToLight, Span<Vector2> destination, ref int count)
+        {
+            AppendXY(EvaluateCascadeCorner(frustum.LeftBottomNear, frustum.LeftBottomFar, nearT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.RightBottomNear, frustum.RightBottomFar, nearT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.LeftTopNear, frustum.LeftTopFar, nearT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.RightTopNear, frustum.RightTopFar, nearT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.LeftBottomNear, frustum.LeftBottomFar, farT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.RightBottomNear, frustum.RightBottomFar, farT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.LeftTopNear, frustum.LeftTopFar, farT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.RightTopNear, frustum.RightTopFar, farT, worldToLight), destination, ref count);
+        }
+
+        private static void AppendXY(Vector3 point, Span<Vector2> destination, ref int count)
+            => destination[count++] = new Vector2(point.X, point.Y);
+
+        /// <summary>
+        /// Builds the counter-clockwise convex hull of <paramref name="points"/> (monotone chain)
+        /// in <paramref name="hull"/> and returns its point count. Sorts the points in place; it
+        /// allocates nothing.
+        /// </summary>
+        private static int BuildConvexHull(Span<Vector2> points, Span<Vector2> hull)
+        {
+            int n = points.Length;
+            if (n < 3)
+            {
+                points.CopyTo(hull);
+                return n;
+            }
+
+            for (int i = 1; i < n; i++)
+            {
+                Vector2 key = points[i];
+                int j = i - 1;
+                while (j >= 0 && (points[j].X > key.X || (points[j].X == key.X && points[j].Y > key.Y)))
+                {
+                    points[j + 1] = points[j];
+                    j--;
+                }
+                points[j + 1] = key;
+            }
+
+            int k = 0;
+            for (int i = 0; i < n; i++)
+            {
+                while (k >= 2 && Cross(hull[k - 2], hull[k - 1], points[i]) <= 0.0f)
+                    k--;
+                if (k < hull.Length)
+                    hull[k++] = points[i];
+            }
+            int lower = k + 1;
+            for (int i = n - 2; i >= 0; i--)
+            {
+                while (k >= lower && Cross(hull[k - 2], hull[k - 1], points[i]) <= 0.0f)
+                    k--;
+                if (k < hull.Length)
+                    hull[k++] = points[i];
+            }
+            return Math.Max(k - 1, 0);
+        }
+
+        private static float Cross(Vector2 o, Vector2 a, Vector2 b)
+            => (a.X - o.X) * (b.Y - o.Y) - (a.Y - o.Y) * (b.X - o.X);
+
+        /// <summary>
+        /// True when a light-space caster box (<paramref name="min"/>, <paramref name="max"/>)
+        /// can shadow a receiver of a cascade slice. The box, grown by the filter margin, must
+        /// overlap the slice's light-space X/Y convex hull (<paramref name="hull"/>: the corners
+        /// of every source frustum, both eyes for a stereo source, with the split overlap), and
+        /// its highest point toward the light must be above the slice's lowest point. Positive
+        /// light-space Z points toward the light. The X/Y overlap uses separating axes: the
+        /// box axes (the footprint bounds) and every hull edge normal.
+        /// </summary>
+        private static bool ReceiverFootprintMeets(Vector3 footprintMin, Vector3 footprintMax, ReadOnlySpan<Vector2> hull, Vector3 min, Vector3 max)
+        {
+            if (footprintMax.X < footprintMin.X)
+                return false;
+
+            Vector3 margin = (footprintMax - footprintMin) * ReceiverFootprintMarginFraction;
+            min -= margin;
+            max += margin;
+            if (min.X > footprintMax.X || max.X < footprintMin.X ||
+                min.Y > footprintMax.Y || max.Y < footprintMin.Y ||
+                max.Z < footprintMin.Z)
+            {
+                return false;
+            }
+
+            if (hull.Length < 3)
+                return true;
+
+            for (int e = 0; e < hull.Length; e++)
+            {
+                Vector2 a = hull[e];
+                Vector2 b = hull[(e + 1) % hull.Length];
+                // Outward normal of a counter-clockwise edge.
+                Vector2 normal = new(b.Y - a.Y, a.X - b.X);
+                // The box corner that reaches farthest against the normal.
+                Vector2 inner = new(normal.X >= 0.0f ? min.X : max.X, normal.Y >= 0.0f ? min.Y : max.Y);
+                if (Vector2.Dot(normal, inner - a) > 0.0f)
+                    return false;
+            }
+
+            return true;
         }
 
         private void CollectCascadeSourceVisibleItems(ShadowRequestSource source)

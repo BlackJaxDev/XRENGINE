@@ -91,6 +91,8 @@ namespace XREngine.Rendering.Info
         private Matrix4x4 _cullingMatrix = Matrix4x4.Identity;
         private OctreeNodeBase? _octreeNode;
         private Box? _lastQueuedWorldBounds;
+        // World box of the last shadow caster change that this renderable reported.
+        private Box? _lastShadowCasterBounds;
         private ICommittedWorldBoundsProvider? _committedWorldBoundsProvider;
         internal bool HasCommittedWorldBoundsProvider
             => Volatile.Read(ref _committedWorldBoundsProvider) is not null;
@@ -273,8 +275,17 @@ namespace XREngine.Rendering.Info
                     TryQueueOctreeMove();
                     InvalidateRenderCommandsForOwnerState();
                     break;
-                case nameof(Layer):
                 case nameof(CastsShadows):
+                    // A caster that starts or stops casting changes the cascades that its box meets.
+                    if (_registeredWorldInstance is IRuntimeRenderWorld castWorld)
+                    {
+                        Box? box = ((IOctreeItem)this).WorldCullingVolume;
+                        castWorld.VisualScene.RecordShadowCasterChange(box, box);
+                        _lastShadowCasterBounds = box;
+                    }
+                    InvalidateRenderCommandsForOwnerState();
+                    break;
+                case nameof(Layer):
                 case nameof(ReceivesShadows):
                     InvalidateRenderCommandsForOwnerState();
                     break;
@@ -359,10 +370,11 @@ namespace XREngine.Rendering.Info
 
         private void TryQueueOctreeMove(bool force = false)
         {
+            var worldBounds = ((IOctreeItem)this).WorldCullingVolume;
+            ReportShadowCasterChange(worldBounds, force);
             if (OctreeNode is null)
                 return;
 
-            var worldBounds = ((IOctreeItem)this).WorldCullingVolume;
             if (!force && worldBounds.HasValue &&
                 _lastQueuedWorldBounds.HasValue &&
                 BoxNearlyEqual(_lastQueuedWorldBounds.Value, worldBounds.Value))
@@ -373,6 +385,28 @@ namespace XREngine.Rendering.Info
 
             _lastQueuedWorldBounds = worldBounds;
             OctreeNode.QueueItemMoved(this);
+        }
+
+        /// <summary>
+        /// Reports a change of this shadow caster to its scene, so that the directional
+        /// cascades that its old or new box meets re-render. It reports when the box
+        /// changed, and on every forced notification: a new deformation output (a new
+        /// skinned pose) can keep a conservative box, but the pose still changes the shadow.
+        /// Renderables that cast no shadow, or that are not registered with a world, report
+        /// nothing.
+        /// </summary>
+        private void ReportShadowCasterChange(Box? worldBounds, bool force)
+        {
+            if (!CastsShadows || _registeredWorldInstance is not IRuntimeRenderWorld world)
+                return;
+
+            bool changed = !worldBounds.HasValue || !_lastShadowCasterBounds.HasValue ||
+                !BoxNearlyEqual(_lastShadowCasterBounds.Value, worldBounds.Value);
+            if (!force && !changed)
+                return;
+
+            world.VisualScene.RecordShadowCasterChange(_lastShadowCasterBounds, worldBounds);
+            _lastShadowCasterBounds = worldBounds;
         }
 
         private static bool BoxNearlyEqual(in Box a, in Box b, float epsilon = 1e-4f)
