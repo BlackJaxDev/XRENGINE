@@ -742,6 +742,7 @@ public static partial class RuntimeEngine
                 private int _maxDirectionalCascadeRefreshesPerFrame = 1;
                 private float _directionalCascadeRefitMarginFraction = 0.1f;
                 private bool _directionalShadowStaticCacheEnabled = true;
+                private bool _emulatedVrEyesUseHmdDirectionalCascades;
                 private EDirectionalCascadeFitCentre _desktopDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
                 private EDirectionalCascadeFitCentre _hmdDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
                 private uint _minShadowAtlasTileResolution = 128u;
@@ -1005,6 +1006,24 @@ public static partial class RuntimeEngine
 
                 private static readonly bool s_directionalShadowStaticCacheDisabledByEnvironment =
                     Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
+
+                [Category("Shadows")]
+                [Description("Makes the emulated VR eye viewports use the cascaded HMD directional shadow source, as headset eyes do: the HMD cascades fit both eye frusta and the combined eye frustum, and the eyes read them. When off, emulated eyes read the primary directional shadow map. Use it to test the HMD cascade source without a headset. The environment variable XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1 turns it on for the process.")]
+                public bool EmulatedVrEyesUseHmdDirectionalCascades
+                {
+                    get => Volatile.Read(ref _emulatedVrEyesUseHmdDirectionalCascades) ||
+                        s_emulatedVrHmdDirectionalCascadesEnabledByEnvironment;
+                    set
+                    {
+                        if (!SetField(ref _emulatedVrEyesUseHmdDirectionalCascades, value))
+                            return;
+
+                        Volatile.Write(ref _emulatedVrEyesUseHmdDirectionalCascades, value);
+                    }
+                }
+
+                private static readonly bool s_emulatedVrHmdDirectionalCascadesEnabledByEnvironment =
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EmulatedVrHmdDirectionalCascades) is "1" or "true" or "True";
 
                 [Category("Shadows")]
                 [Description("Centre of the directional cascade fit for the desktop camera. CameraPosition centres each cascade sphere on the camera, so turning the camera does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the camera: finer texels, but a turn refits the cascades.")]

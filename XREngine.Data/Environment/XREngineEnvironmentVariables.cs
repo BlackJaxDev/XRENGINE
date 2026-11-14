@@ -360,6 +360,12 @@ public static class XREngineEnvironmentVariables
     /// Advanced directional shadow lane: every cascade refresh draws all casters.
     /// </summary>
     public const string DirectionalShadowStaticCache = "XRE_DIRECTIONAL_SHADOW_STATIC_CACHE";
+    /// <summary>
+    /// Set to <c>1</c> to make emulated VR eye viewports use the cascaded HMD directional shadow
+    /// source, as headset eyes do. It turns on the
+    /// <c>EmulatedVrEyesUseHmdDirectionalCascades</c> engine setting for the process.
+    /// </summary>
+    public const string EmulatedVrHmdDirectionalCascades = "XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES";
     public const string VulkanCommandBufferLabels = "XRE_VULKAN_COMMAND_BUFFER_LABELS";
     public const string VulkanCommandChains = "XRE_VULKAN_COMMAND_CHAINS";
     public const string VulkanCommandChainsSingleThread = "XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD";

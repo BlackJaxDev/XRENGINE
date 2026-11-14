@@ -39,8 +39,11 @@ namespace XREngine.Scene
             // OpenXR eye viewports render from standalone XRCamera instances, so they
             // do not have a CameraComponent to carry the editor-facing shadow mode.
             // Treat external swapchain scene cameras like normal runtime cameras and
-            // keep directional cascades enabled for them.
-            return viewport.RendersToExternalSwapchainTarget && viewport.ActiveCamera is not null;
+            // keep directional cascades enabled for them. Emulated eyes do the same when
+            // the EmulatedVrEyesUseHmdDirectionalCascades setting is on.
+            return (viewport.RendersToExternalSwapchainTarget ||
+                    DirectionalLightComponent.IsEmulatedHmdCascadeEyeViewport(viewport)) &&
+                viewport.ActiveCamera is not null;
         }
 
         private bool HasCascadedDirectionalShadowViewport(

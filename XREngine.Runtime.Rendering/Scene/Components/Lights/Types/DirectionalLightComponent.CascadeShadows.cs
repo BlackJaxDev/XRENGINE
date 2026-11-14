@@ -3292,7 +3292,7 @@ namespace XREngine.Components.Lights
             }
 
             EnsureCascadeShadowResources(ShadowRequestSource.Desktop);
-            if (RuntimeEngine.VRState.IsInVR)
+            if (IsHmdCascadeSourceActive)
                 EnsureCascadeShadowResources(ShadowRequestSource.Hmd);
         }
 
@@ -3731,7 +3731,7 @@ namespace XREngine.Components.Lights
             Array.Clear(_cascadeSourceCameras);
             AddCascadeSourceCameraFrustum(primaryCamera, destination, _cascadeSourceCameras, ref count);
 
-            if (source == ShadowRequestSource.Hmd && RuntimeEngine.VRState.IsInVR)
+            if (source == ShadowRequestSource.Hmd && IsHmdCascadeSourceActive)
             {
                 IRuntimeRenderWorld? world = World.GetRenderWorld();
                 AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.LeftEyeViewport, world, destination, _cascadeSourceCameras, ref count);
@@ -3754,8 +3754,31 @@ namespace XREngine.Components.Lights
             if (viewport.CameraComponent is { } cameraComponent)
                 return cameraComponent.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded;
 
-            return viewport.RendersToExternalSwapchainTarget && viewport.ActiveCamera is not null;
+            return (viewport.RendersToExternalSwapchainTarget || IsEmulatedHmdCascadeEyeViewport(viewport)) &&
+                viewport.ActiveCamera is not null;
         }
+
+        /// <summary>
+        /// True when the HMD cascade source has eye viewports to fit and serve: a headset session
+        /// (<c>IsInVR</c>), or emulated VR eyes with the
+        /// <c>EmulatedVrEyesUseHmdDirectionalCascades</c> setting on.
+        /// </summary>
+        internal static bool IsHmdCascadeSourceActive
+            => RuntimeEngine.VRState.IsInVR ||
+               (RuntimeEngine.VRState.EmulatedRenderActive &&
+                RuntimeEngine.Rendering.Settings.EmulatedVrEyesUseHmdDirectionalCascades);
+
+        /// <summary>
+        /// True for an emulated VR eye viewport when the <c>EmulatedVrEyesUseHmdDirectionalCascades</c>
+        /// setting is on. Headset eye viewports render to an external swapchain and prefer cascades
+        /// for that reason; emulated eyes render to internal targets, so this setting makes them
+        /// prefer the HMD cascade source in the same way. The cascade source fit and the primary shadow need test both use it.
+        /// </summary>
+        internal static bool IsEmulatedHmdCascadeEyeViewport(XRViewport viewport)
+            => RuntimeEngine.VRState.EmulatedRenderActive &&
+               RuntimeEngine.Rendering.Settings.EmulatedVrEyesUseHmdDirectionalCascades &&
+               (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
+                ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport));
 
         private static void AddCascadeSourceViewportFrustum(
             XRViewport? viewport,
@@ -3808,7 +3831,7 @@ namespace XREngine.Components.Lights
             ref int count)
         {
             if (count >= destination.Length ||
-                !RuntimeEngine.VRState.IsInVR ||
+                !IsHmdCascadeSourceActive ||
                 !TryGetCascadeSourceEyeCamera(RuntimeEngine.VRState.LeftEyeViewport, world, out XRCamera? leftCamera) ||
                 !TryGetCascadeSourceEyeCamera(RuntimeEngine.VRState.RightEyeViewport, world, out XRCamera? rightCamera))
             {
