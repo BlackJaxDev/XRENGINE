@@ -233,6 +233,8 @@ namespace XREngine
                     private static int _vulkanTrackedDescriptorSetCount;
                     private static int _vulkanLifetimePendingRetirementCount;
                     private static long _vulkanLifetimeOldestPendingRetirementAgeMilliseconds;
+                    private static int _vulkanPendingRetiredCommandBufferCount;
+                    private static long _vulkanRetiredCommandBufferWorkerOwnedDeferralsTotal;
                     private static int _vulkanMeshFrameDataArenaChunkCount;
                     private static long _vulkanMeshFrameDataMappedBytes;
                     private static long _vulkanMeshFrameDataReservedBytes;
@@ -758,6 +760,20 @@ namespace XREngine
                     public static int VulkanTrackedDescriptorSetCount => Volatile.Read(ref _vulkanTrackedDescriptorSetCount);
                     public static int VulkanLifetimePendingRetirementCount => Volatile.Read(ref _vulkanLifetimePendingRetirementCount);
                     public static long VulkanLifetimeOldestPendingRetirementAgeMilliseconds => Volatile.Read(ref _vulkanLifetimeOldestPendingRetirementAgeMilliseconds);
+
+                    /// <summary>
+                    /// Number of retired command buffers that wait in the retirement
+                    /// queues. Each command buffer drain writes it after its scan.
+                    /// </summary>
+                    public static int VulkanPendingRetiredCommandBufferCount => Volatile.Read(ref _vulkanPendingRetiredCommandBufferCount);
+
+                    /// <summary>
+                    /// Cumulative number of times that render-thread maintenance kept a
+                    /// ready retired command buffer queued, because an in-flight desktop
+                    /// worker batch owned its command pool. One buffer counts once for
+                    /// each drain that skips it. The batch join frees these buffers.
+                    /// </summary>
+                    public static long VulkanRetiredCommandBufferWorkerOwnedDeferralsTotal => Interlocked.Read(ref _vulkanRetiredCommandBufferWorkerOwnedDeferralsTotal);
                     public static int VulkanMeshFrameDataArenaChunkCount => Volatile.Read(ref _vulkanMeshFrameDataArenaChunkCount);
                     public static long VulkanMeshFrameDataMappedBytes => Volatile.Read(ref _vulkanMeshFrameDataMappedBytes);
                     public static long VulkanMeshFrameDataReservedBytes => Volatile.Read(ref _vulkanMeshFrameDataReservedBytes);
@@ -1021,6 +1037,27 @@ namespace XREngine
                         Volatile.Write(ref _vulkanTrackedDescriptorSetCount, Math.Max(trackedDescriptorSetCount, 0));
                         Volatile.Write(ref _vulkanLifetimePendingRetirementCount, Math.Max(pendingRetirementCount, 0));
                         Volatile.Write(ref _vulkanLifetimeOldestPendingRetirementAgeMilliseconds, Math.Max(oldestPendingRetirementAgeMilliseconds, 0L));
+                    }
+
+                    /// <summary>Writes the number of retired command buffers that wait in the retirement queues.</summary>
+                    public static void RecordVulkanPendingRetiredCommandBufferCount(int pendingCount)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Volatile.Write(ref _vulkanPendingRetiredCommandBufferCount, Math.Max(pendingCount, 0));
+                    }
+
+                    /// <summary>
+                    /// Counts one retired command buffer that stayed queued because an
+                    /// in-flight desktop worker batch owned its command pool.
+                    /// </summary>
+                    public static void RecordVulkanRetiredCommandBufferWorkerOwnedDeferral()
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Increment(ref _vulkanRetiredCommandBufferWorkerOwnedDeferralsTotal);
                     }
 
                     public static void RecordVulkanMeshFrameDataGauges(

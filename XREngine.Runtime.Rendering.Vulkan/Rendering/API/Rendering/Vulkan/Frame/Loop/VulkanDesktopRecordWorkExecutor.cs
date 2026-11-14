@@ -83,6 +83,11 @@ internal sealed class VulkanDesktopRecordWorkExecutor : IRenderWorkExecutor
             using VulkanRenderLaneExecutionScope laneScope = new(attachment);
             using VulkanLaneCommandFamilyArena.RecordingLease arenaLease =
                 VulkanLaneCommandFamilyArena.EnterRecording(attachment.Graphics);
+            // Marks this thread as the owner of the desktop worker pools. Pools it
+            // allocates from become worker pools, and it may write them while other
+            // threads must wait for the join.
+            using VulkanCommandRuntime.DesktopWorkerRecordingThreadScope workerPoolScope =
+                VulkanCommandRuntime.EnterDesktopWorkerRecordingThread();
             using VulkanPreparedResourcePlannerThreadScope plannerScope = new(
                 runtime.ThreadWorkspace.Current,
                 runtime,
