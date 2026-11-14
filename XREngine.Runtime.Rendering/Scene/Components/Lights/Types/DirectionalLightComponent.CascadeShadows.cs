@@ -5265,6 +5265,7 @@ namespace XREngine.Components.Lights
             int publishedMatrixCount = CopyPublishedCascadeMatrices(source, publishedMatrices);
             Span<Matrix4x4> orderedMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
             Span<BoundingRectangle> orderedRects = stackalloc BoundingRectangle[MaxCascadeRenderCount];
+            Span<int> orderedCascades = stackalloc int[MaxCascadeRenderCount];
             int groupedCount = Math.Min(group.CascadeCount, MaxCascadeRenderCount);
             for (int i = 0; i < groupedCount; i++)
             {
@@ -5279,6 +5280,7 @@ namespace XREngine.Components.Lights
 
                 orderedMatrices[member.ViewportScissorIndex] = publishedMatrices[member.CascadeIndex];
                 orderedRects[member.ViewportScissorIndex] = member.InnerPixelRect;
+                orderedCascades[member.ViewportScissorIndex] = member.CascadeIndex;
             }
 
             // The generic layered pass clears every tile to 1.0 and tests Lequal:
@@ -5290,7 +5292,7 @@ namespace XREngine.Components.Lights
                 collectionCamera.CullingLayerMask);
             for (int i = 0; i < groupedCount; i++)
             {
-                if (!request.TryAddCascade(in orderedRects[i], in orderedMatrices[i]))
+                if (!request.TryAddCascade(in orderedRects[i], in orderedMatrices[i], orderedCascades[i]))
                     return DeclineCascadeAtlasRender(out declineReason, "The lane request rejected a cascade tile.");
             }
 

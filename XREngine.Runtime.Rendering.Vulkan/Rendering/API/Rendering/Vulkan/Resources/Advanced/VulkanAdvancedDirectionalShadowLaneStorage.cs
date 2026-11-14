@@ -18,6 +18,7 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
     private readonly Matrix4x4[] _viewProjections = new Matrix4x4[MaxCascadeCount];
     private readonly Viewport[] _viewports = new Viewport[MaxCascadeCount];
     private readonly Rect2D[] _scissors = new Rect2D[MaxCascadeCount];
+    private readonly BoundingRectangle[] _tileRects = new BoundingRectangle[MaxCascadeCount];
     private byte[] _recordMasks = [];
     private int _recordMaskCount;
 
@@ -27,6 +28,28 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
     internal uint CullingLayerMask { get; private set; }
     internal ulong RenderFrameId { get; private set; }
     internal XRFrameBuffer? Target { get; private set; }
+
+    /// <summary>Static caster tile of cascade 0, or null (see AdvancedDirectionalShadowLaneRequest.StaticTile).</summary>
+    internal DirectionalCascadeStaticTile? StaticTile { get; private set; }
+    /// <summary>Entry index of cascade 0 when <see cref="StaticTile"/> is set; otherwise -1.</summary>
+    internal int StaticCacheEntry { get; private set; } = -1;
+    /// <summary>Static caster epoch of cascade 0 in this frame.</summary>
+    internal ulong StaticCasterEpoch { get; private set; }
+    /// <summary>
+    /// Reason why the static cache does not run for this group, or null when it runs (or the
+    /// group does not draw cascade 0). Preparation can set it after the capture.
+    /// </summary>
+    internal EDirectionalShadowStaticCacheCause? StaticCacheCause { get; private set; }
+    /// <summary>True after preparation found the static tile target ready for this frame.</summary>
+    internal bool StaticTilePrepared { get; private set; }
+    /// <summary>64-bit order-independent hash of the static caster records of cascade 0.</summary>
+    internal ulong StaticRecordSetHash { get; private set; }
+    /// <summary>Number of static caster records of cascade 0.</summary>
+    internal int StaticRecordCount { get; private set; }
+    /// <summary>True when the static cache runs for this group in this frame.</summary>
+    internal bool UsesStaticCache => StaticTile is not null && StaticTilePrepared && StaticCacheEntry >= 0;
+    /// <summary>Inner tile rectangles (bottom-left origin, page pixels), one per cascade.</summary>
+    internal ReadOnlySpan<BoundingRectangle> TileRects => _tileRects.AsSpan(0, CascadeCount);
 
     internal ReadOnlySpan<Matrix4x4> ViewProjections => _viewProjections.AsSpan(0, CascadeCount);
     internal ReadOnlySpan<Viewport> Viewports => _viewports.AsSpan(0, CascadeCount);
@@ -70,6 +93,7 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
             _scissors[index] = scissor;
             _viewports[index] = VulkanCommandRuntime.CreateVulkanViewport(rects[index], pageExtent);
             _viewProjections[index] = matrices[index];
+            _tileRects[index] = rects[index];
         }
 
         CascadeCount = source.CascadeCount;
@@ -78,8 +102,31 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         CullingLayerMask = source.CullingLayerMask;
         RenderFrameId = renderFrameId;
         Target = source.PageFrameBuffer;
+        StaticTile = source.StaticTile;
+        StaticCacheEntry = source.StaticTile is not null ? source.StaticCacheEntry : -1;
+        StaticCasterEpoch = source.StaticCasterEpoch;
+        StaticCacheCause = source.StaticCacheCause;
         failureReason = "Ready";
         return true;
+    }
+
+    /// <summary>
+    /// Records that preparation found the static tile target ready, with the static caster
+    /// record set of cascade 0 for this frame.
+    /// </summary>
+    internal void SetStaticTilePrepared(ulong recordSetHash, int recordCount)
+    {
+        StaticTilePrepared = true;
+        StaticRecordSetHash = recordSetHash;
+        StaticRecordCount = recordCount;
+        StaticCacheCause = null;
+    }
+
+    /// <summary>Records why the static cache cannot run for this group in this frame.</summary>
+    internal void BlockStaticCache(EDirectionalShadowStaticCacheCause cause)
+    {
+        StaticTilePrepared = false;
+        StaticCacheCause = cause;
     }
 
     /// <summary>Copies one sealed lane without retaining the mutable queue ring slot.</summary>
@@ -93,6 +140,14 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         source.ViewProjections.CopyTo(_viewProjections);
         source.Viewports.CopyTo(_viewports);
         source.Scissors.CopyTo(_scissors);
+        source.TileRects.CopyTo(_tileRects);
+        StaticTile = source.StaticTile;
+        StaticCacheEntry = source.StaticCacheEntry;
+        StaticCasterEpoch = source.StaticCasterEpoch;
+        StaticCacheCause = source.StaticCacheCause;
+        StaticTilePrepared = source.StaticTilePrepared;
+        StaticRecordSetHash = source.StaticRecordSetHash;
+        StaticRecordCount = source.StaticRecordCount;
         CascadeCount = source.CascadeCount;
         DepthClearValue = source.DepthClearValue;
         ReversedDepth = source.ReversedDepth;
@@ -124,5 +179,12 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         RenderFrameId = 0UL;
         Target = null;
         _recordMaskCount = 0;
+        StaticTile = null;
+        StaticCacheEntry = -1;
+        StaticCasterEpoch = 0UL;
+        StaticCacheCause = null;
+        StaticTilePrepared = false;
+        StaticRecordSetHash = 0UL;
+        StaticRecordCount = 0;
     }
 }

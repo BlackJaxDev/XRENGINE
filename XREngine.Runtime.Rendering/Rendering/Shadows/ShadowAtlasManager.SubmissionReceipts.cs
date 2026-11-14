@@ -143,6 +143,7 @@ public sealed partial class ShadowAtlasManager
                 }
 
                 _submissionRetryKeys.Add(key);
+                InvalidateDirectionalStaticCascadeTile(key);
                 retryCount++;
             }
 

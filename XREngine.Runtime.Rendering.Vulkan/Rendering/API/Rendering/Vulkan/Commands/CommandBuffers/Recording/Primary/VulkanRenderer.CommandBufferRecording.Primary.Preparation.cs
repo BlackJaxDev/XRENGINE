@@ -13,6 +13,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Diagnostics;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -2248,6 +2249,15 @@ namespace XREngine.Rendering.Vulkan
                             input.Candidates,
                             lane.ViewProjections,
                             lane.AcquireRecordMasks(familyBins.RecordCount));
+                        PrepareDirectionalShadowStaticTile(
+                            lane,
+                            familyBins.Records,
+                            input.Candidates,
+                            recordingState.Policy.AllowSynchronousResourceUploads);
+                    }
+                    else if (lane.StaticTile is not null)
+                    {
+                        lane.BlockStaticCache(EDirectionalShadowStaticCacheCause.GpuCasterSelection);
                     }
                     return true;
                 }
@@ -2258,6 +2268,75 @@ namespace XREngine.Rendering.Vulkan
                 $"Advanced directional shadow preparation requires a fresh-frame retry: {shadowReason}";
             recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
             return false;
+        }
+
+        /// <summary>
+        /// Checks that the static caster tile of cascade 0 can be a render target in this
+        /// frame, and computes the static caster record set of cascade 0: the records that
+        /// cast into cascade 0 (record mask bit of the cascade 0 entry) and that do not carry
+        /// GPUIndirectRenderFlags.ShadowCasterDynamic. The record set hash is order
+        /// independent and 64 bits wide: a sum and an xor of a 64-bit mix of each record's
+        /// draw handle (index and generation). The record set comes from the frozen stream of
+        /// canonical scene draws, not from a camera-culled list, and the cascade mask of a
+        /// record depends only on its bounds and the cascade matrix. So a camera move inside a
+        /// held fit does not change it. It allocates nothing.
+        /// </summary>
+        private void PrepareDirectionalShadowStaticTile(
+            VulkanAdvancedDirectionalShadowLaneStorage lane,
+            ReadOnlySpan<VulkanPreparedStableBinRecord> records,
+            ReadOnlySpan<AdvancedVisibilityCandidate> candidates,
+            bool allowSynchronousUploads)
+        {
+            if (lane.StaticTile is not { } tile || lane.StaticCacheEntry < 0)
+                return;
+
+            if (ResourceRuntime.BackendObjects.Get(tile.FrameBuffer) is not VkFrameBuffer wrapper)
+            {
+                lane.BlockStaticCache(EDirectionalShadowStaticCacheCause.TileUnavailable);
+                return;
+            }
+            if (allowSynchronousUploads)
+                wrapper.EnsureCurrent();
+            if (!wrapper.TryCaptureRecordedRenderTargetSnapshot(out VulkanRecordedRenderTargetSnapshot snapshot) ||
+                snapshot.Width != tile.Width || snapshot.Height != tile.Height)
+            {
+                lane.BlockStaticCache(EDirectionalShadowStaticCacheCause.TileUnavailable);
+                return;
+            }
+
+            byte cascadeBit = (byte)(1 << lane.StaticCacheEntry);
+            ReadOnlySpan<byte> masks = lane.RecordMasks;
+            ulong sum = 0UL;
+            ulong xor = 0UL;
+            int count = 0;
+            for (int recordIndex = 0; recordIndex < records.Length && recordIndex < masks.Length; recordIndex++)
+            {
+                ref readonly VulkanPreparedStableBinRecord record = ref records[recordIndex];
+                if ((masks[recordIndex] & cascadeBit) == 0 ||
+                    (record.VisibilityDrawFlags & (uint)GPUIndirectRenderFlags.ShadowCasterDynamic) != 0u)
+                {
+                    continue;
+                }
+
+                int payloadIndex = record.VisibilityPayloadIndex;
+                ulong identity = (uint)payloadIndex < (uint)candidates.Length
+                    ? ((ulong)candidates[payloadIndex].Draw.Generation << 32) | candidates[payloadIndex].Draw.Index
+                    : 0xFFFF_FFFF_0000_0000UL | (uint)recordIndex;
+                ulong mixed = MixStaticRecordIdentity(identity);
+                sum = unchecked(sum + mixed);
+                xor ^= MixStaticRecordIdentity(mixed ^ 0x9E37_79B9_7F4A_7C15UL);
+                count++;
+            }
+
+            lane.SetStaticTilePrepared(sum ^ ((xor << 32) | (xor >> 32)), count);
+        }
+
+        /// <summary>SplitMix64 finalizer: a 64-bit mix with good bit diffusion.</summary>
+        private static ulong MixStaticRecordIdentity(ulong value)
+        {
+            value = unchecked((value ^ (value >> 30)) * 0xBF58_476D_1CE4_E5B9UL);
+            value = unchecked((value ^ (value >> 27)) * 0x94D0_49BB_1331_11EBUL);
+            return value ^ (value >> 31);
         }
 
         private static bool TryValidateAdvancedDirectionalShadowTarget(

@@ -16,6 +16,7 @@ public sealed class AdvancedDirectionalShadowLaneRequest
 
     private readonly Matrix4x4[] _viewProjections = new Matrix4x4[MaxCascadeCount];
     private readonly BoundingRectangle[] _tileRects = new BoundingRectangle[MaxCascadeCount];
+    private readonly int[] _cascadeIndices = new int[MaxCascadeCount];
 
     /// <summary>Depth-only atlas page the cascades render into.</summary>
     public XRFrameBuffer? PageFrameBuffer { get; private set; }
@@ -44,6 +45,27 @@ public sealed class AdvancedDirectionalShadowLaneRequest
     /// <summary>Inner atlas tile rectangles (bottom-left origin, page pixels), one per cascade.</summary>
     public ReadOnlySpan<BoundingRectangle> TileRects => _tileRects.AsSpan(0, CascadeCount);
 
+    /// <summary>Cascade index (0 is the nearest cascade) of each entry.</summary>
+    public ReadOnlySpan<int> CascadeIndices => _cascadeIndices.AsSpan(0, CascadeCount);
+
+    /// <summary>
+    /// Static caster tile of cascade 0, or null when the static cache does not apply to this
+    /// group. See <see cref="StaticCacheEntry"/> and <see cref="StaticCacheCause"/>.
+    /// </summary>
+    public DirectionalCascadeStaticTile? StaticTile { get; private set; }
+
+    /// <summary>Entry index of cascade 0 when <see cref="StaticTile"/> is set; otherwise -1.</summary>
+    public int StaticCacheEntry { get; private set; } = -1;
+
+    /// <summary>Static caster epoch of cascade 0 in this frame (see DirectionalLightComponent.MarkDirectionalCascadeCasterChanges).</summary>
+    public ulong StaticCasterEpoch { get; private set; }
+
+    /// <summary>
+    /// Why the static cache does not apply to this group, when the group draws cascade 0 and
+    /// <see cref="StaticTile"/> is null. The lane counts it.
+    /// </summary>
+    public EDirectionalShadowStaticCacheCause? StaticCacheCause { get; private set; }
+
     /// <summary>Atlas-manager bookkeeping slot; not meaningful to backends.</summary>
     internal int PendingSlot { get; set; } = -1;
     internal bool RequiresStrictGpu { get; set; }
@@ -64,6 +86,31 @@ public sealed class AdvancedDirectionalShadowLaneRequest
         DepthClearValue = depthClearValue;
         CullingLayerMask = cullingLayerMask;
         CascadeCount = 0;
+        ClearStaticCache();
+    }
+
+    /// <summary>Attaches the static caster tile of cascade 0 (entry <paramref name="entry"/>) to the group.</summary>
+    internal void SetStaticCache(DirectionalCascadeStaticTile tile, int entry, ulong staticCasterEpoch)
+    {
+        StaticTile = tile;
+        StaticCacheEntry = entry;
+        StaticCasterEpoch = staticCasterEpoch;
+        StaticCacheCause = null;
+    }
+
+    /// <summary>Records why the static cache does not apply to a group that draws cascade 0.</summary>
+    internal void SetStaticCacheCause(EDirectionalShadowStaticCacheCause cause)
+    {
+        ClearStaticCache();
+        StaticCacheCause = cause;
+    }
+
+    private void ClearStaticCache()
+    {
+        StaticTile = null;
+        StaticCacheEntry = -1;
+        StaticCasterEpoch = 0UL;
+        StaticCacheCause = null;
     }
 
     internal void Clear()
@@ -74,15 +121,17 @@ public sealed class AdvancedDirectionalShadowLaneRequest
         PendingSlot = -1;
         RequiresStrictGpu = false;
         ConsumerAuthority = default;
+        ClearStaticCache();
     }
 
-    internal bool TryAddCascade(in BoundingRectangle tileRect, in Matrix4x4 viewProjection)
+    internal bool TryAddCascade(in BoundingRectangle tileRect, in Matrix4x4 viewProjection, int cascadeIndex)
     {
         if (CascadeCount >= MaxCascadeCount || tileRect.Width <= 0 || tileRect.Height <= 0)
             return false;
 
         _tileRects[CascadeCount] = tileRect;
         _viewProjections[CascadeCount] = viewProjection;
+        _cascadeIndices[CascadeCount] = cascadeIndex;
         CascadeCount++;
         return true;
     }
