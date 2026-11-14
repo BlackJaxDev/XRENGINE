@@ -69,6 +69,23 @@ public sealed partial class ShadowAtlasManager
     /// </summary>
     public static bool AdvancedDirectionalShadowLaneEnabled => s_advancedDirectionalShadowLaneEnabled;
 
+    /// <summary>
+    /// True when the directional cascade groups of this render frame can be drawn: the
+    /// lane is off (every group uses the generic path), or the Advanced stage reported
+    /// itself ready in the previous frame. The scheduled-tile pass applies the same
+    /// readiness test before it defers a group to the lane, and a strict lane drops a
+    /// declined group without a draw. The Advanced capture reads this before that pass,
+    /// when the readiness state of the previous frame is final.
+    /// </summary>
+    internal bool CanDrawDirectionalCascadeGroupsThisFrame()
+    {
+        if (!s_advancedDirectionalShadowLaneEnabled)
+            return true;
+
+        return _advancedLaneConsumerReady &&
+            _advancedLaneConsumerFrameId + 1UL >= SubmissionTrackingRenderFrameId;
+    }
+
     /// <summary>Lane counters and the last decline reason, for diagnostics.</summary>
     public AdvancedDirectionalShadowLaneDiagnostics CaptureAdvancedDirectionalShadowLaneDiagnostics()
         => new(

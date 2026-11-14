@@ -202,7 +202,11 @@ public readonly record struct AdvancedGlobalResourceCapture(
     private static void CaptureDirectionalSource(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows, Span<DirectionalShadowGpuRecord> records, ShadowRequestSource source, bool hmd)
     {
         light.CopyPublishedDirectionalShadowRecords(source, true, records, out int count);
-        light.ApplyPlannedDirectionalCascadeRefreshes(source, records, count);
+        light.ApplyPlannedDirectionalCascadeRefreshes(
+            source,
+            records,
+            count,
+            lights.ShadowAtlas.CanDrawDirectionalCascadeGroupsThisFrame());
         for (int cascade = 0; cascade < count; ++cascade)
         {
             if (!lights.TryGetDirectionalCascadeShadowAtlasAllocation(light, source, cascade, out ShadowAtlasAllocation allocation, out _) ||

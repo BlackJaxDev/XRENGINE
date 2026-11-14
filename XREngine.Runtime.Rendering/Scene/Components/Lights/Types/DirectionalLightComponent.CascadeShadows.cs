@@ -1386,12 +1386,16 @@ namespace XREngine.Components.Lights
         /// the same swap copied from <c>Slices</c>, so the current slice values are the
         /// draw values. A cascade without a rendered tile keeps its unsampled record.
         /// The next call checks that each planned refresh committed its matrix and logs a
-        /// diagnostic when it did not.
+        /// diagnostic when it did not. When <paramref name="refreshesCanDraw"/> is false,
+        /// the Advanced lane will decline this frame's cascade groups and a strict lane
+        /// draws nothing, so the records keep their committed values: a tile that is not
+        /// drawn must keep the matrix that it was rendered with.
         /// </summary>
         internal void ApplyPlannedDirectionalCascadeRefreshes(
             ShadowRequestSource source,
             Span<DirectionalShadowGpuRecord> records,
-            int cascadeCount)
+            int cascadeCount,
+            bool refreshesCanDraw)
         {
             ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop
@@ -1415,7 +1419,7 @@ namespace XREngine.Components.Lights
                     }
 
                     ref DirectionalShadowGpuRecord record = ref records[i];
-                    if (!state.AtlasCascadeRenderRequested[i] || record.AtlasPacked0.X == 0)
+                    if (!refreshesCanDraw || !state.AtlasCascadeRenderRequested[i] || record.AtlasPacked0.X == 0)
                         continue;
 
                     record.RenderedWorldToLight = record.CurrentWorldToLight;
