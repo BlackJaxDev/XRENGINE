@@ -137,6 +137,8 @@ The visible simulated-HMD preview is the `monado-service.exe` windowed composito
 
 `--smoke-frames N` or `XRE_SMOKE_FRAMES=N` makes the editor exit after N submitted OpenXR frames. The editor then drains the session, destroys swapchains, destroys the session and instance, and writes a structured smoke summary with a `schemaVersion`. The runner fails if a required summary field is missing. The process exit code is zero only when the smoke criteria pass. The editor uses 21 for startup failure, 22 for frame timeout, 23 for summary failure, 24 for teardown failure, and 25 for an engine exception (`Program.OpenXrSmokeRunController.cs`). Runtime differences are gated by extension support or capability probes, not by runtime name, except in diagnostics.
 
+On Vulkan, Monado sessions have no directional cascade shadows by default (a safety stop for earlier hangs). Set `XRE_VULKAN_DIRECTIONAL_CASCADES=1` in the process environment to validate directional cascades, the shadow atlas, and the Advanced directional shadow lane on Monado. Stop a session that hangs; the hang is not proved to be gone. See [shadow atlas](../../architecture/rendering/shadow-atlas.md).
+
 Monado lane baselines, CI promotion, and persistent smoke settings remain open decisions for XR validation.
 
 ## Implementation References

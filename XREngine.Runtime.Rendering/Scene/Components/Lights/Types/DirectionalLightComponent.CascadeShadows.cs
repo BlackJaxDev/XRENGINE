@@ -663,17 +663,30 @@ namespace XREngine.Components.Lights
                CanUseDirectionalCascadeShadowAtlasForCurrentBackend(cascadeCount);
 
         private static bool CanRenderDirectionalCascadesForCurrentBackend()
-        {
-            if (!IsVulkanDirectionalShadowBackend())
-                return true;
+            => !IsVulkanDirectionalShadowBackend() ||
+               AllowsVulkanDirectionalShadowWorkForCurrentRuntime();
 
+        /// <summary>
+        /// The one runtime test for Vulkan directional shadow work. Three gates use it: cascade
+        /// rendering (<see cref="CanRenderDirectionalCascadesForCurrentBackend"/>), the cascade shadow
+        /// atlas (<see cref="CanUseDirectionalCascadeShadowAtlasForCurrentBackend"/>), and grouped atlas
+        /// entries (<c>ShadowAtlasManager.ShouldBuildGroupedAtlasRenderPlanEntries</c>), which the
+        /// Advanced directional shadow lane needs. One test keeps the three gates equal.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="XREngineEnvironmentVariables.VulkanDirectionalCascades"/> decides when it is set:
+        /// <c>1</c> turns the three on and <c>0</c> turns them off. Without it, the known Monado OpenXR
+        /// runtime gets no directional cascades, no cascade atlas and no grouped entries. This safety
+        /// stop is for OpenXR + Monado hangs that occurred while shared cascade texture arrays rendered.
+        /// It is not proved that the hang is gone, also not on the atlas path. Use the override on
+        /// Monado for validation, with a guard that stops a session that hangs. SteamVR and ordinary
+        /// Vulkan sessions use the cascade path by default.
+        /// </remarks>
+        internal static bool AllowsVulkanDirectionalShadowWorkForCurrentRuntime()
+        {
             if (TryResolveVulkanDirectionalCascadesOverride(out bool enabled))
                 return enabled;
 
-            // The original Vulkan safety stop was for OpenXR + Monado hangs while
-            // rendering shared cascade texture arrays. Keep that runtime guarded by
-            // default, but allow SteamVR and ordinary Vulkan sessions to exercise the
-            // cascade path.
             return !IsKnownMonadoOpenXrRuntime();
         }
 
@@ -5230,13 +5243,9 @@ namespace XREngine.Components.Lights
             if (!UsesDirectionalShadowAtlasForCurrentEncoding)
                 return false;
 
+            // Grouped atlas rendering is gated separately, by the same runtime test.
             if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-            {
-                // Keep the known Monado OpenXR Vulkan path protected, but let
-                // SteamVR and ordinary Vulkan sessions exercise the atlas toggle.
-                // Grouped atlas rendering is still gated separately.
-                return !IsKnownMonadoOpenXrRuntime();
-            }
+                return AllowsVulkanDirectionalShadowWorkForCurrentRuntime();
 
             return cascadeCount > 0;
         }

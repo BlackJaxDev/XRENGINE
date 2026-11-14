@@ -1264,13 +1264,12 @@ public sealed partial class ShadowAtlasManager
 
     private static bool ShouldBuildGroupedAtlasRenderPlanEntries()
     {
+        // On Vulkan, the known Monado OpenXR runtime stays on sequential tile entries unless
+        // XRE_VULKAN_DIRECTIONAL_CASCADES overrides it (the same test as the cascade and atlas
+        // gates). SteamVR and ordinary Vulkan sessions can use the grouped multi-viewport or
+        // layered shader path when the renderer reports support.
         if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-        {
-            // Keep the known Monado OpenXR Vulkan path on sequential tile entries.
-            // SteamVR and ordinary Vulkan sessions can use the grouped
-            // multi-viewport/layered shader path when the renderer reports support.
-            return !DirectionalLightComponent.IsKnownMonadoOpenXrRuntime();
-        }
+            return DirectionalLightComponent.AllowsVulkanDirectionalShadowWorkForCurrentRuntime();
 
         return true;
     }
