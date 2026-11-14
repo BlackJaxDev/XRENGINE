@@ -21,6 +21,7 @@ public static class DirectionalShadowStaticCacheDiagnostics
     private static long s_promotions;
     private static long s_demotions;
     private static long s_demotionBatches;
+    private static long s_forcedDemotionBatches;
     private static int s_pendingDemotions;
     private static long s_staticRenders;
     private static long s_copies;
@@ -58,10 +59,12 @@ public static class DirectionalShadowStaticCacheDiagnostics
     internal static void RecordPromotion()
         => Interlocked.Increment(ref s_promotions);
 
-    internal static void RecordDemotionBatch(int demotedCount)
+    internal static void RecordDemotionBatch(int demotedCount, bool forced)
     {
         Interlocked.Add(ref s_demotions, demotedCount);
         Interlocked.Increment(ref s_demotionBatches);
+        if (forced)
+            Interlocked.Increment(ref s_forcedDemotionBatches);
     }
 
     internal static void SetPendingDemotions(int count)
@@ -134,7 +137,7 @@ public static class DirectionalShadowStaticCacheDiagnostics
             $"{DateTimeOffset.Now:O} DirectionalShadow.StaticCache: " +
             $"staticRenders={StaticRenders} copies={Copies} overlayFrames={OverlayFrames} " +
             $"dynamicRecordDraws={DynamicRecordDraws} fullCascadeDraws={GetFullCascadeDraws(0)}/{GetFullCascadeDraws(1)}/{GetFullCascadeDraws(2)}/{GetFullCascadeDraws(3)}/{GetFullCascadeDraws(4)} tiles={TilesCreated - TilesReleased} tilesCreated={TilesCreated} tilesReleased={TilesReleased} pageLayerInitializations={PageLayerInitializations} lastStaticRecords={Interlocked.Read(ref s_staticRecordCount)} " +
-            $"promotions={Promotions} demotions={Demotions} demotionBatches={DemotionBatches} pendingDemotions={PendingDemotions} " +
+            $"promotions={Promotions} demotions={Demotions} demotionBatches={DemotionBatches} forcedDemotionBatches={Interlocked.Read(ref s_forcedDemotionBatches)} pendingDemotions={PendingDemotions} " +
             $"causes: disabled={GetCauseCount(EDirectionalShadowStaticCacheCause.Disabled)} " +
             $"outOfScope={GetCauseCount(EDirectionalShadowStaticCacheCause.OutOfScope)} " +
             $"noDynamicCasters={GetCauseCount(EDirectionalShadowStaticCacheCause.NoDynamicCasters)} " +

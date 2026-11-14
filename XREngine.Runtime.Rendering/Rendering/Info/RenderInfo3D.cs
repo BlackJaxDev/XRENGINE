@@ -99,8 +99,12 @@ namespace XREngine.Rendering.Info
 
         // Motion classification for the static directional cascade cache. The scene's
         // classification lock (VisualScene3D.NoteShadowCasterMotion) guards this field.
-        // Stopwatch timestamp of the last reported change.
+        // Stopwatch timestamps of the last reported change and of the moment the caster became
+        // due for demotion (0 when not due), and the content change repeat window.
         internal long ShadowCasterLastChangeTimestamp;
+        internal long ShadowCasterDueSinceTimestamp;
+        internal long ShadowCasterContentWindowStart;
+        internal int ShadowCasterContentChanges;
         // True while the scene keeps this caster in its moving-caster list.
         private volatile bool _shadowCasterMotionDynamic;
 
@@ -477,7 +481,7 @@ namespace XREngine.Rendering.Info
         /// Renderables that cast no shadow, or that are not registered with a world, report
         /// nothing.
         /// </summary>
-        private void ReportShadowCasterChange(Box? worldBounds, bool force)
+        private void ReportShadowCasterChange(Box? worldBounds, bool force, bool motion = true)
         {
             if (!CastsShadows || _registeredWorldInstance is not IRuntimeRenderWorld world ||
                 !HasShadowCasterPassCommand())
@@ -491,9 +495,17 @@ namespace XREngine.Rendering.Info
             // A change is dynamic only when the caster was dynamic before it and stays
             // dynamic. A promotion reports a static change: the swap that shows the new pose
             // can still carry the static flag, so the static tile must re-render.
+            // A transform or bounds change promotes the caster at once. A content change (mesh,
+            // material, instances, enabled state) promotes it only when it repeats (see
+            // VisualScene3D.NoteShadowCasterContentChange).
             bool wasDynamic = IsShadowCasterDynamic;
             if (!HasCommittedWorldBoundsProvider)
-                world.VisualScene.NoteShadowCasterMotion(this);
+            {
+                if (motion)
+                    world.VisualScene.NoteShadowCasterMotion(this);
+                else
+                    world.VisualScene.NoteShadowCasterContentChange(this);
+            }
             bool dynamicChange = wasDynamic && IsShadowCasterDynamic;
             world.VisualScene.RecordShadowCasterChange(_lastShadowCasterBounds, worldBounds, dynamicChange);
             _lastShadowCasterBounds = worldBounds;
@@ -505,7 +517,7 @@ namespace XREngine.Rendering.Info
         /// directional cascades that its box meets re-render.
         /// </summary>
         internal void ReportShadowCasterContentChange()
-            => ReportShadowCasterChange(((IOctreeItem)this).WorldCullingVolume, force: true);
+            => ReportShadowCasterChange(((IOctreeItem)this).WorldCullingVolume, force: true, motion: false);
 
         private static bool BoxNearlyEqual(in Box a, in Box b, float epsilon = 1e-4f)
         {
