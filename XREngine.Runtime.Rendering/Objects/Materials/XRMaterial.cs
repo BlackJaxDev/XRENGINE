@@ -619,14 +619,22 @@ namespace XREngine.Rendering
                     if (!IsManagedTransparencyRenderPass(RenderPass))
                         _opaqueRenderPass = RenderPass;
                     break;
+                // The Advanced scene publisher encodes the cutoff and the transparency
+                // technique into the material constants and compares BindingValueVersion
+                // to decide whether committed material words are still current. The
+                // mirrored "AlphaCutoff" and "_Cutoff" parameters advance that version only
+                // when the material declares them, so these edits advance it directly.
                 case nameof(TransparencyMode):
                     ApplyTransparencyState();
+                    IncrementBindingValueVersion();
                     break;
                 case nameof(TransparentTechniqueOverride):
                     ApplyTransparencyState();
+                    IncrementBindingValueVersion();
                     break;
                 case nameof(AlphaCutoff):
                     SyncAlphaCutoffParameter();
+                    IncrementBindingValueVersion();
                     break;
             }
 
