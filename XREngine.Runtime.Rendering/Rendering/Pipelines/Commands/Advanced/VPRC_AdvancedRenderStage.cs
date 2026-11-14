@@ -608,6 +608,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         }
         atlas.NotifyAdvancedDirectionalShadowLaneConsumer(
             renderFrameId,
+            ActivePipelineInstance,
             ready,
             unavailableReason,
             casterProducer,

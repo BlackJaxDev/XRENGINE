@@ -17,6 +17,12 @@ public interface IOpenXrRuntime : IOpenXrApplicationLifecycle
     double NextFrameSlackMs { get; }
     /// <summary>Timestamp of the last return from <c>xrWaitFrame</c>. Each XR frame has its own value.</summary>
     long LastFrameWakeTicks { get; }
+    /// <summary>
+    /// True when the collect thread has collected and swapped an XR frame that the next render
+    /// frame renders: the eye viewports then render in that render frame. Read it on the render
+    /// thread before the eyes render.
+    /// </summary>
+    bool HasPreparedEyeFrame => false;
     bool PrepareRendererDeviceTeardown(AbstractRenderer renderer, string reason);
     void PrepareRendererDeviceLossAbandonment(AbstractRenderer renderer, string reason, OpenXrDeviceLossSource source);
     XRViewport? StereoViewport { get; }

@@ -2733,6 +2733,14 @@ namespace XREngine.Rendering
             return recorded;
         }
 
+        /// <summary>
+        /// True when this viewport renders its 3D scene in the current render frame: the scene
+        /// is not suppressed and the frame output pacing of the swapped collect made it due.
+        /// The window reads it before the shadow pass to find the views that render.
+        /// </summary>
+        internal bool RendersSceneThisFrame
+            => _renderingFrameOutputSceneDue && !Suppress3DSceneRendering;
+
         /// <summary>True when the XR frame priority held this viewport's scene for the current render.</summary>
         internal bool IsHeldForXrFramePriority
             => !_renderingFrameOutputSceneDue &&

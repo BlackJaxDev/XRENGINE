@@ -13,7 +13,8 @@ namespace XREngine.Rendering.Shadows;
 public sealed partial class ShadowAtlasManager
 {
     private const int MaxPendingAdvancedLaneGroups = 4;
-    private const ulong AdvancedLaneFailureHoldFrames = 60UL;
+    private const int AdvancedLaneFailureHoldFrames = 60;
+    private const int MaxAdvancedLaneConsumers = 8;
 
     private static readonly bool s_advancedDirectionalShadowLaneEnabled =
         ReadAdvancedDirectionalShadowLaneFlag();
@@ -40,12 +41,26 @@ public sealed partial class ShadowAtlasManager
     private bool _advancedLaneGenericFallbackAllowed = true;
     private bool _advancedLaneAuthorityConflict;
     private string? _advancedLaneAuthorityReason;
-    private ulong _advancedLaneHoldUntilFrameId;
+    // Frames with a lane owner that remain in the failure hold. The hold counts only frames in
+    // which an Advanced instance owns the lane, so render frames that draw no Advanced view (for
+    // example OpenXR frames without an eye frame) do not end it early.
+    private int _advancedLaneHoldOwnerFrames;
+    private ulong _advancedLaneHoldCountedFrameId;
+    // True when VR eye views render in this frame before the lane owner executes (the eyes do not
+    // use an Advanced pipeline). HMD-source groups then use the generic path, which draws them
+    // before any view.
+    private bool _advancedLaneHmdViewsBeforeOwner;
+    // Readiness that each Advanced pipeline instance reported at its last directional shadow
+    // stage. The lane defers groups only to an owner whose last report was ready.
+    private readonly AdvancedLaneConsumerReadiness[] _advancedLaneConsumerReadiness =
+        new AdvancedLaneConsumerReadiness[MaxAdvancedLaneConsumers];
     private string? _advancedLaneLastDeclineReason;
     private long _advancedLaneDeferredGroups;
     private long _advancedLaneAcceptedGroups;
     private long _advancedLaneRejectedGroups;
     private long _advancedLaneUnconsumedGroups;
+    // Unconsumed groups whose owner did not run its stage in their frame. They start no hold.
+    private long _advancedLaneOwnerAbsentGroups;
     private long _advancedLaneGenericGroups;
 
     private enum PendingAdvancedLaneGroupState : byte
@@ -53,6 +68,14 @@ public sealed partial class ShadowAtlasManager
         Free = 0,
         Pending,
         Dequeued,
+    }
+
+    private struct AdvancedLaneConsumerReadiness
+    {
+        public XRRenderPipelineInstance? Pipeline;
+        public ulong FrameId;
+        public bool Ready;
+        public string? Reason;
     }
 
     private struct PendingAdvancedLaneGroup
@@ -75,19 +98,52 @@ public sealed partial class ShadowAtlasManager
 
     /// <summary>
     /// True when the directional cascade groups of this render frame can be drawn: the
-    /// lane is off (every group uses the generic path), or the Advanced stage reported
-    /// itself ready in the previous frame. The scheduled-tile pass applies the same
-    /// readiness test before it defers a group to the lane, and a strict lane drops a
-    /// declined group without a draw. The Advanced capture reads this before that pass,
-    /// when the readiness state of the previous frame is final.
+    /// lane is off (every group uses the generic path), or an Advanced pipeline instance
+    /// reported its directional shadow stage ready at its last execution. The
+    /// scheduled-tile pass tests the readiness of the frame's owner before it defers a
+    /// group to the lane, and a strict lane drops a declined group without a draw. The
+    /// Advanced capture reads this at the swap, before the render frame chooses its owner,
+    /// so it tests every known consumer.
     /// </summary>
     internal bool CanDrawDirectionalCascadeGroupsThisFrame()
     {
         if (!s_advancedDirectionalShadowLaneEnabled)
             return true;
 
-        return _advancedLaneConsumerReady &&
-            _advancedLaneConsumerFrameId + 1UL >= SubmissionTrackingRenderFrameId;
+        for (int i = 0; i < _advancedLaneConsumerReadiness.Length; i++)
+        {
+            ref readonly AdvancedLaneConsumerReadiness entry = ref _advancedLaneConsumerReadiness[i];
+            if (entry.Pipeline is not null && entry.Ready)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Finds the readiness that <paramref name="pipeline"/> reported at its last directional
+    /// shadow stage. Returns false when that instance has not run the stage yet.
+    /// </summary>
+    private bool TryGetAdvancedLaneConsumerReadiness(
+        XRRenderPipelineInstance? pipeline,
+        out bool ready,
+        out string? reason)
+    {
+        ready = false;
+        reason = null;
+        if (pipeline is null)
+            return false;
+
+        for (int i = 0; i < _advancedLaneConsumerReadiness.Length; i++)
+        {
+            ref readonly AdvancedLaneConsumerReadiness entry = ref _advancedLaneConsumerReadiness[i];
+            if (!ReferenceEquals(entry.Pipeline, pipeline))
+                continue;
+
+            ready = entry.Ready;
+            reason = entry.Reason;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>Lane counters and the last decline reason, for diagnostics.</summary>
@@ -96,21 +152,22 @@ public sealed partial class ShadowAtlasManager
             s_advancedDirectionalShadowLaneEnabled,
             _advancedLaneConsumerReady,
             _advancedLaneConsumerFrameId,
-            _advancedLaneHoldUntilFrameId,
+            _advancedLaneHoldOwnerFrames,
             _advancedLaneDeferredGroups,
             _advancedLaneAcceptedGroups,
             _advancedLaneRejectedGroups,
             _advancedLaneUnconsumedGroups,
+            _advancedLaneOwnerAbsentGroups,
             _advancedLaneGenericGroups,
             _advancedLaneLastDeclineReason ?? _advancedLaneConsumerReason,
             _advancedLaneCasterProducer,
             _advancedLaneCasterProducerReason);
 
     /// <summary>
-    /// Called by the Advanced directional shadow stage every time it executes.
-    /// Groups are deferred in a later frame only while the consumer keeps
-    /// reporting itself ready. A strict GPU request stays dirty without it.
-    /// <paramref name="casterProducer"/> names the producer that draws the
+    /// Called by the Advanced directional shadow stage of <paramref name="consumer"/> every
+    /// time that stage owns the frame's groups. The lane defers groups to an owner only
+    /// while the last report of that instance was ready. A strict GPU request stays dirty
+    /// without it. <paramref name="casterProducer"/> names the producer that draws the
     /// casters of this frame's submission strategy, and
     /// <paramref name="casterProducerReason"/> tells why. Diagnostics show both, so
     /// a reader can see, for example, that a meshlet frame draws indexed casters.
@@ -118,6 +175,7 @@ public sealed partial class ShadowAtlasManager
     /// </summary>
     public void NotifyAdvancedDirectionalShadowLaneConsumer(
         ulong renderFrameId,
+        XRRenderPipelineInstance consumer,
         bool ready,
         string? reason,
         string? casterProducer = null,
@@ -129,17 +187,56 @@ public sealed partial class ShadowAtlasManager
         _advancedLaneConsumerReason = ready ? null : reason;
         _advancedLaneCasterProducer = casterProducer;
         _advancedLaneCasterProducerReason = casterProducerReason;
+
+        // Keep one entry per instance. A new instance takes a free entry, or the entry with
+        // the oldest report when all entries are in use.
+        int slot = -1;
+        for (int i = 0; i < _advancedLaneConsumerReadiness.Length; i++)
+        {
+            ref readonly AdvancedLaneConsumerReadiness entry = ref _advancedLaneConsumerReadiness[i];
+            if (ReferenceEquals(entry.Pipeline, consumer))
+            {
+                slot = i;
+                break;
+            }
+            if (slot < 0)
+            {
+                slot = i;
+                continue;
+            }
+            ref readonly AdvancedLaneConsumerReadiness chosen = ref _advancedLaneConsumerReadiness[slot];
+            if (chosen.Pipeline is not null &&
+                (entry.Pipeline is null || entry.FrameId < chosen.FrameId))
+            {
+                slot = i;
+            }
+        }
+
+        ref AdvancedLaneConsumerReadiness target = ref _advancedLaneConsumerReadiness[slot];
+        target.Pipeline = consumer;
+        target.FrameId = renderFrameId;
+        target.Ready = ready;
+        target.Reason = ready ? null : reason;
     }
 
-    /// <summary>Publishes the desktop consumer selected before shadow scheduling.</summary>
+    /// <summary>
+    /// Publishes the consumer that owns this frame's directional cascade groups, selected before
+    /// shadow scheduling. <paramref name="hmdViewsRenderBeforeOwner"/> is true when VR eye views
+    /// render before that owner in this frame.
+    /// </summary>
     internal void PublishAdvancedDirectionalShadowConsumerAuthority(
         ulong renderFrameId,
         in AdvancedDirectionalShadowConsumerAuthority authority,
         bool ownerExpected,
         bool genericFallbackAllowed,
-        string? reason)
+        string? reason,
+        bool hmdViewsRenderBeforeOwner = false)
     {
         AssertRenderThread();
+        if (_advancedLaneAuthorityFrameId == renderFrameId)
+            _advancedLaneHmdViewsBeforeOwner |= hmdViewsRenderBeforeOwner;
+        else
+            _advancedLaneHmdViewsBeforeOwner = hmdViewsRenderBeforeOwner;
         if (_advancedLaneAuthorityFrameId == renderFrameId)
         {
             _advancedLaneGenericFallbackAllowed &= genericFallbackAllowed;
@@ -177,6 +274,14 @@ public sealed partial class ShadowAtlasManager
             ? authority : default;
         _advancedLaneOwnerExpected = ownerExpected;
         _advancedLaneAuthorityReason = _advancedLaneAuthority.IsValid ? null : reason;
+
+        // The failure hold counts frames that have an owner, once per frame.
+        if (_advancedLaneAuthority.IsValid && _advancedLaneHoldCountedFrameId != renderFrameId)
+        {
+            _advancedLaneHoldCountedFrameId = renderFrameId;
+            if (_advancedLaneHoldOwnerFrames > 0)
+                _advancedLaneHoldOwnerFrames--;
+        }
     }
 
     /// <summary>
@@ -318,15 +423,25 @@ public sealed partial class ShadowAtlasManager
                 "The desktop Advanced shadow consumer has no published command package.";
             return false;
         }
-        if (!_advancedLaneConsumerReady || _advancedLaneConsumerFrameId + 1UL < renderFrameId)
+        if (_advancedLaneHmdViewsBeforeOwner && group.Source == ShadowRequestSource.Hmd)
         {
-            declineReason = _advancedLaneConsumerReason ??
-                "No Advanced directional shadow stage reported itself ready in the previous frame.";
+            declineReason = "VR eye views render before the lane owner in this frame, so HMD cascade groups use the generic path, which draws before any view.";
+            return false;
+        }
+        if (!TryGetAdvancedLaneConsumerReadiness(_advancedLaneAuthority.Pipeline, out bool ownerReady, out string? ownerReason))
+        {
+            declineReason = "The Advanced pipeline instance that owns this frame has not run its directional shadow stage yet.";
+            return false;
+        }
+        if (!ownerReady)
+        {
+            declineReason = ownerReason ??
+                "The Advanced directional shadow stage of this frame's owner reported itself not ready at its last execution.";
             return false;
         }
 
         bool strictGpu = RequiresStrictDirectionalShadowLane();
-        if (!strictGpu && renderFrameId < _advancedLaneHoldUntilFrameId)
+        if (!strictGpu && _advancedLaneHoldOwnerFrames > 0)
         {
             declineReason = _advancedLaneLastDeclineReason ?? "The lane is held after a rejected group.";
             return false;
@@ -407,8 +522,10 @@ public sealed partial class ShadowAtlasManager
 
     /// <summary>
     /// Groups still pending when the next scheduled-tile pass starts were never
-    /// consumed. They stay dirty. A CPU-direct group can use a bounded hold;
-    /// a strict GPU group must retry its GPU lane.
+    /// consumed. They stay dirty. When the owner did not run its directional shadow
+    /// stage in the group's frame (for example an eye view that skipped a frame while
+    /// its resources were rebuilt), the lane did not fail, so no hold starts. Otherwise
+    /// a CPU-direct group can use a bounded hold; a strict GPU group must retry its GPU lane.
     /// </summary>
     private void FailUnconsumedAdvancedLaneGroups()
     {
@@ -416,6 +533,7 @@ public sealed partial class ShadowAtlasManager
             return;
 
         int unconsumed = 0;
+        int ownerAbsent = 0;
         bool strictGroup = false;
         for (int slot = 0; slot < _pendingAdvancedLaneGroups.Length; slot++)
         {
@@ -424,6 +542,8 @@ public sealed partial class ShadowAtlasManager
                 continue;
 
             unconsumed++;
+            if (pending.Request is { } request && !AdvancedLaneOwnerRanInFrame(request))
+                ownerAbsent++;
             strictGroup |= pending.Request?.RequiresStrictGpu == true;
             ReleasePendingAdvancedLaneGroup(ref pending);
         }
@@ -431,12 +551,35 @@ public sealed partial class ShadowAtlasManager
         if (unconsumed == 0)
             return;
 
+        _advancedLaneOwnerAbsentGroups += ownerAbsent;
+        if (ownerAbsent == unconsumed)
+        {
+            _advancedLaneUnconsumedGroups += unconsumed;
+            return;
+        }
+
         _advancedLaneUnconsumedGroups += unconsumed;
         if (strictGroup || RequiresStrictDirectionalShadowLane())
             _advancedLaneLastDeclineReason =
                 "The strict GPU directional shadow stage did not consume its deferred groups.";
         else
             HoldAdvancedLane("The Advanced directional shadow stage did not consume the deferred cascade groups.");
+    }
+
+    /// <summary>
+    /// True when the owner named by <paramref name="request"/> ran its directional shadow
+    /// stage in the request's render frame.
+    /// </summary>
+    private bool AdvancedLaneOwnerRanInFrame(AdvancedDirectionalShadowLaneRequest request)
+    {
+        XRRenderPipelineInstance? owner = request.ConsumerAuthority.Pipeline;
+        for (int i = 0; i < _advancedLaneConsumerReadiness.Length; i++)
+        {
+            ref readonly AdvancedLaneConsumerReadiness entry = ref _advancedLaneConsumerReadiness[i];
+            if (ReferenceEquals(entry.Pipeline, owner))
+                return entry.FrameId == request.RenderFrameId;
+        }
+        return false;
     }
 
     private void ReleasePendingAdvancedLaneGroup(ref PendingAdvancedLaneGroup pending)
@@ -454,11 +597,11 @@ public sealed partial class ShadowAtlasManager
     private void HoldAdvancedLane(string reason)
     {
         _advancedLaneLastDeclineReason = reason;
-        _advancedLaneHoldUntilFrameId = SubmissionTrackingRenderFrameId + AdvancedLaneFailureHoldFrames;
+        _advancedLaneHoldOwnerFrames = AdvancedLaneFailureHoldFrames;
         XREngine.Debug.LightingWarningEvery(
             $"ShadowAtlas.AdvancedDirectionalShadowLane.Hold.{GetHashCode()}",
             TimeSpan.FromSeconds(2.0),
-            "[ShadowAtlas] Directional cascade groups return to the generic path for {0} frames: {1}",
+            "[ShadowAtlas] Directional cascade groups return to the generic path for {0} frames with a lane owner: {1}",
             AdvancedLaneFailureHoldFrames,
             reason);
     }
@@ -629,11 +772,12 @@ public readonly record struct AdvancedDirectionalShadowLaneDiagnostics(
     bool Enabled,
     bool ConsumerReady,
     ulong ConsumerFrameId,
-    ulong HoldUntilFrameId,
+    int HoldOwnerFramesRemaining,
     long DeferredGroups,
     long AcceptedGroups,
     long RejectedGroups,
     long UnconsumedGroups,
+    long OwnerAbsentGroups,
     long GenericGroups,
     string? LastDeclineReason,
     string? CasterProducer,

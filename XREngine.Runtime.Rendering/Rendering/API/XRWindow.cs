@@ -3000,9 +3000,21 @@ namespace XREngine.Rendering
                 //LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
                 ApplyForcedDebugOpaquePipelineOverride();
 
+                // A held desktop keeps its last image. Recording and presenting it again would
+                // take the render-thread time that the hold gives to the next XR frame. The
+                // shadow consumer selection below needs this decision, so it is made first.
+                bool windowHeldForXrFrame =
+                    IsWindowHeldForXrFramePriority() ||
+                    IsWindowHeldForVrMirrorOff() ||
+                    IsWindowHeldForUnavailableDesktopExecutionMode();
+
                 if (!interactiveResizeFrame)
                 {
-                    PublishAdvancedDirectionalShadowConsumerAuthority(renderFrameId);
+                    PublishAdvancedDirectionalShadowConsumerAuthority(
+                        renderFrameId,
+                        thisWindowRendersViewports: !windowHeldForXrFrame &&
+                            canRenderWindowViewports &&
+                            !RuntimeRenderingHostServices.FrameTiming.IsPlayModeTransitioning);
                     frameRenderer.PrepareRenderFramePacing();
                     using var preRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPreRender");
                     long preRenderStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -3029,12 +3041,6 @@ namespace XREngine.Rendering
                 }
                 RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.ViewportsCallback, viewportsCallbackStart);
                 long desktopWorkStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                // A held desktop keeps its last image. Recording and presenting it again would
-                // take the render-thread time that the hold gives to the next XR frame.
-                bool windowHeldForXrFrame =
-                    IsWindowHeldForXrFramePriority() ||
-                    IsWindowHeldForVrMirrorOff() ||
-                    IsWindowHeldForUnavailableDesktopExecutionMode();
 
                 // Viewport/pipeline rendering is isolated so that exceptions during scene rendering
                 // do not prevent Vulkan's RenderFrameCallback (acquire/record/submit/present) from
@@ -3291,7 +3297,20 @@ namespace XREngine.Rendering
             }
         }
 
-        private void PublishAdvancedDirectionalShadowConsumerAuthority(ulong renderFrameId)
+        /// <summary>
+        /// Selects the Advanced directional shadow consumer of this render frame and publishes it
+        /// before the shadow pass schedules cascade groups. The consumer draws the deferred
+        /// groups, so it must run before every view that samples them in this frame: it is the
+        /// first Advanced pipeline instance that executes. The VR eyes render
+        /// (<see cref="RenderViewportsCallback"/>) before the desktop viewports, so the candidates
+        /// in execution order are the left and right eye viewports when the eyes render in this
+        /// frame, then the desktop viewports whose scene renders in this frame. When the first
+        /// candidate has no published command package, no instance owns the lane and the groups
+        /// use the generic path, which draws them before any view.
+        /// <paramref name="thisWindowRendersViewports"/> is false when this window holds its
+        /// viewports in this frame.
+        /// </summary>
+        private void PublishAdvancedDirectionalShadowConsumerAuthority(ulong renderFrameId, bool thisWindowRendersViewports)
         {
             IRuntimeRenderWorld? world = TargetWorldInstance;
             ShadowAtlasManager? atlas = world?.Lights.ShadowAtlas;
@@ -3299,8 +3318,20 @@ namespace XREngine.Rendering
                 return;
 
             AdvancedDirectionalShadowConsumerAuthority authority = default;
-            int ownerCount = 0;
+            int candidateCount = 0;
             bool genericFallbackAllowed = true;
+            bool eyesRender = VrEyesRenderThisFrame();
+            if (eyesRender)
+            {
+                ConsiderAdvancedDirectionalShadowConsumer(RuntimeEngine.VRState.LeftEyeViewport, world!, renderFrameId,
+                    ref authority, ref candidateCount, ref genericFallbackAllowed);
+                ConsiderAdvancedDirectionalShadowConsumer(RuntimeEngine.VRState.RightEyeViewport, world!, renderFrameId,
+                    ref authority, ref candidateCount, ref genericFallbackAllowed);
+            }
+            // Eyes that render without an Advanced pipeline sample the HMD cascades before a
+            // desktop owner runs.
+            bool hmdViewsRenderBeforeOwner = eyesRender && candidateCount == 0;
+
             ReadOnlySpan<XRWindow> windows = RuntimeEngine.RegisteredWindowSnapshot;
             bool currentWindowRegistered = false;
             for (int windowIndex = 0; windowIndex <= windows.Length; ++windowIndex)
@@ -3308,31 +3339,66 @@ namespace XREngine.Rendering
                 if (windowIndex == windows.Length && currentWindowRegistered)
                     break;
                 XRWindow window = windowIndex == windows.Length ? this : windows[windowIndex];
-                currentWindowRegistered |= ReferenceEquals(window, this);
+                bool isThisWindow = ReferenceEquals(window, this);
+                currentWindowRegistered |= isThisWindow;
+                if (isThisWindow && !thisWindowRendersViewports)
+                    continue;
                 for (int index = 0; index < window.Viewports.Count; ++index)
                 {
                     XRViewport viewport = window.Viewports[index];
-                    if (!ReferenceEquals(viewport.World, world) ||
-                        viewport.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
+                    if (!viewport.RendersSceneThisFrame)
                         continue;
-
-                    ++ownerCount;
-                    bool captured = viewport.TryCaptureAdvancedDirectionalShadowConsumerAuthority(
-                        renderFrameId, out AdvancedDirectionalShadowConsumerAuthority candidate);
-                    genericFallbackAllowed &= captured &&
-                        candidate.Strategy == EMeshSubmissionStrategy.CpuDirect;
-                    authority = ownerCount == 1 ? candidate : default;
+                    ConsiderAdvancedDirectionalShadowConsumer(viewport, world!, renderFrameId,
+                        ref authority, ref candidateCount, ref genericFallbackAllowed);
                 }
             }
 
-            string? reason = ownerCount > 1
-                ? "Multiple desktop Advanced viewports own different shadow consumers."
-                : ownerCount == 1 && !authority.IsValid
-                    ? "The desktop Advanced viewport has no published command package."
-                    : null;
+            string? reason = candidateCount != 0 && !authority.IsValid
+                ? "The first Advanced view that renders in this frame has no published command package."
+                : null;
             atlas.PublishAdvancedDirectionalShadowConsumerAuthority(
-                renderFrameId, authority, ownerCount != 0,
-                genericFallbackAllowed, reason);
+                renderFrameId, authority, candidateCount != 0,
+                genericFallbackAllowed, reason, hmdViewsRenderBeforeOwner);
+        }
+
+        /// <summary>
+        /// Adds <paramref name="viewport"/> to the consumer candidates of this frame when it renders
+        /// <paramref name="world"/> with an Advanced pipeline. The first candidate becomes the
+        /// owner. Every candidate decides whether a group that the lane declines may use the
+        /// generic path: only CPU-direct frames may.
+        /// </summary>
+        private static void ConsiderAdvancedDirectionalShadowConsumer(
+            XRViewport? viewport,
+            IRuntimeRenderWorld world,
+            ulong renderFrameId,
+            ref AdvancedDirectionalShadowConsumerAuthority authority,
+            ref int candidateCount,
+            ref bool genericFallbackAllowed)
+        {
+            if (viewport is null ||
+                !ReferenceEquals(viewport.World, world) ||
+                viewport.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
+                return;
+
+            bool captured = viewport.TryCaptureAdvancedDirectionalShadowConsumerAuthority(
+                renderFrameId, out AdvancedDirectionalShadowConsumerAuthority candidate);
+            genericFallbackAllowed &= captured &&
+                candidate.Strategy == EMeshSubmissionStrategy.CpuDirect;
+            if (++candidateCount == 1)
+                authority = candidate;
+        }
+
+        /// <summary>
+        /// True when the VR eye viewports render in this render frame: emulated and OpenVR eyes
+        /// render in every frame, OpenXR eyes when the collect thread prepared an XR frame.
+        /// </summary>
+        private static bool VrEyesRenderThisFrame()
+        {
+            RuntimeVrState vr = RuntimeEngine.VRState;
+            if (vr.EmulatedRenderActive || vr.OpenVrRuntimeActiveForRender)
+                return true;
+            return RuntimeRenderingHostServices.Presentation.IsOpenXRActive &&
+                vr.OpenXRApi?.HasPreparedEyeFrame == true;
         }
 
         private void LogRenderDiagnostics(double delta, bool useScenePanelMode, bool canRenderWindowViewports, bool forceFullViewport)

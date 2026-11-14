@@ -454,8 +454,8 @@ The lane then works as follows:
 
 - `ShadowAtlasManager.RenderScheduledTiles` still allocates, tracks dirtiness,
   applies budgets and owns completion receipts. A depth-only cascade group
-  (desktop or HMD source) whose grouped render would run is deferred to the lane when the stage
-  reported itself ready in the previous frame
+  (desktop or HMD source) whose grouped render would run is deferred to the lane when the
+  frame's owner reported its stage ready at its last run
   ([`ShadowAtlasManager.AdvancedDirectionalShadowLane`](../../../XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.AdvancedDirectionalShadowLane.cs)).
   The light publishes the page, one tile rectangle and one world-to-clip matrix
   per cascade. The first successfully built request selects one framebuffer
@@ -475,7 +475,9 @@ The lane then works as follows:
   ([`RecordAdvancedDirectionalShadowRasterPayload`](../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.DirectionalShadow.cs)).
 - Acceptance commits the cascade slots and receipts like a grouped render. A
   rejected or unconsumed group stays dirty, renders generically next frame and
-  holds the lane closed for 60 frames. A lane preparation fault rejects the
+  holds the lane closed for 60 frames that have an owner. A group whose owner
+  did not run in its frame (for example an eye that skipped a frame) stays
+  dirty without a hold (`ownerAbsentGroups`). A lane preparation fault rejects the
   fresh frame with failed receipts, preserves dirty keys for generic retry,
   and reports the stage not ready for 5 s.
 - Moment-encoded pages, unsupported submission strategies and
@@ -487,8 +489,18 @@ The lane then works as follows:
   it (see [shadow atlas](shadow-atlas.md#static-caster-tiles-of-directional-cascades)).
   `XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0` turns the static tile off.
   Several Advanced pipeline instances can run in one frame (the desktop view
-  and the VR eyes). Only the instance named by the published consumer
-  authority takes the deferred groups and reports readiness; the other
+  and the VR eyes). The window publishes the consumer authority before the
+  shadow pass (`XRWindow.PublishAdvancedDirectionalShadowConsumerAuthority`):
+  the owner is the first Advanced instance that runs in the frame, so the
+  lane draws the groups before every view that samples them. The eyes render
+  (`RenderViewportsCallback`) before the desktop viewports, so the candidates
+  in that order are the left and right eye viewports when the eyes render in
+  the frame (emulated and OpenVR eyes in each frame; OpenXR eyes when
+  `IOpenXrRuntime.HasPreparedEyeFrame` is true), then the desktop viewports
+  whose scene renders in the frame (`XRViewport.RendersSceneThisFrame`, not
+  held). Eyes without an Advanced pipeline render before a desktop owner, so
+  HMD groups then stay on the generic path. Only the owner takes the deferred
+  groups and reports readiness, kept per pipeline instance; the other
   instances skip the lane, so they neither reject the owner's groups nor mark
   the lane not ready.
   `get_advanced_profile_diagnostics.directionalShadowLane` reports the
