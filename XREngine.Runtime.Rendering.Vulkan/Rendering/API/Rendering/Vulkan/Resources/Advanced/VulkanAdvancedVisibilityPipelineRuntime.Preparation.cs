@@ -88,27 +88,6 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         }
     }
 
-    private int _directionalShadowSkippedSkinnedRecords = -1;
-
-    /// <summary>
-    /// Records how many skinned meshlet caster records the directional shadow lane skipped
-    /// in this frame's family preparation. These casters cast no directional shadow in
-    /// meshlet frames until skinned positions have an indexed shadow producer. An
-    /// auxiliary log entry is written only when the count changes, so a run shows the
-    /// skipped casters without a per-frame allocation.
-    /// </summary>
-    internal void RecordDirectionalShadowSkippedSkinnedCasters(int records)
-    {
-        if (Interlocked.Exchange(ref _directionalShadowSkippedSkinnedRecords, records) == records)
-            return;
-
-        XREngine.Debug.WriteAuxiliaryLog(
-            "advanced-directional-shadow-lane.log",
-            records > 0
-                ? $"Advanced directional shadow lane: {records} skinned meshlet caster records cast no directional shadow in meshlet frames. Skinned meshlet positions have no indexed shadow producer yet; the static casters still render."
-                : "Advanced directional shadow lane: no skinned meshlet caster records are skipped.");
-    }
-
     /// <summary>Records a lane pipeline failure observed during family preparation.</summary>
     internal void RecordDirectionalShadowLaneFault(string reason)
     {

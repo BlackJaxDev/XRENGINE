@@ -109,8 +109,12 @@ void main()
         drawDense,
         draw,
         preparedDeformation);
+    // A skinned meshlet draw has no deformed vertex buffer bound: its frozen indexed
+    // arguments index the canonical geometry. Its pose comes only from the prepared
+    // deformation of this frame, so a draw without one casts nothing.
     bool producerRequiresDeformation =
-        producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED;
+        producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED ||
+        producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET;
     if (producerRequiresDeformation && !deformed)
     {
         XR_ADV_RejectShadowVertex();
@@ -136,7 +140,11 @@ void main()
     vec2 localTexCoord3 = vec2(0.0);
     vec4 localColor = vec4(1.0);
     uint selectedVertex = uint(XR_ADV_VERTEX_INDEX);
-    if (producer == XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
+    // Indirect indexed and skinned meshlet draws use local geometry indices (vertex
+    // offset 0) and fetch the vertex from the packed arena: the deformed range of this
+    // frame when the draw is deformed, the canonical geometry otherwise.
+    if (producer == XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED ||
+        producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
     {
         uint geometryDense = XR_ADV_ResolveVisibilityHandle(
             payload.geometry,
@@ -222,7 +230,8 @@ void main()
     // The shadow lane draws a static meshlet payload with the frozen indexed
     // arguments of its canonical geometry. gl_PrimitiveID then counts index-buffer
     // triangles, so the coverage decode must use the indexed encoding.
-    ShadowProducer = producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET
+    ShadowProducer = producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET ||
+            producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET
         ? XR_ADV_VIS_PRODUCER_CPU_STATIC_INDEXED
         : producer;
     ShadowPrimitiveBase = payload.firstIndex / 3u;

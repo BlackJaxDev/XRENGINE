@@ -429,14 +429,14 @@ submission strategy selects the caster producer:
   cull for meshlet frames does not exist yet. The stage writes one log entry
   when it first resolves a meshlet frame to this producer. The shadow vertex stage
   reports a static meshlet payload as an indexed producer, so masked coverage
-  decodes index-buffer triangles. A skinned meshlet bin has no indexed shadow
-  producer yet: shadow preparation gives it no shadow pipeline and the lane
-  recorder skips it, so the static casters of the frame still render. The
-  skinned casters then cast no directional shadow in meshlet frames. The
-  visibility pipeline runtime writes the number of skipped skinned records to
-  the auxiliary log `advanced-directional-shadow-lane.log` whenever the number
-  changes. Meshlet frames use the strict lane (no generic fallback), so before
-  this skip one skinned bin removed every directional shadow of the frame.
+  decodes index-buffer triangles. A skinned meshlet bin uses the same frozen
+  indexed arguments (local geometry indices, vertex offset 0). Its vertex stage
+  fetches each vertex from the prepared deformation of the frame
+  (`preparedDeformation.currentVertexOffset` into the current vertex arena), as
+  the indirect indexed producer does, so the avatar casts its present pose. A
+  skinned draw without a prepared deformation record casts nothing; it never
+  falls back to the bind pose. The deformation stage runs before the directional
+  shadow raster in the Advanced frame contract.
 - `GpuMeshletInstrumented` and every other strategy keep the generic path with
   an explicit reason.
 
