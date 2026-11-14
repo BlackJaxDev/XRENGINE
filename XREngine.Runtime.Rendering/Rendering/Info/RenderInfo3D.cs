@@ -409,6 +409,14 @@ namespace XREngine.Rendering.Info
             _lastShadowCasterBounds = worldBounds;
         }
 
+        /// <summary>
+        /// Reports a change of the shadow that this caster casts without a move: a new mesh,
+        /// LOD, material, instance count or enabled state of one of its render commands. The
+        /// directional cascades that its box meets re-render.
+        /// </summary>
+        internal void ReportShadowCasterContentChange()
+            => ReportShadowCasterChange(((IOctreeItem)this).WorldCullingVolume, force: true);
+
         private static bool BoxNearlyEqual(in Box a, in Box b, float epsilon = 1e-4f)
         {
             return MathF.Abs(a.LocalCenter.X - b.LocalCenter.X) <= epsilon &&

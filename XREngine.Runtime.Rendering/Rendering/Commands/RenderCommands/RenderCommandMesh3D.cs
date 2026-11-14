@@ -632,6 +632,20 @@ namespace XREngine.Rendering.Commands
             get => _worldMatrixIsModelMatrix;
             set => SetField(ref _worldMatrixIsModelMatrix, value);
         }
+        /// <summary>
+        /// Reports a change of the cast shadow to the owning renderable when the drawn mesh
+        /// (also a LOD switch), the material override, the instance count or the enabled state
+        /// changes. The box of the caster does not move then, so the move tracking of
+        /// <see cref="RenderInfo3D"/> does not see it. Edits inside a material object (for
+        /// example its alpha cutoff) are not reported.
+        /// </summary>
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            if (propName is nameof(Mesh) or nameof(MaterialOverride) or nameof(Instances) or nameof(Enabled))
+                (OwnerRenderInfo as RenderInfo3D)?.ReportShadowCasterContentChange();
+        }
+
         public XRMaterial? MaterialOverride
         {
             get => _materialOverride;
