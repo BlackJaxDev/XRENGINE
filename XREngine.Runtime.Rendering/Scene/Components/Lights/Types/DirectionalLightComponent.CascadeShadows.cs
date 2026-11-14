@@ -139,9 +139,14 @@ namespace XREngine.Components.Lights
             public readonly ulong[] PreviousAtlasRequestContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly int[] StableAtlasRequestFrameCounts = new int[MaxCascadeRenderCount];
             public readonly int[] AtlasCascadeStaleFrameCounts = new int[MaxCascadeRenderCount];
-            // Content-changed cascade refreshes granted in the current request frame.
-            // BeginDirectionalCascadeAtlasRequestFrame resets it.
-            public int AtlasCascadeRefreshesThisFrame;
+            // Cascades that may refresh in the current request frame although only their
+            // camera fit changed. Lights3DCollection selects them before it submits the
+            // cascade requests. BeginDirectionalCascadeAtlasRequestFrame clears them.
+            public readonly bool[] AtlasCascadeRefreshGranted = new bool[MaxCascadeRenderCount];
+            // Caster state hash of the last request that asked to render each cascade.
+            public readonly ulong[] RequestedCasterStateHashes = new ulong[MaxCascadeRenderCount];
+            // Shadow atlas frame of the last request that asked to render each cascade.
+            public readonly ulong[] RequestedRefreshFrames = new ulong[MaxCascadeRenderCount];
             public readonly ulong[] AtlasCollectedContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeRenderRequested = new bool[MaxCascadeRenderCount];
             // Matrices that the Advanced capture published for planned refreshes. The
@@ -1802,10 +1807,10 @@ namespace XREngine.Components.Lights
             lock (_cascadeDataLock)
             {
                 DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
-                state.AtlasCascadeRefreshesThisFrame = 0;
                 int count = Math.Clamp(activeCascadeCount, 0, MaxCascadeRenderCount);
                 for (int i = 0; i < MaxCascadeRenderCount; i++)
                 {
+                    state.AtlasCascadeRefreshGranted[i] = false;
                     state.AtlasRequestContentHashes[i] = 0u;
                     state.AtlasCascadeRenderRequested[i] = false;
                     state.AtlasCascadeCollectVisibleNeeded[i] = false;
@@ -1818,38 +1823,104 @@ namespace XREngine.Components.Lights
                     state.PreviousAtlasRequestContentHashes[i] = 0u;
                     state.StableAtlasRequestFrameCounts[i] = 0;
                     state.AtlasCascadeStaleFrameCounts[i] = 0;
+                    state.RequestedCasterStateHashes[i] = 0u;
+                    state.RequestedRefreshFrames[i] = 0u;
                 }
             }
         }
 
         /// <summary>
-        /// Counts one content-changed cascade refresh of this light and source in the
-        /// current request frame. Returns false, and counts nothing, when the frame
-        /// already has <paramref name="limit"/> refreshes. A limit of 0 or less has no
-        /// limit. With <paramref name="force"/> the refresh is counted and always
-        /// granted: a cascade at the stale limit or without a rendered tile must render.
+        /// Lets the cascade refresh in the current request frame although only its camera
+        /// fit changed. Lights3DCollection calls it, before it submits the cascade
+        /// requests, for the cascades that the per-frame refresh limit selects.
         /// </summary>
-        internal bool TryGrantDirectionalCascadeRefresh(ShadowRequestSource source, int limit, bool force)
+        internal void GrantDirectionalCascadeRefresh(ShadowRequestSource source, int index)
         {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return;
+
             ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop
                 : source;
 
             lock (_cascadeDataLock)
-            {
-                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
-                if (!force && limit > 0 && state.AtlasCascadeRefreshesThisFrame >= limit)
-                    return false;
-                state.AtlasCascadeRefreshesThisFrame++;
+                GetCascadeSourceState(resolvedSource).AtlasCascadeRefreshGranted[index] = true;
+        }
+
+        /// <summary>
+        /// True when <see cref="GrantDirectionalCascadeRefresh"/> selected the cascade in
+        /// the current request frame.
+        /// </summary>
+        internal bool IsDirectionalCascadeRefreshGranted(ShadowRequestSource source, int index)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return false;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+                return GetCascadeSourceState(resolvedSource).AtlasCascadeRefreshGranted[index];
+        }
+
+        /// <summary>
+        /// Returns the shadow atlas frame of a cascade refresh that is still in flight, or 0.
+        /// The collect thread plans the next frame while the render thread draws this one,
+        /// so a refresh requested in the previous plan has usually not completed, and the
+        /// allocation still reports the older rendered frame. A refresh is in flight when it
+        /// was requested after <paramref name="lastRenderedFrame"/> and at most two plan
+        /// frames before <paramref name="currentFrameId"/>; an older request was lost.
+        /// </summary>
+        internal ulong GetDirectionalCascadeRefreshInFlightFrame(
+            ShadowRequestSource source,
+            int index,
+            ulong lastRenderedFrame,
+            ulong currentFrameId)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return 0u;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            ulong requested;
+            lock (_cascadeDataLock)
+                requested = GetCascadeSourceState(resolvedSource).RequestedRefreshFrames[index];
+
+            return requested > lastRenderedFrame && requested <= currentFrameId && currentFrameId - requested <= 2u
+                ? requested
+                : 0u;
+        }
+
+        /// <summary>
+        /// True when <paramref name="casterStateHash"/> differs from the caster state hash
+        /// of the last request that asked to render the cascade: a caster moved, entered or
+        /// left the collected set, or the light changed. A stale tile then shows old
+        /// casters, so the cascade refreshes at once and does not wait for the per-frame
+        /// refresh limit.
+        /// </summary>
+        internal bool HasDirectionalCascadeCasterStateChanged(ShadowRequestSource source, int index, ulong casterStateHash)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
                 return true;
-            }
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+                return GetCascadeSourceState(resolvedSource).RequestedCasterStateHashes[index] != casterStateHash;
         }
 
         internal void MarkDirectionalCascadeAtlasRequest(
             ShadowRequestSource source,
             int index,
             ulong contentHash,
-            bool renderRequested)
+            bool renderRequested,
+            ulong casterStateHash,
+            ulong requestFrameId)
         {
             if ((uint)index >= (uint)MaxCascadeRenderCount)
                 return;
@@ -1895,6 +1966,11 @@ namespace XREngine.Components.Lights
 
                 state.AtlasCascadeRenderRequested[index] = renderRequested;
                 state.AtlasCascadeCollectVisibleNeeded[index] = renderRequested && !cacheHit;
+                if (renderRequested)
+                {
+                    state.RequestedCasterStateHashes[index] = casterStateHash;
+                    state.RequestedRefreshFrames[index] = requestFrameId;
+                }
             }
         }
 

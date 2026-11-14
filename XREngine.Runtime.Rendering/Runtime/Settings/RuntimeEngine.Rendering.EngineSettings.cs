@@ -954,7 +954,7 @@ public static partial class RuntimeEngine
                 }
 
                 [Category("Shadows")]
-                [Description("Maximum number of content-changed directional cascades of one light and source that refresh in one frame. The nearest dirty cascades refresh first; the others keep their stale tiles, which shading reprojects with the matrix they were rendered with, until a later frame or the stale limit. A cascade at the stale limit or without a rendered tile always refreshes. 0 removes the limit.")]
+                [Description("Maximum number of directional cascades of one light and source that refresh in one frame when only the camera moved. The cascades with the oldest rendered tiles refresh first; the others keep their stale tiles, which shading reprojects with the matrix they were rendered with. A caster change, a cascade without a rendered tile, a large fit jump and a cascade at the stale limit always refresh. 0 removes the limit.")]
                 public int MaxDirectionalCascadeRefreshesPerFrame
                 {
                     get => Volatile.Read(ref _maxDirectionalCascadeRefreshesPerFrame);
