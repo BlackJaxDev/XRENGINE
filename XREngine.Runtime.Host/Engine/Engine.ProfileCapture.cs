@@ -780,6 +780,7 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "render_wait_reason", RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitReason, ref first);
             AppendNumberField(s_lineBuilder, "skipped_collect_frames", RuntimeEngine.Rendering.Stats.FrameLifecycle.SkippedCollectFrames, ref first);
             AppendNumberField(s_lineBuilder, "stale_collect_reuse_frames", RuntimeEngine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames, ref first);
+            AppendNumberField(s_lineBuilder, "render_circuit_breaker_trips", RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderCircuitBreakerTrips, ref first);
             AppendNumberField(s_lineBuilder, "frame_package_production_ms", RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageProductionMs, ref first);
             AppendNumberField(s_lineBuilder, "frame_package_publication_ms", RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackagePublicationMs, ref first);
             AppendNumberField(s_lineBuilder, "frame_package_validation_ms", RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageValidationMs, ref first);

@@ -568,6 +568,7 @@ namespace XREngine.Editor.Mcp
                         render_wait_for_collect_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs,
                         render_wait_reason = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitReason,
                         stale_collect_reuse_frames = RuntimeEngine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames,
+                        render_circuit_breaker_trips = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderCircuitBreakerTrips,
                         frame_package_production_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageProductionMs,
                         frame_package_publication_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackagePublicationMs,
                         frame_package_validation_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageValidationMs,

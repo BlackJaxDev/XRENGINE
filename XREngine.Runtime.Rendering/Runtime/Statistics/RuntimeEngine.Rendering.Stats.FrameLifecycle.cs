@@ -70,6 +70,19 @@ namespace XREngine
                     public static string RenderWaitReason
                         => ((EFrameLifecycleWaitReason)_lastFrameRenderWaitReason).ToString();
 
+                    private static long _renderCircuitBreakerTrips;
+
+                    /// <summary>
+                    /// Total count of window render circuit-breaker trips since start. Each trip
+                    /// stops rendering of a window for its hold time after a render-callback
+                    /// exception. The count is cumulative and does not depend on <see cref="EnableTracking"/>.
+                    /// </summary>
+                    public static long RenderCircuitBreakerTrips => Interlocked.Read(ref _renderCircuitBreakerTrips);
+
+                    /// <summary>Counts one window render circuit-breaker trip.</summary>
+                    internal static void RecordRenderCircuitBreakerTrip()
+                        => Interlocked.Increment(ref _renderCircuitBreakerTrips);
+
                     public static int SkippedCollectFrames => _lastFrameSkippedCollectFrames;
                     public static int StaleCollectReuseFrames => _lastFrameStaleCollectReuseFrames;
                     public static double FramePackageProductionMs

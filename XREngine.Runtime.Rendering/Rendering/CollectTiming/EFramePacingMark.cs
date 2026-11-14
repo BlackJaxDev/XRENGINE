@@ -95,4 +95,9 @@ public enum EFramePacingMark : byte
     DesktopReadyComputeRecording,
     /// <summary>Desktop readiness finished plan acceptance.</summary>
     DesktopReadyAccepted,
+    /// <summary>
+    /// The window render circuit breaker caught a render-callback exception and stopped
+    /// rendering of the window for its hold time.
+    /// </summary>
+    RenderCircuitBreakerTrip,
 }

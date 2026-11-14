@@ -3255,6 +3255,7 @@ namespace XREngine.Rendering
                 // Backoff grows up to 5 seconds.
                 int backoffMs = Math.Min(5000, 100 * _consecutiveRenderFailures);
                 _renderDisabledUntilUtc = DateTime.UtcNow.AddMilliseconds(backoffMs);
+                ReportRenderCircuitBreakerTrip(ex, backoffMs);
 
                 string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
                 Debug.RenderingWarningEvery(
@@ -3273,6 +3274,61 @@ namespace XREngine.Rendering
                     AbstractRenderer.Current = null;
                 Volatile.Write(ref _normalRenderActive, 0);
             }
+        }
+
+        private static readonly object s_renderCircuitBreakerLogLock = new();
+        private static long s_renderCircuitBreakerLastLogTicks;
+        private static int s_renderCircuitBreakerSuppressedLogs;
+
+        /// <summary>
+        /// Makes a render circuit-breaker trip visible in every build configuration. It counts the
+        /// trip in the frame lifecycle stats, adds a frame pacing mark, and writes the exception
+        /// type, message and top stack frames to <c>render-circuit-breaker.log</c>. Release builds
+        /// compile out the general log, so without this record a 100 ms render stop leaves no trace.
+        /// The log keeps at most one entry each second and reports how many entries it skipped.
+        /// This runs only on the exception path, so its allocations do not affect normal frames.
+        /// </summary>
+        private void ReportRenderCircuitBreakerTrip(Exception exception, int holdMilliseconds)
+        {
+            RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderCircuitBreakerTrip();
+            FramePacingTimeline.Mark(EFramePacingMark.RenderCircuitBreakerTrip);
+
+            int suppressed;
+            lock (s_renderCircuitBreakerLogLock)
+            {
+                long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (s_renderCircuitBreakerLastLogTicks != 0 &&
+                    now - s_renderCircuitBreakerLastLogTicks < System.Diagnostics.Stopwatch.Frequency)
+                {
+                    s_renderCircuitBreakerSuppressedLogs++;
+                    return;
+                }
+                s_renderCircuitBreakerLastLogTicks = now;
+                suppressed = s_renderCircuitBreakerSuppressedLogs;
+                s_renderCircuitBreakerSuppressedLogs = 0;
+            }
+
+            System.Text.StringBuilder entry = new();
+            entry.Append('[').Append(DateTimeOffset.Now.ToString("O")).Append("] Window=").Append(GetHashCode())
+                .Append(" RenderFrame=").Append(RuntimeEngine.Rendering.State.RenderFrameId)
+                .Append(" Failures=").Append(_consecutiveRenderFailures)
+                .Append(" HoldMs=").Append(holdMilliseconds)
+                .Append(" TotalTrips=").Append(RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderCircuitBreakerTrips)
+                .Append(" SkippedEntries=").Append(suppressed)
+                .Append('\n').Append(exception.GetType().FullName).Append(": ").Append(exception.Message).Append('\n');
+            string? stackTrace = exception.StackTrace;
+            if (stackTrace is not null)
+            {
+                const int TopFrameCount = 8;
+                int frameCount = 0;
+                foreach (string line in stackTrace.Split('\n'))
+                {
+                    if (frameCount++ >= TopFrameCount)
+                        break;
+                    entry.Append(line.TrimEnd('\r')).Append('\n');
+                }
+            }
+            Debug.WriteAuxiliaryLog("render-circuit-breaker.log", entry.ToString());
         }
 
         private void ApplyForcedDebugOpaquePipelineOverride()
