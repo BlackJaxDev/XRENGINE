@@ -11,6 +11,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan.RenderGraph;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -38,6 +39,8 @@ internal sealed partial class VulkanFrameLoop
     internal bool TryRenderOpenXrEyeMirrorFrameBuffer(
         in OpenXrEyeMirrorRenderRequest request)
     {
+        // The eye mirror preview is part of the XR output domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
             return false;
@@ -123,6 +126,7 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeMirrorRenderRequest firstEye,
         in OpenXrEyeMirrorRenderRequest secondEye)
     {
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
             return false;

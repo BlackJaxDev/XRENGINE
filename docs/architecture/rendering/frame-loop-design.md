@@ -556,6 +556,21 @@ previous restore's copy (`SnapshotRestoredContent`).
     when runtime counters show no lock contention and about 1% GC. Use them for
     coarse subtrees only, and confirm contention with `dotnet-counters`
     (`dotnet.monitor.lock_contentions`).
+- **Separate the output domains.** One render thread can render two output
+  families in a frame: the desktop window and the XR eyes. Each backend frame
+  entry point enters an output domain scope (`RenderOutputDomainContext`:
+  desktop frame transaction, XR eye frame and eye mirror, and the render workers
+  that record for them), so per-output work can be counted and owned by its
+  domain. A domain is an output family, not a view: both eyes are one XR domain.
+  `vulkan.output_domains` reports cumulative counts per domain (`desktop`, `xr`,
+  `none`): frames, plan builds, plan operations and rank evaluations, prepared
+  mesh cohort matches and misses, materialized mesh requests, binding artifact
+  replacements and table evictions, and descriptor owner misses. Divide a window
+  delta by the domain's `frames`.
+- **Separate GC from lock waits.** A trace with
+  `Microsoft-Windows-DotNETRuntime:0x4001:5` records GC suspensions, allocation
+  ticks with stacks, and contention start and stop events, so GC pause time and
+  real lock waits are measured separately from sample traces.
 - **Know which fields are gauges.** Most `binding_data.*` fields describe the
   last frame, and many `frame_lifecycle` fields describe the last sample. Diff
   cumulative counters across a window and normalize by completed frames.

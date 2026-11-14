@@ -14,6 +14,7 @@ using Debug = XREngine.Debug;
 using VkExtent2D = Silk.NET.Vulkan.Extent2D;
 using VkFormat = Silk.NET.Vulkan.Format;
 using VkImage = Silk.NET.Vulkan.Image;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -857,6 +858,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
     private bool TryRenderVulkanEye(uint viewIndex, uint imageIndex)
     {
+        // One eye of a sequential XR frame. The XR frame count comes from the frame lifecycle,
+        // so this entry only sets the domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (Window?.Renderer is not VulkanRenderer renderer)
             return false;
 
@@ -1287,6 +1291,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
     private bool TryRenderVulkanEyesBatch(out bool handled)
     {
+        // One XR frame of the XR output domain: both eyes, any view mode.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
+        RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.Frames);
         global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.EyeBatchStart);
         bool strictSinglePassStereoRequested =
             RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;

@@ -17,6 +17,7 @@ using XREngine.Rendering.Vulkan;
 using XREngine.Scene.Transforms;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.OutputDomains;
 using McpCapability = XREngine.Runtime.Automation.Mcp.McpCapability;
 using GpuDrivenStats = XREngine.RuntimeEngine.Rendering.Stats.GpuDriven;
 using GpuPipelineStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
@@ -1606,6 +1607,9 @@ namespace XREngine.Editor.Mcp
                             mesh_descriptor_pool_high_water = VulkanStats.VulkanMeshDescriptorPoolHighWater,
                             mesh_descriptor_set_high_water = VulkanStats.VulkanMeshDescriptorSetHighWater,
                         },
+                        // Per output domain (desktop, XR, none): cumulative counts of the work that
+                        // rebuilds state, such as plan builds, mesh cohort misses and artifact replacements.
+                        output_domains = BuildRenderOutputDomainTelemetry(),
                         retired_resources = new
                         {
                             metering = vulkanDiagnostics?.GetRetirementDiagnostics(),
@@ -1786,6 +1790,29 @@ namespace XREngine.Editor.Mcp
         /// as row_gate_passes and row_gate_failures. The last_exception values identify the most recent prepare
         /// exception in all builds, because Release builds write no warning log.
         /// </summary>
+        /// <summary>
+        /// Formats the cumulative output domain counters as one map per domain, keyed by the
+        /// snake-case counter name. Callers subtract two snapshots to get a measurement window.
+        /// </summary>
+        private static object BuildRenderOutputDomainTelemetry()
+        {
+            long[] captured = RenderOutputDomainTelemetry.Capture();
+            Dictionary<string, Dictionary<string, long>> domains = [];
+            for (ERenderOutputDomain domain = ERenderOutputDomain.None; domain < ERenderOutputDomain.Count; ++domain)
+            {
+                Dictionary<string, long> counters = [];
+                for (ERenderOutputDomainCounter counter = ERenderOutputDomainCounter.Frames;
+                    counter < ERenderOutputDomainCounter.Count;
+                    ++counter)
+                {
+                    counters[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(counter.ToString())] =
+                        RenderOutputDomainTelemetry.Read(captured, domain, counter);
+                }
+                domains[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(domain.ToString())] = counters;
+            }
+            return domains;
+        }
+
         private static object BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetrySnapshot snapshot)
         {
             Dictionary<string, long> refusals = [];

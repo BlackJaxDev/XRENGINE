@@ -5,6 +5,7 @@ using Silk.NET.Vulkan;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.Vulkan.DeviceBootstrap;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -792,6 +793,9 @@ internal sealed partial class VulkanFrameLoop
 
     private void ExecuteDesktopFrameTransaction(in DesktopFrameIdentity identity)
     {
+        // The whole transaction belongs to the desktop output domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Desktop);
+        RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.Frames);
         VulkanFrameAttempt attempt = new(in identity);
         FramePacingTimeline.Mark(EFramePacingMark.DesktopTransactionStart);
         try

@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using XREngine.Execution;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -61,6 +62,8 @@ internal sealed class VulkanDesktopRecordWorkExecutor : IRenderWorkExecutor
 
     public void Execute(in RenderWorkItem item, ref RenderWorkerContext context)
     {
+        // The worker records the desktop primary, so its work belongs to the desktop domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Desktop);
         if (item.OperationKind != DesktopPrimaryOperationKind || context.LaneId != _laneId)
         {
             throw new InvalidOperationException(

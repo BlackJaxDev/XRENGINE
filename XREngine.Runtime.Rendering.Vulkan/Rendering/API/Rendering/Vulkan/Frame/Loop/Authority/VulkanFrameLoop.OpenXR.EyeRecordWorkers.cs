@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using XREngine.Execution;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -10,6 +11,7 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeSwapchainRenderRequest firstEye,
         in OpenXrEyeSwapchainRenderRequest secondEye)
     {
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
         {

@@ -10,6 +10,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -17,6 +18,8 @@ internal sealed partial class VulkanFrameLoop
 {
     internal bool TryRenderOpenXrEyeSwapchain(in OpenXrEyeSwapchainRenderRequest request)
     {
+        // Eye frames belong to the XR output domain; both eyes share one domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         uint openXrViewIndex = request.OpenXrViewIndex;
 
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
@@ -134,6 +137,7 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeSwapchainRenderRequest firstEye,
         in OpenXrEyeSwapchainRenderRequest secondEye)
     {
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
         {

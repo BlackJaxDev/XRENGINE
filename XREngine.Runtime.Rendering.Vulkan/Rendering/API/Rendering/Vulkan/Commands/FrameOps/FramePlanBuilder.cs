@@ -1,5 +1,6 @@
 using System.Threading;
 using XREngine.Rendering.Vulkan.RenderGraph;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -251,6 +252,8 @@ internal sealed class FramePlanBuilder
         authoringOperationCount = authoringOperationCount < 0
             ? operations.Length
             : authoringOperationCount;
+        RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.PlanBuilds);
+        RenderOutputDomainTelemetry.Add(ERenderOutputDomainCounter.PlanOperations, authoringOperationCount);
         authoringDynamicOverlayOperationCount = authoringDynamicOverlayOperationCount < 0
             ? dynamicOverlayOperations.Length
             : authoringDynamicOverlayOperationCount;
@@ -822,9 +825,12 @@ internal sealed class FramePlanBuilder
         int outputCount,
         EVrOutputViewKind? openXrViewKind)
     {
+        // Counts the rank evaluations of this sort once, after the loop.
+        long rankEvaluations = 0L;
         for (int index = 1; index < operationCount; index++)
         {
             int candidate = order[index];
+            ++rankEvaluations;
             int candidateRank = GetOutputRank(
                 slot,
                 operations.GetContext(candidate),
@@ -834,6 +840,7 @@ internal sealed class FramePlanBuilder
             while (insertionIndex > 0)
             {
                 int prior = order[insertionIndex - 1];
+                ++rankEvaluations;
                 int priorRank = GetOutputRank(
                     slot,
                 operations.GetContext(prior),
@@ -851,6 +858,7 @@ internal sealed class FramePlanBuilder
 
             order[insertionIndex] = candidate;
         }
+        RenderOutputDomainTelemetry.Add(ERenderOutputDomainCounter.PlanRankEvaluations, rankEvaluations);
     }
 
     private static void CompileResourceDependencyOrder(

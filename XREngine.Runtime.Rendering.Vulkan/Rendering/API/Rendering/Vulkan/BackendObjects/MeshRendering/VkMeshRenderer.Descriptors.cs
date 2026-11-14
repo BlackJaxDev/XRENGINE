@@ -22,6 +22,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -821,6 +822,7 @@ internal unsafe partial class VkMeshRenderer
 					ownerLookupMiss: true,
 					ownerGenerationMiss: false,
 					frameSourceGenerationMiss: false);
+			RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.DescriptorOwnerMisses);
             return false;
         }
 
