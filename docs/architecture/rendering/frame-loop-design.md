@@ -486,6 +486,11 @@ The lane then works as follows:
   matching tile key copies that tile and draws only the dynamic casters over
   it (see [shadow atlas](shadow-atlas.md#static-caster-tiles-of-directional-cascades)).
   `XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0` turns the static tile off.
+  Several Advanced pipeline instances can run in one frame (the desktop view
+  and the VR eyes). Only the instance named by the published consumer
+  authority takes the deferred groups and reports readiness; the other
+  instances skip the lane, so they neither reject the owner's groups nor mark
+  the lane not ready.
   `get_advanced_profile_diagnostics.directionalShadowLane` reports the
   counters (`genericGroups` counts the groups that stayed on the generic
   path), the last decline reason, and `casterProducer` with

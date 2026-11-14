@@ -179,6 +179,7 @@ internal sealed partial class VulkanCommandRuntime
             RecordDirectionalShadowCascadeCasters(
                 ref state, in payload, bins, lane, cascade,
                 EDirectionalShadowCasterSelection.All);
+            DirectionalShadowStaticCacheDiagnostics.RecordFullCascadeDraw(lane.CascadeIndices[cascade]);
         }
         CmdEndLabel(state.CommandBuffer);
         return info.OperationIndex;

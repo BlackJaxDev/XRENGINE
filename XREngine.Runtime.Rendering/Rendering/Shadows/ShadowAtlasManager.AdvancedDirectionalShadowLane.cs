@@ -179,6 +179,19 @@ public sealed partial class ShadowAtlasManager
         _advancedLaneAuthorityReason = _advancedLaneAuthority.IsValid ? null : reason;
     }
 
+    /// <summary>
+    /// True when a valid consumer authority for the frame of <paramref name="authority"/> exists
+    /// and names another pipeline instance. Several Advanced pipeline instances can run in one
+    /// frame (the desktop view and the VR eyes); only the owner may take the deferred groups and
+    /// report readiness. Another instance skips the lane, so it neither rejects the owner's groups
+    /// nor marks the lane not ready.
+    /// </summary>
+    internal bool IsAdvancedDirectionalShadowConsumerOwnedByAnother(
+        in AdvancedDirectionalShadowConsumerAuthority authority)
+        => _advancedLaneAuthorityFrameId == authority.RenderFrameId &&
+            _advancedLaneAuthority.IsValid &&
+            !_advancedLaneAuthority.SameAs(in authority);
+
     /// <summary>Checks that the stage owns this frame's scheduled groups.</summary>
     internal bool MatchesAdvancedDirectionalShadowConsumerAuthority(
         in AdvancedDirectionalShadowConsumerAuthority authority)

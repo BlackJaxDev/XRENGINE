@@ -19,6 +19,7 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
     private readonly Viewport[] _viewports = new Viewport[MaxCascadeCount];
     private readonly Rect2D[] _scissors = new Rect2D[MaxCascadeCount];
     private readonly BoundingRectangle[] _tileRects = new BoundingRectangle[MaxCascadeCount];
+    private readonly int[] _cascadeIndices = new int[MaxCascadeCount];
     private readonly DirectionalCascadeStaticTile?[] _staticTiles = new DirectionalCascadeStaticTile?[MaxCascadeCount];
     private readonly ulong[] _staticCasterEpochs = new ulong[MaxCascadeCount];
     private readonly EDirectionalShadowStaticCacheCause?[] _staticCacheCauses = new EDirectionalShadowStaticCacheCause?[MaxCascadeCount];
@@ -55,6 +56,8 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
 
     /// <summary>Inner tile rectangles (bottom-left origin, page pixels), one per cascade.</summary>
     internal ReadOnlySpan<BoundingRectangle> TileRects => _tileRects.AsSpan(0, CascadeCount);
+    /// <summary>Cascade index (0 is the nearest cascade) of each entry.</summary>
+    internal ReadOnlySpan<int> CascadeIndices => _cascadeIndices.AsSpan(0, CascadeCount);
 
     internal ReadOnlySpan<Matrix4x4> ViewProjections => _viewProjections.AsSpan(0, CascadeCount);
     internal ReadOnlySpan<Viewport> Viewports => _viewports.AsSpan(0, CascadeCount);
@@ -99,6 +102,7 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
             _viewports[index] = VulkanCommandRuntime.CreateVulkanViewport(rects[index], pageExtent);
             _viewProjections[index] = matrices[index];
             _tileRects[index] = rects[index];
+            _cascadeIndices[index] = source.CascadeIndices[index];
         }
 
         CascadeCount = source.CascadeCount;
@@ -145,6 +149,7 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         source.Viewports.CopyTo(_viewports);
         source.Scissors.CopyTo(_scissors);
         source.TileRects.CopyTo(_tileRects);
+        source.CascadeIndices.CopyTo(_cascadeIndices);
         source._staticTiles.AsSpan().CopyTo(_staticTiles);
         source._staticCasterEpochs.AsSpan().CopyTo(_staticCasterEpochs);
         source._staticCacheCauses.AsSpan().CopyTo(_staticCacheCauses);

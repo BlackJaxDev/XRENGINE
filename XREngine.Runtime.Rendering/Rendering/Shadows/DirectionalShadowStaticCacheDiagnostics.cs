@@ -29,6 +29,8 @@ public static class DirectionalShadowStaticCacheDiagnostics
     private static long s_staticRecordCount;
     private static long s_pageLayerInitializations;
     private static long s_tilesCreated;
+    // Lane cascade draws without a static tile, per cascade index (0 to 3; 4 counts the rest).
+    private static readonly long[] s_fullCascadeDraws = new long[5];
     private static long s_tilesReleased;
     private static long s_lastLogTimestamp;
 
@@ -87,6 +89,14 @@ public static class DirectionalShadowStaticCacheDiagnostics
     /// <summary>Page layers that the lane moved into the attachment layout before a copy, because they had no layout of their own yet.</summary>
     public static long PageLayerInitializations => Interlocked.Read(ref s_pageLayerInitializations);
 
+    /// <summary>Returns the lane draws of all casters (no static tile) of one cascade index.</summary>
+    public static long GetFullCascadeDraws(int cascadeIndex)
+        => Interlocked.Read(ref s_fullCascadeDraws[Math.Clamp(cascadeIndex, 0, s_fullCascadeDraws.Length - 1)]);
+
+    /// <summary>Counts one lane draw of all casters of a cascade that has no static tile.</summary>
+    public static void RecordFullCascadeDraw(int cascadeIndex)
+        => Interlocked.Increment(ref s_fullCascadeDraws[Math.Clamp(cascadeIndex, 0, s_fullCascadeDraws.Length - 1)]);
+
     /// <summary>Static tiles created.</summary>
     public static long TilesCreated => Interlocked.Read(ref s_tilesCreated);
     /// <summary>Static tiles released after their cascade had no dynamic caster change for a while.</summary>
@@ -123,7 +133,7 @@ public static class DirectionalShadowStaticCacheDiagnostics
             LogFileName,
             $"{DateTimeOffset.Now:O} DirectionalShadow.StaticCache: " +
             $"staticRenders={StaticRenders} copies={Copies} overlayFrames={OverlayFrames} " +
-            $"dynamicRecordDraws={DynamicRecordDraws} tiles={TilesCreated - TilesReleased} tilesCreated={TilesCreated} tilesReleased={TilesReleased} pageLayerInitializations={PageLayerInitializations} lastStaticRecords={Interlocked.Read(ref s_staticRecordCount)} " +
+            $"dynamicRecordDraws={DynamicRecordDraws} fullCascadeDraws={GetFullCascadeDraws(0)}/{GetFullCascadeDraws(1)}/{GetFullCascadeDraws(2)}/{GetFullCascadeDraws(3)}/{GetFullCascadeDraws(4)} tiles={TilesCreated - TilesReleased} tilesCreated={TilesCreated} tilesReleased={TilesReleased} pageLayerInitializations={PageLayerInitializations} lastStaticRecords={Interlocked.Read(ref s_staticRecordCount)} " +
             $"promotions={Promotions} demotions={Demotions} demotionBatches={DemotionBatches} pendingDemotions={PendingDemotions} " +
             $"causes: disabled={GetCauseCount(EDirectionalShadowStaticCacheCause.Disabled)} " +
             $"outOfScope={GetCauseCount(EDirectionalShadowStaticCacheCause.OutOfScope)} " +

@@ -554,6 +554,16 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             viewport, ActivePipelineInstance, commands, renderFrameId,
             package.PackageGeneration, package.Identity,
             package.SubmissionResolution.Resolved);
+        // Another pipeline instance (for example the desktop view while this stage renders a VR
+        // eye) owns the groups of this frame. Skip the lane: do not take, reject or report.
+        if (atlas.IsAdvancedDirectionalShadowConsumerOwnedByAnother(in stageAuthority))
+        {
+            PublishStageDiagnostic(
+                EAdvancedVisibilityStageBackendPhase.Complete,
+                EAdvancedProfileStageDiagnosticState.CommandScopeReached,
+                "Another Advanced pipeline instance owns the directional shadow groups of this frame.");
+            return;
+        }
         AdvancedVisibilityStageBackendRequest template = default;
         IAdvancedVisibilityStageBackendCapability? visibility = null;
         bool ready = ShadowAtlasManager.AdvancedDirectionalShadowLaneEnabled;
