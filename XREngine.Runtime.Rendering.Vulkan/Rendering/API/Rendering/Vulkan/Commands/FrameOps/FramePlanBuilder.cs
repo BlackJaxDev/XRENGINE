@@ -51,6 +51,8 @@ internal sealed class FramePlanBuilder
         // Authoring arrays are never published. The slot's operation streams
         // are the plan-owned representation after numeric ordering.
         internal int[] OperationOrderScratch = new int[StaticOperationCapacity];
+        // Output rank of each operation, computed once per sort (see SortOperationOrder).
+        internal int[] OperationRankScratch = new int[StaticOperationCapacity];
         internal int[] OperationDependencyScratch = new int[StaticOperationCapacity];
         internal int[] OperationTopologicalOrderScratch = new int[StaticOperationCapacity];
         internal int[] OperationPriorityScratch = new int[StaticOperationCapacity];
@@ -62,6 +64,7 @@ internal sealed class FramePlanBuilder
         internal readonly Dictionary<ResourceVersionKey, int> LastResourceWriters =
             new(ResourceDependencyEdgeCapacity);
         internal int[] DynamicOverlayOperationOrderScratch = new int[DynamicOperationCapacity];
+        internal int[] DynamicOverlayOperationRankScratch = new int[DynamicOperationCapacity];
         internal OutputRequest[] Outputs = new OutputRequest[OutputCapacity];
         internal RenderOutputRequest[] OutputGraphRequests = new RenderOutputRequest[OutputCapacity];
         internal RenderOutputSchedulingDecision[] OutputDecisions =
@@ -791,10 +794,20 @@ internal sealed class FramePlanBuilder
                 : EVulkanAcceptedFrameLane.MainScene);
         for (int index = 0; index < source.Count; index++)
             orderScratch[index] = index;
+        int[] rankScratch = dynamicOverlay
+            ? slot.DynamicOverlayOperationRankScratch
+            : slot.OperationRankScratch;
+        RequireCapacity(
+            rankScratch,
+            source.Count,
+            dynamicOverlay
+                ? EVulkanAcceptedFrameLane.Ui
+                : EVulkanAcceptedFrameLane.MainScene);
         SortOperationOrder(
             slot,
             source,
             orderScratch,
+            rankScratch,
             source.Count,
             outputCount,
             openXrViewKind);
@@ -817,35 +830,46 @@ internal sealed class FramePlanBuilder
         return source.Count;
     }
 
+    /// <summary>
+    /// Orders the operations by the execution rank of their output. Each operation's rank is an
+    /// output identity lookup (<see cref="GetOutputRank"/>), so the ranks are computed once into
+    /// <paramref name="ranks"/> (indexed by operation) before the sort. The sort is the same
+    /// stable insertion sort as before, with the same comparison (rank, then original index), so
+    /// it gives the same order; only the cost of each comparison changes. Before this, the sort
+    /// computed the rank again for every comparison, which made the cost grow with the square of
+    /// the operation count.
+    /// </summary>
     private static void SortOperationOrder(
         Slot slot,
         FrameOperationStream operations,
         int[] order,
+        int[] ranks,
         int operationCount,
         int outputCount,
         EVrOutputViewKind? openXrViewKind)
     {
-        // Counts the rank evaluations of this sort once, after the loop.
-        long rankEvaluations = 0L;
+        // With fewer than two operations there is nothing to order, and no rank is needed.
+        if (operationCount < 2)
+            return;
+        for (int operation = 0; operation < operationCount; operation++)
+        {
+            ranks[operation] = GetOutputRank(
+                slot,
+                operations.GetContext(operation),
+                outputCount,
+                openXrViewKind);
+        }
+        RenderOutputDomainTelemetry.Add(ERenderOutputDomainCounter.PlanRankEvaluations, operationCount);
+
         for (int index = 1; index < operationCount; index++)
         {
             int candidate = order[index];
-            ++rankEvaluations;
-            int candidateRank = GetOutputRank(
-                slot,
-                operations.GetContext(candidate),
-                outputCount,
-                openXrViewKind);
+            int candidateRank = ranks[candidate];
             int insertionIndex = index;
             while (insertionIndex > 0)
             {
                 int prior = order[insertionIndex - 1];
-                ++rankEvaluations;
-                int priorRank = GetOutputRank(
-                    slot,
-                operations.GetContext(prior),
-                    outputCount,
-                    openXrViewKind);
+                int priorRank = ranks[prior];
                 if (priorRank < candidateRank ||
                     (priorRank == candidateRank && prior < candidate))
                 {
@@ -858,7 +882,6 @@ internal sealed class FramePlanBuilder
 
             order[insertionIndex] = candidate;
         }
-        RenderOutputDomainTelemetry.Add(ERenderOutputDomainCounter.PlanRankEvaluations, rankEvaluations);
     }
 
     private static void CompileResourceDependencyOrder(
