@@ -107,9 +107,39 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable, IEdit
         InfiniteGridFloorComponent owner,
         int gridPlane) : IRenderBindingPublisher
     {
+        private readonly object _sync = new();
+        private GridBindingState _lastGridState;
+        private TemporalMatrixState _lastTemporalState;
+        private bool _hasLastState;
         private ulong _generation = 1;
         public ERenderBindingFrequency Frequency => ERenderBindingFrequency.Material;
-        public ulong Generation => unchecked(_generation++);
+
+        // The generation changes only when a published value changes: the grid
+        // parameters or the temporal view-projection matrices. A generation that
+        // changed on every read made the binding cache treat this publisher as new
+        // in every frame, so the draws that use it rebuilt their binding artifacts
+        // and descriptor sets even for a still camera.
+        public ulong Generation
+        {
+            get
+            {
+                GridBindingState gridState = owner.CaptureBindingState();
+                TemporalMatrixState temporalState = CaptureTemporalMatrices();
+                lock (_sync)
+                {
+                    if (_hasLastState && gridState == _lastGridState && temporalState == _lastTemporalState)
+                        return _generation;
+
+                    _lastGridState = gridState;
+                    _lastTemporalState = temporalState;
+                    _hasLastState = true;
+                    unchecked { _generation++; }
+                    if (_generation == 0)
+                        _generation = 1;
+                    return _generation;
+                }
+            }
+        }
 
         public void PublishUniforms(
             XRRenderProgram vertexProgram,
@@ -1218,41 +1248,61 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable, IEdit
         return s_reactiveMaskStereoFragmentShader;
     }
 
-    private static void BindTemporalMatrices(XRRenderProgram program)
+    /// <summary>
+    /// The current and previous unjittered view-projection matrices of both eyes that the
+    /// velocity and reactive-mask passes of the grid publish, with the history flags.
+    /// </summary>
+    private readonly record struct TemporalMatrixState(
+        Matrix4x4 CurrViewProjection,
+        Matrix4x4 PrevViewProjection,
+        Matrix4x4 RightEyeCurrViewProjection,
+        Matrix4x4 RightEyePrevViewProjection,
+        bool LeftEyeHistoryReady,
+        bool RightEyeHistoryReady);
+
+    /// <summary>
+    /// Reads the temporal matrices from the temporal accumulation pass of this frame, or,
+    /// when that pass has no data, from the rendering camera and the stereo right-eye camera.
+    /// A camera without history uses its current matrix as the previous matrix.
+    /// </summary>
+    private static TemporalMatrixState CaptureTemporalMatrices()
     {
         if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var data))
         {
-            program.Uniform("CurrViewProjection", data.CurrViewProjectionUnjittered);
-            program.Uniform("PrevViewProjection", data.LeftEyeHistoryReady
-                ? data.PrevViewProjectionUnjittered : data.CurrViewProjectionUnjittered);
-            program.Uniform("RightEyeCurrViewProjection", data.RightEyeCurrViewProjectionUnjittered);
-            program.Uniform("RightEyePrevViewProjection", data.RightEyeHistoryReady
-                ? data.RightEyePrevViewProjectionUnjittered : data.RightEyeCurrViewProjectionUnjittered);
-            program.Uniform("LeftEyeHistoryReady", data.LeftEyeHistoryReady);
-            program.Uniform("RightEyeHistoryReady", data.RightEyeHistoryReady);
+            return new TemporalMatrixState(
+                data.CurrViewProjectionUnjittered,
+                data.LeftEyeHistoryReady ? data.PrevViewProjectionUnjittered : data.CurrViewProjectionUnjittered,
+                data.RightEyeCurrViewProjectionUnjittered,
+                data.RightEyeHistoryReady ? data.RightEyePrevViewProjectionUnjittered : data.RightEyeCurrViewProjectionUnjittered,
+                data.LeftEyeHistoryReady,
+                data.RightEyeHistoryReady);
         }
-        else
-        {
-            var camera = RuntimeEngine.Rendering.State.RenderingCamera
-                ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastRenderingCamera
-                ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastSceneCamera;
-            var rightCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
 
-            Matrix4x4 leftCurrVp = camera?.ViewProjectionMatrixUnjittered ?? camera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
-            bool leftHistoryReady = camera?.HasPreviousViewProjectionMatrix == true;
-            Matrix4x4 leftPrevVp = leftHistoryReady ? camera!.PreviousViewProjectionMatrixUnjittered : leftCurrVp;
+        var camera = RuntimeEngine.Rendering.State.RenderingCamera
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastRenderingCamera
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastSceneCamera;
+        var rightCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
 
-            Matrix4x4 rightCurrVp = rightCamera?.ViewProjectionMatrixUnjittered ?? rightCamera?.ViewProjectionMatrix ?? leftCurrVp;
-            bool rightHistoryReady = rightCamera?.HasPreviousViewProjectionMatrix == true;
-            Matrix4x4 rightPrevVp = rightHistoryReady ? rightCamera!.PreviousViewProjectionMatrixUnjittered : rightCurrVp;
+        Matrix4x4 leftCurrVp = camera?.ViewProjectionMatrixUnjittered ?? camera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
+        bool leftHistoryReady = camera?.HasPreviousViewProjectionMatrix == true;
+        Matrix4x4 leftPrevVp = leftHistoryReady ? camera!.PreviousViewProjectionMatrixUnjittered : leftCurrVp;
 
-            program.Uniform("CurrViewProjection", leftCurrVp);
-            program.Uniform("PrevViewProjection", leftPrevVp);
-            program.Uniform("RightEyeCurrViewProjection", rightCurrVp);
-            program.Uniform("RightEyePrevViewProjection", rightPrevVp);
-            program.Uniform("LeftEyeHistoryReady", leftHistoryReady);
-            program.Uniform("RightEyeHistoryReady", rightHistoryReady);
-        }
+        Matrix4x4 rightCurrVp = rightCamera?.ViewProjectionMatrixUnjittered ?? rightCamera?.ViewProjectionMatrix ?? leftCurrVp;
+        bool rightHistoryReady = rightCamera?.HasPreviousViewProjectionMatrix == true;
+        Matrix4x4 rightPrevVp = rightHistoryReady ? rightCamera!.PreviousViewProjectionMatrixUnjittered : rightCurrVp;
+
+        return new TemporalMatrixState(leftCurrVp, leftPrevVp, rightCurrVp, rightPrevVp, leftHistoryReady, rightHistoryReady);
+    }
+
+    private static void BindTemporalMatrices(XRRenderProgram program)
+    {
+        TemporalMatrixState state = CaptureTemporalMatrices();
+        program.Uniform("CurrViewProjection", state.CurrViewProjection);
+        program.Uniform("PrevViewProjection", state.PrevViewProjection);
+        program.Uniform("RightEyeCurrViewProjection", state.RightEyeCurrViewProjection);
+        program.Uniform("RightEyePrevViewProjection", state.RightEyePrevViewProjection);
+        program.Uniform("LeftEyeHistoryReady", state.LeftEyeHistoryReady);
+        program.Uniform("RightEyeHistoryReady", state.RightEyeHistoryReady);
     }
 
     #region Shader Sources
