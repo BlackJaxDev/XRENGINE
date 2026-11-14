@@ -71,6 +71,19 @@ namespace XREngine
                         => ((EFrameLifecycleWaitReason)_lastFrameRenderWaitReason).ToString();
 
                     private static long _renderCircuitBreakerTrips;
+                    private static long _desktopSecondHalfBusyStops;
+
+                    /// <summary>
+                    /// Total count of split desktop frames (VR desktop WorkerRecord mode) whose
+                    /// second half stopped because a swapchain image was still in use on the GPU.
+                    /// The desktop window keeps its last image for that opportunity, and the next
+                    /// opportunity resumes the recorded frame.
+                    /// </summary>
+                    public static long DesktopSecondHalfBusyStops => Interlocked.Read(ref _desktopSecondHalfBusyStops);
+
+                    /// <summary>Counts one split desktop second half that stopped with a busy swapchain image.</summary>
+                    public static void RecordDesktopSecondHalfBusyStop()
+                        => Interlocked.Increment(ref _desktopSecondHalfBusyStops);
 
                     /// <summary>
                     /// Total count of window render circuit-breaker trips since start. Each trip
