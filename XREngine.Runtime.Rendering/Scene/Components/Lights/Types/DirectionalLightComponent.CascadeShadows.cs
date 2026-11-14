@@ -166,6 +166,10 @@ namespace XREngine.Components.Lights
             // (counter-clockwise), ReceiverHullCapacity points per cascade.
             public readonly Vector2[] ReceiverHullPoints = new Vector2[MaxCascadeRenderCount * ReceiverHullCapacity];
             public readonly int[] ReceiverHullCounts = new int[MaxCascadeRenderCount];
+            // Six outward light-space planes (normal, distance) of the slice of each source
+            // frustum, ReceiverPlaneCapacity planes per cascade, and the frustum count.
+            public readonly Vector4[] ReceiverSlicePlanes = new Vector4[MaxCascadeRenderCount * ReceiverPlaneCapacity];
+            public readonly int[] ReceiverSliceFrustumCounts = new int[MaxCascadeRenderCount];
             // Light-space union of the caster changes that met a cascade's tile but not its
             // receiver footprint since the cascade last rendered. A footprint that later moves
             // over this region marks the cascade, so no sampled texel keeps stale casters.
@@ -3967,6 +3971,8 @@ namespace XREngine.Components.Lights
             Span<Vector2> hullPoints = stackalloc Vector2[MaxCascadeRenderCount * ReceiverHullCapacity];
             Span<int> hullCounts = stackalloc int[MaxCascadeRenderCount];
             Span<Vector2> cornerScratch = stackalloc Vector2[ReceiverHullCapacity];
+            Span<Vector4> slicePlanes = stackalloc Vector4[MaxCascadeRenderCount * ReceiverPlaneCapacity];
+            Span<int> sliceFrustumCounts = stackalloc int[MaxCascadeRenderCount];
 
             float cameraNear = playerCamera.NearZ;
             float sourceCameraFar = playerCamera.FarZ;
@@ -4079,6 +4085,11 @@ namespace XREngine.Components.Lights
                     hullCounts[resourceSlot] = BuildConvexHull(
                         cornerScratch[..cornerCount],
                         hullPoints.Slice(resourceSlot * ReceiverHullCapacity, ReceiverHullCapacity));
+                    int planeFrusta = Math.Min(cascadeFrusta.Length, ReceiverPlaneCapacity / 6);
+                    for (int f = 0; f < planeFrusta; f++)
+                        BuildSlicePlanes(cascadeFrusta[f], nearT, farT, worldToLight,
+                            slicePlanes.Slice(resourceSlot * ReceiverPlaneCapacity + f * 6, 6));
+                    sliceFrustumCounts[resourceSlot] = planeFrusta;
                     resourceSlot++;
                 }
 
@@ -4096,6 +4107,9 @@ namespace XREngine.Components.Lights
                         state.ReceiverFootprintMinLS[i] = footprintMin[i];
                         state.ReceiverFootprintMaxLS[i] = footprintMax[i];
                         state.ReceiverHullCounts[i] = hullCounts[i];
+                        state.ReceiverSliceFrustumCounts[i] = sliceFrustumCounts[i];
+                        slicePlanes.Slice(i * ReceiverPlaneCapacity, sliceFrustumCounts[i] * 6)
+                            .CopyTo(state.ReceiverSlicePlanes.AsSpan(i * ReceiverPlaneCapacity, ReceiverPlaneCapacity));
                         hullPoints.Slice(i * ReceiverHullCapacity, hullCounts[i])
                             .CopyTo(state.ReceiverHullPoints.AsSpan(i * ReceiverHullCapacity, ReceiverHullCapacity));
                     }
@@ -4550,9 +4564,10 @@ namespace XREngine.Components.Lights
                     Vector3 footprintMin = state.ReceiverFootprintMinLS[i];
                     Vector3 footprintMax = state.ReceiverFootprintMaxLS[i];
                     ReadOnlySpan<Vector2> hull = state.ReceiverHullPoints.AsSpan(i * ReceiverHullCapacity, state.ReceiverHullCounts[i]);
+                    ReadOnlySpan<Vector4> planes = state.ReceiverSlicePlanes.AsSpan(i * ReceiverPlaneCapacity, state.ReceiverSliceFrustumCounts[i] * 6);
                     bool mark = allChanged ||
                         (state.PendingDirtyValid[i] &&
-                         ReceiverFootprintMeets(footprintMin, footprintMax, hull, state.PendingDirtyMinLS[i], state.PendingDirtyMaxLS[i]));
+                         ReceiverFootprintMeets(footprintMin, footprintMax, hull, planes, state.PendingDirtyMinLS[i], state.PendingDirtyMaxLS[i]));
 
                     CascadeShadowSlice slice = state.Slices[i];
                     Vector3 tileCenter = Vector3.Transform(slice.Center, worldToLight);
@@ -4563,6 +4578,9 @@ namespace XREngine.Components.Lights
                     Vector3 previousFootprintMax = hasPrevious ? state.ReceiverFootprintMaxLS[i - 1] : default;
                     ReadOnlySpan<Vector2> previousHull = hasPrevious
                         ? state.ReceiverHullPoints.AsSpan((i - 1) * ReceiverHullCapacity, state.ReceiverHullCounts[i - 1])
+                        : default;
+                    ReadOnlySpan<Vector4> previousPlanes = hasPrevious
+                        ? state.ReceiverSlicePlanes.AsSpan((i - 1) * ReceiverPlaneCapacity, state.ReceiverSliceFrustumCounts[i - 1] * 6)
                         : default;
                     Vector3 previousInnerMin = default;
                     Vector3 previousInnerMax = default;
@@ -4578,12 +4596,12 @@ namespace XREngine.Components.Lights
                     for (int b = 0; b < changes.Length && !mark; b++)
                     {
                         LightSpaceBounds(changes[b], worldToLight, out Vector3 min, out Vector3 max);
-                        if (ReceiverFootprintMeets(footprintMin, footprintMax, hull, min, max))
+                        if (ReceiverFootprintMeets(footprintMin, footprintMax, hull, planes, min, max))
                         {
                             mark = true;
                         }
                         else if (hasPrevious &&
-                            ReceiverFootprintMeets(previousFootprintMin, previousFootprintMax, previousHull, min, max) &&
+                            ReceiverFootprintMeets(previousFootprintMin, previousFootprintMax, previousHull, previousPlanes, min, max) &&
                             !(min.X >= previousInnerMin.X && max.X <= previousInnerMax.X &&
                               min.Y >= previousInnerMin.Y && max.Y <= previousInnerMax.Y))
                         {
@@ -4716,7 +4734,7 @@ namespace XREngine.Components.Lights
         /// light-space Z points toward the light. The X/Y overlap uses separating axes: the
         /// box axes (the footprint bounds) and every hull edge normal.
         /// </summary>
-        private static bool ReceiverFootprintMeets(Vector3 footprintMin, Vector3 footprintMax, ReadOnlySpan<Vector2> hull, Vector3 min, Vector3 max)
+        private static bool ReceiverFootprintMeets(Vector3 footprintMin, Vector3 footprintMax, ReadOnlySpan<Vector2> hull, ReadOnlySpan<Vector4> slicePlanes, Vector3 min, Vector3 max)
         {
             if (footprintMax.X < footprintMin.X)
                 return false;
@@ -4746,7 +4764,84 @@ namespace XREngine.Components.Lights
                     return false;
             }
 
-            return true;
+            return slicePlanes.Length < 6 || ShadowVolumeMeetsSlice(slicePlanes, min, max);
+        }
+
+        /// <summary>Planes stored per cascade: six per source frustum, for up to four frusta.</summary>
+        private const int ReceiverPlaneCapacity = 24;
+
+        /// <summary>
+        /// Builds the six outward light-space planes (near, far, left, right, bottom, top) of
+        /// the slice of one source frustum. Each plane is (normal, distance) with
+        /// dot(normal, p) - distance > 0 outside. The normals point away from the slice centre.
+        /// </summary>
+        private static void BuildSlicePlanes(Frustum frustum, float nearT, float farT, Matrix4x4 worldToLight, Span<Vector4> planes)
+        {
+            Span<Vector3> c = stackalloc Vector3[8];
+            c[0] = EvaluateCascadeCorner(frustum.LeftBottomNear, frustum.LeftBottomFar, nearT, worldToLight);
+            c[1] = EvaluateCascadeCorner(frustum.RightBottomNear, frustum.RightBottomFar, nearT, worldToLight);
+            c[2] = EvaluateCascadeCorner(frustum.LeftTopNear, frustum.LeftTopFar, nearT, worldToLight);
+            c[3] = EvaluateCascadeCorner(frustum.RightTopNear, frustum.RightTopFar, nearT, worldToLight);
+            c[4] = EvaluateCascadeCorner(frustum.LeftBottomNear, frustum.LeftBottomFar, farT, worldToLight);
+            c[5] = EvaluateCascadeCorner(frustum.RightBottomNear, frustum.RightBottomFar, farT, worldToLight);
+            c[6] = EvaluateCascadeCorner(frustum.LeftTopNear, frustum.LeftTopFar, farT, worldToLight);
+            c[7] = EvaluateCascadeCorner(frustum.RightTopNear, frustum.RightTopFar, farT, worldToLight);
+            Vector3 centre = Vector3.Zero;
+            for (int i = 0; i < 8; i++)
+                centre += c[i];
+            centre /= 8.0f;
+
+            planes[0] = OutwardPlane(c[0], c[1], c[3], centre); // near
+            planes[1] = OutwardPlane(c[4], c[5], c[7], centre); // far
+            planes[2] = OutwardPlane(c[0], c[2], c[6], centre); // left
+            planes[3] = OutwardPlane(c[1], c[3], c[7], centre); // right
+            planes[4] = OutwardPlane(c[0], c[1], c[5], centre); // bottom
+            planes[5] = OutwardPlane(c[2], c[3], c[7], centre); // top
+        }
+
+        private static Vector4 OutwardPlane(Vector3 a, Vector3 b, Vector3 c, Vector3 inside)
+        {
+            Vector3 normal = Vector3.Cross(b - a, c - a);
+            float length = normal.Length();
+            if (length < 1e-12f)
+                return new Vector4(0.0f, 0.0f, 0.0f, -1.0f); // Degenerate: never separates.
+            normal /= length;
+            float distance = Vector3.Dot(normal, a);
+            if (Vector3.Dot(normal, inside) - distance > 0.0f)
+            {
+                normal = -normal;
+                distance = -distance;
+            }
+            return new Vector4(normal, distance);
+        }
+
+        /// <summary>
+        /// True when the shadow volume of a light-space caster box (the box extruded away from
+        /// the light to unlimited depth: X/Y from <paramref name="min"/> to <paramref name="max"/>,
+        /// Z up to max.Z) meets the slice of at least one source frustum. A slice is missed
+        /// when one of its planes has the whole volume outside. The volume reaches unlimited
+        /// depth, so a plane whose normal points away from the light never separates it.
+        /// </summary>
+        private static bool ShadowVolumeMeetsSlice(ReadOnlySpan<Vector4> slicePlanes, Vector3 min, Vector3 max)
+        {
+            for (int f = 0; f + 6 <= slicePlanes.Length; f += 6)
+            {
+                bool separated = false;
+                for (int k = 0; k < 6 && !separated; k++)
+                {
+                    Vector4 plane = slicePlanes[f + k];
+                    if (plane.Z > 0.0f)
+                        continue; // The volume reaches -infinity in Z on this plane's inner side.
+                    float x = plane.X >= 0.0f ? min.X : max.X;
+                    float y = plane.Y >= 0.0f ? min.Y : max.Y;
+                    float z = max.Z;
+                    if (plane.X * x + plane.Y * y + plane.Z * z - plane.W > 0.0f)
+                        separated = true;
+                }
+                if (!separated)
+                    return true;
+            }
+            return false;
         }
 
         private void CollectCascadeSourceVisibleItems(ShadowRequestSource source)
