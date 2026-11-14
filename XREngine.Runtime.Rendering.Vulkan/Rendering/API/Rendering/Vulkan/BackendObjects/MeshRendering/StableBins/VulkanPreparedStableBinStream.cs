@@ -1915,7 +1915,10 @@ internal sealed partial class VulkanPreparedStableBinStream
     /// raster must already have sealed the bins and retained their templates.
     /// CPU-direct bins, strict indexed bins, and the static meshlet and indexed
     /// bins of a meshlet frame are admitted. The lane issues the frozen indexed
-    /// arguments itself in CPU-direct and meshlet frames.
+    /// arguments itself in CPU-direct and meshlet frames. Skinned meshlet bins of a
+    /// meshlet frame get no shadow pipeline: their deformed positions have no indexed
+    /// shadow producer yet. They are skipped, so the static casters keep their shadows,
+    /// and the runtime reports the skipped records in the lane diagnostics.
     /// </summary>
     internal VulkanAdvancedVisibilityPipelineReadiness TryPrepareDirectionalShadowRasterPipelines(
         VulkanAdvancedVisibilityPipelineRuntime visibilityPipelines,
@@ -1934,6 +1937,7 @@ internal sealed partial class VulkanPreparedStableBinStream
 
         VulkanVisibilityRasterPipeline opaque = default;
         VulkanVisibilityRasterPipeline masked = default;
+        int skippedSkinnedRecords = 0;
         for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
         {
             ref readonly VulkanPreparedStableBinHeader header = ref _headers[headerIndex];
@@ -1944,14 +1948,12 @@ internal sealed partial class VulkanPreparedStableBinStream
                 // A meshlet frame also seals indexed ranges (for example
                 // fragment-depth draws). The lane draws every bin with the frozen
                 // indexed arguments of its records, so both range kinds qualify.
-                // Skinned meshlet bins have no indexed shadow producer: the whole
-                // group then stays on the generic path.
                 EMeshSubmissionStrategy binStrategy = header.SubmissionPlan!.ResolvedStrategy;
                 EAdvancedGeometryProducer binProducer = header.IndirectRange.Key.Producer;
                 if (binProducer == EAdvancedGeometryProducer.SkinnedMeshlet)
                 {
-                    reason = "skinned meshlet casters have no indexed shadow producer";
-                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                    skippedSkinnedRecords += header.RecordCount;
+                    continue;
                 }
                 if (!(binStrategy == EMeshSubmissionStrategy.GpuMeshletZeroReadback &&
                         binProducer == EAdvancedGeometryProducer.StaticMeshlet) &&
@@ -2023,6 +2025,7 @@ internal sealed partial class VulkanPreparedStableBinStream
             _headers[headerIndex] = header with { ShadowRasterPipeline = shadow };
         }
 
+        visibilityPipelines.RecordDirectionalShadowSkippedSkinnedCasters(skippedSkinnedRecords);
         reason = "Ready";
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }

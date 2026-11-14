@@ -156,6 +156,13 @@ internal sealed partial class VulkanCommandRuntime
                     throw new VulkanPlanPreconditionException(
                         "A non-empty visibility bin has no sealed raster pipeline and submission plan.");
                 }
+                // Skinned meshlet bins of a meshlet frame have no shadow pipeline: shadow
+                // preparation skipped them and reported them in the lane diagnostics.
+                if (header.SubmissionPlan!.ResolvedStrategy == EMeshSubmissionStrategy.GpuMeshletZeroReadback &&
+                    header.IndirectRange.Key.Producer == EAdvancedGeometryProducer.SkinnedMeshlet)
+                {
+                    continue;
+                }
 
                 VulkanVisibilityRasterPipeline shadow = header.ShadowRasterPipeline;
                 if (!shadow.IsValid || shadow.TargetClosure != payload.TargetClosure ||
