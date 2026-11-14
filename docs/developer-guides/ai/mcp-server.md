@@ -850,7 +850,7 @@ The edits enter Undo and do not save assets.
 | `set_editor_camera_depth_mode` | Set normal or reversed-Z depth on the active editor camera and invalidate its viewport. |
 | `set_editor_camera_render_on_demand` | Set render-on-demand for the active editor camera pawn and optionally invalidate the viewport. |
 | `set_editor_camera_render_pipeline_asset` | Assign a loaded render-pipeline asset to the active editor camera by ID, path, or name. |
-| `set_editor_camera_view` | Set the editor camera view with interpolation using position plus look-at or Euler rotation. |
+| `set_editor_camera_view` | Set the editor camera view with interpolation using position plus look-at or Euler rotation, and optionally its vertical field of view. |
 | `set_editor_openxr_enabled` | Set the editor OpenXR toggle to enabled or disabled. Runtime startup and teardown are asynchronous; inspect toggle status afterward. |
 | `set_editor_preference` | Set an editor preference by property name or dotted path, either persistently or for this editor session only. |
 | `set_game_setting` | Set a game startup setting by property name or dotted path, persistently or for the active process only. |

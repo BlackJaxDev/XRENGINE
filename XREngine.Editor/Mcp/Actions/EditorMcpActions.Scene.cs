@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 using XREngine;
+using XREngine.Components;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
@@ -716,7 +717,7 @@ namespace XREngine.Editor.Mcp
         /// </summary>
         [XRMcp(Name = "set_editor_camera_view", Permission = McpPermissionLevel.Mutate, PermissionReason = "Moves and rotates the editor camera view.")]
         [McpThreadAffinity(McpThreadAffinity.Update)]
-        [Description("Set the editor camera view with interpolation using position plus look-at or Euler rotation.")]
+        [Description("Set the editor camera view with interpolation using position plus look-at or Euler rotation, and optionally its vertical field of view.")]
         public static Task<McpToolResponse> SetEditorCameraViewAsync(
             McpToolContext context,
             [McpName("position_x"), Description("Optional world position X.")] float? positionX = null,
@@ -731,10 +732,21 @@ namespace XREngine.Editor.Mcp
             [McpName("pitch"), Description("Optional camera pitch in degrees.")] float? pitch = null,
             [McpName("yaw"), Description("Optional camera yaw in degrees.")] float? yaw = null,
             [McpName("roll"), Description("Optional camera roll in degrees.")] float? roll = null,
-            [McpName("duration"), Description("Optional interpolation duration in seconds.")] float durationSeconds = 0.35f)
+            [McpName("duration"), Description("Optional interpolation duration in seconds.")] float durationSeconds = 0.35f,
+            [McpName("vertical_fov_degrees"), Description("Optional vertical field of view in degrees (1 to 170) for a perspective editor camera. Applies at once, without interpolation.")]
+            float? verticalFovDegrees = null)
         {
             if (ResolveEditorCameraPawn(context.WorldOrNull) is not { } pawn)
                 return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
+
+            if (verticalFovDegrees is float fov)
+            {
+                if (!float.IsFinite(fov) || fov < 1.0f || fov > 170.0f)
+                    return Task.FromResult(new McpToolResponse("vertical_fov_degrees must be from 1 to 170.", isError: true));
+                if (pawn.GetCamera()?.Camera.Parameters is not XRPerspectiveCameraParameters perspective)
+                    return Task.FromResult(new McpToolResponse("The editor camera has no perspective parameters.", isError: true));
+                perspective.VerticalFieldOfView = fov;
+            }
 
             if (pawn.SceneNode?.Transform is not TransformBase cameraTransform)
                 return Task.FromResult(new McpToolResponse("Editor camera transform is unavailable.", isError: true));
@@ -785,7 +797,8 @@ namespace XREngine.Editor.Mcp
             {
                 targetPosition = ToMcpVector3(targetPosition),
                 targetRotation = ToMcpQuaternion(targetRotation),
-                durationSeconds
+                durationSeconds,
+                verticalFovDegrees = (pawn.GetCamera()?.Camera.Parameters as XRPerspectiveCameraParameters)?.VerticalFieldOfView
             }));
         }
 
