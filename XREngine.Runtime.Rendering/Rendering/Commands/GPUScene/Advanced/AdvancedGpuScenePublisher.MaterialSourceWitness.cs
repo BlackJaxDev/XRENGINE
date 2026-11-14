@@ -93,9 +93,11 @@ public sealed partial class AdvancedGpuScenePublisher
     }
 
     /// <summary>
-    /// Captures the witness of a material. Returns false when a bound texture has
-    /// no source-version contract (a texture view, a GPU-authored cube or array,
-    /// or an unknown type), so the material always takes the full check.
+    /// Captures the witness of a material. The hash covers the legacy texture list and the
+    /// textures of <see cref="XRMaterial.SurfaceTextureBindings"/>, because the source
+    /// encoder reads both. Returns false when a bound texture has no source-version contract
+    /// (a texture view, a GPU-authored cube or array, or an unknown type), so the material
+    /// always takes the full check.
     /// </summary>
     private bool TryCaptureMaterialSourceWitness(
         XRMaterial? material,
@@ -107,55 +109,19 @@ public sealed partial class AdvancedGpuScenePublisher
         if (material is null)
             return false;
 
-        const ulong prime = 1099511628211UL;
         ulong hash = 14695981039346656037UL;
         int count = material.Textures.Count;
         for (int index = 0; index < count; ++index)
-        {
-            XRTexture? texture = material.Textures[index];
-            ulong counters;
-            switch (texture)
-            {
-                case null:
-                    counters = 0UL;
-                    break;
-                case XRTexture2D texture2D:
-                    if (texture2D.IsDestroyed)
-                        return false;
-                    Mipmap2D[] mipmaps = texture2D.Mipmaps;
-                    Mipmap2D? baseMip = mipmaps.Length > 0 ? mipmaps[0] : null;
-                    counters = unchecked(
-                        texture2D.CanonicalSourceContentGeneration * 31UL +
-                        texture2D.ImportedSourceMetadataEpoch * 17UL +
-                        (ulong)mipmaps.Length * 13UL +
-                        (ulong)(uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(mipmaps) * 7UL +
-                        (ulong)(uint)(baseMip?.CanonicalContentEpoch ?? 0) * 5UL +
-                        (ulong)(uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(baseMip));
-                    // Read the base mip shape directly as well: a write made while
-                    // notifications are suppressed (for example during load) does
-                    // not advance the mip content epoch.
-                    hash = unchecked((hash ^ (baseMip?.Width ?? 0u)) * prime);
-                    hash = unchecked((hash ^ (baseMip?.Height ?? 0u)) * prime);
-                    hash = unchecked((hash ^ (ulong)(baseMip?.InternalFormat ?? default)) * prime);
-                    break;
-                case XRTexture2DArray array:
-                    ulong layerWitness = array.CanonicalLayerContentWitness;
-                    if (array.IsDestroyed || layerWitness == 0UL)
-                        return false;
-                    counters = layerWitness;
-                    break;
-                case XRTextureCube cube:
-                    if (cube.IsDestroyed || !cube.TryGetCanonicalCpuSourceGeneration(out ulong cubeGeneration))
-                        return false;
-                    counters = cubeGeneration;
-                    break;
-                default:
-                    return false;
-            }
+            if (!TryMixTextureSourceWitness(material.Textures[index], ref hash))
+                return false;
 
-            hash = unchecked((hash ^ counters) * prime);
-            hash = unchecked((hash ^ (ulong)(uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(texture)) * prime);
-        }
+        // Surface textures do not subscribe to the material's texture source version, and a
+        // binding can name a texture that is not in the legacy list. Their counters are read
+        // directly here, so a content change of such a texture also changes the witness.
+        MaterialSurfaceTextureBinding[] surfaceBindings = material.SurfaceTextureBindings;
+        for (int index = 0; index < surfaceBindings.Length; ++index)
+            if (!TryMixTextureSourceWitness(surfaceBindings[index]?.Texture, ref hash))
+                return false;
 
         witness = new AdvancedMaterialSourceWitness(
             material,
@@ -170,6 +136,59 @@ public sealed partial class AdvancedGpuScenePublisher
             _resourcePublisher.CommitGeneration,
             Database.Materials.Generations,
             committedInputHash);
+        return true;
+    }
+
+    /// <summary>
+    /// Mixes the source counters of one texture into the witness hash: the content
+    /// generations, the base mip shape and format, and the object identities of the texture
+    /// and its mip array. Returns false for a texture without a source-version contract.
+    /// </summary>
+    private static bool TryMixTextureSourceWitness(XRTexture? texture, ref ulong hash)
+    {
+        const ulong prime = 1099511628211UL;
+        ulong counters;
+        switch (texture)
+        {
+            case null:
+                counters = 0UL;
+                break;
+            case XRTexture2D texture2D:
+                if (texture2D.IsDestroyed)
+                    return false;
+                Mipmap2D[] mipmaps = texture2D.Mipmaps;
+                Mipmap2D? baseMip = mipmaps.Length > 0 ? mipmaps[0] : null;
+                counters = unchecked(
+                    texture2D.CanonicalSourceContentGeneration * 31UL +
+                    texture2D.ImportedSourceMetadataEpoch * 17UL +
+                    (ulong)mipmaps.Length * 13UL +
+                    (ulong)(uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(mipmaps) * 7UL +
+                    (ulong)(uint)(baseMip?.CanonicalContentEpoch ?? 0) * 5UL +
+                    (ulong)(uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(baseMip));
+                // Read the base mip shape directly as well: a write made while
+                // notifications are suppressed (for example during load) does
+                // not advance the mip content epoch.
+                hash = unchecked((hash ^ (baseMip?.Width ?? 0u)) * prime);
+                hash = unchecked((hash ^ (baseMip?.Height ?? 0u)) * prime);
+                hash = unchecked((hash ^ (ulong)(baseMip?.InternalFormat ?? default)) * prime);
+                break;
+            case XRTexture2DArray array:
+                ulong layerWitness = array.CanonicalLayerContentWitness;
+                if (array.IsDestroyed || layerWitness == 0UL)
+                    return false;
+                counters = layerWitness;
+                break;
+            case XRTextureCube cube:
+                if (cube.IsDestroyed || !cube.TryGetCanonicalCpuSourceGeneration(out ulong cubeGeneration))
+                    return false;
+                counters = cubeGeneration;
+                break;
+            default:
+                return false;
+        }
+
+        hash = unchecked((hash ^ counters) * prime);
+        hash = unchecked((hash ^ (ulong)(uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(texture)) * prime);
         return true;
     }
 
