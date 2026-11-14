@@ -334,7 +334,10 @@ after each hit, publishes its result, and counts each disagreement with the
 witness that should have caught it. `get_render_profiler_stats` reports the
 counters in `frame_lifecycle.collect_stages.swap.advanced_publication.prepared_gate`:
 prepares, refusals and misses by reason, hits, re-evaluated rows, verify
-disagreements, and the last exception.
+disagreements, and the last exception. `swap_gate_failures` counts each
+world-swap publication whose swap-time gate failed, by the reason of the first
+row or check that failed. Each of these publications plans and commits the whole
+scene, so these reasons name what keeps the scene off the unchanged-row path.
 
 ### Deformation source identity
 

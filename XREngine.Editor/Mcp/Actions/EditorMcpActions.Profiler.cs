@@ -1791,6 +1791,7 @@ namespace XREngine.Editor.Mcp
             Dictionary<string, long> refusals = [];
             Dictionary<string, long> misses = [];
             Dictionary<string, long> verifyDisagreements = [];
+            Dictionary<string, long> swapGateFailures = [];
             for (EAdvancedPreparedGateOutcome reason = EAdvancedPreparedGateOutcome.None;
                 reason < EAdvancedPreparedGateOutcome.Count;
                 ++reason)
@@ -1804,6 +1805,7 @@ namespace XREngine.Editor.Mcp
                 refusals[name] = snapshot.GetRefusals(reason);
                 misses[name] = snapshot.GetMisses(reason);
                 verifyDisagreements[name] = snapshot.GetVerifyDisagreements(reason);
+                swapGateFailures[name] = snapshot.GetSwapGateFailures(reason);
             }
 
             return new
@@ -1823,10 +1825,13 @@ namespace XREngine.Editor.Mcp
                 // The rows that the consumes evaluated again at the swap. They keep the swap-time row walk cost.
                 reevaluated_rows = snapshot.ReevaluatedRows,
                 verify_disagreements_total = snapshot.VerifyDisagreementTotal,
-                // Each map holds the count of each reason. The reason names are the same in the three maps.
+                // Swap-time gate failures: each one planned and committed the whole scene.
+                swap_gate_failures_total = snapshot.SwapGateFailureTotal,
+                // Each map holds the count of each reason. The reason names are the same in the four maps.
                 refusals,
                 misses,
                 verify_disagreements = verifyDisagreements,
+                swap_gate_failures = swapGateFailures,
             };
         }
 

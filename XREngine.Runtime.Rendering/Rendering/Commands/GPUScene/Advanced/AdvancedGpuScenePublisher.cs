@@ -286,8 +286,20 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     out reusedStaticPlans,
                     out materialResolveAttempts);
                 if (!gateDecided)
+                {
                     rowsUnchanged = TryPassUnchangedRowGate(
-                        scene, frameId, out reusedStaticPlans, out materialResolveAttempts);
+                        scene, frameId, out reusedStaticPlans, out materialResolveAttempts,
+                        out EAdvancedPreparedGateOutcome swapGateMismatch);
+                    // Count the failure reason only in the world swap, the scope of the
+                    // row-gate pass and failure counts of the swap stage timers. A row
+                    // check that fails without a named reason counts as a registration
+                    // change, as in the prepared verdict.
+                    if (!rowsUnchanged && stageMark != 0L)
+                        AdvancedPreparedGateTelemetry.RecordSwapGateFailure(
+                            swapGateMismatch == EAdvancedPreparedGateOutcome.None
+                                ? EAdvancedPreparedGateOutcome.RegistrationChanged
+                                : swapGateMismatch);
+                }
             }
             CollectVisibleStageTimings.MarkAdvancedRowGate(ref stageMark, rowsUnchanged);
             if (rowsUnchanged && TryPublishUnchangedRows(
