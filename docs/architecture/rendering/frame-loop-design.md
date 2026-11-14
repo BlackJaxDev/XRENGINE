@@ -481,6 +481,11 @@ The lane then works as follows:
 - Moment-encoded pages, HMD sources, unsupported submission strategies and
   sequential cascade renders keep the generic path with an explicit decline
   reason. `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` disables the lane.
+  In CPU-direct and meshlet frames, the lane keeps the static casters of
+  cascade 0 (desktop source) in a separate static tile. A refresh with a
+  matching tile key copies that tile and draws only the dynamic casters over
+  it (see [shadow atlas](shadow-atlas.md#static-caster-tile-of-cascade-0)).
+  `XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0` turns the static tile off.
   `get_advanced_profile_diagnostics.directionalShadowLane` reports the
   counters (`genericGroups` counts the groups that stayed on the generic
   path), the last decline reason, and `casterProducer` with

@@ -543,6 +543,7 @@ Additional diagnostic flags are:
 | `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |
 | `XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD=1` | Benchmark-only mode that forces every scheduled mesh-chain secondary to rerecord each frame. Use only for controlled serial/parallel dirty-recording comparisons. |
 | `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1` | Builds and validates queue-schedule sidecar metadata; execution still falls back to the graphics queue. |
+| `XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0` | Turns off the static caster tile of directional cascade 0 in the Advanced directional shadow lane: every cascade refresh draws all casters (see [shadow atlas](shadow-atlas.md#static-caster-tile-of-cascade-0)). |
 | `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` | Keeps directional cascade casters on the generic per-renderer shadow path instead of the Advanced directional shadow raster lane (see [frame loop design](frame-loop-design.md#shadow-casters-are-the-dominant-motion-cost)). |
 
 `XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT=1` is a destructive,
