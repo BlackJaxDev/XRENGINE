@@ -29,6 +29,15 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
 // indices. Each mesh workgroup draws one surviving meshlet.
 taskPayloadSharedEXT XRAdvancedVisibilityTaskPayload XR_ADV_TaskPayload;
 
+// Redeclare the per-primitive built-in block with only the member that this stage
+// writes. The implicit block also declares gl_Layer, and a mesh stage with a Layer
+// output is not valid in a multiview pipeline (a nonzero view mask), which the
+// single-pass stereo raster uses.
+perprimitiveEXT out gl_MeshPerPrimitiveEXT
+{
+    int gl_PrimitiveID;
+} gl_MeshPrimitivesEXT[];
+
 // Opaque visibility programs define XR_ADV_VISIBILITY_IDENTITY_ONLY. Their
 // fragment stage reads only the flat identity values, so this stage does not
 // write the interpolated coverage attributes. This also makes the per-meshlet
