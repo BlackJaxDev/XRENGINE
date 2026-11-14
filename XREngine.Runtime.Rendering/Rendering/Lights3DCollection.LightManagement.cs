@@ -14,7 +14,12 @@ namespace XREngine.Scene
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.Clear");
 
-            _forwardDirectionalShadowRecordPublication?.Dispose();
+            // The source slots own the publications. The current publication only points to one of them.
+            for (int i = 0; i < _forwardDirectionalShadowRecordPublicationsBySource.Length; ++i)
+            {
+                _forwardDirectionalShadowRecordPublicationsBySource[i]?.Dispose();
+                _forwardDirectionalShadowRecordPublicationsBySource[i] = null;
+            }
             _forwardDirectionalShadowRecordPublication = null;
             ReleaseForwardLightBuffers();
 

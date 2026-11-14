@@ -42,7 +42,18 @@ namespace XREngine.Scene
         private XRDataBuffer? _emptyForwardPlusLocalLightsBuffer;
         private XRDataBuffer? _emptyForwardPlusVisibleIndicesBuffer;
         private readonly DirectionalShadowGpuRecord[] _forwardDirectionalShadowRecords = new DirectionalShadowGpuRecord[ForwardDirectionalShadowRecordCount];
+        // The publication that forward programs bind at binding 39. It points to the source slot
+        // of the current camera and does not own the publication.
         private ReadOnlyStoragePublication? _forwardDirectionalShadowRecordPublication;
+        // One owned publication for each directional shadow source of the rendering camera
+        // (slot 0 desktop, slot 1 HMD). Desktop views and eye views read different cascade
+        // records. With one shared publication, each change of source between the views of a
+        // frame published new bytes with a new token. The Vulkan mesh renderers include that
+        // token in their descriptor allocation key, so every forward draw built a new
+        // descriptor set in every multi-view frame. A slot for each source keeps the token
+        // stable while the records of that source do not change.
+        private readonly ReadOnlyStoragePublication?[] _forwardDirectionalShadowRecordPublicationsBySource =
+            new ReadOnlyStoragePublication?[2];
         private ulong _forwardDirectionalShadowRecordGeneration;
         private const uint ForwardDirectionalShadowRecordsBinding = 39;
         private const ulong ForwardDirectionalShadowRecordsAbiSignature = 0x4453_4852_3232_3442UL;
@@ -267,15 +278,22 @@ namespace XREngine.Scene
             }
 
             ReadOnlySpan<byte> bytes = MemoryMarshal.AsBytes(_forwardDirectionalShadowRecords.AsSpan());
-            if (_forwardDirectionalShadowRecordPublication is { } current && current.ByteContentEquals(bytes))
+            int sourceSlot = DirectionalLightComponent.GetCascadeSourceForCamera(directionalShadowCamera) == ShadowRequestSource.Hmd
+                ? 1
+                : 0;
+            if (_forwardDirectionalShadowRecordPublicationsBySource[sourceSlot] is { } current && current.ByteContentEquals(bytes))
+            {
+                _forwardDirectionalShadowRecordPublication = current;
                 return;
+            }
 
             ReadOnlyStoragePublication next = ReadOnlyStoragePublication.CopyFrom(
                 bytes,
                 (ulong)RuntimeHelpers.GetHashCode(this),
                 ++_forwardDirectionalShadowRecordGeneration,
                 ForwardDirectionalShadowRecordsAbiSignature);
-            _forwardDirectionalShadowRecordPublication?.Dispose();
+            _forwardDirectionalShadowRecordPublicationsBySource[sourceSlot]?.Dispose();
+            _forwardDirectionalShadowRecordPublicationsBySource[sourceSlot] = next;
             _forwardDirectionalShadowRecordPublication = next;
         }
 
