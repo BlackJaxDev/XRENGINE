@@ -3431,9 +3431,12 @@ namespace XREngine.Rendering
             ref int candidateCount,
             ref bool genericFallbackAllowed)
         {
+            // Read the assigned pipeline only. This query runs every frame for the eye viewports
+            // too, and OpenXR true single-pass stereo holds those without a pipeline; reading
+            // Pipeline there would create a default pipeline that the next XR frame releases again.
             if (viewport is null ||
                 !ReferenceEquals(viewport.World, world) ||
-                viewport.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
+                viewport.RenderPipelineInstance.PipelineIfAssigned is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
                 return;
 
             bool captured = viewport.TryCaptureAdvancedDirectionalShadowConsumerAuthority(

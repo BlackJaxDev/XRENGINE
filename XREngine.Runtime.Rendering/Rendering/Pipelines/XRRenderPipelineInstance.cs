@@ -251,6 +251,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             if (EffectiveRequestedPipeline is { } requested)
                 return requested;
 
+            // An instance that its owner released on purpose stays without a pipeline.
+            if (IsPipelineReleasedByOwner)
+                return null;
+
             return RequestDefaultPipelineIfUnassigned(CreateDefaultRenderPipeline());
         }
         set => RequestPipelineChange(value, LastWindowViewport);

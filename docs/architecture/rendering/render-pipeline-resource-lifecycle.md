@@ -192,6 +192,25 @@ failure cannot make stale legacy resources appear current. Readiness likewise
 rejects any outstanding transition request, including a request that has not yet
 reached the render thread.
 
+### Reading A Pipeline Without Creating One
+
+`XRRenderPipelineInstance.Pipeline` creates and requests the default pipeline
+when no pipeline is applied or pending. Code that only queries the state (for
+example the shadow consumer selection, which runs every frame, and diagnostics
+such as `get_vr_view_state`) reads `PipelineIfAssigned`, which never creates or
+requests a pipeline.
+
+An owner can release an instance's pipeline on purpose and hold the instance
+without one (`ReleasePipelineByOwner`, `IsPipelineReleasedByOwner`). OpenXR
+true single-pass stereo holds the per-eye viewports this way while the stereo
+viewport renders both eyes, and the per-eye modes hold the stereo viewport. A
+held instance is not unassigned: `Pipeline` returns null and no default is
+created. The hold ends when the owner ends it (`EndPipelineReleaseByOwner`) or
+when a pipeline is requested explicitly. Without the hold, a per-frame query of
+a released viewport created a default pipeline, the output binding replaced it
+with a new eye pipeline, and the next XR frame released it again, so each frame
+built and destroyed render pipelines.
+
 ## Resize And Settings Changes
 
 Internal-resolution resize, display-region resize, rendering settings changes,

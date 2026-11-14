@@ -1352,19 +1352,26 @@ public unsafe partial class OpenXRAPI
     {
         ReleaseOpenXrExternalEyeViewportPipelineForTrueStereo(_openXrLeftViewport, 0);
         ReleaseOpenXrExternalEyeViewportPipelineForTrueStereo(_openXrRightViewport, 1);
+        // True stereo renders through the stereo viewport, so it may get a pipeline again.
+        _openXrStereoViewport?.RenderPipelineInstance.EndPipelineReleaseByOwner();
     }
 
+    /// <summary>
+    /// Holds a per-eye viewport without a pipeline while true single-pass stereo renders both
+    /// eyes through the stereo viewport. The hold is explicit (owner release), so code that
+    /// reads the viewport's pipeline does not create a default pipeline for it every frame.
+    /// </summary>
     private static void ReleaseOpenXrExternalEyeViewportPipelineForTrueStereo(XRViewport? viewport, int eyeIndex)
     {
         if (viewport is null)
             return;
 
         viewport.MeshRenderCommandsOverride = null;
-        if (viewport.RenderPipelineInstance.AssignedPipeline is null)
+        bool hadPipeline = viewport.RenderPipelineInstance.AssignedPipeline is not null;
+        string pipelineName = hadPipeline ? viewport.RenderPipelineInstance.DebugName : string.Empty;
+        viewport.RenderPipelineInstance.ReleasePipelineByOwner(viewport);
+        if (!hadPipeline)
             return;
-
-        string pipelineName = viewport.RenderPipelineInstance.DebugName;
-        viewport.RenderPipeline = null;
 
         Debug.RenderingEvery(
             $"OpenXR.TrueStereo.ReleaseExternalEyePipeline.{eyeIndex}",
@@ -1374,18 +1381,24 @@ public unsafe partial class OpenXRAPI
             eyeIndex);
     }
 
+    /// <summary>
+    /// Holds the true-stereo viewport without a pipeline while the per-eye viewports render,
+    /// and ends the hold of the per-eye viewports so they can get their pipelines again.
+    /// </summary>
     private void ReleaseOpenXrStereoViewportPipelineForExternalEyes()
     {
+        _openXrLeftViewport?.RenderPipelineInstance.EndPipelineReleaseByOwner();
+        _openXrRightViewport?.RenderPipelineInstance.EndPipelineReleaseByOwner();
         XRViewport? viewport = _openXrStereoViewport;
         if (viewport is null)
             return;
 
         viewport.MeshRenderCommandsOverride = null;
-        if (viewport.RenderPipelineInstance.AssignedPipeline is null)
+        bool hadPipeline = viewport.RenderPipelineInstance.AssignedPipeline is not null;
+        string pipelineName = hadPipeline ? viewport.RenderPipelineInstance.DebugName : string.Empty;
+        viewport.RenderPipelineInstance.ReleasePipelineByOwner(viewport);
+        if (!hadPipeline)
             return;
-
-        string pipelineName = viewport.RenderPipelineInstance.DebugName;
-        viewport.RenderPipeline = null;
 
         Debug.RenderingEvery(
             $"OpenXR.ExternalEyes.ReleaseStereoPipeline.{GetHashCode()}",
