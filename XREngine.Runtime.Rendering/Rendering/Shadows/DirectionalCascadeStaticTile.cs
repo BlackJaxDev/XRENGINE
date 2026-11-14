@@ -6,8 +6,8 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.Shadows;
 
 /// <summary>
-/// Depth tile that holds the static shadow casters of one directional cascade of one light
-/// (desktop source). The Advanced directional shadow lane draws the static casters into this
+/// Depth tile that holds the static shadow casters of one directional cascade of one light and
+/// one source (desktop or HMD). The Advanced directional shadow lane draws the static casters into this
 /// tile, copies it into the cascade tile of the atlas page, and draws the dynamic casters over
 /// the copy. While the key of the tile matches the cascade, a refresh only copies the tile and
 /// draws the dynamic casters. The tile is never published to receivers. It has the format of
@@ -20,9 +20,10 @@ public sealed class DirectionalCascadeStaticTile
     private long _recordedRenderFrameId;
     private int _hasContent;
 
-    internal DirectionalCascadeStaticTile(Guid lightId, int cascadeIndex, uint width, uint height)
+    internal DirectionalCascadeStaticTile(Guid lightId, ShadowRequestSource source, int cascadeIndex, uint width, uint height)
     {
         LightId = lightId;
+        Source = source;
         CascadeIndex = cascadeIndex;
         Width = width;
         Height = height;
@@ -53,6 +54,8 @@ public sealed class DirectionalCascadeStaticTile
 
     /// <summary>Light that owns the cascade.</summary>
     public Guid LightId { get; }
+    /// <summary>Cascade source (desktop or HMD). Each source has its own fits, so its own tiles.</summary>
+    public ShadowRequestSource Source { get; }
     /// <summary>Cascade index (0 is the nearest cascade).</summary>
     public int CascadeIndex { get; }
     /// <summary>Tile width in texels (the inner rectangle width of the cascade).</summary>

@@ -129,11 +129,11 @@ internal sealed partial class VulkanCommandRuntime
                     lane.StaticCasterEpochs[entry],
                     lane.StaticRecordSetHashes[entry],
                     lane.StaticRecordCounts[entry]);
-                DirectionalShadowStaticCacheDiagnostics.RecordStaticRender(staticRecords);
+                DirectionalShadowStaticCacheDiagnostics.RecordStaticRender(staticRecords, lane.Source);
             }
             CopyDirectionalShadowStaticTile(
                 ref state, tile, lane.Target!, lane.Scissors[entry], info.PassIndex);
-            DirectionalShadowStaticCacheDiagnostics.RecordCopy(overlayOnly: mismatch is null);
+            DirectionalShadowStaticCacheDiagnostics.RecordCopy(overlayOnly: mismatch is null, lane.Source);
             cachedEntries |= (byte)(1 << entry);
         }
         RecordDirectionalShadowStaticCacheCauses(lane);
@@ -179,7 +179,7 @@ internal sealed partial class VulkanCommandRuntime
             RecordDirectionalShadowCascadeCasters(
                 ref state, in payload, bins, lane, cascade,
                 EDirectionalShadowCasterSelection.All);
-            DirectionalShadowStaticCacheDiagnostics.RecordFullCascadeDraw(lane.CascadeIndices[cascade]);
+            DirectionalShadowStaticCacheDiagnostics.RecordFullCascadeDraw(lane.CascadeIndices[cascade], lane.Source);
         }
         CmdEndLabel(state.CommandBuffer);
         return info.OperationIndex;

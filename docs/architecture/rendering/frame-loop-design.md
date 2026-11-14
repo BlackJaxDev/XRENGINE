@@ -453,8 +453,8 @@ submission strategy selects the caster producer:
 The lane then works as follows:
 
 - `ShadowAtlasManager.RenderScheduledTiles` still allocates, tracks dirtiness,
-  applies budgets and owns completion receipts. A depth-only desktop cascade
-  group whose grouped render would run is deferred to the lane when the stage
+  applies budgets and owns completion receipts. A depth-only cascade group
+  (desktop or HMD source) whose grouped render would run is deferred to the lane when the stage
   reported itself ready in the previous frame
   ([`ShadowAtlasManager.AdvancedDirectionalShadowLane`](../../../XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.AdvancedDirectionalShadowLane.cs)).
   The light publishes the page, one tile rectangle and one world-to-clip matrix
@@ -478,11 +478,11 @@ The lane then works as follows:
   holds the lane closed for 60 frames. A lane preparation fault rejects the
   fresh frame with failed receipts, preserves dirty keys for generic retry,
   and reports the stage not ready for 5 s.
-- Moment-encoded pages, HMD sources, unsupported submission strategies and
+- Moment-encoded pages, unsupported submission strategies and
   sequential cascade renders keep the generic path with an explicit decline
   reason. `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` disables the lane.
   In CPU-direct and meshlet frames, the lane keeps the static casters of
-  each desktop cascade with dynamic casters in a separate static tile. A refresh with a
+  each cascade (desktop and HMD source) with dynamic casters in a separate static tile. A refresh with a
   matching tile key copies that tile and draws only the dynamic casters over
   it (see [shadow atlas](shadow-atlas.md#static-caster-tiles-of-directional-cascades)).
   `XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0` turns the static tile off.

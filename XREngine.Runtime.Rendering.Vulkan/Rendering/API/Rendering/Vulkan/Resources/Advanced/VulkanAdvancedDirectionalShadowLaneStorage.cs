@@ -35,6 +35,8 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
     internal uint CullingLayerMask { get; private set; }
     internal ulong RenderFrameId { get; private set; }
     internal XRFrameBuffer? Target { get; private set; }
+    /// <summary>Cascade source of the group (desktop or HMD).</summary>
+    internal ShadowRequestSource Source { get; private set; }
 
     /// <summary>Static caster tile of each entry, or null (see AdvancedDirectionalShadowLaneRequest.StaticTiles).</summary>
     internal ReadOnlySpan<DirectionalCascadeStaticTile?> StaticTiles => _staticTiles.AsSpan(0, CascadeCount);
@@ -111,6 +113,7 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         CullingLayerMask = source.CullingLayerMask;
         RenderFrameId = renderFrameId;
         Target = source.PageFrameBuffer;
+        Source = source.Source;
         source.StaticTiles.CopyTo(_staticTiles);
         source.StaticCasterEpochs.CopyTo(_staticCasterEpochs);
         source.StaticCacheCauses.CopyTo(_staticCacheCauses);
@@ -150,6 +153,7 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         source.Scissors.CopyTo(_scissors);
         source.TileRects.CopyTo(_tileRects);
         source.CascadeIndices.CopyTo(_cascadeIndices);
+        Source = source.Source;
         source._staticTiles.AsSpan().CopyTo(_staticTiles);
         source._staticCasterEpochs.AsSpan().CopyTo(_staticCasterEpochs);
         source._staticCacheCauses.AsSpan().CopyTo(_staticCacheCauses);

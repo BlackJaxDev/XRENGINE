@@ -9,8 +9,6 @@ public enum EDirectionalShadowStaticCacheCause
 {
     /// <summary>The cache setting is off.</summary>
     Disabled,
-    /// <summary>The group is not the desktop source.</summary>
-    OutOfScope,
     /// <summary>No dynamic caster changed in the cascade recently, so the cascade has no static tile and draws all casters.</summary>
     NoDynamicCasters,
     /// <summary>The frame selects casters on the GPU (strict indexed frame); the cache supports only CPU record masks.</summary>

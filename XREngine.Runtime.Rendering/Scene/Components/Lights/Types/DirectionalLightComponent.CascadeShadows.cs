@@ -5428,7 +5428,7 @@ namespace XREngine.Components.Lights
             // shadow cameras keep normal depth regardless of the scene camera.
             if (sourceState.Viewports[0].Camera is not { } collectionCamera)
                 return DeclineCascadeAtlasRender(out declineReason, "The grouped cascade collection camera is unavailable.");
-            request.Reset(atlasFbo, group.LightId, renderFrameId,
+            request.Reset(atlasFbo, group.LightId, source, renderFrameId,
                 reversedDepth: false, depthClearValue: 1.0f,
                 collectionCamera.CullingLayerMask);
             for (int i = 0; i < groupedCount; i++)

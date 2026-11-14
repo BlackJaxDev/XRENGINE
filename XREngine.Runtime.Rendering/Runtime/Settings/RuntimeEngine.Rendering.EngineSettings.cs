@@ -1008,7 +1008,7 @@ public static partial class RuntimeEngine
                     Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
 
                 [Category("Shadows")]
-                [Description("Makes the emulated VR eye viewports use the cascaded HMD directional shadow source, as headset eyes do: the HMD cascades fit both eye frusta and the combined eye frustum, and the eyes read them. When off, emulated eyes read the primary directional shadow map. Use it to test the HMD cascade source without a headset. The environment variable XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1 turns it on for the process.")]
+                [Description("Makes the emulated VR eye viewports use the cascaded HMD directional shadow source, as headset eyes do: the HMD cascades fit both eye frusta and the combined eye frustum. Default-pipeline eyes read them. Advanced eyes in SequentialViews still read the desktop cascades, because their views carry the desktop view kind. Use it to test the HMD cascade source (fit, lane groups, static tiles) without a headset. The environment variable XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1 turns it on for the process.")]
                 public bool EmulatedVrEyesUseHmdDirectionalCascades
                 {
                     get => Volatile.Read(ref _emulatedVrEyesUseHmdDirectionalCascades) ||

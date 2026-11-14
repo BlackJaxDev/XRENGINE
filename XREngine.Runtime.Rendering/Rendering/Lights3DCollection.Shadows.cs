@@ -520,7 +520,7 @@ namespace XREngine.Scene
 
         /// <summary>
         /// Allows a demotion only when every dynamic directional light draws the static tiles
-        /// that the caster box meets in this plan pass (desktop source; see
+        /// that the caster box meets in this plan pass, for the desktop and the HMD source (see
         /// DirectionalLightComponent.DirectionalStaticTilesRedrawFor).
         /// </summary>
         bool XREngine.Scene.IShadowCasterDemotionGate.CanDemote(in AABB worldBounds)
@@ -529,8 +529,9 @@ namespace XREngine.Scene
             int count = DynamicDirectionalLights.Count;
             for (int i = 0; i < count; i++)
             {
-                if (!DynamicDirectionalLights[i].DirectionalStaticTilesRedrawFor(
-                        ShadowRequestSource.Desktop, in worldBounds, planFrame))
+                DirectionalLightComponent light = DynamicDirectionalLights[i];
+                if (!light.DirectionalStaticTilesRedrawFor(ShadowRequestSource.Desktop, in worldBounds, planFrame) ||
+                    !light.DirectionalStaticTilesRedrawFor(ShadowRequestSource.Hmd, in worldBounds, planFrame))
                 {
                     return false;
                 }
@@ -719,8 +720,7 @@ namespace XREngine.Scene
 
                 ShadowMapFormatSelection shadowFormat = light.ResolveShadowMapFormat(preferredStorageFormat: null);
                 EShadowMapEncoding encoding = shadowFormat.Encoding;
-                SubmitDirectionalCascadeShadowAtlasRequests(light, ShadowRequestSource.Desktop, encoding);
-                SubmitDirectionalCascadeShadowAtlasRequests(light, ShadowRequestSource.Hmd, encoding);
+                SubmitDirectionalCascadeShadowAtlasRequests(light, encoding);
 
                 bool hasAnyDirectionalCascades =
                     light.HasPublishedCascades(ShadowRequestSource.Desktop) ||
@@ -876,16 +876,38 @@ namespace XREngine.Scene
             return hash;
         }
 
+        /// <summary>
+        /// Plans the cascade requests of one light for the desktop and the HMD source. Both
+        /// sources first start their request frame and mark their caster changes; then one
+        /// refresh budget is granted across both sources (GrantDirectionalCascadeRefreshes),
+        /// and then each source submits its cascade requests.
+        /// </summary>
         private void SubmitDirectionalCascadeShadowAtlasRequests(
             DirectionalLightComponent light,
-            ShadowRequestSource source,
             EShadowMapEncoding encoding)
+        {
+            int desktopCount = BeginDirectionalCascadeSourceRequests(light, ShadowRequestSource.Desktop);
+            int hmdCount = BeginDirectionalCascadeSourceRequests(light, ShadowRequestSource.Hmd);
+            if (desktopCount == 0 && hmdCount == 0)
+                return;
+
+            GrantDirectionalCascadeRefreshes(light, encoding, desktopCount, hmdCount);
+            SubmitDirectionalCascadeSourceRequests(light, ShadowRequestSource.Desktop, encoding, desktopCount);
+            SubmitDirectionalCascadeSourceRequests(light, ShadowRequestSource.Hmd, encoding, hmdCount);
+        }
+
+        /// <summary>
+        /// Starts the request frame of one source and marks its caster changes. Returns the
+        /// number of active cascades of the source, or 0 when the source does not use the
+        /// cascade atlas.
+        /// </summary>
+        private int BeginDirectionalCascadeSourceRequests(DirectionalLightComponent light, ShadowRequestSource source)
         {
             int activeCascadeCount = light.GetActiveCascadeCount(source);
             bool useCascadeAtlas = light.EnableCascadedShadows &&
                 light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(activeCascadeCount);
-            if (!useCascadeAtlas)
-                return;
+            if (!useCascadeAtlas || activeCascadeCount <= 0)
+                return 0;
 
             light.BeginDirectionalCascadeAtlasRequestFrame(source, activeCascadeCount);
             light.MarkDirectionalCascadeCasterChanges(
@@ -893,7 +915,15 @@ namespace XREngine.Scene
                 _shadowCasterChanges.AsSpan(0, _shadowCasterChangeCount),
                 _shadowCasterChangeDynamic.AsSpan(0, _shadowCasterChangeCount),
                 _shadowCasterChangesOverflowed);
-            GrantDirectionalCascadeRefreshes(light, source, encoding, activeCascadeCount);
+            return activeCascadeCount;
+        }
+
+        private void SubmitDirectionalCascadeSourceRequests(
+            DirectionalLightComponent light,
+            ShadowRequestSource source,
+            EShadowMapEncoding encoding,
+            int activeCascadeCount)
+        {
             for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
             {
                 XRCamera? cascadeCamera = light.GetCascadeCamera(source, cascadeIndex);
@@ -914,35 +944,41 @@ namespace XREngine.Scene
         }
 
         /// <summary>
-        /// Selects the cascades of one light and source that may refresh in this frame
-        /// although only the camera moved. A camera move changes the fit of every cascade,
-        /// and every cascade draws the whole caster set that reaches its volume, so the
-        /// refreshes of one frame are limited by <c>MaxDirectionalCascadeRefreshesPerFrame</c>.
-        /// The candidates have a rendered tile, a changed depth content hash, and the same
-        /// caster state as their last render. The cascades with the oldest rendered frame
-        /// get the slots, and the nearest cascade wins a tie. Then a moving camera refreshes
-        /// the cascades in turn, and a cascade reaches the stale-age limit only when there
-        /// are more cascades than stale frames. Caster changes, cascades without a rendered
-        /// tile and large fit jumps are not candidates: they refresh at once.
+        /// Selects the cascades of one light that may refresh in this frame although only the
+        /// camera moved, across the desktop and the HMD source together. A camera move changes
+        /// the fit of every cascade, and a refresh that changes the fit draws all static casters
+        /// of the cascade (also its static tile), so <c>MaxDirectionalCascadeRefreshesPerFrame</c>
+        /// limits these refreshes of one light in one frame for both sources together. The
+        /// candidates have a rendered tile, a changed depth content hash, and the same caster
+        /// state as their last render. The candidates with the oldest rendered frame get the
+        /// slots; on a tie the nearest cascade wins, then the desktop source. Then a moving
+        /// camera or head refreshes the cascades in turn. Caster changes (also the copy and
+        /// overlay refreshes of dynamic casters), cascades without a rendered tile and large fit
+        /// jumps are not candidates: they refresh at once.
         /// </summary>
         private void GrantDirectionalCascadeRefreshes(
             DirectionalLightComponent light,
-            ShadowRequestSource source,
             EShadowMapEncoding encoding,
-            int activeCascadeCount)
+            int desktopCascadeCount,
+            int hmdCascadeCount)
         {
-            const int MaxCandidates = 8;
-            int count = Math.Clamp(activeCascadeCount, 0, MaxCandidates);
+            const int MaxPerSource = 8;
+            int desktopCount = Math.Clamp(desktopCascadeCount, 0, MaxPerSource);
+            int hmdCount = Math.Clamp(hmdCascadeCount, 0, MaxPerSource);
+            int total = desktopCount + hmdCount;
             int limit = RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeRefreshesPerFrame;
-            if (count == 0)
+            if (total == 0)
                 return;
 
-            // Rendered frame of each candidate; 0 marks a cascade that is not a candidate.
-            Span<ulong> lastRenderedFrames = stackalloc ulong[MaxCandidates];
+            // Rendered frame of each candidate (desktop slots first, then HMD slots); 0 marks a
+            // cascade that is not a candidate.
+            Span<ulong> lastRenderedFrames = stackalloc ulong[MaxPerSource * 2];
             uint desiredResolution = GetDesiredShadowAtlasResolution(light);
-            for (int i = 0; i < count; i++)
+            for (int slot = 0; slot < total; slot++)
             {
-                lastRenderedFrames[i] = 0u;
+                ShadowRequestSource source = slot < desktopCount ? ShadowRequestSource.Desktop : ShadowRequestSource.Hmd;
+                int i = slot < desktopCount ? slot : slot - desktopCount;
+                lastRenderedFrames[slot] = 0u;
                 XRCamera? camera = light.GetCascadeCamera(source, i);
                 if (camera is null)
                     continue;
@@ -979,24 +1015,38 @@ namespace XREngine.Scene
                 ulong inFlightFrame = light.GetDirectionalCascadeRefreshInFlightFrame(
                     source, i, previous.LastRenderedFrame, ShadowAtlas.CurrentFrameId);
                 if (contentHash != previous.ContentVersion)
-                    lastRenderedFrames[i] = Math.Max(previous.LastRenderedFrame, inFlightFrame);
+                    lastRenderedFrames[slot] = Math.Max(previous.LastRenderedFrame, inFlightFrame);
             }
 
-            int grants = limit <= 0 ? count : Math.Min(limit, count);
+            int grants = limit <= 0 ? total : Math.Min(limit, total);
             for (int g = 0; g < grants; g++)
             {
                 int oldest = -1;
-                for (int i = 0; i < count; i++)
+                for (int slot = 0; slot < total; slot++)
                 {
-                    if (lastRenderedFrames[i] != 0u &&
-                        (oldest < 0 || lastRenderedFrames[i] < lastRenderedFrames[oldest]))
-                        oldest = i;
+                    if (lastRenderedFrames[slot] == 0u)
+                        continue;
+                    if (oldest < 0 || lastRenderedFrames[slot] < lastRenderedFrames[oldest])
+                    {
+                        oldest = slot;
+                        continue;
+                    }
+                    // Tie: the nearer cascade wins, then the desktop source (lower slot).
+                    if (lastRenderedFrames[slot] == lastRenderedFrames[oldest])
+                    {
+                        int slotCascade = slot < desktopCount ? slot : slot - desktopCount;
+                        int oldestCascade = oldest < desktopCount ? oldest : oldest - desktopCount;
+                        if (slotCascade < oldestCascade)
+                            oldest = slot;
+                    }
                 }
 
                 if (oldest < 0)
                     return;
 
-                light.GrantDirectionalCascadeRefresh(source, oldest);
+                ShadowRequestSource grantedSource = oldest < desktopCount ? ShadowRequestSource.Desktop : ShadowRequestSource.Hmd;
+                int grantedCascade = oldest < desktopCount ? oldest : oldest - desktopCount;
+                light.GrantDirectionalCascadeRefresh(grantedSource, grantedCascade);
                 lastRenderedFrames[oldest] = 0u;
             }
         }

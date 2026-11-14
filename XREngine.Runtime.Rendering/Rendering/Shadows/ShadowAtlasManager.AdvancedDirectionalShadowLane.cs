@@ -22,10 +22,10 @@ public sealed partial class ShadowAtlasManager
         new PendingAdvancedLaneGroup[MaxPendingAdvancedLaneGroups];
     private readonly AdvancedDirectionalShadowLaneRequest[] _advancedLaneRequests =
         CreateAdvancedLaneRequests();
-    // Static caster tiles, one per (light, cascade) with recent dynamic casters (see
+    // Static caster tiles, one per (light, source, cascade) with recent dynamic casters (see
     // DirectionalCascadeStaticTile). A light that leaves keeps its slots until the atlas resets.
     private readonly DirectionalCascadeStaticTile?[] _directionalStaticCascadeTiles =
-        new DirectionalCascadeStaticTile?[MaxPendingAdvancedLaneGroups * AdvancedDirectionalShadowLaneRequest.MaxCascadeCount];
+        new DirectionalCascadeStaticTile?[MaxPendingAdvancedLaneGroups * AdvancedDirectionalShadowLaneRequest.MaxCascadeCount * 2];
     private int _pendingAdvancedLaneGroupCount;
     private ulong _advancedLaneConsumerFrameId;
     private ulong _advancedLaneTargetFrameId;
@@ -344,14 +344,12 @@ public sealed partial class ShadowAtlasManager
             return false;
         }
 
+        // The family that owns the canonical scene draws the groups of every source: casters
+        // do not depend on the view, the record masks come from each group's cascade matrices,
+        // and the static tiles are kept per source.
         ShadowRequestSource source = group.Source == ShadowRequestSource.Default
             ? ShadowRequestSource.Desktop
             : group.Source;
-        if (source != ShadowRequestSource.Desktop)
-        {
-            declineReason = "Only desktop cascade groups are consumed by the desktop Advanced family.";
-            return false;
-        }
 
         if (_advancedLaneTargetFrameBuffer is not null &&
             !ReferenceEquals(_advancedLaneTargetFrameBuffer, page.FrameBuffer))
@@ -481,7 +479,7 @@ public sealed partial class ShadowAtlasManager
     private const ulong DirectionalStaticTileKeepFrames = 600UL;
 
     /// <summary>
-    /// Attaches a static caster tile to each cascade of a desktop group that a dynamic caster
+    /// Attaches a static caster tile to each cascade of a group (desktop or HMD source) that a dynamic caster
     /// change marked within <see cref="DirectionalStaticTileKeepFrames"/> update frames, or
     /// records why the cache does not apply to a cascade. A tile is created on first use and
     /// created again when the inner tile size changes. The tiles of this light whose cascade
@@ -494,9 +492,8 @@ public sealed partial class ShadowAtlasManager
         ShadowRequestSource source)
     {
         bool enabled = RuntimeEngine.Rendering.Settings.DirectionalShadowStaticCacheEnabled;
-        bool desktop = source == ShadowRequestSource.Desktop;
         ulong frame = RuntimeRenderingHostServices.FrameTiming.UpdateFrameId;
-        ReleaseUnusedDirectionalStaticCascadeTiles(request.LightId, light, source, frame, enabled && desktop);
+        ReleaseUnusedDirectionalStaticCascadeTiles(request.LightId, light, source, frame, enabled);
 
         ReadOnlySpan<int> cascades = request.CascadeIndices;
         ReadOnlySpan<BoundingRectangle> rects = request.TileRects;
@@ -509,11 +506,6 @@ public sealed partial class ShadowAtlasManager
                 request.SetStaticCacheCause(entry, EDirectionalShadowStaticCacheCause.Disabled);
                 continue;
             }
-            if (!desktop)
-            {
-                request.SetStaticCacheCause(entry, EDirectionalShadowStaticCacheCause.OutOfScope);
-                continue;
-            }
             if (!light.HasRecentDirectionalCascadeDynamicChange(source, cascade, frame, DirectionalStaticTileKeepFrames))
             {
                 request.SetStaticCacheCause(entry, EDirectionalShadowStaticCacheCause.NoDynamicCasters);
@@ -523,7 +515,7 @@ public sealed partial class ShadowAtlasManager
             BoundingRectangle rect = rects[entry];
             uint width = (uint)Math.Max(rect.Width, 0);
             uint height = (uint)Math.Max(rect.Height, 0);
-            DirectionalCascadeStaticTile? tile = FindDirectionalStaticCascadeTile(request.LightId, cascade, out int slot);
+            DirectionalCascadeStaticTile? tile = FindDirectionalStaticCascadeTile(request.LightId, source, cascade, out int slot);
             if (tile is not null && (tile.Width != width || tile.Height != height))
             {
                 tile.Destroy();
@@ -537,7 +529,7 @@ public sealed partial class ShadowAtlasManager
                     request.SetStaticCacheCause(entry, EDirectionalShadowStaticCacheCause.TileUnavailable);
                     continue;
                 }
-                tile = new DirectionalCascadeStaticTile(request.LightId, cascade, width, height);
+                tile = new DirectionalCascadeStaticTile(request.LightId, source, cascade, width, height);
                 _directionalStaticCascadeTiles[slot] = tile;
                 DirectionalShadowStaticCacheDiagnostics.RecordTileCreated();
             }
@@ -551,7 +543,7 @@ public sealed partial class ShadowAtlasManager
     }
 
     /// <summary>
-    /// Releases the static tiles of <paramref name="lightId"/> whose cascade had no dynamic
+    /// Releases the static tiles of <paramref name="lightId"/> and <paramref name="source"/> whose cascade had no dynamic
     /// caster change for <see cref="DirectionalStaticTileKeepFrames"/> update frames, or all of
     /// them when the cache does not apply (<paramref name="keep"/> false).
     /// </summary>
@@ -565,7 +557,7 @@ public sealed partial class ShadowAtlasManager
         for (int i = 0; i < _directionalStaticCascadeTiles.Length; i++)
         {
             DirectionalCascadeStaticTile? tile = _directionalStaticCascadeTiles[i];
-            if (tile is null || tile.LightId != lightId)
+            if (tile is null || tile.LightId != lightId || tile.Source != source)
                 continue;
             if (keep && light.HasRecentDirectionalCascadeDynamicChange(source, tile.CascadeIndex, frame, DirectionalStaticTileKeepFrames))
                 continue;
@@ -577,10 +569,11 @@ public sealed partial class ShadowAtlasManager
     }
 
     /// <summary>
-    /// Returns the static tile of one cascade of <paramref name="lightId"/>. When there is none,
-    /// <paramref name="slot"/> is a free slot for a new tile, or -1 when all slots are used.
+    /// Returns the static tile of one cascade of <paramref name="lightId"/> and <paramref name="source"/>.
+    /// When there is none, <paramref name="slot"/> is a free slot for a new tile, or -1 when all
+    /// slots are used.
     /// </summary>
-    private DirectionalCascadeStaticTile? FindDirectionalStaticCascadeTile(Guid lightId, int cascadeIndex, out int slot)
+    private DirectionalCascadeStaticTile? FindDirectionalStaticCascadeTile(Guid lightId, ShadowRequestSource source, int cascadeIndex, out int slot)
     {
         slot = -1;
         for (int i = 0; i < _directionalStaticCascadeTiles.Length; i++)
@@ -592,7 +585,7 @@ public sealed partial class ShadowAtlasManager
                     slot = i;
                 continue;
             }
-            if (tile.LightId == lightId && tile.CascadeIndex == cascadeIndex)
+            if (tile.LightId == lightId && tile.Source == source && tile.CascadeIndex == cascadeIndex)
             {
                 slot = i;
                 return tile;
@@ -609,7 +602,8 @@ public sealed partial class ShadowAtlasManager
     {
         if (key.ProjectionType != EShadowProjectionType.DirectionalCascade)
             return;
-        FindDirectionalStaticCascadeTile(key.LightId, key.FaceOrCascadeIndex, out _)?.Invalidate();
+        ShadowRequestSource source = key.Source == ShadowRequestSource.Default ? ShadowRequestSource.Desktop : key.Source;
+        FindDirectionalStaticCascadeTile(key.LightId, source, key.FaceOrCascadeIndex, out _)?.Invalidate();
     }
 
     private static AdvancedDirectionalShadowLaneRequest[] CreateAdvancedLaneRequests()

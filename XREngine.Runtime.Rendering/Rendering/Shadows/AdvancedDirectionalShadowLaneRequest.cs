@@ -39,6 +39,9 @@ public sealed class AdvancedDirectionalShadowLaneRequest
     /// <summary>Render frame that scheduled the group.</summary>
     public ulong RenderFrameId { get; private set; }
 
+    /// <summary>Cascade source of the group (desktop or HMD).</summary>
+    public ShadowRequestSource Source { get; private set; }
+
     /// <summary>Owning light, for diagnostics.</summary>
     public Guid LightId { get; private set; }
 
@@ -71,12 +74,14 @@ public sealed class AdvancedDirectionalShadowLaneRequest
     internal void Reset(
         XRFrameBuffer pageFrameBuffer,
         Guid lightId,
+        ShadowRequestSource source,
         ulong renderFrameId,
         bool reversedDepth,
         float depthClearValue,
         uint cullingLayerMask)
     {
         PageFrameBuffer = pageFrameBuffer;
+        Source = source;
         LightId = lightId;
         RenderFrameId = renderFrameId;
         ReversedDepth = reversedDepth;
