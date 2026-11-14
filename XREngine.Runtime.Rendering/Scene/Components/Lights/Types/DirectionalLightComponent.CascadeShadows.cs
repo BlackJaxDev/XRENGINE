@@ -129,6 +129,13 @@ namespace XREngine.Components.Lights
         private sealed class DirectionalCascadeSourceState(ShadowRequestSource source)
         {
             public readonly ShadowRequestSource Source = source;
+            // Held cascade fits, per cascade index, in light space. Only the cascade fit on
+            // the collect thread reads and writes them.
+            public readonly bool[] HeldFitValid = new bool[MaxCascadeRenderCount];
+            public readonly Vector3[] HeldFitCenterLS = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] HeldFitHalfExtents = new Vector3[MaxCascadeRenderCount];
+            public readonly uint[] HeldFitResolution = new uint[MaxCascadeRenderCount];
+            public readonly Quaternion[] HeldFitLightRotation = new Quaternion[MaxCascadeRenderCount];
             public readonly List<CascadedShadowAabb> Aabbs = new(4);
             public readonly List<CascadeShadowSlice> Slices = new(MaxCascadeRenderCount);
             public DirectionalCascadeAtlasSlot[] AtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
@@ -3050,6 +3057,93 @@ namespace XREngine.Components.Lights
             halfExtents.Z += step * 0.5f;
         }
 
+        /// <summary>
+        /// Keeps the held fit of a cascade when it still covers the camera's slice. The
+        /// slice box (<paramref name="centerLS"/>, <paramref name="halfExtents"/>, before any
+        /// margin) must lie inside the held box in X, Y and depth, and the held box must not
+        /// be larger than the slice box with two margins (a narrower slice gets a tighter
+        /// fit). The light rotation and the fit resolution must not have changed. On success
+        /// the method replaces the slice box with the held box, so the cascade matrix and its
+        /// content hash do not change and the cascade does not re-render. A margin of 0
+        /// turns the hold off.
+        /// </summary>
+        private static bool TryHoldCascadeFit(
+            DirectionalCascadeSourceState state,
+            int cascadeIndex,
+            float margin,
+            uint fitResolution,
+            Quaternion lightRotation,
+            ref Vector3 centerLS,
+            ref Vector3 halfExtents)
+        {
+            if (margin <= 0.0f ||
+                (uint)cascadeIndex >= (uint)MaxCascadeRenderCount ||
+                !state.HeldFitValid[cascadeIndex] ||
+                state.HeldFitResolution[cascadeIndex] != fitResolution ||
+                state.HeldFitLightRotation[cascadeIndex] != lightRotation)
+            {
+                return false;
+            }
+
+            Vector3 heldCenter = state.HeldFitCenterLS[cascadeIndex];
+            Vector3 heldHalf = state.HeldFitHalfExtents[cascadeIndex];
+            Vector3 neededMin = centerLS - halfExtents;
+            Vector3 neededMax = centerLS + halfExtents;
+            Vector3 heldMin = heldCenter - heldHalf;
+            Vector3 heldMax = heldCenter + heldHalf;
+            if (neededMin.X < heldMin.X || neededMin.Y < heldMin.Y || neededMin.Z < heldMin.Z ||
+                neededMax.X > heldMax.X || neededMax.Y > heldMax.Y || neededMax.Z > heldMax.Z)
+            {
+                return false;
+            }
+
+            float neededRadius = MathF.Max(halfExtents.X, halfExtents.Y);
+            float heldRadius = MathF.Max(heldHalf.X, heldHalf.Y);
+            if (heldRadius > neededRadius * (1.0f + 2.0f * margin) + 1e-4f)
+                return false;
+
+            centerLS = heldCenter;
+            halfExtents = heldHalf;
+            return true;
+        }
+
+        /// <summary>
+        /// Grows a new cascade fit so it covers the slice with room for camera movement: X and
+        /// Y by <paramref name="margin"/> times the larger of the two half extents, and depth
+        /// by <paramref name="margin"/> times its own half extent. The texel size and the
+        /// depth step grow by the same fraction.
+        /// </summary>
+        private static void ExpandCascadeFitByMargin(ref Vector3 halfExtents, float margin)
+        {
+            if (margin <= 0.0f)
+                return;
+
+            float grow = MathF.Max(halfExtents.X, halfExtents.Y) * margin;
+            halfExtents.X += grow;
+            halfExtents.Y += grow;
+            halfExtents.Z += halfExtents.Z * margin;
+        }
+
+        /// <summary>Stores a new cascade fit as the held fit, or clears the hold when the margin is 0.</summary>
+        private static void StoreHeldCascadeFit(
+            DirectionalCascadeSourceState state,
+            int cascadeIndex,
+            float margin,
+            uint fitResolution,
+            Quaternion lightRotation,
+            Vector3 centerLS,
+            Vector3 halfExtents)
+        {
+            if ((uint)cascadeIndex >= (uint)MaxCascadeRenderCount)
+                return;
+
+            state.HeldFitValid[cascadeIndex] = margin > 0.0f;
+            state.HeldFitCenterLS[cascadeIndex] = centerLS;
+            state.HeldFitHalfExtents[cascadeIndex] = halfExtents;
+            state.HeldFitResolution[cascadeIndex] = fitResolution;
+            state.HeldFitLightRotation[cascadeIndex] = lightRotation;
+        }
+
         private static void SnapCascadeCenterToTexels(ref Vector3 centerLS, Vector3 halfExtents, uint resolution)
         {
             float texelX = MathF.Max(halfExtents.X * 2.0f / MathF.Max(1.0f, resolution), 1e-6f);
@@ -3852,6 +3946,7 @@ namespace XREngine.Components.Lights
             float shadowDepth = totalDepth;
             float cumulative = 0.0f;
             int resourceSlot = 0;
+            float refitMargin = RuntimeEngine.Rendering.Settings.DirectionalCascadeRefitMarginFraction;
 
             try
             {
@@ -3887,12 +3982,17 @@ namespace XREngine.Components.Lights
 
                     Vector3 halfExtents = Vector3.Max((max - min) * 0.5f, new Vector3(1e-3f, 1e-3f, NearZ + 1e-3f));
                     Vector3 centerLS = (min + max) * 0.5f;
-                    QuantizeCascadeDepthRange(ref centerLS, ref halfExtents);
                     uint fitResolution = GetCascadeFitResolution(source, resourceSlot, cascadeTexture);
                     uint biasResolution = UsesDirectionalShadowAtlasForCurrentEncoding
                         ? GetDesiredShadowAtlasResolution()
                         : fitResolution;
-                    SnapCascadeCenterToTexels(ref centerLS, halfExtents, fitResolution);
+                    if (!TryHoldCascadeFit(state, cascadeIndex, refitMargin, fitResolution, lightRotation, ref centerLS, ref halfExtents))
+                    {
+                        ExpandCascadeFitByMargin(ref halfExtents, refitMargin);
+                        QuantizeCascadeDepthRange(ref centerLS, ref halfExtents);
+                        SnapCascadeCenterToTexels(ref centerLS, halfExtents, fitResolution);
+                        StoreHeldCascadeFit(state, cascadeIndex, refitMargin, fitResolution, lightRotation, centerLS, halfExtents);
+                    }
                     Vector3 centerWS = Vector3.Transform(centerLS, lightToWorld);
 
                     UpdateCascadeShadowCamera(transformsSnapshot[resourceSlot], camerasSnapshot[resourceSlot], centerWS, halfExtents, lightRotation, lightDirection, NearZ);

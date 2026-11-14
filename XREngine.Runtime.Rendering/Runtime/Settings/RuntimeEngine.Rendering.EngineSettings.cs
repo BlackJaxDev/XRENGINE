@@ -739,6 +739,7 @@ public static partial class RuntimeEngine
                 private int _maxDirectionalCascadeAtlasStaleFrames = 4;
                 private bool _holdDirectionalCascadesWhileCameraMoves;
                 private int _maxDirectionalCascadeRefreshesPerFrame = 1;
+                private float _directionalCascadeRefitMarginFraction = 0.1f;
                 private uint _minShadowAtlasTileResolution = 128u;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
@@ -965,6 +966,21 @@ public static partial class RuntimeEngine
                             return;
 
                         Volatile.Write(ref _maxDirectionalCascadeRefreshesPerFrame, clamped);
+                    }
+                }
+
+                [Category("Shadows")]
+                [Description("Margin of a directional cascade fit, as a fraction of the cascade radius. A fit grows by this margin on each side, and the cascade keeps its fit while the camera's slice stays inside it, so a small camera move does not re-render the cascade. A refit happens when the slice leaves the fit, the light rotates, or the fit resolution changes. The texel size grows by the same fraction. 0 turns the margin off and refits in every frame in which the slice moves.")]
+                public float DirectionalCascadeRefitMarginFraction
+                {
+                    get => Volatile.Read(ref _directionalCascadeRefitMarginFraction);
+                    set
+                    {
+                        float clamped = float.IsFinite(value) ? Math.Clamp(value, 0.0f, 0.5f) : 0.0f;
+                        if (!SetField(ref _directionalCascadeRefitMarginFraction, clamped))
+                            return;
+
+                        Volatile.Write(ref _directionalCascadeRefitMarginFraction, clamped);
                     }
                 }
 
