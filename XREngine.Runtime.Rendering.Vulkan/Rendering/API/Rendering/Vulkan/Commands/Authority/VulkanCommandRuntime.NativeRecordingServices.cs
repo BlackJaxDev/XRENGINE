@@ -765,8 +765,42 @@ internal sealed partial class VulkanCommandRuntime
         Api.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.BottomOfPipeBit, queryPool, 1);
     }
 
+    /// <summary>
+    /// Counts primary recordings on a background render lane that recorded no dense GPU
+    /// profiler queries. The render thread reports a change of this count once as a backend
+    /// timing status, so the missing scopes are visible in the GPU pipeline dump.
+    /// </summary>
+    private static long s_backgroundLaneProfilerSkips;
+    private long _reportedBackgroundLaneProfilerSkips;
+
+    /// <summary>
+    /// Starts the dense GPU profiler queries of one primary recording. Only the render thread
+    /// records them: the recording cursor (active flag, frame slot, next query, budget flag)
+    /// and the per-slot query pools are shared state without a lock. A recording on a
+    /// background render lane (for example the VR desktop WorkerRecord mode, which runs while
+    /// the render thread records the eyes) therefore records no profiler queries. Before this
+    /// rule, such a recording cleared the render thread's cursor in the middle of an eye
+    /// recording and wrote timestamps into a query pool that it had not reset.
+    /// </summary>
     private void BeginVulkanGpuProfilerQueries(CommandBuffer commandBuffer, int frameSlot)
     {
+        if (!RuntimeEngine.IsRenderThread)
+        {
+            Interlocked.Increment(ref s_backgroundLaneProfilerSkips);
+            return;
+        }
+
+        long backgroundSkips = Interlocked.Read(ref s_backgroundLaneProfilerSkips);
+        if (backgroundSkips != _reportedBackgroundLaneProfilerSkips &&
+            RenderPipelineGpuProfiler.Instance.IsProfilingActive)
+        {
+            _reportedBackgroundLaneProfilerSkips = backgroundSkips;
+            RenderPipelineGpuProfiler.Instance.RecordBackendGpuTimingStatus(
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                VulkanFrameTelemetry.GpuProfilerBackendName,
+                "Primary recordings on a background render lane (VR desktop WorkerRecord) record no GPU timing scopes.");
+        }
+
         FrameTelemetry._vulkanGpuProfilerRecordingActive = false;
         FrameTelemetry._vulkanGpuProfilerRecordingFrameSlot = -1;
         FrameTelemetry._vulkanGpuProfilerNextQuery = 0;
@@ -883,6 +917,9 @@ internal sealed partial class VulkanCommandRuntime
         queryPool = default;
         startQuery = 0;
         endQuery = 0;
+        // The recording cursor belongs to the render thread; see BeginVulkanGpuProfilerQueries.
+        if (!RuntimeEngine.IsRenderThread)
+            return false;
         int frameSlot = FrameTelemetry._vulkanGpuProfilerRecordingFrameSlot;
         if (!FrameTelemetry._vulkanGpuProfilerRecordingActive ||
             FrameTelemetry._vulkanGpuProfilerQueryPools is not { } queryPools ||
