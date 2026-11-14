@@ -27,6 +27,7 @@ public static class DirectionalShadowStaticCacheDiagnostics
     private static long s_overlayFrames;
     private static long s_dynamicRecordDraws;
     private static long s_staticRecordCount;
+    private static long s_pageLayerInitializations;
     private static long s_lastLogTimestamp;
 
     /// <summary>Casters that motion made dynamic.</summary>
@@ -81,6 +82,13 @@ public static class DirectionalShadowStaticCacheDiagnostics
             Interlocked.Increment(ref s_overlayFrames);
     }
 
+    /// <summary>Page layers that the lane moved into the attachment layout before a copy, because they had no layout of their own yet.</summary>
+    public static long PageLayerInitializations => Interlocked.Read(ref s_pageLayerInitializations);
+
+    /// <summary>Counts one page layer initialization before a copy.</summary>
+    public static void RecordPageLayerInitialization()
+        => Interlocked.Increment(ref s_pageLayerInitializations);
+
     /// <summary>Counts dynamic caster records drawn over a copied static tile.</summary>
     public static void RecordDynamicDraws(int records)
         => Interlocked.Add(ref s_dynamicRecordDraws, records);
@@ -102,7 +110,7 @@ public static class DirectionalShadowStaticCacheDiagnostics
             LogFileName,
             $"{DateTimeOffset.Now:O} DirectionalShadow.StaticCache: " +
             $"staticRenders={StaticRenders} copies={Copies} overlayFrames={OverlayFrames} " +
-            $"dynamicRecordDraws={DynamicRecordDraws} lastStaticRecords={Interlocked.Read(ref s_staticRecordCount)} " +
+            $"dynamicRecordDraws={DynamicRecordDraws} pageLayerInitializations={PageLayerInitializations} lastStaticRecords={Interlocked.Read(ref s_staticRecordCount)} " +
             $"promotions={Promotions} demotions={Demotions} demotionBatches={DemotionBatches} pendingDemotions={PendingDemotions} " +
             $"causes: disabled={GetCauseCount(EDirectionalShadowStaticCacheCause.Disabled)} " +
             $"outOfScope={GetCauseCount(EDirectionalShadowStaticCacheCause.OutOfScope)} " +

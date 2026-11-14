@@ -84,8 +84,14 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         if (payload.DirectionalShadowResources.IsValid)
+        {
+            // GPU caster selection has no CPU record masks, so the static cache does not run.
+            if (lane.StaticCacheCause is { } gpuCause)
+                DirectionalShadowStaticCacheDiagnostics.RecordCause(gpuCause);
+            DirectionalShadowStaticCacheDiagnostics.WriteIfDue();
             return RecordAdvancedDirectionalShadowGpuPayload(
                 ref state, in payload, in info, bins);
+        }
 
         if (state.RenderScope.IsActive)
             EndActiveRenderPass(ref state);
@@ -318,6 +324,29 @@ internal sealed partial class VulkanCommandRuntime
             PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit;
         const AccessFlags DepthAccess =
             AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit;
+        // A page layer that was never drawn has no layout in this command buffer and no
+        // tracked layout of its own. The blit barrier would then start from the layout tracked
+        // for the whole texture (other layers), not from the layer's real UNDEFINED layout, and
+        // a later sampled read of the layer fails validation. In that case only, an empty
+        // render scope on the page moves the layer into the attachment layout first: it loads
+        // the page (no clear), so other tiles keep their content, and it records the layer's
+        // access state, which the copy barrier then uses.
+        ImageSubresourceRange destinationRange = new()
+        {
+            AspectMask = NormalizeBarrierAspectMask(destination.Format, destination.AspectMask),
+            BaseMipLevel = destination.MipLevel,
+            LevelCount = 1u,
+            BaseArrayLayer = destination.BaseArrayLayer,
+            LayerCount = 1u,
+        };
+        if (!TryGetRecordedImageAccessState(state.CommandBuffer, destination.Image, destinationRange, out _) &&
+            !TryGetTrackedImageLayout(destination.Image, destinationRange, out _))
+        {
+            BeginRenderPassForTarget(ref state, page, passIndex, state.ActiveContext);
+            EndActiveRenderPass(ref state);
+            DirectionalShadowStaticCacheDiagnostics.RecordPageLayerInitialization();
+        }
+
         TransitionPreparedImageForBlit(
             state.CommandBuffer, source, source.PreferredLayout, ImageLayout.TransferSrcOptimal,
             source.AccessMask, AccessFlags.TransferReadBit, source.StageMask, PipelineStageFlags.TransferBit);
