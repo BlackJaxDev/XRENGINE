@@ -563,7 +563,12 @@ public unsafe partial class OpenXRAPI
 
             // Late-update: refresh tracked poses as close to rendering as possible.
             // This updates the view poses used for projection submission and device transforms.
-            if (_sessionBegun && Volatile.Read(ref _pendingXrFrame) != 0)
+            // Only a render frame that submits the prepared XR frame needs it. While a frame is
+            // begun but not yet collected and swapped, the render loop can run many times, and
+            // each late locate and action sync is a runtime call whose result no frame uses.
+            if (_sessionBegun &&
+                Volatile.Read(ref _pendingXrFrame) != 0 &&
+                Volatile.Read(ref _framePrepared) != 0)
             {
                 using var latePoseSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.LatePose");
                 // Capture predicted pose before late update for debug comparison.
