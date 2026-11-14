@@ -437,6 +437,16 @@ submission strategy selects the caster producer:
   skinned draw without a prepared deformation record casts nothing; it never
   falls back to the bind pose. The deformation stage runs before the directional
   shadow raster in the Advanced frame contract.
+  The CPU side does not count rejected skinned shadow records, because a
+  recorded frame cannot contain one. The shadow lane draws the records of the
+  visibility geometry stream of the frame
+  (`VulkanPreparedStableBinStream.TryBuildVisibilityGeometryStream`). That build
+  writes an active deformation record for each skinned payload, from the
+  deformation slice and the canonical draw of the same publication. If a skinned
+  payload has no matching slice, the build fails with a reason and the Advanced
+  frame is deferred; it is not drawn without the avatar. The vertex-stage
+  rejection is a GPU guard only. The CPU cannot see the remaining GPU case: a
+  deformation dispatch that was recorded but did not write its vertices.
 - `GpuMeshletInstrumented` and every other strategy keep the generic path with
   an explicit reason.
 
