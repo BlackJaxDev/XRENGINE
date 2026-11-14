@@ -430,7 +430,13 @@ submission strategy selects the caster producer:
   when it first resolves a meshlet frame to this producer. The shadow vertex stage
   reports a static meshlet payload as an indexed producer, so masked coverage
   decodes index-buffer triangles. A skinned meshlet bin has no indexed shadow
-  producer and rejects the group, which then stays on the generic path.
+  producer yet: shadow preparation gives it no shadow pipeline and the lane
+  recorder skips it, so the static casters of the frame still render. The
+  skinned casters then cast no directional shadow in meshlet frames. The
+  visibility pipeline runtime writes the number of skipped skinned records to
+  the auxiliary log `advanced-directional-shadow-lane.log` whenever the number
+  changes. Meshlet frames use the strict lane (no generic fallback), so before
+  this skip one skinned bin removed every directional shadow of the frame.
 - `GpuMeshletInstrumented` and every other strategy keep the generic path with
   an explicit reason.
 
