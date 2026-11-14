@@ -355,6 +355,11 @@ public static class XREngineEnvironmentVariables
     /// per-renderer path instead of the Advanced directional shadow raster lane.
     /// </summary>
     public const string AdvancedDirectionalShadowLane = "XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE";
+    /// <summary>
+    /// Set to <c>0</c> to turn off the static caster tile of directional cascade 0 in the
+    /// Advanced directional shadow lane: every cascade refresh draws all casters.
+    /// </summary>
+    public const string DirectionalShadowStaticCache = "XRE_DIRECTIONAL_SHADOW_STATIC_CACHE";
     public const string VulkanCommandBufferLabels = "XRE_VULKAN_COMMAND_BUFFER_LABELS";
     public const string VulkanCommandChains = "XRE_VULKAN_COMMAND_CHAINS";
     public const string VulkanCommandChainsSingleThread = "XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD";

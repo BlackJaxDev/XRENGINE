@@ -157,6 +157,11 @@ namespace XREngine.Components.Lights
             // Caster change epoch of each cascade. It advances when a changed shadow caster
             // box meets the cascade volume, and it is the cascade's caster command signature.
             public readonly ulong[] CascadeCasterEpochs = new ulong[MaxCascadeRenderCount];
+            // Per slice index: advances when a static caster change (or a lost record) meets
+            // the cascade tile. The static caster tile of a cascade is valid only for the epoch
+            // that it was drawn with. A change of a dynamic caster does not advance it, because
+            // the static tile does not contain dynamic casters.
+            public readonly ulong[] CascadeStaticCasterEpochs = new ulong[MaxCascadeRenderCount];
             // Light-space bounds of the receiver slice of each cascade (the frustum slice
             // corners, before the sphere fit), per slice index, and the light basis they use.
             public readonly Vector3[] ReceiverFootprintMinLS = new Vector3[MaxCascadeRenderCount];
@@ -4548,8 +4553,16 @@ namespace XREngine.Components.Lights
         /// fit sphere alone is not used: a camera-centred fit holds the camera area in every
         /// cascade, so a caster near the camera would mark every cascade. With
         /// <paramref name="allChanged"/> (a lost record) every cascade advances.
+        /// The static caster epoch of a cascade advances when a change of a static caster
+        /// (<paramref name="dynamicChanges"/> false) meets the cascade tile, when a pending
+        /// region marks the cascade, or with <paramref name="allChanged"/>. The static caster
+        /// tile of the cascade is then stale, even when no receiver sees the change yet.
         /// </summary>
-        internal void MarkDirectionalCascadeCasterChanges(ShadowRequestSource source, ReadOnlySpan<AABB> changes, bool allChanged)
+        internal void MarkDirectionalCascadeCasterChanges(
+            ShadowRequestSource source,
+            ReadOnlySpan<AABB> changes,
+            ReadOnlySpan<bool> dynamicChanges,
+            bool allChanged)
         {
             ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop
@@ -4568,6 +4581,9 @@ namespace XREngine.Components.Lights
                     bool mark = allChanged ||
                         (state.PendingDirtyValid[i] &&
                          ReceiverFootprintMeets(footprintMin, footprintMax, hull, planes, state.PendingDirtyMinLS[i], state.PendingDirtyMaxLS[i]));
+                    // A pending region can hold static changes, so its mark also makes the
+                    // static tile stale.
+                    bool staticMark = mark;
 
                     CascadeShadowSlice slice = state.Slices[i];
                     Vector3 tileCenter = Vector3.Transform(slice.Center, worldToLight);
@@ -4593,12 +4609,23 @@ namespace XREngine.Components.Lights
                         previousInnerMax = previousCenter + inner;
                     }
 
-                    for (int b = 0; b < changes.Length && !mark; b++)
+                    for (int b = 0; b < changes.Length && !(mark && staticMark); b++)
                     {
+                        bool staticChange = (uint)b >= (uint)dynamicChanges.Length || !dynamicChanges[b];
+                        // A dynamic change cannot change the static tile, so once the cascade is
+                        // marked it needs no more tests.
+                        if (mark && !staticChange)
+                            continue;
+
                         LightSpaceBounds(changes[b], worldToLight, out Vector3 min, out Vector3 max);
+                        bool meetsTile =
+                            min.X <= tileMax.X && max.X >= tileMin.X &&
+                            min.Y <= tileMax.Y && max.Y >= tileMin.Y &&
+                            max.Z >= tileMin.Z;
                         if (ReceiverFootprintMeets(footprintMin, footprintMax, hull, planes, min, max))
                         {
                             mark = true;
+                            staticMark |= staticChange;
                         }
                         else if (hasPrevious &&
                             ReceiverFootprintMeets(previousFootprintMin, previousFootprintMax, previousHull, previousPlanes, min, max) &&
@@ -4606,11 +4633,11 @@ namespace XREngine.Components.Lights
                               min.Y >= previousInnerMin.Y && max.Y <= previousInnerMax.Y))
                         {
                             mark = true;
+                            staticMark |= staticChange;
                         }
-                        else if (min.X <= tileMax.X && max.X >= tileMin.X &&
-                            min.Y <= tileMax.Y && max.Y >= tileMin.Y &&
-                            max.Z >= tileMin.Z)
+                        else if (meetsTile)
                         {
+                            staticMark |= staticChange;
                             if (state.PendingDirtyValid[i])
                             {
                                 state.PendingDirtyMinLS[i] = Vector3.Min(state.PendingDirtyMinLS[i], min);
@@ -4627,7 +4654,28 @@ namespace XREngine.Components.Lights
 
                     if (mark)
                         state.CascadeCasterEpochs[i]++;
+                    if (staticMark)
+                        state.CascadeStaticCasterEpochs[i]++;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Returns the static caster epoch of one cascade of <paramref name="source"/>
+        /// (see <see cref="MarkDirectionalCascadeCasterChanges"/>), or 0 when the cascade has
+        /// no slice.
+        /// </summary>
+        internal ulong GetDirectionalCascadeStaticCasterEpoch(ShadowRequestSource source, int cascadeIndex)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                return (uint)cascadeIndex < (uint)MaxCascadeRenderCount
+                    ? state.CascadeStaticCasterEpochs[cascadeIndex]
+                    : 0UL;
             }
         }
 

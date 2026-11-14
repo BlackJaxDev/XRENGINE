@@ -17,6 +17,10 @@ public partial class VisualScene3D
 
     private readonly Vector3[] _shadowCasterChangeMin = new Vector3[ShadowCasterChangeCapacity];
     private readonly Vector3[] _shadowCasterChangeMax = new Vector3[ShadowCasterChangeCapacity];
+    // True when the record comes from a caster that is dynamic before and after the change
+    // (see RenderInfo3D.IsShadowCasterDynamic). Such a change does not change the static
+    // caster content of a cascade.
+    private readonly bool[] _shadowCasterChangeDynamic = new bool[ShadowCasterChangeCapacity];
     // Sequence number + 1 of the record that a slot holds; 0 for an empty slot. A writer
     // stores it after the box, so a reader that sees the expected stamp sees the box.
     private readonly long[] _shadowCasterChangeStamps = new long[ShadowCasterChangeCapacity];
@@ -27,9 +31,11 @@ public partial class VisualScene3D
     /// and <paramref name="after"/>: it moved, its deformation produced a new pose, or its
     /// cast-shadow flag changed. Any thread can call it; it takes no lock and allocates
     /// nothing. The directional cascades that the box meets re-render in the next plan
-    /// frame.
+    /// frame. <paramref name="dynamicCaster"/> is true when the caster was dynamic before the
+    /// change and stays dynamic: the static caster tile of a cascade does not contain it, so
+    /// the change does not make that tile stale.
     /// </summary>
-    public void RecordShadowCasterChange(in Box? before, in Box? after)
+    public void RecordShadowCasterChange(in Box? before, in Box? after, bool dynamicCaster = false)
     {
         if (!before.HasValue && !after.HasValue)
             return;
@@ -52,6 +58,7 @@ public partial class VisualScene3D
         int slot = (int)(sequence % ShadowCasterChangeCapacity);
         _shadowCasterChangeMin[slot] = min;
         _shadowCasterChangeMax[slot] = max;
+        _shadowCasterChangeDynamic[slot] = dynamicCaster;
         Volatile.Write(ref _shadowCasterChangeStamps[slot], sequence + 1);
     }
 
@@ -62,9 +69,10 @@ public partial class VisualScene3D
     /// finished stays for the next drain, so no record is lost. Returns the number of
     /// copied records. <paramref name="overflowed"/> is true when records were lost to a
     /// lapped ring or did not fit in <paramref name="destination"/>; the caller then treats
-    /// every cascade as changed.
+    /// every cascade as changed. <paramref name="dynamicDestination"/> receives the dynamic
+    /// caster flag of each copied record.
     /// </summary>
-    internal int DrainShadowCasterChanges(Span<AABB> destination, ref long readIndex, out bool overflowed)
+    internal int DrainShadowCasterChanges(Span<AABB> destination, Span<bool> dynamicDestination, ref long readIndex, out bool overflowed)
     {
         overflowed = false;
         long write = Volatile.Read(ref _shadowCasterChangeWriteIndex);
@@ -89,13 +97,14 @@ public partial class VisualScene3D
                 continue;
             }
 
-            if (count >= destination.Length)
+            if (count >= destination.Length || count >= dynamicDestination.Length)
             {
                 overflowed = true;
                 readIndex = write;
                 break;
             }
 
+            dynamicDestination[count] = _shadowCasterChangeDynamic[slot];
             destination[count++] = new AABB(_shadowCasterChangeMin[slot], _shadowCasterChangeMax[slot]);
             // A writer that lapped the slot during the copy can tear the box.
             if (Volatile.Read(ref _shadowCasterChangeStamps[slot]) != readIndex + 1)

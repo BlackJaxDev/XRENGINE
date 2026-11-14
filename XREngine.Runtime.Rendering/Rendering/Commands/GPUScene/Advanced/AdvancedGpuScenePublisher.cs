@@ -1649,7 +1649,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         => flags & ~((uint)GPUIndirectRenderFlags.EditorHighlightMask |
             (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
-            (uint)GPUIndirectRenderFlags.ReceiveShadows);
+            (uint)GPUIndirectRenderFlags.ReceiveShadows |
+            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic);
 
     private static ulong ComputeStructuralSignature(
         in DrawMetadata command,
@@ -1711,7 +1712,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         hash = Mix(hash, command.Flags & ((uint)GPUIndirectRenderFlags.EditorHighlightMask |
             (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
-            (uint)GPUIndirectRenderFlags.ReceiveShadows));
+            (uint)GPUIndirectRenderFlags.ReceiveShadows |
+            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic));
         hash = Mix(hash, command.LayerMask);
         hash = Mix(hash, gpuOwnedBounds ? 1u : 0u);
         hash = Mix(hash, sourceFlatDirectionOct);

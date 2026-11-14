@@ -741,6 +741,7 @@ public static partial class RuntimeEngine
                 private bool _holdDirectionalCascadesWhileCameraMoves;
                 private int _maxDirectionalCascadeRefreshesPerFrame = 1;
                 private float _directionalCascadeRefitMarginFraction = 0.1f;
+                private bool _directionalShadowStaticCacheEnabled = true;
                 private EDirectionalCascadeFitCentre _desktopDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
                 private EDirectionalCascadeFitCentre _hmdDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
                 private uint _minShadowAtlasTileResolution = 128u;
@@ -986,6 +987,24 @@ public static partial class RuntimeEngine
                         Volatile.Write(ref _directionalCascadeRefitMarginFraction, clamped);
                     }
                 }
+
+                [Category("Shadows")]
+                [Description("Caches the static shadow casters of directional cascade 0 (desktop source) in a separate depth tile. A refresh caused only by dynamic casters (skinned meshes and moving objects) copies that tile into the cascade tile and draws only the dynamic casters over it. It works in the Advanced directional shadow lane for CPU-direct and meshlet frames. The environment variable XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0 turns it off for the process.")]
+                public bool DirectionalShadowStaticCacheEnabled
+                {
+                    get => Volatile.Read(ref _directionalShadowStaticCacheEnabled) &&
+                        !s_directionalShadowStaticCacheDisabledByEnvironment;
+                    set
+                    {
+                        if (!SetField(ref _directionalShadowStaticCacheEnabled, value))
+                            return;
+
+                        Volatile.Write(ref _directionalShadowStaticCacheEnabled, value);
+                    }
+                }
+
+                private static readonly bool s_directionalShadowStaticCacheDisabledByEnvironment =
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
 
                 [Category("Shadows")]
                 [Description("Centre of the directional cascade fit for the desktop camera. CameraPosition centres each cascade sphere on the camera, so turning the camera does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the camera: finer texels, but a turn refits the cascades.")]

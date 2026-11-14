@@ -493,6 +493,11 @@ namespace XREngine.Scene
         // Shadow caster changes drained for the current plan pass, and the read index of this
         // collection in the scene's change ring.
         private readonly AABB[] _shadowCasterChanges = new AABB[4096];
+        // Per drained change: true when it comes from a caster that stays dynamic.
+        private readonly bool[] _shadowCasterChangeDynamic = new bool[4096];
+        // Cascade refreshes that GrantDirectionalCascadeRefreshes gave in this plan pass. A
+        // demotion batch runs only in a pass without them, so it stays inside the refresh limit.
+        private int _directionalCascadeRefreshGrants;
         private int _shadowCasterChangeCount;
         private bool _shadowCasterChangesOverflowed;
         private long _shadowCasterChangeReadIndex;
@@ -501,7 +506,8 @@ namespace XREngine.Scene
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.UpdateShadowAtlasRequests");
             _shadowCasterChangeCount = World.VisualScene.DrainShadowCasterChanges(
-                _shadowCasterChanges, ref _shadowCasterChangeReadIndex, out _shadowCasterChangesOverflowed);
+                _shadowCasterChanges, _shadowCasterChangeDynamic, ref _shadowCasterChangeReadIndex, out _shadowCasterChangesOverflowed);
+            _directionalCascadeRefreshGrants = 0;
 
             SynchronizeDirectionalShadowAtlasMode();
             PopulateShadowAtlasActiveCameras(scratch);
@@ -513,6 +519,7 @@ namespace XREngine.Scene
             SubmitPointShadowAtlasRequests(scratch);
 
             ShadowAtlas.SolveAllocations();
+            World.VisualScene.ProcessShadowCasterDemotions(releaseAllowed: _directionalCascadeRefreshGrants == 0);
         }
 
         private void SynchronizeDirectionalShadowAtlasMode()
@@ -868,6 +875,7 @@ namespace XREngine.Scene
             light.MarkDirectionalCascadeCasterChanges(
                 source,
                 _shadowCasterChanges.AsSpan(0, _shadowCasterChangeCount),
+                _shadowCasterChangeDynamic.AsSpan(0, _shadowCasterChangeCount),
                 _shadowCasterChangesOverflowed);
             GrantDirectionalCascadeRefreshes(light, source, encoding, activeCascadeCount);
             for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
@@ -974,6 +982,7 @@ namespace XREngine.Scene
 
                 light.GrantDirectionalCascadeRefresh(source, oldest);
                 lastRenderedFrames[oldest] = 0u;
+                _directionalCascadeRefreshGrants++;
             }
         }
 
