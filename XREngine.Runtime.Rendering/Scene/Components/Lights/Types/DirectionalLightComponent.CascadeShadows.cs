@@ -144,6 +144,14 @@ namespace XREngine.Components.Lights
             public int AtlasCascadeRefreshesThisFrame;
             public readonly ulong[] AtlasCollectedContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeRenderRequested = new bool[MaxCascadeRenderCount];
+            // Matrices that the Advanced capture published for planned refreshes. The
+            // next capture checks that the draw committed them.
+            public readonly Matrix4x4[] PlannedRefreshMatrices = new Matrix4x4[MaxCascadeRenderCount];
+            public readonly bool[] PlannedRefreshPending = new bool[MaxCascadeRenderCount];
+            // Planned refreshes that did not commit their matrix, and the Stopwatch time of
+            // the last log entry about them.
+            public long PlannedRefreshNotCommittedCount;
+            public long PlannedRefreshNotCommittedLogTimestamp;
             public readonly bool[] AtlasCascadeCollectVisibleNeeded = new bool[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeSwapNeeded = new bool[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeVisibleSetCached = new bool[MaxCascadeRenderCount];
@@ -1339,6 +1347,89 @@ namespace XREngine.Components.Lights
                         matrices[i] = Matrix4x4.Identity;
                         staleAges[i] = -1.0f;
                     }
+                }
+            }
+        }
+
+        private const string PlannedRefreshLogFileName = "directional-shadow-planned-refresh.log";
+
+        /// <summary>
+        /// Counts a planned cascade refresh that did not commit the matrix that the
+        /// Advanced shading used, and writes the running count to an auxiliary log at most
+        /// every 5 seconds per light and source. The auxiliary log is written in Release
+        /// builds too, so a validation run can count the misses. The caller holds
+        /// <c>_cascadeDataLock</c>.
+        /// </summary>
+        private void LogPlannedRefreshNotCommitted(
+            DirectionalCascadeSourceState state,
+            ShadowRequestSource source,
+            int cascadeIndex)
+        {
+            state.PlannedRefreshNotCommittedCount++;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (state.PlannedRefreshNotCommittedLogTimestamp != 0 &&
+                System.Diagnostics.Stopwatch.GetElapsedTime(state.PlannedRefreshNotCommittedLogTimestamp, now) < TimeSpan.FromSeconds(5))
+                return;
+
+            state.PlannedRefreshNotCommittedLogTimestamp = now;
+            Debug.WriteAuxiliaryLog(
+                PlannedRefreshLogFileName,
+                $"{DateTimeOffset.Now:O} DirectionalShadow.PlannedRefreshNotCommitted: a planned directional cascade refresh did not commit the matrix that the Advanced shading used for one frame. light={ID} source={source} cascade={cascadeIndex} total={state.PlannedRefreshNotCommittedCount}");
+        }
+
+        /// <summary>
+        /// Gives each cascade that this frame refreshes the values of this frame's draw.
+        /// The Advanced capture runs at the swap, before the render thread draws the
+        /// cascades and commits their atlas slots. Without this, a refreshed tile holds
+        /// this frame's fit while its record still holds the previous fit, so shadows
+        /// trail the camera by one frame. The draw uses <c>RenderSliceMatrices</c>, which
+        /// the same swap copied from <c>Slices</c>, so the current slice values are the
+        /// draw values. A cascade without a rendered tile keeps its unsampled record.
+        /// The next call checks that each planned refresh committed its matrix and logs a
+        /// diagnostic when it did not.
+        /// </summary>
+        internal void ApplyPlannedDirectionalCascadeRefreshes(
+            ShadowRequestSource source,
+            Span<DirectionalShadowGpuRecord> records,
+            int cascadeCount)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                int count = Math.Min(
+                    Math.Min(cascadeCount, records.Length),
+                    Math.Min(state.Slices.Count, MaxCascadeRenderCount));
+                for (int i = 0; i < count; i++)
+                {
+                    if (state.PlannedRefreshPending[i])
+                    {
+                        state.PlannedRefreshPending[i] = false;
+                        DirectionalCascadeAtlasSlot committed = state.AtlasSlots[i];
+                        if (!committed.HasCascadeUniformData ||
+                            committed.WorldToLightSpaceMatrix != state.PlannedRefreshMatrices[i])
+                            LogPlannedRefreshNotCommitted(state, resolvedSource, i);
+                    }
+
+                    ref DirectionalShadowGpuRecord record = ref records[i];
+                    if (!state.AtlasCascadeRenderRequested[i] || record.AtlasPacked0.X == 0)
+                        continue;
+
+                    record.RenderedWorldToLight = record.CurrentWorldToLight;
+                    record.RenderedSplitBlendBias = record.CurrentSplitBlendBias;
+                    record.ReceiverOffsetsAge = new(
+                        record.ReceiverOffsetsAge.X,
+                        record.ReceiverOffsetsAge.X,
+                        0.0f,
+                        record.ReceiverOffsetsAge.W);
+                    // The capture then takes the UV rectangle of the planned allocation,
+                    // where this frame's draw writes.
+                    record.AtlasUvScaleBias = Vector4.Zero;
+                    state.PlannedRefreshMatrices[i] = record.CurrentWorldToLight;
+                    state.PlannedRefreshPending[i] = true;
                 }
             }
         }
