@@ -989,7 +989,7 @@ public static partial class RuntimeEngine
                 }
 
                 [Category("Shadows")]
-                [Description("Caches the static shadow casters of directional cascade 0 (desktop source) in a separate depth tile. A refresh caused only by dynamic casters (skinned meshes and moving objects) copies that tile into the cascade tile and draws only the dynamic casters over it. It works in the Advanced directional shadow lane for CPU-direct and meshlet frames. The environment variable XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0 turns it off for the process.")]
+                [Description("Caches the static shadow casters of each directional cascade (desktop source) that has dynamic casters in a separate depth tile. A refresh caused only by dynamic casters (skinned meshes and moving objects) copies that tile into the cascade tile and draws only the dynamic casters over it. It works in the Advanced directional shadow lane for CPU-direct and meshlet frames. The environment variable XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0 turns it off for the process.")]
                 public bool DirectionalShadowStaticCacheEnabled
                 {
                     get => Volatile.Read(ref _directionalShadowStaticCacheEnabled) &&

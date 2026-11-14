@@ -356,7 +356,7 @@ public static class XREngineEnvironmentVariables
     /// </summary>
     public const string AdvancedDirectionalShadowLane = "XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE";
     /// <summary>
-    /// Set to <c>0</c> to turn off the static caster tile of directional cascade 0 in the
+    /// Set to <c>0</c> to turn off the static caster tiles of directional cascades in the
     /// Advanced directional shadow lane: every cascade refresh draws all casters.
     /// </summary>
     public const string DirectionalShadowStaticCache = "XRE_DIRECTIONAL_SHADOW_STATIC_CACHE";

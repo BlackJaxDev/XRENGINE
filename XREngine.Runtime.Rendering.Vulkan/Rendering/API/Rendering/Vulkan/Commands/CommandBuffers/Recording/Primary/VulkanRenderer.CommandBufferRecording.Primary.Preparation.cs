@@ -2249,15 +2249,20 @@ namespace XREngine.Rendering.Vulkan
                             input.Candidates,
                             lane.ViewProjections,
                             lane.AcquireRecordMasks(familyBins.RecordCount));
-                        PrepareDirectionalShadowStaticTile(
+                        PrepareDirectionalShadowStaticTiles(
                             lane,
                             familyBins.Records,
                             input.Candidates,
                             recordingState.Policy.AllowSynchronousResourceUploads);
                     }
-                    else if (lane.StaticTile is not null)
+                    else
                     {
-                        lane.BlockStaticCache(EDirectionalShadowStaticCacheCause.GpuCasterSelection);
+                        ReadOnlySpan<DirectionalCascadeStaticTile?> staticTiles = lane.StaticTiles;
+                        for (int entry = 0; entry < staticTiles.Length; entry++)
+                        {
+                            if (staticTiles[entry] is not null)
+                                lane.BlockStaticCache(entry, EDirectionalShadowStaticCacheCause.GpuCasterSelection);
+                        }
                     }
                     return true;
                 }
@@ -2271,64 +2276,87 @@ namespace XREngine.Rendering.Vulkan
         }
 
         /// <summary>
-        /// Checks that the static caster tile of cascade 0 can be a render target in this
-        /// frame, and computes the static caster record set of cascade 0: the records that
-        /// cast into cascade 0 (record mask bit of the cascade 0 entry) and that do not carry
-        /// GPUIndirectRenderFlags.ShadowCasterDynamic. The record set hash is order
+        /// Checks that the static caster tile of each cascade entry can be a render target in
+        /// this frame, and computes the static caster record set of each such cascade: the
+        /// records that cast into the cascade (record mask bit of the entry) and that do not
+        /// carry GPUIndirectRenderFlags.ShadowCasterDynamic. The record set hash is order
         /// independent and 64 bits wide: a sum and an xor of a 64-bit mix of each record's
         /// draw handle (index and generation). The record set comes from the frozen stream of
         /// canonical scene draws, not from a camera-culled list, and the cascade mask of a
         /// record depends only on its bounds and the cascade matrix. So a camera move inside a
-        /// held fit does not change it. It allocates nothing.
+        /// held fit does not change it. One pass over the records serves all entries. It
+        /// allocates nothing.
         /// </summary>
-        private void PrepareDirectionalShadowStaticTile(
+        private void PrepareDirectionalShadowStaticTiles(
             VulkanAdvancedDirectionalShadowLaneStorage lane,
             ReadOnlySpan<VulkanPreparedStableBinRecord> records,
             ReadOnlySpan<AdvancedVisibilityCandidate> candidates,
             bool allowSynchronousUploads)
         {
-            if (lane.StaticTile is not { } tile || lane.StaticCacheEntry < 0)
-                return;
+            ReadOnlySpan<DirectionalCascadeStaticTile?> tiles = lane.StaticTiles;
+            byte preparedMask = 0;
+            for (int entry = 0; entry < tiles.Length; entry++)
+            {
+                if (tiles[entry] is not { } tile)
+                    continue;
 
-            if (ResourceRuntime.BackendObjects.Get(tile.FrameBuffer) is not VkFrameBuffer wrapper)
-            {
-                lane.BlockStaticCache(EDirectionalShadowStaticCacheCause.TileUnavailable);
-                return;
-            }
-            if (allowSynchronousUploads)
-                wrapper.EnsureCurrent();
-            if (!wrapper.TryCaptureRecordedRenderTargetSnapshot(out VulkanRecordedRenderTargetSnapshot snapshot) ||
-                snapshot.Width != tile.Width || snapshot.Height != tile.Height)
-            {
-                lane.BlockStaticCache(EDirectionalShadowStaticCacheCause.TileUnavailable);
-                return;
-            }
-
-            byte cascadeBit = (byte)(1 << lane.StaticCacheEntry);
-            ReadOnlySpan<byte> masks = lane.RecordMasks;
-            ulong sum = 0UL;
-            ulong xor = 0UL;
-            int count = 0;
-            for (int recordIndex = 0; recordIndex < records.Length && recordIndex < masks.Length; recordIndex++)
-            {
-                ref readonly VulkanPreparedStableBinRecord record = ref records[recordIndex];
-                if ((masks[recordIndex] & cascadeBit) == 0 ||
-                    (record.VisibilityDrawFlags & (uint)GPUIndirectRenderFlags.ShadowCasterDynamic) != 0u)
+                if (ResourceRuntime.BackendObjects.Get(tile.FrameBuffer) is not VkFrameBuffer wrapper)
                 {
+                    lane.BlockStaticCache(entry, EDirectionalShadowStaticCacheCause.TileUnavailable);
                     continue;
                 }
+                if (allowSynchronousUploads)
+                    wrapper.EnsureCurrent();
+                if (!wrapper.TryCaptureRecordedRenderTargetSnapshot(out VulkanRecordedRenderTargetSnapshot snapshot) ||
+                    snapshot.Width != tile.Width || snapshot.Height != tile.Height)
+                {
+                    lane.BlockStaticCache(entry, EDirectionalShadowStaticCacheCause.TileUnavailable);
+                    continue;
+                }
+                preparedMask |= (byte)(1 << entry);
+            }
+            if (preparedMask == 0)
+                return;
+
+            Span<ulong> sums = stackalloc ulong[VulkanAdvancedDirectionalShadowLaneStorage.MaxCascadeCount];
+            Span<ulong> xors = stackalloc ulong[VulkanAdvancedDirectionalShadowLaneStorage.MaxCascadeCount];
+            Span<int> counts = stackalloc int[VulkanAdvancedDirectionalShadowLaneStorage.MaxCascadeCount];
+            sums.Clear();
+            xors.Clear();
+            counts.Clear();
+            ReadOnlySpan<byte> masks = lane.RecordMasks;
+            for (int recordIndex = 0; recordIndex < records.Length && recordIndex < masks.Length; recordIndex++)
+            {
+                byte mask = (byte)(masks[recordIndex] & preparedMask);
+                if (mask == 0)
+                    continue;
+                ref readonly VulkanPreparedStableBinRecord record = ref records[recordIndex];
+                if ((record.VisibilityDrawFlags & (uint)GPUIndirectRenderFlags.ShadowCasterDynamic) != 0u)
+                    continue;
 
                 int payloadIndex = record.VisibilityPayloadIndex;
                 ulong identity = (uint)payloadIndex < (uint)candidates.Length
                     ? ((ulong)candidates[payloadIndex].Draw.Generation << 32) | candidates[payloadIndex].Draw.Index
                     : 0xFFFF_FFFF_0000_0000UL | (uint)recordIndex;
                 ulong mixed = MixStaticRecordIdentity(identity);
-                sum = unchecked(sum + mixed);
-                xor ^= MixStaticRecordIdentity(mixed ^ 0x9E37_79B9_7F4A_7C15UL);
-                count++;
+                ulong mixed2 = MixStaticRecordIdentity(mixed ^ 0x9E37_79B9_7F4A_7C15UL);
+                for (int entry = 0; mask != 0; entry++, mask >>= 1)
+                {
+                    if ((mask & 1) == 0)
+                        continue;
+                    sums[entry] = unchecked(sums[entry] + mixed);
+                    xors[entry] ^= mixed2;
+                    counts[entry]++;
+                }
             }
 
-            lane.SetStaticTilePrepared(sum ^ ((xor << 32) | (xor >> 32)), count);
+            for (int entry = 0; entry < tiles.Length; entry++)
+            {
+                if ((preparedMask & (1 << entry)) == 0)
+                    continue;
+                ulong xor = xors[entry];
+                lane.SetStaticTilePrepared(entry, sums[entry] ^ ((xor << 32) | (xor >> 32)), counts[entry]);
+            }
         }
 
         /// <summary>SplitMix64 finalizer: a 64-bit mix with good bit diffusion.</summary>

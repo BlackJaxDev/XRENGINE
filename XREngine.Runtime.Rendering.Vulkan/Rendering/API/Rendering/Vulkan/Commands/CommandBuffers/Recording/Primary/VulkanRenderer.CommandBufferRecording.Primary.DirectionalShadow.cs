@@ -86,8 +86,7 @@ internal sealed partial class VulkanCommandRuntime
         if (payload.DirectionalShadowResources.IsValid)
         {
             // GPU caster selection has no CPU record masks, so the static cache does not run.
-            if (lane.StaticCacheCause is { } gpuCause)
-                DirectionalShadowStaticCacheDiagnostics.RecordCause(gpuCause);
+            RecordDirectionalShadowStaticCacheCauses(lane);
             DirectionalShadowStaticCacheDiagnostics.WriteIfDue();
             return RecordAdvancedDirectionalShadowGpuPayload(
                 ref state, in payload, in info, bins);
@@ -101,41 +100,43 @@ internal sealed partial class VulkanCommandRuntime
         // before the first cascade draw, exactly as for the visibility raster.
         EmitAdvancedVisibilityRasterReadBarrier(ref state);
 
-        // Static cache of cascade 0: draw the static casters into the static tile when its
-        // key does not match, then copy the tile into the cascade tile. The cascade loop
-        // below then draws only the dynamic casters of that cascade over the copy.
-        int cacheEntry = -1;
-        if (lane.UsesStaticCache)
+        // Static cache: for each cascade with a static tile, draw the static casters into the
+        // tile when its key does not match, then copy the tile into the cascade tile. The
+        // cascade loop below then draws only the dynamic casters of that cascade over the copy.
+        // All copies happen before the page scope begins.
+        byte cachedEntries = 0;
+        ReadOnlySpan<DirectionalCascadeStaticTile?> staticTiles = lane.StaticTiles;
+        for (int entry = 0; entry < lane.CascadeCount; entry++)
         {
-            cacheEntry = lane.StaticCacheEntry;
-            DirectionalCascadeStaticTile tile = lane.StaticTile!;
+            if (!lane.UsesStaticCache(entry))
+                continue;
+
+            DirectionalCascadeStaticTile tile = staticTiles[entry]!;
             EDirectionalShadowStaticCacheCause? mismatch =
-                MatchDirectionalShadowStaticTile(lane, tile, payload.Request.RenderFrameId);
+                MatchDirectionalShadowStaticTile(lane, entry, tile, payload.Request.RenderFrameId);
             if (mismatch is { } cause)
             {
                 DirectionalShadowStaticCacheDiagnostics.RecordCause(cause);
                 int staticRecords = RecordDirectionalShadowStaticTile(
-                    ref state, in payload, in info, bins, lane, tile, cacheEntry);
+                    ref state, in payload, in info, bins, lane, tile, entry);
                 // The key moves with the recorded content. A group that the lane declines
-                // never reaches this method, so its tile keeps the key of its content.
+                // never reaches this method, so its tiles keep the keys of their content.
                 tile.RecordStaticDraw(
                     payload.Request.RenderFrameId,
-                    in lane.ViewProjections[cacheEntry],
-                    in lane.TileRects[cacheEntry],
+                    in lane.ViewProjections[entry],
+                    in lane.TileRects[entry],
                     lane.Target!,
-                    lane.StaticCasterEpoch,
-                    lane.StaticRecordSetHash,
-                    lane.StaticRecordCount);
+                    lane.StaticCasterEpochs[entry],
+                    lane.StaticRecordSetHashes[entry],
+                    lane.StaticRecordCounts[entry]);
                 DirectionalShadowStaticCacheDiagnostics.RecordStaticRender(staticRecords);
             }
             CopyDirectionalShadowStaticTile(
-                ref state, tile, lane.Target!, lane.Scissors[cacheEntry], info.PassIndex);
+                ref state, tile, lane.Target!, lane.Scissors[entry], info.PassIndex);
             DirectionalShadowStaticCacheDiagnostics.RecordCopy(overlayOnly: mismatch is null);
+            cachedEntries |= (byte)(1 << entry);
         }
-        else if (lane.StaticCacheCause is { } blocked)
-        {
-            DirectionalShadowStaticCacheDiagnostics.RecordCause(blocked);
-        }
+        RecordDirectionalShadowStaticCacheCauses(lane);
         DirectionalShadowStaticCacheDiagnostics.WriteIfDue();
 
         // The page is loaded, never cleared as a whole: other lights' tiles stay
@@ -164,7 +165,7 @@ internal sealed partial class VulkanCommandRuntime
             Viewport viewport = viewports[cascade];
             Rect2D scissor = scissors[cascade];
             SetViewportScissorTracked(state.CommandBuffer, in viewport, in scissor);
-            if (cascade == cacheEntry)
+            if ((cachedEntries & (1 << cascade)) != 0)
             {
                 // The copy of the static tile already filled this tile.
                 int dynamicRecords = RecordDirectionalShadowCascadeCasters(
@@ -194,13 +195,14 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     /// <summary>
-    /// Compares the key of the static caster tile with cascade 0 of this group. Returns null
+    /// Compares the key of the static caster tile with the cascade of entry <paramref name="entry"/>. Returns null
     /// when the tile holds exactly the static casters that this frame would draw: the same
     /// matrix (all 16 values), tile rectangle and page, static caster epoch and static record
     /// set, from an earlier render frame. Otherwise returns the first reason that fails.
     /// </summary>
     private static EDirectionalShadowStaticCacheCause? MatchDirectionalShadowStaticTile(
         VulkanAdvancedDirectionalShadowLaneStorage lane,
+        int entry,
         DirectionalCascadeStaticTile tile,
         ulong renderFrameId)
     {
@@ -211,7 +213,6 @@ internal sealed partial class VulkanCommandRuntime
         if (tile.RecordedRenderFrameId >= renderFrameId)
             return EDirectionalShadowStaticCacheCause.SameFrame;
 
-        int entry = lane.StaticCacheEntry;
         if (tile.RecordedViewProjection != lane.ViewProjections[entry])
             return EDirectionalShadowStaticCacheCause.FitMismatch;
 
@@ -224,10 +225,10 @@ internal sealed partial class VulkanCommandRuntime
             return EDirectionalShadowStaticCacheCause.TileMismatch;
         }
 
-        if (tile.RecordedStaticEpoch != lane.StaticCasterEpoch)
+        if (tile.RecordedStaticEpoch != lane.StaticCasterEpochs[entry])
             return EDirectionalShadowStaticCacheCause.StaticEpochChanged;
-        if (tile.RecordedRecordSetHash != lane.StaticRecordSetHash ||
-            tile.RecordedRecordCount != lane.StaticRecordCount)
+        if (tile.RecordedRecordSetHash != lane.StaticRecordSetHashes[entry] ||
+            tile.RecordedRecordCount != lane.StaticRecordCounts[entry])
         {
             return EDirectionalShadowStaticCacheCause.RecordSetChanged;
         }
@@ -236,8 +237,8 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     /// <summary>
-    /// Draws the static casters of cascade 0 into the static tile: begins rendering into the
-    /// tile framebuffer, clears it, draws the static records with the cascade 0 matrix, and
+    /// Draws the static casters of one cascade into its static tile: begins rendering into the
+    /// tile framebuffer, clears it, draws the static records with the cascade matrix, and
     /// ends rendering. The tile has the size of the cascade's inner tile rectangle, so each
     /// texel gets the same depth as the same texel of a full cascade draw. Returns the number
     /// of static records drawn.
@@ -278,7 +279,7 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     /// <summary>
-    /// Copies the static tile into the inner rectangle of cascade 0 on the atlas page
+    /// Copies the static tile into the inner rectangle of its cascade on the atlas page
     /// (<paramref name="pageScissor"/>). Both images move to transfer layouts with barriers
     /// that come from their recorded access state, and return to the depth attachment layout.
     /// The copy covers the inner rectangle: the cascade draw writes only that rectangle (its
@@ -370,6 +371,17 @@ internal sealed partial class VulkanCommandRuntime
         TransitionPreparedImageForBlit(
             state.CommandBuffer, destination, ImageLayout.TransferDstOptimal, ImageLayout.DepthStencilAttachmentOptimal,
             AccessFlags.TransferWriteBit, DepthAccess, PipelineStageFlags.TransferBit, DepthStages);
+    }
+
+    /// <summary>Counts the reason of each entry that has no static cache in this frame.</summary>
+    private static void RecordDirectionalShadowStaticCacheCauses(VulkanAdvancedDirectionalShadowLaneStorage lane)
+    {
+        ReadOnlySpan<EDirectionalShadowStaticCacheCause?> causes = lane.StaticCacheCauses;
+        for (int entry = 0; entry < causes.Length; entry++)
+        {
+            if (!lane.UsesStaticCache(entry) && causes[entry] is { } cause)
+                DirectionalShadowStaticCacheDiagnostics.RecordCause(cause);
+        }
     }
 
     /// <summary>Clears one tile of the active depth target to the lane's depth clear value.</summary>

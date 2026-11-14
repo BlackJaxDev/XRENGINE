@@ -19,6 +19,12 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
     private readonly Viewport[] _viewports = new Viewport[MaxCascadeCount];
     private readonly Rect2D[] _scissors = new Rect2D[MaxCascadeCount];
     private readonly BoundingRectangle[] _tileRects = new BoundingRectangle[MaxCascadeCount];
+    private readonly DirectionalCascadeStaticTile?[] _staticTiles = new DirectionalCascadeStaticTile?[MaxCascadeCount];
+    private readonly ulong[] _staticCasterEpochs = new ulong[MaxCascadeCount];
+    private readonly EDirectionalShadowStaticCacheCause?[] _staticCacheCauses = new EDirectionalShadowStaticCacheCause?[MaxCascadeCount];
+    private readonly bool[] _staticTilePrepared = new bool[MaxCascadeCount];
+    private readonly ulong[] _staticRecordSetHashes = new ulong[MaxCascadeCount];
+    private readonly int[] _staticRecordCounts = new int[MaxCascadeCount];
     private byte[] _recordMasks = [];
     private int _recordMaskCount;
 
@@ -29,25 +35,24 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
     internal ulong RenderFrameId { get; private set; }
     internal XRFrameBuffer? Target { get; private set; }
 
-    /// <summary>Static caster tile of cascade 0, or null (see AdvancedDirectionalShadowLaneRequest.StaticTile).</summary>
-    internal DirectionalCascadeStaticTile? StaticTile { get; private set; }
-    /// <summary>Entry index of cascade 0 when <see cref="StaticTile"/> is set; otherwise -1.</summary>
-    internal int StaticCacheEntry { get; private set; } = -1;
-    /// <summary>Static caster epoch of cascade 0 in this frame.</summary>
-    internal ulong StaticCasterEpoch { get; private set; }
+    /// <summary>Static caster tile of each entry, or null (see AdvancedDirectionalShadowLaneRequest.StaticTiles).</summary>
+    internal ReadOnlySpan<DirectionalCascadeStaticTile?> StaticTiles => _staticTiles.AsSpan(0, CascadeCount);
+    /// <summary>Static caster epoch of each entry's cascade in this frame.</summary>
+    internal ReadOnlySpan<ulong> StaticCasterEpochs => _staticCasterEpochs.AsSpan(0, CascadeCount);
     /// <summary>
-    /// Reason why the static cache does not run for this group, or null when it runs (or the
-    /// group does not draw cascade 0). Preparation can set it after the capture.
+    /// Reason why the static cache does not run for each entry, or null when it runs.
+    /// Preparation can set it after the capture.
     /// </summary>
-    internal EDirectionalShadowStaticCacheCause? StaticCacheCause { get; private set; }
-    /// <summary>True after preparation found the static tile target ready for this frame.</summary>
-    internal bool StaticTilePrepared { get; private set; }
-    /// <summary>64-bit order-independent hash of the static caster records of cascade 0.</summary>
-    internal ulong StaticRecordSetHash { get; private set; }
-    /// <summary>Number of static caster records of cascade 0.</summary>
-    internal int StaticRecordCount { get; private set; }
-    /// <summary>True when the static cache runs for this group in this frame.</summary>
-    internal bool UsesStaticCache => StaticTile is not null && StaticTilePrepared && StaticCacheEntry >= 0;
+    internal ReadOnlySpan<EDirectionalShadowStaticCacheCause?> StaticCacheCauses => _staticCacheCauses.AsSpan(0, CascadeCount);
+    /// <summary>64-bit order-independent hash of the static caster records of each entry's cascade.</summary>
+    internal ReadOnlySpan<ulong> StaticRecordSetHashes => _staticRecordSetHashes.AsSpan(0, CascadeCount);
+    /// <summary>Number of static caster records of each entry's cascade.</summary>
+    internal ReadOnlySpan<int> StaticRecordCounts => _staticRecordCounts.AsSpan(0, CascadeCount);
+
+    /// <summary>True when the static cache runs for entry <paramref name="entry"/> in this frame.</summary>
+    internal bool UsesStaticCache(int entry)
+        => (uint)entry < (uint)CascadeCount && _staticTiles[entry] is not null && _staticTilePrepared[entry];
+
     /// <summary>Inner tile rectangles (bottom-left origin, page pixels), one per cascade.</summary>
     internal ReadOnlySpan<BoundingRectangle> TileRects => _tileRects.AsSpan(0, CascadeCount);
 
@@ -102,31 +107,30 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         CullingLayerMask = source.CullingLayerMask;
         RenderFrameId = renderFrameId;
         Target = source.PageFrameBuffer;
-        StaticTile = source.StaticTile;
-        StaticCacheEntry = source.StaticTile is not null ? source.StaticCacheEntry : -1;
-        StaticCasterEpoch = source.StaticCasterEpoch;
-        StaticCacheCause = source.StaticCacheCause;
+        source.StaticTiles.CopyTo(_staticTiles);
+        source.StaticCasterEpochs.CopyTo(_staticCasterEpochs);
+        source.StaticCacheCauses.CopyTo(_staticCacheCauses);
         failureReason = "Ready";
         return true;
     }
 
     /// <summary>
-    /// Records that preparation found the static tile target ready, with the static caster
-    /// record set of cascade 0 for this frame.
+    /// Records that preparation found the static tile target of entry <paramref name="entry"/>
+    /// ready, with the static caster record set of its cascade for this frame.
     /// </summary>
-    internal void SetStaticTilePrepared(ulong recordSetHash, int recordCount)
+    internal void SetStaticTilePrepared(int entry, ulong recordSetHash, int recordCount)
     {
-        StaticTilePrepared = true;
-        StaticRecordSetHash = recordSetHash;
-        StaticRecordCount = recordCount;
-        StaticCacheCause = null;
+        _staticTilePrepared[entry] = true;
+        _staticRecordSetHashes[entry] = recordSetHash;
+        _staticRecordCounts[entry] = recordCount;
+        _staticCacheCauses[entry] = null;
     }
 
-    /// <summary>Records why the static cache cannot run for this group in this frame.</summary>
-    internal void BlockStaticCache(EDirectionalShadowStaticCacheCause cause)
+    /// <summary>Records why the static cache cannot run for entry <paramref name="entry"/> in this frame.</summary>
+    internal void BlockStaticCache(int entry, EDirectionalShadowStaticCacheCause cause)
     {
-        StaticTilePrepared = false;
-        StaticCacheCause = cause;
+        _staticTilePrepared[entry] = false;
+        _staticCacheCauses[entry] = cause;
     }
 
     /// <summary>Copies one sealed lane without retaining the mutable queue ring slot.</summary>
@@ -141,13 +145,12 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         source.Viewports.CopyTo(_viewports);
         source.Scissors.CopyTo(_scissors);
         source.TileRects.CopyTo(_tileRects);
-        StaticTile = source.StaticTile;
-        StaticCacheEntry = source.StaticCacheEntry;
-        StaticCasterEpoch = source.StaticCasterEpoch;
-        StaticCacheCause = source.StaticCacheCause;
-        StaticTilePrepared = source.StaticTilePrepared;
-        StaticRecordSetHash = source.StaticRecordSetHash;
-        StaticRecordCount = source.StaticRecordCount;
+        source._staticTiles.AsSpan().CopyTo(_staticTiles);
+        source._staticCasterEpochs.AsSpan().CopyTo(_staticCasterEpochs);
+        source._staticCacheCauses.AsSpan().CopyTo(_staticCacheCauses);
+        source._staticTilePrepared.AsSpan().CopyTo(_staticTilePrepared);
+        source._staticRecordSetHashes.AsSpan().CopyTo(_staticRecordSetHashes);
+        source._staticRecordCounts.AsSpan().CopyTo(_staticRecordCounts);
         CascadeCount = source.CascadeCount;
         DepthClearValue = source.DepthClearValue;
         ReversedDepth = source.ReversedDepth;
@@ -179,12 +182,11 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         RenderFrameId = 0UL;
         Target = null;
         _recordMaskCount = 0;
-        StaticTile = null;
-        StaticCacheEntry = -1;
-        StaticCasterEpoch = 0UL;
-        StaticCacheCause = null;
-        StaticTilePrepared = false;
-        StaticRecordSetHash = 0UL;
-        StaticRecordCount = 0;
+        Array.Clear(_staticTiles);
+        Array.Clear(_staticCasterEpochs);
+        Array.Clear(_staticCacheCauses);
+        Array.Clear(_staticTilePrepared);
+        Array.Clear(_staticRecordSetHashes);
+        Array.Clear(_staticRecordCounts);
     }
 }

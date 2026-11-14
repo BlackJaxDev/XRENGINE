@@ -17,6 +17,9 @@ public sealed class AdvancedDirectionalShadowLaneRequest
     private readonly Matrix4x4[] _viewProjections = new Matrix4x4[MaxCascadeCount];
     private readonly BoundingRectangle[] _tileRects = new BoundingRectangle[MaxCascadeCount];
     private readonly int[] _cascadeIndices = new int[MaxCascadeCount];
+    private readonly DirectionalCascadeStaticTile?[] _staticTiles = new DirectionalCascadeStaticTile?[MaxCascadeCount];
+    private readonly ulong[] _staticCasterEpochs = new ulong[MaxCascadeCount];
+    private readonly EDirectionalShadowStaticCacheCause?[] _staticCacheCauses = new EDirectionalShadowStaticCacheCause?[MaxCascadeCount];
 
     /// <summary>Depth-only atlas page the cascades render into.</summary>
     public XRFrameBuffer? PageFrameBuffer { get; private set; }
@@ -49,22 +52,16 @@ public sealed class AdvancedDirectionalShadowLaneRequest
     public ReadOnlySpan<int> CascadeIndices => _cascadeIndices.AsSpan(0, CascadeCount);
 
     /// <summary>
-    /// Static caster tile of cascade 0, or null when the static cache does not apply to this
-    /// group. See <see cref="StaticCacheEntry"/> and <see cref="StaticCacheCause"/>.
+    /// Static caster tile of each entry, or null when the static cache does not apply to that
+    /// cascade in this frame (see <see cref="StaticCacheCauses"/>).
     /// </summary>
-    public DirectionalCascadeStaticTile? StaticTile { get; private set; }
+    public ReadOnlySpan<DirectionalCascadeStaticTile?> StaticTiles => _staticTiles.AsSpan(0, CascadeCount);
 
-    /// <summary>Entry index of cascade 0 when <see cref="StaticTile"/> is set; otherwise -1.</summary>
-    public int StaticCacheEntry { get; private set; } = -1;
+    /// <summary>Static caster epoch of each entry's cascade in this frame (see DirectionalLightComponent.MarkDirectionalCascadeCasterChanges).</summary>
+    public ReadOnlySpan<ulong> StaticCasterEpochs => _staticCasterEpochs.AsSpan(0, CascadeCount);
 
-    /// <summary>Static caster epoch of cascade 0 in this frame (see DirectionalLightComponent.MarkDirectionalCascadeCasterChanges).</summary>
-    public ulong StaticCasterEpoch { get; private set; }
-
-    /// <summary>
-    /// Why the static cache does not apply to this group, when the group draws cascade 0 and
-    /// <see cref="StaticTile"/> is null. The lane counts it.
-    /// </summary>
-    public EDirectionalShadowStaticCacheCause? StaticCacheCause { get; private set; }
+    /// <summary>Why the static cache does not apply to each entry without a tile; the lane counts it.</summary>
+    public ReadOnlySpan<EDirectionalShadowStaticCacheCause?> StaticCacheCauses => _staticCacheCauses.AsSpan(0, CascadeCount);
 
     /// <summary>Atlas-manager bookkeeping slot; not meaningful to backends.</summary>
     internal int PendingSlot { get; set; } = -1;
@@ -89,28 +86,27 @@ public sealed class AdvancedDirectionalShadowLaneRequest
         ClearStaticCache();
     }
 
-    /// <summary>Attaches the static caster tile of cascade 0 (entry <paramref name="entry"/>) to the group.</summary>
-    internal void SetStaticCache(DirectionalCascadeStaticTile tile, int entry, ulong staticCasterEpoch)
+    /// <summary>Attaches the static caster tile of entry <paramref name="entry"/>.</summary>
+    internal void SetStaticCache(int entry, DirectionalCascadeStaticTile tile, ulong staticCasterEpoch)
     {
-        StaticTile = tile;
-        StaticCacheEntry = entry;
-        StaticCasterEpoch = staticCasterEpoch;
-        StaticCacheCause = null;
+        _staticTiles[entry] = tile;
+        _staticCasterEpochs[entry] = staticCasterEpoch;
+        _staticCacheCauses[entry] = null;
     }
 
-    /// <summary>Records why the static cache does not apply to a group that draws cascade 0.</summary>
-    internal void SetStaticCacheCause(EDirectionalShadowStaticCacheCause cause)
+    /// <summary>Records why the static cache does not apply to entry <paramref name="entry"/>.</summary>
+    internal void SetStaticCacheCause(int entry, EDirectionalShadowStaticCacheCause cause)
     {
-        ClearStaticCache();
-        StaticCacheCause = cause;
+        _staticTiles[entry] = null;
+        _staticCasterEpochs[entry] = 0UL;
+        _staticCacheCauses[entry] = cause;
     }
 
     private void ClearStaticCache()
     {
-        StaticTile = null;
-        StaticCacheEntry = -1;
-        StaticCasterEpoch = 0UL;
-        StaticCacheCause = null;
+        Array.Clear(_staticTiles);
+        Array.Clear(_staticCasterEpochs);
+        Array.Clear(_staticCacheCauses);
     }
 
     internal void Clear()

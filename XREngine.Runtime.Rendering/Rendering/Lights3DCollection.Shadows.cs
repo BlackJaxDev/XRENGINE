@@ -15,7 +15,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Scene
 {
-    public partial class Lights3DCollection
+    public partial class Lights3DCollection : XREngine.Scene.IShadowCasterDemotionGate
     {
         #region Shadow Collection & Culling
 
@@ -495,9 +495,6 @@ namespace XREngine.Scene
         private readonly AABB[] _shadowCasterChanges = new AABB[4096];
         // Per drained change: true when it comes from a caster that stays dynamic.
         private readonly bool[] _shadowCasterChangeDynamic = new bool[4096];
-        // Cascade refreshes that GrantDirectionalCascadeRefreshes gave in this plan pass. A
-        // demotion batch runs only in a pass without them, so it stays inside the refresh limit.
-        private int _directionalCascadeRefreshGrants;
         private int _shadowCasterChangeCount;
         private bool _shadowCasterChangesOverflowed;
         private long _shadowCasterChangeReadIndex;
@@ -507,7 +504,6 @@ namespace XREngine.Scene
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.UpdateShadowAtlasRequests");
             _shadowCasterChangeCount = World.VisualScene.DrainShadowCasterChanges(
                 _shadowCasterChanges, _shadowCasterChangeDynamic, ref _shadowCasterChangeReadIndex, out _shadowCasterChangesOverflowed);
-            _directionalCascadeRefreshGrants = 0;
 
             SynchronizeDirectionalShadowAtlasMode();
             PopulateShadowAtlasActiveCameras(scratch);
@@ -519,7 +515,27 @@ namespace XREngine.Scene
             SubmitPointShadowAtlasRequests(scratch);
 
             ShadowAtlas.SolveAllocations();
-            World.VisualScene.ProcessShadowCasterDemotions(releaseAllowed: _directionalCascadeRefreshGrants == 0);
+            World.VisualScene.ProcessShadowCasterDemotions(this);
+        }
+
+        /// <summary>
+        /// Allows a demotion only when every dynamic directional light draws the static tiles
+        /// that the caster box meets in this plan pass (desktop source; see
+        /// DirectionalLightComponent.DirectionalStaticTilesRedrawFor).
+        /// </summary>
+        bool XREngine.Scene.IShadowCasterDemotionGate.CanDemote(in AABB worldBounds)
+        {
+            ulong planFrame = ShadowAtlas.CurrentFrameId;
+            int count = DynamicDirectionalLights.Count;
+            for (int i = 0; i < count; i++)
+            {
+                if (!DynamicDirectionalLights[i].DirectionalStaticTilesRedrawFor(
+                        ShadowRequestSource.Desktop, in worldBounds, planFrame))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private void SynchronizeDirectionalShadowAtlasMode()
@@ -982,7 +998,6 @@ namespace XREngine.Scene
 
                 light.GrantDirectionalCascadeRefresh(source, oldest);
                 lastRenderedFrames[oldest] = 0u;
-                _directionalCascadeRefreshGrants++;
             }
         }
 

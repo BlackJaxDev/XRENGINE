@@ -162,6 +162,9 @@ namespace XREngine.Components.Lights
             // that it was drawn with. A change of a dynamic caster does not advance it, because
             // the static tile does not contain dynamic casters.
             public readonly ulong[] CascadeStaticCasterEpochs = new ulong[MaxCascadeRenderCount];
+            // Per slice index: update frame of the last dynamic caster change that marked the
+            // cascade (0 when none). The static tile of a cascade exists only while this is recent.
+            public readonly ulong[] CascadeDynamicChangeFrames = new ulong[MaxCascadeRenderCount];
             // Light-space bounds of the receiver slice of each cascade (the frustum slice
             // corners, before the sphere fit), per slice index, and the light basis they use.
             public readonly Vector3[] ReceiverFootprintMinLS = new Vector3[MaxCascadeRenderCount];
@@ -181,6 +184,21 @@ namespace XREngine.Components.Lights
             public readonly Vector3[] PendingDirtyMinLS = new Vector3[MaxCascadeRenderCount];
             public readonly Vector3[] PendingDirtyMaxLS = new Vector3[MaxCascadeRenderCount];
             public readonly bool[] PendingDirtyValid = new bool[MaxCascadeRenderCount];
+            // The part of the pending region that comes from static caster changes. Only this
+            // part makes the static caster tile stale when a footprint later meets it; a
+            // dynamic change is never in a static tile.
+            public readonly Vector3[] PendingStaticMinLS = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] PendingStaticMaxLS = new Vector3[MaxCascadeRenderCount];
+            public readonly bool[] PendingStaticValid = new bool[MaxCascadeRenderCount];
+            // Per slice index: the fit (centre, half extents, orientation) and static caster
+            // epoch of the last requested render, and the plan frame of the last requested
+            // render that changes one of them. Such a render draws the static caster tile, so a
+            // demotion in that pass costs no draw of its own.
+            public readonly Vector3[] LastRequestedFitCenters = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] LastRequestedFitHalfExtents = new Vector3[MaxCascadeRenderCount];
+            public readonly Quaternion[] LastRequestedFitOrientations = new Quaternion[MaxCascadeRenderCount];
+            public readonly ulong[] LastRequestedStaticEpochs = new ulong[MaxCascadeRenderCount];
+            public readonly ulong[] StaticRedrawPlannedFrames = new ulong[MaxCascadeRenderCount];
             public readonly ulong[] AtlasCollectedContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeRenderRequested = new bool[MaxCascadeRenderCount];
             // Matrices that the Advanced capture published for planned refreshes. The
@@ -2007,6 +2025,23 @@ namespace XREngine.Components.Lights
                     // The render collects the present casters, so earlier changes outside the
                     // footprint are in the new tile.
                     state.PendingDirtyValid[index] = false;
+                    state.PendingStaticValid[index] = false;
+                    if (index < state.Slices.Count)
+                    {
+                        CascadeShadowSlice slice = state.Slices[index];
+                        ulong staticEpoch = state.CascadeStaticCasterEpochs[index];
+                        if (slice.Center != state.LastRequestedFitCenters[index] ||
+                            slice.HalfExtents != state.LastRequestedFitHalfExtents[index] ||
+                            slice.Orientation != state.LastRequestedFitOrientations[index] ||
+                            staticEpoch != state.LastRequestedStaticEpochs[index])
+                        {
+                            state.StaticRedrawPlannedFrames[index] = requestFrameId;
+                        }
+                        state.LastRequestedFitCenters[index] = slice.Center;
+                        state.LastRequestedFitHalfExtents[index] = slice.HalfExtents;
+                        state.LastRequestedFitOrientations[index] = slice.Orientation;
+                        state.LastRequestedStaticEpochs[index] = staticEpoch;
+                    }
                 }
             }
         }
@@ -4571,6 +4606,7 @@ namespace XREngine.Components.Lights
             {
                 DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
                 Matrix4x4 worldToLight = state.ReceiverFootprintWorldToLight;
+                ulong updateFrame = RuntimeRenderingHostServices.FrameTiming.UpdateFrameId;
                 int count = Math.Min(state.Slices.Count, MaxCascadeRenderCount);
                 for (int i = 0; i < count; i++)
                 {
@@ -4581,9 +4617,10 @@ namespace XREngine.Components.Lights
                     bool mark = allChanged ||
                         (state.PendingDirtyValid[i] &&
                          ReceiverFootprintMeets(footprintMin, footprintMax, hull, planes, state.PendingDirtyMinLS[i], state.PendingDirtyMaxLS[i]));
-                    // A pending region can hold static changes, so its mark also makes the
-                    // static tile stale.
-                    bool staticMark = mark;
+                    // Only the static part of the pending region makes the static tile stale.
+                    bool staticMark = allChanged ||
+                        (state.PendingStaticValid[i] &&
+                         ReceiverFootprintMeets(footprintMin, footprintMax, hull, planes, state.PendingStaticMinLS[i], state.PendingStaticMaxLS[i]));
 
                     CascadeShadowSlice slice = state.Slices[i];
                     Vector3 tileCenter = Vector3.Transform(slice.Center, worldToLight);
@@ -4626,6 +4663,8 @@ namespace XREngine.Components.Lights
                         {
                             mark = true;
                             staticMark |= staticChange;
+                            if (!staticChange)
+                                state.CascadeDynamicChangeFrames[i] = updateFrame;
                         }
                         else if (hasPrevious &&
                             ReceiverFootprintMeets(previousFootprintMin, previousFootprintMax, previousHull, previousPlanes, min, max) &&
@@ -4634,10 +4673,26 @@ namespace XREngine.Components.Lights
                         {
                             mark = true;
                             staticMark |= staticChange;
+                            if (!staticChange)
+                                state.CascadeDynamicChangeFrames[i] = updateFrame;
                         }
                         else if (meetsTile)
                         {
                             staticMark |= staticChange;
+                            if (staticChange)
+                            {
+                                if (state.PendingStaticValid[i])
+                                {
+                                    state.PendingStaticMinLS[i] = Vector3.Min(state.PendingStaticMinLS[i], min);
+                                    state.PendingStaticMaxLS[i] = Vector3.Max(state.PendingStaticMaxLS[i], max);
+                                }
+                                else
+                                {
+                                    state.PendingStaticMinLS[i] = min;
+                                    state.PendingStaticMaxLS[i] = max;
+                                    state.PendingStaticValid[i] = true;
+                                }
+                            }
                             if (state.PendingDirtyValid[i])
                             {
                                 state.PendingDirtyMinLS[i] = Vector3.Min(state.PendingDirtyMinLS[i], min);
@@ -4657,6 +4712,60 @@ namespace XREngine.Components.Lights
                     if (staticMark)
                         state.CascadeStaticCasterEpochs[i]++;
                 }
+            }
+        }
+
+        /// <summary>
+        /// True when a demotion of a caster with world box <paramref name="worldBounds"/> costs no
+        /// static draw of its own in plan frame <paramref name="planFrame"/>: every cascade of
+        /// <paramref name="source"/> whose tile the box meets (light-space X/Y overlap, and the
+        /// box top above the tile bottom) has a render requested in this frame that changes its
+        /// fit or its static caster epoch, so it draws its static tile anyway.
+        /// </summary>
+        internal bool DirectionalStaticTilesRedrawFor(ShadowRequestSource source, in AABB worldBounds, ulong planFrame)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                Matrix4x4 worldToLight = state.ReceiverFootprintWorldToLight;
+                LightSpaceBounds(worldBounds, worldToLight, out Vector3 min, out Vector3 max);
+                int count = Math.Min(state.Slices.Count, MaxCascadeRenderCount);
+                for (int i = 0; i < count; i++)
+                {
+                    CascadeShadowSlice slice = state.Slices[i];
+                    Vector3 tileCenter = Vector3.Transform(slice.Center, worldToLight);
+                    Vector3 tileMin = tileCenter - slice.HalfExtents;
+                    Vector3 tileMax = tileCenter + slice.HalfExtents;
+                    bool meetsTile =
+                        min.X <= tileMax.X && max.X >= tileMin.X &&
+                        min.Y <= tileMax.Y && max.Y >= tileMin.Y &&
+                        max.Z >= tileMin.Z;
+                    if (meetsTile && state.StaticRedrawPlannedFrames[i] != planFrame)
+                        return false;
+                }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// True when a dynamic caster change marked one cascade of <paramref name="source"/>
+        /// within <paramref name="windowFrames"/> update frames before <paramref name="updateFrame"/>.
+        /// The shadow atlas manager keeps a static caster tile only for such a cascade.
+        /// </summary>
+        internal bool HasRecentDirectionalCascadeDynamicChange(ShadowRequestSource source, int cascadeIndex, ulong updateFrame, ulong windowFrames)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                if ((uint)cascadeIndex >= (uint)MaxCascadeRenderCount)
+                    return false;
+                ulong changed = GetCascadeSourceState(resolvedSource).CascadeDynamicChangeFrames[cascadeIndex];
+                return changed != 0UL && updateFrame >= changed && updateFrame - changed < windowFrames;
             }
         }
 

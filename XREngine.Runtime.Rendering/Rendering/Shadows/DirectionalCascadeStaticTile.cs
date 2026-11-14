@@ -6,7 +6,7 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.Shadows;
 
 /// <summary>
-/// Depth tile that holds the static shadow casters of directional cascade 0 of one light
+/// Depth tile that holds the static shadow casters of one directional cascade of one light
 /// (desktop source). The Advanced directional shadow lane draws the static casters into this
 /// tile, copies it into the cascade tile of the atlas page, and draws the dynamic casters over
 /// the copy. While the key of the tile matches the cascade, a refresh only copies the tile and
@@ -20,9 +20,10 @@ public sealed class DirectionalCascadeStaticTile
     private long _recordedRenderFrameId;
     private int _hasContent;
 
-    internal DirectionalCascadeStaticTile(Guid lightId, uint width, uint height)
+    internal DirectionalCascadeStaticTile(Guid lightId, int cascadeIndex, uint width, uint height)
     {
         LightId = lightId;
+        CascadeIndex = cascadeIndex;
         Width = width;
         Height = height;
         DepthTexture = new XRTexture2DArray(
@@ -52,7 +53,9 @@ public sealed class DirectionalCascadeStaticTile
 
     /// <summary>Light that owns the cascade.</summary>
     public Guid LightId { get; }
-    /// <summary>Tile width in texels (the inner rectangle width of cascade 0).</summary>
+    /// <summary>Cascade index (0 is the nearest cascade).</summary>
+    public int CascadeIndex { get; }
+    /// <summary>Tile width in texels (the inner rectangle width of the cascade).</summary>
     public uint Width { get; }
     /// <summary>Tile height in texels.</summary>
     public uint Height { get; }
@@ -63,17 +66,17 @@ public sealed class DirectionalCascadeStaticTile
 
     // Key of the last recorded static draw. The lane writes these fields together when it
     // records a static draw, and compares them before it copies the tile without a draw.
-    /// <summary>Cascade 0 world-to-clip matrix that the static casters were drawn with.</summary>
+    /// <summary>Cascade world-to-clip matrix that the static casters were drawn with.</summary>
     public Matrix4x4 RecordedViewProjection { get; private set; }
-    /// <summary>Inner tile rectangle of cascade 0 on the atlas page at the static draw.</summary>
+    /// <summary>Inner tile rectangle of the cascade on the atlas page at the static draw.</summary>
     public BoundingRectangle RecordedTileRect { get; private set; }
     /// <summary>Atlas page framebuffer that the tile was drawn for.</summary>
     public XRFrameBuffer? RecordedPage { get; private set; }
-    /// <summary>Static caster epoch of cascade 0 at the static draw.</summary>
+    /// <summary>Static caster epoch of the cascade at the static draw.</summary>
     public ulong RecordedStaticEpoch { get; private set; }
-    /// <summary>64-bit order-independent hash of the static caster records of cascade 0 at the static draw.</summary>
+    /// <summary>64-bit order-independent hash of the static caster records of the cascade at the static draw.</summary>
     public ulong RecordedRecordSetHash { get; private set; }
-    /// <summary>Number of static caster records of cascade 0 at the static draw.</summary>
+    /// <summary>Number of static caster records of the cascade at the static draw.</summary>
     public int RecordedRecordCount { get; private set; }
 
     /// <summary>Render frame of the last recorded static draw; 0 when none.</summary>
@@ -108,7 +111,7 @@ public sealed class DirectionalCascadeStaticTile
 
     /// <summary>
     /// Marks the content as unusable, so the next refresh draws the static casters again.
-    /// The atlas manager calls it when a submission that held cascade 0 failed.
+    /// The atlas manager calls it when a submission that held the cascade failed.
     /// </summary>
     public void Invalidate()
         => Volatile.Write(ref _hasContent, 0);
