@@ -3359,8 +3359,9 @@ namespace XREngine.Rendering
         /// groups, so it must run before every view that samples them in this frame: it is the
         /// first Advanced pipeline instance that executes. The VR eyes render
         /// (<see cref="RenderViewportsCallback"/>) before the desktop viewports, so the candidates
-        /// in execution order are the left and right eye viewports when the eyes render in this
-        /// frame, then the desktop viewports whose scene renders in this frame. When the first
+        /// in execution order are the eye views when the eyes render in this frame (the OpenXR
+        /// stereo viewport in true single-pass stereo, otherwise the left and right eye
+        /// viewports), then the desktop viewports whose scene renders in this frame. When the first
         /// candidate has no published command package, no instance owns the lane and the groups
         /// use the generic path, which draws them before any view.
         /// <paramref name="thisWindowRendersViewports"/> is false when this window holds its
@@ -3379,6 +3380,12 @@ namespace XREngine.Rendering
             bool eyesRender = VrEyesRenderThisFrame();
             if (eyesRender)
             {
+                // OpenXR true single-pass stereo renders both eyes through one stereo viewport and
+                // holds the per-eye viewports without a pipeline; the per-eye modes hold the stereo
+                // viewport instead. The query reads only assigned pipelines, so exactly one of the
+                // two eye families is a candidate in a frame.
+                ConsiderAdvancedDirectionalShadowConsumer(RuntimeEngine.VRState.OpenXRApi?.StereoViewport, world!, renderFrameId,
+                    ref authority, ref candidateCount, ref genericFallbackAllowed);
                 ConsiderAdvancedDirectionalShadowConsumer(RuntimeEngine.VRState.LeftEyeViewport, world!, renderFrameId,
                     ref authority, ref candidateCount, ref genericFallbackAllowed);
                 ConsiderAdvancedDirectionalShadowConsumer(RuntimeEngine.VRState.RightEyeViewport, world!, renderFrameId,
