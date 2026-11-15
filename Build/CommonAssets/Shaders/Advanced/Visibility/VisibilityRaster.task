@@ -115,12 +115,29 @@ void main()
                 XR_ADV_MeshletDrawCullState(transform.world, payload.cullMode, producer);
             XRAdvancedVisibilityMeshletDescriptor meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
             laneTriangles = meshlet.triangleCount;
+#if defined(XR_ADV_CLUSTER_LOD_CUT)
+            // The cut variant tests the cluster cut first. A cluster outside the
+            // cut is not drawn, and the late variant does not set its history bit.
+            // A cluster that enters the cut has no history bit, so the late raster
+            // tests it against this frame's depth pyramid.
+            XRAdvancedClusterCutState cut = XR_ADV_ClusterCutState(payload.geometry, producer, viewIndex, view);
+            bool inCut = !cut.applies || XR_ADV_ClusterInCut(meshletIndex, cut, drawState);
+            cullReason = inCut
+                ? XR_ADV_ClassifyVisibilityMeshlet(
+                    meshlet,
+                    drawState,
+                    producer,
+                    view.viewProjectionUnjittered,
+                    view.cameraPositionAndNear.xyz)
+                : XR_ADV_MESHLET_CULL_LOD;
+#else
             cullReason = XR_ADV_ClassifyVisibilityMeshlet(
                 meshlet,
                 drawState,
                 producer,
                 view.viewProjectionUnjittered,
                 view.cameraPositionAndNear.xyz);
+#endif
 
             // History applies to static meshlets only; skinned meshlets are never
             // culled, so their history is not read or written.

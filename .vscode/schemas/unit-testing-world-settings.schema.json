@@ -797,6 +797,14 @@
           ],
           "description": "Generated from CustomRenderPipelineScriptPath on UnitTestingRenderSettings."
         },
+        "VirtualGeometry": {
+          "type": "boolean",
+          "description": "Enables or disables VirtualGeometry."
+        },
+        "VirtualGeometryPixelThreshold": {
+          "type": "number",
+          "description": "Generated from VirtualGeometryPixelThreshold on UnitTestingRenderSettings."
+        },
         "OpenGL": {
           "$ref": "#/definitions/UnitTestingOpenGLRenderSettings",
           "description": "Generated from OpenGL on UnitTestingRenderSettings."

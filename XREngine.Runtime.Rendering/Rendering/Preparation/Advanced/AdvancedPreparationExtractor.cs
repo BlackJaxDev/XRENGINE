@@ -873,7 +873,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         AdvancedSceneGeometryOffsets offsets = ResolveGeometryOffsets(
             hasCanonicalGeometry,
             in canonicalGeometry,
-            command.SkinID);
+            command.SkinID,
+            clusterCut: !skinned && AdvancedVirtualGeometryPolicy.Enabled);
         if (skinned && (renderer is null || mesh is not { VertexCount: > 0 }))
             throw new InvalidOperationException(
                 $"Advanced draw {draw} requires a captured primitive mesh and renderer for deformation.");
@@ -1693,10 +1694,17 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             source.RenderOptionsOverride);
     }
 
+    /// <summary>
+    /// Reads the arena offsets and the meshlet range of a draw's geometry for its visibility
+    /// payload. With <paramref name="clusterCut"/> (a static draw while Advanced virtual geometry
+    /// is on), the range holds the meshlets of every level and the task stage selects the cut;
+    /// otherwise it holds only the level-0 meshlets of a cluster hierarchy geometry.
+    /// </summary>
     private static AdvancedSceneGeometryOffsets ResolveGeometryOffsets(
         bool hasCanonicalGeometry,
         in AdvancedGeometryRecord geometry,
-        uint skinId)
+        uint skinId,
+        bool clusterCut)
     {
         if (!hasCanonicalGeometry)
             return default;
@@ -1708,7 +1716,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             WeightOffset: geometry.CurrentVertexData.ElementOffset,
             PaletteOffset: skinId,
             MeshletOffset: geometry.MeshletFirst,
-            MeshletCount: geometry.DrawMeshletCount);
+            MeshletCount: clusterCut ? geometry.MeshletCount : geometry.DrawMeshletCount);
     }
 
     /// <summary>

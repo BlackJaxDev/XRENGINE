@@ -227,4 +227,168 @@ bool XR_ADV_MeshletSphereOccluded(vec4 sphere, XRAdvancedViewRecord view)
 }
 #endif
 
+#if defined(XR_ADV_CLUSTER_LOD_CUT)
+// Cluster level-of-detail cut. Only the task variant compiled with
+// XR_ADV_CLUSTER_LOD_CUT has it; every other variant is unchanged.
+//
+// A cluster hierarchy geometry publishes the meshlets of every level (level 0
+// first). Its triangle-word stream holds, after the triangle words, one cluster
+// record per meshlet (group, refined group) and then one group record per group
+// (sphere center and radius, error, depth, two reserved words). The geometry
+// record stores the level-0 count in reservedLayout0 and the word offset of the
+// cluster records in reservedLayout1. A geometry without a hierarchy has
+// reservedLayout0 == 0 and draws every meshlet.
+//
+// Render rule: draw a cluster when the projected error of its own group's
+// simplified bound is above the threshold (the coarser level is not good
+// enough) and the cluster is a level-0 cluster or the projected error of the
+// group it was made from is at or below the threshold. Errors and spheres grow
+// from child to parent, so the selected clusters cover the mesh once, and the
+// locked group borders make the cut crack free.
+#define XR_ADV_MESHLET_CULL_LOD 6u
+#ifndef XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD
+#define XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD 1.0
+#endif
+#define XR_ADV_CLUSTER_RECORD_WORDS 2u
+#define XR_ADV_CLUSTER_GROUP_RECORD_WORDS 8u
+#define XR_ADV_CLUSTER_VIEW_FLAG_STEREO_LEFT (1u << 2u)
+#define XR_ADV_CLUSTER_VIEW_FLAG_STEREO_RIGHT (1u << 3u)
+
+// Facts of the cut that every cluster of one draw shares.
+struct XRAdvancedClusterCutState
+{
+    bool applies;
+    uint geometryMeshletFirst;
+    uint geometryMeshletCount;
+    uint level0Count;
+    uint clusterWordBase;
+    uint groupWordBase;
+    vec3 eye0;
+    vec3 eye1;
+    float pixelScale;
+    float nearDistance;
+};
+
+// Pixels for one world unit of error at distance 1 for one view: the larger
+// projection scale term times half the render height.
+float XR_ADV_ClusterCutPixelScale(uint viewIndex)
+{
+    mat4 projection = XR_ADV_Views.records[viewIndex].projectionUnjittered;
+    float scale = max(abs(projection[0][0]), abs(projection[1][1]));
+    return scale * XR_ADV_Views.records[viewIndex].renderSizeAndInverse.y * 0.5;
+}
+
+// The other eye of a stereo pair: the adjacent view with the opposite stereo
+// flag. A view without a partner uses itself. Both eyes then make the same cut
+// from both eye positions, so they show the same clusters.
+uint XR_ADV_ClusterCutPartnerView(uint viewIndex, uint viewFlags)
+{
+    uint viewCount = uint(XR_ADV_Views.records.length());
+    if ((viewFlags & XR_ADV_CLUSTER_VIEW_FLAG_STEREO_LEFT) != 0u && viewIndex + 1u < viewCount &&
+        (XR_ADV_Views.records[viewIndex + 1u].flags & XR_ADV_CLUSTER_VIEW_FLAG_STEREO_RIGHT) != 0u)
+        return viewIndex + 1u;
+    if ((viewFlags & XR_ADV_CLUSTER_VIEW_FLAG_STEREO_RIGHT) != 0u && viewIndex > 0u &&
+        (XR_ADV_Views.records[viewIndex - 1u].flags & XR_ADV_CLUSTER_VIEW_FLAG_STEREO_LEFT) != 0u)
+        return viewIndex - 1u;
+    return viewIndex;
+}
+
+// Builds the cut state of one draw. The cut is active only for a static
+// meshlet draw of a hierarchy geometry whose tables fit in the triangle-word
+// table. Without it the draw keeps every meshlet of its payload range.
+XRAdvancedClusterCutState XR_ADV_ClusterCutState(
+    XRAdvancedGpuHandle geometryHandle,
+    uint producer,
+    uint viewIndex,
+    XRAdvancedViewRecord view)
+{
+    XRAdvancedClusterCutState cut;
+    cut.applies = false;
+    cut.geometryMeshletFirst = 0u;
+    cut.geometryMeshletCount = 0u;
+    cut.level0Count = 0u;
+    cut.clusterWordBase = 0u;
+    cut.groupWordBase = 0u;
+    cut.eye0 = view.cameraPositionAndNear.xyz;
+    cut.eye1 = cut.eye0;
+    cut.pixelScale = 0.0;
+    cut.nearDistance = max(view.cameraPositionAndNear.w, 1.0e-4);
+    if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET)
+        return cut;
+    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+        geometryHandle, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
+    if (geometryDense == XR_ADV_INVALID_DENSE_INDEX)
+        return cut;
+    XRAdvancedGeometryRecord geometry = XR_ADV_LoadGeometry(geometryDense);
+    if (geometry.reservedLayout0 == 0u || geometry.reservedLayout0 > geometry.meshletCount)
+        return cut;
+    uint clusterWordBase = geometry.meshletTriangleWords.elementOffset + geometry.reservedLayout1;
+    uint groupWordBase = clusterWordBase + geometry.meshletCount * XR_ADV_CLUSTER_RECORD_WORDS;
+    if (clusterWordBase < geometry.meshletTriangleWords.elementOffset ||
+        groupWordBase < clusterWordBase ||
+        groupWordBase > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()))
+        return cut;
+
+    uint partner = XR_ADV_ClusterCutPartnerView(viewIndex, view.flags);
+    cut.applies = true;
+    cut.geometryMeshletFirst = geometry.meshletFirst;
+    cut.geometryMeshletCount = geometry.meshletCount;
+    cut.level0Count = geometry.reservedLayout0;
+    cut.clusterWordBase = clusterWordBase;
+    cut.groupWordBase = groupWordBase;
+    cut.eye1 = XR_ADV_Views.records[partner].cameraPositionAndNear.xyz;
+    cut.pixelScale = max(XR_ADV_ClusterCutPixelScale(viewIndex), XR_ADV_ClusterCutPixelScale(partner));
+    return cut;
+}
+
+// Projected error in render pixels of one group's simplified bound. The bound
+// is in mesh space; the draw's world matrix moves the center, and its largest
+// axis scale scales the radius and the error. The nearer eye gives the larger
+// error. A camera inside the sphere clamps to the near distance, so the
+// cluster refines. An infinite error (the last group) never passes the test.
+float XR_ADV_ClusterGroupProjectedError(
+    uint group,
+    XRAdvancedClusterCutState cut,
+    XRAdvancedMeshletDrawCullState draw)
+{
+    uint word = cut.groupWordBase + group * XR_ADV_CLUSTER_GROUP_RECORD_WORDS;
+    if (group >= 0x08000000u || word + 5u > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()))
+        return 3.402823e38;
+    vec4 sphere = vec4(
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 0u]),
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 1u]),
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 2u]),
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 3u]));
+    float error = uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 4u]);
+    if (isnan(error) || isinf(error) || error >= 3.0e38 || any(isnan(sphere)) || any(isinf(sphere)))
+        return 3.402823e38;
+    vec3 center = (vec4(sphere.xyz, 1.0) * draw.world).xyz;
+    float radius = sphere.w * draw.maxScale;
+    float distanceToBound = min(distance(center, cut.eye0), distance(center, cut.eye1)) - radius;
+    return error * draw.maxScale * cut.pixelScale / max(distanceToBound, cut.nearDistance);
+}
+
+// True when the cut selects this meshlet. A meshlet outside the geometry range
+// or with an unreadable record is kept only when it is a level-0 meshlet, so a
+// bad table never draws two levels at once.
+bool XR_ADV_ClusterInCut(
+    uint meshletIndex,
+    XRAdvancedClusterCutState cut,
+    XRAdvancedMeshletDrawCullState draw)
+{
+    uint cluster = meshletIndex - cut.geometryMeshletFirst;
+    uint recordWord = cut.clusterWordBase + cluster * XR_ADV_CLUSTER_RECORD_WORDS;
+    if (meshletIndex < cut.geometryMeshletFirst || cluster >= cut.geometryMeshletCount ||
+        recordWord + 2u > cut.groupWordBase)
+        return cluster < cut.level0Count;
+    uint group = XR_ADV_VisibilityMeshletTriangleWords.records[recordWord + 0u];
+    int refined = int(XR_ADV_VisibilityMeshletTriangleWords.records[recordWord + 1u]);
+    const float threshold = float(XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD);
+    if (XR_ADV_ClusterGroupProjectedError(group, cut, draw) <= threshold)
+        return false;
+    return refined < 0 ||
+        XR_ADV_ClusterGroupProjectedError(uint(refined), cut, draw) <= threshold;
+}
+#endif
+
 #endif

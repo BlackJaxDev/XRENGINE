@@ -2869,6 +2869,39 @@ public static partial class RuntimeEngine
                     set => SetField(ref _vrAdvancedShadowFilterTaps, Math.Clamp(value, 0, 32));
                 }
 
+                private bool _advancedVirtualGeometry;
+
+                /// <summary>
+                /// Vulkan Advanced visibility (desktop and VR eyes) selects a cluster cut for static
+                /// meshlet draws of models cooked with a cluster hierarchy: the task stage draws
+                /// coarser clusters where their projected error is at or below
+                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. Off draws the level-0
+                /// clusters only. The value is read once, at the first Advanced frame; a change
+                /// takes effect at the next start.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Vulkan Advanced visibility draws a cluster cut of models cooked with a cluster hierarchy. Read once at the first Advanced frame; a change takes effect at the next start.")]
+                public bool AdvancedVirtualGeometry
+                {
+                    get => _advancedVirtualGeometry;
+                    set => SetField(ref _advancedVirtualGeometry, value);
+                }
+
+                private float _advancedVirtualGeometryPixelThreshold = 1.0f;
+
+                /// <summary>
+                /// The cluster cut threshold of <see cref="AdvancedVirtualGeometry"/>, in render
+                /// pixels of projected simplification error (0.25 to 16). A larger value draws
+                /// coarser clusters. Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Cluster cut threshold of Advanced virtual geometry, in render pixels of projected error (0.25 to 16). Read once at the first Advanced frame.")]
+                public float AdvancedVirtualGeometryPixelThreshold
+                {
+                    get => _advancedVirtualGeometryPixelThreshold;
+                    set => SetField(ref _advancedVirtualGeometryPixelThreshold, float.IsFinite(value) ? Math.Clamp(value, 0.25f, 16.0f) : 1.0f);
+                }
+
                 /// <summary>
                 /// Controls disabled, capability-gated, required, and diagnostic selection
                 /// of the advanced render pipeline for desktop and offscreen outputs.

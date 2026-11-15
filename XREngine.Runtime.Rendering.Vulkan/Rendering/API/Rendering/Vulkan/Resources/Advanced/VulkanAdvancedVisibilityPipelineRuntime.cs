@@ -736,7 +736,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     /// draw. The task stage culls those meshlets against the view frustum and their
     /// normal cones and launches one mesh workgroup per surviving meshlet.
     /// <paramref name="taskPreamble"/> is added to the task stage only: it selects
-    /// the late task variant, which the mesh and fragment stages do not know.
+    /// the late task variant, which the mesh and fragment stages do not know. The
+    /// cluster cut defines of <see cref="AdvancedVirtualGeometryPolicy.TaskPreamble"/>
+    /// also go to the task stage only; they are empty while the cut is off.
     /// </summary>
     private XRRenderProgram CreateMeshRasterProgram(
         string fragmentPath,
@@ -761,7 +763,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         XRRenderProgram program = new(
             linkNow: false,
             separable: false,
-            CreateShaderWithPreamble(taskAsset, taskPreamble + preamble, name + ".task"),
+            CreateShaderWithPreamble(
+                taskAsset,
+                AdvancedVirtualGeometryPolicy.TaskPreamble + taskPreamble + preamble,
+                name + ".task"),
             CreateShaderWithPreamble(meshAsset, preamble, name + ".mesh"),
             CreateShaderWithPreamble(fragmentAsset, preamble, name + ".frag"))
         {

@@ -405,7 +405,50 @@ relative to the geometry's `MeshletTriangleWords` reference, so arena
 compaction keeps it valid. `MeshletCount` counts every level, and
 `DrawMeshletCount` is the level-0 count of a hierarchy geometry. Visibility
 payloads, deformation ranges and deformation witnesses use `DrawMeshletCount`,
-so a draw renders only level 0 until a renderer selects a cut.
+so a draw renders only level 0 unless the cluster cut below is on.
+
+### Cluster cut (Advanced virtual geometry)
+
+The engine setting `AdvancedVirtualGeometry` (off by default; the unit-testing
+world sets it with `Rendering.VirtualGeometry`) makes the Vulkan Advanced
+visibility stage (desktop and VR eyes) draw a cut of each static meshlet draw of
+a cluster hierarchy geometry. `AdvancedVirtualGeometryPixelThreshold`
+(`Rendering.VirtualGeometryPixelThreshold`, default 1, range 0.25 to 16) is the
+largest projected error, in render pixels, that a drawn cluster may have.
+
+- `AdvancedVirtualGeometryPolicy` reads both settings once, at the first
+  Advanced frame with a Vulkan renderer. A change takes effect at the next
+  start. The two consumers below must agree in every frame; a change while they
+  run could draw every level at once.
+- The preparation extractor gives a static draw of a hierarchy geometry the
+  full meshlet range (`MeshletCount`). Skinned draws and every draw while the
+  setting is off keep `DrawMeshletCount`. Other backends never enable the
+  policy, so the OpenGL and WebGPU paths keep level 0.
+- The meshlet task stage is compiled with `XR_ADV_CLUSTER_LOD_CUT` (and the
+  threshold as `XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD`) only while the setting is
+  on. The off variant compiles from the same text as before, so its SPIR-V does
+  not change.
+- Render rule (from `clusterlod.h`): draw a cluster when the projected error of
+  its own group's simplified bound is above the threshold and the cluster is a
+  level-0 cluster or the projected error of the group it was made from is at or
+  below the threshold. Projected error =
+  `error * scale * proj * renderHeight * 0.5 / max(distance - radius * scale, near)`,
+  with `proj` the larger of `|P00|` and `|P11|` and `scale` the largest axis
+  scale of the draw. An unreadable record keeps only level-0 clusters.
+- Stereo: the task stage finds the other eye of a pair (the adjacent view with
+  the opposite `StereoLeft`/`StereoRight` flag) and uses the nearer eye
+  position, so both eyes draw the same clusters.
+- The cut runs before the frustum, cone and history tests. A cluster outside
+  the cut is not drawn and the late task does not set its history bit. A
+  cluster that enters the cut has no history bit, so the late raster tests it
+  against this frame's depth pyramid. Every cluster keeps its own sphere and
+  cone for culling; the group sphere is used only for the error test.
+- Directional shadow casters still draw the full-detail canonical index buffer.
+
+Measured with New Sponza and the prefab avatar at 2688x2688 (RVC, true single
+pass stereo): at the atrium the early raster goes from 5.9 to 3.6 ms and the
+late raster from 0.6 to 1.3 ms (the late pass tests about twice the clusters);
+the eye GPU time goes from 41.0 to 39.1 ms. At the origin nothing changes.
 
 ## Production Closeout Status
 

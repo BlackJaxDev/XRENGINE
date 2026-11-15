@@ -122,6 +122,8 @@ public static class BootstrapRenderSettings
             renderSettings.Vulkan.Startup.FallbackPolicy = settings.Rendering.BackendFallbackPolicy;
             renderSettings.VulkanPresentationProfile = settings.Rendering.Vulkan.PresentationProfile;
             renderSettings.VulkanPresentationTargetRefreshHz = settings.Rendering.Vulkan.TargetRefreshHz;
+            renderSettings.AdvancedVirtualGeometry = settings.Rendering.VirtualGeometry;
+            renderSettings.AdvancedVirtualGeometryPixelThreshold = settings.Rendering.VirtualGeometryPixelThreshold;
             Engine.GameSettings.VulkanPresentationProfileOverride = new(
                 settings.Rendering.Vulkan.PresentationProfile,
                 true);
