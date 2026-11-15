@@ -183,6 +183,9 @@ internal sealed partial class VulkanFrameLoop
             RecordRvcShadeletTelemetry = request.RecordRvcShadeletTelemetry,
             ShowOcclusionCulledBounds = request.ShowOcclusionCulledBounds,
             RvcFoveatedQuadShading = request.RvcFoveatedQuadShading,
+            AdvancedEdgeHalfRateShading = request.AdvancedEdgeHalfRateShading,
+            AdvancedEdgeHalfRateRadius = request.AdvancedEdgeHalfRateRadius,
+            AdvancedEdgeHalfRateDebugTint = request.AdvancedEdgeHalfRateDebugTint,
             DecalBufferEnabled = request.DecalBufferEnabled,
         };
         if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)

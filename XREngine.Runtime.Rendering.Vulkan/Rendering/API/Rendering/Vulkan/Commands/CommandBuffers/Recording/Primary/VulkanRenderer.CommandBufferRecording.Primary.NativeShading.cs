@@ -49,6 +49,32 @@ internal sealed partial class VulkanCommandRuntime
     private static readonly string[] FoveatedQuadFillGpuProfilerPath = ["Advanced", "Rvc", "FoveatedQuadFill"];
     // Matches XR_ADV_SHADING_FOVEATED_QUADS in FoveatedQuadShading.glslinc.
     private const uint FoveatedQuadShadingFlag = 1u << 28;
+    // Match XR_ADV_SHADING_EDGE_HALF_RATE, XR_ADV_SHADING_EDGE_HALF_RATE_TINT and the
+    // radius field (5 bits, steps of 0.05) in FoveatedQuadShading.glslinc.
+    private const uint EdgeHalfRateShadingFlag = 1u << 17;
+    private const uint EdgeHalfRateTintFlag = 1u << 18;
+    private const int EdgeHalfRateRadiusShift = 19;
+    private const float EdgeHalfRateRadiusStep = 0.05f;
+
+    /// <summary>
+    /// Push flags for the shading and fill passes of one view. RVC foveated quads and
+    /// Advanced edge half-rate shading share the follower rule and the fill pass; the
+    /// edge mode adds its own bit and the quantized radius. MSAA visibility uses neither.
+    /// </summary>
+    private static uint QuadShadingFlags(
+        bool rvcFoveatedQuads, bool edgeHalfRate, float edgeRadius, bool edgeTint, bool multisampleVisibility)
+    {
+        if (multisampleVisibility)
+            return 0u;
+        if (rvcFoveatedQuads)
+            return FoveatedQuadShadingFlag;
+        if (!edgeHalfRate)
+            return 0u;
+        uint radius = (uint)Math.Clamp((int)MathF.Round(edgeRadius / EdgeHalfRateRadiusStep), 1, 31);
+        return FoveatedQuadShadingFlag | EdgeHalfRateShadingFlag |
+            (edgeTint ? EdgeHalfRateTintFlag : 0u) |
+            (radius << EdgeHalfRateRadiusShift);
+    }
     private const string RvcTelemetryMissingClosureReason = "The native closure has no RVC telemetry counters or whole-array views.";
     private const string RvcTelemetryMissingKernelReason = "The RVC telemetry kernel is not current.";
     private int RecordAdvancedNativeComputePayload(
@@ -83,7 +109,9 @@ internal sealed partial class VulkanCommandRuntime
             (payload.Request.AmbientOcclusionSpecularUsesVisibility ? 128u : 0u) |
             (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8) |
             ((Math.Min(closure.MsaaSampleCount, 16u) & 0xFu) << 24) |
-            (payload.Request.RvcFoveatedQuadShading && !closure.UsesMultisampleVisibility ? FoveatedQuadShadingFlag : 0u) |
+            QuadShadingFlags(payload.Request.RvcFoveatedQuadShading,
+                payload.Request.AdvancedEdgeHalfRateShading, payload.Request.AdvancedEdgeHalfRateRadius,
+                payload.Request.AdvancedEdgeHalfRateDebugTint, closure.UsesMultisampleVisibility) |
             (payload.Request.DecalBufferEnabled && closure.HasDecalBuffer ? NativeDecalBufferShadingFlag : 0u), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,

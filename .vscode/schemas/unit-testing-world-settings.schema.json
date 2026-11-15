@@ -968,6 +968,18 @@
           "description": "Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.",
           "markdownDescription": "Supported values: `Off`, `ForwardPlusOracle`, `VisibilityOnlyDebug`, `MaterialCache`, `SharedLighting`, `Full`."
         },
+        "AdvancedEdgeHalfRateShading": {
+          "type": "boolean",
+          "description": "Advanced eyes shade one pixel for each 2x2 block of the same triangle outside AdvancedEdgeHalfRateRadius and copy it to the rest of the block. Vulkan eyes without MSAA only; the desktop view is never affected."
+        },
+        "AdvancedEdgeHalfRateRadius": {
+          "type": "number",
+          "description": "Full-rate radius around the lens center of each eye, as a fraction of the half extent of the eye image, in steps of 0.05."
+        },
+        "AdvancedEdgeHalfRateDebugTint": {
+          "type": "boolean",
+          "description": "Diagnostic: tints the 2x2 blocks that Advanced edge half-rate shading shades at half rate."
+        },
         "PreviewStereoViews": {
           "type": "boolean",
           "description": "Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active."

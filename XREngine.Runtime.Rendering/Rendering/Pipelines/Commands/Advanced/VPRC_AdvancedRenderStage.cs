@@ -447,6 +447,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     pipeline),
             RvcFoveatedQuadShading = requiresNativeOpaqueShading && samples <= 1u &&
                 ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcFoveatedQuadShadingEnabled: true },
+            // Only OpenXR eye instances qualify, so the desktop output always shades at full rate.
+            AdvancedEdgeHalfRateShading = requiresNativeOpaqueShading && samples <= 1u &&
+                RuntimeEngine.Rendering.Settings.VrAdvancedEdgeHalfRateShading &&
+                ActivePipelineInstance.Pipeline is AdvancedRenderPipeline { IsOpenXrEyeProfile: true },
+            AdvancedEdgeHalfRateRadius = RuntimeEngine.Rendering.Settings.VrAdvancedEdgeHalfRateRadius,
+            AdvancedEdgeHalfRateDebugTint = RuntimeEngine.Rendering.Settings.VrAdvancedEdgeHalfRateDebugTint,
             DecalBufferEnabled = stageBackend.SupportsAdvancedSurfaceDecalBuffer &&
                 ActivePipelineInstance.Resources.TryGetFrameBuffer(
                     AdvancedDecalBufferResourceNames.FrameBuffer, out XRFrameBuffer? decalBuffer) &&

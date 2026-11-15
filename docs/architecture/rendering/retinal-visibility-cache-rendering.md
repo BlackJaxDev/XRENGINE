@@ -475,6 +475,9 @@ to its opaque shading. RVC eyes therefore use foveated quad shading in compute:
   visibility identity and the view record, so shading and fill always agree.
 - Edges between primitives stay per pixel, because a follower needs the same
   primitive as its representative.
+- Advanced eyes use the same rule and fill pass for
+  [edge half-rate shading](advanced-render-pipeline.md#edge-half-rate-shading-for-eye-outputs),
+  with one radius around the lens center and 2x2 blocks only.
 
 ## Shared Head-Space Lighting
 

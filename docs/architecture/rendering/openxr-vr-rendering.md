@@ -37,6 +37,8 @@ Mutable render state belongs to a view, not to the renderer. On Vulkan, each eye
 
 `ViewFoveationContext` carries requested and effective `EVrFoveationMode`, quality preset, foveal center, and fallback reason for each view. Foveation never shrinks the visibility frustum. An explicit request that the backend cannot honor reports a diagnostic.
 
+Advanced eye outputs can also shade the outer part of each eye at half rate with the `VrAdvancedEdgeHalfRateShading` engine setting (off by default). It is independent of `EVrFoveationMode` and does not change the view set or the visibility frustum. See [edge half-rate shading](advanced-render-pipeline.md#edge-half-rate-shading-for-eye-outputs).
+
 `OpenXrRenderPacingMode` selects the thread that owns `xrWaitFrame`, `xrBeginFrame`, and `xrLocateViews`: `InRenderCallback`, `PostRenderCallback`, `DedicatedThread` (default), or `CollectVisibleThread`. `xrEndFrame` and layer submission stay on the OpenXR render path in all modes.
 
 Per-eye swapchain size does not follow the desktop window. `OpenXrEyeResolutionPreset`, `OpenXrEyeResolutionScale`, and `OpenXrCustomEyeResolutionWidth`/`Height` select it. Swapchain creation clamps to the runtime maximum image rectangle and logs the clamp. A live change recreates the OpenXR instance and session resources. Unit-testing worlds can set the same values through `XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_PRESET`, `XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_SCALE`, `XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_WIDTH`, and `XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_HEIGHT`. The Monado launch path passes the resolved profile to the simulated HMD through `XRE_OPENXR_EYE_RESOLUTION_*`.

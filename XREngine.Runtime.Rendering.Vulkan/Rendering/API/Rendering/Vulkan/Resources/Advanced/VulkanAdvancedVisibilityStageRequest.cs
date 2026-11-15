@@ -58,6 +58,15 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// <summary>Shades one pixel per peripheral block of the same primitive, then fills the rest.</summary>
     internal bool RvcFoveatedQuadShading { get; init; }
 
+    /// <summary>Shades one pixel per 2x2 block of the same primitive outside the edge radius of an Advanced eye, then fills the rest.</summary>
+    internal bool AdvancedEdgeHalfRateShading { get; init; }
+
+    /// <summary>Full-rate radius around the lens center, as a fraction of the half extent of the eye image.</summary>
+    internal float AdvancedEdgeHalfRateRadius { get; init; }
+
+    /// <summary>Diagnostic tint of the half-rate blocks.</summary>
+    internal bool AdvancedEdgeHalfRateDebugTint { get; init; }
+
     /// <summary>True when the family records the decal buffer phase and native shading reads the decal buffer.</summary>
     internal bool DecalBufferEnabled { get; init; }
 

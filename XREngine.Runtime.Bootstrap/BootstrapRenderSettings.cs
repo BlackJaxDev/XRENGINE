@@ -142,6 +142,9 @@ public static class BootstrapRenderSettings
             renderSettings.VrRenderPipeline = settings.VR.RenderPipeline;
             renderSettings.RvcPipelineMode = settings.VR.RvcPipelineMode;
             renderSettings.RvcQuadViewEnabled = settings.VR.RvcQuadView;
+            renderSettings.VrAdvancedEdgeHalfRateShading = settings.VR.AdvancedEdgeHalfRateShading;
+            renderSettings.VrAdvancedEdgeHalfRateRadius = settings.VR.AdvancedEdgeHalfRateRadius;
+            renderSettings.VrAdvancedEdgeHalfRateDebugTint = settings.VR.AdvancedEdgeHalfRateDebugTint;
             renderSettings.VrFoveationMode = settings.VR.Foveation.Mode;
             renderSettings.VrFoveationQualityPreset = settings.VR.Foveation.QualityPreset;
             renderSettings.VrFoveationRequireRequested = settings.VR.Foveation.RequireRequested;

@@ -716,6 +716,9 @@ public static partial class RuntimeEngine
                 private float _vrFoveationVisibilityMargin = 0.05f;
                 private bool _vrFoveationForceFullResForUiAndNearField = true;
                 private float _vrFoveationFullResNearDistanceMeters = 1.5f;
+                private bool _vrAdvancedEdgeHalfRateShading = false;
+                private float _vrAdvancedEdgeHalfRateRadius = 0.6f;
+                private bool _vrAdvancedEdgeHalfRateDebugTint = false;
                 private bool _populateVertexDataInParallel = true;
                 private bool _processMeshImportsAsynchronously = true;
                 private bool _useInterleavedMeshBuffer = false;
@@ -2804,6 +2807,48 @@ public static partial class RuntimeEngine
                 {
                     get => _vrFoveationFullResNearDistanceMeters;
                     set => SetField(ref _vrFoveationFullResNearDistanceMeters, Math.Clamp(value, 0.0f, 10.0f));
+                }
+
+                /// <summary>
+                /// Makes Advanced eye outputs shade one pixel for each 2x2 block of the same triangle
+                /// outside <see cref="VrAdvancedEdgeHalfRateRadius"/>. A fill pass then copies the
+                /// result to the other pixels of the block. Depth, visibility and shadows stay at full
+                /// resolution. Vulkan eyes without MSAA only; the desktop view is never affected.
+                /// </summary>
+                [Category("VR")]
+                [Description("Makes Advanced eye outputs shade one pixel for each 2x2 block of the same triangle outside the edge radius, and copy it to the rest of the block. Depth, visibility and shadows stay at full resolution. Vulkan eyes without MSAA only; the desktop view is never affected.")]
+                public bool VrAdvancedEdgeHalfRateShading
+                {
+                    get => _vrAdvancedEdgeHalfRateShading;
+                    set => SetField(ref _vrAdvancedEdgeHalfRateShading, value);
+                }
+
+                /// <summary>
+                /// Radius of the full-rate region for <see cref="VrAdvancedEdgeHalfRateShading"/>.
+                /// The region is centered on the lens center of each eye (the point where the view
+                /// direction meets the image), not on the texture center. The value is a fraction of
+                /// the half extent of the eye image on each axis: 1 reaches the image edge on an axis
+                /// of a symmetric eye. The shader uses steps of 0.05.
+                /// </summary>
+                [Category("VR")]
+                [Description("Radius of the full-rate region for Advanced edge half-rate shading, centered on the lens center of each eye. A fraction of the half extent of the eye image on each axis, in steps of 0.05.")]
+                public float VrAdvancedEdgeHalfRateRadius
+                {
+                    get => _vrAdvancedEdgeHalfRateRadius;
+                    set => SetField(ref _vrAdvancedEdgeHalfRateRadius, Math.Clamp(value, 0.05f, 1.55f));
+                }
+
+                /// <summary>
+                /// Tints the 2x2 blocks that <see cref="VrAdvancedEdgeHalfRateShading"/> shades at half
+                /// rate. Pixels in the edge region that shade at full rate, because their block shows
+                /// more than one triangle, keep their normal color. Diagnostic only.
+                /// </summary>
+                [Category("VR")]
+                [Description("Diagnostic: tints the 2x2 blocks that Advanced edge half-rate shading shades at half rate. Pixels at triangle edges keep their normal color.")]
+                public bool VrAdvancedEdgeHalfRateDebugTint
+                {
+                    get => _vrAdvancedEdgeHalfRateDebugTint;
+                    set => SetField(ref _vrAdvancedEdgeHalfRateDebugTint, value);
                 }
 
                 /// <summary>

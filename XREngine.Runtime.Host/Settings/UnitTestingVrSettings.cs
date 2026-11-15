@@ -26,6 +26,20 @@ public class UnitTestingVrSettings
     /// <see cref="EVrRenderPipeline.Rvc"/>. The runtime must expose XR_VARJO_quad_views.
     /// </summary>
     public bool RvcQuadView { get; set; } = false;
+    /// <summary>
+    /// Sets the <c>VrAdvancedEdgeHalfRateShading</c> engine setting: Advanced eyes shade the
+    /// 2x2 blocks outside <see cref="AdvancedEdgeHalfRateRadius"/> at half rate.
+    /// </summary>
+    public bool AdvancedEdgeHalfRateShading { get; set; } = false;
+    /// <summary>
+    /// Sets the <c>VrAdvancedEdgeHalfRateRadius</c> engine setting: the full-rate radius around
+    /// the lens center, as a fraction of the half extent of the eye image.
+    /// </summary>
+    public float AdvancedEdgeHalfRateRadius { get; set; } = 0.6f;
+    /// <summary>
+    /// Sets the <c>VrAdvancedEdgeHalfRateDebugTint</c> engine setting: tints the half-rate blocks.
+    /// </summary>
+    public bool AdvancedEdgeHalfRateDebugTint { get; set; } = false;
     public bool PreviewStereoViews { get; set; } = false;
     public bool AllowDesktopEditing { get; set; } = true;
     /// <summary>

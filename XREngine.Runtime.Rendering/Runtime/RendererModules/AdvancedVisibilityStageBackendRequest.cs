@@ -69,6 +69,25 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     public bool RvcFoveatedQuadShading { get; init; }
 
     /// <summary>
+    /// True when native opaque shading of an Advanced eye output shades one pixel per
+    /// 2x2 block of the same primitive outside <see cref="AdvancedEdgeHalfRateRadius"/>
+    /// and fills the rest. Only Advanced OpenXR eyes without MSAA set it; the desktop
+    /// output never does. It is a per-frame setting and is not part of the family identity.
+    /// </summary>
+    public bool AdvancedEdgeHalfRateShading { get; init; }
+
+    /// <summary>
+    /// Radius of the full-rate region around the lens center, as a fraction of the half
+    /// extent of the eye image on each axis. Used only with <see cref="AdvancedEdgeHalfRateShading"/>.
+    /// </summary>
+    public float AdvancedEdgeHalfRateRadius { get; init; }
+
+    /// <summary>
+    /// Diagnostic: tints the blocks that <see cref="AdvancedEdgeHalfRateShading"/> shades at half rate.
+    /// </summary>
+    public bool AdvancedEdgeHalfRateDebugTint { get; init; }
+
+    /// <summary>
     /// True when this family records the mesh surface decal buffer phase. Native opaque
     /// shading then blends the decal buffer before lighting. Every stage of one family
     /// carries the same value.

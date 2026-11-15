@@ -157,6 +157,9 @@ public static partial class EditorUnitTests
             s.VrRenderPipeline = runtimeSettings.VR.RenderPipeline;
             s.RvcPipelineMode = runtimeSettings.VR.RvcPipelineMode;
             s.RvcQuadViewEnabled = runtimeSettings.VR.RvcQuadView;
+            s.VrAdvancedEdgeHalfRateShading = runtimeSettings.VR.AdvancedEdgeHalfRateShading;
+            s.VrAdvancedEdgeHalfRateRadius = runtimeSettings.VR.AdvancedEdgeHalfRateRadius;
+            s.VrAdvancedEdgeHalfRateDebugTint = runtimeSettings.VR.AdvancedEdgeHalfRateDebugTint;
             s.VrFoveationMode = runtimeSettings.VR.Foveation.Mode;
             s.VrFoveationQualityPreset = runtimeSettings.VR.Foveation.QualityPreset;
             s.VrFoveationRequireRequested = runtimeSettings.VR.Foveation.RequireRequested;

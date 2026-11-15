@@ -103,6 +103,47 @@ preamble define `XR_ADV_NATIVE_SHADING_FAMILY` selects the family:
   it is ready, and the standard multisample kernel with the fallback before
   that. Only the kernel for the current visibility mode is requested.
 
+### Edge half-rate shading for eye outputs
+
+Lens optics blur the outer part of each eye image, so full-rate shading there
+costs time that the user does not see. The `VrAdvancedEdgeHalfRateShading`
+engine setting (off by default) makes Advanced eye outputs shade the outer part
+at half rate on each axis:
+
+- It applies only to `AdvancedRenderPipeline` instances with the OpenXR eye
+  profile, on Vulkan, without MSAA. The desktop output and offscreen captures
+  always shade at full rate. OpenGL eyes ignore the setting.
+- The full-rate region is centered on the lens center of each eye: the point
+  where the view direction meets the image. The kernel computes it from the
+  unjittered projection of the view record. With asymmetric eye frusta it is
+  not at the texture center (on most headsets it is nearer the nose).
+- `VrAdvancedEdgeHalfRateRadius` (default 0.6) sets the radius in clip NDC,
+  where 1 is the half extent of the image on each axis. The push flags carry
+  it in steps of 0.05.
+- Outside the radius, the top-left pixel of each 2x2 block (the
+  representative) shades. A pixel of the block that shows the same draw and
+  primitive (a follower) skips `ShadeNativeOpaque.comp`. The shading kernel packs
+  the remaining pixels into the first invocations of the work group, so whole
+  subgroups of followers stay idle.
+- `FoveatedQuadFill.comp` then copies HDR color, velocity, reactive mask,
+  shading diagnostics and the optional material exports from the representative
+  to each follower. A pixel whose identity differs from its representative
+  shades itself, so triangle and object edges stay per pixel and colors do not
+  bleed across them.
+- Depth, visibility, classification, ambient occlusion and shadow maps stay at
+  full resolution. TSR reads the filled color and velocity as usual. It needs
+  no other input change.
+- The follower rule is in `FoveatedQuadShading.glslinc`. It is a pure function
+  of the visibility identity, the view record and the push flags, so the shading
+  kernel and the fill pass always agree. RVC foveated quad shading uses the
+  same rule with its own radii and 4x4 blocks.
+- `VrAdvancedEdgeHalfRateDebugTint` tints the half-rate blocks green. Only a
+  representative that at least one follower copies gets the tint, so the tint
+  marks exactly the pixels that shade at half rate.
+
+The unit-testing world sets the three values with `VR.AdvancedEdgeHalfRateShading`,
+`VR.AdvancedEdgeHalfRateRadius` and `VR.AdvancedEdgeHalfRateDebugTint`.
+
 ### Scene registration identity reuse
 
 Native Uber material reuse retains the result of strict shader validation.

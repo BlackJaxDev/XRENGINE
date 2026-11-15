@@ -170,5 +170,7 @@ void main()
         kernelTileFlags,
         true,
         result);
+    if (XR_ADV_IsTintedEdgeHalfRateRepresentative(pixel, viewIndex, identity))
+        result.radiance *= vec3(0.35, 1.0, 0.35);
     XR_ADV_StoreOpaqueSampleResult(pixel, viewIndex, result);
 }
