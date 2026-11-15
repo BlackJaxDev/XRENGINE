@@ -23,6 +23,18 @@ public readonly record struct AdvancedGeometryRegistration(
     uint MeshletCount,
     uint CookedLayoutVersion)
 {
+    /// <summary>
+    /// The level-0 meshlet count of a cluster hierarchy geometry, or zero. The level-0 meshlets are
+    /// the first meshlets of the geometry.
+    /// </summary>
+    public uint ClusterLevel0Count { get; init; }
+
+    /// <summary>
+    /// The word offset of the cluster hierarchy tables in the triangle-word stream of a cluster
+    /// hierarchy geometry (see <see cref="AdvancedPublishedMeshletLayout"/>), or zero.
+    /// </summary>
+    public uint ClusterHierarchyWordOffset { get; init; }
+
     public static AdvancedGeometryRegistration Create(
         uint vertexCount,
         uint indexCount,

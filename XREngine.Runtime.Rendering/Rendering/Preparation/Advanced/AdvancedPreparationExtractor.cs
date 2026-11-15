@@ -745,7 +745,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             GPUScene.GpuMeshletRange meshletRange = new()
             {
                 MeshletOffset = geometry.MeshletFirst,
-                MeshletCount = geometry.MeshletCount,
+                MeshletCount = geometry.DrawMeshletCount,
             };
             uint topologyGeneration = ComputeTopologyGeneration(mesh, meshletRange);
             // Consecutive rows that draw one shared mesh use one preparation.
@@ -885,7 +885,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         GPUScene.GpuMeshletRange deformationMeshletRange = new()
         {
             MeshletOffset = canonicalGeometry.MeshletFirst,
-            MeshletCount = canonicalGeometry.MeshletCount,
+            MeshletCount = canonicalGeometry.DrawMeshletCount,
         };
         AdvancedDeformedArenaSlice deformationSlice = default;
         int deformationCandidateIndex = -1;
@@ -1708,7 +1708,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             WeightOffset: geometry.CurrentVertexData.ElementOffset,
             PaletteOffset: skinId,
             MeshletOffset: geometry.MeshletFirst,
-            MeshletCount: geometry.MeshletCount);
+            MeshletCount: geometry.DrawMeshletCount);
     }
 
     /// <summary>

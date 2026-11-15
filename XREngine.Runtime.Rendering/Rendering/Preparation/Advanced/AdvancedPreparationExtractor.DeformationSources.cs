@@ -37,7 +37,7 @@ public sealed partial class AdvancedPreparationExtractor
                 throw new InvalidOperationException("A deformation source requires a captured mesh and renderer.");
             if (!publication.Geometry.TryGet(publication.Submission.Records[index].Geometry, out AdvancedGeometryRecord geometry))
                 throw new InvalidOperationException("A deformation source requires a captured geometry record.");
-            AdvancedDeformationSourceWitness witness = AdvancedDeformationSourceWitness.Capture(mesh, geometry.MeshletCount, policy);
+            AdvancedDeformationSourceWitness witness = AdvancedDeformationSourceWitness.Capture(mesh, geometry.DrawMeshletCount, policy);
             sources.Visit(mesh, in witness);
         }
         DeformationSourceGeneration = sources.Complete();

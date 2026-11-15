@@ -146,6 +146,7 @@ public sealed class AdvancedGeometryDatabase
             registration.MeshletCount == 0u ||
             registration.MeshletCount != (uint)meshletDescriptors.Length ||
             !ValidateMeshletStreams(meshletDescriptors, meshletVertexIndices, meshletTriangleWords) ||
+            !ValidateClusterHierarchy(registration, meshletTriangleWords.Length) ||
             Records.Count >= Records.Capacity)
         {
             return false;
@@ -679,6 +680,8 @@ public sealed class AdvancedGeometryDatabase
             MeshletFirst = meshletDescriptors.IsValid ? meshletDescriptors.ElementOffset : registration.MeshletFirst,
             MeshletCount = meshletDescriptors.IsValid ? meshletDescriptors.ElementCount : registration.MeshletCount,
             VertexLayoutId = registration.VertexLayoutId,
+            ReservedLayout0 = registration.ClusterLevel0Count,
+            ReservedLayout1 = registration.ClusterHierarchyWordOffset,
             BoundsSphere = registration.BoundsSphere,
             BoundsMin = registration.BoundsMin,
             BoundsMax = registration.BoundsMax,
@@ -690,6 +693,23 @@ public sealed class AdvancedGeometryDatabase
             MissingBehavior = EAdvancedMissingGeometryBehavior.SkipDraw,
             CookedLayoutVersion = registration.CookedLayoutVersion,
         };
+
+    /// <summary>
+    /// Checks the cluster hierarchy fields of a meshlet registration: the level-0 count is not
+    /// larger than the meshlet count, and the cluster records (one per meshlet) fit in the
+    /// triangle-word stream after the hierarchy offset. A registration without a hierarchy must
+    /// have a zero offset.
+    /// </summary>
+    private static bool ValidateClusterHierarchy(in AdvancedGeometryRegistration registration, int triangleWordCount)
+    {
+        if (registration.ClusterLevel0Count == 0u)
+            return registration.ClusterHierarchyWordOffset == 0u;
+
+        return registration.ClusterLevel0Count <= registration.MeshletCount &&
+            (ulong)registration.ClusterHierarchyWordOffset +
+            (ulong)registration.MeshletCount * AdvancedPublishedMeshletLayout.ClusterRecordWords +
+            AdvancedPublishedMeshletLayout.GroupRecordWords <= (ulong)triangleWordCount;
+    }
 
     private static bool ValidateMeshletStreams(
         ReadOnlySpan<AdvancedMeshletDescriptor> descriptors,

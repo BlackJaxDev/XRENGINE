@@ -375,10 +375,23 @@ The hierarchy flag changes the meshlet settings hash only when it is set.
 
 A renderer without cut selection draws only the level-0 prefix:
 `MeshletPayload.Level0MeshletCount`, `Level0Meshlets`, `Level0VertexIndices`
-and `Level0TriangleIndices`. `GPUScene`, `MeshletCollection`, the Advanced
-canonical geometry publisher and the WebGPU meshlet geometry use these. The
-import cook writes one `[ClusterHierarchy]` summary line for each model to
-`meshlet-cache.log`.
+and `Level0TriangleIndices`. `GPUScene`, `MeshletCollection` and the WebGPU
+meshlet geometry use these. The import cook writes one `[ClusterHierarchy]`
+summary line for each model to `meshlet-cache.log`.
+
+The Advanced canonical geometry publisher publishes the full hierarchy
+(`AdvancedPublishedMeshletLayout`): the descriptors and vertex indices of every
+level, and in the triangle-word stream of the geometry, after the packed
+triangle words, one cluster record per meshlet (2 words: group, refined group)
+and then one group record per group (8 words: sphere, error, depth, two
+reserved words; floats as bits). The geometry record keeps its GPU layout:
+`ReservedLayout0` holds the level-0 count (`ClusterLevel0Count`; zero without a
+hierarchy) and `ReservedLayout1` the word offset of the cluster records,
+relative to the geometry's `MeshletTriangleWords` reference, so arena
+compaction keeps it valid. `MeshletCount` counts every level, and
+`DrawMeshletCount` is the level-0 count of a hierarchy geometry. Visibility
+payloads, deformation ranges and deformation witnesses use `DrawMeshletCount`,
+so a draw renders only level 0 until a renderer selects a cut.
 
 ## Production Closeout Status
 
