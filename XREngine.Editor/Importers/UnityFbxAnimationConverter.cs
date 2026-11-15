@@ -86,6 +86,20 @@ internal sealed class UnityFbxAnimationConverter
                 break;
             time += step;
         }
+        // Constant keys change the value at one instant. A sample just before each step and a
+        // sample at the step keep the step sharp after linear playback. The interval between
+        // these two samples is not refined.
+        long stepOffset = StepOffsetTicks(duration);
+        var stepIntervals = new HashSet<(long Before, long At)>();
+        foreach (FbxNodeAnimationBinding binding in stack.NodeAnimations)
+            foreach (FbxScalarCurve? curve in binding.GetCurves())
+                if (curve is not null)
+                    foreach ((long before, long at) in curve.EnumerateSteps(stepOffset))
+                    {
+                        keyTimes.Add(before);
+                        keyTimes.Add(at);
+                        stepIntervals.Add((before, at));
+                    }
         if (keyTimes.Count > 16384 || (long)keyTimes.Count * _targets.Length > 2000000)
             throw new InvalidDataException($"Animation '{stack.Name}' exceeds the supported sample count.");
 
@@ -97,7 +111,8 @@ internal sealed class UnityFbxAnimationConverter
             samples.Add(time, Sample(time, bindings));
         }
         for (int index = 1; index < initialTimes.Length; index++)
-            Refine(initialTimes[index - 1], initialTimes[index], 0);
+            if (!stepIntervals.Contains((initialTimes[index - 1], initialTimes[index])))
+                Refine(initialTimes[index - 1], initialTimes[index], 0);
 
         float[] times = samples.Keys.Select(time => FbxAnimationTime.ToSeconds(time - start)).ToArray();
         var builder = new UnityModelAnimationBuilder(_root);
@@ -235,7 +250,9 @@ internal sealed class UnityFbxAnimationConverter
                 curve.Keyframes.PreInfinityMode = EKeyframeInfinityMode.Clamp;
                 curve.Keyframes.PostInfinityMode = EKeyframeInfinityMode.Clamp;
                 // FBX curves hold their endpoint outside their own key range.
-                SortedSet<long> times = [start, end, .. binding.WeightCurve.KeyTimes];
+                SortedSet<long> times = binding.WeightCurve.HasNonLinearSegments
+                    ? SampleNonLinearWeights(binding, start, end, duration)
+                    : [start, end, .. binding.WeightCurve.KeyTimes];
                 foreach (long time in times)
                     curve.Keyframes.Add(new FloatKeyframe
                     {
@@ -249,6 +266,67 @@ internal sealed class UnityFbxAnimationConverter
                 MorphTargets.Add((target, channelName));
             }
         }
+    }
+
+    /// <summary>
+    /// Selects the sample times of a blend-shape weight curve with constant or cubic segments,
+    /// so that linear playback of the samples stays within 1e-4 of the source curve (as a
+    /// fraction of the full weight). The method starts from the key times, a 120 Hz grid and the
+    /// step samples of constant keys, then adds the midpoint of each interval whose linear
+    /// value misses the curve, to a depth of 8 halvings.
+    /// </summary>
+    private SortedSet<long> SampleNonLinearWeights(FbxBlendShapeAnimationBinding binding, long start, long end, float duration)
+    {
+        FbxScalarCurve weights = binding.WeightCurve;
+        float tolerance = 1e-4f * binding.FullWeight;
+        SortedSet<long> times = [start, end, .. weights.KeyTimes];
+        long step = FbxAnimationTime.TicksPerSecond / 120;
+        for (long time = start; time < end; time += step)
+            times.Add(time);
+        var stepIntervals = new HashSet<(long Before, long At)>();
+        foreach ((long before, long at) in weights.EnumerateSteps(StepOffsetTicks(duration)))
+        {
+            times.Add(before);
+            times.Add(at);
+            stepIntervals.Add((before, at));
+        }
+
+        long[] initialTimes = [.. times];
+        for (int index = 1; index < initialTimes.Length; index++)
+            if (!stepIntervals.Contains((initialTimes[index - 1], initialTimes[index])))
+                Refine(initialTimes[index - 1], initialTimes[index], 0);
+        if (times.Count > 16384)
+            throw new InvalidDataException($"Blendshape '{binding.BlendShapeName}' exceeds the supported sample count.");
+        return times;
+
+        void Refine(long first, long last, int depth)
+        {
+            _cancellation.ThrowIfCancellationRequested();
+            long middle = first + (last - first) / 2;
+            if (middle == first || middle == last)
+                return;
+            float fraction = (float)((middle - first) / (double)(last - first));
+            float interpolated = weights.Evaluate(first) + ((weights.Evaluate(last) - weights.Evaluate(first)) * fraction);
+            if (MathF.Abs(weights.Evaluate(middle) - interpolated) <= tolerance)
+                return;
+            if (depth >= 8 || times.Count >= 16384)
+                throw new InvalidDataException($"Blendshape '{binding.BlendShapeName}' cannot meet the weight sampling tolerance.");
+            times.Add(middle);
+            Refine(first, middle, depth + 1);
+            Refine(middle, last, depth + 1);
+        }
+    }
+
+    /// <summary>
+    /// Gets the time between the sample before a constant-key step and the sample at the step.
+    /// It is 10 microseconds, or longer for long clips, so that both samples stay separate
+    /// after the conversion to float seconds (at least 4 float steps at the clip duration).
+    /// </summary>
+    private static long StepOffsetTicks(float durationSeconds)
+    {
+        double floatStep = MathF.BitIncrement(MathF.Max(durationSeconds, 1.0f)) - MathF.Max(durationSeconds, 1.0f);
+        long floatStepTicks = (long)Math.Ceiling(4.0 * floatStep * FbxAnimationTime.TicksPerSecond);
+        return Math.Max(FbxAnimationTime.TicksPerSecond / 100000, floatStepTicks);
     }
 
     private string ResolveBlendShapeName(XREngine.Rendering.Models.Model model, FbxBlendShapeAnimationBinding binding)
