@@ -41,6 +41,8 @@ Advanced eye outputs can also shade the outer part of each eye at half rate with
 
 `OpenXrRenderPacingMode` selects the thread that owns `xrWaitFrame`, `xrBeginFrame`, and `xrLocateViews`: `InRenderCallback`, `PostRenderCallback`, `DedicatedThread` (default), or `CollectVisibleThread`. `xrEndFrame` and layer submission stay on the OpenXR render path in all modes.
 
+With TSR on the eyes, `TsrRenderScale` renders Advanced eyes below the swapchain size and TSR upscales to it. Only true single-pass stereo eyes are validated with a scale below 1. See [eye render scale](advanced-render-pipeline.md#eye-render-scale).
+
 Per-eye swapchain size does not follow the desktop window. `OpenXrEyeResolutionPreset`, `OpenXrEyeResolutionScale`, and `OpenXrCustomEyeResolutionWidth`/`Height` select it. Swapchain creation clamps to the runtime maximum image rectangle and logs the clamp. A live change recreates the OpenXR instance and session resources. Unit-testing worlds can set the same values through `XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_PRESET`, `XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_SCALE`, `XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_WIDTH`, and `XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_HEIGHT`. The Monado launch path passes the resolved profile to the simulated HMD through `XRE_OPENXR_EYE_RESOLUTION_*`.
 
 Desktop output while VR is active follows [VR output pacing and mirror policy](vr-output-pacing-and-mirror-policy.md).

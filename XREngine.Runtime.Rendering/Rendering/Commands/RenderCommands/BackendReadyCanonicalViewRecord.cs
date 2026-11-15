@@ -14,6 +14,20 @@ public readonly record struct BackendReadyCanonicalViewRecord(
     int ViewportHeight,
     ulong ViewGeneration)
 {
+    /// <summary>
+    /// Width of the internal render target of this view in pixels, when the view renders
+    /// below its output size (render scale with an upscale, such as TSR). 0 means the view
+    /// renders at <see cref="ViewportWidth"/>. Native stages map pixels of their internal
+    /// targets to clip space with this size; <see cref="ViewportWidth"/> stays the output size.
+    /// </summary>
+    public int RenderWidth { get; init; }
+
+    /// <summary>
+    /// Height of the internal render target of this view in pixels; 0 means
+    /// <see cref="ViewportHeight"/>. See <see cref="RenderWidth"/>.
+    /// </summary>
+    public int RenderHeight { get; init; }
+
     public Matrix4x4 ProjectionUnjittered { get; init; }
     public Matrix4x4 ViewProjectionJittered { get; init; }
     public Matrix4x4 ViewProjectionUnjittered { get; init; }

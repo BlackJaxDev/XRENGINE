@@ -44,9 +44,12 @@ public sealed partial class BackendReadyFramePackage
 
     private EAdvancedViewRecordFlags _canonicalViewPolicyFlags;
 
-    /// <summary>Preserves collection policy when authoring freezes newer camera or eye matrices.</summary>
+    /// <summary>
+    /// Preserves collection policy when authoring freezes newer camera or eye matrices, and
+    /// sets the internal render size of a view that renders below its output size.
+    /// </summary>
     internal BackendReadyCanonicalViewRecord ApplyCanonicalViewPolicy(BackendReadyCanonicalViewRecord view)
-        => view with { Flags = view.Flags | _canonicalViewPolicyFlags };
+        => ApplyInternalRenderSize(view with { Flags = view.Flags | _canonicalViewPolicyFlags });
     public ReadOnlySpan<BackendReadyCanonicalPassRecord> CanonicalPasses => _canonicalPasses.AsSpan(0, _canonicalPassCount);
     public ReadOnlySpan<BackendReadyCanonicalDirtyOwnerRange> CanonicalDirtyOwnerRanges => _canonicalDirtyOwnerRanges.AsSpan(0, _canonicalDirtyOwnerRangeCount);
     public ReadOnlySpan<BackendReadyDiagnosticReadbackRequest> DiagnosticReadbackRequests => _canonicalDiagnosticReadbackRequests.AsSpan(0, _canonicalDiagnosticReadbackRequestCount);
@@ -353,6 +356,24 @@ public sealed partial class BackendReadyFramePackage
         // consumer obtains its own completion-owned lease there; releasing this
         // one early made the supposedly canonical stream fall back to mutable
         // GPUScene state between package production and primary recording.
+    }
+
+    /// <summary>
+    /// Sets the internal render size of a view that renders below its output size. The view
+    /// set describes each view by its output rectangle (for OpenXR, the swapchain size), but
+    /// the pipeline renders its native targets at the internal size of the package viewport
+    /// (a render scale with an upscale). Only a view whose rectangle is the package viewport
+    /// gets the internal size, so a view that already carries its render size, or a view of
+    /// another size, is not scaled twice.
+    /// </summary>
+    private BackendReadyCanonicalViewRecord ApplyInternalRenderSize(in BackendReadyCanonicalViewRecord view)
+    {
+        BackendReadyFramePackageIdentity identity = Identity;
+        if (identity.InternalWidth <= 0 || identity.InternalHeight <= 0 ||
+            (identity.InternalWidth == identity.ViewportWidth && identity.InternalHeight == identity.ViewportHeight) ||
+            view.ViewportWidth != identity.ViewportWidth || view.ViewportHeight != identity.ViewportHeight)
+            return view;
+        return view with { RenderWidth = identity.InternalWidth, RenderHeight = identity.InternalHeight };
     }
 
     /// <summary>

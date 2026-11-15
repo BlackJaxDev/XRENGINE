@@ -1885,7 +1885,11 @@ internal sealed partial class VulkanCommandRuntime
             BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         }
         int uniformSlot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
-        bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot, out string failureReason, out bool pipelineUnavailable);
+        bool recorded;
+        string failureReason;
+        bool pipelineUnavailable;
+        using (TryBeginStereoPassGpuProfilerScope(state.CommandBuffer, in payload.Draw))
+            recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot, out failureReason, out pipelineUnavailable);
         state.CurrentPrimaryOperationRecorded = recorded;
         if (!recorded && failureReason.Length > 0)
         {

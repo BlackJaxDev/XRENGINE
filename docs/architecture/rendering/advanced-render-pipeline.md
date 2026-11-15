@@ -157,6 +157,36 @@ hypothesis is that the fetches of a group are bound by the sample spacing; a tes
 with texture gradients times two (one mip level coarser) recovered only a small
 part of the texture cost, which does not agree with it.
 
+### Eye render scale
+
+With TSR as the anti-aliasing mode of the eyes, `TsrRenderScale` (0.5 to 1.0, or the
+`TsrRenderScaleOverride` of the eye camera) renders the eyes below the swapchain size.
+The temporal upscale (`TemporalSuperResolutionStereo.fs`) then writes the output at
+the swapchain size:
+
+- Everything before TSR runs at the internal size: the native stages (visibility
+  raster, depth pyramid and meshlet occlusion, tile classification, ambient
+  occlusion, native opaque shading, the fill pass) and the stereo screen-space
+  passes (ambient occlusion, bloom, post process, final post process). TSR is the
+  last pass of the chain. It reads the internal size and writes the output size.
+- The view set describes each eye by its output rectangle (for OpenXR, the swapchain
+  size). `BackendReadyFramePackage.ApplyCanonicalViewPolicy` therefore gives each
+  canonical view whose rectangle is the package viewport the internal size of the
+  package (`RenderWidth` and `RenderHeight`). `AdvancedViewRecordFactory` writes it to
+  `renderSizeAndInverse`, which the native stages use to map their pixels to clip
+  space. `outputSizeAndInverse` stays the output size. Without this split, the native
+  stages read an internal target as if it had the output size, which zooms the image
+  out and reads rows outside the target.
+- Only true single-pass stereo eyes are validated with a scale below 1. Two-pass eyes
+  (`SequentialViews`, `ParallelCommandBufferRecording`) are not validated. OpenGL and
+  WebGPU canonical views do not get the internal size.
+- With another anti-aliasing mode, or at 1.0, the eyes render at the swapchain size and
+  the image does not change.
+
+Vulkan GPU timing names each stereo fullscreen pass after its fragment shader
+(`Stereo > Fullscreen > <shader>` in the stereo pipeline dump), so the TSR, FXAA and
+post passes of the eyes have their own rows.
+
 ### Scene registration identity reuse
 
 Native Uber material reuse retains the result of strict shader validation.
