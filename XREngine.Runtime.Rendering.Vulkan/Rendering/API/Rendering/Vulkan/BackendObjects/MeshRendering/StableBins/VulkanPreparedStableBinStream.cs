@@ -598,7 +598,7 @@ internal sealed partial class VulkanPreparedStableBinStream
                 payload.PrimitiveTopology,
                 payload.Skinned,
                 producer,
-                producer == EAdvancedGeometryProducer.IndirectIndexed ? default : payload.Geometry,
+                AdvancedIndirectRangeKey.RangeGeometry(producer, payload.Geometry),
                 preparedVertices);
             if (!hasLastRecordInputs || recordInputs != lastRecordInputs)
             {

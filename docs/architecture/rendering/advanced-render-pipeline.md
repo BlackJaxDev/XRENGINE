@@ -429,6 +429,20 @@ so one stream serves every second frame on desktop. The stream keeps its sealed
 records, bin headers, manifests, and submission plans across frames when every
 seal input is equal.
 
+Indirect ranges and bins are keyed by the raster state class, the coverage, the
+cull mode, the topology, the geometry producer, and the deformed-vertex flag.
+Indexed and meshlet producers (`IndirectIndexed`, `StaticMeshlet`,
+`SkinnedMeshlet`) read their geometry from the shared atlases through each
+payload: the index atlas, the static vertex atlas, and the meshlet descriptor
+table. Their keys hold no geometry handle
+(`AdvancedIndirectRangeKey.RangeGeometry`), so the payloads of different meshes
+share one range, one bin, and one indirect draw. The visibility identity (draw,
+meshlet, and primitive) comes from the payload that the task and mesh stages
+read, not from the bin. CPU-direct producers bind the vertex and index buffers
+of one mesh, so their keys keep the geometry handle. Before meshlet ranges were
+merged, New Sponza produced about 640 one-mesh bins for each view, and the eye
+frame spent about 3.6 ms of CPU recording them.
+
 Records and bin keys contain no frame binding:
 
 - A deformed record does not hold the deformation output buffer. The deformed
