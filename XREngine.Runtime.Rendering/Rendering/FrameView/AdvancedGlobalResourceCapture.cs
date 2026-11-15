@@ -190,7 +190,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
     /// <summary>
     /// Adds the desktop and the headset cascade records of one directional light. The
     /// primary directional light is the first light of the capture (directional lights are
-    /// captured first); only its headset records get the headset shadow quality settings.
+    /// captured first); only its headset records get the headset shadow quality setting.
     /// </summary>
     private static void CaptureDirectionalShadows(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, bool primary, List<AdvancedShadowCaptureRow> rows)
     {

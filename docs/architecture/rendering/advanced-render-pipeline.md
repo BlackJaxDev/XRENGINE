@@ -159,7 +159,7 @@ part of the texture cost, which does not agree with it.
 
 ### Headset shadow quality
 
-Two engine settings lower the directional shadow cost of the eyes. They change only
+One engine setting lowers the directional shadow cost of the eyes. It changes only
 the headset cascade records (`HmdSource`) of the primary directional light, that is
 the first directional light of the world. The desktop records, the cascade rendering
 and the shaders stay the same.
@@ -168,12 +168,12 @@ and the shaders stay the same.
   and the Vogel tap count of the light. The soft shadow mode of the light still
   selects the pattern: `FixedPoisson` uses up to 16 taps, and `Hard` uses 1 tap or a
   4-tap tent, so 2 gives 4 taps there.
-- `VrAdvancedContactShadowSamples` (0 to 32, default 0) replaces the contact shadow
-  sample count of the light, when the light has contact shadows.
 - 0 uses the values of the light.
 
-The unit-testing world sets them with `VR.AdvancedShadowFilterTaps` and
-`VR.AdvancedContactShadowSamples`.
+The unit-testing world sets it with `VR.AdvancedShadowFilterTaps`. The contact sample
+count needs no headset setting: a directional cascade fetches the stored depth once
+for all contact steps, so the sample count changes only arithmetic (see the contact
+march in the default render pipeline notes).
 
 Measured gain in native opaque shading at 2016x2240 for each eye (New Sponza with an
 avatar, both eyes; the sun uses `ContactHardeningPcss` with 8 filter samples and 16

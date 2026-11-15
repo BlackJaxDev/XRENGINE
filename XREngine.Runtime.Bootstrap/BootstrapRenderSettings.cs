@@ -146,7 +146,6 @@ public static class BootstrapRenderSettings
             renderSettings.VrAdvancedEdgeHalfRateRadius = settings.VR.AdvancedEdgeHalfRateRadius;
             renderSettings.VrAdvancedEdgeHalfRateDebugTint = settings.VR.AdvancedEdgeHalfRateDebugTint;
             renderSettings.VrAdvancedShadowFilterTaps = settings.VR.AdvancedShadowFilterTaps;
-            renderSettings.VrAdvancedContactShadowSamples = settings.VR.AdvancedContactShadowSamples;
             renderSettings.VrFoveationMode = settings.VR.Foveation.Mode;
             renderSettings.VrFoveationQualityPreset = settings.VR.Foveation.QualityPreset;
             renderSettings.VrFoveationRequireRequested = settings.VR.Foveation.RequireRequested;

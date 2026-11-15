@@ -1222,6 +1222,8 @@ composition is separate.
 
 Contact shadows expose distance, sample count, thickness, fade range, normal offset, and jitter strength. Use the fade range to limit near-field detail work to the camera distances where the extra ray march is visible.
 
+The shadow-map contact march (`XRENGINE_SHADOW_BODY_SampleContactShadow2D` for forward receivers, `XR_ADV_DirectionalContactShadow` for Advanced native shading) steps from the receiver toward the light and darkens where an occluder lies above the step within the thickness window. Distance and thickness are in world meters. The depth difference of a step is in normalized light depth, so the march scales the window by the light depth change of one meter along the light direction (1 / depth range of the map). For an orthographic map (a directional cascade) every step projects to the same texel, so the march fetches the stored depth once and tests each step against it; the sample count then changes only arithmetic. Perspective maps (spot lights) keep one fetch for each step.
+
 Directional lights default to short-range contact shadows enabled with distance `1.0`, `16` samples, thickness `2.0`, fade range `10` to `40`, zero normal offset, and full jitter.
 
 Spot lights default to `512x512` shadow maps, PCSS/contact-hardening filtering, `8` blocker samples, `8` filter samples, blocker-search radius `0.1`, penumbra clamp `0.0002` to `0.05`, source radius `0.1`, and short-range contact shadows with distance `0.1`, `16` samples, thickness `1.0`, fade range `10` to `40`, normal offset `0.036`, and full jitter.

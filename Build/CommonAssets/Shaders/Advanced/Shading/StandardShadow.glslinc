@@ -89,16 +89,25 @@ bool XR_ADV_ShadowAffectsView(XRAdvancedShadowRecord record, XRAdvancedViewRecor
         viewIndex < 64u && (record.viewMaskHi & (1u << (viewIndex - 32u))) != 0u;
 }
 
-bool XR_ADV_ProjectShadow(XRAdvancedShadowRecord record, vec3 position, out vec3 coordinate)
+// Projects a world position to shadow-map UV and depth without the [0, 1] bounds test.
+// Returns false only when the projection is not finite or lies behind the projection.
+bool XR_ADV_ProjectShadowUnbounded(XRAdvancedShadowRecord record, vec3 position, out vec3 coordinate)
 {
     coordinate = vec3(0.0);
-    if (record.type == 3u) return record.renderedLightPositionAndFar.w > 0.0;
     vec4 clip = XR_ADV_TransformRowVector(vec4(position, 1.0), record.worldToShadow);
     if (clip.w <= 0.000001 || any(isnan(clip)) || any(isinf(clip))) return false;
     vec3 ndc = clip.xyz / clip.w;
     coordinate = vec3(ndc.xy * 0.5 + 0.5,
         (record.flags & 32u) != 0u ? ndc.z : ndc.z * 0.5 + 0.5);
     if ((record.flags & 64u) != 0u) coordinate.y = 1.0 - coordinate.y;
+    return true;
+}
+
+bool XR_ADV_ProjectShadow(XRAdvancedShadowRecord record, vec3 position, out vec3 coordinate)
+{
+    coordinate = vec3(0.0);
+    if (record.type == 3u) return record.renderedLightPositionAndFar.w > 0.0;
+    if (!XR_ADV_ProjectShadowUnbounded(record, position, coordinate)) return false;
     return all(greaterThanEqual(coordinate, vec3(0.0))) && all(lessThanEqual(coordinate, vec3(1.0)));
 }
 
@@ -261,6 +270,13 @@ float XR_ADV_SampleDirectionalFiltered(XRAdvancedShadowRecord record, XRAdvanced
 // Short-range contact shadows: march toward the light in the cascade's own depth
 // page and darken where a thin occluder lies just above the ray. Mirrors the
 // forward shadow-map contact march, including its view-depth sample scaling.
+//
+// A directional cascade is an orthographic projection along L, so every step of the
+// march projects to the same shadow-map texel; only its light depth changes. The march
+// therefore fetches the stored depth once and tests each step against it. The depth
+// difference is in normalized light depth (0 to 1 over the cascade depth range), so the
+// thickness window, which the light gives in world meters, is scaled by the light depth
+// change of one meter along L (1 / cascade depth range).
 float XR_ADV_DirectionalContactShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
     XRAdvancedEncodedTextureReference textureReference, vec3 position, vec3 N, vec3 L,
     vec2 lower, vec2 upper, float compareBias, float viewDepth, float noise)
@@ -281,18 +297,30 @@ float XR_ADV_DirectionalContactShadow(XRAdvancedShadowRecord record, XRAdvancedT
     vec3 origin = position + N * max(max(record.depthBiasAndFilter.z, record.contactParameters.w), compareBias * 2.0);
     float jitter = record.contactFadeAndTexel.z;
     float thicknessScale = record.contactParameters.z;
+
+    vec3 originCoordinate;
+    vec3 lightStepCoordinate;
+    if (!XR_ADV_ProjectShadowUnbounded(record, origin, originCoordinate) ||
+        !XR_ADV_ProjectShadowUnbounded(record, origin + L, lightStepCoordinate))
+        return 1.0;
+    if (any(lessThan(originCoordinate.xy, vec2(0.0))) || any(greaterThan(originCoordinate.xy, vec2(1.0))))
+        return 1.0;
+    // Light depth change for one meter along L; negative because L points to the light.
+    float depthPerMeter = lightStepCoordinate.z - originCoordinate.z;
+    float thicknessPerMeter = thicknessScale * abs(depthPerMeter);
+    float depth = XR_ADV_DirectionalTapDepth(record, textureRecord, textureReference,
+        originCoordinate.xy, lower, upper);
+
     float occlusion = 0.0;
     for (int i = 0; i < 32; ++i)
     {
         if (i >= samples) break;
         float travel = (float(i) + 0.5 + (noise - 0.5) * jitter) * stepSize;
-        vec3 coordinate;
-        if (!XR_ADV_ProjectShadow(record, origin + L * travel, coordinate)) continue;
-        float depth = XR_ADV_DirectionalTapDepth(record, textureRecord, textureReference,
-            coordinate.xy, lower, upper);
-        float blockerDelta = coordinate.z - depth;
+        float stepDepth = originCoordinate.z + travel * depthPerMeter;
+        if (stepDepth < 0.0 || stepDepth > 1.0) continue;
+        float blockerDelta = stepDepth - depth;
         if (blockerDelta <= compareBias) continue;
-        float thickness = max(travel * thicknessScale, compareBias * 4.0);
+        float thickness = max(travel * thicknessPerMeter, compareBias * 4.0);
         if (blockerDelta > thickness) continue;
         float depthWeight = 1.0 - smoothstep(compareBias, thickness, blockerDelta);
         occlusion = max(occlusion, depthWeight * (1.0 - travel / distance));
