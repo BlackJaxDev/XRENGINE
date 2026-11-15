@@ -58,6 +58,12 @@ internal sealed class NativeMeshOptimizerBackend : IMeshOptimizerBackend
         => NativeMeshOptimizer.SpatialClusterPoints(destination, positions, vertexCount, positionsStride, clusterSize);
     public void GeneratePositionRemap(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride)
         => NativeMeshOptimizer.GeneratePositionRemap(destination, positions, vertexCount, positionsStride);
+    public int PartitionClusters(Span<uint> destination, ReadOnlySpan<uint> clusterIndices, ReadOnlySpan<uint> clusterIndexCounts, ReadOnlySpan<float> positions, int vertexCount, int positionsStride, int targetPartitionSize)
+        => NativeMeshOptimizer.PartitionClusters(destination, clusterIndices, clusterIndexCounts, positions, vertexCount, positionsStride, targetPartitionSize);
+    public MeshOptimizerBounds ComputeSphereBounds(ReadOnlySpan<float> positions, int count, int positionsStride, ReadOnlySpan<float> radii, int radiiStride)
+        => NativeMeshOptimizer.ComputeSphereBounds(positions, count, positionsStride, radii, radiiStride);
+    public MeshOptimizerBounds ComputeClusterBounds(ReadOnlySpan<uint> indices, ReadOnlySpan<float> positions, int vertexCount, int positionsStride)
+        => NativeMeshOptimizer.ComputeClusterBounds(indices, positions, vertexCount, positionsStride);
     public int FilterIndexBuffer(Span<uint> destination, ReadOnlySpan<uint> indices, ReadOnlySpan<float> vertices, int vertexCount, int vertexSize, int vertexStride)
         => NativeMeshOptimizer.FilterIndexBuffer(destination, indices, vertices, vertexCount, vertexSize, vertexStride);
 }
