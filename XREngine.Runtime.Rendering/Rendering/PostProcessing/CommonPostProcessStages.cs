@@ -135,7 +135,7 @@ public static class CommonPostProcessStages
         stage.AddParameter(
             PostProcessParameterNames.TonemappingOperator,
             PostProcessParameterKind.Int,
-            (int)ETonemappingType.Mobius,
+            (int)TonemappingSettings.HostDefaultTonemapping,
             displayName: "Operator",
             enumOptions: BuildEnumOptions<ETonemappingType>());
 

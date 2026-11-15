@@ -1395,6 +1395,12 @@ The Default Render Pipeline tonemapping stage now exposes AgX and GT7 in additio
 
 `GT7` is the lightweight Uchimura/Gran Turismo per-channel curve intended for the engine's SDR post-process path. It is not the full GT7 physical HDR/display pipeline with target-display adaptation and perceptual gamut mapping.
 
+**Default operator.** `TonemappingSettings.HostDefaultTonemapping` sets the operator that new tonemapping settings and new post-process schemas start with. Each pipeline copies the value into its schema when it builds the schema, so a host must set it before it creates render pipelines.
+
+- The shared default is `Mobius`. The cooked web Default output route (`Tonemap.slang`) supports only Mobius, and `GetWebPostProcessRejection` rejects other operators. `CreateWebPostProcessAdmissionState` sets Mobius as the browser default before it applies the authored values.
+- Desktop hosts install `GT7`. `DesktopEngineStartupPolicy.Install` sets it when the editor, desktop runtime, VR client or server installs its application services, before any camera exists. Editor, desktop and VR eye cameras therefore start with GT7 without a per-scene step.
+- Authored camera values win over the host default. A camera that keeps GT7 is rejected by the cooked web route.
+
 ---
 
 ## 25. ImGui Platform Viewport Disposal
@@ -1421,6 +1427,8 @@ Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resourc
 ---
 
 ## 27. DLAA And MFAA AA Modes
+
+The default AA mode (`EngineSettings.AntiAliasingMode`) is `Tsr`, and the default `TsrRenderScale` is 1.0. At 1.0, TSR renders at full resolution and acts as temporal anti-aliasing. A camera `AntiAliasingModeOverride` or `TsrRenderScaleOverride` replaces these values for one camera.
 
 `DLAA` is a first-class AA mode in the default render pipeline. It requests the existing NVIDIA DLSS vendor path at native internal resolution, bypasses the in-engine FXAA/SMAA/TSR post-AA chain, and fails visibly when the DLSS runtime or compatible NVIDIA path is unavailable.
 

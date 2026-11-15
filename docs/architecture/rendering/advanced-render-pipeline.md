@@ -207,6 +207,8 @@ the swapchain size:
   WebGPU canonical views do not get the internal size.
 - With another anti-aliasing mode, or at 1.0, the eyes render at the swapchain size and
   the image does not change.
+- The engine default is TSR at 1.0, so the eyes render at the swapchain size unless a
+  setting or a camera override selects a lower scale.
 
 Vulkan GPU timing names each stereo fullscreen pass after its fragment shader
 (`Stereo > Fullscreen > <shader>` in the stereo pipeline dump), so the TSR, FXAA and
