@@ -738,15 +738,21 @@ public sealed partial class ShadowAtlasManager
     }
 
     /// <summary>
-    /// Invalidates the static tile of a cascade when a submission that held that cascade
-    /// failed, so the next refresh draws its static casters again.
+    /// Invalidates the static tile of a cascade when the failed submission of render frame
+    /// <paramref name="submissionFrameId"/> recorded the static draw that the tile holds, so
+    /// the next refresh draws its static casters again. A failed submission loses only the
+    /// content that it wrote: a tile whose static draw came from another frame keeps its
+    /// content. This matters when a window callback that skips its desktop frame discards its
+    /// queued shadow work. That cohort fails without having drawn into the static tiles.
     /// </summary>
-    private void InvalidateDirectionalStaticCascadeTile(in ShadowRequestKey key)
+    private void InvalidateDirectionalStaticCascadeTile(in ShadowRequestKey key, ulong submissionFrameId)
     {
         if (key.ProjectionType != EShadowProjectionType.DirectionalCascade)
             return;
         ShadowRequestSource source = key.Source == ShadowRequestSource.Default ? ShadowRequestSource.Desktop : key.Source;
-        FindDirectionalStaticCascadeTile(key.LightId, source, key.FaceOrCascadeIndex, out _)?.Invalidate();
+        DirectionalCascadeStaticTile? tile = FindDirectionalStaticCascadeTile(key.LightId, source, key.FaceOrCascadeIndex, out _);
+        if (tile is not null && tile.RecordedRenderFrameId == submissionFrameId)
+            tile.Invalidate();
     }
 
     private static AdvancedDirectionalShadowLaneRequest[] CreateAdvancedLaneRequests()
