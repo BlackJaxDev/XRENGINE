@@ -40,6 +40,16 @@ public class UnitTestingVrSettings
     /// Sets the <c>VrAdvancedEdgeHalfRateDebugTint</c> engine setting: tints the half-rate blocks.
     /// </summary>
     public bool AdvancedEdgeHalfRateDebugTint { get; set; } = false;
+    /// <summary>
+    /// Sets the <c>VrAdvancedShadowFilterTaps</c> engine setting: the filter tap count of the
+    /// headset shadow cascades of the primary directional light. 0 uses the values of the light.
+    /// </summary>
+    public int AdvancedShadowFilterTaps { get; set; } = 0;
+    /// <summary>
+    /// Sets the <c>VrAdvancedContactShadowSamples</c> engine setting: the contact shadow sample
+    /// count of the headset shadow cascades of the primary directional light. 0 uses the value of the light.
+    /// </summary>
+    public int AdvancedContactShadowSamples { get; set; } = 0;
     public bool PreviewStereoViews { get; set; } = false;
     public bool AllowDesktopEditing { get; set; } = true;
     /// <summary>

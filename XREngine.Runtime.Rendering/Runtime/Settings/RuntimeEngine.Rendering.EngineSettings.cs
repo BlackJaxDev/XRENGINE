@@ -2851,6 +2851,37 @@ public static partial class RuntimeEngine
                     set => SetField(ref _vrAdvancedEdgeHalfRateDebugTint, value);
                 }
 
+                private int _vrAdvancedShadowFilterTaps = 0;
+                private int _vrAdvancedContactShadowSamples = 0;
+
+                /// <summary>
+                /// Filter tap count of the headset shadow cascades of the primary directional light
+                /// (the first directional light of the world) in Advanced native shading. The value
+                /// replaces the filter sample count and the Vogel tap count of the light in the headset
+                /// records only. 0 uses the values of the light. The desktop view is never affected.
+                /// </summary>
+                [Category("VR")]
+                [Description("Filter tap count of the headset shadow cascades of the primary directional light in Advanced native shading. 0 uses the values of the light. The desktop view is never affected.")]
+                public int VrAdvancedShadowFilterTaps
+                {
+                    get => _vrAdvancedShadowFilterTaps;
+                    set => SetField(ref _vrAdvancedShadowFilterTaps, Math.Clamp(value, 0, 32));
+                }
+
+                /// <summary>
+                /// Contact shadow sample count of the headset shadow cascades of the primary directional
+                /// light in Advanced native shading. The value replaces the contact sample count of the
+                /// light in the headset records only, when the light has contact shadows. 0 uses the
+                /// value of the light. The desktop view is never affected.
+                /// </summary>
+                [Category("VR")]
+                [Description("Contact shadow sample count of the headset shadow cascades of the primary directional light in Advanced native shading, when the light has contact shadows. 0 uses the value of the light. The desktop view is never affected.")]
+                public int VrAdvancedContactShadowSamples
+                {
+                    get => _vrAdvancedContactShadowSamples;
+                    set => SetField(ref _vrAdvancedContactShadowSamples, Math.Clamp(value, 0, 32));
+                }
+
                 /// <summary>
                 /// Controls disabled, capability-gated, required, and diagnostic selection
                 /// of the advanced render pipeline for desktop and offscreen outputs.

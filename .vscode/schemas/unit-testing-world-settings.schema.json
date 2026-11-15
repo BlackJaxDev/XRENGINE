@@ -980,6 +980,14 @@
           "type": "boolean",
           "description": "Diagnostic: tints the 2x2 blocks that Advanced edge half-rate shading shades at half rate."
         },
+        "AdvancedShadowFilterTaps": {
+          "type": "integer",
+          "description": "Filter tap count of the headset shadow cascades of the primary directional light in Advanced native shading. 0 uses the values of the light. The desktop view is never affected."
+        },
+        "AdvancedContactShadowSamples": {
+          "type": "integer",
+          "description": "Contact shadow sample count of the headset shadow cascades of the primary directional light in Advanced native shading, when the light has contact shadows. 0 uses the value of the light."
+        },
         "PreviewStereoViews": {
           "type": "boolean",
           "description": "Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active."

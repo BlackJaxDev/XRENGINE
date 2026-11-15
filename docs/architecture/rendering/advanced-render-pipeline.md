@@ -157,6 +157,31 @@ hypothesis is that the fetches of a group are bound by the sample spacing; a tes
 with texture gradients times two (one mip level coarser) recovered only a small
 part of the texture cost, which does not agree with it.
 
+### Headset shadow quality
+
+Two engine settings lower the directional shadow cost of the eyes. They change only
+the headset cascade records (`HmdSource`) of the primary directional light, that is
+the first directional light of the world. The desktop records, the cascade rendering
+and the shaders stay the same.
+
+- `VrAdvancedShadowFilterTaps` (0 to 32, default 0) replaces the filter sample count
+  and the Vogel tap count of the light. The soft shadow mode of the light still
+  selects the pattern: `FixedPoisson` uses up to 16 taps, and `Hard` uses 1 tap or a
+  4-tap tent, so 2 gives 4 taps there.
+- `VrAdvancedContactShadowSamples` (0 to 32, default 0) replaces the contact shadow
+  sample count of the light, when the light has contact shadows.
+- 0 uses the values of the light.
+
+The unit-testing world sets them with `VR.AdvancedShadowFilterTaps` and
+`VR.AdvancedContactShadowSamples`.
+
+Measured gain in native opaque shading at 2016x2240 for each eye (New Sponza with an
+avatar, both eyes; the sun uses `ContactHardeningPcss` with 8 filter samples and 16
+contact samples over 1 m): 2 taps about -0.6 to -0.7 ms, 2 contact samples about
+-0.4 ms, both about -1.0 to -1.3 ms. With 2 taps the sun patches on the floor are
+brighter and their edges show steps. Distant shadows change little. 2 contact samples
+give little visible change.
+
 ### Eye render scale
 
 With TSR as the anti-aliasing mode of the eyes, `TsrRenderScale` (0.5 to 1.0, or the
