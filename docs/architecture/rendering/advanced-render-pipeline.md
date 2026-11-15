@@ -210,9 +210,18 @@ the swapchain size:
 - The engine default is TSR at 1.0, so the eyes render at the swapchain size unless a
   setting or a camera override selects a lower scale.
 
-Vulkan GPU timing names each stereo fullscreen pass after its fragment shader
-(`Stereo > Fullscreen > <shader>` in the stereo pipeline dump), so the TSR, FXAA and
-post passes of the eyes have their own rows.
+Vulkan GPU timing names each fullscreen pass of the post chain after its fragment shader,
+so the TSR, FXAA, bloom, ambient occlusion and post passes have their own rows:
+
+- Eyes: `Stereo > Fullscreen > <shader>` in the stereo pipeline dump, for fragment shaders
+  whose file name ends with `Stereo`.
+- Mono views such as the desktop: `Fullscreen > <shader>` for draws of an
+  `XRQuadFrameBuffer` (mesh renderer name `FullscreenQuad:...`). A shader without a file
+  uses the material name.
+- The DLSS evaluate: `Vendor > DlssEvaluate`. The vendor output blit that follows it is a
+  `Fullscreen` row.
+
+`VulkanRenderer.CommandBufferRecording.Primary.FullscreenPassTiming.cs` builds these paths.
 
 ### Scene registration identity reuse
 

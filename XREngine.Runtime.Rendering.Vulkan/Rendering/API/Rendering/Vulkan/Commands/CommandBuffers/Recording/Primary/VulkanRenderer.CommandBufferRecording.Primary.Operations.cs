@@ -1825,7 +1825,8 @@ internal sealed partial class VulkanCommandRuntime
     private int RecordDlssUpscalePayload(scoped ref PrimaryCommandBufferRecordingState state, in DlssUpscalePayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
         CmdBeginLabel(state.CommandBuffer, "DLSS.SuperResolution");
-        RecordDlssUpscalePayload(state.CommandBuffer, in payload);
+        using (TryBeginDlssEvaluateGpuProfilerScope(state.CommandBuffer))
+            RecordDlssUpscalePayload(state.CommandBuffer, in payload);
         CmdEndLabel(state.CommandBuffer); return info.OperationIndex;
     }
 
@@ -1888,7 +1889,7 @@ internal sealed partial class VulkanCommandRuntime
         bool recorded;
         string failureReason;
         bool pipelineUnavailable;
-        using (TryBeginStereoPassGpuProfilerScope(state.CommandBuffer, in payload.Draw))
+        using (TryBeginFullscreenPassGpuProfilerScope(state.CommandBuffer, in payload.Draw))
             recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot, out failureReason, out pipelineUnavailable);
         state.CurrentPrimaryOperationRecorded = recorded;
         if (!recorded && failureReason.Length > 0)
