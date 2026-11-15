@@ -135,6 +135,12 @@ namespace XREngine.Timers
         /// </summary>
         public XREvent? PreCollectVisible;
         /// <summary>
+        /// Subscribe to this event to decide the output pacing of a viewport for the new collect frame.
+        /// It runs sequentially on the collect visible thread after <see cref="CollectFrameId"/> advances and
+        /// before <see cref="PreCollectVisible"/>, so the lights can read the decisions when they plan shadow work.
+        /// </summary>
+        public XREvent? PrepareFrameOutputs;
+        /// <summary>
         /// Subscribe to this event to execute parallel visibility collection on the collect visible thread.
         /// </summary>
         public XREvent? CollectVisible;
@@ -962,6 +968,7 @@ namespace XREngine.Timers
                 }
                 try
                 {
+                    PrepareFrameOutputs?.Invoke();
                     PreCollectVisible?.Invoke();
                     XREngine.Rendering.CollectVisibleStageTimings.Mark(ref stageMark, XREngine.Rendering.ECollectVisibleStage.PreCollectEvent);
                     CollectVisible?.Invoke();

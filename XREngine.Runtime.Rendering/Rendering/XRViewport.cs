@@ -14,6 +14,7 @@ using XREngine.Input;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.OutputDomains;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
@@ -194,6 +195,15 @@ namespace XREngine.Rendering
 
         private FrameOutputPacingDecision _pendingFrameOutputPacing;
         private FrameOutputPacingDecision _renderingFrameOutputPacing;
+        // Collect frame id for which PrepareFrameOutputAutomatic stored _pendingFrameOutputPacing,
+        // or 0. CollectVisibleAutomatic reuses the stored decision only for this frame id.
+        private ulong _preparedFrameOutputCollectFrameId;
+        // Collect frame id of the last swapped collect whose scene this viewport rendered.
+        private ulong _sceneRenderedCollectFrameId;
+        // Collect frame id whose stored output decision does not render the scene, or 0. Unlike
+        // _preparedFrameOutputCollectFrameId it stays set after the collect, because the lights
+        // can read it after this viewport collected (IsSceneHeldForCollectFrame).
+        private ulong _sceneHeldCollectFrameId;
         private bool _pendingFrameOutputSceneDue = true;
         private ulong _nextExactOutputCollectionGeneration;
         private ulong _pendingExactOutputCollectionGeneration;
@@ -1346,6 +1356,7 @@ namespace XREngine.Rendering
                     return;
 
                 IRuntimeRenderSchedulingServices host = RuntimeRenderingHostServices.Scheduling;
+                host.SubscribeViewportPrepareFrameOutput(PrepareFrameOutputAutomatic);
                 host.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
                 _collectVisibleSubscriptionHost = host;
                 return;
@@ -1356,7 +1367,9 @@ namespace XREngine.Rendering
                 return;
 
             _collectVisibleSubscriptionHost = null;
+            subscribedHost.UnsubscribeViewportPrepareFrameOutput(PrepareFrameOutputAutomatic);
             subscribedHost.UnsubscribeViewportCollectVisible(CollectVisibleAutomatic);
+            _preparedFrameOutputCollectFrameId = 0UL;
         }
 
         #endregion
@@ -1733,9 +1746,22 @@ namespace XREngine.Rendering
             if (_destroyed)
                 return;
 
-            FrameOutputPacingDecision pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
-            _pendingFrameOutputPacing = pacing;
-            _pendingFrameOutputSceneDue = pacing.IsDue;
+            // The frame output preparation of this collect frame already evaluated the pacing
+            // (and recorded its statistics). Evaluate it here only when no preparation ran.
+            ulong collectFrameId = RuntimeRenderingHostServices.FrameTiming.CollectFrameId;
+            FrameOutputPacingDecision pacing;
+            if (collectFrameId != 0UL && _preparedFrameOutputCollectFrameId == collectFrameId)
+            {
+                pacing = _pendingFrameOutputPacing;
+            }
+            else
+            {
+                pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
+                _pendingFrameOutputPacing = pacing;
+                _pendingFrameOutputSceneDue = pacing.IsDue;
+                _sceneHeldCollectFrameId = pacing.IsDue ? 0UL : collectFrameId;
+            }
+            _preparedFrameOutputCollectFrameId = 0UL;
 
             if (Suppress3DSceneRendering)
             {
@@ -1926,6 +1952,70 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// True when this viewport has a stored output decision for the collect frame
+        /// <paramref name="collectFrameId"/> and that decision does not render the scene. The
+        /// lights read it on the collect thread to retain the desktop shadow source only in
+        /// frames in which no desktop viewport renders. Without a stored decision for the frame
+        /// it returns false, so the viewport counts as due.
+        /// </summary>
+        internal bool IsSceneHeldForCollectFrame(ulong collectFrameId)
+            => collectFrameId != 0UL && _sceneHeldCollectFrameId == collectFrameId;
+
+        /// <summary>
+        /// Evaluates this viewport's output pacing for the new collect frame, before any collect
+        /// callback runs, and stores it for <see cref="CollectVisibleAutomatic"/> and for the
+        /// lights (<see cref="IsSceneHeldForCollectFrame"/>), so the lights plan the desktop
+        /// shadow source only in frames in which a desktop viewport renders its scene.
+        /// </summary>
+        private void PrepareFrameOutputAutomatic()
+        {
+            if (_destroyed)
+                return;
+
+            FrameOutputPacingDecision pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
+            _pendingFrameOutputPacing = pacing;
+            _pendingFrameOutputSceneDue = pacing.IsDue;
+            _preparedFrameOutputCollectFrameId = RuntimeRenderingHostServices.FrameTiming.CollectFrameId;
+            _sceneHeldCollectFrameId = pacing.IsDue ? 0UL : _preparedFrameOutputCollectFrameId;
+        }
+
+        /// <summary>
+        /// Counts a desktop scene that the swapped collect made due but that did not render
+        /// before the next swap, in a VR session with an independent desktop window. The render
+        /// of the swapped collect finishes before the next swap, so the check runs at the swap.
+        /// </summary>
+        private void CountDesktopSceneDueNotRendered()
+        {
+            ulong collectFrameId = _renderingFrameOutputPacing.FrameId;
+            if (!_renderingFrameOutputSceneDue ||
+                collectFrameId == 0UL ||
+                _sceneRenderedCollectFrameId == collectFrameId ||
+                Suppress3DSceneRendering ||
+                _renderPipeline.IsShadowPipeline ||
+                !IsDesktopFacingOutput() ||
+                !RuntimeRenderingHostServices.Presentation.IsIndependentDesktopRetentionInScope)
+                return;
+
+            DesktopOutputScheduleTelemetry.Count(EDesktopOutputScheduleCounter.DesktopSceneDueNotRendered);
+        }
+
+        /// <summary>
+        /// Records that this viewport rendered the scene of the swapped collect. When that
+        /// collect retained the desktop shadow source, the render read stale desktop cascades;
+        /// the counter DesktopSceneRenderedWhileRetained records it.
+        /// </summary>
+        private void NoteDesktopSceneRendered()
+        {
+            ulong collectFrameId = _renderingFrameOutputPacing.FrameId;
+            if (collectFrameId == 0UL || !IsDesktopFacingOutput())
+                return;
+
+            _sceneRenderedCollectFrameId = collectFrameId;
+            if (World?.Lights.WasDesktopShadowSourceRetained(collectFrameId) == true)
+                DesktopOutputScheduleTelemetry.Count(EDesktopOutputScheduleCounter.DesktopSceneRenderedWhileRetained);
+        }
+
+        /// <summary>
         /// Internal callback for automatic buffer swapping.
         /// Subscribed to RuntimeEngine.Time.Timer.SwapBuffers when AutomaticallySwapBuffers is true.
         /// Delegates to SwapBuffers() with default parameters, wrapped in a profiler sample.
@@ -1934,6 +2024,8 @@ namespace XREngine.Rendering
         {
             if (_destroyed)
                 return;
+
+            CountDesktopSceneDueNotRendered();
 
             FrameOutputPacingDecision pacing = _pendingFrameOutputPacing.FrameId != 0UL
                 ? _pendingFrameOutputPacing
@@ -2929,6 +3021,9 @@ namespace XREngine.Rendering
             // target that can never be presented.
             if (_renderPipeline.IsShadowPipeline)
                 return;
+
+            if (phase == EFrameOutputPhase.Render && sceneRendered)
+                NoteDesktopSceneRendered();
 
             double cpuMs = elapsedTicks <= 0L
                 ? 0.0

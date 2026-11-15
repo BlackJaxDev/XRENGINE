@@ -443,6 +443,16 @@ internal sealed class EngineRuntimeRenderingHostServices :
         Engine.Time.Timer.SwapBuffers -= swapBuffers;
     }
 
+    public void SubscribeViewportPrepareFrameOutput(Action prepareFrameOutput)
+    {
+        Engine.Time.Timer.PrepareFrameOutputs += prepareFrameOutput;
+    }
+
+    public void UnsubscribeViewportPrepareFrameOutput(Action prepareFrameOutput)
+    {
+        Engine.Time.Timer.PrepareFrameOutputs -= prepareFrameOutput;
+    }
+
     public void SubscribeViewportCollectVisible(Action collectVisible)
     {
         Engine.Time.Timer.CollectVisible += collectVisible;
@@ -1640,6 +1650,11 @@ internal sealed class EngineRuntimeRenderingHostServices :
     private bool ShouldKeepIndependentDesktopLive(EVrMirrorMode mode)
         => mode == EVrMirrorMode.FullIndependentRender &&
            RuntimeEngine.Rendering.Settings.RenderWindowsWhileInVR;
+
+    public bool IsIndependentDesktopRetentionInScope
+        => RuntimeEngine.VRState.IsInVR &&
+           RuntimeEngine.VRState.IsOpenXRActive &&
+           ShouldKeepIndependentDesktopLive(RuntimeEngine.Rendering.Settings.VrMirrorMode);
 
     /// <summary>
     /// Admits at most one independent desktop frame per XR frame, and only when it can finish

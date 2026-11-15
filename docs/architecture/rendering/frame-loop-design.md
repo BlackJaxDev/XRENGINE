@@ -567,6 +567,26 @@ previous restore's copy (`SnapshotRestoredContent`).
   mesh cohort matches and misses, materialized mesh requests, binding artifact
   replacements and table evictions, and descriptor owner misses. Divide a window
   delta by the domain's `frames`.
+- **Decide desktop output before the collect plans work.** Each automatically
+  collected viewport decides its output pacing for a collect frame one time, in
+  the timer's `PrepareFrameOutputs` event. The event runs on the collect thread
+  after `CollectFrameId` advances and before any collect callback. The decision
+  includes every reason that a desktop scene is not due: the XR frame priority
+  hold, the mirror mode, the VR pressure hold and the cadence skip.
+  `CollectVisibleAutomatic` reuses the stored decision for its frame id, and the
+  swap carries it to the render, so the collect, the swap and the render of one
+  frame use one answer. The lights read the stored decisions
+  (`XRViewport.IsSceneHeldForCollectFrame`) and plan the desktop shadow source
+  for every frame in which a desktop viewport renders. A viewport without a
+  stored decision for the frame (manual collect, or created after the
+  preparation) counts as due. The
+  render does not decide again, so a render-time veto of a collect decision
+  cannot occur. `vulkan.desktop_output_schedule` counts both mismatch
+  directions in a VR session with an independent desktop window:
+  `desktop_scene_rendered_while_retained` (a desktop render read retained
+  desktop cascades; it must stay 0) and `desktop_scene_due_not_rendered` (the
+  collect made the scene due, but it did not render, for example because of a
+  breaker hold or a minimized window; the shadow work of that frame was wasted).
 - **Pending planner publications retry, bounded.** A pass or resource-generation
   change of an output (for example a debug view change or a capture) gives the
   desktop frame operations a new planner key one render before the generation

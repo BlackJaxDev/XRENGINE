@@ -80,6 +80,8 @@ When `VrDesktopAutoSkipWhenOverBudget` is true and the previous whole-frame time
 
 The eyes render first in the render loop. With `VrDesktopAutoSkipWhenOverBudget` on, at most one independent desktop frame runs per XR frame, and only when its last measured cost fits before the next XR frame. `OpenXRAPI.NextFrameSlackMs` estimates that time from the eye work time and the runtime period. A held frame reports `EFrameOutputSkipReason.Budget`, and the window keeps its last image.
 
+The decision is made at the start of the collect that prepares the frame (the timer's `PrepareFrameOutputs` event), with the XR slack known at that time. The collect, the swap and the render of the frame use this one decision. A collect in which no desktop viewport renders also retains the desktop shadow cascades (see [shadow atlas](shadow-atlas.md)).
+
 The desktop keeps a minimum rate of 15 Hz, so the window cannot freeze. A frame that is due at this rate waits for the start of the next slack window (just after `xrEndFrame`). It runs only when its measured cost goes past the next XR wake by at most 1.5 ms. When the cost does not fit, a 4 Hz fallback frame runs early in a slack window, with at least 1.5 ms of slack left. Below 1 Hz, a frame runs at any time. A frame that starts just before an XR wake delays the eye frame by most of its cost and makes the eye frame miss its display slot; on the imported avatar at 90 Hz, this change reduced missed slots from 42 to 13 of about 450 frames.
 
 ## Render priority

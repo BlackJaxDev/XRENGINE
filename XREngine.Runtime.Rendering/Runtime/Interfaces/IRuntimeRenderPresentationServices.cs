@@ -92,6 +92,15 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     bool VrDesktopSplitSlackGate => false;
 
     /// <summary>
+    /// True in an OpenXR VR session with an independent desktop window (mirror mode
+    /// FullIndependentRender with RenderWindowsWhileInVR). Only then does a collect in which no
+    /// desktop viewport renders its scene
+    /// retain the desktop shadow source (no cascade refit and no refresh render). Desktop-only,
+    /// OpenVR and emulated stereo return false and keep the earlier desktop source planning.
+    /// </summary>
+    bool IsIndependentDesktopRetentionInScope => false;
+
+    /// <summary>
     /// Gets which output gets render-thread time first while VR is active. The
     /// priority output also owns the per-frame mesh deformation.
     /// </summary>

@@ -1610,6 +1610,10 @@ namespace XREngine.Editor.Mcp
                         // Per output domain (desktop, XR, none): cumulative counts of the work that
                         // rebuilds state, such as plan builds, mesh cohort misses and artifact replacements.
                         output_domains = BuildRenderOutputDomainTelemetry(),
+                        // VR with an independent desktop window: collects that render or retain the
+                        // desktop shadow source, cascade requests and grants per source, and the two
+                        // mismatch directions between the collect decision and the desktop render.
+                        desktop_output_schedule = BuildDesktopOutputScheduleTelemetry(),
                         // Desktop attempts that retried, or failed past the limit, because a changed
                         // output's planner publication was not there yet (pass or generation change).
                         planner_publication_pending = new
@@ -1797,6 +1801,24 @@ namespace XREngine.Editor.Mcp
         /// as row_gate_passes and row_gate_failures. The last_exception values identify the most recent prepare
         /// exception in all builds, because Release builds write no warning log.
         /// </summary>
+        /// <summary>
+        /// Formats the cumulative desktop output schedule counters as one map keyed by the
+        /// snake-case counter name. Callers subtract two snapshots to get a measurement window.
+        /// </summary>
+        private static object BuildDesktopOutputScheduleTelemetry()
+        {
+            long[] captured = DesktopOutputScheduleTelemetry.Capture();
+            Dictionary<string, long> counters = [];
+            for (EDesktopOutputScheduleCounter counter = EDesktopOutputScheduleCounter.DesktopSceneDueCollects;
+                counter < EDesktopOutputScheduleCounter.Count;
+                ++counter)
+            {
+                counters[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(counter.ToString())] =
+                    captured[(int)counter];
+            }
+            return counters;
+        }
+
         /// <summary>
         /// Formats the cumulative output domain counters as one map per domain, keyed by the
         /// snake-case counter name. Callers subtract two snapshots to get a measurement window.

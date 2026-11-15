@@ -11,6 +11,7 @@ using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.OutputDomains;
 using XREngine.Rendering.Shadows;
 
 namespace XREngine.Scene
@@ -24,6 +25,48 @@ namespace XREngine.Scene
         // Identity and layer-mask signature of the main cameras at the previous directional atlas planning.
         private ulong _shadowOnlyCasterCameraSignature;
 
+        // True while the collect in progress retains the desktop shadow source (no desktop
+        // viewport of this world renders its scene in the frame of this collect).
+        private bool _desktopShadowSourceRetainedForCollect;
+
+        // Collect frame id whose collect retained the desktop shadow source, or 0. The desktop
+        // render compares its frame id with this value (DesktopSceneRenderedWhileRetained).
+        private ulong _desktopShadowSourceRetainedCollectFrameId;
+
+        /// <summary>
+        /// True when the collect of <paramref name="collectFrameId"/> retained the desktop shadow
+        /// source. A desktop scene render of that frame reads stale desktop cascades.
+        /// </summary>
+        public bool WasDesktopShadowSourceRetained(ulong collectFrameId)
+            => collectFrameId != 0UL &&
+               Volatile.Read(ref _desktopShadowSourceRetainedCollectFrameId) == collectFrameId;
+
+        /// <summary>
+        /// Decides, at the start of a collect, whether the collect retains the desktop shadow
+        /// source. It retains the source only in a VR session with an independent desktop window
+        /// (IsIndependentDesktopRetentionInScope), and only when every desktop cascade viewport of
+        /// this world has a stored held decision for this collect frame
+        /// (<see cref="HasDueOrUndecidedDesktopCascadeViewport"/>). A viewport without a stored
+        /// decision counts as due. Outside that scope the desktop source is planned as before.
+        /// </summary>
+        private void DecideDesktopShadowSourceRetention()
+        {
+            if (!RuntimeRenderingHostServices.Presentation.IsIndependentDesktopRetentionInScope)
+            {
+                _desktopShadowSourceRetainedForCollect = false;
+                Volatile.Write(ref _desktopShadowSourceRetainedCollectFrameId, 0UL);
+                return;
+            }
+
+            ulong collectFrameId = RuntimeRenderingHostServices.FrameTiming.CollectFrameId;
+            bool retained = !HasDueOrUndecidedDesktopCascadeViewport(collectFrameId);
+            _desktopShadowSourceRetainedForCollect = retained;
+            Volatile.Write(ref _desktopShadowSourceRetainedCollectFrameId, retained ? collectFrameId : 0UL);
+            DesktopOutputScheduleTelemetry.Count(retained
+                ? EDesktopOutputScheduleCounter.DesktopSourceRetainedCollects
+                : EDesktopOutputScheduleCounter.DesktopSceneDueCollects);
+        }
+
         public void CollectVisibleItems()
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.CollectVisibleItems");
@@ -34,6 +77,7 @@ namespace XREngine.Scene
             //CollectingVisibleShadowMaps = true;
 
             SynchronizeDirectionalShadowAtlasMode();
+            DecideDesktopShadowSourceRetention();
 
             // Cascaded shadow slices must be finalized before directional-light shadow
             // viewports collect and swap their render-command buffers for this frame.
@@ -304,7 +348,12 @@ namespace XREngine.Scene
             SynchronizeDirectionalShadowAtlasMode();
 
             if (collectVisibleNow)
+            {
+                // A render-time collect plans the frame that it renders now. It never retains
+                // the desktop source.
+                _desktopShadowSourceRetainedForCollect = false;
                 PrepareDirectionalShadowMaps();
+            }
 
             RenderingShadowMaps = true;
             try
@@ -886,14 +935,20 @@ namespace XREngine.Scene
             DirectionalLightComponent light,
             EShadowMapEncoding encoding)
         {
+            // Both sources mark their caster changes in every collect, so the static desktop
+            // tiles stay valid across a frame that retains the desktop source.
             int desktopCount = BeginDirectionalCascadeSourceRequests(light, ShadowRequestSource.Desktop);
             int hmdCount = BeginDirectionalCascadeSourceRequests(light, ShadowRequestSource.Hmd);
             if (desktopCount == 0 && hmdCount == 0)
                 return;
 
-            GrantDirectionalCascadeRefreshes(light, encoding, desktopCount, hmdCount);
-            SubmitDirectionalCascadeSourceRequests(light, ShadowRequestSource.Desktop, encoding, desktopCount);
-            SubmitDirectionalCascadeSourceRequests(light, ShadowRequestSource.Hmd, encoding, hmdCount);
+            // A collect in which no desktop viewport renders its scene retains the desktop source:
+            // its requests keep their resident tiles without a render (the tile stays dirty until
+            // a collect renders a desktop scene again), and its refresh grants go to the HMD source.
+            bool desktopRetained = desktopCount > 0 && _desktopShadowSourceRetainedForCollect;
+            GrantDirectionalCascadeRefreshes(light, encoding, desktopRetained ? 0 : desktopCount, hmdCount, desktopRetained);
+            SubmitDirectionalCascadeSourceRequests(light, ShadowRequestSource.Desktop, encoding, desktopCount, desktopRetained);
+            SubmitDirectionalCascadeSourceRequests(light, ShadowRequestSource.Hmd, encoding, hmdCount, retainOnly: false);
         }
 
         /// <summary>
@@ -922,7 +977,8 @@ namespace XREngine.Scene
             DirectionalLightComponent light,
             ShadowRequestSource source,
             EShadowMapEncoding encoding,
-            int activeCascadeCount)
+            int activeCascadeCount,
+            bool retainOnly)
         {
             for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
             {
@@ -938,8 +994,11 @@ namespace XREngine.Scene
                     priority: 10000.0f - cascadeIndex * 100.0f + (source == ShadowRequestSource.Hmd ? 25.0f : 0.0f),
                     fallback: ShadowFallbackMode.StaleTile,
                     encoding: encoding,
+                    forcedSkipReason: retainOnly ? SkipReason.StaleTileReused : SkipReason.None,
                     source: source,
                     directionalCascadeCount: activeCascadeCount);
+                if (retainOnly)
+                    DesktopOutputScheduleTelemetry.Count(EDesktopOutputScheduleCounter.DesktopCascadeRequestsRetained);
             }
         }
 
@@ -960,7 +1019,8 @@ namespace XREngine.Scene
             DirectionalLightComponent light,
             EShadowMapEncoding encoding,
             int desktopCascadeCount,
-            int hmdCascadeCount)
+            int hmdCascadeCount,
+            bool desktopRetained)
         {
             const int MaxPerSource = 8;
             int desktopCount = Math.Clamp(desktopCascadeCount, 0, MaxPerSource);
@@ -1047,6 +1107,11 @@ namespace XREngine.Scene
                 ShadowRequestSource grantedSource = oldest < desktopCount ? ShadowRequestSource.Desktop : ShadowRequestSource.Hmd;
                 int grantedCascade = oldest < desktopCount ? oldest : oldest - desktopCount;
                 light.GrantDirectionalCascadeRefresh(grantedSource, grantedCascade);
+                DesktopOutputScheduleTelemetry.Count(grantedSource == ShadowRequestSource.Desktop
+                    ? EDesktopOutputScheduleCounter.CascadeGrantsDesktop
+                    : desktopRetained
+                        ? EDesktopOutputScheduleCounter.CascadeGrantsHmdDesktopRetained
+                        : EDesktopOutputScheduleCounter.CascadeGrantsHmdDesktopDue);
                 lastRenderedFrames[oldest] = 0u;
             }
         }

@@ -72,6 +72,31 @@ namespace XREngine.Scene
         }
 
         /// <summary>
+        /// Returns true when a viewport of this world that reads the desktop cascade source renders
+        /// its scene in the collect frame <paramref name="collectFrameId"/>, or has no stored output
+        /// decision for that frame (<see cref="XRViewport.IsSceneHeldForCollectFrame"/>). A viewport
+        /// that collects manually, or one created after the frame output preparation, has no stored
+        /// decision, so it counts as due and the desktop source is planned normally.
+        /// </summary>
+        private bool HasDueOrUndecidedDesktopCascadeViewport(ulong collectFrameId)
+        {
+            bool DueOrUndecided(XRViewport? viewport)
+                => viewport is not null &&
+                   ViewportTargetsWorld(viewport, World) &&
+                   viewport.ActiveCamera is XRCamera camera &&
+                   ViewportPrefersCascadedDirectionalShadows(viewport) &&
+                   DirectionalLightComponent.GetCascadeSourceForCamera(camera) == ShadowRequestSource.Desktop &&
+                   !viewport.Suppress3DSceneRendering &&
+                   !viewport.IsSceneHeldForCollectFrame(collectFrameId);
+
+            foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
+                if (DueOrUndecided(viewport))
+                    return true;
+
+            return DueOrUndecided(RuntimeEngine.VRState.LeftEyeViewport) || DueOrUndecided(RuntimeEngine.VRState.RightEyeViewport);
+        }
+
+        /// <summary>
         /// Returns true when an active window or VR eye viewport that targets this world reads the primary shadow map of
         /// <paramref name="light"/>. A viewport reads it when its camera does not prefer cascades, or when
         /// <paramref name="light"/> has no published cascades for the cascade source of that camera. It also returns
@@ -178,7 +203,11 @@ namespace XREngine.Scene
 
         private void PrepareDirectionalShadowMaps()
         {
-            bool wantsDesktopCascades = HasCascadedDirectionalShadowViewport(
+            // A collect in which no desktop viewport renders its scene (VR with an independent
+            // desktop window only) retains the desktop source like a suppressed viewport: its
+            // cascades keep their fit and tiles, and the next collect that renders a desktop
+            // scene refits them to the current camera.
+            bool wantsDesktopCascades = !_desktopShadowSourceRetainedForCollect && HasCascadedDirectionalShadowViewport(
                 ShadowRequestSource.Desktop,
                 includeSuppressed: false);
             bool wantsHmdCascades = HasCascadedDirectionalShadowViewport(
