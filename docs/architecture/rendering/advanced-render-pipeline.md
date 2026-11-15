@@ -144,6 +144,19 @@ at half rate on each axis:
 The unit-testing world sets the three values with `VR.AdvancedEdgeHalfRateShading`,
 `VR.AdvancedEdgeHalfRateRadius` and `VR.AdvancedEdgeHalfRateDebugTint`.
 
+Measured cost at 2016x2240 for each eye (Sponza with an avatar, both eyes, radius
+0.6): about 70% of the pixels are in half-rate blocks, but native opaque shading
+drops only from about 10.4 ms to 9.8 ms, and the fill pass adds about 0.2 ms. The
+setting therefore stays off by default. In these measurements the shading cost
+follows the screen area that the work groups cover, not the number of shaded
+lanes: a group that shades the representatives of a tile costs about as much as a
+group that shades the full tile. A dispatch that packs the representatives of four
+tiles into one work group cost about four times as much for each group, so it was
+not faster than full-rate shading. Why the cost follows the area is not proven. One
+hypothesis is that the fetches of a group are bound by the sample spacing; a test
+with texture gradients times two (one mip level coarser) recovered only a small
+part of the texture cost, which does not agree with it.
+
 ### Scene registration identity reuse
 
 Native Uber material reuse retains the result of strict shader validation.
