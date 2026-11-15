@@ -35,6 +35,14 @@ public sealed record AdvancedGpuCounterReadback(
     public uint MeshletEarlyConeCulled
         => IsVisibilityReceipt && Values.Length > 15 ? Values[15] : 0u;
 
+    /// <summary>Gets the meshlets that the early-raster task stage culled with the previous-frame visibility history.</summary>
+    public uint MeshletEarlyHistoryCulled
+        => IsVisibilityReceipt && Values.Length > 38 ? Values[38] : 0u;
+
+    /// <summary>Gets the triangles of the meshlets that the early-raster task stage launched for this view.</summary>
+    public uint MeshletEarlyTriangles
+        => IsVisibilityReceipt && Values.Length > 39 ? Values[39] : 0u;
+
     private bool IsVisibilityReceipt
         => Source.StartsWith("AdvancedVisibilityCounters", StringComparison.Ordinal);
 }

@@ -49,6 +49,7 @@ taskPayloadSharedEXT XRAdvancedVisibilityTaskPayload XR_ADV_TaskPayload;
 
 shared uint XR_ADV_TaskSurvivorFlags[XR_ADV_TASK_MESHLETS_PER_GROUP];
 shared uint XR_ADV_TaskCullReasons[XR_ADV_TASK_MESHLETS_PER_GROUP];
+shared uint XR_ADV_TaskTriangles[XR_ADV_TASK_MESHLETS_PER_GROUP];
 
 void main()
 {
@@ -86,6 +87,7 @@ void main()
     uint meshletIndex = XR_ADV_VIS_INVALID;
     bool historyUsable = false;
     uint previousSet = 0u;
+    uint laneTriangles = 0u;
     if (groupValid)
     {
         // Draw-level records are the same for every lane of the group.
@@ -112,6 +114,7 @@ void main()
             XRAdvancedMeshletDrawCullState drawState =
                 XR_ADV_MeshletDrawCullState(transform.world, payload.cullMode, producer);
             XRAdvancedVisibilityMeshletDescriptor meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
+            laneTriangles = meshlet.triangleCount;
             cullReason = XR_ADV_ClassifyVisibilityMeshlet(
                 meshlet,
                 drawState,
@@ -204,18 +207,23 @@ void main()
     // Early-phase telemetry for the delayed counter receipt. One atomic per
     // counter per group. The late raster runs after that receipt is copied.
     XR_ADV_TaskCullReasons[lane] = cullReason;
+    XR_ADV_TaskTriangles[lane] = visible ? laneTriangles : 0u;
     barrier();
     if (lane == 0u)
     {
         uint visibleCount = 0u;
         uint frustumCount = 0u;
         uint coneCount = 0u;
+        uint historyCount = 0u;
+        uint triangleCount = 0u;
         for (uint other = 0u; other < XR_ADV_TASK_MESHLETS_PER_GROUP; ++other)
         {
             uint reason = XR_ADV_TaskCullReasons[other];
             visibleCount += reason == XR_ADV_MESHLET_CULL_NONE ? 1u : 0u;
             frustumCount += reason == XR_ADV_MESHLET_CULL_FRUSTUM ? 1u : 0u;
             coneCount += reason == XR_ADV_MESHLET_CULL_CONE ? 1u : 0u;
+            historyCount += reason == XR_ADV_MESHLET_CULL_HISTORY ? 1u : 0u;
+            triangleCount += XR_ADV_TaskTriangles[other];
         }
         if (visibleCount != 0u)
             atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyVisible, visibleCount);
@@ -223,6 +231,10 @@ void main()
             atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyFrustumCulled, frustumCount);
         if (coneCount != 0u)
             atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyConeCulled, coneCount);
+        if (historyCount != 0u)
+            atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyHistoryCulled, historyCount);
+        if (triangleCount != 0u)
+            atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyTriangles, triangleCount);
     }
 #endif
 

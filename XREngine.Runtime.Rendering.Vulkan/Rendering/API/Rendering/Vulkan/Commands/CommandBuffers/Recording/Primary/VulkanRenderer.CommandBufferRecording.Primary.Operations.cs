@@ -587,7 +587,7 @@ internal sealed partial class VulkanCommandRuntime
                 EmitMemoryBarrierMask(state.CommandBuffer,
                     EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             }
-            const uint counterByteLength = 152u;
+            const uint counterByteLength = 160u;
             GpuDiagnosticReadbackPlanNode counterNode = new(
                 (ulong)payload.State.Counters.Buffer.Handle,
                 viewIndex,

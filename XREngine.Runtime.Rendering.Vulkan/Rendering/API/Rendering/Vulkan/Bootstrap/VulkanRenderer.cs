@@ -749,6 +749,26 @@ public sealed partial class VulkanRenderer :
             ["oldestPendingRetirementAgeMilliseconds"] = diagnostic.OldestPendingRetirementAgeMilliseconds,
         };
     }
+    object? IRenderBackendDiagnosticsCapability.GetDiagnosticReadbackDiagnostics()
+    {
+        if (_frameLoop.CaptureDiagnosticReadbackSidecar() is not { } diagnostic)
+            return null;
+
+        return new JsonObject
+        {
+            ["capacity"] = diagnostic.Capacity,
+            ["idle"] = diagnostic.Idle,
+            ["reserved"] = diagnostic.Reserved,
+            ["reservedPrimaryAttached"] = diagnostic.ReservedPrimaryAttached,
+            ["submitted"] = diagnostic.Submitted,
+            ["decoding"] = diagnostic.Decoding,
+            ["oldestReservedFrameIdentity"] = diagnostic.OldestReservedFrameIdentity,
+            ["currentRenderFrameId"] = RuntimeEngine.Rendering.State.RenderFrameId,
+            ["droppedReservations"] = diagnostic.DroppedReservations,
+            ["completedReservations"] = diagnostic.CompletedReservations,
+        };
+    }
+
     object IRenderBackendDiagnosticsCapability.GetValidationDiagnostics()
     {
         VulkanValidationDiagnosticSnapshot diagnostic = CaptureValidationDiagnostics();

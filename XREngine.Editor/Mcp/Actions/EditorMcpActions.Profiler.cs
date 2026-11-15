@@ -1655,6 +1655,10 @@ namespace XREngine.Editor.Mcp
                             last_message = VulkanStats.VulkanLastValidationMessage,
                             cumulative = vulkanDiagnostics?.GetValidationDiagnostics(),
                         },
+                        // Delayed GPU diagnostic readback ring: slots by state, the oldest reservation,
+                        // and the dropped and completed reservations. Stuck reserved slots stop the
+                        // Advanced counter receipts.
+                        diagnostic_readback = vulkanDiagnostics?.GetDiagnosticReadbackDiagnostics(),
                         diagnostics = new
                         {
                             dropped_frame_ops = VulkanStats.VulkanDroppedFrameOps,

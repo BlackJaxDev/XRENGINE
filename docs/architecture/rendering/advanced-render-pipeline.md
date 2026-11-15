@@ -530,8 +530,20 @@ in front of `VisibilityRaster.mesh`.
   against one eye for output that two eyes use.
 - The early raster adds its launched, frustum-culled and cone-culled meshlet
   counts to counter words 13-15 (`meshletEarlyVisible`,
-  `meshletEarlyFrustumCulled`, `meshletEarlyConeCulled`). The delayed
-  Advanced counter receipt reports them. Late-raster task work is not counted.
+  `meshletEarlyFrustumCulled`, `meshletEarlyConeCulled`). It also adds the
+  meshlets that the previous-frame history culled (`meshletEarlyHistoryCulled`,
+  word 38) and the triangles of the launched meshlets
+  (`meshletEarlyTriangles`, word 39). Words 16-37 hold the lookup segments,
+  so the per-view record is 40 words (160 bytes). The delayed Advanced
+  counter receipt reports these counts under the instrumented strategies
+  (`GpuMeshletInstrumented`, `GpuIndirectInstrumented`). Late-raster task work
+  is not counted, because the counter copy runs before the late raster.
+- The delayed diagnostic readback ring keeps its last quarter of slots for the
+  per-view counter receipts. The per-bin copies request thousands of slots per
+  second; without the reserved slots they took every slot and the counter
+  receipts stopped after startup. `vulkan.diagnostic_readback` in
+  `get_render_profiler_stats` reports the slots by state and the dropped and
+  completed reservations.
 - `EmitAdvancedVisibilityRasterReadBarrier` includes the task stage, so the task
   stage sees the preparation writes in frames without indexed instance groups.
 

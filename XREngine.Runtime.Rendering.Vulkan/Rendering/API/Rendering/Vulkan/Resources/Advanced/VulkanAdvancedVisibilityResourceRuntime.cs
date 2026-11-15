@@ -21,7 +21,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
     // Sixteen counter words followed by eleven exact packed handle-lookup
     // segments. Keeping these in set 1 removes any mutable set-0 uniform
     // dependency from the preparation/raster family.
-    private const uint CounterByteLength = 152u;
+    private const uint CounterByteLength = 160u;
     private const uint IndexedIndirectArgumentByteLength = 20u;
     private const uint MeshIndirectArgumentByteLength = 12u;
     private const uint PersistentStateRecordByteLength = 32u;

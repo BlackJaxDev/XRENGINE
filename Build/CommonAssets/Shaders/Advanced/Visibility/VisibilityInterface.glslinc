@@ -293,6 +293,10 @@ struct XRAdvancedVisibilityCounterRecord
     uvec2 textureLookupSegment;
     uvec2 samplerLookupSegment;
     uvec2 shadowLookupSegment;
+    // Early-raster meshlet results that follow the lookup segments: meshlets that
+    // the previous-frame history culled, and triangles of the launched meshlets.
+    uint meshletEarlyHistoryCulled;
+    uint meshletEarlyTriangles;
 };
 
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_COUNTERS)
