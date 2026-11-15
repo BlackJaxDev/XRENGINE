@@ -416,6 +416,13 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostDestination(builder, TsrAccumulationFBOName, TsrAccumulationTextureName, windowSize, CreateTsrAccumulationFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataOutputTextureName, windowSize, CreateTsrHistoryMetadataOutputFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataFBOName, TsrHistoryMetadataTextureName, windowSize, CreateTsrHistoryMetadataFBO);
+        if (!builder.Profile.Stereo)
+        {
+            // The vendor upscaler writes its output here on mono views. Vendor upscalers do not
+            // run on stereo views, so stereo profiles skip the output-size target.
+            DeclareLatePostColor(builder, VendorOutputTextureName, windowSize, 1u, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+            DeclareLatePostDestination(builder, VendorOutputFBOName, VendorOutputTextureName, windowSize, CreateVendorOutputFBO);
+        }
         builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName)
             .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName)

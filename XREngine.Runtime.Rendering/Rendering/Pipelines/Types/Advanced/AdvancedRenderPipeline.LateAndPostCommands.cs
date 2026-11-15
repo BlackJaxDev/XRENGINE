@@ -503,7 +503,21 @@ public partial class AdvancedRenderPipeline
         vendor.MotionTextureName = VelocityTextureName;
         vendor.MotionFrameBufferName = VelocityFBOName;
         vendor.AutoExposureTextureName = AutoExposureTextureName;
-        vendor.FlipSourceYOnVulkanFallback = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
+        if (Stereo)
+        {
+            // Vendor upscalers do not run on stereo views; the command presents its fallback.
+            vendor.FlipSourceYOnVulkanFallback = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
+        }
+        else
+        {
+            // The vendor output goes into a pipeline framebuffer, and the same window present
+            // as the other output branches shows it. Capture, Y flip, sRGB encoding and the
+            // window target are then the same for every branch. The fallback copy into the
+            // framebuffer needs no flip; the present applies it.
+            vendor.DestinationFBOName = VendorOutputFBOName;
+            vendor.FlipSourceYOnVulkanFallback = false;
+            AppendAdvancedWindowPresent(vendorCommands, VendorOutputFBOName);
+        }
         vendorOutput.TrueCommands = vendorCommands;
         vendorOutput.FalseCommands = CreateAdvancedPresentCommands(sourceFboName);
     }

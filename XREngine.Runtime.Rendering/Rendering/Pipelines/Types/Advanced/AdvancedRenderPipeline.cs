@@ -1578,6 +1578,13 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string ForwardContactPrePassCopyFBOName = "ForwardContactPrePassCopyFBO";
     public const string DeferredGBufferPreForwardCopyFBOName = "DeferredGBufferPreForwardCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
+    /// <summary>
+    /// Output-size color target of the vendor upscaler (DLSS or DLAA) on mono views. The native
+    /// evaluate writes into it, and the window present samples it, the same as the TSR output.
+    /// </summary>
+    public const string VendorOutputTextureName = "VendorOutputTexture";
+    /// <summary>Framebuffer of <see cref="VendorOutputTextureName"/>.</summary>
+    public const string VendorOutputFBOName = "VendorOutputFBO";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
     public const string SmaaEdgeTextureName = SmaaFBOName + "_EdgeTexture";
     public const string SmaaBlendTextureName = SmaaFBOName + "_BlendTexture";

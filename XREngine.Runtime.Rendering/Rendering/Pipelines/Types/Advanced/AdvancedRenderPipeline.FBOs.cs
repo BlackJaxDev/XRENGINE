@@ -445,6 +445,21 @@ public partial class AdvancedRenderPipeline
         return fbo;
     }
 
+    /// <summary>
+    /// Creates the framebuffer of the declared vendor output texture. The vendor upscaler writes
+    /// into it, and the window present reads it.
+    /// </summary>
+    private XRFrameBuffer CreateVendorOutputFBO()
+    {
+        IFrameBufferAttachement attachment = EnsureTextureAttachment(
+            VendorOutputTextureName,
+            static () => throw new InvalidOperationException("The vendor output texture is a declared pipeline resource."));
+        return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VendorOutputFBOName
+        };
+    }
+
     private XRFrameBuffer CreateFxaaFBO()
     {
         IFrameBufferAttachement fxaaAttach = EnsureTextureAttachment(FxaaOutputTextureName, CreateFxaaOutputTexture);

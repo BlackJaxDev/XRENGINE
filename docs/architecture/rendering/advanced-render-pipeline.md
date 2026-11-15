@@ -218,8 +218,10 @@ so the TSR, FXAA, bloom, ambient occlusion and post passes have their own rows:
 - Mono views such as the desktop: `Fullscreen > <shader>` for draws of an
   `XRQuadFrameBuffer` (mesh renderer name `FullscreenQuad:...`). A shader without a file
   uses the material name.
-- The DLSS evaluate: `Vendor > DlssEvaluate`. The vendor output blit that follows it is a
-  `Fullscreen` row.
+- The DLSS evaluate: `Vendor > DlssEvaluate`. On mono views it writes
+  `VendorOutputTexture` directly, and the window present that follows it is the same
+  `VPRC_RenderToWindow` draw as for the TSR output (see
+  [Vulkan upscale bridge](../../developer-guides/rendering/vulkan-upscale-bridge.md)).
 
 `VulkanRenderer.CommandBufferRecording.Primary.FullscreenPassTiming.cs` builds these paths.
 
