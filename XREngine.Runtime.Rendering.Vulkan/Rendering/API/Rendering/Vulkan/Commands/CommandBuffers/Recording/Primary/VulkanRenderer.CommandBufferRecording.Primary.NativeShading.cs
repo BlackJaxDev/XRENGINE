@@ -23,6 +23,8 @@ internal sealed partial class VulkanCommandRuntime
     private const uint NativeUberFallbackShadingFlag = 1u << 29;
     // Matches XR_ADV_SHADING_DECAL_BUFFER in ShadeNativeOpaqueEvaluator.glslinc.
     private const uint NativeDecalBufferShadingFlag = 1u << 16;
+    // Matches XR_ADV_CLASSIFICATION_PIXEL_COUNTERS in ClassifyTiles.comp.
+    private const uint ClassificationPixelCountersFlag = 1u << 30;
 
     /// <summary>
     /// Records one indirect dispatch for each dense shading kernel in <paramref name="kernels"/>.
@@ -106,8 +108,14 @@ internal sealed partial class VulkanCommandRuntime
                 FillNativeCounters(state.CommandBuffer, closure.ClassificationCounters);
                 FillNativeCounters(state.CommandBuffer, closure.KernelCounts);
             }
+            // The classified and background pixel counters are read only by the diagnostic
+            // readback, which instrumented strategies record after the last view.
+            VulkanAdvancedNativeShadingPushConstants classifyPush =
+                GpuDiagnosticReadbackPlan.IsInstrumented(payload.Request.BackendPackage.Package.SubmissionResolution.Resolved)
+                    ? push with { Flags = push.Flags | ClassificationPixelCountersFlag }
+                    : push;
             RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.Classify,
-                in push, tilesX, tilesY, 1, "Advanced.ClassifyTiles", NativeClassificationGpuProfilerPath);
+                in classifyPush, tilesX, tilesY, 1, "Advanced.ClassifyTiles", NativeClassificationGpuProfilerPath);
             EmitNativeBufferDependency(state.CommandBuffer, closure.KernelCounts,
                 AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
                 PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);

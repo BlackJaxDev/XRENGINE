@@ -1,15 +1,35 @@
 #version 450
 #include "ClassificationInterface.glslinc"
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+// Per-kernel membership counts of this dispatch, reduced to the kernel tile total.
+shared uint kernelTileTotal;
+
 void main()
 {
     uint kernel = gl_GlobalInvocationID.x;
-    if (kernel >= XR_ADV_MAX_SHADING_KERNELS || kernel >= uint(XR_ADV_ClassificationDispatch.commands.length())) return;
+    if (gl_LocalInvocationIndex == 0u)
+        kernelTileTotal = 0u;
+    barrier();
+
+    // The kernel tile total is the sum of the per-kernel membership counts. ClassifyTiles
+    // counts each membership only once, in its kernel range, so the tiles do not contend on
+    // one global counter. The counts accumulate over the views of the frame, and this pass
+    // runs after each view, so the value written after the last view is the frame total.
+    bool validKernel = kernel < XR_ADV_MAX_SHADING_KERNELS && kernel < uint(XR_ADV_KernelCounts.counts.length());
+    uint membershipCount = validKernel ? XR_ADV_KernelCounts.counts[kernel] : 0u;
+    if (membershipCount != 0u)
+        atomicAdd(kernelTileTotal, membershipCount);
+    barrier();
+    if (gl_LocalInvocationIndex == 0u)
+        XR_ADV_ClassificationCounters.counters.kernelTileCount = kernelTileTotal;
+
+    if (!validKernel || kernel >= uint(XR_ADV_ClassificationDispatch.commands.length())) return;
     uint capacity = XR_ADV_TotalTileCount();
     bool rangeFits = capacity != 0u && kernel <= u_Push.maxKernelTiles / capacity;
     uint rangeBase = rangeFits ? kernel * capacity : u_Push.maxKernelTiles;
     uint available = rangeFits ? min(capacity, u_Push.maxKernelTiles - rangeBase) : 0u;
-    uint count = min(XR_ADV_KernelCounts.counts[kernel], available);
+    uint count = min(membershipCount, available);
     // Any producer failure selects the separate GPU-only repair pass, avoiding
     // races between a partial kernel stream and full-screen recovery.
     if (XR_ADV_ClassificationCounters.counters.overflowFlags != 0u) count = 0u;

@@ -1,6 +1,9 @@
 #version 450
 #include "ClassificationInterface.glslinc"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+// Push flag: the classification counter readback is active (instrumented submission
+// strategies). Only then does each tile add its pixels to the two pixel counters.
+#define XR_ADV_CLASSIFICATION_PIXEL_COUNTERS (1u << 30u)
 #if defined(XR_ADV_VISIBILITY_ARRAY)
 XR_ADV_SHADING_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
 XR_ADV_SHADING_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
@@ -94,8 +97,14 @@ void main()
 #endif
     barrier();
     if (localIndex != 0u) return;
-    atomicAdd(XR_ADV_ClassificationCounters.counters.backgroundPixelCount, backgroundPixels);
-    atomicAdd(XR_ADV_ClassificationCounters.counters.classifiedPixelCount, activePixels);
+    // The pixel counters have no reader on the GPU; only the diagnostic readback reads them.
+    // Every tile adds to the same two addresses, which costs several milliseconds at headset
+    // resolution, so the tiles add to them only while the readback is active.
+    if ((u_Push.flags & XR_ADV_CLASSIFICATION_PIXEL_COUNTERS) != 0u)
+    {
+        atomicAdd(XR_ADV_ClassificationCounters.counters.backgroundPixelCount, backgroundPixels);
+        atomicAdd(XR_ADV_ClassificationCounters.counters.classifiedPixelCount, activePixels);
+    }
     if (activePixels == 0u) return;
 
     uint tileCapacity = XR_ADV_TotalTileCount();
@@ -113,8 +122,9 @@ void main()
     for (uint k = 0u; k < XR_ADV_MAX_SHADING_KERNELS; ++k)
     {
         if (kernelHistogram[k] == 0u) continue;
+        // BuildClassificationIndirect sums these per-kernel counts into kernelTileCount, so the
+        // tiles do not also contend on one global counter here.
         uint rangeIndex = atomicAdd(XR_ADV_KernelCounts.counts[k], 1u);
-        atomicAdd(XR_ADV_ClassificationCounters.counters.kernelTileCount, 1u);
         uint capacity = min(u_Push.maxKernelTiles, uint(XR_ADV_KernelTiles.records.length()));
         // Bound multiplication before evaluating it, including tiny pressure
         // buffers. Later bounds checks cannot detect wrapped uint arithmetic.
