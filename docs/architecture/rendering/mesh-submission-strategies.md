@@ -353,9 +353,12 @@ cooks a cluster level-of-detail hierarchy instead of one meshlet level.
   (through a position remap, so split attribute vertices lock together),
   merges and simplifies the group to half its triangles
   (`simplifyWithAttributes` with `Sparse | ErrorAbsolute | ErrorClamped`, normal
-  and UV0 as attributes; `simplifySloppy` with the error x2 only when that does
-  not reach 85%), and splits the result into new clusters. A group that stays
-  above 85% ends its branch.
+  and UV0 as attributes), and splits the result into new clusters. A group that
+  keeps more than 85% of its triangles, that simplifies to no triangles, or
+  whose simplification changes the open edges between its locked vertices,
+  ends its branch: its clusters stay as roots of the cut, and their vertices stay
+  locked for every later level, so coarser neighbours keep the shared border.
+  There is no sloppy fallback: it ignores attributes and seams.
 - The group sphere is the merge of its cluster spheres and the group error is
   the larger of the child errors and the simplify error, so sphere and error
   grow from child to parent. Locked borders and monotonic bounds make every
@@ -371,7 +374,18 @@ refined group; 8 bytes) per meshlet and one `MeshletLodGroupRecord`
 own culling sphere and normal cone. Such a payload has payload version 5
 (`MeshletPayload.ClusterHierarchyPayloadVersion`); every payload without a
 hierarchy stays version 4, so existing caches and cooked meshes stay valid.
-The hierarchy flag changes the meshlet settings hash only when it is set.
+The hierarchy flag changes the meshlet settings hash only when it is set; it
+then adds `MeshletClusterHierarchyBuilder.CookVersion`, so a change of the cook
+recooks cached hierarchy payloads only.
+
+The cook checks the properties that make a cut free of cracks and writes the
+totals for the process to `meshlet-cache.log` (`[ClusterHierarchyChecks]`,
+failures/checks): a cluster's own bound equals the record of the group that
+made it; a parent group's error is at least the error of each group that its
+clusters came from; and the parent sphere contains those spheres
+(failures/checks). The open edges between the locked vertices of a group must
+be the same before and after its simplification; the cook rejects a
+simplification that changes them and counts it as `borderRejected`.
 
 A renderer without cut selection draws only the level-0 prefix:
 `MeshletPayload.Level0MeshletCount`, `Level0Meshlets`, `Level0VertexIndices`

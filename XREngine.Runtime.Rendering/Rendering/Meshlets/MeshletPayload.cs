@@ -659,8 +659,9 @@ public static class MeshletPayloadUtility
         AppendBoolean(hash, settings.EncodeMeshlets);
         AppendBoolean(hash, settings.EncodeVertexReferences);
         // Appended only when set, so the hash of every payload without a hierarchy stays the same.
+        // The cook version makes a changed hierarchy cook recook cached hierarchy payloads.
         if (settings.BuildClusterHierarchy)
-            AppendBoolean(hash, true);
+            AppendInt32(hash, MeshletClusterHierarchyBuilder.CookVersion);
         return hash.GetCurrentHashAsUInt64();
     }
 

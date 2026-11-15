@@ -165,6 +165,14 @@ public static class ModelImportMeshletCooker
             $"groups={totals.Groups} maxLevels={totals.MaxLevels} sourceTriangles={totals.SourceTriangles} level0Triangles={totals.Level0Triangles} " +
             $"allLevelTriangles={totals.HierarchyTriangles} triangleRatio={(totals.Level0Triangles == 0 ? 0.0 : (double)totals.HierarchyTriangles / totals.Level0Triangles):F2} " +
             $"cookMs={cookTime.TotalMilliseconds:F0} cacheBytes={cacheBytes} cacheHits={cache?.HitCount ?? 0} cacheMisses={cache?.MissCount ?? 0}");
+        // Crack-free checks of the hierarchies built (not read from the cache) in this process.
+        MeshletClusterHierarchyBuilder.InvariantReport checks = MeshletClusterHierarchyBuilder.InvariantTotals;
+        Debug.WriteAuxiliaryLog(
+            "meshlet-cache.log",
+            $"[ClusterHierarchyChecks] cookVersion={MeshletClusterHierarchyBuilder.CookVersion} " +
+            $"self={checks.SelfFailures}/{checks.SelfChecks} monotonic={checks.MonotonicFailures}/{checks.MonotonicChecks} " +
+            $"containment={checks.ContainmentFailures}/{checks.ContainmentChecks} (failures/checks) " +
+            $"borderRejected={checks.BorderRejections}/{checks.BorderChecks} (rejected simplifications/checks)");
     }
 
     private static ModelImportMeshletPayloadCache? OpenPayloadCache(string stableModelIdentity)

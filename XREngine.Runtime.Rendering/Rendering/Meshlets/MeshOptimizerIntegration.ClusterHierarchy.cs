@@ -146,9 +146,10 @@ public static partial class MeshOptimizerIntegration
             level0Count,
             groups.Length,
             groups.Length == 0 ? 0 : groups.Max(static g => g.Depth) + 1,
-            hierarchy.SloppyFallbackGroupCount,
+            hierarchy.EndedGroupCount,
             sourceIndices.Length / 3,
             (int)descriptors.Sum(static d => (long)d.TriangleCount));
+        MeshletClusterHierarchyBuilder.RecordInvariants(hierarchy.Invariants);
 
         return new MeshletBuildResult
         {
@@ -166,7 +167,7 @@ public static partial class MeshOptimizerIntegration
     /// <param name="Level0Count">Level-0 meshlets.</param>
     /// <param name="GroupCount">Groups.</param>
     /// <param name="LevelCount">Hierarchy levels (maximum group depth + 1).</param>
-    /// <param name="SloppyGroupCount">Groups that only the sloppy fallback could simplify.</param>
+    /// <param name="EndedGroupCount">Groups that ended their branch before the last level.</param>
     /// <param name="SourceTriangleCount">Triangles of the source mesh.</param>
     /// <param name="TotalTriangleCount">Triangles of all meshlets of every level.</param>
     public readonly record struct ClusterHierarchyCookStats(
@@ -174,7 +175,7 @@ public static partial class MeshOptimizerIntegration
         int Level0Count,
         int GroupCount,
         int LevelCount,
-        int SloppyGroupCount,
+        int EndedGroupCount,
         int SourceTriangleCount,
         int TotalTriangleCount);
 

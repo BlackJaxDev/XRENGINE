@@ -28,18 +28,53 @@ namespace XREngine.Rendering.Meshlets;
 /// <item>Split the mesh into clusters (level 0).</item>
 /// <item>Repeat while more than one cluster is left: put about 16 neighbouring clusters into a group;
 /// lock the vertices on the borders between groups; merge and simplify each group's triangles to
-/// half; split the result into new clusters. A group that cannot reach 85% of its triangle count
-/// stops there.</item>
+/// half (attribute-aware); split the result into new clusters. A group that keeps more than 85% of
+/// its triangles, that simplifies to no triangles, or whose simplification changes its locked
+/// border, ends its branch: its clusters stay as roots of the cut, and their vertices stay locked
+/// for every later level.</item>
 /// </list>
 /// Locked group borders make any cut free of cracks: two neighbouring groups meet on the same
 /// vertices at every level. The simplification keeps original vertices (no new or moved vertices),
-/// so every cluster of every level refers to the original vertex buffer.
+/// so every cluster of every level refers to the original vertex buffer. There is no sloppy
+/// fallback: it ignores attributes and seams, so a group that the attribute simplifier cannot
+/// reduce ends its branch instead.
 /// </summary>
 public static class MeshletClusterHierarchyBuilder
 {
     private const byte VertexLockBit = 1;
     private const byte VertexProtectBit = 2;
     private const byte VertexSeenBit = 0x80;
+
+    /// <summary>
+    /// Version of the hierarchy cook. The meshlet settings hash of a hierarchy payload includes it,
+    /// so a change of the cook recooks cached hierarchy payloads and leaves level-0 payloads alone.
+    /// Version 3 has no sloppy fallback and no placeholder triangle, rejects simplifications
+    /// that change a locked border, and keeps ended branches locked.
+    /// </summary>
+    public const int CookVersion = 3;
+
+    private static readonly Lock InvariantSync = new();
+    private static InvariantReport _invariantTotals;
+
+    /// <summary>
+    /// Gets the sum of the crack-free check results of every hierarchy built in this process. The
+    /// model cook writes it to meshlet-cache.log with its cluster hierarchy summary.
+    /// </summary>
+    public static InvariantReport InvariantTotals
+    {
+        get
+        {
+            lock (InvariantSync)
+                return _invariantTotals;
+        }
+    }
+
+    /// <summary>Adds the check results of one built hierarchy to <see cref="InvariantTotals"/>.</summary>
+    public static void RecordInvariants(InvariantReport report)
+    {
+        lock (InvariantSync)
+            _invariantTotals += report;
+    }
 
     /// <summary>Configuration of the hierarchy cook.</summary>
     /// <param name="MaxVertices">Maximum vertices per cluster.</param>
@@ -49,7 +84,6 @@ public static class MeshletClusterHierarchyBuilder
     /// <param name="SplitFactor">Split factor of the flexible cluster builder.</param>
     /// <param name="SimplifyRatio">Triangle ratio that each simplification aims for.</param>
     /// <param name="SimplifyThreshold">A group that keeps more than this share of its triangles stops.</param>
-    /// <param name="SloppyErrorFactor">Error factor for groups that only the sloppy fallback can simplify.</param>
     public readonly record struct Config(
         uint MaxVertices = 64u,
         uint MinTriangles = 41u,
@@ -57,8 +91,42 @@ public static class MeshletClusterHierarchyBuilder
         int PartitionSize = 16,
         float SplitFactor = 2.0f,
         float SimplifyRatio = 0.5f,
-        float SimplifyThreshold = 0.85f,
-        float SloppyErrorFactor = 2.0f);
+        float SimplifyThreshold = 0.85f);
+
+    /// <summary>
+    /// Results of the checks of the properties that make a cut free of cracks. The self, monotonic
+    /// and containment counts are failures; zero for all three means the hierarchy passes. The
+    /// border count is the number of rejected simplifications, which never reach the hierarchy.
+    /// </summary>
+    /// <param name="SelfChecks">Clusters made from a group whose own bound was compared with that group's record.</param>
+    /// <param name="SelfFailures">Clusters whose own sphere or error differs from the record of the group that made them.</param>
+    /// <param name="MonotonicChecks">Cluster links (own group to refined group) whose errors were compared.</param>
+    /// <param name="MonotonicFailures">Links where the parent group's error is smaller than the refined group's error.</param>
+    /// <param name="ContainmentChecks">Cluster links whose spheres were compared.</param>
+    /// <param name="ContainmentFailures">Links where the parent group's sphere does not contain the refined group's sphere.</param>
+    /// <param name="BorderChecks">Simplified groups whose locked border edges were compared before and after simplification.</param>
+    /// <param name="BorderRejections">
+    /// Simplifications that changed the open edges between locked vertices. The cook rejects them
+    /// (the group ends its branch), so no accepted level has a changed border.
+    /// </param>
+    public readonly record struct InvariantReport(
+        int SelfChecks,
+        int SelfFailures,
+        int MonotonicChecks,
+        int MonotonicFailures,
+        int ContainmentChecks,
+        int ContainmentFailures,
+        int BorderChecks,
+        int BorderRejections)
+    {
+        /// <summary>Adds two reports.</summary>
+        public static InvariantReport operator +(InvariantReport a, InvariantReport b)
+            => new(
+                a.SelfChecks + b.SelfChecks, a.SelfFailures + b.SelfFailures,
+                a.MonotonicChecks + b.MonotonicChecks, a.MonotonicFailures + b.MonotonicFailures,
+                a.ContainmentChecks + b.ContainmentChecks, a.ContainmentFailures + b.ContainmentFailures,
+                a.BorderChecks + b.BorderChecks, a.BorderRejections + b.BorderRejections);
+    }
 
     /// <summary>One cluster of the hierarchy: a triangle list into the original vertex buffer.</summary>
     /// <param name="Indices">Triangle list (three indices per triangle) into the mesh vertices.</param>
@@ -69,11 +137,12 @@ public static class MeshletClusterHierarchyBuilder
     /// <summary>The cooked hierarchy, with clusters in output order and one record per group.</summary>
     public sealed class Result
     {
-        internal Result(List<Cluster> clusters, List<MeshletLodGroupRecord> groups, int simplifyFallbackGroups)
+        internal Result(List<Cluster> clusters, List<MeshletLodGroupRecord> groups, int endedGroups, InvariantReport invariants)
         {
             Clusters = clusters;
             Groups = groups;
-            SloppyFallbackGroupCount = simplifyFallbackGroups;
+            EndedGroupCount = endedGroups;
+            Invariants = invariants;
         }
 
         /// <summary>Gets the clusters of every level.</summary>
@@ -82,8 +151,14 @@ public static class MeshletClusterHierarchyBuilder
         /// <summary>Gets the groups; <see cref="Cluster.Group"/> and <see cref="Cluster.RefinedGroup"/> index it.</summary>
         public IReadOnlyList<MeshletLodGroupRecord> Groups { get; }
 
-        /// <summary>Gets the number of groups that only the sloppy fallback could simplify.</summary>
-        public int SloppyFallbackGroupCount { get; }
+        /// <summary>
+        /// Gets the number of groups that ended their branch before the last level because they
+        /// could not simplify below the threshold or simplified to no triangles.
+        /// </summary>
+        public int EndedGroupCount { get; }
+
+        /// <summary>Gets the results of the crack-free checks of this hierarchy.</summary>
+        public InvariantReport Invariants { get; }
     }
 
     private struct WorkCluster
@@ -130,9 +205,17 @@ public static class MeshletClusterHierarchyBuilder
         MeshOptimizerNative.GeneratePositionRemap(remap, positions, vertexCount, sizeof(float) * 3);
         byte[] locks = new byte[vertexCount];
 
+        // Vertices (by position remap) of groups that ended their branch. Their clusters stay in the
+        // cut at every coarser level, so later simplification must keep their borders.
+        byte[] endedLocks = new byte[vertexCount];
+
         List<Cluster> outputClusters = [];
         List<MeshletLodGroupRecord> outputGroups = [];
-        int sloppyGroups = 0;
+        int endedGroups = 0;
+        int selfChecks = 0;
+        int selfFailures = 0;
+        int borderChecks = 0;
+        int borderRejections = 0;
 
         List<uint> clusterIndices = new(indices.Length);
         List<WorkCluster> clusters = [];
@@ -157,7 +240,7 @@ public static class MeshletClusterHierarchyBuilder
             int[] groupOffsets = Partition(ref clusters, config, positions, clusterIndices, remap);
             pending.Clear();
             pendingIndices.Clear();
-            LockBoundary(locks, clusters, groupOffsets, clusterIndices, remap, vertexLock);
+            LockBoundary(locks, clusters, groupOffsets, clusterIndices, remap, vertexLock, endedLocks);
 
             for (int g = 0; g + 1 < groupOffsets.Length; g++)
             {
@@ -178,21 +261,38 @@ public static class MeshletClusterHierarchyBuilder
 
                 int targetSize = (int)(merged.Length / 3 * config.SimplifyRatio) * 3;
                 (Vector4 sphere, float error) bounds = MergeBounds(clusters, first, count);
-                uint[] simplified = Simplify(config, positions, vertexCount, attributes, attributeStride, attributeWeights, merged, locks, targetSize, out float simplifyError, out bool usedSloppy);
+                uint[] simplified = Simplify(positions, vertexCount, attributes, attributeStride, attributeWeights, merged, locks, targetSize, out float simplifyError);
 
-                if (simplified.Length > merged.Length * config.SimplifyThreshold)
+                bool simplifiable = simplified.Length != 0 &&
+                    simplified.Length <= merged.Length * config.SimplifyThreshold &&
+                    float.IsFinite(simplifyError);
+                if (simplifiable)
                 {
-                    // The group cannot simplify further; it ends this branch of the hierarchy.
-                    OutputGroup(outputClusters, outputGroups, clusters, first, count, clusterIndices, bounds.sphere, float.MaxValue, depth);
+                    // The simplifier can still change the border around a locked vertex (for
+                    // example by removing a triangle that a collapse made degenerate). A changed
+                    // border would open a crack against the neighbour groups, so such a result
+                    // is rejected and the group ends its branch.
+                    borderChecks++;
+                    if (!LockedBorderUnchanged(merged, simplified, locks, remap))
+                    {
+                        borderRejections++;
+                        simplifiable = false;
+                    }
+                }
+
+                if (!simplifiable)
+                {
+                    // The group cannot simplify further; it ends this branch of the hierarchy. Its
+                    // clusters stay as roots of the cut, so their vertices stay locked from now on.
+                    OutputGroup(outputClusters, outputGroups, clusters, first, count, clusterIndices, bounds.sphere, float.MaxValue, depth, ref selfChecks, ref selfFailures);
+                    MarkEnded(endedLocks, clusters, first, count, clusterIndices, remap);
+                    endedGroups++;
                     continue;
                 }
 
-                if (usedSloppy)
-                    sloppyGroups++;
-
                 // Error and sphere grow monotonically from child clusters to the group.
                 float groupError = MathF.Max(bounds.error, simplifyError);
-                int refined = OutputGroup(outputClusters, outputGroups, clusters, first, count, clusterIndices, bounds.sphere, groupError, depth);
+                int refined = OutputGroup(outputClusters, outputGroups, clusters, first, count, clusterIndices, bounds.sphere, groupError, depth, ref selfChecks, ref selfFailures);
 
                 int clusterOffset = pending.Count;
                 Clusterize(pending, pendingIndices, config, positions, vertexCount, simplified, refined);
@@ -211,9 +311,94 @@ public static class MeshletClusterHierarchyBuilder
         }
 
         if (clusters.Count == 1)
-            OutputGroup(outputClusters, outputGroups, clusters, 0, 1, clusterIndices, clusters[0].Sphere, float.MaxValue, depth);
+            OutputGroup(outputClusters, outputGroups, clusters, 0, 1, clusterIndices, clusters[0].Sphere, float.MaxValue, depth, ref selfChecks, ref selfFailures);
 
-        return new Result(outputClusters, outputGroups, sloppyGroups);
+        InvariantReport links = CheckLinks(outputClusters, outputGroups);
+        InvariantReport invariants = links + new InvariantReport(selfChecks, selfFailures, 0, 0, 0, 0, borderChecks, borderRejections);
+        return new Result(outputClusters, outputGroups, endedGroups, invariants);
+    }
+
+    /// <summary>
+    /// Locks every vertex (by position remap) of a group that ended its branch, for all later levels.
+    /// </summary>
+    private static void MarkEnded(byte[] endedLocks, List<WorkCluster> clusters, int first, int count, List<uint> clusterIndices, uint[] remap)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            WorkCluster c = clusters[first + i];
+            for (int k = 0; k < c.IndexCount; k++)
+                endedLocks[remap[clusterIndices[c.IndexOffset + k]]] = 1;
+        }
+    }
+
+    /// <summary>
+    /// True when simplification kept the group's border: the open edges (edges of one triangle of the
+    /// group) whose two vertices are locked are the same before and after, compared by position
+    /// remap. These are the edges that the neighbour groups share, so an unchanged set means the
+    /// neighbours still meet the group on the same vertices.
+    /// </summary>
+    private static bool LockedBorderUnchanged(uint[] before, uint[] after, byte[] locks, uint[] remap)
+    {
+        HashSet<ulong> beforeEdges = LockedOpenEdges(before, locks, remap);
+        HashSet<ulong> afterEdges = LockedOpenEdges(after, locks, remap);
+        return beforeEdges.SetEquals(afterEdges);
+    }
+
+    private static HashSet<ulong> LockedOpenEdges(uint[] triangles, byte[] locks, uint[] remap)
+    {
+        Dictionary<ulong, int> edgeUses = new(triangles.Length);
+        for (int t = 0; t + 2 < triangles.Length; t += 3)
+        {
+            for (int e = 0; e < 3; e++)
+            {
+                uint a = triangles[t + e];
+                uint b = triangles[t + (e + 1) % 3];
+                if ((locks[a] & VertexLockBit) == 0 || (locks[b] & VertexLockBit) == 0)
+                    continue;
+                uint ra = remap[a];
+                uint rb = remap[b];
+                if (ra == rb)
+                    continue;
+                ulong key = ra < rb ? ((ulong)ra << 32) | rb : ((ulong)rb << 32) | ra;
+                edgeUses[key] = edgeUses.TryGetValue(key, out int uses) ? uses + 1 : 1;
+            }
+        }
+
+        HashSet<ulong> open = [];
+        foreach ((ulong key, int uses) in edgeUses)
+            if (uses == 1)
+                open.Add(key);
+        return open;
+    }
+
+    /// <summary>
+    /// Checks each link from a cluster's own group (its parent bound) to the group it was made from
+    /// (its own bound): the parent error is at least the refined error, and the parent sphere
+    /// contains the refined sphere (with a small relative tolerance for float rounding).
+    /// </summary>
+    private static InvariantReport CheckLinks(List<Cluster> clusters, List<MeshletLodGroupRecord> groups)
+    {
+        int checks = 0;
+        int monotonicFailures = 0;
+        int containmentFailures = 0;
+        foreach (Cluster cluster in clusters)
+        {
+            if (cluster.RefinedGroup < 0)
+                continue;
+            checks++;
+            MeshletLodGroupRecord parent = groups[cluster.Group];
+            MeshletLodGroupRecord refined = groups[cluster.RefinedGroup];
+            if (parent.SimplifiedError < refined.SimplifiedError)
+                monotonicFailures++;
+            Vector3 pc = new(parent.SimplifiedSphere.X, parent.SimplifiedSphere.Y, parent.SimplifiedSphere.Z);
+            Vector3 rc = new(refined.SimplifiedSphere.X, refined.SimplifiedSphere.Y, refined.SimplifiedSphere.Z);
+            float reach = Vector3.Distance(pc, rc) + refined.SimplifiedSphere.W;
+            float limit = parent.SimplifiedSphere.W * 1.0001f + 1e-5f;
+            if (reach > limit)
+                containmentFailures++;
+        }
+
+        return new InvariantReport(0, 0, checks, monotonicFailures, checks, containmentFailures, 0, 0);
     }
 
     private static void Clusterize(
@@ -304,7 +489,7 @@ public static class MeshletClusterHierarchyBuilder
     /// Locks every vertex that clusters of two different groups use, so simplification keeps the
     /// group borders. Vertices with the same position lock together (through the position remap).
     /// </summary>
-    private static void LockBoundary(byte[] locks, List<WorkCluster> clusters, int[] groupOffsets, List<uint> clusterIndices, uint[] remap, byte[]? vertexLock)
+    private static void LockBoundary(byte[] locks, List<WorkCluster> clusters, int[] groupOffsets, List<uint> clusterIndices, uint[] remap, byte[]? vertexLock, byte[] endedLocks)
     {
         for (int i = 0; i < locks.Length; i++)
             locks[i] &= unchecked((byte)~(VertexLockBit | VertexSeenBit));
@@ -333,14 +518,19 @@ public static class MeshletClusterHierarchyBuilder
         for (int i = 0; i < locks.Length; i++)
         {
             uint r = remap[i];
-            locks[i] = (byte)((locks[r] & VertexLockBit) | (locks[i] & VertexProtectBit));
+            locks[i] = (byte)((locks[r] & VertexLockBit) | (locks[i] & VertexProtectBit) |
+                (endedLocks[r] != 0 ? VertexLockBit : 0));
             if (vertexLock is not null)
                 locks[i] |= vertexLock[i];
         }
     }
 
+    /// <summary>
+    /// Attribute-aware simplification of a group's merged triangles toward the target, with the
+    /// group borders locked. Returns the triangles (empty when nothing is left) and the absolute
+    /// error that the simplifier reports.
+    /// </summary>
     private static uint[] Simplify(
-        Config config,
         float[] positions,
         int vertexCount,
         float[] attributes,
@@ -349,56 +539,14 @@ public static class MeshletClusterHierarchyBuilder
         uint[] merged,
         byte[] locks,
         int targetCount,
-        out float error,
-        out bool usedSloppy)
+        out float error)
     {
-        usedSloppy = false;
         uint[] lod = (uint[])merged.Clone();
         MeshOptimizerSimplifyOptions options = MeshOptimizerSimplifyOptions.Sparse | MeshOptimizerSimplifyOptions.ErrorAbsolute | MeshOptimizerSimplifyOptions.ErrorClamped;
         // The attribute variant is the one that takes vertex locks; the locks keep the group borders.
         int count = MeshOptimizerNative.SimplifyWithAttributes(lod, positions, vertexCount, attributes, attributeStride, attributeWeights, targetCount, float.MaxValue, options, locks, out error);
 
-        if (count > targetCount)
-        {
-            lod = SimplifySloppy(positions, merged, locks, targetCount, out error);
-            error *= config.SloppyErrorFactor;
-            count = lod.Length;
-            usedSloppy = true;
-        }
-
-        // A degenerate result keeps the first triangle, so no cluster is empty.
-        if (count == 0)
-            return [merged[0], merged[1], merged[2]];
-
         return count == lod.Length ? lod : lod.AsSpan(0, count).ToArray();
-    }
-
-    /// <summary>
-    /// Sloppy simplification of the merged triangles. The subset is de-indexed first, so the call
-    /// does not process the whole vertex buffer; the error is converted to absolute units.
-    /// </summary>
-    private static uint[] SimplifySloppy(float[] positions, uint[] merged, byte[] locks, int targetCount, out float error)
-    {
-        int n = merged.Length;
-        float[] subset = new float[n * 3];
-        byte[] subsetLocks = new byte[n];
-        uint[] lod = new uint[n];
-        for (int i = 0; i < n; i++)
-        {
-            uint v = merged[i];
-            subset[i * 3 + 0] = positions[v * 3 + 0];
-            subset[i * 3 + 1] = positions[v * 3 + 1];
-            subset[i * 3 + 2] = positions[v * 3 + 2];
-            subsetLocks[i] = locks[v];
-            lod[i] = (uint)i;
-        }
-
-        int count = MeshOptimizerNative.SimplifySloppy(lod, subset, n, targetCount, float.MaxValue, subsetLocks, out error);
-        error *= MeshOptimizerNative.SimplifyScale(subset, n);
-        uint[] result = new uint[count];
-        for (int i = 0; i < count; i++)
-            result[i] = merged[lod[i]];
-        return result;
     }
 
     /// <summary>
@@ -433,13 +581,24 @@ public static class MeshletClusterHierarchyBuilder
         List<uint> clusterIndices,
         Vector4 simplifiedSphere,
         float simplifiedError,
-        int depth)
+        int depth,
+        ref int selfChecks,
+        ref int selfFailures)
     {
         int group = outputGroups.Count;
         outputGroups.Add(new MeshletLodGroupRecord(simplifiedSphere, simplifiedError, depth));
         for (int i = 0; i < count; i++)
         {
             WorkCluster c = clusters[first + i];
+            // A cluster made from a group must carry exactly that group's bound as its own bound:
+            // the cut tests the same values on both sides of the link.
+            if (c.Refined >= 0)
+            {
+                selfChecks++;
+                MeshletLodGroupRecord made = outputGroups[c.Refined];
+                if (c.Sphere != made.SimplifiedSphere || c.Error != made.SimplifiedError)
+                    selfFailures++;
+            }
             uint[] clusterTriangles = new uint[c.IndexCount];
             clusterIndices.CopyTo(c.IndexOffset, clusterTriangles, 0, c.IndexCount);
             outputClusters.Add(new Cluster(clusterTriangles, group, c.Refined));
