@@ -629,6 +629,15 @@ internal sealed class FramePlanBuilder
                     out VulkanRenderGraphPlan plan,
                     out string failureReason))
             {
+                // The output exists and only its newest planner state is not published yet:
+                // readiness retries, because the generation transaction publishes it next.
+                if (authority.IsPublicationPendingForSameOutput(in key))
+                {
+                    throw new VulkanPlannerPublicationPendingException(
+                        $"The planner state of the current passes or resource generation is not published yet for context " +
+                        $"kind={key.ContextKind} pipe={key.PipelineIdentity} viewport={key.ViewportIdentity} " +
+                        $"resourceGeneration={key.ResourceGeneration}. Reason={failureReason}");
+                }
                 throw new VulkanPlanPreconditionException(
                     $"Frame plan has no frozen render-graph publication for context " +
                     $"kind={key.ContextKind} pipe={key.PipelineIdentity} viewport={key.ViewportIdentity} " +

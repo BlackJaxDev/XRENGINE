@@ -567,6 +567,15 @@ previous restore's copy (`SnapshotRestoredContent`).
   mesh cohort matches and misses, materialized mesh requests, binding artifact
   replacements and table evictions, and descriptor owner misses. Divide a window
   delta by the domain's `frames`.
+- **Pending planner publications retry, bounded.** A pass or resource-generation
+  change of an output (for example a debug view change or a capture) gives the
+  desktop frame operations a new planner key one render before the generation
+  transaction publishes its planner state. When the output already has a
+  published state, the desktop readiness retries the frame instead of failing
+  it (and tripping the render circuit breaker), for at most 8 consecutive
+  attempts; after that it fails as before. A key whose output has no published
+  state fails at once. `vulkan.planner_publication_pending` counts the retries
+  and the failures.
 - **Separate GC from lock waits.** A trace with
   `Microsoft-Windows-DotNETRuntime:0x4001:5` records GC suspensions, allocation
   ticks with stacks, and contention start and stop events, so GC pause time and

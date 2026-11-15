@@ -1610,6 +1610,13 @@ namespace XREngine.Editor.Mcp
                         // Per output domain (desktop, XR, none): cumulative counts of the work that
                         // rebuilds state, such as plan builds, mesh cohort misses and artifact replacements.
                         output_domains = BuildRenderOutputDomainTelemetry(),
+                        // Desktop attempts that retried, or failed past the limit, because a changed
+                        // output's planner publication was not there yet (pass or generation change).
+                        planner_publication_pending = new
+                        {
+                            retries_total = VulkanStats.VulkanPlannerPublicationPendingRetriesTotal,
+                            failures_total = VulkanStats.VulkanPlannerPublicationPendingFailuresTotal,
+                        },
                         retired_resources = new
                         {
                             metering = vulkanDiagnostics?.GetRetirementDiagnostics(),

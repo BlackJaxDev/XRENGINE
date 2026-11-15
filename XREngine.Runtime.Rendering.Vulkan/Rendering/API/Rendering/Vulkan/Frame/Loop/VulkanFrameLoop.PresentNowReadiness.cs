@@ -137,6 +137,14 @@ internal sealed partial class VulkanFrameLoop
     /// CPU frame slot. No WSI image is owned while shadows, meshes, descriptors,
     /// frame operations, resource bindings, and pipeline requirements converge.
     /// </summary>
+    /// <summary>
+    /// Consecutive desktop attempts that found the planner state of a changed output not yet
+    /// published. A pass or generation change needs one render for the publication, so a small
+    /// limit is enough; more consecutive attempts mean a publication that does not arrive.
+    /// </summary>
+    private const int MaxPlannerPublicationPendingRetries = 8;
+    private int _plannerPublicationPendingRetries;
+
     private bool TryAcceptDesktopPresentNowPlan(
         ref VulkanFrameAttempt attempt,
         ref VulkanPresentNowReadinessWatchdog watchdog,
@@ -587,6 +595,26 @@ internal sealed partial class VulkanFrameLoop
                 exception.Message);
             return false;
         }
+        catch (VulkanPlannerPublicationPendingException exception)
+        {
+            // A pass or generation change of an existing output: retry the frame, for a
+            // bounded number of consecutive attempts. A publication that stays pending longer
+            // fails loudly, as a missing publication did before.
+            if (++_plannerPublicationPendingRetries > MaxPlannerPublicationPendingRetries)
+            {
+                _plannerPublicationPendingRetries = 0;
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPlannerPublicationPendingFailure();
+                throw;
+            }
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPlannerPublicationPendingRetry();
+            retry = watchdog.CreateRetry(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "planner-publication-pending",
+                "DesktopScene -> resource planner publication",
+                exception.Message);
+            return false;
+        }
+        _plannerPublicationPendingRetries = 0;
         FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyPlanSealed);
         logicalPlan.PrepareRecordingPlannerGenerations(in plannerState);
         if (!logicalPlan.HasAnyExecutableOutput)

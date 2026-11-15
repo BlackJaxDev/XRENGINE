@@ -7,5 +7,5 @@ namespace XREngine.Rendering.Vulkan;
 /// sealed for the current recording attempt. The partial command buffer must be
 /// abandoned and must never be submitted.
 /// </summary>
-internal sealed class VulkanPlanPreconditionException(string message)
+internal class VulkanPlanPreconditionException(string message)
     : InvalidOperationException(message);

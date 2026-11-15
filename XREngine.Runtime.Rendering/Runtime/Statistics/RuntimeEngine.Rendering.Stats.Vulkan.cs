@@ -235,6 +235,8 @@ namespace XREngine
                     private static long _vulkanLifetimeOldestPendingRetirementAgeMilliseconds;
                     private static int _vulkanPendingRetiredCommandBufferCount;
                     private static long _vulkanRetiredCommandBufferWorkerOwnedDeferralsTotal;
+                    private static long _vulkanPlannerPublicationPendingRetriesTotal;
+                    private static long _vulkanPlannerPublicationPendingFailuresTotal;
                     private static int _vulkanMeshFrameDataArenaChunkCount;
                     private static long _vulkanMeshFrameDataMappedBytes;
                     private static long _vulkanMeshFrameDataReservedBytes;
@@ -774,6 +776,18 @@ namespace XREngine
                     /// each drain that skips it. The batch join frees these buffers.
                     /// </summary>
                     public static long VulkanRetiredCommandBufferWorkerOwnedDeferralsTotal => Interlocked.Read(ref _vulkanRetiredCommandBufferWorkerOwnedDeferralsTotal);
+
+                    /// <summary>
+                    /// Cumulative desktop frame attempts that retried because the planner state
+                    /// of a changed output (new passes or resource generation) was not published yet.
+                    /// </summary>
+                    public static long VulkanPlannerPublicationPendingRetriesTotal => Interlocked.Read(ref _vulkanPlannerPublicationPendingRetriesTotal);
+
+                    /// <summary>
+                    /// Cumulative desktop frame attempts that failed because such a publication
+                    /// stayed pending past the retry limit.
+                    /// </summary>
+                    public static long VulkanPlannerPublicationPendingFailuresTotal => Interlocked.Read(ref _vulkanPlannerPublicationPendingFailuresTotal);
                     public static int VulkanMeshFrameDataArenaChunkCount => Volatile.Read(ref _vulkanMeshFrameDataArenaChunkCount);
                     public static long VulkanMeshFrameDataMappedBytes => Volatile.Read(ref _vulkanMeshFrameDataMappedBytes);
                     public static long VulkanMeshFrameDataReservedBytes => Volatile.Read(ref _vulkanMeshFrameDataReservedBytes);
@@ -1052,6 +1066,14 @@ namespace XREngine
                     /// Counts one retired command buffer that stayed queued because an
                     /// in-flight desktop worker batch owned its command pool.
                     /// </summary>
+                    /// <summary>Counts one desktop attempt that retried for a pending planner publication.</summary>
+                    public static void RecordVulkanPlannerPublicationPendingRetry()
+                        => Interlocked.Increment(ref _vulkanPlannerPublicationPendingRetriesTotal);
+
+                    /// <summary>Counts one desktop attempt that failed for a planner publication past the retry limit.</summary>
+                    public static void RecordVulkanPlannerPublicationPendingFailure()
+                        => Interlocked.Increment(ref _vulkanPlannerPublicationPendingFailuresTotal);
+
                     public static void RecordVulkanRetiredCommandBufferWorkerOwnedDeferral()
                     {
                         if (!EnableTracking)
