@@ -230,6 +230,13 @@ void main()
 
             base.DescribeRenderPass(context);
             var builder = context.GetOrCreateSyntheticPass(passName);
+            // A native vendor evaluate also reads depth, motion vectors and exposure. Declaring
+            // them keeps the resource planner from ending their lifetimes, or aliasing their
+            // memory, before this pass.
+            DescribeVendorInputRead(context, builder, DepthTextureName);
+            DescribeVendorInputRead(context, builder, DepthStencilTextureName);
+            DescribeVendorInputRead(context, builder, MotionTextureName);
+            DescribeVendorInputRead(context, builder, AutoExposureTextureName);
             if (!string.IsNullOrWhiteSpace(SourceTextureName))
             {
                 builder.SampleTexture(MakeTextureResource(SourceTextureName));
@@ -238,6 +245,12 @@ void main()
 
             if (!TryDescribeActualFboColorInputs(builder, SourceQuadFBOName))
                 builder.SampleTexture(MakeFboColorResource(SourceQuadFBOName));
+        }
+
+        private static void DescribeVendorInputRead(RenderGraphDescribeContext context, RenderPassBuilder builder, string? textureName)
+        {
+            if (!string.IsNullOrWhiteSpace(textureName) && (context.ResourceLayout is null || context.HasResource(textureName)))
+                builder.SampleTexture(MakeTextureResource(textureName));
         }
 
         protected override void Execute()
