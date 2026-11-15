@@ -383,13 +383,42 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
 
         // Compute descriptor refreshes run every eye frame. Keep the entry and
         // signature scratch off the heap; only a new cache entry copies the signature.
-        const int StackTemplateEntries = 16;
+        // Compute programs with many storage bindings exceed 16 writes, so the stack
+        // limit covers 64 writes (about 5.6 KB); larger sets rent pooled scratch.
+        const int StackTemplateEntries = 64;
+        DescriptorUpdateTemplateEntry[]? rentedEntries = null;
+        DescriptorUpdateTemplateSignature[]? rentedSignature = null;
         Span<DescriptorUpdateTemplateEntry> entries = writes.Length <= StackTemplateEntries
             ? stackalloc DescriptorUpdateTemplateEntry[writes.Length]
-            : new DescriptorUpdateTemplateEntry[writes.Length];
+            : (rentedEntries = ArrayPool<DescriptorUpdateTemplateEntry>.Shared.Rent(writes.Length)).AsSpan(0, writes.Length);
         Span<DescriptorUpdateTemplateSignature> signature = writes.Length <= StackTemplateEntries
             ? stackalloc DescriptorUpdateTemplateSignature[writes.Length]
-            : new DescriptorUpdateTemplateSignature[writes.Length];
+            : (rentedSignature = ArrayPool<DescriptorUpdateTemplateSignature>.Shared.Rent(writes.Length)).AsSpan(0, writes.Length);
+        try
+        {
+            return TryUpdateDescriptorSetWithTemplateCore(
+                device, descriptorSet, descriptorSetLayout, bindPoint, pipelineLayout, setIndex, writes, entries, signature);
+        }
+        finally
+        {
+            if (rentedEntries is not null)
+                ArrayPool<DescriptorUpdateTemplateEntry>.Shared.Return(rentedEntries);
+            if (rentedSignature is not null)
+                ArrayPool<DescriptorUpdateTemplateSignature>.Shared.Return(rentedSignature);
+        }
+    }
+
+    private bool TryUpdateDescriptorSetWithTemplateCore(
+        VulkanDeviceContext device,
+        DescriptorSet descriptorSet,
+        DescriptorSetLayout descriptorSetLayout,
+        PipelineBindPoint bindPoint,
+        PipelineLayout pipelineLayout,
+        uint setIndex,
+        ReadOnlySpan<WriteDescriptorSet> writes,
+        Span<DescriptorUpdateTemplateEntry> entries,
+        Span<DescriptorUpdateTemplateSignature> signature)
+    {
         nuint totalSize = 0;
         for (int index = 0; index < writes.Length; index++)
         {
