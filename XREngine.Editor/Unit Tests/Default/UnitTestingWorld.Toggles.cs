@@ -346,6 +346,14 @@ public static partial class EditorUnitTests
             public int MeshletAdditionalLodCount { get; set; } = 2;
 
             /// <summary>
+            /// Cooks a cluster level-of-detail hierarchy for the meshlets of this model (level-0
+            /// meshlets plus coarser cluster levels with crack-free group borders). Off by default; the
+            /// cook takes longer and the meshlet data is about twice the size. Renderers without cut
+            /// selection draw only the level-0 meshlets.
+            /// </summary>
+            public bool GenerateClusterHierarchy { get; set; }
+
+            /// <summary>
             /// Additional post-import actions to apply after the source model has been loaded.
             /// </summary>
             public ModelPostImportFlags PostImportFlags { get; set; } = ModelPostImportFlags.None;

@@ -339,6 +339,47 @@ renderer does not.
 
 Broad model and prefab binary-cache hydration is open work.
 
+### Cluster hierarchy payloads
+
+`MeshletGenerationSettings.BuildClusterHierarchy` (off by default; the
+unit-testing world sets it for each model with `GenerateClusterHierarchy`)
+cooks a cluster level-of-detail hierarchy instead of one meshlet level.
+`MeshletClusterHierarchyBuilder` (a port of meshoptimizer's
+`demo/clusterlod.h`, MIT) builds it:
+
+- Level 0 splits the mesh into clusters (`buildMeshletsFlex`, 64 vertices,
+  41 to 124 triangles). Each further level puts about 16 neighbouring clusters
+  into a group (`partitionClusters`), locks the vertices that two groups share
+  (through a position remap, so split attribute vertices lock together),
+  merges and simplifies the group to half its triangles
+  (`simplifyWithAttributes` with `Sparse | ErrorAbsolute | ErrorClamped`, normal
+  and UV0 as attributes; `simplifySloppy` with the error x2 only when that does
+  not reach 85%), and splits the result into new clusters. A group that stays
+  above 85% ends its branch.
+- The group sphere is the merge of its cluster spheres and the group error is
+  the larger of the child errors and the simplify error, so sphere and error
+  grow from child to parent. Locked borders and monotonic bounds make every
+  cut free of cracks.
+- Simplification keeps the original vertices: every cluster of every level
+  refers to the source vertex buffer, so deformation and vertex buffers do not
+  change.
+
+The payload stores every cluster as a meshlet in the normal streams, level 0
+first, and adds `ClusterLevel0Count`, one `MeshletClusterLodRecord` (group,
+refined group; 8 bytes) per meshlet and one `MeshletLodGroupRecord`
+(simplified sphere, error, depth; 32 bytes) per group. Each meshlet keeps its
+own culling sphere and normal cone. Such a payload has payload version 5
+(`MeshletPayload.ClusterHierarchyPayloadVersion`); every payload without a
+hierarchy stays version 4, so existing caches and cooked meshes stay valid.
+The hierarchy flag changes the meshlet settings hash only when it is set.
+
+A renderer without cut selection draws only the level-0 prefix:
+`MeshletPayload.Level0MeshletCount`, `Level0Meshlets`, `Level0VertexIndices`
+and `Level0TriangleIndices`. `GPUScene`, `MeshletCollection`, the Advanced
+canonical geometry publisher and the WebGPU meshlet geometry use these. The
+import cook writes one `[ClusterHierarchy]` summary line for each model to
+`meshlet-cache.log`.
+
 ## Production Closeout Status
 
 The unconditional meshlet import/runtime production gate completed on

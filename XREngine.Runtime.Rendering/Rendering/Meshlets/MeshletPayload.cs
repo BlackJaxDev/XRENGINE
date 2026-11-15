@@ -54,7 +54,8 @@ public readonly record struct MeshletGenerationSettingsSnapshot(
     int OptimizeLevel,
     bool ComputeBounds,
     bool EncodeMeshlets,
-    bool EncodeVertexReferences)
+    bool EncodeVertexReferences,
+    bool BuildClusterHierarchy = false)
 {
     public static MeshletGenerationSettingsSnapshot From(MeshletGenerationSettings? settings)
     {
@@ -72,7 +73,8 @@ public readonly record struct MeshletGenerationSettingsSnapshot(
             settings.OptimizeLevel,
             settings.ComputeBounds,
             settings.EncodeMeshlets,
-            settings.EncodeVertexReferences);
+            settings.EncodeVertexReferences,
+            settings.BuildClusterHierarchy);
     }
 }
 
@@ -137,6 +139,13 @@ public sealed class MeshletPayload
     /// read by skipping that stream; nothing else differs.
     /// </summary>
     public const int CurrentPayloadVersion = 4;
+    /// <summary>
+    /// Version 5 is version 4 plus a cluster hierarchy: <see cref="ClusterLevel0Count"/>, one
+    /// <see cref="MeshletClusterLodRecord"/> per meshlet and the <see cref="LodGroups"/> table. Only a
+    /// payload cooked with <see cref="MeshletGenerationSettings.BuildClusterHierarchy"/> uses it, so
+    /// every version 4 payload (caches and cooked assets) stays valid without a recook.
+    /// </summary>
+    public const int ClusterHierarchyPayloadVersion = 5;
     /// <summary>The last version that stored a per-vertex stream.</summary>
     public const int LastPayloadVersionWithVertexStream = 3;
     public const uint PortableMaxVertices = 64u;
@@ -170,10 +179,53 @@ public sealed class MeshletPayload
     public ImmutableArray<byte> TriangleIndices { get; init; } = [];
     public MeshOptimizerMeshletStats Stats { get; init; }
 
+    /// <summary>
+    /// For a cluster hierarchy payload, the number of level-0 (full-detail) meshlets. They come first,
+    /// so meshlets [0, count) and the start of both index streams form the plain level-0 payload.
+    /// Zero for a payload without a hierarchy.
+    /// </summary>
+    public int ClusterLevel0Count { get; init; }
+    /// <summary>The hierarchy record of each meshlet, in meshlet order; empty without a hierarchy.</summary>
+    public ImmutableArray<MeshletClusterLodRecord> ClusterLods { get; init; } = [];
+    /// <summary>The groups of the cluster hierarchy; empty without a hierarchy.</summary>
+    public ImmutableArray<MeshletLodGroupRecord> LodGroups { get; init; } = [];
+
     public bool HasMeshlets => State == MeshletPayloadState.Present && Meshlets.Length > 0;
 
+    /// <summary>True when the payload holds a cluster hierarchy (version 5).</summary>
+    public bool HasClusterHierarchy => ClusterLods.Length > 0;
+
+    /// <summary>
+    /// The number of meshlets that a renderer without cut selection draws: the level-0 meshlets of a
+    /// hierarchy payload, or every meshlet otherwise. The level-0 meshlets form a prefix of
+    /// <see cref="Meshlets"/>.
+    /// </summary>
+    public int Level0MeshletCount => HasClusterHierarchy ? ClusterLevel0Count : Meshlets.Length;
+
+    /// <summary>The level-0 meshlet descriptors (all descriptors without a hierarchy).</summary>
+    public ReadOnlySpan<CpuMeshletDescriptor> Level0Meshlets => Meshlets.AsSpan(0, Level0MeshletCount);
+
+    /// <summary>The vertex references that the level-0 meshlets use (a prefix of <see cref="VertexIndices"/>).</summary>
+    public ReadOnlySpan<uint> Level0VertexIndices
+        => HasClusterHierarchy
+            ? VertexIndices.AsSpan(0, checked((int)(Meshlets[ClusterLevel0Count - 1].VertexOffset + Meshlets[ClusterLevel0Count - 1].VertexCount)))
+            : VertexIndices.AsSpan();
+
+    /// <summary>
+    /// The local triangle bytes that the level-0 meshlets use, with the four-byte terminal padding
+    /// (a prefix of <see cref="TriangleIndices"/>).
+    /// </summary>
+    public ReadOnlySpan<byte> Level0TriangleIndices
+        => HasClusterHierarchy
+            ? TriangleIndices.AsSpan(0, checked((int)((Meshlets[ClusterLevel0Count - 1].TriangleOffset + Meshlets[ClusterLevel0Count - 1].TriangleCount * 3u + 3u) & ~3u)))
+            : TriangleIndices.AsSpan();
+
+    /// <summary>The payload version that a payload with or without a cluster hierarchy must have.</summary>
+    public static int ExpectedPayloadVersion(bool clusterHierarchy)
+        => clusterHierarchy ? ClusterHierarchyPayloadVersion : CurrentPayloadVersion;
+
     public bool IsRuntimeCompatible
-        => PayloadVersion == CurrentPayloadVersion
+        => PayloadVersion == ExpectedPayloadVersion(HasClusterHierarchy)
            && RuntimeCompatibilityToken == MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(MeshletSettings)
            && MeshletSettings.MaxVertices <= PortableMaxVertices
            && MeshletSettings.MaxTriangles <= PortableMaxTriangles;
@@ -283,6 +335,8 @@ public sealed class MeshletPayload
         if (TriangleIndices.Length != 0 && (TriangleIndices.Length & 3) != 0)
             throw new InvalidDataException("The meshlet local-triangle stream must have four-byte-aligned terminal padding.");
 
+        ValidateClusterHierarchy();
+
         if (Meshlets.Length > 0)
         {
             CpuMeshletDescriptor last = Meshlets[^1];
@@ -291,6 +345,46 @@ public sealed class MeshletPayload
                 throw new InvalidDataException("The meshlet local-triangle stream does not preserve its required terminal padding.");
         }
 
+    }
+
+    /// <summary>
+    /// Checks the cluster hierarchy tables: the version matches the presence of the tables and the
+    /// settings flag; every meshlet has a record; the level-0 meshlets come first and have no refined
+    /// group; every other meshlet names a refined group; all group indices are in range; group errors
+    /// are not negative and spheres are finite.
+    /// </summary>
+    private void ValidateClusterHierarchy()
+    {
+        bool hierarchy = ClusterLods.Length > 0 || LodGroups.Length > 0 || ClusterLevel0Count != 0;
+        if (hierarchy != MeshletSettings.BuildClusterHierarchy && State == MeshletPayloadState.Present)
+            throw new InvalidDataException("The meshlet payload's cluster hierarchy does not match its cook settings.");
+        if (!hierarchy)
+            return;
+
+        if (State != MeshletPayloadState.Present)
+            throw new InvalidDataException("Only a present meshlet payload can hold a cluster hierarchy.");
+        if (ClusterLods.Length != Meshlets.Length || LodGroups.Length == 0
+            || ClusterLevel0Count <= 0 || ClusterLevel0Count > Meshlets.Length)
+            throw new InvalidDataException("The meshlet cluster hierarchy has inconsistent table sizes.");
+
+        for (int index = 0; index < ClusterLods.Length; index++)
+        {
+            MeshletClusterLodRecord record = ClusterLods[index];
+            bool level0 = index < ClusterLevel0Count;
+            if ((uint)record.Group >= (uint)LodGroups.Length
+                || (level0 ? record.RefinedGroup != -1 : (uint)record.RefinedGroup >= (uint)LodGroups.Length))
+                throw new InvalidDataException($"Meshlet {index} has an invalid cluster hierarchy record.");
+        }
+
+        for (int index = 0; index < LodGroups.Length; index++)
+        {
+            MeshletLodGroupRecord group = LodGroups[index];
+            if (!float.IsFinite(group.SimplifiedSphere.X) || !float.IsFinite(group.SimplifiedSphere.Y)
+                || !float.IsFinite(group.SimplifiedSphere.Z) || !float.IsFinite(group.SimplifiedSphere.W)
+                || group.SimplifiedSphere.W < 0.0f || float.IsNaN(group.SimplifiedError) || group.SimplifiedError < 0.0f
+                || group.Depth < 0)
+                throw new InvalidDataException($"Cluster hierarchy group {index} has invalid bounds or error.");
+        }
     }
 
     public bool IsFreshFor(XRMesh mesh, MeshletGenerationSettings? meshletSettings, MeshLodGenerationSettings? lodSettings, string? sourceMeshIdentity = null)
@@ -306,7 +400,7 @@ public sealed class MeshletPayload
         string provenanceKey = MeshletPayloadUtility.CurrentCookProvenanceKey;
         ulong freshness = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, meshletHash, lodHash, provenanceKey);
 
-        return PayloadVersion == CurrentPayloadVersion
+        return PayloadVersion == ExpectedPayloadVersion(meshletSnapshot.BuildClusterHierarchy)
             && OwnerGeometryRevision == mesh.GeometryRevision
             && SourceVertexCount == mesh.VertexCount
             && SourceTriangleCount == (mesh.Triangles?.Count ?? 0)
@@ -327,7 +421,7 @@ public sealed class MeshletPayload
         string versionKey = CookProvenanceKey;
         ulong freshness = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, MeshletSettingsHash, LodSettingsHash, versionKey);
 
-        return PayloadVersion == CurrentPayloadVersion
+        return PayloadVersion == ExpectedPayloadVersion(MeshletSettings.BuildClusterHierarchy)
             && OwnerGeometryRevision == mesh.GeometryRevision
             && SourceVertexCount == mesh.VertexCount
             && SourceTriangleCount == (mesh.Triangles?.Count ?? 0)
@@ -564,6 +658,9 @@ public static class MeshletPayloadUtility
         AppendBoolean(hash, settings.ComputeBounds);
         AppendBoolean(hash, settings.EncodeMeshlets);
         AppendBoolean(hash, settings.EncodeVertexReferences);
+        // Appended only when set, so the hash of every payload without a hierarchy stays the same.
+        if (settings.BuildClusterHierarchy)
+            AppendBoolean(hash, true);
         return hash.GetCurrentHashAsUInt64();
     }
 

@@ -97,7 +97,7 @@ namespace XREngine.Rendering.Meshlets
             uint baseVertOffset = (uint)_vertexIndices.Count;
             uint baseTriOffset = (uint)_triangleIndices.Count;
 
-            for (int i = 0; i < payload.Meshlets.Length; i++)
+            for (int i = 0; i < payload.Level0MeshletCount; i++)
             {
                 Meshlet m = payload.Meshlets[i].ToGpuMeshlet(instanceID, materialID, (uint)renderPass);
                 m.MeshID = instanceID;
@@ -111,11 +111,11 @@ namespace XREngine.Rendering.Meshlets
             // Payloads no longer carry a vertex copy; this diagnostic path
             // expands the mesh's attributes only for the meshes it collects.
             _vertices.AddRange(MeshOptimizerIntegration.BuildMeshletVerticesForPayload(mesh));
-            for (int i = 0; i < payload.VertexIndices.Length; i++)
+            for (int i = 0; i < payload.Level0VertexIndices.Length; i++)
                 _vertexIndices.Add(payload.VertexIndices[i] + baseVertexOffset);
-            _triangleIndices.AddRange(payload.TriangleIndices);
+            _triangleIndices.AddRange(payload.Level0TriangleIndices);
 
-            _meshletOffsets[instanceID] = (_meshlets.Count - payload.Meshlets.Length, payload.Meshlets.Length);
+            _meshletOffsets[instanceID] = (_meshlets.Count - payload.Level0MeshletCount, payload.Level0MeshletCount);
             _transforms[instanceID] = transform;
             _buffersDirty = true;
             _transformBufferDirty = true;

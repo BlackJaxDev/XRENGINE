@@ -257,10 +257,10 @@ public sealed partial class AdvancedGpuScenePublisher
                 bool useMeshlets = payload is { HasMeshlets: true } && payload.IsValidatedFor(mesh);
                 int vertexCount = mesh.VertexCount;
                 int indexCount = checked(triangles.Count * 3);
-                int descriptorCount = useMeshlets ? payload!.Meshlets.Length : 0;
-                int meshletIndexCount = useMeshlets ? payload!.VertexIndices.Length : 0;
+                int descriptorCount = useMeshlets ? payload!.Level0MeshletCount : 0;
+                int meshletIndexCount = useMeshlets ? payload!.Level0VertexIndices.Length : 0;
                 int triangleWordCount = useMeshlets
-                    ? checked((int)(((long)payload!.TriangleIndices.Length + 3L) / 4L))
+                    ? checked((int)(((long)payload!.Level0TriangleIndices.Length + 3L) / 4L))
                     : 0;
                 ref StagedCanonicalGeometry sized = ref _stagedGeometry[commandIndex];
                 if (!ReferenceEquals(sized.SizedPayload, payload) ||
@@ -318,12 +318,12 @@ public sealed partial class AdvancedGpuScenePublisher
                     if (useMeshlets)
                     {
                         ConvertMeshletDescriptors(
-                            payload!.Meshlets.AsSpan(),
+                            payload!.Level0Meshlets,
                             _packedMeshletDescriptors.AsSpan(descriptorCursor, descriptorCount));
-                        payload.VertexIndices.AsSpan().CopyTo(
+                        payload.Level0VertexIndices.CopyTo(
                             _packedMeshletVertexIndices.AsSpan(meshletIndexCursor, meshletIndexCount));
                         PackTriangleWords(
-                            payload.TriangleIndices.AsSpan(),
+                            payload.Level0TriangleIndices,
                             _packedMeshletTriangleWords.AsSpan(triangleWordCursor, triangleWordCount));
                     }
                 }
@@ -468,10 +468,10 @@ public sealed partial class AdvancedGpuScenePublisher
                 int indexCount = checked(triangles.Count * 3);
                 MeshletPayload? payload = mesh.MeshletPayload;
                 bool useMeshlets = payload is { HasMeshlets: true } && payload.IsValidatedFor(mesh);
-                int descriptorCount = useMeshlets ? payload!.Meshlets.Length : 0;
-                int meshletIndexCount = useMeshlets ? payload!.VertexIndices.Length : 0;
+                int descriptorCount = useMeshlets ? payload!.Level0MeshletCount : 0;
+                int meshletIndexCount = useMeshlets ? payload!.Level0VertexIndices.Length : 0;
                 int triangleWordCount = useMeshlets
-                    ? checked((int)(((long)payload!.TriangleIndices.Length + 3L) / 4L))
+                    ? checked((int)(((long)payload!.Level0TriangleIndices.Length + 3L) / 4L))
                     : 0;
                 _stagedGeometry[commandIndex] = new StagedCanonicalGeometry
                 {

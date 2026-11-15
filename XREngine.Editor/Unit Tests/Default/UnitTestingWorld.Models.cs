@@ -164,7 +164,11 @@ public static partial class EditorUnitTests
                 TextureLoadDirSearchPaths = textureLoadDirSearchPaths,
                 CookSettings = new ModelCookSettings
                 {
-                    Meshlets = new MeshletGenerationSettings { Enabled = true },
+                    Meshlets = new MeshletGenerationSettings
+                    {
+                        Enabled = true,
+                        BuildClusterHierarchy = model.GenerateClusterHierarchy,
+                    },
                     Lods = new MeshLodGenerationSettings
                     {
                         Enabled = model.GenerateMeshletLods,

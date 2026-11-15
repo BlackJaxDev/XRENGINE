@@ -1306,6 +1306,10 @@
           "type": "integer",
           "description": "Additional LOD levels requested when  is enabled."
         },
+        "GenerateClusterHierarchy": {
+          "type": "boolean",
+          "description": "Cooks a cluster level-of-detail hierarchy for the meshlets of this model (level-0 meshlets plus coarser cluster levels with crack-free group borders). Off by default; the cook takes longer and the meshlet data is about twice the size. Renderers without cut selection draw only the level-0 meshlets."
+        },
         "PostImportFlags": {
           "type": "string",
           "description": "Additional post-import actions to apply after the source model has been loaded.",
