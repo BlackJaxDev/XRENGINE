@@ -35,6 +35,15 @@ does not have a backend kernel. This is a feature, not a placeholder accident:
 it prevents the engine from pretending the cache path is doing GPU work when it
 is only proving resource and pass topology.
 
+Current behavior: every active RVC mode (`ForwardPlusOracle`, `VisibilityOnlyDebug`,
+`MaterialCache`, `SharedLighting`, `Full`) renders through the hosted Advanced stage
+family (`RvcRenderPipeline.GenerateCommandChain` returns
+`AdvancedStageFamily.CreateHostedCommandChain`), so the image is the Advanced image:
+visibility raster, reconstruction, tile classification and compute native shading.
+`ForwardPlusOracle` does not render Forward+ today. The RVC passes
+(`AppendRvcPassCommands`, `DeclareRvcResources`) are not called. `Off` renders no XR
+output.
+
 The foundation covers:
 
 - explicit runtime view-set contracts for mono, stereo, quad wide/inset, mirror,
@@ -67,6 +76,7 @@ choices, and foveal inset artifacts.
 
 ### Forward+ Remains The Oracle
 
+Design intent; not implemented yet (see the current behavior above).
 Forward+ is kept as both a companion path and the correctness oracle. Transparent
 and order-dependent materials remain on Forward+, and every RVC quality claim is
 compared against a foveated Forward+ baseline when the runtime supports it.
