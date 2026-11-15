@@ -1676,7 +1676,12 @@ internal sealed class EngineRuntimeRenderingHostServices :
                 _independentDesktopCostSinceAdmissionMs,
                 RuntimeEngine.Rendering.Stats.FrameOutputs.LastDesktopWorkMs);
 
-            double slackMs = RuntimeEngine.VRState.OpenXRApi?.NextFrameSlackMs ?? -1.0;
+            // A paced collect starts when the eyes enter xrEndFrame, and its desktop frame renders
+            // after the next eye frame, so it reads the slack of that window from completed frames.
+            // A render-paced collect reads the time left now, as before.
+            double slackMs = RuntimeEngine.VRState.OpenXRApi is IOpenXrCollectPacing { IsCurrentCollectPaced: true } pacedCollect
+                ? pacedCollect.PacedDesktopSlackMs
+                : RuntimeEngine.VRState.OpenXRApi?.NextFrameSlackMs ?? -1.0;
             long xrWakeTicks = RuntimeEngine.VRState.OpenXRApi?.LastFrameWakeTicks ?? 0L;
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
             double elapsedMs = (now - _independentDesktopLastAdmittedTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -1764,8 +1769,11 @@ internal sealed class EngineRuntimeRenderingHostServices :
                 return false;
             }
 
-            _vrDesktopPressureHoldFramesRemaining--;
-            _vrDesktopPressureConsecutiveSkips++;
+            // Hold and skip counts are budget periods: with XR collect pacing one collect stands
+            // for the display periods since the last collect, so the hold keeps its length in time.
+            int periods = CollectBudgetPeriods.Current;
+            _vrDesktopPressureHoldFramesRemaining -= periods;
+            _vrDesktopPressureConsecutiveSkips += periods;
             _vrDesktopPressureHoldCurrentFrame = true;
             return true;
         }

@@ -3074,6 +3074,7 @@ namespace XREngine.Rendering
                             if (!windowHeldForXrFrame)
                             {
                                 FramePacingTimeline.Mark(EFramePacingMark.DesktopRenderStart);
+                                (RuntimeEngine.VRState.OpenXRApi as XREngine.Rendering.API.Rendering.OpenXR.IOpenXrCollectPacing)?.NoteDesktopRenderStart();
                                 RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
                             }
                         }

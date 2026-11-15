@@ -345,8 +345,11 @@ Frame lifecycle fields identify fence pressure between update, collect/swap, and
 render: `update_frame_id`, `collect_frame_id`, `swap_frame_id`,
 `present_frame_id`, `collect_visible_late_policy`,
 `collect_wait_for_render_ms`, `collect_wait_reason`,
-`render_wait_for_collect_ms`, `render_wait_reason`,
+`render_wait_for_collect_ms`, `render_wait_for_xr_frame_ms`, `render_wait_reason`,
 `skipped_collect_frames`, and `stale_collect_reuse_frames`.
+`render_wait_for_xr_frame_ms` is the part of the render-thread publication wait
+in which OpenXR collect pacing held the publication for `xrWaitFrame`; it is
+not in `render_wait_for_collect_ms`.
 `XRE_COLLECT_VISIBLE_LATE_POLICY=ReusePreviousVisibility` records stale-snapshot
 reuse when render intentionally skips a late collect/swap wait; the default
 `BlockUntilFresh` preserves fresh visibility publication before render.

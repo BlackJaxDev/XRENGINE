@@ -102,6 +102,11 @@ public static class XREngineEnvironmentVariables
     /// <summary>Set to 0 to stop collecting single-pass stereo commands for the next OpenXR frame while the current frame renders. On by default.</summary>
     public const string OpenXrSpeculativeCollect = "XRE_OPENXR_SPECULATIVE_COLLECT";
     /// <summary>
+    /// Overrides the <c>OpenXrCollectPacing</c> engine setting: <c>1</c> paces the collect loop to
+    /// OpenXR frames, <c>0</c> uses render pacing. Unset keeps the setting.
+    /// </summary>
+    public const string OpenXrCollectPacing = "XRE_OPENXR_COLLECT_PACING";
+    /// <summary>
     /// OpenXR eye mesh-operation reuse across frames (Vulkan). On by default. <c>0</c> materializes
     /// every eye mesh request each frame. <c>witness</c> materializes each reused request again,
     /// enqueues the fresh operation, and logs structural differences to <c>openxr-mesh-cohort-witness.log</c>.

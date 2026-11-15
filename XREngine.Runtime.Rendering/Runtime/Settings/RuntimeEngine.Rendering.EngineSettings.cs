@@ -708,6 +708,7 @@ public static partial class RuntimeEngine
                 private OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXrTrackingLossPolicy.FreezeLastValid;
                 private OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXrActionSyncPolicy.PredictedOnly;
                 private OpenXrRenderPacingMode _openXrRenderPacingMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+                private bool _openXrCollectPacing = false;
                 private Vector2 _vrFoveationCenterUv = new(0.5f, 0.5f);
                 private float _vrFoveationInnerRadius = 0.35f;
                 private float _vrFoveationOuterRadius = 0.85f;
@@ -2662,6 +2663,25 @@ public static partial class RuntimeEngine
                 {
                     get => _openXrRenderPacingMode;
                     set => SetField(ref _openXrRenderPacingMode, value);
+                }
+
+                /// <summary>
+                /// Paces the collect loop to OpenXR frames: one collect and one publication for
+                /// each XR frame. The collect for the next frame starts when the render thread
+                /// enters <c>xrEndFrame</c> for the current frame, so the collect and the swap run
+                /// while the runtime blocks in <c>xrEndFrame</c> or <c>xrWaitFrame</c>. It applies
+                /// only to true single-pass stereo with the dedicated pacing thread, while a focused
+                /// OpenXR session renders eyes. Otherwise the loop collects again after each render
+                /// dispatch (render pacing). Off by default: it raises the XR rate when the render
+                /// thread is the limit, but on Monado it lowered the rate when the eye GPU time was
+                /// more than two display periods. See the VR output pacing documentation.
+                /// </summary>
+                [Category("VR")]
+                [Description("Collects and publishes one visibility generation for each OpenXR frame (true single-pass stereo only). Faster when the render thread is the limit; slower on Monado when the eye GPU time is more than two display periods. Off by default.")]
+                public bool OpenXrCollectPacing
+                {
+                    get => _openXrCollectPacing;
+                    set => SetField(ref _openXrCollectPacing, value);
                 }
 
                 /// <summary>

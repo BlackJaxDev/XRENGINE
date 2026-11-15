@@ -26,6 +26,7 @@ namespace XREngine
                 {
                     private static long _collectWaitForRenderTicks;
                     private static long _renderWaitForCollectTicks;
+                    private static long _renderWaitForXrFrameTicks;
                     private static int _collectWaitReason;
                     private static int _renderWaitReason;
                     private static int _skippedCollectFrames;
@@ -43,6 +44,7 @@ namespace XREngine
 
                     private static long _lastFrameCollectWaitForRenderTicks;
                     private static long _lastFrameRenderWaitForCollectTicks;
+                    private static long _lastFrameRenderWaitForXrFrameTicks;
                     private static int _lastFrameCollectWaitReason;
                     private static int _lastFrameRenderWaitReason;
                     private static int _lastFrameSkippedCollectFrames;
@@ -61,8 +63,19 @@ namespace XREngine
                     public static double CollectWaitForRenderMs
                         => StopwatchTicksToMilliseconds(_lastFrameCollectWaitForRenderTicks);
 
+                    /// <summary>
+                    /// Render-thread wait for a publication while the collect thread collected or
+                    /// swapped, in the last sampled frame. Excludes <see cref="RenderWaitForXrFrameMs"/>.
+                    /// </summary>
                     public static double RenderWaitForCollectMs
                         => StopwatchTicksToMilliseconds(_lastFrameRenderWaitForCollectTicks);
+
+                    /// <summary>
+                    /// Render-thread wait for a publication that the collect thread held for
+                    /// <c>xrWaitFrame</c> (XR collect pacing), in the last sampled frame.
+                    /// </summary>
+                    public static double RenderWaitForXrFrameMs
+                        => StopwatchTicksToMilliseconds(_lastFrameRenderWaitForXrFrameTicks);
 
                     public static string CollectWaitReason
                         => ((EFrameLifecycleWaitReason)_lastFrameCollectWaitReason).ToString();
@@ -156,6 +169,19 @@ namespace XREngine
                             Interlocked.Exchange(ref _renderWaitReason, (int)EFrameLifecycleWaitReason.WaitingForCollectVisible);
                     }
 
+                    /// <summary>
+                    /// Records the part of a render-thread publication wait in which the collect thread
+                    /// held the publication for <c>xrWaitFrame</c> (XR collect pacing).
+                    /// </summary>
+                    internal static void RecordRenderWaitForXrFrame(long stopwatchTicks)
+                    {
+                        AddPhase(ref _renderWaitForXrFrameTotalTicks, ref _renderWaitForXrFrameTotalCalls, stopwatchTicks);
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Add(ref _renderWaitForXrFrameTicks, Math.Max(0L, stopwatchTicks));
+                    }
+
                     internal static void RecordStaleCollectReuse()
                     {
                         if (!EnableTracking)
@@ -213,6 +239,7 @@ namespace XREngine
                     {
                         _lastFrameCollectWaitForRenderTicks = Interlocked.Exchange(ref _collectWaitForRenderTicks, 0);
                         _lastFrameRenderWaitForCollectTicks = Interlocked.Exchange(ref _renderWaitForCollectTicks, 0);
+                        _lastFrameRenderWaitForXrFrameTicks = Interlocked.Exchange(ref _renderWaitForXrFrameTicks, 0);
                         _lastFrameCollectWaitReason = Interlocked.Exchange(ref _collectWaitReason, 0);
                         _lastFrameRenderWaitReason = Interlocked.Exchange(ref _renderWaitReason, 0);
                         _lastFrameSkippedCollectFrames = Interlocked.Exchange(ref _skippedCollectFrames, 0);

@@ -1026,7 +1026,9 @@ namespace XREngine.Scene
             int desktopCount = Math.Clamp(desktopCascadeCount, 0, MaxPerSource);
             int hmdCount = Math.Clamp(hmdCascadeCount, 0, MaxPerSource);
             int total = desktopCount + hmdCount;
-            int limit = RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeRefreshesPerFrame;
+            // The limit is per budget period: one collect with XR collect pacing stands for the
+            // display periods since the last collect, so the refresh rate stays the same in time.
+            int limit = CollectBudgetPeriods.Scale(RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeRefreshesPerFrame);
             if (total == 0)
                 return;
 
@@ -1075,7 +1077,10 @@ namespace XREngine.Scene
                 ulong inFlightFrame = light.GetDirectionalCascadeRefreshInFlightFrame(
                     source, i, previous.LastRenderedFrame, ShadowAtlas.CurrentFrameId);
                 if (contentHash != previous.ContentVersion)
+                {
                     lastRenderedFrames[slot] = Math.Max(previous.LastRenderedFrame, inFlightFrame);
+                    DirectionalCascadeRefreshLatencyTelemetry.NoteStale(source, i);
+                }
             }
 
             int grants = limit <= 0 ? total : Math.Min(limit, total);

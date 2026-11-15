@@ -567,6 +567,7 @@ namespace XREngine.Editor.Mcp
                         required_collect_generation = RuntimeEngine.Rendering.Stats.FrameLifecycle.RequiredCollectGeneration,
                         collect_wait_for_render_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs,
                         render_wait_for_collect_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs,
+                        render_wait_for_xr_frame_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitForXrFrameMs,
                         render_wait_reason = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitReason,
                         stale_collect_reuse_frames = RuntimeEngine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames,
                         render_circuit_breaker_trips = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderCircuitBreakerTrips,
@@ -1614,6 +1615,23 @@ namespace XREngine.Editor.Mcp
                         // desktop shadow source, cascade requests and grants per source, and the two
                         // mismatch directions between the collect decision and the desktop render.
                         desktop_output_schedule = BuildDesktopOutputScheduleTelemetry(),
+                        // OpenXR collect pacing (one collect for each XR frame): paced and
+                        // render-paced collects, the submit and frame waits with their time-outs
+                        // (fallbacks to render pacing), deactivations, and publications with and
+                        // without an XR frame.
+                        xr_collect_pacing = BuildXrCollectPacingTelemetry(),
+                        // Angle between the head view of a speculative stereo collect and the predicted
+                        // view of the frame that receives its commands: cumulative counts per 0.1 degree
+                        // bucket (the last bucket also counts larger angles).
+                        speculative_view_angle_buckets = SpeculativeViewAngleTelemetry.Capture(),
+                        // Time from the first collect that finds a directional cascade stale (sun or
+                        // camera move) to the recorded draw of that cascade, per source. Cumulative;
+                        // max_us is the largest single value since start.
+                        directional_cascade_refresh_latency = new
+                        {
+                            desktop = BuildCascadeRefreshLatency(XREngine.Rendering.Shadows.ShadowRequestSource.Desktop),
+                            hmd = BuildCascadeRefreshLatency(XREngine.Rendering.Shadows.ShadowRequestSource.Hmd),
+                        },
                         // Desktop attempts that retried, or failed past the limit, because a changed
                         // output's planner publication was not there yet (pass or generation change).
                         planner_publication_pending = new
@@ -1686,6 +1704,9 @@ namespace XREngine.Editor.Mcp
                 render = BuildFrameLifecyclePhaseTotal(totals.Render),
                 collect_wait_for_render = BuildFrameLifecyclePhaseTotal(totals.CollectWaitForRender),
                 render_wait_for_collect = BuildFrameLifecyclePhaseTotal(totals.RenderWaitForCollect),
+                render_wait_for_xr_frame = BuildFrameLifecyclePhaseTotal(totals.RenderWaitForXrFrame),
+                collect_wait_for_xr_submit = BuildFrameLifecyclePhaseTotal(totals.CollectWaitForXrSubmit),
+                publication_age = BuildFrameLifecyclePhaseTotal(totals.PublicationAge),
             };
 
         private static object BuildFrameLifecyclePhaseTotal(FrameLifecyclePhaseTotal total)
@@ -1809,6 +1830,28 @@ namespace XREngine.Editor.Mcp
         /// Formats the cumulative desktop output schedule counters as one map keyed by the
         /// snake-case counter name. Callers subtract two snapshots to get a measurement window.
         /// </summary>
+        private static object BuildCascadeRefreshLatency(XREngine.Rendering.Shadows.ShadowRequestSource source)
+            => new
+            {
+                samples = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetSamples(source),
+                total_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetTotalMicroseconds(source),
+                max_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetMaxMicroseconds(source),
+            };
+
+        private static object BuildXrCollectPacingTelemetry()
+        {
+            long[] captured = XrCollectPacingTelemetry.Capture();
+            Dictionary<string, long> counters = [];
+            for (EXrCollectPacingCounter counter = EXrCollectPacingCounter.PacedCollects;
+                counter < EXrCollectPacingCounter.Count;
+                ++counter)
+            {
+                counters[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(counter.ToString())] =
+                    captured[(int)counter];
+            }
+            return counters;
+        }
+
         private static object BuildDesktopOutputScheduleTelemetry()
         {
             long[] captured = DesktopOutputScheduleTelemetry.Capture();

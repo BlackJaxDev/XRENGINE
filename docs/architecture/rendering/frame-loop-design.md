@@ -587,6 +587,22 @@ previous restore's copy (`SnapshotRestoredContent`).
   desktop cascades; it must stay 0) and `desktop_scene_due_not_rendered` (the
   collect made the scene due, but it did not render, for example because of a
   breaker hold or a minimized window; the shadow work of that frame was wasted).
+- **Split the render wait.** `frame_lifecycle.phase_totals.render_wait_for_collect`
+  is the time the render thread waited while the collect thread collected or
+  swapped. With OpenXR collect pacing the collect thread also holds a
+  publication until `xrWaitFrame` of the next XR frame returns; the render
+  thread waits for that frame anyway, so that part is reported separately as
+  `render_wait_for_xr_frame`. `collect_wait_for_xr_submit` is the collect
+  thread's wait for the eyes to enter `xrEndFrame`, and `publication_age` is
+  the time from a collect start to the render thread taking its publication.
+  The timeline marks `CollectWaitXrSubmit*` and `CollectWaitXrFrame*` show the
+  two waits. See [XR collect pacing](vr-output-pacing-and-mirror-policy.md#xr-collect-pacing).
+- **Budgets that count collects keep their real-time rate.** A per-collect
+  allowance (the directional cascade refresh limit, texture streaming
+  transitions and their frame clock, the VR desktop pressure hold) is
+  multiplied by `CollectBudgetPeriods`. It is 1 with render pacing. With XR
+  collect pacing one collect stands for the XR display periods since the last
+  collect, so a change of the collect rate does not change these rates in time.
 - **Pending planner publications retry, bounded.** A pass or resource-generation
   change of an output (for example a debug view change or a capture) gives the
   desktop frame operations a new planner key one render before the generation
@@ -649,4 +665,7 @@ Open work that affects this design:
 - planner states for short-lived outputs (for example each world copy's shadow
   viewports) accumulate under new keys until the state cap evicts them;
 - temporal (TSR) correctness passes cut and render-scale checks, but
-  disocclusion and the original ghosting report are not yet verified.
+  disocclusion and the original ghosting report are not yet verified;
+- OpenXR collect pacing is off by default: on Monado it lowers the XR rate
+  when the eye GPU time is more than about two display periods, for a reason
+  that is not known yet.

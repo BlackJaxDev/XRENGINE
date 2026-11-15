@@ -103,6 +103,35 @@ These commands use the last pose, because the next pose is not known yet. The co
 
 Set `XRE_OPENXR_SPECULATIVE_COLLECT=0` to turn this off. Parallel command buffer recording does not use it.
 
+## XR collect pacing
+
+The engine setting `OpenXrCollectPacing` (off by default) paces the collect loop to OpenXR frames. `XRE_OPENXR_COLLECT_PACING=1` or `0` overrides the setting. Without it, the collect loop publishes again after each render dispatch (render pacing), also while the render thread only waits for the next XR frame. In the avatar benchmark that was about 2.6 publications for each XR frame, and an XR frame waited for the collect that was in progress when `xrWaitFrame` returned.
+
+With pacing, there is one collect and one publication for each XR frame:
+
+1. The render thread enters `xrEndFrame` for frame N. This releases the collect for frame N+1 (`OpenXRAPI.EndFrameWithTiming`). The release is at the entry, not the return. Monado blocks in `xrEndFrame` until the GPU work is done; other runtimes block in `xrWaitFrame`. From the entry, the collect overlaps the block in both cases.
+2. The collect runs the next-frame (speculative) stereo collect described above, while the render thread is still in `xrEndFrame` and the pacing thread then blocks in `xrWaitFrame` for N+1.
+3. After the swap, a publication gate waits for a located frame newer than N, assigns the speculative commands to it and marks it prepared. Only then does the engine timer publish the generation, so the render thread receives frame N+1 and its commands together.
+
+Pacing applies only to true single-pass stereo with the next-frame collect, with the dedicated pacing thread (`OpenXrRenderPacingMode.DedicatedThread`), while the session is focused and the last XR frame submitted its eyes. Two-pass and emulated stereo, focus loss, a session stop, a frame without eyes and a runtime loss use render pacing at once. Each wait is bounded: the limit is the larger of four display periods and two times the largest wake-to-end work of the last four frames, at most 100 ms. A wait that reaches the limit uses render pacing for that collect and is counted.
+
+Measured on Monado with the Sponza avatar benchmark (Vulkan, Advanced pipeline, welded meshes):
+
+| View | Size | Pacing off | Pacing on |
+|---|---|---|---|
+| Atrium | Monado default | 53.1 Hz | 53.8 Hz |
+| Origin | Monado default | 51.1 Hz | 63.6 Hz |
+| Atrium | 2016x2240 | 36.4 Hz | 29.7 Hz |
+| Origin | 2016x2240 | 40.9 Hz | 36.3 Hz |
+
+Pacing raises the XR rate when the render thread is the limit. When the eye GPU time is more than about two display periods (27.5 ms and 20.5 ms at 2016x2240), the rate is lower: the CPU work is the same, but `xrEndFrame` blocks about 4 to 5 ms longer, and most frames take one display period more. The cause of this is not known yet, so the setting is off by default.
+
+Desktop frames in VR use the same admission policy, but a paced collect starts when the eyes enter `xrEndFrame`, and the desktop frame that it admits renders after the next eye frame. So the admission reads the slack of that later window from completed frames: the median slack after `xrEndFrame` of the last four frames, minus the largest measured lead from the `xrEndFrame` return to the desktop render start. At the atrium the desktop rate stayed within 1 Hz (9.0 Hz to 8.1 Hz). At the origin it fell from 20.7 Hz to 7.5 Hz while the XR rate rose.
+
+With pacing, collect-keyed budgets keep their real-time rate. `CollectBudgetPeriods` counts the XR display periods since the last paced collect (the fraction carries to the next collect). The directional cascade refresh limit, the texture streaming transition limits and their frame clock, and the VR desktop pressure hold multiply their per-collect values by it. With render pacing the value is 1.
+
+`get_render_profiler_stats` reports `vulkan.xr_collect_pacing` (paced and render-paced collects, the waits, their time-outs, deactivations, and publications with and without an XR frame), `speculative_view_angle_buckets` (the angle between the head view of the next-frame collect and the predicted view of the frame that receives it), and `frame_lifecycle.phase_totals.render_wait_for_xr_frame`, `collect_wait_for_xr_submit` and `publication_age`.
+
 ## Limits
 
 - All outputs still share one render thread and fence chain. Separate pacing domains for desktop and XR depend on dedicated render-thread window ownership and are not implemented.

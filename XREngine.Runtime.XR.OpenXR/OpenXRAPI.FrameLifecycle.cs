@@ -56,6 +56,7 @@ public unsafe partial class OpenXRAPI
         _smokePendingFrameTiming.EngineRenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         bool endFrameAttempted = false;
+        bool submittedEyes = false;
         try
         {
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
@@ -209,6 +210,7 @@ public unsafe partial class OpenXRAPI
         };
 
         var endFrameResult = EndFrameWithTiming(in frameEndInfo, ref endFrameAttempted);
+        submittedEyes = endFrameResult == Result.Success;
         if (endFrameResult == Result.Success && allEyesRendered)
             CommitOpenXrViewHistory(frameNo, frameEndInfo.DisplayTime);
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
@@ -262,6 +264,10 @@ public unsafe partial class OpenXRAPI
             {
                 _sessionBegun = false;
             }
+
+            // XR collect pacing: record whether this frame submitted eyes, and set the collect
+            // release again for a frame that ended without reaching xrEndFrame.
+            ReleasePacedCollect(submittedEyes);
 
             // This is the admission publication observed by the pacing owner.
             // Finish every old-frame write before admitting the next frame.
@@ -1681,6 +1687,7 @@ public unsafe partial class OpenXRAPI
             {
                 stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
                 _openXrStereoUpdatingBufferFree = true;
+                Volatile.Write(ref _lastPublishedTrueSinglePassStereo, 1);
                 SwapOpenXrInsetPairCommands();
                 Debug.RenderingEvery(
                     $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
@@ -1704,6 +1711,7 @@ public unsafe partial class OpenXRAPI
             RenderCommandCollection rightCommands = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands;
             _openXrLeftViewport.SwapBuffers(leftCommands, allowScreenSpaceUISwap: false);
             _openXrRightViewport.SwapBuffers(rightCommands, allowScreenSpaceUISwap: false);
+            Volatile.Write(ref _lastPublishedTrueSinglePassStereo, 0);
         }
 
         Interlocked.Exchange(ref _framePrepared, 1);
@@ -1772,6 +1780,7 @@ public unsafe partial class OpenXRAPI
             {
                 Volatile.Write(ref _frameSkipRender, 1);
                 Volatile.Write(ref _pendingXrFrame, 1);
+                SignalPendingFrameForCollectPacing();
 
                 if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo))
                     Debug.Out($"OpenXR[{frameNo}] Prepare: ShouldRender=0 (will EndFrame with no layers)");
@@ -1833,6 +1842,7 @@ public unsafe partial class OpenXRAPI
             }
 
             Volatile.Write(ref _pendingXrFrame, 1);
+            SignalPendingFrameForCollectPacing();
         }
         finally
         {

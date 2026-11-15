@@ -165,6 +165,8 @@ internal sealed partial class VulkanCommandRuntime
             Viewport viewport = viewports[cascade];
             Rect2D scissor = scissors[cascade];
             SetViewportScissorTracked(state.CommandBuffer, in viewport, in scissor);
+            // The cascade is drawn with its current fit in this frame.
+            DirectionalCascadeRefreshLatencyTelemetry.NoteRefreshed(lane.Source, lane.CascadeIndices[cascade]);
             if ((cachedEntries & (1 << cascade)) != 0)
             {
                 // The copy of the static tile already filled this tile.
