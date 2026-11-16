@@ -133,12 +133,23 @@ void main()
         ? XR_ADV_KernelShadesMaterialFamily(materialDense)
         : XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_STANDARD;
     if (!owned) return;
-    XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
-    if (!covered) return;
+    // Only an uncovered pixel gets the neutral surface inputs. A covered pixel gets its full
+    // store from the one dispatch that shades it. A tile is in the lists of several kernels,
+    // and those dispatches run without a barrier between them, so a neutral store here for a
+    // pixel of another kernel could overwrite that kernel's surface inputs.
+    if (!covered)
+    {
+        XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
+        return;
+    }
 #else
-    XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
     uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
-    if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID) return;
+    if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID)
+    {
+        // See the family branch: only an uncovered pixel gets the neutral surface inputs.
+        XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
+        return;
+    }
 
     uint metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
     uint materialDense, kernelDense;
