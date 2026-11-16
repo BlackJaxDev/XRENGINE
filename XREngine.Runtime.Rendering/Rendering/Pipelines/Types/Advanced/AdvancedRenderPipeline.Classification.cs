@@ -74,6 +74,18 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     public const uint DefaultMaxShadingKernels = 128u;
 
+    /// <summary>
+    /// Number of per-kernel ranges in the kernel-tile membership buffer. Each range holds one
+    /// record per tile, and kernel k owns range k, so this bounds the dense kernel indices that
+    /// classification can store. The kernel table gives a new kernel the lowest free dense
+    /// index, and at most <see cref="Commands.AdvancedGpuMaterialPublisher.MaxCanonicalKernelKeys"/>
+    /// kernels are live, so the extra ranges cover kernels whose release still waits for the GPU.
+    /// A kernel index past the last range sets the membership overflow flag, and the frame then
+    /// shades every pixel in the overflow repair pass (correct output, more GPU time).
+    /// With 128 ranges the buffer was about 144 MB per frame slot for a 2688x2688 eye pair.
+    /// </summary>
+    public const uint KernelTileRangeCount = Commands.AdvancedGpuMaterialPublisher.MaxCanonicalKernelKeys + 6u;
+
     private void DeclareClassificationResources(RenderPipelineResourceLayoutBuilder builder)
     {
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
@@ -81,7 +93,7 @@ public partial class AdvancedRenderPipeline
         uint tileCapacity = checked(
             AdvancedClassificationTileDimensions.CalculateTilesX(Math.Max(1u, builder.Profile.InternalWidth)) *
             AdvancedClassificationTileDimensions.CalculateTilesY(Math.Max(1u, builder.Profile.InternalHeight)) * layers);
-        uint membershipCapacity = checked(tileCapacity * DefaultMaxShadingKernels);
+        uint membershipCapacity = checked(tileCapacity * KernelTileRangeCount);
 
         for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; slot++)
         {

@@ -50,7 +50,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                     AdvancedClassificationTileDimensions.DefaultTileHeight) *
                 Math.Max(1u, identity.Template.Layers));
             activeBytes = checked(tiles * 16UL);
-            kernelBytes = checked(tiles * AdvancedRenderPipeline.DefaultMaxShadingKernels * 16UL);
+            kernelBytes = checked(tiles * AdvancedRenderPipeline.KernelTileRangeCount * 16UL);
         }
         catch (OverflowException)
         {

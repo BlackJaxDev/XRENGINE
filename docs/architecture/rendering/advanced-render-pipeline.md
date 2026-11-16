@@ -998,6 +998,14 @@ starts while the main kernels still run. Its time includes the main kernels. Use
 
 Each declared resource has one ownership class (`EAdvancedRenderResourceOwnership`): `PipelinePersistent`, `FrameSlotTransient`, `TemporalHistory`, `Imported`, or `External`. Current and previous frame-slot reuse waits on a fence or timeline completion.
 
+The classification kernel-tile membership buffer (`AdvancedClassification.KernelTiles`, one per
+frame slot) holds one range of tile records per dense shading kernel index. It has
+`AdvancedRenderPipeline.KernelTileRangeCount` ranges (48), not one per possible kernel (128): the
+material publisher creates at most 42 distinct kernels, and the kernel table reuses the lowest free
+index. A kernel index past the last range sets the membership overflow flag, and that frame is
+shaded by the overflow repair pass. For a 2688x2688 eye pair this cuts each slot from about 144 MB
+to 54 MB.
+
 Debug-only resources are declared only when their feature bit is in the resource
 feature mask. `AdvancedTransparency.DebugOutput` (RGBA16F, about 110 MB per eye output
 at 2688x2688) needs a late-pass debug view or debug overlays. Each optional resource
