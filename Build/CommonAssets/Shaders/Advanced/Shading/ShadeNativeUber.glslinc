@@ -86,6 +86,10 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     float shadowMask = XR_UBER_ShadowMask(c);
     vec3 primaryL = vec3(0.0, 1.0, 0.0), primaryColor = vec3(0.0);
     float primaryVisibility = 1.0;
+    // The unmodified shadow of the primary directional light. The light loop below visits
+    // the same light again with the same direction, so it reuses this value instead of a
+    // second soft-shadow filter.
+    float primaryShadow = 1.0;
     uint primary = 0xffffffffu;
     uint count = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
     for (uint index = 0u; index < count; ++index)
@@ -97,6 +101,7 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         primaryColor = light.colorAndIntensity.rgb * light.colorAndIntensity.w;
         uint reason;
         primaryVisibility = XR_ADV_EvaluateShadow(light, surface, geometric, primaryL, reason);
+        primaryShadow = primaryVisibility;
         shadowReason = max(shadowReason, reason);
         shadowVisibility = min(shadowVisibility, primaryVisibility);
     }
@@ -372,9 +377,13 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
                 max(light.shapeAndInnerCone.w, light.directionAndOuterCone.w + 0.0001), dot(-L, normalize(light.directionAndOuterCone.xyz)));
         }
         else continue;
-        uint reason;
-        float visibility = XR_ADV_EvaluateShadow(light, surface, geometric, L, reason);
-        shadowReason = max(shadowReason, reason); shadowVisibility = min(shadowVisibility, visibility);
+        float visibility = primaryShadow;
+        if (index != primary)
+        {
+            uint reason;
+            visibility = XR_ADV_EvaluateShadow(light, surface, geometric, L, reason);
+            shadowReason = max(shadowReason, reason); shadowVisibility = min(shadowVisibility, visibility);
+        }
         vec3 radiance = light.colorAndIntensity.rgb * light.colorAndIntensity.w * attenuation;
         if (stylized)
         {
