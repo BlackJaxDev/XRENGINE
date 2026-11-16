@@ -960,6 +960,23 @@ OpenGL and Vulkan lower the same four logical boundaries (`EAdvancedSynchronizat
 3. `ComputeShadingToLateGraphics`
 4. `LateGraphicsToPresentation`
 
+Inside the Vulkan native shading stage, a barrier separates two dispatches only when the second
+reads data from the first, or when both write the same pixels:
+
+- `BuildFroxels` and `Background` have no barrier between them. Background reads only the
+  visibility identity. One global barrier after Background makes the froxel, light index and decal
+  buffers and the background image writes visible to shading.
+- The main shading kernels, the overflow repair dispatch and the Uber kernels have no barriers
+  between them. Their pixel sets are disjoint: the main kernels return when the classification
+  overflow flag is set, and the repair kernel returns when it is clear. Without overflow, each
+  pixel belongs to one kernel, and the Uber kernels shade only Uber kernel tiles.
+- The barrier before the Uber repair dispatch stays. In an overflow frame, the standard repair
+  shades every pixel and the Uber repair then overwrites the Uber pixels.
+
+Because these dispatches overlap, the GPU profiler scope `Advanced > Shading > GpuOverflowRepair`
+starts while the main kernels still run. Its time includes the main kernels. Use the
+`Advanced > Shading` scope for the stage total.
+
 ### Resource ownership
 
 Each declared resource has one ownership class (`EAdvancedRenderResourceOwnership`): `PipelinePersistent`, `FrameSlotTransient`, `TemporalHistory`, `Imported`, or `External`. Current and previous frame-slot reuse waits on a fence or timeline completion.

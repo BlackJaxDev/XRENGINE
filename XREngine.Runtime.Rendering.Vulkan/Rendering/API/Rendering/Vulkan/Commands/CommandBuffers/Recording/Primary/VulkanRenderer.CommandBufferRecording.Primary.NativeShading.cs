@@ -194,20 +194,13 @@ internal sealed partial class VulkanCommandRuntime
         FillNativeCounters(state.CommandBuffer, closure.LightingCounters);
         RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.BuildFroxels,
             in push, DivideRoundUp(tilesX, 8), DivideRoundUp(tilesY, 8), DivideRoundUp(depthSlices, 4), "Advanced.BuildFroxels", NativeFroxelGpuProfilerPath);
-        EmitNativeBufferDependency(state.CommandBuffer, closure.FroxelGrid,
-            AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
-            PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
-        EmitNativeBufferDependency(state.CommandBuffer, closure.LightIndices,
-            AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
-            PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
-        EmitNativeBufferDependency(state.CommandBuffer, closure.FroxelDecalGrid,
-            AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
-            PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
-        EmitNativeBufferDependency(state.CommandBuffer, closure.DecalIndices,
-            AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
-            PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
+        // Background reads only the visibility identity, so it can overlap the froxel build.
+        // The global barrier after it makes the froxel, light index and decal buffers visible
+        // to shading, together with the background image writes.
         RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.Background,
             in push, tilesX, tilesY, 1, "Advanced.Background", NativeBackgroundGpuProfilerPath);
+        // Background initializes every pixel and shading then overwrites the covered pixels,
+        // so this barrier orders a real write-after-write.
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
 
         // Classification and graphics preparation meet only at shading. The
@@ -286,7 +279,10 @@ internal sealed partial class VulkanCommandRuntime
                 RecordNativeKernelDispatches(state.CommandBuffer, in closure, shade, ref push, parameterAddress, standardKernels);
             CmdEndLabel(state.CommandBuffer);
         }
-        EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
+        // No barrier before the repair dispatch: the main pass and the repair pass write
+        // disjoint pixel sets. Both read the classification overflow flag. The main kernels
+        // return when it is set, and the repair kernel returns when it is clear, so only one
+        // of them writes any pixel in a frame.
         VulkanAdvancedNativeShadingPushConstants repairPush = push with { Flags = push.Flags | 1u };
         if (!closure.UsesMultisampleVisibility)
         {
@@ -298,9 +294,10 @@ internal sealed partial class VulkanCommandRuntime
             RecordNativeShadingRootUse(shade.UsesAddressRoot, 1);
         if (uberPass)
         {
-            // One compute-to-compute dependency orders the Uber pass after the standard
-            // pass. The two passes write disjoint pixels of the same images.
-            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
+            // No barrier before the Uber kernels: their pixel set is disjoint from the
+            // standard pass. Without overflow, each pixel belongs to exactly one shading kernel,
+            // and the Uber kernels shade only Uber kernel tiles. With overflow, the Uber main
+            // kernels return at once and only the repair passes write.
             ulong uberParameterAddress = uberShade.UsesAddressRoot
                 ? WriteNativeShadingAddressRoot(ref state, closure.ShadingAddressRoot, in push)
                 : 0UL;
@@ -313,6 +310,8 @@ internal sealed partial class VulkanCommandRuntime
                 RecordNativeKernelDispatches(state.CommandBuffer, in closure, uberShade, ref push, uberParameterAddress, families.Uber);
                 CmdEndLabel(state.CommandBuffer);
             }
+            // The standard repair shades every pixel in an overflow frame, and the Uber repair
+            // then overwrites the Uber pixels. This barrier keeps that order.
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
             RecordNativeDispatch(state.CommandBuffer, in payload, uberShade,
                 in repairPush, tilesX, tilesY, 1, "Advanced.NativeOpaque.Uber.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, uberParameterAddress);
