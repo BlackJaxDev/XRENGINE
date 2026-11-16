@@ -890,7 +890,10 @@ When they are off, no pass, buffer, program or allocation exists for them.
     history bit. The late task stage sets that bit for each meshlet that passes
     all of its tests, so a missing bit means that the late Hi-Z test removed the
     meshlet. The box encloses the cooked bounding sphere that the test used.
-  - Frustum-culled and cone-culled units are not drawn.
+  - Frustum-culled and cone-culled units are not drawn. With virtual geometry on,
+    clusters outside the cluster LOD cut are not drawn either: the overlay compiles
+    with the same cut defines as the meshlet task stage and skips the clusters
+    that the cut rejects before the occlusion test.
   - The program is created on first use and is not part of family admission.
     While it compiles, shading records no overlay.
   - The Advanced CPU-direct path has no occlusion test, so the overlay has no

@@ -80,6 +80,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             ShadeUberProgramIndex => ("Advanced/Shading/ShadeNativeOpaqueUber", UberFamilyPreamble),
             ShadeStandardLeanProgramIndex => ("Advanced/Shading/ShadeNativeOpaqueStandardLean", StandardLeanPreamble),
             ShadeCombinedMultisampleProgramIndex => ("Advanced/Shading/ShadeNativeOpaqueCombinedMsaa", string.Empty),
+            // The overlay applies the same cluster LOD cut as the meshlet task stage, so it
+            // compiles with the same virtual geometry defines.
+            OcclusionCulledBoundsProgramIndex => (path, global::XREngine.Rendering.Commands.AdvancedVirtualGeometryPolicy.TaskPreamble),
             _ => (path, string.Empty),
         };
 
