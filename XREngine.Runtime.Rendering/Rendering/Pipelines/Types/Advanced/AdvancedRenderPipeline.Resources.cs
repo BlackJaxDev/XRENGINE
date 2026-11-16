@@ -353,7 +353,11 @@ public partial class AdvancedRenderPipeline
         RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
 
-        DeclareLatePostColor(builder, BloomBlurTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, mips: 5u);
+        // The bloom chain carries RGB light only: every consumer samples .rgb and no consumer
+        // reads alpha, so the packed unsigned-float format holds it in half the memory of
+        // RGBA16F, as in DefaultRenderPipeline.
+        DeclareLatePostColor(builder, BloomBlurTextureName, internalSize, layers,
+            EPixelInternalFormat.R11fG11fB10f, EPixelFormat.Rgb, EPixelType.Float, ESizedInternalFormat.R11fG11fB10f, mips: 5u);
         DeclareLatePostColor(builder, AutoExposureTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), 1u, EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f);
         DeclareLatePostColor(builder, PostProcessOutputTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, FinalPostProcessOutputTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);

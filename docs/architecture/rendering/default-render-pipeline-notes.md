@@ -404,9 +404,11 @@ therefore follow the active passes through the resource feature mask:
   GTAO at half resolution declares the AO normals at half resolution, adds a
   half-resolution R32F depth target and the prepare framebuffer, and drops the
   full-resolution AO normal framebuffer.
-- The bloom chain is R11G11B10F. No bloom consumer reads alpha (the format
-  drops what the bloom copy passes through) and every consumer samples `.rgb`;
-  keep it that way or move bloom back to RGBA16F.
+- The bloom chain is R11G11B10F in both pipelines. No bloom consumer reads alpha
+  (the format drops what the bloom copy passes through) and every consumer
+  samples `.rgb`; keep it that way or move bloom back to RGBA16F. In Advanced
+  this halves the 2688x2688 eye bloom chain from about 157 MB to 79 MB with no
+  visible change in a same-session A/B; GPU time is unchanged.
 - In Advanced (native renderers), the first bloom downsample reads the HDR scene
   through a linear, clamp-to-edge view (`VPRC_BloomPass.FirstDownsampleReadsInput`).
   The copy into bloom mip 0 is a same-size texel copy, so the result is the same,
