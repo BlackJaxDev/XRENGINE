@@ -53,6 +53,31 @@ Allocator creation passes the instance, physical device, logical device, API ver
 - `Free` unmaps any map scopes that the caller leaked and logs a warning.
 - A failed map logs a rate-limited warning with the result, allocation, offset, length, and memory properties.
 
+## Buffer Placement
+
+`VkDataBuffer` selects the memory of an `XRDataBuffer` in `ShouldUseDeviceLocal` and
+`ResolveMemoryProperties`. A buffer without host-visible intent (no map request and no map storage
+or range flags) gets device-local memory when:
+
+- `GpuProduced` is true, at any size and usage. Compute or raster passes write its contents, and the
+  CPU never writes or maps it. CPU readers copy it on the GPU into a readback buffer first (for
+  example the GpuStats readback arena or `TryReadBufferBytes`). This covers the Advanced
+  classification, clustered-lighting, visibility and PPLL buffers. In host-visible memory, every
+  GPU read and write of these buffers crossed PCIe: on New Sponza in VR, moving them cut the
+  Advanced GPU time per frame by about 5.7 ms (classification 6.4 to 2.5 ms, clustered lighting
+  1.4 to 0.1 ms).
+- or it is a `StaticDraw` or `StaticCopy` buffer of 64 KiB or more. Its uploads go through a
+  staging copy.
+
+Every other buffer gets host-visible memory, with host-cached memory for `*Read` usages. A
+`*Copy` usage does not mean GPU-only here: many per-frame CPU-uploaded buffers use `DynamicCopy`,
+and a device-local upload is a synchronous submit with a fence wait.
+
+When a device-local request ends in host-visible memory (the allocator retry below), `VkDataBuffer`
+logs a rate-limited warning with the buffer name, its size and the actual memory flags. The
+`bufferOwners` section of `list_vulkan_image_allocation_diagnostics` lists the live buffer bytes by
+registering owner and memory type.
+
 ## Failure And Fallback Policy
 
 - A missing, wrong-architecture, or incompatible bridge DLL (`DllNotFoundException`, `EntryPointNotFoundException`, `BadImageFormatException`) becomes a `NotSupportedException` that names the DLL and tells the user to build the bridge or select `Managed`.
@@ -69,8 +94,8 @@ Allocator creation passes the instance, physical device, logical device, API ver
 
 ## Known Limits
 
-- Allocations have no debug name or owner metadata in VMA.
-- Allocator diagnostics do not yet map VMA heap and memory-type statistics, or report placement for each allocation.
+- Allocations have no debug name or owner metadata in VMA. The buffer owner grouping above joins the
+  lifetime tracker owners with the buffer allocations instead.
 - VMA memory-budget, external-memory (Win32), and memory-priority allocator flags are not enabled.
 - External-memory allocations for Vulkan/OpenGL interop do not go through VMA.
 - The device-local to host-visible retry is counted but is not refused for callers that explicitly request an accelerated path.
