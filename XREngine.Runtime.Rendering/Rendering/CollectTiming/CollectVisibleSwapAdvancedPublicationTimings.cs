@@ -28,10 +28,23 @@ namespace XREngine.Rendering;
 /// <param name="CommitMilliseconds">
 /// The time after the gate decision: the unchanged-row publication or the full plan with its commit, and the scratch release.
 /// </param>
+/// <param name="PlanMilliseconds">The whole-scene plan time of the full publications. Part of <paramref name="CommitMilliseconds"/>.</param>
+/// <param name="ApplyMilliseconds">The transaction apply time of the full publications. Part of <paramref name="CommitMilliseconds"/>.</param>
+/// <param name="SealMilliseconds">
+/// The seal time of the full publications: snapshot copies, captures, commit and identity delivery. Part of
+/// <paramref name="CommitMilliseconds"/>.
+/// </param>
+/// <param name="GlobalPreflightMilliseconds">The global-resource preflight time of every publication path.</param>
+/// <param name="IdentityDeliveryMilliseconds">The identity delivery time after each commit. Part of <paramref name="SealMilliseconds"/>.</param>
 public readonly record struct CollectVisibleSwapAdvancedPublicationTimings(
     long RowGatePasses,
     long RowGateFailures,
     double RowGateMilliseconds,
     long UnchangedRowPublications,
     long CommitCalls,
-    double CommitMilliseconds);
+    double CommitMilliseconds,
+    double PlanMilliseconds,
+    double ApplyMilliseconds,
+    double SealMilliseconds,
+    double GlobalPreflightMilliseconds,
+    double IdentityDeliveryMilliseconds);

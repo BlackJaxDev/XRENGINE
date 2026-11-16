@@ -473,7 +473,24 @@ after each hit, publishes its result, and counts each disagreement with the
 witness that should have caught it. `get_render_profiler_stats` reports the
 counters in `frame_lifecycle.collect_stages.swap.advanced_publication.prepared_gate`:
 prepares, refusals and misses by reason, hits, re-evaluated rows, verify
-disagreements, and the last exception. `swap_gate_failures` counts each
+disagreements, and the last exception.
+
+The same stats object splits `commit_ms` for the full publications: `plan_ms`
+(row plan, geometry staging, global preflight, and unchanged-publication check),
+`apply_ms` (transaction apply), and `seal_ms` (table snapshots, captures, commit,
+and identity delivery). `global_preflight_ms` is the global-resource preflight of
+every publication path, and `identity_delivery_ms` is the part of `seal_ms` that
+delivers the source identities. On New Sponza with an animated avatar, a full
+publication spends about 1.5 ms in the plan, 0.1 ms in the apply, and 0.6 ms in
+the seal; the global preflight and the identity delivery are about 0.05 ms each.
+
+With `XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS=1`, the swap gate also writes a
+bounded sample of its row failures to `advanced-scene-publication-diagnostics.log`:
+`row-input-miss` names the compared value (`World`, `PreviousWorld`, `Command`,
+`BoundsVersion`, `RowLookup`) with the mesh, material, and owner type of the row,
+and `unsupported-miss` names the failed step of an unsupported row (`Geometry`,
+`Layout`, or `LateRejection` when the full plan rejected the row after the layout
+selection) with both compatibility reasons. `swap_gate_failures` counts each
 world-swap publication whose swap-time gate failed, by the reason of the first
 row or check that failed. Each of these publications plans and commits the whole
 scene, so these reasons name what keeps the scene off the unchanged-row path.

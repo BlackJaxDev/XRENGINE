@@ -114,14 +114,21 @@ public sealed partial class AdvancedGpuScenePublisher
         UnchangedRowGateScratch scratch = default;
         int rowCount = _plannedCommandCount;
         bool rowsUnchanged = true;
-        for (int commandIndex = 0; rowsUnchanged && commandIndex < rowCount; ++commandIndex)
+        int commandIndex = 0;
+        for (; commandIndex < rowCount; ++commandIndex)
+        {
             rowsUnchanged = EvaluateUnchangedRow(scene, commandIndex, frameId, preparing: false, ref scratch);
+            if (!rowsUnchanged)
+                break;
+        }
 
         reusedStaticPlans = scratch.ReusedStaticPlans;
         materialResolveAttempts = scratch.MaterialResolveAttempts;
         if (!rowsUnchanged)
         {
             mismatch = scratch.RowMismatch;
+            if (scratch.RowMismatchDetail is { } detail)
+                ReportRowInputFailure(commandIndex, mismatch, detail);
             return false;
         }
 
@@ -200,7 +207,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     out _,
                     out _) &&
                 missing is not null)
-                return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged);
+                return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged, "MissingSourceFound");
             return true;
         }
 
@@ -228,7 +235,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 out BoundsGpu cullBounds) ||
             !ReferenceEquals(source, planSource) ||
             primitiveIndex != plan.PrimitiveIndex)
-            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged);
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged, "RowLookup");
 
         AdvancedMeshRenderSnapshot snapshot = CaptureSourceSnapshot(planSource);
         XRMeshRenderer? renderer = snapshot.Renderer;
@@ -256,9 +263,15 @@ public sealed partial class AdvancedGpuScenePublisher
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.CommandChanged);
 
         if (!plan.Supported)
-            return IsUnchangedUnsupportedRow(in plan, in identity, in command, mesh, material,
-                    ref scratch.MaterialResolveAttempts) ||
-                FailRow(ref scratch, EAdvancedPreparedGateOutcome.UnsupportedRowChanged);
+        {
+            if (IsUnchangedUnsupportedRow(in plan, in identity, in command, mesh, material,
+                    ref scratch.MaterialResolveAttempts,
+                    out EAdvancedCanonicalCompatibilityReason currentReason,
+                    out string check))
+                return true;
+            ReportUnsupportedRowFailure(preparing, commandIndex, in plan, material, currentReason, check);
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.UnsupportedRowChanged);
+        }
 
         Matrix4x4 world = snapshot.WorldMatrixIsModelMatrix
             ? snapshot.CurrentWorld
@@ -267,13 +280,14 @@ public sealed partial class AdvancedGpuScenePublisher
             ? snapshot.PreviousWorld
             : Matrix4x4.Identity;
         if (!command.Equals(plan.Command))
-            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged);
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged, "Command");
         if (!ReferenceEquals(renderer, plan.Renderer))
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.CommandChanged);
         // A command swap that changes the matrices also advances the scene row
         // inputs. With equal row inputs, only a late render-thread write remains.
         if (world != plan.World || previousWorld != plan.PreviousWorld)
-            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.LateWorldWrite);
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.LateWorldWrite,
+                world != plan.World ? "World" : "PreviousWorld");
         if (!IsUnchangedSupportedRow(
                 commandIndex,
                 frameId,
@@ -297,6 +311,19 @@ public sealed partial class AdvancedGpuScenePublisher
         EAdvancedPreparedGateOutcome mismatch)
     {
         scratch.RowMismatch = mismatch;
+        return false;
+    }
+
+    /// <summary>
+    /// Records the reason of a failed row comparison and the compared value that differs, and returns false.
+    /// </summary>
+    private static bool FailRow(
+        ref UnchangedRowGateScratch scratch,
+        EAdvancedPreparedGateOutcome mismatch,
+        string detail)
+    {
+        scratch.RowMismatch = mismatch;
+        scratch.RowMismatchDetail = detail;
         return false;
     }
 
@@ -394,28 +421,92 @@ public sealed partial class AdvancedGpuScenePublisher
     /// material layout. Both steps depend only on the inputs read here.
     /// A rejection in a later step, such as resource encoding, fails the gate.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="currentReason"/> and <paramref name="check"/> name the reason that the gate
+    /// derived and the step that failed, for diagnostics. "LateRejection" means that the layout
+    /// selection passed, so the full plan rejected the row in a later step that the gate does not repeat.
+    /// </remarks>
     private static bool IsUnchangedUnsupportedRow(
         in AdvancedGpuSceneCommandTransition plan,
         in OrderedRegistrationIdentity identity,
         in DrawMetadata command,
         XRMesh? mesh,
         XRMaterial? material,
-        ref int materialResolveAttempts)
+        ref int materialResolveAttempts,
+        out EAdvancedCanonicalCompatibilityReason currentReason,
+        out string check)
     {
+        currentReason = EAdvancedCanonicalCompatibilityReason.None;
         if (identity.RegistrationIndex >= 0 || identity.Draw.IsValid)
+        {
+            check = "Registered";
             return false;
-        if (!TryValidateCanonicalGeometry(mesh, out EAdvancedCanonicalCompatibilityReason geometryReason))
-            return geometryReason == plan.CompatibilityReason;
+        }
+        if (!TryValidateCanonicalGeometry(mesh, out currentReason))
+        {
+            check = "Geometry";
+            return currentReason == plan.CompatibilityReason;
+        }
 
         ++materialResolveAttempts;
-        return !TrySelectCanonicalMaterialLayout(
+        if (!TrySelectCanonicalMaterialLayout(
                 material,
                 in command,
                 out _,
                 out _,
                 out _,
-                out EAdvancedCanonicalCompatibilityReason layoutReason) &&
-            layoutReason == plan.CompatibilityReason;
+                out currentReason))
+        {
+            check = "Layout";
+            return currentReason == plan.CompatibilityReason;
+        }
+        check = "LateRejection";
+        return false;
+    }
+
+    /// <summary>Writes a bounded sample of unsupported-row gate failures.</summary>
+    private void ReportUnsupportedRowFailure(
+        bool preparing,
+        int commandIndex,
+        in AdvancedGpuSceneCommandTransition plan,
+        XRMaterial? material,
+        EAdvancedCanonicalCompatibilityReason currentReason,
+        string check)
+    {
+        if (!s_scenePublicationDiagnostics)
+            return;
+
+        long miss = System.Threading.Interlocked.Increment(ref _registrationDiagnosticMisses);
+        if (miss > 12 && (miss & 127) != 0)
+            return;
+
+        Debug.WriteAuxiliaryLog("advanced-scene-publication-diagnostics.log",
+            $"unsupported-miss={miss} stage={(preparing ? "prepare" : "swap")} check={check} row={commandIndex} " +
+            $"planReason={plan.CompatibilityReason} currentReason={currentReason} " +
+            $"sourceKey={(plan.Source is RenderCommand command ? command.StableQueryKey : 0u)} " +
+            $"materialName={material?.GetDescribingName()} materialSemantic={material?.EngineSemantic}");
+    }
+
+    /// <summary>
+    /// Writes a bounded sample of swap gate failures on row inputs or world matrices: the row, the compared value,
+    /// and the mesh and material names, so that the changing source can be found.
+    /// </summary>
+    private void ReportRowInputFailure(int commandIndex, EAdvancedPreparedGateOutcome mismatch, string detail)
+    {
+        if (!s_scenePublicationDiagnostics)
+            return;
+
+        long miss = System.Threading.Interlocked.Increment(ref _registrationDiagnosticMisses);
+        if (miss > 12 && (miss & 127) != 0)
+            return;
+
+        ref readonly AdvancedGpuSceneCommandTransition plan = ref _plannedCommands[commandIndex];
+        Debug.WriteAuxiliaryLog("advanced-scene-publication-diagnostics.log",
+            $"row-input-miss={miss} mismatch={mismatch} detail={detail} row={commandIndex} " +
+            $"sourceKey={(plan.Source is RenderCommand command ? command.StableQueryKey : 0u)} " +
+            $"skinned={plan.MeshIsSkinned} gpuBounds={plan.GpuBoundsSource is not null} " +
+            $"mesh={plan.Mesh?.Name} materialName={plan.MaterialSource?.GetDescribingName()} " +
+            $"owner={(plan.Source is RenderCommand ownerCommand ? ownerCommand.OwnerRenderInfo?.Owner?.GetType().Name : null)}");
     }
 
     /// <summary>
@@ -483,7 +574,7 @@ public sealed partial class AdvancedGpuScenePublisher
         // A CPU-owned bound enters the content signature through its version.
         if (plan.GpuBoundsSource is null &&
             cullBounds.BoundsVersion != plan.Bounds.BoundsVersion)
-            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged);
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged, "BoundsVersion");
 
         ref readonly AdvancedResidentRegistration registration =
             ref _registrations[registrationIndex];
@@ -719,8 +810,10 @@ public sealed partial class AdvancedGpuScenePublisher
         _resourceReleaseCount = 0;
         bool hasGlobalResources;
         string globalResourceFailure;
+        long globalPreflightStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.GlobalPreflight"))
             hasGlobalResources = TryPreflightGlobalResources(in globalResources, out globalResourceFailure);
+        CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedGlobalPreflight, globalPreflightStart);
         bool resourceMutation = hasGlobalResources && HasPlannedResourceMutation();
         bool requiresCommit = resourceMutation || !publicationRetained;
         // The full plan repeats the global preflight; it has no other effect.

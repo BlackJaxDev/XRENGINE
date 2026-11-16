@@ -110,6 +110,9 @@ public sealed partial class AdvancedGpuScenePublisher
         /// </summary>
         public EAdvancedPreparedGateOutcome RowMismatch;
 
+        /// <summary>Names the compared value of a failed row-input or world check, for diagnostics.</summary>
+        public string? RowMismatchDetail;
+
         /// <summary>
         /// Clears the row fields before the next row is evaluated, so that no
         /// value of a previous row stays in the outputs.
@@ -140,6 +143,7 @@ public sealed partial class AdvancedGpuScenePublisher
             RowHeaderCoverage = default;
             RowHeaderState = default;
             RowMismatch = EAdvancedPreparedGateOutcome.None;
+            RowMismatchDetail = null;
         }
     }
 }

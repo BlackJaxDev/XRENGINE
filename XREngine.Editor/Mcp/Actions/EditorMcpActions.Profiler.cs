@@ -1793,6 +1793,13 @@ namespace XREngine.Editor.Mcp
                         unchanged_row_publications = advancedPublication.UnchangedRowPublications,
                         commit_calls = advancedPublication.CommitCalls,
                         commit_ms = advancedPublication.CommitMilliseconds,
+                        // Parts of commit_ms for the full publications only.
+                        plan_ms = advancedPublication.PlanMilliseconds,
+                        apply_ms = advancedPublication.ApplyMilliseconds,
+                        seal_ms = advancedPublication.SealMilliseconds,
+                        // global_preflight_ms covers every publication path; identity_delivery_ms is part of seal_ms.
+                        global_preflight_ms = advancedPublication.GlobalPreflightMilliseconds,
+                        identity_delivery_ms = advancedPublication.IdentityDeliveryMilliseconds,
                         // The collect thread prepares the gate decision in prepare_swap_publication_event_ms. A hit
                         // replaces the row walk in row_gate_ms; a miss runs the swap-time row walk.
                         prepared_gate = BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetry.Capture()),
