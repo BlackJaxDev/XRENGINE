@@ -140,6 +140,13 @@ shading. No extra pass runs:
   the frame package captures its views. It sets the view record flag
   `EAdvancedViewRecordFlags.GtaoMaterialNormals` (bit 9) when GTAO is the active AO type and the
   setting is true. RVC eyes use the same rule through their Advanced stage family.
+- A camera keeps one post-process state per pipeline ID. An RVC eye runs the Advanced stage
+  family inside the RVC pipeline, so the family reads the AO settings (this flag, multi-bounce,
+  specular occlusion, and the AO resource layout) from the camera state of the RVC pipeline,
+  the state that the editor and the MCP post-process tools write.
+- The VR eye cameras share one post-process state collection, separate from the desktop
+  camera. To change the eyes, write the eye state (MCP `vr_eye` = `left`, `right` or
+  `stereo`). A write to the desktop camera does not reach the eyes.
 - After the normal map is applied, the shading kernel multiplies the AO value by
   `0.5 + 0.5 * saturate(dot(mappedNormal, surfaceNormal))`. The term never darkens more than 30
   percent (`XR_ADV_GTAO_MICRO_OCCLUSION_MAX_DARKENING`). Like GTAO, it darkens only indirect light.

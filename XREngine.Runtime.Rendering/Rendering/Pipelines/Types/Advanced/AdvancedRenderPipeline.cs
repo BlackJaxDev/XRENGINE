@@ -2275,7 +2275,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         if (camera is null)
             return null;
 
-        var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>(this);
+        var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>(
+            ResolvePostProcessSettingsPipeline(currentPipeline));
         if (stage is null)
             return null;
 
@@ -2286,13 +2287,33 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     }
 
     /// <summary>
+    /// Returns the pipeline whose camera post-process state holds the settings of this render.
+    /// A camera keeps one state per pipeline ID. An RVC eye runs this pipeline as its Advanced
+    /// stage family, but the camera and the post-process tools write the state of the RVC
+    /// pipeline (the assigned pipeline of the instance). The family must read that state;
+    /// a state keyed by the family itself only ever holds defaults.
+    /// </summary>
+    private RenderPipeline ResolvePostProcessSettingsPipeline(XRRenderPipelineInstance? instance)
+        => instance?.AssignedPipeline is { } assigned && ReferenceEquals(assigned.ResolveAdvancedStageFamily(), this)
+            ? assigned
+            : this;
+
+    internal override EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera)
+        => ResolveCanonicalViewPolicyFlags(camera, this);
+
+    /// <summary>
     /// Sets <see cref="EAdvancedViewRecordFlags.GtaoMaterialNormals"/> when the camera uses GTAO with
     /// <see cref="GroundTruthAmbientOcclusionSettings.UseMaterialNormals"/>. Native shading reads the
     /// flag from the view record and adds normal-map micro-occlusion to the GTAO value.
     /// </summary>
-    internal override EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera)
+    /// <param name="camera">The camera of the views.</param>
+    /// <param name="settingsPipeline">
+    /// The pipeline that keys the camera post-process state: this pipeline, or the RVC pipeline that
+    /// runs this pipeline as its stage family.
+    /// </param>
+    internal EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera, RenderPipeline settingsPipeline)
     {
-        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(this) is not { } stage ||
+        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(settingsPipeline) is not { } stage ||
             !stage.TryGetBacking(out AmbientOcclusionSettings? settings) ||
             settings is not { Enabled: true } ||
             AmbientOcclusionSettings.NormalizeType(settings.Type) != AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion ||
@@ -2313,7 +2334,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             ?? instance.LastSceneCamera
             ?? instance.LastRenderingCamera
             ?? viewport?.ActiveCamera;
-        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(this) is not { } stage ||
+        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(
+                ResolvePostProcessSettingsPipeline(instance)) is not { } stage ||
             !stage.TryGetBacking(out AmbientOcclusionSettings? settings))
             return null;
 

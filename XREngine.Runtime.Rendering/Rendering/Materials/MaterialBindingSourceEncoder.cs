@@ -21,8 +21,15 @@ namespace XREngine.Rendering.Materials
             bool hasSurfaceBindings = material.SurfaceTextureBindings.Length != 0;
             XRTexture? albedo = material.GetSurfaceTexture(EMaterialTextureSemantic.BaseColor)?.Texture;
             XRTexture? normal = material.GetSurfaceTexture(EMaterialTextureSemantic.Normal)?.Texture;
-            XRTexture? rm = material.GetSurfaceTexture(EMaterialTextureSemantic.Metallic)?.Texture ??
-                material.GetSurfaceTexture(EMaterialTextureSemantic.Roughness)?.Texture;
+            MaterialSurfaceTextureBinding? metallicBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Metallic);
+            MaterialSurfaceTextureBinding? roughnessBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Roughness);
+            XRTexture? rm = metallicBinding?.Texture ?? roughnessBinding?.Texture;
+            // A glTF metallic-roughness texture binds once for both roles: roughness in green and
+            // metallic in blue. The RM slot then reads those channels instead of red and green.
+            bool packedMetallicRoughness = hasSurfaceBindings &&
+                metallicBinding is not null && roughnessBinding is not null &&
+                ReferenceEquals(metallicBinding.Texture, roughnessBinding.Texture) &&
+                roughnessBinding.Channel == 1 && metallicBinding.Channel == 2;
             MaterialSurfaceTextureBinding? emissiveBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Emissive);
             XRTexture? emissive = emissiveBinding?.Texture;
             // A separate opacity map only matters for coverage. A map that is also the base
@@ -55,7 +62,11 @@ namespace XREngine.Rendering.Materials
             if (normal is not null)
                 flags |= 1u << 1;
             if (rm is not null)
+            {
                 flags |= 1u << 2;
+                if (packedMetallicRoughness)
+                    flags |= GPUMaterialEntry.PackedMetallicRoughnessFlag;
+            }
             if (material.GetEffectiveTransparencyMode() is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
             {
                 flags |= GPUMaterialEntry.MaskedCoverageFlag;

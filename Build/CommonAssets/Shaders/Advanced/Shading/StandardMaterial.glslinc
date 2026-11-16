@@ -76,6 +76,14 @@ vec3 XR_ADV_StandardHeightTangentNormal(XRAdvancedMaterialRecord material,
     return normalize(vec3(slope * heightScale, 1.0));
 }
 
+// Roughness (x) and metallic (y) factors from a sample of the Standard RM texture (slot 2).
+// A glTF metallic-roughness texture keeps roughness in green and metallic in blue
+// (XR_ADV_STANDARD_PACKED_METALLIC_ROUGHNESS_FLAG). Other RM textures keep them in red and green.
+vec2 XR_ADV_StandardRoughnessMetallic(uint materialFlags, vec4 texel)
+{
+    return (materialFlags & XR_ADV_STANDARD_PACKED_METALLIC_ROUGHNESS_FLAG) != 0u ? texel.gb : texel.rg;
+}
+
 // Ambient occlusion texture of a Standard material, with glTF semantics:
 // occlusion = 1 + strength * (texel - 1). The controls word selects the channel
 // (XR_ADV_STANDARD_OCCLUSION_CHANNEL_MASK, 0 red to 3 alpha) and the texture-coordinate

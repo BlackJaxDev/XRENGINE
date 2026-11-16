@@ -144,8 +144,9 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
         => AdvancedStageFamily.GetRequestedInternalResolutionForCamera(camera);
 
+    // The camera keeps its post-process values under this pipeline's ID, not the family's.
     internal override EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera)
-        => AdvancedStageFamily.ResolveCanonicalViewPolicyFlags(camera);
+        => AdvancedStageFamily.ResolveCanonicalViewPolicyFlags(camera, this);
 
     internal override float? GetRequestedInternalResolutionForCamera(
         XRCamera? camera,
