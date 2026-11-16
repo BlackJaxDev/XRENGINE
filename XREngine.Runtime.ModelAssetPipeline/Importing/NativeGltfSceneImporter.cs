@@ -929,7 +929,12 @@ internal static class NativeGltfSceneImporter
 
         if (material.OcclusionTexture is { } occlusionInfo)
         {
-            ResolveTextureBinding(sourceFilePath, document, occlusionInfo, importOptions, textureCache, TextureType.Unknown, "occlusion", 0);
+            // glTF stores occlusion in the red channel (an ORM texture shares the image with
+            // metallic-roughness). The binding is surface-only, like transmission, so the legacy
+            // sampler slots of the material do not change.
+            ResolvedTextureBinding? binding = ResolveTextureBinding(sourceFilePath, document, occlusionInfo, importOptions, textureCache, TextureType.Unknown, "occlusion", 0);
+            if (binding is not null)
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Occlusion, binding, occlusionInfo, channel: 0, isSrgb: false));
         }
 
         if (TryGetTransmissionTextureInfo(material, out GltfTextureInfo? transmissionInfo) && transmissionInfo is not null)
@@ -1310,6 +1315,7 @@ internal static class NativeGltfSceneImporter
         material.SetFloat("Emission", Math.Max(emissiveColor.X, Math.Max(emissiveColor.Y, emissiveColor.Z)) * emissionStrength);
         material.SurfaceTextureBindings = texturePayload.SurfaceTextureBindings;
         material.NormalScale = gltfMaterial.NormalTexture?.Scale ?? 1.0f;
+        material.OcclusionStrength = gltfMaterial.OcclusionTexture?.Strength ?? 1.0f;
         material.Transmission = GetExtensionFloat(gltfMaterial, "KHR_materials_transmission", "transmissionFactor", 0.0f);
         material.TransmissionColor = GetExtensionColor(gltfMaterial, "KHR_materials_volume", "attenuationColor", Vector3.One);
 
