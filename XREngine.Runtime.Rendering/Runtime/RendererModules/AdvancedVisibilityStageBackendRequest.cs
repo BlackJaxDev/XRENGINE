@@ -145,9 +145,11 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
                 return "The directional shadow stage target is not the cascade group's atlas page.";
             return null;
         }
+        // An empty selection name means a single-sample visibility target without the
+        // selection image (OpenXR eyes on Vulkan); multisample targets always carry it.
         if (string.IsNullOrWhiteSpace(IdentityTargetName) ||
             string.IsNullOrWhiteSpace(MetadataTargetName) ||
-            string.IsNullOrWhiteSpace(SelectionTargetName) ||
+            (MsaaSampleCount > 1u && string.IsNullOrWhiteSpace(SelectionTargetName)) ||
             string.IsNullOrWhiteSpace(DepthTargetName) ||
             string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName) ||
             (!IsMinimalVisibilityOutput &&

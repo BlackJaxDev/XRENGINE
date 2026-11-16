@@ -38,10 +38,14 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
             ? target.DynamicRenderingFormats.ColorAttachmentCount
             : program.MeshTaskProgramServices.GetRenderPassColorAttachmentCount(
                 target.RenderPass);
+        // Single-sample targets carry identity, metadata and an optional selection image
+        // (omitted for OpenXR eyes); multisample targets add sample positions.
         uint expectedColorAttachmentCount = target.RasterizationSamples == SampleCountFlags.Count1Bit
             ? 3u
             : 4u;
-        if (colorAttachmentCount != expectedColorAttachmentCount)
+        bool omittedSelection = target.RasterizationSamples == SampleCountFlags.Count1Bit &&
+            colorAttachmentCount == 2u;
+        if (colorAttachmentCount != expectedColorAttachmentCount && !omittedSelection)
         {
             reason = $"visibility raster requires exactly {expectedColorAttachmentCount} color attachments for {target.RasterizationSamples}, received {colorAttachmentCount}";
             return false;

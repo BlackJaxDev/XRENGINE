@@ -134,6 +134,15 @@ preamble define `XR_ADV_NATIVE_SHADING_FAMILY` selects the family:
   background and foveated fill kernels, and Vulkan records no write transition for
   it. The desktop output and offscreen captures keep the image. Set a shading debug
   view to capture it on an eye output.
+- Single-sample OpenXR eye outputs on Vulkan also omit the visibility selection image
+  (`Advanced.Visibility.Selection`, R32_UINT, about 55 MB per eye output at 2688x2688)
+  while no visibility debug output is on. Only editor picking (which rejects eye
+  instances) and the selection debug view read it; the editor outline uses the
+  selection bit in the metadata image. The visibility framebuffer then has identity,
+  metadata and depth-stencil, the stage requests carry an empty selection name, and the
+  raster pipelines are built with two color attachments; the fragment shaders' selection
+  output has no attachment and is discarded. Multisample visibility and OpenGL keep the
+  image.
 
 ### Edge half-rate shading for eye outputs
 

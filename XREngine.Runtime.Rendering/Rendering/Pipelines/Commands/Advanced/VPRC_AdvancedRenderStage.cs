@@ -175,7 +175,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     Target = decalTarget,
                     IdentityTargetName = AdvancedVisibilityResourceNames.Identity,
                     MetadataTargetName = AdvancedVisibilityResourceNames.Metadata,
-                    SelectionTargetName = AdvancedVisibilityResourceNames.Selection,
+                    SelectionTargetName = SingleSampleSelectionTargetName(ActivePipelineInstance),
                     DepthTargetName = AdvancedVisibilityResourceNames.DepthStencil,
                 }, DecalBufferPassName);
             }
@@ -408,7 +408,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             target,
             multisampleRaster ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity,
             multisampleRaster ? rawMetadata : AdvancedVisibilityResourceNames.Metadata,
-            multisampleRaster ? rawSelection : AdvancedVisibilityResourceNames.Selection,
+            multisampleRaster ? rawSelection : SingleSampleSelectionTargetName(ActivePipelineInstance),
             multisampleRaster ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil,
             useNeutralWebAmbientOcclusion ? AdvancedRenderPipeline.WebPostProcessNeutralTextureName : AdvancedAmbientOcclusionContract.ResourceName,
             AdvancedVisibilityResourceNames.CurrentDepthPyramid,
@@ -806,7 +806,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true,
             usesMultisampleVisibility, packedSamples,
             hasAmbientOcclusion ? AdvancedAmbientOcclusionContract.ResourceName : AdvancedRenderPipeline.WebPostProcessNeutralTextureName,
-            context.HasResource(AdvancedShadingResourceNames.ShadingDiagnostics));
+            context.HasResource(AdvancedShadingResourceNames.ShadingDiagnostics), context);
         // RVC telemetry runs after native shading and reads every view layer.
         if (descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
             context.HasResource(RvcShadeletTelemetryResourceNames.Counters(0u)))
@@ -911,7 +911,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         if (usesMultisampleVisibility)
             DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Load, packedSamples);
         else
-            DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Load);
+            DescribeCanonicalRasterAttachments(context, builder, ERenderPassLoadOp.Load);
     }
 
     /// <summary>
@@ -977,7 +977,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         EAdvancedRenderStage stage,
         bool requiresMaterialSurfaceExports,
         bool usesMultisampleVisibility, bool packedSamples, string ambientOcclusionTextureName,
-        bool hasShadingDiagnostics)
+        bool hasShadingDiagnostics, RenderGraphDescribeContext context)
     {
         switch (stage)
         {
@@ -1026,7 +1026,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 if (usesMultisampleVisibility)
                     DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Clear, packedSamples);
                 else
-                    DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Clear);
+                    DescribeCanonicalRasterAttachments(context, builder, ERenderPassLoadOp.Clear);
                 builder
                     .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
                     .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
@@ -1185,9 +1185,22 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
            && context.HasResource(AdvancedVisibilityResourceNames.IdentityMultisample)
            && context.HasResource(AdvancedVisibilityResourceNames.DepthStencilMultisample);
 
-    private static void DescribeCanonicalRasterAttachments(RenderPassBuilder builder, ERenderPassLoadOp load)
+    /// <summary>
+    /// Name of the single-sample selection image, or an empty name when the profile omits it
+    /// (single-sample OpenXR eyes on Vulkan). The backend then expects a visibility target with
+    /// identity, metadata and depth only.
+    /// </summary>
+    private static string SingleSampleSelectionTargetName(XRRenderPipelineInstance instance)
+        => instance.Resources.TryGetTexture(AdvancedVisibilityResourceNames.Selection, out XRTexture? selection) &&
+            selection is not null
+            ? AdvancedVisibilityResourceNames.Selection
+            : string.Empty;
+
+    private static void DescribeCanonicalRasterAttachments(
+        RenderGraphDescribeContext context, RenderPassBuilder builder, ERenderPassLoadOp load)
     {
-        for (int attachment = 0; attachment < 3; attachment++)
+        int colorAttachments = context.HasResource(AdvancedVisibilityResourceNames.Selection) ? 3 : 2;
+        for (int attachment = 0; attachment < colorAttachments; attachment++)
         {
             builder.UseColorAttachment(
                 RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, attachment),

@@ -130,7 +130,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            Target.Height != 0u &&
            !string.IsNullOrWhiteSpace(IdentityTargetName) &&
            !string.IsNullOrWhiteSpace(MetadataTargetName) &&
-           !string.IsNullOrWhiteSpace(SelectionTargetName) &&
+           (MsaaSampleCount <= 1u || !string.IsNullOrWhiteSpace(SelectionTargetName)) &&
            !string.IsNullOrWhiteSpace(DepthTargetName) &&
            !string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName) &&
            (!RequiresNativeComputeClosure ||
@@ -262,9 +262,17 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
             Phase is not (EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
                 EAdvancedVisibilityStageBackendPhase.DecalBuffer));
 
+    /// <summary>
+    /// True when this single-sample visibility target has no selection image (identity,
+    /// metadata and depth-stencil only), as declared for single-sample OpenXR eyes.
+    /// </summary>
+    internal bool OmitsSelectionTarget
+        => MsaaSampleCount <= 1u && string.IsNullOrEmpty(SelectionTargetName);
+
     private bool HasExpectedVisibilityTargetNames(bool raw)
         => string.Equals(IdentityTargetName, raw ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity, StringComparison.Ordinal) &&
            string.Equals(MetadataTargetName, raw ? AdvancedVisibilityResourceNames.MetadataMultisample : AdvancedVisibilityResourceNames.Metadata, StringComparison.Ordinal) &&
-           string.Equals(SelectionTargetName, raw ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection, StringComparison.Ordinal) &&
+           (string.Equals(SelectionTargetName, raw ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection, StringComparison.Ordinal) ||
+            !raw && SelectionTargetName.Length == 0) &&
            string.Equals(DepthTargetName, raw ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil, StringComparison.Ordinal);
 }

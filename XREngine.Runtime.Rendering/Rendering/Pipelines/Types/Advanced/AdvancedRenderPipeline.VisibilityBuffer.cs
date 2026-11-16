@@ -118,6 +118,7 @@ public partial class AdvancedRenderPipeline
             .Layers(layers)
             .StereoCompatible(layers > 1u)
             .DependsOn(AdvancedVisibilityResourceNames.Metadata)
+            .When(static profile => !OmitsVisibilitySelection(profile))
             .DebugLabel("Advanced editor selection identity")
             .Add();
 
@@ -191,12 +192,14 @@ public partial class AdvancedRenderPipeline
         DeclareVisibilityPersistentBuffers(builder);
         DeclareVisibilityFrameSlotBuffers(builder);
 
-        builder.FrameBuffer(AdvancedVisibilityResourceNames.FrameBuffer)
+        var visibilityFrameBuffer = builder.FrameBuffer(AdvancedVisibilityResourceNames.FrameBuffer)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Size(internalSize)
             .Color(0, AdvancedVisibilityResourceNames.Identity, layerIndex: -1)
-            .Color(1, AdvancedVisibilityResourceNames.Metadata, layerIndex: -1)
-            .Color(2, AdvancedVisibilityResourceNames.Selection, layerIndex: -1)
+            .Color(1, AdvancedVisibilityResourceNames.Metadata, layerIndex: -1);
+        if (!OmitsVisibilitySelection(builder.Profile))
+            visibilityFrameBuffer.Color(2, AdvancedVisibilityResourceNames.Selection, layerIndex: -1);
+        visibilityFrameBuffer
             .DepthStencil(
                 AdvancedVisibilityResourceNames.DepthStencil,
                 layerIndex: -1)
@@ -677,14 +680,23 @@ public partial class AdvancedRenderPipeline
         => checked((Math.Max(value, 1u) + divisor - 1u) / divisor);
 
     private XRFrameBuffer CreateVisibilityFrameBuffer()
-        => new(
-            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Identity), EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Metadata), EFrameBufferAttachment.ColorAttachment1, 0, -1),
-            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Selection), EFrameBufferAttachment.ColorAttachment2, 0, -1),
-            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
-        {
-            Name = AdvancedVisibilityResourceNames.FrameBuffer,
-        };
+        => GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Selection) is null
+            // Selection omitted (OmitsVisibilitySelection): identity, metadata and depth only.
+            ? new(
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Identity), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Metadata), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            {
+                Name = AdvancedVisibilityResourceNames.FrameBuffer,
+            }
+            : new(
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Identity), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Metadata), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Selection), EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            {
+                Name = AdvancedVisibilityResourceNames.FrameBuffer,
+            };
 
     private XRFrameBuffer CreateVisibilityDebugFrameBuffer()
         => new(

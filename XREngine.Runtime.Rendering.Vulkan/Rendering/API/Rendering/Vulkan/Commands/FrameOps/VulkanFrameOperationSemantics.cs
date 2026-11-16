@@ -239,10 +239,11 @@ internal static class VulkanFrameOperationSemantics
                         ref uses,
                         RenderGraphResourceNames.MakeTexture(visibility.Request.MetadataTargetName),
                         version);
-                    AddLogicalResourceUse(
-                        ref uses,
-                        RenderGraphResourceNames.MakeTexture(visibility.Request.SelectionTargetName),
-                        version);
+                    if (!visibility.Request.OmitsSelectionTarget)
+                        AddLogicalResourceUse(
+                            ref uses,
+                            RenderGraphResourceNames.MakeTexture(visibility.Request.SelectionTargetName),
+                            version);
                     AddLogicalResourceUse(
                         ref uses,
                         RenderGraphResourceNames.MakeTexture(visibility.Request.DepthTargetName),

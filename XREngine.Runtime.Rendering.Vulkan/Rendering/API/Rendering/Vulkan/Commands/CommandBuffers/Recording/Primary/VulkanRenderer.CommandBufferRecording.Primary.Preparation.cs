@@ -2112,6 +2112,17 @@ namespace XREngine.Rendering.Vulkan
         ];
 
         /// <summary>
+        /// Expected attachment order of a single-sample visibility target without the selection
+        /// image (single-sample OpenXR eyes).
+        /// </summary>
+        private static readonly EFrameBufferAttachment[] VisibilityTargetAttachmentsWithoutSelection =
+        [
+            EFrameBufferAttachment.ColorAttachment0,
+            EFrameBufferAttachment.ColorAttachment1,
+            EFrameBufferAttachment.DepthStencilAttachment,
+        ];
+
+        /// <summary>
         /// Expected attachment order of a multisample advanced visibility raster target. The fourth
         /// color attachment holds the sample positions.
         /// </summary>
@@ -2131,20 +2142,22 @@ namespace XREngine.Rendering.Vulkan
         {
             bool multisampleRaster = request.MsaaSampleCount > 1u &&
                 request.Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
-            int expectedAttachmentCount = multisampleRaster ? 5 : 4;
+            bool omitsSelection = request.OmitsSelectionTarget;
+            ReadOnlySpan<EFrameBufferAttachment> expected = multisampleRaster
+                ? MultisampleVisibilityTargetAttachments
+                : omitsSelection
+                    ? VisibilityTargetAttachmentsWithoutSelection
+                    : VisibilityTargetAttachments;
             if (request.Target.Targets is not { } attachments ||
-                attachments.Length != expectedAttachmentCount)
+                attachments.Length != expected.Length)
             {
-                reason = $"the authoritative framebuffer does not have exactly {(multisampleRaster ? "four" : "three")} color attachments and one depth-stencil attachment";
+                reason = $"the authoritative framebuffer does not have exactly {expected.Length - 1} color attachments and one depth-stencil attachment";
                 return false;
             }
 
-            ReadOnlySpan<EFrameBufferAttachment> expected = multisampleRaster
-                ? MultisampleVisibilityTargetAttachments
-                : VisibilityTargetAttachments;
             for (int index = 0; index < attachments.Length; ++index)
             {
-                string expectedName = GetExpectedVisibilityAttachmentName(in request, index, multisampleRaster);
+                string expectedName = GetExpectedVisibilityAttachmentName(in request, index, multisampleRaster, omitsSelection);
                 if (attachments[index].Attachment != expected[index] ||
                     attachments[index].Target is not GenericRenderObject targetObject ||
                     !string.Equals(
@@ -2173,12 +2186,13 @@ namespace XREngine.Rendering.Vulkan
         private static string GetExpectedVisibilityAttachmentName(
             in VulkanAdvancedVisibilityStageRequest request,
             int index,
-            bool multisampleRaster)
+            bool multisampleRaster,
+            bool omitsSelection)
             => index switch
             {
                 0 => request.IdentityTargetName,
                 1 => request.MetadataTargetName,
-                2 => request.SelectionTargetName,
+                2 when !omitsSelection => request.SelectionTargetName,
                 3 when multisampleRaster => AdvancedVisibilityResourceNames.SamplePositionMultisample,
                 _ => request.DepthTargetName,
             };
@@ -2499,7 +2513,8 @@ namespace XREngine.Rendering.Vulkan
         {
             bool multisampleRaster = request.MsaaSampleCount > 1u &&
                 request.Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
-            uint expectedColorCount = multisampleRaster ? 4u : 3u;
+            bool omitsSelection = !multisampleRaster && request.OmitsSelectionTarget;
+            uint expectedColorCount = multisampleRaster ? 4u : omitsSelection ? 2u : 3u;
             SampleCountFlags expectedSamples = request.Phase ==
                 EAdvancedVisibilityStageBackendPhase.MultisampleResolve
                     ? SampleCountFlags.Count1Bit
@@ -2518,7 +2533,7 @@ namespace XREngine.Rendering.Vulkan
                 formats.ColorAttachmentCount == expectedColorCount &&
                 formats.GetColorAttachmentFormat(0u) == Format.R32G32Uint &&
                 formats.GetColorAttachmentFormat(1u) == Format.R32Uint &&
-                formats.GetColorAttachmentFormat(2u) == Format.R32Uint &&
+                (omitsSelection || formats.GetColorAttachmentFormat(2u) == Format.R32Uint) &&
                 (!multisampleRaster ||
                  formats.GetColorAttachmentFormat(3u) == Format.R16G16Sfloat) &&
                 formats.DepthAttachmentFormat == Format.D32SfloatS8Uint &&

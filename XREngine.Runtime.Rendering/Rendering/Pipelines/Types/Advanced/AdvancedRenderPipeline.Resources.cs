@@ -24,7 +24,21 @@ public partial class AdvancedRenderPipeline
     // The shading diagnostics image is not declared: an OpenXR eye output without a shading debug
     // view or debug overlays. Nothing in the frame reads that image, so the eyes skip it.
     private const ulong ShadingDiagnosticsOmittedFeatureBit = 1UL << 38;
+    // The visibility selection image is not declared: a single-sample OpenXR eye output on
+    // Vulkan without visibility debug output. It only feeds editor picking and the selection
+    // debug view, which eyes do not use. Bits 0-31 hold no other feature.
+    private const ulong VisibilitySelectionOmittedFeatureBit = 1UL << 30;
     public const string ExternalOutputResourceName = "$ExternalOutput";
+
+    /// <summary>
+    /// True when the profile omits the visibility selection image. The visibility framebuffer
+    /// then has two color attachments (identity, metadata) and depth-stencil, and the raster
+    /// discards its selection output. Multisample visibility always keeps the image, because
+    /// its resolve and shading passes read the selection samples.
+    /// </summary>
+    internal static bool OmitsVisibilitySelection(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & VisibilitySelectionOmittedFeatureBit) != 0UL &&
+            !(profile.AntiAliasingMode == EAntiAliasingMode.Msaa && profile.MsaaSampleCount > 1u);
 
     // Forward late/debug consumers retain the existing probe-array contract.
     // Native shading uses canonical publication resources independently; these
@@ -133,6 +147,13 @@ public partial class AdvancedRenderPipeline
             shadingFeatureMask |= ShadingDiagnosticsOmittedFeatureBit;
         }
 
+        ulong visibilityOutputFeatureMask = 0UL;
+        if (IsOpenXrEyeProfile && IsVulkanRuntimeActiveOrExpected() &&
+            (visibilityFeatures & AdvancedVisibilityResourceFeature.DebugOutput) == 0)
+        {
+            visibilityOutputFeatureMask = VisibilitySelectionOmittedFeatureBit;
+        }
+
         ulong latePassFeatureMask = 0UL;
         if (!UsesMinimalVisibilityOutput &&
             (LatePassDebugView != EAdvancedLatePassDebugView.Disabled ||
@@ -157,6 +178,7 @@ public partial class AdvancedRenderPipeline
             (ulong)reconstructionFeatures |
             ((ulong)classificationFeatures << 32) |
             shadingFeatureMask |
+            visibilityOutputFeatureMask |
             latePassFeatureMask |
             profileFeatureMask |
             BuildAdvancedWebOutputFeatureMask(instance, viewport);
