@@ -524,6 +524,8 @@ internal unsafe sealed class VulkanMappedFrameArena
         return true;
     }
 
+    // This method reads the mapped memory. The chunks can be device-local host-visible memory,
+    // where CPU reads are uncached and slow, so do not call it on a per-frame path.
     internal bool TryWriteIfChanged<T>(in VulkanMappedFrameSlice slice, in T value) where T : unmanaged
     {
         if (slice.Length < sizeof(T) || !TryBeginWrite(slice, out VulkanMappedFrameWriteScope scope))

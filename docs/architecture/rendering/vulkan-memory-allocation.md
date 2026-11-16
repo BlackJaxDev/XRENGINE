@@ -73,6 +73,25 @@ Every other buffer gets host-visible memory, with host-cached memory for `*Read`
 `*Copy` usage does not mean GPU-only here: many per-frame CPU-uploaded buffers use `DynamicCopy`,
 and a device-local upload is a synchronous submit with a fence wait.
 
+CPU-written buffers that the GPU reads every frame prefer device-local host-visible memory
+(`DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT`, resizable BAR) when the device exposes it:
+
+- the `AdvancedSceneStorage` lane of the canonical frame-data arena (the resident scene records).
+  The arena constructor flag `preferDeviceLocalSceneStorage` selects this, so the synchronous,
+  readback and GPU-statistics arenas keep system memory;
+- the `MappedFrameArena` uniform chunks;
+- the Advanced geometry resident cache (vertex and index data). Its buffers come from
+  `CreateDedicatedRaw`; when that throws `VulkanOutOfMemoryException`, the cache logs a warning and
+  allocates in system memory.
+
+The CPU only writes these buffers, sequentially. CPU reads from this memory are uncached and very
+slow: the env-gated uniform diagnostics that read it are marked as unsuitable for timing runs, and
+`VulkanMappedFrameArena.TryWriteIfChanged` must not get a per-frame caller. A mapped chunk that
+preferred device-local memory but got another memory type logs a rate-limited warning. On New Sponza
+in VR, the geometry cache placement cut the Advanced visibility pass from 5.3 to 1.8 ms at the sun
+view; the two arenas gave about 0.4 ms. The synchronous arena keeps its upload staging (about 1.3 GB
+in the `FrameDataArena.Storage` lane on that scene) in system memory.
+
 When a device-local request ends in host-visible memory (the allocator retry below), `VkDataBuffer`
 logs a rate-limited warning with the buffer name, its size and the actual memory flags. The
 `bufferOwners` section of `list_vulkan_image_allocation_diagnostics` lists the live buffer bytes by
