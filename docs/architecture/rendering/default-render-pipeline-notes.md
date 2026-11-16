@@ -407,6 +407,13 @@ therefore follow the active passes through the resource feature mask:
 - The bloom chain is R11G11B10F. No bloom consumer reads alpha (the format
   drops what the bloom copy passes through) and every consumer samples `.rgb`;
   keep it that way or move bloom back to RGBA16F.
+- In Advanced (native renderers), the first bloom downsample reads the HDR scene
+  through a linear, clamp-to-edge view (`VPRC_BloomPass.FirstDownsampleReadsInput`).
+  The copy into bloom mip 0 is a same-size texel copy, so the result is the same,
+  and the copy runs only while the bloom combine reads mip 0 (start mip 0 with a
+  mip 0 weight) or the bloom debug view is on. With the default settings this saves
+  the full-resolution copy (about 0.15 ms for the 2688x2688 eye pair). WebGPU
+  keeps the copy.
 
 ---
 

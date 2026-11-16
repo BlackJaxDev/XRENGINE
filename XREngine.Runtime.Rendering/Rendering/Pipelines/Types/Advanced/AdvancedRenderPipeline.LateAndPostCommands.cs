@@ -155,6 +155,9 @@ public partial class AdvancedRenderPipeline
             var bloomCommands = new ViewportRenderCommandContainer(this);
             _advancedBloomProvider = bloomCommands.Add<VPRC_BloomPass>();
             _advancedBloomProvider.SetTargetFBONames(ForwardPassFBOName, BloomBlurTextureName, Stereo);
+            // Native renderers read the HDR scene directly in the first downsample, with no
+            // full-resolution copy. The WebGPU bloom programs keep the mip 0 copy.
+            _advancedBloomProvider.FirstDownsampleReadsInput = !Shaders.Compilation.WebPipelineRasterProgram.IsActive;
             bloom.TrueCommands = bloomCommands;
 
             AppendAdvancedPostBloomPass(commands);
