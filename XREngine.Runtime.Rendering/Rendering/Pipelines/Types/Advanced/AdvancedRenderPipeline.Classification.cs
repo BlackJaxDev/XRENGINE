@@ -82,7 +82,7 @@ public partial class AdvancedRenderPipeline
     /// kernels are live, so the extra ranges cover kernels whose release still waits for the GPU.
     /// A kernel index past the last range sets the membership overflow flag, and the frame then
     /// shades every pixel in the overflow repair pass (correct output, more GPU time).
-    /// With 128 ranges the buffer was about 144 MB per frame slot for a 2688x2688 eye pair.
+    /// For a 2688x2688 eye pair this is about 38 MB per frame slot instead of 101 MB.
     /// </summary>
     public const uint KernelTileRangeCount = Commands.AdvancedGpuMaterialPublisher.MaxCanonicalKernelKeys + 6u;
 

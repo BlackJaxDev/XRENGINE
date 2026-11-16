@@ -1003,8 +1003,8 @@ frame slot) holds one range of tile records per dense shading kernel index. It h
 `AdvancedRenderPipeline.KernelTileRangeCount` ranges (48), not one per possible kernel (128): the
 material publisher creates at most 42 distinct kernels, and the kernel table reuses the lowest free
 index. A kernel index past the last range sets the membership overflow flag, and that frame is
-shaded by the overflow repair pass. For a 2688x2688 eye pair this cuts each slot from about 144 MB
-to 54 MB.
+shaded by the overflow repair pass. For a 2688x2688 eye pair this cuts each slot from about 101 MB
+to 38 MB of device-local memory.
 
 Debug-only resources are declared only when their feature bit is in the resource
 feature mask. `AdvancedTransparency.DebugOutput` (RGBA16F, about 110 MB per eye output
