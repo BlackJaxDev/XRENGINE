@@ -37,6 +37,15 @@ FrameBegin
 - Deformation produces current and previous deformed vertex data one time. Visibility, shadow, velocity, and other geometry consumers reuse it.
 - Visibility preparation runs early GPU culling and indirect preparation. Visibility raster writes depth and one visibility payload per pixel. The depth pyramid stage recovers late-visible geometry.
 - Work classification builds GPU material and light work proportional to visible coverage.
+  `ClassifyTiles.comp` builds a per-tile kernel histogram. With subgroup ballots, each
+  subgroup visits only the kernels that its lanes hold (a waterfall loop: the first
+  pending lane names the kernel of a pass, the ballot counts its lanes, and those lanes
+  leave), bounded to `gl_SubgroupSize` passes. The tile tail runs in parallel: invocation
+  k writes the membership of kernel k, and a shared `atomicMax` on
+  `(pixel count << 8) | (255 - k)` selects the primary kernel (the largest count; on a tie,
+  the lowest kernel index). On New Sponza in VR this cut classification from 2.5 to 0.5 ms
+  per view pair, compared with a pass for each of the 128 kernels and a serial tail on one
+  invocation.
 - Native opaque shading reconstructs surface attributes from visibility identity, evaluates material lighting, and writes HDR scene color.
 - Late passes hold transparent, refractive, volumetric, particle, editor-overlay, gizmo, and other special work.
 

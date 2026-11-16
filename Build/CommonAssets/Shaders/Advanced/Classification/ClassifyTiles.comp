@@ -17,11 +17,16 @@ shared uint activePixels;
 shared uint backgroundPixels;
 shared uint kernelHistogram[128];
 shared uint kernelFlags[128];
+// The active tile slot and the primary kernel, shared by the invocations that write the
+// tile's kernel memberships. The primary kernel is packed as (pixel count << 8) | (255 - kernel),
+// so atomicMax selects the largest count and, on a tie, the lowest kernel index.
+shared uint tileSlot;
+shared uint primaryKernelPacked;
 
 void main()
 {
     uint localIndex = gl_LocalInvocationIndex;
-    if (localIndex == 0u) { activePixels = 0u; backgroundPixels = 0u; }
+    if (localIndex == 0u) { activePixels = 0u; backgroundPixels = 0u; primaryKernelPacked = 0u; }
     if (localIndex < XR_ADV_MAX_SHADING_KERNELS)
     {
         kernelHistogram[localIndex] = 0u;
@@ -74,16 +79,31 @@ void main()
     uint activeRank = subgroupBallotExclusiveBitCount(activeMask);
     if (isActive && activeRank == 0u)
         atomicAdd(activePixels, activeCount);
-    for (uint k = 0u; k < XR_ADV_MAX_SHADING_KERNELS; ++k)
+    // Visit only the kernels present in this subgroup (a waterfall loop). A lane leaves the
+    // loop when its kernel is counted, so the active lanes in each pass are exactly the lanes
+    // still pending: the first of them names the kernel of the pass, the ballot counts its
+    // lanes, and those lanes leave. A subgroup usually holds one to three kernels, so this
+    // replaces a pass for each of the 128 kernels. Each pass retires at least one lane, so
+    // gl_SubgroupSize passes always finish the loop; the bound only guards against a
+    // lane-state error, which would otherwise hang the GPU.
+    if (isActive)
     {
-        bool matches = isActive && pixelKernel == k;
-        uvec4 members = subgroupBallot(matches);
-        uint count = subgroupBallotBitCount(members);
-        uint rank = subgroupBallotExclusiveBitCount(members);
-        if (matches && rank == 0u)
+        for (uint pass = 0u; pass < gl_SubgroupSize; ++pass)
         {
-            atomicAdd(kernelHistogram[k], count);
-            atomicOr(kernelFlags[k], pixelKernelFlags);
+            uint k = subgroupBroadcastFirst(pixelKernel);
+            bool matches = pixelKernel == k;
+            uvec4 members = subgroupBallot(matches);
+            uint count = subgroupBallotBitCount(members);
+            uint rank = subgroupBallotExclusiveBitCount(members);
+            if (matches)
+            {
+                if (rank == 0u)
+                {
+                    atomicAdd(kernelHistogram[k], count);
+                    atomicOr(kernelFlags[k], pixelKernelFlags);
+                }
+                break;
+            }
         }
     }
 #else
@@ -96,55 +116,68 @@ void main()
     }
 #endif
     barrier();
-    if (localIndex != 0u) return;
-    // The pixel counters have no reader on the GPU; only the diagnostic readback reads them.
-    // Every tile adds to the same two addresses, which costs several milliseconds at headset
-    // resolution, so the tiles add to them only while the readback is active.
-    if ((u_Push.flags & XR_ADV_CLASSIFICATION_PIXEL_COUNTERS) != 0u)
+    if (localIndex == 0u)
     {
-        atomicAdd(XR_ADV_ClassificationCounters.counters.backgroundPixelCount, backgroundPixels);
-        atomicAdd(XR_ADV_ClassificationCounters.counters.classifiedPixelCount, activePixels);
+        // The pixel counters have no reader on the GPU; only the diagnostic readback reads them.
+        // Every tile adds to the same two addresses, which costs several milliseconds at headset
+        // resolution, so the tiles add to them only while the readback is active.
+        if ((u_Push.flags & XR_ADV_CLASSIFICATION_PIXEL_COUNTERS) != 0u)
+        {
+            atomicAdd(XR_ADV_ClassificationCounters.counters.backgroundPixelCount, backgroundPixels);
+            atomicAdd(XR_ADV_ClassificationCounters.counters.classifiedPixelCount, activePixels);
+        }
     }
+    // activePixels is uniform for the work group, so every invocation leaves here together.
     if (activePixels == 0u) return;
 
     uint tileCapacity = XR_ADV_TotalTileCount();
-    uint tileIndex = atomicAdd(XR_ADV_ClassificationCounters.counters.activeTileCount, 1u);
-    if (tileIndex >= min(tileCapacity, uint(XR_ADV_ActiveTiles.records.length())))
+    if (localIndex == 0u)
     {
-        atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_OVERFLOW_TILES);
+        uint slot = atomicAdd(XR_ADV_ClassificationCounters.counters.activeTileCount, 1u);
+        if (slot >= min(tileCapacity, uint(XR_ADV_ActiveTiles.records.length())))
+        {
+            atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_OVERFLOW_TILES);
+            slot = 0xFFFFFFFFu;
+        }
+        tileSlot = slot;
+    }
+    // Invocation k handles kernel k, so the 128 kernels are processed in parallel instead of
+    // in one serial loop on invocation 0.
+    uint kernel = localIndex;
+    bool hasKernel = kernel < XR_ADV_MAX_SHADING_KERNELS && kernelHistogram[kernel] != 0u;
+    if (hasKernel)
+        atomicMax(primaryKernelPacked, (kernelHistogram[kernel] << 8u) | (255u - kernel));
+    barrier();
+    uint tileIndex = tileSlot;
+    if (tileIndex == 0xFFFFFFFFu) return;
+    if (localIndex == 0u)
+        XR_ADV_ActiveTiles.records[tileIndex] = XRAdvancedActiveTile(
+            gl_WorkGroupID.x | (gl_WorkGroupID.y << 16u), u_Push.viewIndex, activePixels,
+            255u - (primaryKernelPacked & 255u));
+    if (!hasKernel) return;
+
+    // BuildClassificationIndirect sums these per-kernel counts into kernelTileCount, so the
+    // tiles do not also contend on one global counter here.
+    uint rangeIndex = atomicAdd(XR_ADV_KernelCounts.counts[kernel], 1u);
+    uint capacity = min(u_Push.maxKernelTiles, uint(XR_ADV_KernelTiles.records.length()));
+    // Bound multiplication before evaluating it, including tiny pressure
+    // buffers. Later bounds checks cannot detect wrapped uint arithmetic.
+    if (tileCapacity == 0u || kernel > capacity / tileCapacity)
+    {
+        atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_OVERFLOW_MEMBERSHIPS);
         return;
     }
-    uint primaryKernel = 0u;
-    for (uint k = 1u; k < XR_ADV_MAX_SHADING_KERNELS; ++k)
-        if (kernelHistogram[k] > kernelHistogram[primaryKernel]) primaryKernel = k;
-    XR_ADV_ActiveTiles.records[tileIndex] = XRAdvancedActiveTile(
-        gl_WorkGroupID.x | (gl_WorkGroupID.y << 16u), u_Push.viewIndex, activePixels, primaryKernel);
-    for (uint k = 0u; k < XR_ADV_MAX_SHADING_KERNELS; ++k)
+    uint rangeBase = kernel * tileCapacity;
+    if (rangeIndex >= tileCapacity || rangeIndex >= capacity - rangeBase)
     {
-        if (kernelHistogram[k] == 0u) continue;
-        // BuildClassificationIndirect sums these per-kernel counts into kernelTileCount, so the
-        // tiles do not also contend on one global counter here.
-        uint rangeIndex = atomicAdd(XR_ADV_KernelCounts.counts[k], 1u);
-        uint capacity = min(u_Push.maxKernelTiles, uint(XR_ADV_KernelTiles.records.length()));
-        // Bound multiplication before evaluating it, including tiny pressure
-        // buffers. Later bounds checks cannot detect wrapped uint arithmetic.
-        if (tileCapacity == 0u || k > capacity / tileCapacity)
-        {
-            atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_OVERFLOW_MEMBERSHIPS);
-            continue;
-        }
-        uint rangeBase = k * tileCapacity;
-        if (rangeIndex >= tileCapacity || rangeIndex >= capacity - rangeBase)
-        {
-            atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_OVERFLOW_MEMBERSHIPS);
-            continue;
-        }
-        uint destination = rangeBase + rangeIndex;
-        // The dense kernel owns its layout, coverage and derivative contract;
-        // material rows remain data and the tile retains its exact view index.
-        uint flags = kernelHistogram[k] == activePixels ? XR_ADV_KERNEL_TILE_FULL : XR_ADV_KERNEL_TILE_MIXED;
-        flags |= kernelFlags[k];
-        XR_ADV_KernelTiles.records[destination] = XRAdvancedKernelTile(
-            tileIndex, k, kernelHistogram[k], flags);
+        atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_OVERFLOW_MEMBERSHIPS);
+        return;
     }
+    uint destination = rangeBase + rangeIndex;
+    // The dense kernel owns its layout, coverage and derivative contract;
+    // material rows remain data and the tile retains its exact view index.
+    uint flags = kernelHistogram[kernel] == activePixels ? XR_ADV_KERNEL_TILE_FULL : XR_ADV_KERNEL_TILE_MIXED;
+    flags |= kernelFlags[kernel];
+    XR_ADV_KernelTiles.records[destination] = XRAdvancedKernelTile(
+        tileIndex, kernel, kernelHistogram[kernel], flags);
 }
