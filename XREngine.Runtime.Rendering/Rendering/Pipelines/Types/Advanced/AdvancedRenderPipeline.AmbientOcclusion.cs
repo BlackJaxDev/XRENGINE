@@ -91,6 +91,20 @@ public partial class AdvancedRenderPipeline
     private static bool AoModeRunsPasses(int mode)
         => mode is not (0 or AoModeVoxel);
 
+    /// <summary>
+    /// True when the AO passes of this frame write the whole native AO image after the native AO
+    /// stage: the passes run (<see cref="AppendAdvancedAmbientOcclusionCommands"/>), and the
+    /// finalize framebuffer exists in the current resource generation. The native stage then
+    /// skips its neutral fill, because the finalize quad overwrites it before shading reads it.
+    /// AO off, VXAO, the startup-safe path, a missing camera and a missing finalize target all
+    /// keep the fill.
+    /// </summary>
+    internal bool AmbientOcclusionPassesReplaceNeutralFill(XRRenderPipelineInstance instance)
+        => UsesAmbientOcclusionPasses && !UseOpenXrVulkanDesktopStartupSafePath &&
+            AoModeRunsPasses(EvaluateAmbientOcclusionMode()) &&
+            instance.Resources.TryGetFrameBuffer(AoFinalizeFBOName, out XRFrameBuffer? finalize) &&
+            finalize is not null;
+
     /// <summary>Gets the mode that the camera selects now, in the same form as the resource mask.</summary>
     private int EvaluateAmbientOcclusionMode()
     {

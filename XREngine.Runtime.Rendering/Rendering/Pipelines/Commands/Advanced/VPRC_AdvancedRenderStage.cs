@@ -457,6 +457,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 ActivePipelineInstance.Resources.TryGetFrameBuffer(
                     AdvancedDecalBufferResourceNames.FrameBuffer, out XRFrameBuffer? decalBuffer) &&
                 decalBuffer is not null,
+            SkipNeutralAmbientOcclusionFill = Stage == EAdvancedRenderStage.AmbientOcclusion &&
+                !enableBuiltInAmbientOcclusion &&
+                pipeline.AmbientOcclusionPassesReplaceNeutralFill(ActivePipelineInstance),
         };
         if (request.RecordRvcShadeletTelemetry)
             RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryRequest();

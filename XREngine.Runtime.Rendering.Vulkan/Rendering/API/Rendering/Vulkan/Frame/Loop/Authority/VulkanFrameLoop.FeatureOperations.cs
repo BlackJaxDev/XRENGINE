@@ -187,6 +187,7 @@ internal sealed partial class VulkanFrameLoop
             AdvancedEdgeHalfRateRadius = request.AdvancedEdgeHalfRateRadius,
             AdvancedEdgeHalfRateDebugTint = request.AdvancedEdgeHalfRateDebugTint,
             DecalBufferEnabled = request.DecalBufferEnabled,
+            SkipNeutralAmbientOcclusionFill = request.SkipNeutralAmbientOcclusionFill,
         };
         if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
         {

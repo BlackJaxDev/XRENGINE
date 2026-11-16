@@ -521,7 +521,13 @@ The resource-generation key and frozen native stage order preserve the selected
 AO family. On desktop backends, the native stage writes neutral AO. The mode from
 the camera's AO schema then replaces it with the Default pipeline's AO commands
 and shaders, which read normals derived from depth. VXAO stays neutral, because
-the Default pipeline does not implement it.
+the Default pipeline does not implement it. On Vulkan, when the AO passes run in a
+frame and their finalize framebuffer exists
+(`AdvancedRenderPipeline.AmbientOcclusionPassesReplaceNeutralFill`), the native stage
+records no neutral-fill dispatch (`SkipNeutralAmbientOcclusionFill`): the finalize quad
+overwrites the whole image before shading reads it. The stage operation and its
+transitions still run. AO off, VXAO, the startup-safe path, a missing camera and a
+missing finalize target keep the fill.
 All native, surface-export, depth-comparison, and MSAA shading recipes declare
 `XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1`. Runtime validation rejects older
 recipes before binding the neutral texture, despite the unchanged 160-byte

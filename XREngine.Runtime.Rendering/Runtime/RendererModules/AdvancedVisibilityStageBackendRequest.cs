@@ -94,6 +94,13 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// </summary>
     public bool DecalBufferEnabled { get; init; }
 
+    /// <summary>
+    /// True when the native AO stage skips its neutral fill (AO = 1) because the camera's AO passes
+    /// write the whole native AO image later in the same frame, before shading reads it. The stage
+    /// operation still runs, with its layout transitions. It is not part of the family identity.
+    /// </summary>
+    public bool SkipNeutralAmbientOcclusionFill { get; init; }
+
     public bool IsValid => GetInvalidReason() is null;
 
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>

@@ -70,6 +70,12 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// <summary>True when the family records the decal buffer phase and native shading reads the decal buffer.</summary>
     internal bool DecalBufferEnabled { get; init; }
 
+    /// <summary>
+    /// True when the native AO stage records no neutral-fill dispatch, because the AO passes
+    /// overwrite the native AO image before shading. The transitions still run.
+    /// </summary>
+    internal bool SkipNeutralAmbientOcclusionFill { get; init; }
+
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
     internal bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
 

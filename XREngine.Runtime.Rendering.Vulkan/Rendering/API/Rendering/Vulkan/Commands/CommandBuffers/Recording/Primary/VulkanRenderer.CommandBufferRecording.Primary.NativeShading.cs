@@ -171,8 +171,11 @@ internal sealed partial class VulkanCommandRuntime
         if (payload.Request.Stage == EAdvancedRenderStage.AmbientOcclusion)
         {
             TransitionNativeOutput(state.CommandBuffer, closure.AmbientOcclusion, closure.ViewIndex);
-            RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.AmbientOcclusion,
-                in push, tilesX, tilesY, 1, "Advanced.GTAO", NativeAmbientOcclusionGpuProfilerPath);
+            // The AO passes overwrite the whole image later in this frame, so the neutral fill
+            // would be a dead write. The transition and the barrier still run.
+            if (!payload.Request.SkipNeutralAmbientOcclusionFill)
+                RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.AmbientOcclusion,
+                    in push, tilesX, tilesY, 1, "Advanced.GTAO", NativeAmbientOcclusionGpuProfilerPath);
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
             return info.OperationIndex;
         }
