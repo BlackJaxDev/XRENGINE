@@ -17,6 +17,10 @@ public partial class AdvancedRenderPipeline
     private const ulong OpenXrTwoPassEyeFamilyFeatureBit = 1UL << 63;
     private const ulong MinimalVisibilityOffscreenFeatureBit = 1UL << 62;
     private const ulong MaterialSurfaceExportResourcesFeatureBit = 1UL << 56;
+    // Declares the late-pass debug output (AdvancedTransparency.DebugOutput), set only while a
+    // late-pass debug view or debug overlays are on. Bits 48-50 hold the visibility resource
+    // features (Core is always set), so this bit must stay outside them.
+    private const ulong LatePassDebugOutputFeatureBit = 1UL << 39;
     public const string ExternalOutputResourceName = "$ExternalOutput";
 
     // Forward late/debug consumers retain the existing probe-array contract.
@@ -124,7 +128,7 @@ public partial class AdvancedRenderPipeline
             (LatePassDebugView != EAdvancedLatePassDebugView.Disabled ||
              viewport?.CapturePolicy.RenderDebugOverlays == true))
         {
-            latePassFeatureMask = (1UL << 48);
+            latePassFeatureMask = LatePassDebugOutputFeatureBit;
         }
 
         ulong profileFeatureMask =

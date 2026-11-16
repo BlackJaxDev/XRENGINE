@@ -953,6 +953,12 @@ OpenGL and Vulkan lower the same four logical boundaries (`EAdvancedSynchronizat
 
 Each declared resource has one ownership class (`EAdvancedRenderResourceOwnership`): `PipelinePersistent`, `FrameSlotTransient`, `TemporalHistory`, `Imported`, or `External`. Current and previous frame-slot reuse waits on a fence or timeline completion.
 
+Debug-only resources are declared only when their feature bit is in the resource
+feature mask. `AdvancedTransparency.DebugOutput` (RGBA16F, about 110 MB per eye output
+at 2688x2688) needs a late-pass debug view or debug overlays. Each optional resource
+uses its own bit. Bits 48-50 hold `AdvancedVisibilityResourceFeature`, and `Core` is
+always set, so a debug resource gated on one of those bits is always allocated.
+
 ## Invariants
 
 - Compatible opaque and masked surfaces write one visibility payload and shade through the visibility path. They do not choose between deferred and ordinary opaque-forward color paths.
