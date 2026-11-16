@@ -1,5 +1,6 @@
 #version 450
 #include "ClassificationInterface.glslinc"
+#include "Advanced/Shading/HiddenAreaTiles.glslinc"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 // Push flag: the classification counter readback is active (instrumented submission
 // strategies). Only then does each tile add its pixels to the two pixel counters.
@@ -25,6 +26,9 @@ shared uint primaryKernelPacked;
 
 void main()
 {
+    // A tile that the headset lens never shows gets no kernel membership. The background pass
+    // fills it. The test depends only on the work group, so the whole group leaves together.
+    if (XR_ADV_IsHiddenAreaTile(gl_WorkGroupID.xy)) return;
     uint localIndex = gl_LocalInvocationIndex;
     if (localIndex == 0u) { activePixels = 0u; backgroundPixels = 0u; primaryKernelPacked = 0u; }
     if (localIndex < XR_ADV_MAX_SHADING_KERNELS)

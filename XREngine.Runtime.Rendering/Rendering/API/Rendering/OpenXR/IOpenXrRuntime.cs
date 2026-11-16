@@ -33,6 +33,27 @@ public interface IOpenXrRuntime : IOpenXrApplicationLifecycle
     ulong PreviewRightEyeFrameId { get; }
     bool TryGetLatestIPD(out float ipdMeters);
     bool TryGetEyeFovAngles(bool leftEye, out float angleLeft, out float angleRight, out float angleUp, out float angleDown);
+    /// <summary>
+    /// Returns the XR_KHR_visibility_mask meshes of one eye as the runtime reported them: vertices in
+    /// view space on the plane at z = -1 (x right, y up), and triangle indices. <paramref name="revision"/>
+    /// changes each time the engine fetches the meshes again. Returns false when the runtime gives no
+    /// hidden-area mesh. The arrays belong to the runtime; callers must not change them.
+    /// </summary>
+    /// <summary>Returns 0 for the left eye camera, 1 for the right eye camera, and -1 for any other camera.</summary>
+    int ResolveEyeIndex(XRCamera? camera) => -1;
+    bool TryGetVisibilityMaskMeshes(
+        bool leftEye,
+        out Vector2[] hiddenVertices,
+        out uint[] hiddenIndices,
+        out Vector2[] visibleVertices,
+        out uint[] visibleIndices,
+        out ulong revision)
+    {
+        hiddenVertices = visibleVertices = [];
+        hiddenIndices = visibleIndices = [];
+        revision = 0;
+        return false;
+    }
     bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight);
     bool TryGetHeadLocalPose(out Matrix4x4 localPose);
     bool TryGetHeadLocalPose(RuntimeOpenXrPoseTiming timing, out Matrix4x4 localPose);

@@ -139,6 +139,8 @@ The visible simulated-HMD preview is the `monado-service.exe` windowed composito
 
 On Vulkan, Monado sessions have no directional cascade shadows by default (a safety stop for earlier hangs). Set `XRE_VULKAN_DIRECTIONAL_CASCADES=1` in the process environment to validate directional cascades, the shadow atlas, and the Advanced directional shadow lane on Monado. Stop a session that hangs; the hang is not proved to be gone. See [shadow atlas](../../architecture/rendering/shadow-atlas.md).
 
+Monado does not enable `XR_KHR_visibility_mask` for its simulated headset, so the Advanced hidden-area tile reject is off there. To measure the reject on Monado, set the test hook `XRE_TEST_HIDDEN_AREA_MASK` to a hidden fraction from 0 to 0.5 (for example `0.15`), optionally followed by a center offset as a fraction of the field of view (`0.15,0.0,0.1`: x right, y up). The eyes then use a synthetic circular mask, and every session that uses it writes a warning to `advanced-hidden-area.log` in the session log folder. Do not use the hook outside tests. With a runtime mask, the same log reports for each eye the hidden fraction of the mask and the image fraction that the reject can skip. See [Advanced render pipeline](../../architecture/rendering/advanced-render-pipeline.md#hidden-area-tile-reject).
+
 Monado lane baselines, CI promotion, and persistent smoke settings remain open decisions for XR validation.
 
 ## Implementation References

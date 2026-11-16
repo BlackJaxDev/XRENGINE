@@ -88,6 +88,13 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     public bool AdvancedEdgeHalfRateDebugTint { get; init; }
 
     /// <summary>
+    /// Conservative visible ellipses of the OpenXR eye views from <see cref="AdvancedHiddenAreaTiles"/>.
+    /// Classification skips the tiles fully outside the ellipse of their view, and the background
+    /// pass fills them with black. A view without an ellipse keeps every tile.
+    /// </summary>
+    public AdvancedHiddenAreaEllipses HiddenAreaEllipses { get; init; }
+
+    /// <summary>
     /// True when this family records the mesh surface decal buffer phase. Native opaque
     /// shading then blends the decal buffer before lighting. Every stage of one family
     /// carries the same value.

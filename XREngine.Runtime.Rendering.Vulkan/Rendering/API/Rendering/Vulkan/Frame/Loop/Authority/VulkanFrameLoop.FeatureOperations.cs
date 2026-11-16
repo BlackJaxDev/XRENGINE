@@ -186,6 +186,7 @@ internal sealed partial class VulkanFrameLoop
             AdvancedEdgeHalfRateShading = request.AdvancedEdgeHalfRateShading,
             AdvancedEdgeHalfRateRadius = request.AdvancedEdgeHalfRateRadius,
             AdvancedEdgeHalfRateDebugTint = request.AdvancedEdgeHalfRateDebugTint,
+            HiddenAreaEllipses = request.HiddenAreaEllipses,
             DecalBufferEnabled = request.DecalBufferEnabled,
             SkipNeutralAmbientOcclusionFill = request.SkipNeutralAmbientOcclusionFill,
         };

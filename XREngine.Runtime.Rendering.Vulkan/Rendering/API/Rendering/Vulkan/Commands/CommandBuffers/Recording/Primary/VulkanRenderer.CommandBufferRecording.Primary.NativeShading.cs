@@ -60,6 +60,32 @@ internal sealed partial class VulkanCommandRuntime
     private const float EdgeHalfRateRadiusStep = 0.05f;
 
     /// <summary>
+    /// Writes the hidden-area ellipse into the push fields that classification and the background
+    /// pass do not read: depthSlices holds the center (two 16-bit UNORM values in eye-image UV),
+    /// maxLightIndices and lightCount hold the inverse radii (float bits, in UV). Zero inverse radii
+    /// turn the reject off. Only ClassifyTiles.comp and ShadeBackground.comp receive this push;
+    /// the froxel and shading dispatches keep the real values. MSAA visibility shades with one
+    /// full-screen dispatch that ignores classification, so it keeps every tile.
+    /// </summary>
+    private static VulkanAdvancedNativeShadingPushConstants WithHiddenAreaTiles(
+        in VulkanAdvancedNativeShadingPushConstants push, Vector4 ellipse, bool multisampleVisibility)
+    {
+        // A center outside the image cannot be packed without moving the ellipse, which could
+        // then exclude visible pixels, so such an ellipse turns the reject off.
+        if (multisampleVisibility || !(ellipse.Z > 0f) || !(ellipse.W > 0f) ||
+            !(ellipse.X >= 0f && ellipse.X <= 1f && ellipse.Y >= 0f && ellipse.Y <= 1f))
+            return push with { DepthSlices = 0u, MaxLightIndices = 0u, LightCount = 0u };
+        uint centerU = (uint)MathF.Round(ellipse.X * 65535f);
+        uint centerV = (uint)MathF.Round(ellipse.Y * 65535f);
+        return push with
+        {
+            DepthSlices = centerU | (centerV << 16),
+            MaxLightIndices = BitConverter.SingleToUInt32Bits(1f / ellipse.Z),
+            LightCount = BitConverter.SingleToUInt32Bits(1f / ellipse.W),
+        };
+    }
+
+    /// <summary>
     /// Push flags for the shading and fill passes of one view. RVC foveated quads and
     /// Advanced edge half-rate shading share the follower rule and the fill pass; the
     /// edge mode adds its own bit and the quantized radius. MSAA visibility uses neither.
@@ -150,10 +176,11 @@ internal sealed partial class VulkanCommandRuntime
             }
             // The classified and background pixel counters are read only by the diagnostic
             // readback, which instrumented strategies record after the last view.
-            VulkanAdvancedNativeShadingPushConstants classifyPush =
+            VulkanAdvancedNativeShadingPushConstants classifyPush = WithHiddenAreaTiles(
                 GpuDiagnosticReadbackPlan.IsInstrumented(payload.Request.BackendPackage.Package.SubmissionResolution.Resolved)
                     ? push with { Flags = push.Flags | ClassificationPixelCountersFlag }
-                    : push;
+                    : push,
+                payload.Request.HiddenAreaEllipses.ForView(closure.ViewIndex), closure.UsesMultisampleVisibility);
             RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.Classify,
                 in classifyPush, tilesX, tilesY, 1, "Advanced.ClassifyTiles", NativeClassificationGpuProfilerPath);
             EmitNativeBufferDependency(state.CommandBuffer, closure.KernelCounts,
@@ -205,8 +232,10 @@ internal sealed partial class VulkanCommandRuntime
         // Background reads only the visibility identity, so it can overlap the froxel build.
         // The global barrier after it makes the froxel, light index and decal buffers visible
         // to shading, together with the background image writes.
+        VulkanAdvancedNativeShadingPushConstants backgroundPush = WithHiddenAreaTiles(
+            push, payload.Request.HiddenAreaEllipses.ForView(closure.ViewIndex), closure.UsesMultisampleVisibility);
         RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.Background,
-            in push, tilesX, tilesY, 1, "Advanced.Background", NativeBackgroundGpuProfilerPath);
+            in backgroundPush, tilesX, tilesY, 1, "Advanced.Background", NativeBackgroundGpuProfilerPath);
         // Background initializes every pixel and shading then overwrites the covered pixels,
         // so this barrier orders a real write-after-write.
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);

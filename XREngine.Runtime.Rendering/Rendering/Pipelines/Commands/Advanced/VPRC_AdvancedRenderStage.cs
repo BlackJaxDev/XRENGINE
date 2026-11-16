@@ -453,6 +453,15 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 ActivePipelineInstance.Pipeline is AdvancedRenderPipeline { IsOpenXrEyeProfile: true },
             AdvancedEdgeHalfRateRadius = RuntimeEngine.Rendering.Settings.VrAdvancedEdgeHalfRateRadius,
             AdvancedEdgeHalfRateDebugTint = RuntimeEngine.Rendering.Settings.VrAdvancedEdgeHalfRateDebugTint,
+            // Classification skips the hidden tiles and the shading stage fills them, so both
+            // stages carry the same ellipses. Only views that render an OpenXR eye get one; the
+            // desktop output keeps every tile.
+            HiddenAreaEllipses = Stage is EAdvancedRenderStage.WorkClassification or EAdvancedRenderStage.NativeOpaqueShading &&
+                samples <= 1u
+                    ? AdvancedHiddenAreaTiles.ResolveViewEllipses(RuntimeEngine.VRState.OpenXRApi,
+                        ActivePipelineInstance.RenderState.SceneCamera ?? ActivePipelineInstance.RenderState.RenderingCamera,
+                        ActivePipelineInstance.RenderState.StereoRightEyeCamera)
+                    : default,
             DecalBufferEnabled = stageBackend.SupportsAdvancedSurfaceDecalBuffer &&
                 ActivePipelineInstance.Resources.TryGetFrameBuffer(
                     AdvancedDecalBufferResourceNames.FrameBuffer, out XRFrameBuffer? decalBuffer) &&

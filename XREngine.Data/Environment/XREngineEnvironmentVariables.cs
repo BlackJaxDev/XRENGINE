@@ -402,6 +402,14 @@ public static class XREngineEnvironmentVariables
     /// enables synchronization validation.
     /// </summary>
     public const string VulkanSynchronizationShaderAccesses = "XRE_VULKAN_SYNC_SHADER_ACCESSES";
+    /// <summary>
+    /// Test hook for runtimes without XR_KHR_visibility_mask: replaces the hidden-area mask of the
+    /// OpenXR eyes with a synthetic circle. The value is the hidden fraction of the eye image
+    /// (0 to 0.5), optionally followed by a center offset as a fraction of the field of view:
+    /// "0.15" or "0.15,0.0,0.1" (x right, y up). The engine writes a warning to
+    /// advanced-hidden-area.log in each session that uses it. Do not ship with it set.
+    /// </summary>
+    public const string TestHiddenAreaMask = "XRE_TEST_HIDDEN_AREA_MASK";
     public const string VulkanGpuAssistedValidation = "XRE_VULKAN_GPU_ASSISTED_VALIDATION";
     public const string VulkanBestPracticesValidation = "XRE_VULKAN_BEST_PRACTICES";
     public const string VulkanCrashBreadcrumbs = "XRE_VULKAN_CRASH_BREADCRUMBS";

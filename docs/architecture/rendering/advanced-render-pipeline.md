@@ -241,6 +241,37 @@ light loop visits the same light again with the same direction. It uses the stor
 instead of a second soft-shadow filter. Only the other lights evaluate their shadows in the
 loop.
 
+### Hidden-area tile reject
+
+An OpenXR runtime with `XR_KHR_visibility_mask` reports, for each eye, the part of the eye
+image that the headset lens never shows. The Advanced stages of the OpenXR eye views (Advanced
+and RVC eye pipelines) skip native shading there:
+
+- `AdvancedHiddenAreaTiles` reduces the runtime meshes of each eye to one conservative ellipse
+  in eye-image UV. Every visible pixel lies inside it: the ellipse encloses the visible-area
+  mesh, or, when the runtime gives only the hidden-area mesh, every cell of a 128x128 grid that
+  the hidden triangles do not fully cover. The ellipse is computed again only when the mask
+  revision or the field of view changes.
+- `VPRC_AdvancedRenderStage` puts the ellipse of each eye view into the work classification and
+  native shading requests (`AdvancedHiddenAreaEllipses`). A stereo instance maps view 0 to the
+  left eye and view 1 to the right eye; a mono eye instance uses view 0. The desktop output and
+  MSAA visibility get no ellipse.
+- The Vulkan recording writes the ellipse of the view into push fields that `ClassifyTiles.comp`
+  and `ShadeBackground.comp` do not otherwise read (`HiddenAreaTiles.glslinc`). Classification
+  returns early for a 16x16 tile that lies fully outside the ellipse, so the tile gets no kernel
+  membership and no shading. The background pass writes that tile as opaque black with zero
+  velocity and reactive mask. TSR history, ambient occlusion and bloom then read a stable,
+  defined value, and the sky pass does not draw there.
+- When the runtime gives no mask, the reject is off. The engine writes one line to
+  `advanced-hidden-area.log` that says so, and one line for each eye each time its ellipse
+  changes: the mask hidden fraction, the ellipse, and the image fraction outside the ellipse.
+- `XRE_TEST_HIDDEN_AREA_MASK` replaces the runtime mask with a synthetic circle for runtimes
+  without a mask, such as the Monado bench. It is a test hook only, and every session that uses
+  it writes a warning to the log. See [OpenXR runtime](../../developer-guides/vr/openxr-runtime.md).
+
+The visibility raster, ambient occlusion, TSR and post-processing still process the hidden
+tiles. Only classification and shading skip them.
+
 ### Eye render scale
 
 With TSR as the anti-aliasing mode of the eyes, `TsrRenderScale` (0.5 to 1.0, or the

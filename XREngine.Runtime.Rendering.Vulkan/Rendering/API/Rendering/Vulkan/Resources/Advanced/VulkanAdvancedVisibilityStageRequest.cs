@@ -67,6 +67,9 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// <summary>Diagnostic tint of the half-rate blocks.</summary>
     internal bool AdvancedEdgeHalfRateDebugTint { get; init; }
 
+    /// <summary>Conservative visible ellipses of the OpenXR eye views; a view without one keeps every tile.</summary>
+    internal AdvancedHiddenAreaEllipses HiddenAreaEllipses { get; init; }
+
     /// <summary>True when the family records the decal buffer phase and native shading reads the decal buffer.</summary>
     internal bool DecalBufferEnabled { get; init; }
 
