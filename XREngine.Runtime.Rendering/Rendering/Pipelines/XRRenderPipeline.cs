@@ -1054,7 +1054,19 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     internal virtual float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
         => RequestedInternalResolution;
 
-    internal virtual float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
+    /// <summary>
+    /// Resolves the internal-resolution scale request for one view with its effective anti-aliasing mode.
+    /// </summary>
+    /// <param name="camera">The camera of the view.</param>
+    /// <param name="effectiveAntiAliasingMode">The anti-aliasing mode that the view uses this frame.</param>
+    /// <param name="allowVendorUpscale">
+    /// False when the view cannot run a vendor upscaler (DLSS or XeSS), for example a VR eye. The
+    /// request then ignores the vendor scale, so the view does not render small without an upscaler.
+    /// </param>
+    internal virtual float? GetRequestedInternalResolutionForCamera(
+        XRCamera? camera,
+        EAntiAliasingMode effectiveAntiAliasingMode,
+        bool allowVendorUpscale)
         => GetRequestedInternalResolutionForCamera(camera);
 
     /// <summary>

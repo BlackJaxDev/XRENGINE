@@ -696,7 +696,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return DeclineRender("The play-mode transition suspended pipeline execution.");
         }
 
-        ApplyCurrentFrameProfile(camera, stereoRightEyeCamera, viewport);
+        ApplyCurrentFrameProfile(camera, stereoRightEyeCamera, viewport, stereoPass);
 
         using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))
         {
