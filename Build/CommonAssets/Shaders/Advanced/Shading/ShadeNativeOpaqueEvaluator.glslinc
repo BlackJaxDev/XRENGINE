@@ -601,6 +601,13 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     if ((materialFlags & 4u) != 0u)
         rmse.xy *= XR_ADV_StandardTexture(material, 2u, surface.texCoord0,
             surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0)).rg;
+    // The material occlusion texture multiplies the screen-space AO (product, as the glTF
+    // and engine forward paths do). ambientOcclusion reaches only indirect light: ambient and
+    // probe diffuse, and probe specular through the specular occlusion function.
+    if ((materialFlags & XR_ADV_STANDARD_OCCLUSION_TEXTURE_FLAG) != 0u)
+        ambientOcclusion *= XR_ADV_StandardOcclusion(material,
+            surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy,
+            surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy);
     vec3 N = normalize(surface.shadingNormal);
     if ((materialFlags & 2u) != 0u &&
         XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT))

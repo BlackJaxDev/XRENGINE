@@ -73,6 +73,26 @@ namespace XREngine.Rendering.Materials
                 flags |= 1u << 1;
             flags |= surfaceDetail.Flags;
 
+            // Only an explicit occlusion surface binding with a strength above 0 publishes the
+            // texture and its flag. Without the flag, native shading samples no occlusion texture.
+            MaterialSurfaceTextureBinding? occlusionBinding = hasSurfaceBindings
+                ? material.GetSurfaceTexture(EMaterialTextureSemantic.Occlusion)
+                : null;
+            XRTexture? occlusion = occlusionBinding?.Texture;
+            float occlusionStrength = Math.Clamp(material.OcclusionStrength, 0.0f, 1.0f);
+            uint occlusionControls = 0u;
+            if (occlusion is not null && occlusionStrength > 0.0f)
+            {
+                flags |= GPUMaterialEntry.OcclusionTextureFlag;
+                occlusionControls = (uint)Math.Clamp(occlusionBinding!.Channel, 0, 3) |
+                    (occlusionBinding.TexCoordSet > 0 ? GPUMaterialEntry.OcclusionUv1Flag : 0u);
+            }
+            else
+            {
+                occlusion = null;
+                occlusionStrength = 1.0f;
+            }
+
             return new MaterialBindingSourceSnapshot(
                 new GPUMaterialEntry
                 {
@@ -82,6 +102,8 @@ namespace XREngine.Rendering.Materials
                     AlphaCutoff = material.AlphaCutoff,
                     SurfaceDetailHeightScale = surfaceDetail.HeightScale,
                     ParallaxScale = surfaceDetail.ParallaxScale,
+                    OcclusionStrength = occlusionStrength,
+                    OcclusionControls = occlusionControls,
                 },
                 albedo,
                 normal,
@@ -92,7 +114,8 @@ namespace XREngine.Rendering.Materials
                 ResolveEmissionTextureMetadata(emissiveBinding),
                 emissiveBinding?.UvScaleOffset ?? new Vector4(1.0f, 1.0f, 0.0f, 0.0f),
                 emissiveBinding?.UvRotation ?? 0.0f,
-                opacity);
+                opacity,
+                occlusion);
         }
 
         private readonly record struct SurfaceDetailControls(uint Flags, float HeightScale, float ParallaxScale);

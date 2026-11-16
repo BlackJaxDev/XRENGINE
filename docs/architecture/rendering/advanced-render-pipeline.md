@@ -391,7 +391,7 @@ checks still apply.
 
 Legacy material reuse (no engine semantic, for example an imported material with a
 height, specular, alpha-mask or emissive map) requires no engine-surface or Uber
-companions. It encodes the five legacy texture slots again (from
+companions. It encodes the six legacy texture slots again (from
 `SurfaceTextureBindings` when the material has them, otherwise from the legacy
 texture list) and compares each with its committed logical binding. It also packs
 the constant row again and compares it with the committed row, because one texture
@@ -727,6 +727,36 @@ including the cleared entries. Adjacent writes merge into one range.
 `AdvancedMaterialDatabaseContractTests` checks complete slots for addition,
 replacement, and payload shrink. Replacement uses no managed allocation when
 capacity is sufficient.
+
+### Material ambient occlusion
+
+The Standard layouts (`OpaqueDeferred`, `ForwardOpaque`, `MaskedForward`) have six
+texture slots: albedo, normal, metallic-roughness, emissive, opacity, and occlusion
+(slot 5). The occlusion texture comes from a `MaterialSurfaceTextureBinding` with the
+`EMaterialTextureSemantic.Occlusion` semantic:
+
+- `MaterialBindingSourceEncoder` publishes it only when the binding exists and
+  `XRMaterial.OcclusionStrength` is above 0. It then sets
+  `GPUMaterialEntry.OcclusionTextureFlag` (bit 29 of the material flags word) and
+  writes `OcclusionStrength` and `OcclusionControls` (channel in bits 0-1, texture-coordinate
+  set 1 in bit 2).
+- The occlusion words follow the original 36-word row: strength at word 36, controls at
+  word 37, and the texture handle at word 38 (`MaterialTextureBinding.PackHandleAfterFields`).
+  Every earlier word offset, including `Flags` at word 5, is the same as in a row without
+  occlusion, so the Uber, MSAA and repair kernels, WebGPU, and `GPUMaterialTable` keep their
+  offsets. The row is 40 words.
+- The native opaque kernel samples the texture only when the flag is set, so a
+  material without the texture takes no extra sample. The value follows glTF:
+  `occlusion = 1 + strength * (texel - 1)`.
+- The kernel multiplies it into the screen-space ambient occlusion (product). The
+  combined value darkens only indirect light: the world ambient term, probe diffuse,
+  and probe specular through `XR_ADV_SpecularVisibility`. Direct light does not use it.
+- The glTF importer binds `occlusionTexture` (red channel) with its `strength`. The
+  Assimp importer binds `TextureType.AmbientOcclusion` slots. The native FBX importer
+  maps texture names with "occlusion" or an "_ao" token to that type, instead of the
+  base color default.
+- Only the native opaque kernels read the texture. The Native Uber path, the Default
+  pipeline, and the WebGPU shading contracts ignore it.
 
 ### General debug shapes
 

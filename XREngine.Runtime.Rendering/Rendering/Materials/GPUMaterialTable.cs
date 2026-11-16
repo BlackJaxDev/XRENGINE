@@ -185,6 +185,9 @@ namespace XREngine.Rendering.Materials
                left.RMHandleIndex == right.RMHandleIndex &&
                left.Flags == right.Flags &&
                left.OpacityHandleIndex == right.OpacityHandleIndex &&
+               left.OcclusionHandleIndex == right.OcclusionHandleIndex &&
+               left.OcclusionStrength == right.OcclusionStrength &&
+               left.OcclusionControls == right.OcclusionControls &&
                left.BaseColorOpacity == right.BaseColorOpacity &&
                left.RMSE == right.RMSE &&
                left.AlphaCutoff == right.AlphaCutoff &&
