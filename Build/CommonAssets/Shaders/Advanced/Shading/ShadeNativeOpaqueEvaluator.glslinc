@@ -189,6 +189,19 @@ bool XR_ADV_SourceSH(uint viewIndex, out vec4 ar, out vec4 ag, out vec4 ab,
     return enabled;
 }
 
+// Adds one selected probe to the weighted irradiance and prefiltered sums.
+void XR_ADV_AccumulateProbeSlot(float weight, uint index, vec3 worldPosition, vec3 N, vec3 V,
+    float roughness, inout vec3 irradiance, inout vec3 prefiltered, inout float sum)
+{
+    if (weight <= 0.0) return;
+    vec3 probeDiffuse, probeSpecular;
+    if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(index), worldPosition, N, V,
+        roughness, false, probeDiffuse, probeSpecular)) return;
+    irradiance += probeDiffuse * weight;
+    prefiltered += probeSpecular * weight;
+    sum += weight;
+}
+
 void XR_ADV_EvaluateProbeIblWithSelection(
     uint viewIndex,
     vec3 worldPosition,
@@ -199,16 +212,16 @@ void XR_ADV_EvaluateProbeIblWithSelection(
     float metallic,
     out vec3 diffuseIndirect,
     out vec3 specularIndirect,
-    out float weights[4],
-    out uint indices[4])
+    out vec4 weights,
+    out uvec4 indices)
 {
+    // The four strongest probes, strongest first. Vectors with a fixed insertion order
+    // replace float[4] and uint[4]: a dynamically indexed local array goes to per-invocation
+    // local memory (a register spill), while vector components stay in registers.
     diffuseIndirect = vec3(0.0);
     specularIndirect = vec3(0.0);
-    for (uint slot = 0u; slot < 4u; ++slot)
-    {
-        weights[slot] = 0.0;
-        indices[slot] = 0u;
-    }
+    weights = vec4(0.0);
+    indices = uvec4(0u);
     for (uint index = 0u; index < uint(XR_ADV_Probes.records.length()); ++index)
     {
         XRAdvancedProbeRecord probe = XR_ADV_LoadProbe(index);
@@ -219,32 +232,34 @@ void XR_ADV_EvaluateProbeIblWithSelection(
                 (viewIndex >= 64u || (probe.viewMaskHi & (1u << (viewIndex - 32u))) == 0u))) continue;
         float weight = XR_ADV_ProbeWeight(probe, worldPosition);
         if (weight <= 0.0) continue;
-        for (uint slot = 0u; slot < 4u; ++slot)
+        if (weight > weights.x)
         {
-            if (weight <= weights[slot]) continue;
-            for (uint shift = 3u; shift > slot; --shift)
-            {
-                weights[shift] = weights[shift - 1u];
-                indices[shift] = indices[shift - 1u];
-            }
-            weights[slot] = weight;
-            indices[slot] = index;
-            break;
+            weights = vec4(weight, weights.xyz);
+            indices = uvec4(index, indices.xyz);
+        }
+        else if (weight > weights.y)
+        {
+            weights.yzw = vec3(weight, weights.yz);
+            indices.yzw = uvec3(index, indices.yz);
+        }
+        else if (weight > weights.z)
+        {
+            weights.zw = vec2(weight, weights.z);
+            indices.zw = uvec2(index, indices.z);
+        }
+        else if (weight > weights.w)
+        {
+            weights.w = weight;
+            indices.w = index;
         }
     }
     float sum = 0.0;
     vec3 irradiance = vec3(0.0);
     vec3 prefiltered = vec3(0.0);
-    for (uint slot = 0u; slot < 4u; ++slot)
-    {
-        if (weights[slot] <= 0.0) continue;
-        vec3 probeDiffuse, probeSpecular;
-        if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(indices[slot]), worldPosition, N, V,
-            roughness, false, probeDiffuse, probeSpecular)) continue;
-        irradiance += probeDiffuse * weights[slot];
-        prefiltered += probeSpecular * weights[slot];
-        sum += weights[slot];
-    }
+    XR_ADV_AccumulateProbeSlot(weights.x, indices.x, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+    XR_ADV_AccumulateProbeSlot(weights.y, indices.y, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+    XR_ADV_AccumulateProbeSlot(weights.z, indices.z, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+    XR_ADV_AccumulateProbeSlot(weights.w, indices.w, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
     if (sum <= 0.0) return;
     irradiance /= sum;
     prefiltered /= sum;
@@ -261,44 +276,55 @@ void XR_ADV_EvaluateProbeIbl(uint viewIndex, vec3 worldPosition, vec3 N,
     vec3 V, vec3 albedo, float roughness, float metallic,
     out vec3 diffuseIndirect, out vec3 specularIndirect)
 {
-    float weights[4];
-    uint indices[4];
+    vec4 weights;
+    uvec4 indices;
     XR_ADV_EvaluateProbeIblWithSelection(viewIndex, worldPosition, N, V,
         albedo, roughness, metallic, diffuseIndirect, specularIndirect,
         weights, indices);
 }
 
+void XR_ADV_AccumulateRawPrefilterSlot(float weight, uint index, vec3 worldPosition, vec3 N, vec3 V,
+    float perceptualRoughness, inout vec3 radiance, inout float sum)
+{
+    if (weight <= 0.0) return;
+    vec3 diffuse, prefiltered;
+    if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(index), worldPosition,
+        N, V, perceptualRoughness, true, diffuse, prefiltered)) return;
+    radiance += prefiltered * weight;
+    sum += weight;
+}
+
 vec3 XR_ADV_SampleSelectedRawPrefilter(vec3 worldPosition, vec3 N, vec3 V,
-    float perceptualRoughness, float weights[4], uint indices[4])
+    float perceptualRoughness, vec4 weights, uvec4 indices)
 {
     vec3 radiance = vec3(0.0);
     float sum = 0.0;
-    for (uint slot = 0u; slot < 4u; ++slot)
-    {
-        if (weights[slot] <= 0.0) continue;
-        vec3 diffuse, prefiltered;
-        if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(indices[slot]), worldPosition,
-            N, V, perceptualRoughness, true, diffuse, prefiltered)) continue;
-        radiance += prefiltered * weights[slot];
-        sum += weights[slot];
-    }
+    XR_ADV_AccumulateRawPrefilterSlot(weights.x, indices.x, worldPosition, N, V, perceptualRoughness, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterSlot(weights.y, indices.y, worldPosition, N, V, perceptualRoughness, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterSlot(weights.z, indices.z, worldPosition, N, V, perceptualRoughness, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterSlot(weights.w, indices.w, worldPosition, N, V, perceptualRoughness, radiance, sum);
     return sum > 0.0 ? radiance / sum : vec3(0.0);
 }
 
+void XR_ADV_AccumulateRawPrefilterNormalSlot(float weight, uint index, vec3 normal, float blur,
+    inout vec3 radiance, inout float sum)
+{
+    if (weight <= 0.0) return;
+    vec3 sampleColor;
+    if (!XR_ADV_TrySampleProbeNormal(XR_ADV_LoadProbe(index), normal, blur, sampleColor)) return;
+    radiance += sampleColor * weight;
+    sum += weight;
+}
+
 vec3 XR_ADV_SampleSelectedRawPrefilterNormal(vec3 normal,
-    float blur, float weights[4], uint indices[4])
+    float blur, vec4 weights, uvec4 indices)
 {
     vec3 radiance = vec3(0.0);
     float sum = 0.0;
-    for (uint slot = 0u; slot < 4u; ++slot)
-    {
-        if (weights[slot] <= 0.0) continue;
-        vec3 sampleColor;
-        if (!XR_ADV_TrySampleProbeNormal(XR_ADV_LoadProbe(indices[slot]),
-            normal, blur, sampleColor)) continue;
-        radiance += sampleColor * weights[slot];
-        sum += weights[slot];
-    }
+    XR_ADV_AccumulateRawPrefilterNormalSlot(weights.x, indices.x, normal, blur, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterNormalSlot(weights.y, indices.y, normal, blur, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterNormalSlot(weights.z, indices.z, normal, blur, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterNormalSlot(weights.w, indices.w, normal, blur, radiance, sum);
     return sum > 0.0 ? radiance / sum : vec3(0.0);
 }
 
@@ -370,6 +396,23 @@ vec3 XR_ADV_EvaluateLight(
 
 /// Returns true for a native Uber material row. Same test as XR_UBER_IsMaterial, without
 /// the Uber shading code.
+// Evaluates the lights of one froxel light-index range in list order.
+vec3 XR_ADV_EvaluateFroxelLightRange(uint offset, uint count, uint lightCount,
+    XRAdvancedSurface surface, vec3 N, vec3 V, vec3 albedo, float roughness, float metallic)
+{
+    vec3 color = vec3(0.0);
+    uint available = offset < uint(XR_ADV_LightIndexList.indices.length())
+        ? uint(XR_ADV_LightIndexList.indices.length()) - offset
+        : 0u;
+    for (uint j = 0u; j < min(count, available); ++j)
+    {
+        uint i = XR_ADV_LightIndexList.indices[offset + j];
+        if (i < lightCount)
+            color += XR_ADV_EvaluateLight(i, surface, N, V, albedo, roughness, metallic);
+    }
+    return color;
+}
+
 bool XR_ADV_IsNativeUberLayout(XRAdvancedMaterialRecord material)
 {
     return material.constantWordCount == XR_UBER_WORD_COUNT &&
@@ -645,21 +688,12 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         }
         else
         {
-            uint offsets[2] = uint[2](froxel.pointLightOffset, froxel.spotLightOffset);
-            uint counts[2] = uint[2](froxel.pointLightCount, froxel.spotLightCount);
-            for (uint type = 0u; type < 2u; ++type)
-            {
-                uint available = offsets[type] < uint(XR_ADV_LightIndexList.indices.length())
-                    ? uint(XR_ADV_LightIndexList.indices.length()) - offsets[type]
-                    : 0u;
-                for (uint j = 0u; j < min(counts[type], available); ++j)
-                {
-                    uint i = XR_ADV_LightIndexList.indices[offsets[type] + j];
-                    if (i < lightCount)
-                        color += XR_ADV_EvaluateLight(i, surface, N, V,
-                            base.rgb, roughness, metallic);
-                }
-            }
+            // Point lights, then spot lights. Two calls instead of a two-entry offset and
+            // count array keep the arrays out of per-invocation local memory.
+            color += XR_ADV_EvaluateFroxelLightRange(froxel.pointLightOffset, froxel.pointLightCount,
+                lightCount, surface, N, V, base.rgb, roughness, metallic);
+            color += XR_ADV_EvaluateFroxelLightRange(froxel.spotLightOffset, froxel.spotLightCount,
+                lightCount, surface, N, V, base.rgb, roughness, metallic);
         }
         if ((u_Push.flags & 8u) != 0u)
         {

@@ -60,14 +60,19 @@ vec3 XR_ADV_StandardHeightTangentNormal(XRAdvancedMaterialRecord material,
     XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(material, 1u), textureReference);
     vec2 texel = 1.0 / vec2(max(XR_ADV_Texture2DSize(textureReference), ivec2(1)));
 
-    float heights[3] = float[3](0.0, 0.0, 0.0);
+    // Scalars instead of a height array: a dynamically indexed local array goes to
+    // per-invocation local memory (a register spill); scalars stay in registers.
+    float height0 = 0.0, height1 = 0.0, height2 = 0.0;
     for (uint tap = 0u; tap < min(tapCount, 3u); ++tap)
     {
         vec2 offset = tap == 1u ? vec2(texel.x, 0.0) : (tap == 2u ? vec2(0.0, texel.y) : vec2(0.0));
-        heights[tap] = XR_ADV_SampleTexture2DGrad(textureReference, uv + offset, dx, dy).r;
+        float height = XR_ADV_SampleTexture2DGrad(textureReference, uv + offset, dx, dy).r;
+        if (tap == 0u) height0 = height;
+        else if (tap == 1u) height1 = height;
+        else height2 = height;
     }
 
-    vec2 slope = 2.0 * vec2(heights[0] - heights[1], heights[0] - heights[2]);
+    vec2 slope = 2.0 * vec2(height0 - height1, height0 - height2);
     return normalize(vec3(slope * heightScale, 1.0));
 }
 
