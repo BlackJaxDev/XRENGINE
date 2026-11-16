@@ -140,6 +140,14 @@ internal sealed partial class VulkanCommandRuntime
                 FillNativeCounters(state.CommandBuffer, closure.ClassificationCounters);
                 FillNativeCounters(state.CommandBuffer, closure.KernelCounts);
             }
+            else
+            {
+                // A later view appends to the tile lists and counters of the earlier views and
+                // writes the indirect arguments again. The barrier after the earlier view's
+                // BuildArguments only makes those arguments visible to indirect reads, so this
+                // barrier orders the earlier classification writes before this view's writes.
+                EmitNativeComputeDependency(state.CommandBuffer);
+            }
             // The classified and background pixel counters are read only by the diagnostic
             // readback, which instrumented strategies record after the last view.
             VulkanAdvancedNativeShadingPushConstants classifyPush =
@@ -508,6 +516,22 @@ internal sealed partial class VulkanCommandRuntime
         EmitNativeBufferDependency(commandBuffer, in buffer, AccessFlags.TransferWriteBit,
             AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
             PipelineStageFlags.TransferBit, PipelineStageFlags.ComputeShaderBit);
+    }
+
+    /// <summary>
+    /// Orders all earlier compute shader reads and writes before later compute shader reads and
+    /// writes, for every buffer and image.
+    /// </summary>
+    private unsafe void EmitNativeComputeDependency(CommandBuffer commandBuffer)
+    {
+        MemoryBarrier barrier = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+            DstAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+        };
+        CmdPipelineBarrierTracked(commandBuffer, PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit,
+            DependencyFlags.None, 1, &barrier, 0, null, 0, null);
     }
 
     private unsafe void EmitNativeBufferDependency(CommandBuffer commandBuffer,

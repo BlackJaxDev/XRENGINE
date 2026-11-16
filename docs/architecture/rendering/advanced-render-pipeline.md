@@ -981,6 +981,14 @@ reads data from the first, or when both write the same pixels:
   pixel belongs to one kernel, and the Uber kernels shade only Uber kernel tiles.
 - The barrier before the Uber repair dispatch stays. In an overflow frame, the standard repair
   shades every pixel and the Uber repair then overwrites the Uber pixels.
+- Classification runs once per view and every view uses the same tile lists, counters and
+  indirect arguments. The first view clears the counters. Each later view starts with a global
+  compute-to-compute barrier, because it appends to the earlier views' lists and writes the
+  indirect arguments again, and the barrier after the earlier `BuildArguments` covers only
+  indirect reads of those arguments.
+
+Synchronization validation reports the disjoint-pixel dispatches above as hazards; see the
+known false positives in [Vulkan Diagnostics](../../developer-guides/rendering/vulkan-diagnostics.md#synchronization-validation-coverage).
 
 Because these dispatches overlap, the GPU profiler scope `Advanced > Shading > GpuOverflowRepair`
 starts while the main kernels still run. Its time includes the main kernels. Use the
