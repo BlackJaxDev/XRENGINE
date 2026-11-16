@@ -5,6 +5,8 @@
 #include "StandardMaterial.glslinc"
 #include "StandardPBR.glslinc"
 #include "Advanced/Shading/StandardIbl.glslinc"
+// The shading kernel resolves the directional shadow once per work group.
+#define XR_ADV_SHADOW_GROUP_CACHE 1
 #include "StandardShadow.glslinc"
 #include "AdvancedDecalModifier.glslinc"
 #pragma snippet "NormalEncoding"
@@ -88,6 +90,9 @@ void main()
         pixel = uvec2(tile.packedTileCoord & 0xFFFFu,
             tile.packedTileCoord >> 16u) * 16u + gl_LocalInvocationID.xy;
     }
+    // Every return above is uniform for the work group, so all invocations reach the
+    // barriers of the shadow cache fill.
+    XR_ADV_FillShadowGroupCache(viewIndex, min(u_Push.lightCount, uint(XR_ADV_Lights.records.length())));
     // Foveated quad shading: a peripheral follower takes its block
     // representative's result in the fill pass, so it does not shade here.
     // The pixels that still shade are packed into the first invocations of the

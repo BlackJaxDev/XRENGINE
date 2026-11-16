@@ -223,6 +223,18 @@ contact samples over 1 m): 2 taps about -0.6 to -0.7 ms, 2 contact samples about
 brighter and their edges show steps. Distant shadows change little. 2 contact samples
 give little visible change.
 
+### Directional shadow cache per work group
+
+`ShadeNativeOpaque.comp` defines `XR_ADV_SHADOW_GROUP_CACHE`. At the start of each work
+group (after the returns that are the same for the whole group), one invocation finds the
+first directional light with shadows and resolves its shadow handle, root record and cascade
+range. Then one invocation per cascade (up to 8) loads the cascade record, tests the view
+mask and residency, and resolves the shadow texture reference. The results go to shared
+memory. `XR_ADV_EvaluateShadow` uses this cache for that light and view, with the same
+cascade order, blend band, filter and shadow reason codes as the uncached path. Other
+lights, a light with more than 8 cascades, and the MSAA kernel keep the uncached path.
+At 2688x2688 for each eye this saves about 0.5 to 0.8 ms of native opaque shading.
+
 ### Eye render scale
 
 With TSR as the anti-aliasing mode of the eyes, `TsrRenderScale` (0.5 to 1.0, or the
