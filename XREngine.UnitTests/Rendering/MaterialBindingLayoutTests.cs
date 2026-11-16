@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Materials;
@@ -213,6 +214,38 @@ public sealed class MaterialBindingLayoutTests
 
         result.Outcome.ShouldBe(EMaterialBindingResolverOutcome.PerMaterialRequired);
         result.Reason.ShouldContain("no material semantic");
+    }
+
+    [Test]
+    public void SourceEncoder_FlagsGltfPackedMetallicRoughness_OnlyForOneSharedTexture()
+    {
+        XRTexture2D packed = new(1u, 1u, ColorF4.White) { Name = "MetallicRoughness" };
+        XRMaterial gltf = new()
+        {
+            SurfaceTextureBindings =
+            [
+                new MaterialSurfaceTextureBinding(EMaterialTextureSemantic.Metallic, packed, Channel: 2),
+                new MaterialSurfaceTextureBinding(EMaterialTextureSemantic.Roughness, packed, Channel: 1),
+            ],
+        };
+
+        uint gltfFlags = MaterialBindingSourceEncoder.Encode(gltf).Entry.Flags;
+        (gltfFlags & (1u << 2)).ShouldNotBe(0u);
+        (gltfFlags & GPUMaterialEntry.PackedMetallicRoughnessFlag).ShouldNotBe(0u);
+
+        XRTexture2D metallic = new(1u, 1u, ColorF4.White) { Name = "Metallic" };
+        XRTexture2D roughness = new(1u, 1u, ColorF4.White) { Name = "Roughness" };
+        XRMaterial separate = new()
+        {
+            SurfaceTextureBindings =
+            [
+                new MaterialSurfaceTextureBinding(EMaterialTextureSemantic.Metallic, metallic),
+                new MaterialSurfaceTextureBinding(EMaterialTextureSemantic.Roughness, roughness),
+            ],
+        };
+
+        (MaterialBindingSourceEncoder.Encode(separate).Entry.Flags & GPUMaterialEntry.PackedMetallicRoughnessFlag)
+            .ShouldBe(0u);
     }
 
     private static float UIntToFloat(uint value)

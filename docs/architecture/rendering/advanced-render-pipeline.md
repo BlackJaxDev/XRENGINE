@@ -728,6 +728,23 @@ including the cleared entries. Adjacent writes merge into one range.
 replacement, and payload shrink. Replacement uses no managed allocation when
 capacity is sufficient.
 
+### Metallic-roughness texture channels
+
+The Standard RM slot (texture slot 2) normally holds roughness in red and metallic in
+green. A glTF `metallicRoughnessTexture` holds roughness in green and metallic in blue:
+
+- The glTF importer keeps one grayscale texture per role in the legacy sampler slots,
+  because the Default shaders read a separate map for each. The `Metallic` and `Roughness`
+  surface bindings point to the packed source texture with channels 2 and 1. An ORM
+  `occlusionTexture` binds the same texture object.
+- When both bindings use one texture with those channels, `MaterialBindingSourceEncoder` sets
+  `GPUMaterialEntry.PackedMetallicRoughnessFlag` (bit 30 of the material flags word).
+  `XR_ADV_StandardRoughnessMetallic` then reads green and blue. The native opaque kernels,
+  the decal buffer, the decal modifier and the WebGPU shading contracts use it.
+- Other sources (Assimp and native FBX maps, legacy texture lists) keep red and green.
+  A material with separate metallic and roughness textures still binds only one of them
+  to the RM slot.
+
 ### Material ambient occlusion
 
 The Standard layouts (`OpaqueDeferred`, `ForwardOpaque`, `MaskedForward`) have six

@@ -29,6 +29,7 @@ internal static class AdvancedStandardMaterialShaderContract
         Append(source, "XR_ADV_STANDARD_OPACITY_TEXTURE_FLAG", GPUMaterialEntry.OpacityTextureFlag);
         Append(source, "XR_ADV_STANDARD_OPACITY_TEXTURE_SLOT", ResolveTextureSlot(layout, "opacity"));
         Append(source, "XR_ADV_STANDARD_OCCLUSION_TEXTURE_FLAG", GPUMaterialEntry.OcclusionTextureFlag);
+        Append(source, "XR_ADV_STANDARD_PACKED_METALLIC_ROUGHNESS_FLAG", GPUMaterialEntry.PackedMetallicRoughnessFlag);
         Append(source, "XR_ADV_STANDARD_OCCLUSION_CHANNEL_MASK", GPUMaterialEntry.OcclusionChannelMask);
         Append(source, "XR_ADV_STANDARD_OCCLUSION_UV1_FLAG", GPUMaterialEntry.OcclusionUv1Flag);
         Append(source, "XR_ADV_STANDARD_OCCLUSION_TEXTURE_SLOT", ResolveTextureSlot(layout, "occlusion"));

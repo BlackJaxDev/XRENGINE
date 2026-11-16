@@ -34,6 +34,12 @@ namespace XREngine.Rendering.Materials
         /// </summary>
         public const uint OcclusionTextureFlag = 1u << 29;
 
+        /// <summary>
+        /// The metallic-roughness texture uses the glTF packing: roughness in green and metallic in
+        /// blue. Without this flag, native shading reads roughness from red and metallic from green.
+        /// </summary>
+        public const uint PackedMetallicRoughnessFlag = 1u << 30;
+
         /// <summary>Bits 0-1 of <see cref="OcclusionControls"/>: occlusion channel (0 red to 3 alpha).</summary>
         public const uint OcclusionChannelMask = 3u;
 
