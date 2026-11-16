@@ -396,6 +396,12 @@ public static class XREngineEnvironmentVariables
     public const string VulkanDiagnosticPreset = "XRE_VULKAN_DIAGNOSTIC_PRESET";
     public const string VulkanDiagnosticFlags = "XRE_VULKAN_DIAGNOSTIC_FLAGS";
     public const string VulkanSynchronizationValidation = "XRE_VULKAN_SYNC_VALIDATION";
+    /// <summary>
+    /// Set to 0 to stop synchronization validation from checking the buffers and images that
+    /// shaders access through descriptors. By default the engine turns this check on whenever it
+    /// enables synchronization validation.
+    /// </summary>
+    public const string VulkanSynchronizationShaderAccesses = "XRE_VULKAN_SYNC_SHADER_ACCESSES";
     public const string VulkanGpuAssistedValidation = "XRE_VULKAN_GPU_ASSISTED_VALIDATION";
     public const string VulkanBestPracticesValidation = "XRE_VULKAN_BEST_PRACTICES";
     public const string VulkanCrashBreadcrumbs = "XRE_VULKAN_CRASH_BREADCRUMBS";
