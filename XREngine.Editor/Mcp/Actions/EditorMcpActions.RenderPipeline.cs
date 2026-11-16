@@ -793,7 +793,7 @@ namespace XREngine.Editor.Mcp
         }
 
         [XRMcp(Name = "list_vulkan_image_allocation_diagnostics", Permission = McpPermissionLevel.ReadOnly)]
-        [Description("List live Vulkan image allocation sizes by debug name for VRAM pressure diagnostics.")]
+        [Description("List live Vulkan image allocation sizes by debug name, and live buffer allocation bytes grouped by registering owner and memory type (bufferOwners), for VRAM pressure and memory placement diagnostics.")]
         public static Task<McpToolResponse> ListVulkanImageAllocationDiagnosticsAsync(
             [McpName("limit"), Description("Maximum number of largest allocations to return.")] int limit = 64)
         {

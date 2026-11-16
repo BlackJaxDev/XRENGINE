@@ -803,7 +803,7 @@ The edits enter Undo and do not save assets.
 | `list_transform_types` | List available transform types. |
 | `list_ui_viewport_diagnostics` | List hidden/editor UI viewport components and their offscreen render command state. |
 | `list_viewport_sequence_captures` | List active and recently completed viewport sequence captures without per-frame payloads. |
-| `list_vulkan_image_allocation_diagnostics` | List live Vulkan image allocation sizes by debug name for VRAM pressure diagnostics. |
+| `list_vulkan_image_allocation_diagnostics` | List live Vulkan image allocation sizes by debug name, and live buffer allocation bytes grouped by registering owner and memory type (bufferOwners), for VRAM pressure and memory placement diagnostics. |
 | `list_worlds` | List active world instances and their scenes. |
 | `load_game_project` | Load a local .xrproj authoring project in edit mode. Compile its scripts separately before loading worlds that use game types. |
 | `load_world` | Load a world asset and set it as active on the current world instance. |
