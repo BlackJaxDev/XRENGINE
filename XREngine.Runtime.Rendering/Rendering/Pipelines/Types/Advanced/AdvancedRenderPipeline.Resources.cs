@@ -707,10 +707,29 @@ public partial class AdvancedRenderPipeline
         result.SamplerName = name == DepthOfFieldTextureName ? "ColorSource" :
             // The shared AO blur shaders read the raw AO through this sampler.
             name == AmbientOcclusionRawTextureName ? AmbientOcclusionIntensityTextureName :
-            name == AoNormalTextureName ? "Normal" : name;
+            name == AoNormalTextureName ? "Normal" :
+            // The shared GTAO generation and blur shaders read the half-resolution depth here.
+            name == AoHalfDepthTextureName ? DepthViewTextureName : name;
+        if (name == AoHalfDepthTextureName)
+            SetNearestFilter(result);
         result.AutoGenerateMipmaps = false;
         result.RequiresStorageUsage = !Shaders.Compilation.WebPipelineRasterProgram.IsActive || name == AutoExposureTextureName;
         return result;
+    }
+
+    /// <summary>Uses point sampling, so depth values are never blended across an edge.</summary>
+    private static void SetNearestFilter(XRTexture texture)
+    {
+        if (texture is XRTexture2DArray array)
+        {
+            array.MinFilter = ETexMinFilter.Nearest;
+            array.MagFilter = ETexMagFilter.Nearest;
+        }
+        else if (texture is XRTexture2D mono)
+        {
+            mono.MinFilter = ETexMinFilter.Nearest;
+            mono.MagFilter = ETexMagFilter.Nearest;
+        }
     }
 
     private static void DeclareLatePostDestination(RenderPipelineResourceLayoutBuilder builder, string fboName, string textureName,

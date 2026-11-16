@@ -400,7 +400,10 @@ therefore follow the active passes through the resource feature mask:
   Forward+ oracle schedule none, so OpenXR eyes no longer carry about 0.8 GB of
   unwritten two-layer targets; `VPRC_RvcPass` then describes no resources.
 - AO scratch targets follow the encoded AO mode: SSAO/MVAO/MSVO allocate the
-  shared raw target, HBAO+ and GTAO their own raw and blur targets.
+  shared raw target, HBAO+ and GTAO their own raw and blur targets. In Advanced,
+  GTAO at half resolution declares the AO normals at half resolution, adds a
+  half-resolution R32F depth target and the prepare framebuffer, and drops the
+  full-resolution AO normal framebuffer.
 - The bloom chain is R11G11B10F. No bloom consumer reads alpha (the format
   drops what the bloom copy passes through) and every consumer samples `.rgb`;
   keep it that way or move bloom back to RGBA16F.
