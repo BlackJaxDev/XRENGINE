@@ -2285,6 +2285,25 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         return settings;
     }
 
+    /// <summary>
+    /// Sets <see cref="EAdvancedViewRecordFlags.GtaoMaterialNormals"/> when the camera uses GTAO with
+    /// <see cref="GroundTruthAmbientOcclusionSettings.UseMaterialNormals"/>. Native shading reads the
+    /// flag from the view record and adds normal-map micro-occlusion to the GTAO value.
+    /// </summary>
+    internal override EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera)
+    {
+        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(this) is not { } stage ||
+            !stage.TryGetBacking(out AmbientOcclusionSettings? settings) ||
+            settings is not { Enabled: true } ||
+            AmbientOcclusionSettings.NormalizeType(settings.Type) != AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion ||
+            !settings.GroundTruth.UseMaterialNormals)
+        {
+            return EAdvancedViewRecordFlags.None;
+        }
+
+        return EAdvancedViewRecordFlags.GtaoMaterialNormals;
+    }
+
     private AmbientOcclusionSettings? ResolveAmbientOcclusionSettings(
         XRRenderPipelineInstance instance,
         XRViewport? viewport)

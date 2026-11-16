@@ -144,6 +144,9 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
         => AdvancedStageFamily.GetRequestedInternalResolutionForCamera(camera);
 
+    internal override EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera)
+        => AdvancedStageFamily.ResolveCanonicalViewPolicyFlags(camera);
+
     internal override float? GetRequestedInternalResolutionForCamera(
         XRCamera? camera,
         EAntiAliasingMode effectiveAntiAliasingMode,

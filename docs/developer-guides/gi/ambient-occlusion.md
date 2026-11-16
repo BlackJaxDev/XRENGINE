@@ -106,6 +106,7 @@ aoSettings.GTAOUseVisibilityBitmask = true;
 aoSettings.GTAOVisibilityBitmaskThickness = 0.12f;
 aoSettings.GTAOMultiBounceEnabled = true;
 aoSettings.GTAOSpecularOcclusionEnabled = true;
+aoSettings.GTAOUseMaterialNormals = false; // Advanced pipeline normal-map micro-occlusion
 aoSettings.GTAOResolution = GroundTruthAmbientOcclusionSettings.EResolution.Half;
 aoSettings.GTAOUseNormalWeightedBlur = true;
 ```
@@ -127,6 +128,24 @@ half-resolution inputs:
 On the 2688x2688 VR benchmark this lowers the stereo AO chain from about 4.5 ms to 3.6 ms with
 no visible change. `Full` and `Quarter` keep full-resolution inputs, and `DefaultRenderPipeline`
 keeps its existing GTAO path.
+
+### Normal-map micro-occlusion
+
+GTAO reads only depth, so the small creases of a normal map get no AO.
+`GroundTruth.UseMaterialNormals` (`GTAOUseMaterialNormals`, default false, shown as
+"Normal-Map Micro-Occlusion") adds a cheap per-pixel term in `AdvancedRenderPipeline` native
+shading. No extra pass runs:
+
+- `AdvancedRenderPipeline.ResolveCanonicalViewPolicyFlags` reads the camera GTAO settings when
+  the frame package captures its views. It sets the view record flag
+  `EAdvancedViewRecordFlags.GtaoMaterialNormals` (bit 9) when GTAO is the active AO type and the
+  setting is true. RVC eyes use the same rule through their Advanced stage family.
+- After the normal map is applied, the shading kernel multiplies the AO value by
+  `0.5 + 0.5 * saturate(dot(mappedNormal, surfaceNormal))`. The term never darkens more than 30
+  percent (`XR_ADV_GTAO_MICRO_OCCLUSION_MAX_DARKENING`). Like GTAO, it darkens only indirect light.
+- The flag is uniform for a shading dispatch, so the term costs nothing when the setting is off.
+  Surfaces without a normal map get no term.
+- `DefaultRenderPipeline` and the Native Uber path ignore the setting.
 
 When visibility-bitmask mode is enabled, GTAO replaces the classic horizon accumulation with hemisphere sector coverage. It applies distance falloff and thin-occluder attenuation to both the marked angular thickness and each newly covered sector's weight, so weak same-plane samples do not claim full-dark sectors. The raw gather and denoise passes also keep screen-edge fading narrow, which prevents missing off-screen samples from turning into a visible border halo.
 

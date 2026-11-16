@@ -1047,6 +1047,13 @@ public static class CommonPostProcessStages
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.UseMaterialNormals)),
+            PostProcessParameterKind.Bool,
+            GroundTruthAmbientOcclusionSettings.DefaultUseMaterialNormals,
+            displayName: "Normal-Map Micro-Occlusion",
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.Resolution)),
             PostProcessParameterKind.Int,
             (int)GroundTruthAmbientOcclusionSettings.DefaultResolution,

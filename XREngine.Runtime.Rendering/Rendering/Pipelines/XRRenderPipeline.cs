@@ -1055,6 +1055,15 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         => RequestedInternalResolution;
 
     /// <summary>
+    /// Returns the view record flags that this pipeline derives from <paramref name="camera"/>.
+    /// The frame package ORs them into every canonical view record when it captures the views,
+    /// so the native shading kernels can read a camera setting from the view without a push
+    /// constant. The base pipeline adds none.
+    /// </summary>
+    internal virtual EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera)
+        => EAdvancedViewRecordFlags.None;
+
+    /// <summary>
     /// Resolves the internal-resolution scale request for one view with its effective anti-aliasing mode.
     /// </summary>
     /// <param name="camera">The camera of the view.</param>
