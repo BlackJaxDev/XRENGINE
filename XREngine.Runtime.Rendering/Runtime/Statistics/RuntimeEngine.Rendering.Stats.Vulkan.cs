@@ -327,6 +327,7 @@ namespace XREngine
                     private static string _lastFrameVulkanFrameDiagnosticSummary = string.Empty;
                     private static int _vulkanValidationMessageCount;
                     private static int _vulkanValidationErrorCount;
+                    private static long _vulkanValidationLifetimeErrorCount;
                     private static string _vulkanLastValidationMessage = string.Empty;
                     private static int _lastFrameVulkanValidationMessageCount;
                     private static int _lastFrameVulkanValidationErrorCount;
@@ -858,6 +859,14 @@ namespace XREngine
                     public static string VulkanLastValidationMessage => _lastFrameVulkanLastValidationMessage;
                     public static int VulkanValidationMessageCountCurrentFrame => Volatile.Read(ref _vulkanValidationMessageCount);
                     public static int VulkanValidationErrorCountCurrentFrame => Volatile.Read(ref _vulkanValidationErrorCount);
+
+                    /// <summary>
+                    /// Counts every validation error since the process started. Frame resets and the
+                    /// profiler tracking switch do not change it. Use it for pass or fail checks over a
+                    /// whole run: synchronization validation reports a hazard only a few times before its
+                    /// duplicate limit, so the per-frame count is usually 0 in the frame that is read.
+                    /// </summary>
+                    public static long VulkanValidationLifetimeErrorCount => Interlocked.Read(ref _vulkanValidationLifetimeErrorCount);
                     public static int VulkanDescriptorFallbackSampledImages => _lastFrameVulkanDescriptorFallbackSampledImages;
                     public static int VulkanDescriptorFallbackStorageImages => _lastFrameVulkanDescriptorFallbackStorageImages;
                     public static int VulkanDescriptorFallbackUniformBuffers => _lastFrameVulkanDescriptorFallbackUniformBuffers;
@@ -1333,6 +1342,8 @@ namespace XREngine
 
                     public static void RecordVulkanValidationMessage(bool isError, string? message)
                     {
+                        if (isError)
+                            Interlocked.Increment(ref _vulkanValidationLifetimeErrorCount);
                         if (!EnableTracking)
                             return;
 

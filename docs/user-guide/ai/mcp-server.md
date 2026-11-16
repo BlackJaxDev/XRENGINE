@@ -384,8 +384,12 @@ error/warning totals, bounded message samples, overflow counts, and the effectiv
 standard/synchronization validation and debug-messenger flags. These totals
 survive frames with no messages and reset when the Vulkan device is recreated.
 The sibling `message_count` and `error_count` fields describe only the last
-frame. Check the enabled flags before interpreting zero errors as validation
-evidence; Release builds can omit ordinary debug-log calls.
+frame. Synchronization validation reports a hazard only a few times before its
+duplicate limit, so these per-frame fields are usually 0 even when a hazard
+occurred. `lifetime_error_count` counts every validation error since the process
+started; device recreation does not reset it. Check the enabled flags before
+interpreting zero errors as validation evidence; Release builds can omit
+ordinary debug-log calls.
 
 `get_render_profiler_stats.vulkan.descriptor_heap` exposes cumulative native
 sampler/resource heap binds, heap pushes, successful sampler/resource descriptor
