@@ -805,7 +805,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             descriptor.Stage,
             GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true,
             usesMultisampleVisibility, packedSamples,
-            hasAmbientOcclusion ? AdvancedAmbientOcclusionContract.ResourceName : AdvancedRenderPipeline.WebPostProcessNeutralTextureName);
+            hasAmbientOcclusion ? AdvancedAmbientOcclusionContract.ResourceName : AdvancedRenderPipeline.WebPostProcessNeutralTextureName,
+            context.HasResource(AdvancedShadingResourceNames.ShadingDiagnostics));
         // RVC telemetry runs after native shading and reads every view layer.
         if (descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
             context.HasResource(RvcShadeletTelemetryResourceNames.Counters(0u)))
@@ -975,7 +976,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         RenderPassBuilder builder,
         EAdvancedRenderStage stage,
         bool requiresMaterialSurfaceExports,
-        bool usesMultisampleVisibility, bool packedSamples, string ambientOcclusionTextureName)
+        bool usesMultisampleVisibility, bool packedSamples, string ambientOcclusionTextureName,
+        bool hasShadingDiagnostics)
     {
         switch (stage)
         {
@@ -1096,8 +1098,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 builder.SampleTexture(Tex(ambientOcclusionTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.HDRSceneTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
-                    .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
-                    .ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnostics));
+                    .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName));
+                // OpenXR eye outputs without a shading debug view do not declare the diagnostics image.
+                if (hasShadingDiagnostics)
+                    builder.ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnostics));
                 if (requiresMaterialSurfaceExports)
                 {
                     builder.WriteTexture(Tex(AdvancedRenderPipeline.NormalTextureName))

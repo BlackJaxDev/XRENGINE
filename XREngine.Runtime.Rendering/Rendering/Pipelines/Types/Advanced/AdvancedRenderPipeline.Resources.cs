@@ -21,6 +21,9 @@ public partial class AdvancedRenderPipeline
     // late-pass debug view or debug overlays are on. Bits 48-50 hold the visibility resource
     // features (Core is always set), so this bit must stay outside them.
     private const ulong LatePassDebugOutputFeatureBit = 1UL << 39;
+    // The shading diagnostics image is not declared: an OpenXR eye output without a shading debug
+    // view or debug overlays. Nothing in the frame reads that image, so the eyes skip it.
+    private const ulong ShadingDiagnosticsOmittedFeatureBit = 1UL << 38;
     public const string ExternalOutputResourceName = "$ExternalOutput";
 
     // Forward late/debug consumers retain the existing probe-array contract.
@@ -121,6 +124,13 @@ public partial class AdvancedRenderPipeline
              viewport?.CapturePolicy.RenderDebugOverlays == true))
         {
             shadingFeatureMask = (1UL << 40);
+        }
+
+        if (IsOpenXrEyeProfile &&
+            ShadingDebugView == EAdvancedShadingDebugView.Disabled &&
+            viewport?.CapturePolicy.RenderDebugOverlays != true)
+        {
+            shadingFeatureMask |= ShadingDiagnosticsOmittedFeatureBit;
         }
 
         ulong latePassFeatureMask = 0UL;

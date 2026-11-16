@@ -285,6 +285,8 @@ and accept `mip_level`; out-of-range faces fail explicitly.
 `AdvancedShading.ShadingDiagnostics` preserves reconstruction rejection in bit16
 and its `EAdvancedReconstructionInvalidReason` value in bits20–27. Capture it as
 a companion to HDR/identity when native shading produces the error color.
+OpenXR eye outputs allocate it only while a shading debug view or debug overlays
+are on; capture it from the desktop output, or set a shading debug view first.
 For a nonfinite rejection, bits28–30 identify the first affected attribute:
 1=world position, 2=normal, 3=tangent, 4=bitangent, 5=UV, 6=UV dx, 7=UV dy.
 After completion, `CompletedOutputTextureId` provides the GUID for an exported

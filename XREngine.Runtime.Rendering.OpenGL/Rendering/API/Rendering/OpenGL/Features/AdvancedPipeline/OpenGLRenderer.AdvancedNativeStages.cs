@@ -18,17 +18,19 @@ public partial class OpenGLRenderer
         buffers.Bind();
         if (buffers.PreparedRenderFrame != request.RenderFrameId || buffers.PreparedPublication != request.Publication.PublicationGeneration ||
             buffers.PreparedMaterialSurfaceExports != request.RequiresMaterialSurfaceExports ||
-            buffers.PreparedSuppressBaselineDiffuse != request.SuppressBaselineDiffuse)
+            buffers.PreparedSuppressBaselineDiffuse != request.SuppressBaselineDiffuse ||
+            buffers.PreparedShadingDiagnosticsDisabled != closure.ShadingDiagnosticsAliased)
         {
             buffers.EnsureCapacity(closure.Width, closure.Height, views, depthSlices);
             buffers.UploadPushConstants(closure.Width, closure.Height, views, depthSlices, _advancedSceneUploader?.LightCount ?? 0u,
                 request.RequireNativeOutput, request.EnableBuiltInAmbientOcclusion, request.EnableLightProbesAndIbl, request.RequiresMaterialSurfaceExports,
-                request.SuppressBaselineDiffuse,
+                request.SuppressBaselineDiffuse, closure.ShadingDiagnosticsAliased,
                 request.ShadingDebugView, request.MsaaSampleCount > 1u && request.HasAuthoredBackground);
             buffers.PreparedRenderFrame = request.RenderFrameId;
             buffers.PreparedPublication = request.Publication.PublicationGeneration;
             buffers.PreparedMaterialSurfaceExports = request.RequiresMaterialSurfaceExports;
             buffers.PreparedSuppressBaselineDiffuse = request.SuppressBaselineDiffuse;
+            buffers.PreparedShadingDiagnosticsDisabled = closure.ShadingDiagnosticsAliased;
         }
         bool multisample = request.MsaaSampleCount > 1u;
         Span<uint> raw = stackalloc uint[5];

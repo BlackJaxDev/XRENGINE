@@ -74,6 +74,16 @@ vec3 XR_ADV_MeshletDebugColor(uvec2 identity, uint metadata)
     return rgb * value;
 }
 
+// Push flag: the shading diagnostics image is not allocated (an OpenXR eye output without a
+// shading debug view). Its binding then holds another R32UI image, so no pass may store to it.
+// Matches ShadingDiagnosticsDisabledFlag on the CPU.
+#define XR_ADV_SHADING_DIAGNOSTICS_DISABLED (1u << 31u)
+
+bool XR_ADV_StoresShadingDiagnostics()
+{
+    return (u_Push.flags & XR_ADV_SHADING_DIAGNOSTICS_DISABLED) == 0u;
+}
+
 bool XR_ADV_ExportsMaterialSurfaceInputs()
 {
     return (u_Push.flags & 16u) != 0u;
@@ -131,7 +141,8 @@ void XR_ADV_StoreOpaqueSampleResult(
         vec4(max(result.radiance, vec3(0.0)), result.opacity));
     imageStore(Velocity, XR_ADV_PIXEL(pixel, viewIndex), vec4(result.velocity, 0.0, 0.0));
     imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(result.reactive));
-    imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(result.diagnostics));
+    if (XR_ADV_StoresShadingDiagnostics())
+        imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(result.diagnostics));
     XR_ADV_StoreMaterialSurfaceInputs(pixel, viewIndex, result);
 }
 

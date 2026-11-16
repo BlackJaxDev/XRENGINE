@@ -260,6 +260,7 @@ public partial class AdvancedRenderPipeline
                 AdvancedVisibilityResourceNames.Identity,
                 AdvancedVisibilityResourceNames.Metadata,
                 AdvancedVisibilityResourceNames.DepthStencil)
+            .When(static profile => (profile.FeatureMask & ShadingDiagnosticsOmittedFeatureBit) == 0UL)
             .DebugLabel("Advanced native shading diagnostics")
             .Add();
 

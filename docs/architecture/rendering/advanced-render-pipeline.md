@@ -123,6 +123,17 @@ preamble define `XR_ADV_NATIVE_SHADING_FAMILY` selects the family:
   shadow bits always read "visible" (reason 0, visibility 255). No frame pass reads that
   image (the foveated fill only copies it); to inspect the shadow bits with a capture,
   set a shading debug view, which selects the generic kernel.
+- OpenXR eye outputs do not allocate the shading diagnostics image
+  (`AdvancedShading.ShadingDiagnostics`, R32_UINT, one layer per view) when no shading
+  debug view and no debug overlays are on. No frame pass reads that image, and in
+  the 2688x2688 VR benchmark it costs about 55 MB per eye output. The resource profile then sets a
+  feature bit that removes the declaration, and the shading stage does not declare
+  the image. Binding 18 (the OpenGL image unit 3) holds the visibility metadata image
+  in its place, which is also R32_UINT storage. Push flag bit 31
+  (`XR_ADV_SHADING_DIAGNOSTICS_DISABLED`) stops every store to it in the shading,
+  background and foveated fill kernels, and Vulkan records no write transition for
+  it. The desktop output and offscreen captures keep the image. Set a shading debug
+  view to capture it on an eye output.
 
 ### Edge half-rate shading for eye outputs
 

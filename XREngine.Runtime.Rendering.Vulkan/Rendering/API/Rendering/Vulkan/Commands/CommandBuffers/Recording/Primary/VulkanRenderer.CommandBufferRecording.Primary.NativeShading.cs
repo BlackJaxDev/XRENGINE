@@ -21,6 +21,9 @@ internal sealed partial class VulkanCommandRuntime
     private const uint OcclusionCulledBoundsGroupsPerRow = 4096u;
     // Matches XR_ADV_SHADING_UBER_FALLBACK in ShadeNativeOpaqueEvaluator.glslinc.
     private const uint NativeUberFallbackShadingFlag = 1u << 29;
+    // Matches XR_ADV_SHADING_DIAGNOSTICS_DISABLED: binding 18 holds no diagnostics image, so the
+    // shading, background and quad-fill passes do not store diagnostics.
+    private const uint ShadingDiagnosticsDisabledFlag = 1u << 31;
     // Matches XR_ADV_SHADING_DECAL_BUFFER in ShadeNativeOpaqueEvaluator.glslinc.
     private const uint NativeDecalBufferShadingFlag = 1u << 16;
     // Matches XR_ADV_CLASSIFICATION_PIXEL_COUNTERS in ClassifyTiles.comp.
@@ -112,7 +115,8 @@ internal sealed partial class VulkanCommandRuntime
             QuadShadingFlags(payload.Request.RvcFoveatedQuadShading,
                 payload.Request.AdvancedEdgeHalfRateShading, payload.Request.AdvancedEdgeHalfRateRadius,
                 payload.Request.AdvancedEdgeHalfRateDebugTint, closure.UsesMultisampleVisibility) |
-            (payload.Request.DecalBufferEnabled && closure.HasDecalBuffer ? NativeDecalBufferShadingFlag : 0u), depthSlices,
+            (payload.Request.DecalBufferEnabled && closure.HasDecalBuffer ? NativeDecalBufferShadingFlag : 0u) |
+            (closure.ShadingDiagnosticsAliased ? ShadingDiagnosticsDisabledFlag : 0u), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
             checked((uint)(closure.KernelTiles.NativeSize / 16u)),
@@ -185,7 +189,7 @@ internal sealed partial class VulkanCommandRuntime
         TransitionNativeOutput(state.CommandBuffer, closure.Hdr, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);
-        TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
+        TransitionNativeDiagnosticsOutput(state.CommandBuffer, in closure);
         TransitionNativeDdgiOutputs(state.CommandBuffer, in closure);
         FillNativeCounters(state.CommandBuffer, closure.LightingCounters);
         RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.BuildFroxels,
@@ -230,7 +234,7 @@ internal sealed partial class VulkanCommandRuntime
             TransitionNativeOutput(state.CommandBuffer, closure.Hdr, closure.ViewIndex);
             TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
             TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);
-            TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
+            TransitionNativeDiagnosticsOutput(state.CommandBuffer, in closure);
             TransitionNativeDdgiOutputs(state.CommandBuffer, in closure);
         }
         // Native shading families. The standard kernel shades standard materials and,
@@ -479,6 +483,17 @@ internal sealed partial class VulkanCommandRuntime
             return;
         TransitionNativeInput(commandBuffer, closure.DecalBufferAlbedo!, closure.ViewIndex);
         TransitionNativeInput(commandBuffer, closure.DecalBufferSurface!, closure.ViewIndex);
+    }
+
+    /// <summary>
+    /// Makes the shading diagnostics image a compute write target. When the frame does not
+    /// declare that image, binding 18 holds the metadata image, which the shading passes only
+    /// sample, so no write transition is emitted for it.
+    /// </summary>
+    private void TransitionNativeDiagnosticsOutput(CommandBuffer commandBuffer, in VulkanAdvancedNativeComputeClosure closure)
+    {
+        if (!closure.ShadingDiagnosticsAliased)
+            TransitionNativeOutput(commandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
     }
 
     private void TransitionNativeOutput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)

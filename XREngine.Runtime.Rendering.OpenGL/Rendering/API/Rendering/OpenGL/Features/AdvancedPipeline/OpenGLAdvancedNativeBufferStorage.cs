@@ -19,6 +19,7 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
     internal ulong PreparedPublication { get; set; }
     internal bool PreparedMaterialSurfaceExports { get; set; }
     internal bool PreparedSuppressBaselineDiffuse { get; set; }
+    internal bool PreparedShadingDiagnosticsDisabled { get; set; }
     private nuint _pushStride;
     private nuint _pushBytes;
     private ulong _capacityTiles;
@@ -57,7 +58,7 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
 
     internal void UploadPushConstants(uint width, uint height, uint viewCount, uint depthSlices, uint lightCount,
         bool requireNativeOutput, bool enableAmbientOcclusion, bool enableIbl, bool requireMaterialSurfaceExports,
-        bool suppressBaselineDiffuse,
+        bool suppressBaselineDiffuse, bool shadingDiagnosticsDisabled,
         EAdvancedShadingDebugView debugView, bool transparentBackground)
     {
         uint alignment = checked((uint)Math.Max(64, _renderer.RawGL.GetInteger((GLEnum)UniformBufferOffsetAlignment)));
@@ -74,7 +75,9 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
         uint flags = (requireNativeOutput ? 2u : 0u) | (enableAmbientOcclusion ? 4u : 0u) |
             (enableIbl ? 8u : 0u) | (requireMaterialSurfaceExports ? 16u : 0u) |
             (suppressBaselineDiffuse ? 32u : 0u) |
-            (((uint)debugView & 0xFFu) << 8);
+            (((uint)debugView & 0xFFu) << 8) |
+            // Matches XR_ADV_SHADING_DIAGNOSTICS_DISABLED in the shading shaders.
+            (shadingDiagnosticsDisabled ? 1u << 31 : 0u);
         Span<uint> words = stackalloc uint[16];
         words[0] = width; words[1] = height; words[2] = tilesX; words[3] = tilesY;
         words[5] = viewCount; words[7] = flags; words[8] = depthSlices; words[9] = MaxLightIndices;
