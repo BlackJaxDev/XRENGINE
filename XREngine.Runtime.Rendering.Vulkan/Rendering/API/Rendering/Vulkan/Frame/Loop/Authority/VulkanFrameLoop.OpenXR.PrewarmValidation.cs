@@ -320,6 +320,12 @@ internal sealed partial class VulkanFrameLoop
         return frozen;
     }
 
+    /// <summary>
+    /// Checks that every frame op captured for one OpenXR eye belongs to that eye. Ops that use
+    /// planner resources must have the eye swapchain extent as display extent. Their internal
+    /// extent can be smaller (the TSR render scale) but not empty or larger than the display extent.
+    /// Ops that write the swapchain image must cover the full image.
+    /// </summary>
     private static void ValidateOpenXrExternalFrameOpContexts(
         FrameOp[] ops,
         in Extent2D extent,
@@ -340,8 +346,10 @@ internal sealed partial class VulkanFrameLoop
 
             if (context.DisplayWidth == extent.Width &&
                 context.DisplayHeight == extent.Height &&
-                context.InternalWidth == extent.Width &&
-                context.InternalHeight == extent.Height)
+                context.InternalWidth > 0 &&
+                context.InternalHeight > 0 &&
+                context.InternalWidth <= extent.Width &&
+                context.InternalHeight <= extent.Height)
             {
                 continue;
             }

@@ -1451,7 +1451,7 @@ Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resourc
 
 ## 27. DLAA And MFAA AA Modes
 
-The default AA mode (`EngineSettings.AntiAliasingMode`) is `Tsr`, and the default `TsrRenderScale` is 1.0. At 1.0, TSR renders at full resolution and acts as temporal anti-aliasing. A camera `AntiAliasingModeOverride` or `TsrRenderScaleOverride` replaces these values for one camera.
+The default AA mode (`EngineSettings.AntiAliasingMode`) is `Tsr`, and the default `TsrRenderScale` is 0.75. TSR renders each axis at 75 percent of the output size and upscales to the output size. At 1.0, TSR renders at full resolution and acts as temporal anti-aliasing. A view without TSR history (for example a Default-pipeline per-eye OpenXR eye) keeps its full internal size. A camera `AntiAliasingModeOverride` or `TsrRenderScaleOverride` replaces these values for one camera.
 
 `DLAA` is a first-class AA mode in the default render pipeline. It requests the existing NVIDIA DLSS vendor path at native internal resolution, bypasses the in-engine FXAA/SMAA/TSR post-AA chain, and fails visibly when the DLSS runtime or compatible NVIDIA path is unavailable.
 
