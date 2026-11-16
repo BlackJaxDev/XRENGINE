@@ -2740,6 +2740,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
         }
     }
 
+    /// <summary>
+    /// Checks that a per-eye viewport describes its swapchain image. The display extent must be the
+    /// swapchain extent. The internal extent can be smaller (the TSR render scale), but it must not be
+    /// empty or larger than the display extent.
+    /// </summary>
     private static void ValidateOpenXrEyeViewportExtent(
         XRViewport viewport,
         uint viewIndex,
@@ -2755,8 +2760,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
         int height = (int)expectedHeight;
         if (viewport.Width == width &&
             viewport.Height == height &&
-            viewport.InternalWidth == width &&
-            viewport.InternalHeight == height &&
+            viewport.InternalWidth > 0 &&
+            viewport.InternalHeight > 0 &&
+            viewport.InternalWidth <= width &&
+            viewport.InternalHeight <= height &&
             viewport.RendersToExternalSwapchainTarget &&
             viewport.Window is null)
         {
@@ -2764,7 +2771,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         }
 
         throw new InvalidOperationException(
-            $"OpenXR eye {viewIndex} viewport does not exactly match the swapchain extent. " +
+            $"OpenXR eye {viewIndex} viewport does not match the swapchain extent. " +
             $"Expected={width}x{height}; Viewport={viewport.Width}x{viewport.Height}; " +
             $"Internal={viewport.InternalWidth}x{viewport.InternalHeight}; " +
             $"ExternalTarget={viewport.RendersToExternalSwapchainTarget}; " +

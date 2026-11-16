@@ -540,7 +540,7 @@ public static partial class RuntimeEngine
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
                 private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Tsr;
-                private float _tsrRenderScale = 1.0f;
+                private float _tsrRenderScale = 0.75f;
                 private bool _enableNvidiaDlss = false;
                 private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;
                 private float _dlssCustomScale = 0.77f;
@@ -1138,7 +1138,7 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// Selects which anti-aliasing technique to use, including temporal AA (TAA) and temporal super resolution (TSR).
-                /// The default is TSR at full resolution (<see cref="TsrRenderScale"/> 1.0).
+                /// The default is TSR at 0.75 internal scale (<see cref="TsrRenderScale"/>).
                 /// </summary>
                 [Category("Performance")]
                 [Description("Selects which anti-aliasing technique to use.")]
@@ -1154,7 +1154,9 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// When TSR is enabled, scales the internal render resolution before temporal upscaling.
-                /// The default 1.0 renders at full resolution, so TSR acts as temporal anti-aliasing.
+                /// The default 0.75 renders each axis at 75 percent of the output size, and TSR upscales
+                /// the result to the output size. At 1.0, TSR renders at full resolution and acts as
+                /// temporal anti-aliasing.
                 /// </summary>
                 [Category("Performance")]
                 [Description("Internal resolution scale used by temporal super-resolution (TSR). Values below 1.0 render below native and upscale temporally.")]

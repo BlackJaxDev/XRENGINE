@@ -1268,6 +1268,12 @@ public sealed partial class AdvancedGpuScenePublisher
                 EAdvancedResourceFallback.White,
                 out destination[4],
                 out compatibilityReason,
+                out reason) ||
+            !AdvancedGpuResourceSourceEncoder.TryEncode(
+                snapshot.Occlusion,
+                EAdvancedResourceFallback.White,
+                out destination[5],
+                out compatibilityReason,
                 out reason))
         {
             return false;

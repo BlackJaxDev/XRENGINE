@@ -261,13 +261,31 @@ the swapchain size:
   space. `outputSizeAndInverse` stays the output size. Without this split, the native
   stages read an internal target as if it had the output size, which zooms the image
   out and reads rows outside the target.
-- Only true single-pass stereo eyes are validated with a scale below 1. Two-pass eyes
-  (`SequentialViews`, `ParallelCommandBufferRecording`) are not validated. OpenGL and
-  WebGPU canonical views do not get the internal size.
+- The scale applies only when the eye has TSR history. The frame profile of the eye
+  pipeline instance (`XRRenderPipelineInstance.ApplyCurrentFrameProfile`) resolves the
+  temporal history policy for that instance and its stereo flag before it sets the internal
+  size. A view without history keeps its full internal size, because a smaller image without
+  TSR is only a plain upscale.
+- Per-eye OpenXR eyes (`SequentialViews`, `ParallelCommandBufferRecording`) on Vulkan use the
+  scale when the eye runs the Advanced stage family with a bound output (Advanced, or the
+  Advanced stage family of RVC). `VPRC_TemporalAccumulationPass.ResolveHistoryIsolationPolicy`
+  gives such an eye the `PerEye` policy: each eye has its own viewport and pipeline instance,
+  so the temporal state of the instance holds only that eye. The per-eye viewport keeps the
+  swapchain size as display size; the internal size can be smaller. The Vulkan per-eye checks
+  (`ValidateOpenXrEyeViewportExtent`, `ValidateOpenXrExternalFrameOpContexts`) accept an
+  internal size between 1 and the swapchain size.
+- Other per-eye swapchain eyes (the Default pipeline, and every per-eye eye on OpenGL) have
+  no TSR history. They render at the swapchain size without temporal anti-aliasing, and the
+  pipeline instance writes a `[TemporalHistory]` warning every 10 seconds that names the
+  pipeline and the reason.
+- Stereo passes and OpenXR eyes ignore the DLSS/XeSS scale, because the vendor upscalers
+  run only on mono views that do not write an external swapchain image.
+- Per-eye eyes with a scale below 1 are not yet validated on a headset. OpenGL and WebGPU
+  canonical views do not get the internal size.
 - With another anti-aliasing mode, or at 1.0, the eyes render at the swapchain size and
   the image does not change.
-- The engine default is TSR at 1.0, so the eyes render at the swapchain size unless a
-  setting or a camera override selects a lower scale.
+- The engine default is TSR at 0.75. Set `TsrRenderScale` to 1.0, or set the
+  `TsrRenderScaleOverride` of the eye camera, to render the eyes at the swapchain size.
 
 Vulkan GPU timing names each fullscreen pass of the post chain after its fragment shader,
 so the TSR, FXAA, bloom, ambient occlusion and post passes have their own rows:
@@ -379,7 +397,7 @@ checks still apply.
 
 Legacy material reuse (no engine semantic, for example an imported material with a
 height, specular, alpha-mask or emissive map) requires no engine-surface or Uber
-companions. It encodes the five legacy texture slots again (from
+companions. It encodes the six legacy texture slots again (from
 `SurfaceTextureBindings` when the material has them, otherwise from the legacy
 texture list) and compares each with its committed logical binding. It also packs
 the constant row again and compares it with the committed row, because one texture
@@ -715,6 +733,36 @@ including the cleared entries. Adjacent writes merge into one range.
 `AdvancedMaterialDatabaseContractTests` checks complete slots for addition,
 replacement, and payload shrink. Replacement uses no managed allocation when
 capacity is sufficient.
+
+### Material ambient occlusion
+
+The Standard layouts (`OpaqueDeferred`, `ForwardOpaque`, `MaskedForward`) have six
+texture slots: albedo, normal, metallic-roughness, emissive, opacity, and occlusion
+(slot 5). The occlusion texture comes from a `MaterialSurfaceTextureBinding` with the
+`EMaterialTextureSemantic.Occlusion` semantic:
+
+- `MaterialBindingSourceEncoder` publishes it only when the binding exists and
+  `XRMaterial.OcclusionStrength` is above 0. It then sets
+  `GPUMaterialEntry.OcclusionTextureFlag` (bit 29 of the material flags word) and
+  writes `OcclusionStrength` and `OcclusionControls` (channel in bits 0-1, texture-coordinate
+  set 1 in bit 2).
+- The occlusion words follow the original 36-word row: strength at word 36, controls at
+  word 37, and the texture handle at word 38 (`MaterialTextureBinding.PackHandleAfterFields`).
+  Every earlier word offset, including `Flags` at word 5, is the same as in a row without
+  occlusion, so the Uber, MSAA and repair kernels, WebGPU, and `GPUMaterialTable` keep their
+  offsets. The row is 40 words.
+- The native opaque kernel samples the texture only when the flag is set, so a
+  material without the texture takes no extra sample. The value follows glTF:
+  `occlusion = 1 + strength * (texel - 1)`.
+- The kernel multiplies it into the screen-space ambient occlusion (product). The
+  combined value darkens only indirect light: the world ambient term, probe diffuse,
+  and probe specular through `XR_ADV_SpecularVisibility`. Direct light does not use it.
+- The glTF importer binds `occlusionTexture` (red channel) with its `strength`. The
+  Assimp importer binds `TextureType.AmbientOcclusion` slots. The native FBX importer
+  maps texture names with "occlusion" or an "_ao" token to that type, instead of the
+  base color default.
+- Only the native opaque kernels read the texture. The Native Uber path, the Default
+  pipeline, and the WebGPU shading contracts ignore it.
 
 ### General debug shapes
 

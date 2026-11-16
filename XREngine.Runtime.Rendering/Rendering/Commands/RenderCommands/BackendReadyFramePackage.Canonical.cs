@@ -272,6 +272,11 @@ public sealed partial class BackendReadyFramePackage
     /// resident pass set and template deltas come from the scene publication;
     /// only compact CPU-visible rows and ordered exceptions use visible selections.
     /// </summary>
+    /// <param name="pipelineViewPolicyFlags">
+    /// View record flags that the render pipeline derives from the camera (for example
+    /// <see cref="EAdvancedViewRecordFlags.GtaoMaterialNormals"/>). Every canonical view of the
+    /// package gets them.
+    /// </param>
     internal void PrepareCanonicalFromScene(
         GPUScene? scene,
         XRCamera? camera,
@@ -279,7 +284,8 @@ public sealed partial class BackendReadyFramePackage
         int viewportHeight,
         bool excludeProjectiveMirrors,
         EMeshSubmissionStrategy submissionStrategy,
-        int viewPair = RenderFrameViewSetPublication.AllViews)
+        int viewPair = RenderFrameViewSetPublication.AllViews,
+        EAdvancedViewRecordFlags pipelineViewPolicyFlags = EAdvancedViewRecordFlags.None)
     {
         // A late package preparation only has command membership. It must not
         // discard the already captured canonical publication and its lease.
@@ -308,9 +314,9 @@ public sealed partial class BackendReadyFramePackage
 
         ResetCanonical();
         _canonicalPublicationLease = lease;
-        _canonicalViewPolicyFlags = excludeProjectiveMirrors
+        _canonicalViewPolicyFlags = pipelineViewPolicyFlags | (excludeProjectiveMirrors
             ? EAdvancedViewRecordFlags.ExcludeProjectiveMirrors
-            : EAdvancedViewRecordFlags.None;
+            : EAdvancedViewRecordFlags.None);
 
         AdvancedGpuScenePublication identity = publication.Publication;
         CanonicalScenePublication = new BackendReadyCanonicalScenePublication(

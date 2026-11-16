@@ -601,6 +601,13 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     if ((materialFlags & 4u) != 0u)
         rmse.xy *= XR_ADV_StandardTexture(material, 2u, surface.texCoord0,
             surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0)).rg;
+    // The material occlusion texture multiplies the screen-space AO (product, as the glTF
+    // and engine forward paths do). ambientOcclusion reaches only indirect light: ambient and
+    // probe diffuse, and probe specular through the specular occlusion function.
+    if ((materialFlags & XR_ADV_STANDARD_OCCLUSION_TEXTURE_FLAG) != 0u)
+        ambientOcclusion *= XR_ADV_StandardOcclusion(material,
+            surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy,
+            surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy);
     vec3 N = normalize(surface.shadingNormal);
     if ((materialFlags & 2u) != 0u &&
         XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT))
@@ -621,8 +628,13 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             normalTex = XR_ADV_DecodeTangentNormal(XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
                 surface.texCoord0Dx, surface.texCoord0Dy,
                 vec4(0.5, 0.5, 1.0, 1.0)));
-        N = normalize(surface.tangent * normalTex.x +
+        vec3 mappedN = normalize(surface.tangent * normalTex.x +
             surface.bitangent * normalTex.y + N * normalTex.z);
+        // GTAO normal-map micro-occlusion. The view flag comes from the camera GTAO settings,
+        // so the branch is uniform for the dispatch. N still holds the surface normal here.
+        if ((view.flags & XR_ADV_VIEW_GTAO_MATERIAL_NORMALS) != 0u)
+            ambientOcclusion *= XR_ADV_NormalMapMicroOcclusion(dot(mappedN, N));
+        N = mappedN;
     }
     vec3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
     float roughness = clamp(rmse.x, 0.04, 1.0);

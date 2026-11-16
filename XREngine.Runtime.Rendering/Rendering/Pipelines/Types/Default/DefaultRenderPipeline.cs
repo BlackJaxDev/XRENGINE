@@ -421,20 +421,28 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
     {
         EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
-        return GetRequestedInternalResolutionForCamera(camera, mode);
+        return GetRequestedInternalResolutionForCamera(camera, mode, allowVendorUpscale: true);
     }
 
-    internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
+    /// <summary>
+    /// Returns the internal render scale that the anti-aliasing mode requests for <paramref name="camera"/>.
+    /// The caller (<see cref="XRRenderPipelineInstance"/>) decides whether TSR history is available for the
+    /// view and does not call this method for TSR without history. The vendor (DLSS or XeSS) scale applies
+    /// only when <paramref name="allowVendorUpscale"/> is true.
+    /// </summary>
+    internal override float? GetRequestedInternalResolutionForCamera(
+        XRCamera? camera,
+        EAntiAliasingMode effectiveAntiAliasingMode,
+        bool allowVendorUpscale)
     {
         EAntiAliasingMode mode = effectiveAntiAliasingMode;
-        if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))
+        if (allowVendorUpscale &&
+            !IsRenderingExternalSwapchainTarget() &&
+            TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
 
         if (mode == EAntiAliasingMode.Dlaa)
             return 1.0f;
-
-        if (mode == EAntiAliasingMode.Tsr && DisableHistoryBasedVrEffects())
-            return null;
 
         return mode == EAntiAliasingMode.Tsr
             ? Math.Clamp(camera?.TsrRenderScaleOverride ?? RuntimeEngine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)

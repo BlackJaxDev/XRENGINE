@@ -14,4 +14,9 @@ public enum EMaterialTextureSemantic : byte
     Transmission,
     /// <summary>Linear red-channel intensity multiplying the authored specular factor.</summary>
     Specular = 7,
+    /// <summary>
+    /// Linear ambient occlusion. <see cref="MaterialSurfaceTextureBinding.Channel"/> selects the
+    /// channel (glTF and ORM textures store it in red). It darkens only indirect light.
+    /// </summary>
+    Occlusion = 8,
 }
