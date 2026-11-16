@@ -35,6 +35,8 @@ public sealed partial class AdvancedGpuScenePublisher
     // The standard legacy slots and six engine-surface roles share one reuse check.
     private readonly AdvancedGpuResourceBindingSource[] _reuseStandardLitSources =
         new AdvancedGpuResourceBindingSource[MaterialBindingLayouts.StandardTextureCount + AdvancedEngineSurfaceRecord.RoleCount];
+    // Constant words that the reuse check of a legacy (semantic None) material encodes again.
+    private uint[] _reuseLegacyConstantWords = [];
     private AdvancedMaterialTextureBinding[] _resourceAcquireBindings = [];
     private AdvancedMaterialTextureBinding[] _resourceReleaseBindings = [];
     private int[] _plannedVariantSlots = [];
@@ -1418,18 +1420,109 @@ public sealed partial class AdvancedGpuScenePublisher
         return true;
     }
 
-    /// <summary>Limits source reuse to material families with complete source witnesses.</summary>
+    /// <summary>
+    /// Limits source reuse to material families with a complete reuse check: untextured canonical
+    /// materials, native Uber, standard lit textures, and legacy materials without an engine
+    /// semantic (see <see cref="IsLegacyReusableMaterial"/>).
+    /// </summary>
     private static bool CanReuseMaterialSources(XRMaterial? material)
         => IsUntexturedCanonicalMaterial(material) ||
            material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 ||
-           material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1;
+           material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 ||
+           IsLegacyReusableMaterial(material);
+
+    /// <summary>
+    /// True for a material without an engine semantic (for example an imported material with a
+    /// height, specular, alpha mask or emissive map). Its plan reads only the legacy texture slots
+    /// and the packed constant row, so <see cref="CommittedMaterialBindingsMatch"/> can check it
+    /// completely by encoding both again. Projective mirrors and untextured canonical materials keep
+    /// their own paths.
+    /// </summary>
+    private static bool IsLegacyReusableMaterial(XRMaterial? material)
+        => material is not null and not AdvancedProjectiveMirrorMaterial &&
+           material.EngineSemantic == EngineMaterialSemanticIdentity.None &&
+           !IsUntexturedCanonicalMaterial(material);
+
+    /// <summary>
+    /// The reuse check of a legacy material (no engine semantic): no engine-surface or Uber
+    /// companions, the constant row encoded again equals the committed row, and each of the five
+    /// legacy slots encoded again matches its committed binding (texture, content generation,
+    /// lifetime and sampler). These are all inputs of its full plan.
+    /// </summary>
+    private bool LegacyMaterialBindingsMatch(
+        AdvancedGpuHandle handle,
+        XRMaterial material,
+        MaterialBindingLayout layout,
+        ReadOnlySpan<AdvancedMaterialTextureBinding> bindings,
+        in AdvancedEngineSurfaceRecord engineSurface,
+        in AdvancedUberBaseSurfaceRecord uberSurface)
+    {
+        if (engineSurface.SchemaVersion != 0 || uberSurface.SchemaVersion != 0 ||
+            bindings.Length != MaterialBindingLayouts.StandardTextureCount ||
+            layout.Textures.Count != MaterialBindingLayouts.StandardTextureCount ||
+            ReferenceEquals(layout, NativeUberMaterialSchema.Opaque) ||
+            ReferenceEquals(layout, NativeUberMaterialSchema.Masked))
+            return false;
+        if (!Database.Materials.Materials.TryGet(handle, out AdvancedMaterialRecord committed) ||
+            !Database.Materials.TryGetConstantWords(committed, out ReadOnlySpan<uint> committedConstants) ||
+            committedConstants.Length != (int)layout.RowWordCount)
+            return false;
+
+        if (_reuseLegacyConstantWords.Length < committedConstants.Length)
+            _reuseLegacyConstantWords = new uint[committedConstants.Length];
+        Span<uint> constants = _reuseLegacyConstantWords.AsSpan(0, committedConstants.Length);
+        Span<AdvancedGpuResourceBindingSource> sources =
+            _reuseStandardLitSources.AsSpan(0, MaterialBindingLayouts.StandardTextureCount);
+        try
+        {
+            MaterialBindingSourceSnapshot snapshot = MaterialBindingSourceEncoder.Encode(material);
+            if (!MaterialBindingRowPacker.TryWriteOpaqueDeferred(
+                    layout,
+                    snapshot.Entry,
+                    snapshot.EmissionColor,
+                    snapshot.EmissionStrength,
+                    snapshot.EmissionTextureMetadata,
+                    snapshot.EmissionUvScaleOffset,
+                    snapshot.EmissionUvRotation,
+                    constants,
+                    out _) ||
+                !constants.SequenceEqual(committedConstants) ||
+                !TryEncodeMaterialResourceSources(in snapshot, sources, out _, out _))
+                return false;
+
+            for (int index = 0; index < sources.Length; ++index)
+            {
+                ref readonly AdvancedGpuResourceBindingSource source = ref sources[index];
+                // GPU-authored arrays and cubes have no complete content witness.
+                if (source.Texture is not null &&
+                    (source.Texture.IsDestroyed ||
+                     source.Texture is not XRTexture2D &&
+                     (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
+                      source.SourceContentGeneration == 0UL)))
+                    return false;
+                if (!_resourcePublisher.BindingMatches(in bindings[index], in source))
+                    return false;
+            }
+            return true;
+        }
+        finally
+        {
+            Array.Clear(_reuseStandardLitSources);
+            constants.Clear();
+        }
+    }
 
     /// <summary>
     /// Checks supported texture roles against committed logical resources.
     /// Standard lit textures also compare the native companion values that the
     /// full plan encodes. The material revisions cover legacy scalar values.
+    /// A legacy material without an engine semantic also encodes its constant row
+    /// again and compares it with the committed row of <paramref name="handle"/>,
+    /// because a texture property (the emissive format) feeds that row without a
+    /// material version.
     /// </summary>
     private bool CommittedMaterialBindingsMatch(
+        AdvancedGpuHandle handle,
         XRMaterial? material,
         MaterialBindingLayout layout,
         ReadOnlySpan<AdvancedMaterialTextureBinding> bindings,
@@ -1482,6 +1575,9 @@ public sealed partial class AdvancedGpuScenePublisher
                 Array.Clear(_reuseStandardLitSources);
             }
         }
+
+        if (IsLegacyReusableMaterial(material))
+            return LegacyMaterialBindingsMatch(handle, material!, layout, bindings, in engineSurface, in uberSurface);
 
         if (material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1)
         {

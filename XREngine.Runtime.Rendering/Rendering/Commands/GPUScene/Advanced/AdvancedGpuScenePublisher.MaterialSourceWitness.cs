@@ -56,7 +56,7 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             Interlocked.Increment(ref _materialSourceWitnessHits);
             if (s_validateMaterialSourceWitness &&
-                !CommittedMaterialBindingsMatch(material, layout, bindings, in engineSurface, in uberSurface))
+                !CommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface))
             {
                 _materialSourceWitnesses.Remove(handle);
                 // A texture write on another thread (for example a streaming
@@ -79,7 +79,7 @@ public sealed partial class AdvancedGpuScenePublisher
         }
 
         Interlocked.Increment(ref _materialSourceWitnessMisses);
-        if (!CommittedMaterialBindingsMatch(material, layout, bindings, in engineSurface, in uberSurface))
+        if (!CommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface))
         {
             _materialSourceWitnesses.Remove(handle);
             return false;
@@ -188,6 +188,10 @@ public sealed partial class AdvancedGpuScenePublisher
         }
 
         hash = unchecked((hash ^ counters) * prime);
+        // The source version advances on any texture property change (sampler state, LOD
+        // clamps, streaming state). Surface-binding textures do not feed the material's texture
+        // source version, so it is read directly for every texture here.
+        hash = unchecked((hash ^ (texture?.AdvancedSourceVersion ?? 0UL)) * prime);
         hash = unchecked((hash ^ (ulong)(uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(texture)) * prime);
         return true;
     }

@@ -297,9 +297,9 @@ The gate passes only when all of these conditions are true:
 - The ordered identities and source groups are valid, and no identity recipient is pending.
 - The frame identifier follows the last published frame.
 - The boundary storage did not grow.
-- Each supported row reused its committed material plan. Its material is untextured
-  or uses a supported `NativeUberV1` or `StandardLitTextureV1` layout with current
-  2D or CPU-backed cube bindings.
+- Each supported row reused its committed material plan. Its material is untextured,
+  uses a supported `NativeUberV1` or `StandardLitTextureV1` layout, or has no engine
+  semantic (a legacy material), with current 2D or CPU-backed cube bindings.
 - Each active registration belongs to one row.
 
 Any difference runs the full plan with no change in behavior. Thus a rejected
@@ -316,7 +316,24 @@ legacy texture roles and six engine-surface roles as the full plan. It checks
 each committed logical binding and the engine-surface layout and scalar values.
 Publisher-owned scratch storage is cleared after each check. The existing five
 material revisions, material variant, current handles, header, and render-state
-checks still apply. GPU-authored cubes without a content witness, arrays, projective mirrors, and other
+checks still apply.
+
+Legacy material reuse (no engine semantic, for example an imported material with a
+height, specular, alpha-mask or emissive map) requires no engine-surface or Uber
+companions. It encodes the five legacy texture slots again (from
+`SurfaceTextureBindings` when the material has them, otherwise from the legacy
+texture list) and compares each with its committed logical binding. It also packs
+the constant row again and compares it with the committed row, because one texture
+property (the emissive format) feeds that row without a material version. Without
+this path, New Sponza (height-mapped materials) failed the unchanged-row gate on
+every publication.
+
+The material source witness that skips these checks hashes, for every texture of
+both binding paths, its content counters and `AdvancedSourceVersion`, so a sampler,
+LOD-clamp or streaming change of a surface-binding texture also breaks the
+witness.
+
+GPU-authored cubes without a content witness, arrays, projective mirrors, and other
 textured material families keep the full plan. Native readiness and descriptor
 ownership checks remain at their existing render boundaries.
 
