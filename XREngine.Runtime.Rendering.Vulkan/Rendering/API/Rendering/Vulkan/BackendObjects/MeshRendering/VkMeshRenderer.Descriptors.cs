@@ -84,7 +84,11 @@ internal unsafe partial class VkMeshRenderer
 				BackendContext.Resources.Descriptors.FrameSlotCount,
 				_program.DescriptorSetLayouts.Count))
 		{
-			ActivateDescriptorAllocation(entry.Allocation, drawUniformSlot, bindingSnapshot);
+			// The first request of this frame registered the allocation under its owner key,
+			// so a repeat only makes it active. Building the owner key again costs a resource
+			// signature resolve and a buffer fingerprint for every repeat.
+			ActivateDescriptorAllocation(entry.Allocation, drawUniformSlot, bindingSnapshot,
+				registerOwner: false);
 			_descriptorDirty = false;
 			return true;
 		}
@@ -1573,15 +1577,21 @@ internal unsafe partial class VkMeshRenderer
 		return builder.ToString();
 	}
 
+    /// <summary>
+    /// Makes <paramref name="allocation"/> the active descriptor allocation for this draw
+    /// slot. With <paramref name="registerOwner"/>, it also stores the allocation under its
+    /// owner key, which the published fast path of a later frame looks up.
+    /// </summary>
     private void ActivateDescriptorAllocation(
 		DescriptorAllocation allocation,
 		int drawUniformSlot,
-		ComputeDispatchSnapshot? bindingSnapshot = null)
+		ComputeDispatchSnapshot? bindingSnapshot = null,
+		bool registerOwner = true)
     {
         allocation.LastUsedSerial = ++_descriptorAllocationUsageSerial;
         allocation.LastUsedTimestamp = Stopwatch.GetTimestamp();
         _descriptorAllocationsByDrawSlot[drawUniformSlot] = allocation;
-		if (allocation.Material is { } material)
+		if (registerOwner && allocation.Material is { } material)
 		{
 			if (TryCreateDescriptorOwnerLookupKey(
 					allocation.LayoutFingerprint,
