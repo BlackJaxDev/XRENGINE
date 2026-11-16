@@ -102,6 +102,18 @@ preamble define `XR_ADV_NATIVE_SHADING_FAMILY` selects the family:
   with Uber kernels uses the combined multisample kernel (no family define) when
   it is ready, and the standard multisample kernel with the fallback before
   that. Only the kernel for the current visibility mode is requested.
+- The standard family also compiles a lean variant (`ShadeNativeOpaqueStandardLean`,
+  preamble define `XR_ADV_SHADE_LEAN`). It leaves out the shading debug views, the
+  per-light debug values (direct diffuse and specular, shadow reason and visibility)
+  and the Uber base-color fallback. A single-sample frame with no shading debug view
+  and no Uber fallback records the lean kernel; every other frame records the generic
+  standard kernel. The unused paths still cost registers in the generic kernel: on New
+  Sponza in VR, the lean kernel shades in about 0.3 to 0.5 ms less. The lean kernel is
+  prepared with the family, so admission waits for both and the switch never compiles
+  at frame time. The lean kernel still writes the shading diagnostics image, but its
+  shadow bits always read "visible" (reason 0, visibility 255). No frame pass reads that
+  image (the foveated fill only copies it); to inspect the shadow bits with a capture,
+  set a shading debug view, which selects the generic kernel.
 
 ### Edge half-rate shading for eye outputs
 

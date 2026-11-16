@@ -14,14 +14,17 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private const int ShadeUberProgramIndex = 9;
     private const int ShadeCombinedMultisampleProgramIndex = 10;
     private const int OcclusionCulledBoundsProgramIndex = 11;
+    private const int ShadeStandardLeanProgramIndex = 12;
     private const string OcclusionCulledBoundsShaderPath = "Advanced/Visibility/OcclusionCulledBounds.comp";
     private const string ShadeShaderPath = "Advanced/Shading/ShadeNativeOpaque.comp";
     private const string ShadeMultisampleShaderPath = "Advanced/Shading/ShadeNativeOpaqueMsaa.comp";
     // Matches XR_ADV_NATIVE_SHADING_FAMILY_* in ShadeNativeOpaqueEvaluator.glslinc.
     private const string StandardFamilyPreamble = "#define XR_ADV_NATIVE_SHADING_FAMILY 1\n";
     private const string UberFamilyPreamble = "#define XR_ADV_NATIVE_SHADING_FAMILY 2\n";
+    // Matches XR_ADV_SHADE_LEAN in ShadeNativeOpaqueEvaluator.glslinc.
+    private const string StandardLeanPreamble = StandardFamilyPreamble + "#define XR_ADV_SHADE_LEAN 1\n";
 
-    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[12];
+    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[13];
 
     /// <summary>
     /// By default the native Uber kernel compiles in the background after the standard
@@ -75,6 +78,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             ShadeStandardProgramIndex => ("Advanced/Shading/ShadeNativeOpaqueStandard", StandardFamilyPreamble),
             ShadeStandardMultisampleProgramIndex => ("Advanced/Shading/ShadeNativeOpaqueStandardMsaa", StandardFamilyPreamble),
             ShadeUberProgramIndex => ("Advanced/Shading/ShadeNativeOpaqueUber", UberFamilyPreamble),
+            ShadeStandardLeanProgramIndex => ("Advanced/Shading/ShadeNativeOpaqueStandardLean", StandardLeanPreamble),
             ShadeCombinedMultisampleProgramIndex => ("Advanced/Shading/ShadeNativeOpaqueCombinedMsaa", string.Empty),
             _ => (path, string.Empty),
         };
@@ -89,7 +93,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
     private static bool IsNativeShadingProgram(int index)
         => index is ShadeStandardProgramIndex or ShadeStandardMultisampleProgramIndex or
-            ShadeUberProgramIndex or ShadeCombinedMultisampleProgramIndex;
+            ShadeUberProgramIndex or ShadeCombinedMultisampleProgramIndex or ShadeStandardLeanProgramIndex;
 
     internal VulkanAdvancedVisibilityPipelineReadiness TryGetNativeComputePipelines(
         bool multisampleVisibility,
@@ -135,6 +139,11 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         readiness = TryGetNativeComputePipeline(5, "Advanced/Shading/ShadeNativeOpaque.comp",
             out VulkanAdvancedComputePipeline shade, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
+        // The lean standard kernel is prepared with the family, so the first frame that can
+        // use it does not wait for its compile.
+        readiness = TryGetNativeComputePipeline(ShadeStandardLeanProgramIndex, ShadeShaderPath,
+            out VulkanAdvancedComputePipeline shadeLean, out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
         // The RVC telemetry kernel is small. It is prepared with the family so
         // a compile failure is loud at admission, not a silent missing counter.
         readiness = TryGetNativeComputePipeline(RvcShadeletTelemetryProgramIndex, RvcShadeletTelemetryShaderPath,
@@ -147,6 +156,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         {
             RvcShadeletTelemetry = telemetry,
             FoveatedQuadFill = foveatedFill,
+            ShadeLean = shadeLean,
         };
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }

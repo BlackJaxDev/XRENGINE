@@ -323,17 +323,26 @@ vec3 XR_ADV_EvaluateLight(
     else return vec3(0.0);
     uint reason;
     float visibility = XR_ADV_EvaluateShadow(light, surface, N, L, reason);
+#if !defined(XR_ADV_SHADE_LEAN)
     shadowReason = max(shadowReason, reason);
     shadowVisibility = min(shadowVisibility, visibility);
+#endif
     vec3 radiance = light.colorAndIntensity.rgb * light.colorAndIntensity.w * attenuation * visibility;
     vec3 diffuse, specular;
     vec3 result = XR_ADV_EvaluatePBRDirect(N, V, L, radiance, albedo,
         roughness, metallic, diffuse, specular);
+#if !defined(XR_ADV_SHADE_LEAN)
     directDiffuse += diffuse;
     directSpecular += specular;
+#endif
     return result;
 }
 
+// XR_ADV_SHADE_LEAN builds the standard kernel without the paths that a frame with no shading
+// debug view and a ready Uber kernel never runs: the debug views, the per-light debug globals
+// (direct diffuse and specular, shadow reason and visibility) and the Uber base-color fallback.
+// The unused code still costs registers in the generic kernel. The lean kernel writes no
+// shadow bits into the shading diagnostics image; the generic kernel does.
 // XR_ADV_NATIVE_SHADING_FAMILY selects one material family per kernel:
 // XR_ADV_NATIVE_SHADING_FAMILY_STANDARD (standard and projective-mirror materials) or
 // XR_ADV_NATIVE_SHADING_FAMILY_UBER (native Uber materials). Without it, the kernel shades
@@ -495,7 +504,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     {
 #if !defined(XR_ADV_NATIVE_SHADING_FAMILY) || XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_UBER
         XR_UBER_Shade(pixel, surface, view, material, ambientOcclusion, result);
-#else
+#elif !defined(XR_ADV_SHADE_LEAN)
         XR_ADV_ShadeUberFallback(pixel, material, surface, view, viewIndex, ambientOcclusion, result);
 #endif
         return;
@@ -654,6 +663,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         }
     }
 
+#if !defined(XR_ADV_SHADE_LEAN)
     uint debugView = (u_Push.flags >> 8u) & 255u;
     if (debugView == 1u) color = directDiffuse;
     else if (debugView == 2u) color = directSpecular;
@@ -685,6 +695,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             shadowReason == XR_ADV_SHADOW_OUTSIDE ? vec3(0.0, 0.0, 0.5) :
             vec3(1.0, 0.0, float(shadowReason) / 6.0);
     else if (debugView == 10u) color = vec3(ambientOcclusion);
+#endif
 
     result.radiance = max(color, vec3(0.0));
     result.opacity = base.a;

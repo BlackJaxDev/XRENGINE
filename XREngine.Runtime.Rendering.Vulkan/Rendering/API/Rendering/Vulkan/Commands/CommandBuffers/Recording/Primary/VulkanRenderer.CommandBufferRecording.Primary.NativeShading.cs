@@ -247,9 +247,14 @@ internal sealed partial class VulkanCommandRuntime
         // A publication without family masks keeps the full kernel range.
         if ((families.Standard | families.Uber) == UInt128.Zero)
             standardKernels = UInt128.MaxValue;
+        // Without a shading debug view and the Uber fallback, the lean standard kernel shades
+        // the same image with fewer registers (XR_ADV_SHADE_LEAN).
+        bool leanShade = !closure.UsesMultisampleVisibility && !uberFallback &&
+            ((uint)payload.Request.ShadingDebugView & 0xFFu) == 0u &&
+            payload.NativeComputePipelines.ShadeLean.IsCurrent;
         VulkanAdvancedComputePipeline shade = closure.UsesMultisampleVisibility
             ? combinedMultisample ? combinedMultisampleShade : payload.NativeComputePipelines.ShadeMultisample
-            : payload.NativeComputePipelines.Shade;
+            : leanShade ? payload.NativeComputePipelines.ShadeLean : payload.NativeComputePipelines.Shade;
         ulong parameterAddress = shade.UsesAddressRoot
             ? WriteNativeShadingAddressRoot(ref state, closure.ShadingAddressRoot, in push)
             : 0UL;
