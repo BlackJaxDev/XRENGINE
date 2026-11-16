@@ -416,6 +416,11 @@ therefore follow the active passes through the resource feature mask:
   mip 0 weight) or the bloom debug view is on. With the default settings this saves
   the full-resolution copy (about 0.15 ms for the 2688x2688 eye pair). WebGPU
   keeps the copy.
+  In this mode the copy pass is declared and run after the downsample and
+  upsample passes. The render-graph planner puts the barrier that makes the HDR
+  scene readable on the first pass that reads it. If the optional copy were that
+  first reader, a frame that skips the copy would also skip the barrier, and the
+  first downsample would sample the HDR scene without one.
 
 ---
 

@@ -718,40 +718,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            // Step 1: Copy HDR scene into bloom texture mip 0.
-            if (mip0 is not null)
-            {
-                if (mip0.Material?.Textures.Count != 1 ||
-                    !ReferenceEquals(mip0.Material.Textures[0], inputTexture))
-                {
-                    LogGuardFailure(nameof(Execute), "Bloom copy material source is stale; declared resources must be rebuilt.");
-                    return;
-                }
-                _bloomCopySourceTexture = inputTexture;
-
-                BoundingRectangle copyRegion = ResolveBloomMipRegion(_lastWidth, _lastHeight, 0);
-                ValidateBloomRenderRegion(mip0, copyRegion, 0);
-                int copyPassIndex = ResolvePassIndex(BloomCopyPassName);
-                using var copyPassScope = copyPassIndex != int.MinValue
-                    ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(copyPassIndex)
-                    : default;
-                using (RenderPipelineGpuProfiler.Instance.StartScope(BloomCopyScopeName))
-                using (instance.RenderState.PushRenderArea(copyRegion))
-                using (mip0.BindForWritingState())
-                {
-                    VPRCFullscreenPassContract.ValidateAndLog(
-                        instance,
-                        BloomCopyPassName,
-                        mip0,
-                        inputTexture,
-                        Stereo,
-                        copyRegion);
-                    bool rendered = mip0.Render();
-                    LogBloomRenderResult("CopyMip0", mip0, copyRegion, copyPassIndex, 0, rendered);
-                }
-            }
-
-            if (_activeBloomMaxMip < 1)
+            // Copy the HDR scene into bloom mip 0. When the first downsample reads the input, the
+            // copy runs after the chain (see DescribeRenderPass), so the first downsample is the
+            // first reader of the input and records the barrier that makes it readable.
+            if (mip0 is not null && !FirstDownsampleReadsInput && !CopyInputToMip0(mip0, inputTexture))
                 return;
 
             for (int mipLevel = 1; mipLevel <= _activeBloomMaxMip; ++mipLevel)
@@ -778,6 +748,50 @@ namespace XREngine.Rendering.Pipelines.Commands
 
                 UpsamplePass(upsampleFbo, GetBloomRect(targetMipLevel), sourceMipLevel);
             }
+
+            if (mip0 is not null && FirstDownsampleReadsInput)
+                CopyInputToMip0(mip0, inputTexture);
+        }
+
+        /// <summary>
+        /// Renders the input texture into bloom mip 0 for the combine or the bloom debug view.
+        /// Returns false when the copy material does not sample the current input; the caller
+        /// then skips the rest of the bloom chain for this frame.
+        /// </summary>
+        private bool CopyInputToMip0(XRQuadFrameBuffer mip0, XRTexture inputTexture)
+        {
+            var instance = ActivePipelineInstance;
+            if (instance is null)
+                return false;
+            if (mip0.Material?.Textures.Count != 1 ||
+                !ReferenceEquals(mip0.Material.Textures[0], inputTexture))
+            {
+                LogGuardFailure(nameof(CopyInputToMip0), "Bloom copy material source is stale; declared resources must be rebuilt.");
+                return false;
+            }
+            _bloomCopySourceTexture = inputTexture;
+
+            BoundingRectangle copyRegion = ResolveBloomMipRegion(_lastWidth, _lastHeight, 0);
+            ValidateBloomRenderRegion(mip0, copyRegion, 0);
+            int copyPassIndex = ResolvePassIndex(BloomCopyPassName);
+            using var copyPassScope = copyPassIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(copyPassIndex)
+                : default;
+            using (RenderPipelineGpuProfiler.Instance.StartScope(BloomCopyScopeName))
+            using (instance.RenderState.PushRenderArea(copyRegion))
+            using (mip0.BindForWritingState())
+            {
+                VPRCFullscreenPassContract.ValidateAndLog(
+                    instance,
+                    BloomCopyPassName,
+                    mip0,
+                    inputTexture,
+                    Stereo,
+                    copyRegion);
+                bool rendered = mip0.Render();
+                LogBloomRenderResult("CopyMip0", mip0, copyRegion, copyPassIndex, 0, rendered);
+            }
+            return true;
         }
 
         /// <summary>
@@ -1279,20 +1293,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             bool declared = context.ResourceLayout is null || context.HasResource(BloomOutputTextureName);
             int maxMip = context.ResourceProfile is { } profile
                 ? ResolveBloomMaxMip(profile.InternalWidth, profile.InternalHeight) : BloomMaxMipmapLevel;
-            if (declared)
-            {
-                // With FirstDownsampleReadsInput the copy runs only while the combine reads mip 0.
-                var copy = context.GetOrCreateSyntheticPass(BloomCopyPassName, ERenderGraphPassStage.Graphics);
-                copy.SampleTexture(MakeFboColorResource(InputFBOName));
-                copy.UseColorAttachmentMip(
-                    bloomTexture,
-                    0u,
-                    ERenderGraphAccess.Write,
-                    ERenderPassLoadOp.DontCare,
-                    ERenderPassStoreOp.Store);
-            }
-            else
-                context.ReserveSyntheticPassIndex(BloomCopyPassName);
+            if (!FirstDownsampleReadsInput)
+                DescribeCopyPass(context, bloomTexture, declared);
 
             for (int targetMipLevel = 1; targetMipLevel <= BloomMaxMipmapLevel; targetMipLevel++)
             {
@@ -1331,6 +1333,31 @@ namespace XREngine.Rendering.Pipelines.Commands
                     ERenderPassLoadOp.Load,
                     ERenderPassStoreOp.Store);
             }
+
+            // When the first downsample reads the input, the copy runs only while the combine
+            // reads mip 0, so it must not be the first reader of the input: the planner puts the
+            // barrier that makes the input readable on the first reader, and a skipped copy would
+            // drop it. Declared last, the copy is a read after the first downsample's read.
+            if (FirstDownsampleReadsInput)
+                DescribeCopyPass(context, bloomTexture, declared);
+        }
+
+        private void DescribeCopyPass(RenderGraphDescribeContext context, string bloomTexture, bool declared)
+        {
+            if (!declared)
+            {
+                context.ReserveSyntheticPassIndex(BloomCopyPassName);
+                return;
+            }
+
+            var copy = context.GetOrCreateSyntheticPass(BloomCopyPassName, ERenderGraphPassStage.Graphics);
+            copy.SampleTexture(MakeFboColorResource(InputFBOName));
+            copy.UseColorAttachmentMip(
+                bloomTexture,
+                0u,
+                ERenderGraphAccess.Write,
+                ERenderPassLoadOp.DontCare,
+                ERenderPassStoreOp.Store);
         }
     }
 }
