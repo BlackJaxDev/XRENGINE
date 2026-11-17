@@ -127,6 +127,14 @@ public static class XREngineEnvironmentVariables
     /// </summary>
     public const string AdvancedShadingDebugView = "XRE_ADVANCED_SHADING_DEBUG_VIEW";
     /// <summary>
+    /// Set to <c>1</c> to write one line per render frame to <c>advanced-directional-shadow-owner.log</c>:
+    /// which viewport owns the Advanced directional shadow lane in that frame (OpenXR stereo, an eye
+    /// viewport or a window viewport), whether VR eyes render, the owner's authority and strategy,
+    /// whether headset views sample before the owner, and whether a declined cascade group may take
+    /// the generic path. Off by default.
+    /// </summary>
+    public const string AdvancedDirectionalShadowOwnerDiagnostics = "XRE_ADVANCED_DIRECTIONAL_SHADOW_OWNER_DIAGNOSTICS";
+    /// <summary>
     /// OpenXR eye mesh-operation reuse across frames (Vulkan). On by default. <c>0</c> materializes
     /// every eye mesh request each frame. <c>witness</c> materializes each reused request again,
     /// enqueues the fresh operation, and logs structural differences to <c>openxr-mesh-cohort-witness.log</c>.
