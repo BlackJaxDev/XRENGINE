@@ -1009,6 +1009,22 @@ These two gauges keep the values of the last recorded batch: a stats snapshot
 without an eye batch (most render iterations of a per-eye XR frame) does not
 reset them to 0. The `process_` totals count every successful batch.
 
+The two eye lanes share some locks. `VulkanLockContentionTelemetry` counts the
+contended waits on them (`EVulkanLockContentionSite`): the command-buffer bind
+state gate that every tracked bind takes (`bind_state`), the draw recording lock
+of each `VkMeshRenderer` (`mesh_record`), the mapped uniform arena reservation
+lock (`mapped_arena_reservation`), the descriptor publication locks
+(`descriptor_publication`) and the OpenXR submission tracker gate
+(`submission_tracker`). `VulkanFrameLockScope` tries the lock first, so an
+uncontended acquisition reads no clock and does not allocate; only a failed try
+times the wait. Each site reports the wait count, the total wait and the longest
+wait for the render thread (lane 0) and for all other threads, as process totals:
+`get_render_profiler_stats` under
+`vulkan.lock_contention.<site>.{render_thread,other_threads}.{count,wait_ms,max_us}`,
+and the capture line as
+`vulkan_lock_contention_<site>_{render_thread,other_threads}_{count,wait_ms}`.
+Take the difference between two snapshots for one measurement window.
+
 The two-eye API contract treats the first request as left and the second as
 right. Both preparation phases finish before either worker records. Regardless
 of worker completion order, submission builds one graphics-queue `SubmitInfo`

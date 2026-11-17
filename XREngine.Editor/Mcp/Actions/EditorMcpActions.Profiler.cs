@@ -913,6 +913,7 @@ namespace XREngine.Editor.Mcp
                     },
                     vulkan = new
                     {
+                        lock_contention = BuildVulkanLockContentionTelemetry(),
                         descriptor_heap = new
                         {
                             sampler_binds_total = VulkanStats.DescriptorHeapSamplerBinds,
@@ -1852,6 +1853,37 @@ namespace XREngine.Editor.Mcp
                 samples = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetSamples(source),
                 total_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetTotalMicroseconds(source),
                 max_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetMaxMicroseconds(source),
+            };
+
+        /// <summary>
+        /// Builds one entry for each counted Vulkan lock (snake-case site name), with the contended
+        /// wait count, total wait in milliseconds and longest wait in microseconds, split into the
+        /// render thread and all other threads. The values are process totals since start.
+        /// </summary>
+        private static object BuildVulkanLockContentionTelemetry()
+        {
+            Dictionary<string, object> sites = [];
+            for (XREngine.Rendering.Vulkan.EVulkanLockContentionSite site = XREngine.Rendering.Vulkan.EVulkanLockContentionSite.BindState;
+                site < XREngine.Rendering.Vulkan.EVulkanLockContentionSite.Count;
+                ++site)
+            {
+                sites[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(site.ToString())] = new
+                {
+                    render_thread = BuildVulkanLockContentionThreadClass(site, renderThread: true),
+                    other_threads = BuildVulkanLockContentionThreadClass(site, renderThread: false),
+                };
+            }
+            return sites;
+        }
+
+        private static object BuildVulkanLockContentionThreadClass(
+            XREngine.Rendering.Vulkan.EVulkanLockContentionSite site,
+            bool renderThread)
+            => new
+            {
+                count = XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetCount(site, renderThread),
+                wait_ms = JsonFinite(XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetWaitMilliseconds(site, renderThread)),
+                max_us = JsonFinite(XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetMaxWaitMicroseconds(site, renderThread)),
             };
 
         private static object BuildOpenXrNoLayerFrameTelemetry()

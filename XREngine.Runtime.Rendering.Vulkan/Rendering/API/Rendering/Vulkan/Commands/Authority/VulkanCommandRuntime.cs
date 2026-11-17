@@ -209,7 +209,7 @@ internal sealed partial class VulkanCommandRuntime
                 "Descriptor heap inheritance was appended without active heap storage.");
         }
 
-        lock (CommandBuffers.BindStateGate)
+        using (VulkanFrameLockScope.Enter(CommandBuffers.BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
         {
             if (!CommandBuffers.BindStates.TryGetValue(handle, out CommandBufferBindState state))
                 throw new InvalidOperationException("Descriptor heap inheritance must be marked after command-buffer recording begins.");
@@ -236,7 +236,7 @@ internal sealed partial class VulkanCommandRuntime
     {
         DescriptorHeapBindingIdentity identity = CaptureDescriptorHeapBindingIdentity();
         bool requiresHeapBinding = false;
-        lock (CommandBuffers.BindStateGate)
+        using (VulkanFrameLockScope.Enter(CommandBuffers.BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
         {
             for (int index = 0; index < secondaries.Length; index++)
             {
@@ -393,7 +393,8 @@ internal sealed partial class VulkanCommandRuntime
             (ulong)Interlocked.Increment(ref CommandBuffers.RecordingGeneration));
         using (VulkanFrameLockScope.Enter(
                    CommandBuffers.BindStateGate,
-                   EVulkanFrameWaitReason.DescriptorPublicationLock))
+                   EVulkanFrameWaitReason.DescriptorPublicationLock,
+                   EVulkanLockContentionSite.BindState))
         {
             CommandBuffers.BindStates[handle] = new CommandBufferBindState
             {

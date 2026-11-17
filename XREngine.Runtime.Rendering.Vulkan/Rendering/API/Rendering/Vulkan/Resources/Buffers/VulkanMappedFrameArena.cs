@@ -77,7 +77,7 @@ internal unsafe sealed class VulkanMappedFrameArena
     {
         get
         {
-            lock (_reservationLock)
+            using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
                 return _allocations.Count;
         }
     }
@@ -103,7 +103,7 @@ internal unsafe sealed class VulkanMappedFrameArena
     {
         if (frameSlot < 0 || baseSlot < 0 || slotCount <= 0 || !guard.IsOpen)
             throw new ArgumentOutOfRangeException(nameof(baseSlot));
-        lock (_reservationLock)
+        using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
         {
             if (!_drawFamilies.TryGetValue(renderer, out Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation>? slots))
             {
@@ -132,7 +132,7 @@ internal unsafe sealed class VulkanMappedFrameArena
         out VulkanMappedFrameAllocation guard)
     {
         guard = null!;
-        lock (_reservationLock)
+        using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
         {
             if (!_drawFamilies.TryGetValue(renderer, out Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation>? slots) ||
                 !slots.TryGetValue((frameSlot, drawSlot), out VulkanMappedFrameAllocation? found) ||
@@ -150,7 +150,7 @@ internal unsafe sealed class VulkanMappedFrameArena
     {
         List<VulkanMappedFrameAllocation> recycle = [];
         bool guardRecycle = false;
-        lock (_reservationLock)
+        using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
         {
             if (_drawFamilies.TryGetValue(renderer, out Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation>? slots))
             {
@@ -315,7 +315,7 @@ internal unsafe sealed class VulkanMappedFrameArena
             return false;
 
         VulkanMappedFrameReservationKey key = new(owner, name, isAutoUniform, drawSlot);
-        lock (_reservationLock)
+        using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
         {
             if (_reservations.TryGetValue(key, out VulkanMappedFrameReservation existing))
             {
@@ -369,7 +369,7 @@ internal unsafe sealed class VulkanMappedFrameArena
 
         ulong layoutSignature = ResolvePublicationLayoutSignature(program, block);
         VulkanFrequencyAutoUniformReservationKey key = new(layoutSignature, block.Frequency, ownerIdentity);
-        lock (_reservationLock)
+        using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
         {
             bool hasGuard = TryResolveDrawFamily_NoLock(owner, frameSlot, drawSlot, out VulkanMappedFrameAllocation? guard);
             if (captureOwner is not null &&
@@ -748,7 +748,7 @@ internal unsafe sealed class VulkanMappedFrameArena
         if (owner is null)
             return;
         List<VulkanMappedFrameAllocation> recycle = [];
-        lock (_reservationLock)
+        using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
         {
             List<VulkanMappedFrameReservationKey> removed = [];
             foreach (KeyValuePair<VulkanMappedFrameReservationKey, VulkanMappedFrameReservation> entry in _reservations)
@@ -795,7 +795,7 @@ internal unsafe sealed class VulkanMappedFrameArena
         while (true)
         {
             (ulong Handle, VulkanMappedFrameAllocation Allocation) entry;
-            lock (_reservationLock)
+            using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
             {
                 if (_pendingCommandInvalidations.Count == 0)
                     return;
@@ -807,7 +807,7 @@ internal unsafe sealed class VulkanMappedFrameArena
             }
             catch
             {
-                lock (_reservationLock)
+                using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
                     _pendingCommandInvalidations.Enqueue(entry);
                 throw;
             }
@@ -831,7 +831,7 @@ internal unsafe sealed class VulkanMappedFrameArena
             foreach (Chunk? chunk in _chunks)
                 chunk?.Destroy(_backend, nativeDestroyAllowed);
             _chunks = [];
-            lock (_reservationLock)
+            using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
             {
                 foreach (VulkanMappedFrameAllocation allocation in _allocations)
                     allocation.CloseGeneration();
@@ -941,7 +941,7 @@ internal unsafe sealed class VulkanMappedFrameArena
 
     private void RecycleAllocation(VulkanMappedFrameAllocation allocation)
     {
-        lock (_reservationLock)
+        using (VulkanFrameLockScope.Enter(_reservationLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MappedArenaReservation))
         {
             if (!_allocations.Remove(allocation) || allocation.Generation != Generation)
                 return;

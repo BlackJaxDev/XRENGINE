@@ -1455,6 +1455,15 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_frame_data_slot_alternates", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyeFrameDataSlotAlternates, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_frame_data_slot_waits", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyeFrameDataSlotWaits, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_frame_data_slot_busy_failures", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyeFrameDataSlotBusyFailures, ref first);
+            for (int site = 0; site < s_vulkanLockContentionFieldNames.Length; site++)
+            {
+                var contentionSite = (XREngine.Rendering.Vulkan.EVulkanLockContentionSite)(site + 1);
+                string[] names = s_vulkanLockContentionFieldNames[site];
+                AppendNumberField(s_lineBuilder, names[0], XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetCount(contentionSite, renderThread: true), ref first);
+                AppendNumberField(s_lineBuilder, names[1], XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetWaitMilliseconds(contentionSite, renderThread: true), ref first);
+                AppendNumberField(s_lineBuilder, names[2], XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetCount(contentionSite, renderThread: false), ref first);
+                AppendNumberField(s_lineBuilder, names[3], XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetWaitMilliseconds(contentionSite, renderThread: false), ref first);
+            }
             for (int reason = 0; reason < s_openXrNoLayerFrameFieldNames.Length; reason++)
             {
                 AppendNumberField(
@@ -2233,6 +2242,29 @@ public static partial class Engine
         {
             AppendFieldPrefix(builder, name, ref first);
             builder.Append(value ? "true" : "false");
+        }
+
+        // Four capture field names per counted Vulkan lock (render thread count and wait ms, other
+        // threads count and wait ms), built once so the capture line does not format names per sample.
+        private static readonly string[][] s_vulkanLockContentionFieldNames = CreateVulkanLockContentionFieldNames();
+
+        private static string[][] CreateVulkanLockContentionFieldNames()
+        {
+            int count = (int)XREngine.Rendering.Vulkan.EVulkanLockContentionSite.Count - 1;
+            string[][] names = new string[count][];
+            for (int site = 0; site < count; site++)
+            {
+                string name = System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(
+                    ((XREngine.Rendering.Vulkan.EVulkanLockContentionSite)(site + 1)).ToString());
+                names[site] =
+                [
+                    $"vulkan_lock_contention_{name}_render_thread_count",
+                    $"vulkan_lock_contention_{name}_render_thread_wait_ms",
+                    $"vulkan_lock_contention_{name}_other_threads_count",
+                    $"vulkan_lock_contention_{name}_other_threads_wait_ms",
+                ];
+            }
+            return names;
         }
 
         // One capture field name per no-layer exit, built once so the capture line does not
