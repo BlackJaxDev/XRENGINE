@@ -15,6 +15,11 @@ public partial class XRTexture2D
     // consumes that change at its next SwapCommandBuffers boundary.
     private long _canonicalSourceContentGeneration = 1L;
 
+    // The content generation of the last mutation that was not a dense streaming resident
+    // commit. long.MaxValue while such a mutation is being published. The Vulkan Advanced
+    // source check reads it to accept a publication whose texture only changed residency.
+    private long _lastNonResidencyContentGeneration = 1L;
+
     // Imported-streaming metadata is written as one logical transaction. This is
     // deliberately separate from CanonicalSourceContentGeneration: capture outputs
     // also advance that generation, but their values do not carry seqlock parity.
@@ -82,6 +87,9 @@ public partial class XRTexture2D
     internal void CommitImportedResidentPublication(in ImportedTextureResidentPublicationPlan plan)
     {
         Mipmap2D[] mipmaps = plan.ResidentData.Mipmaps;
+        // Sparse samplers clamp relative to the resident base. A change away from sparse
+        // residency is therefore not a residency-only change for the published sampler.
+        bool hadSparseResidency = HasSparseResidencyState;
         SetField(ref _streamingLockMipLevel, plan.LockMipLevel, publishNotifications: false);
         SetField(ref _mipmaps, mipmaps, publishNotifications: false);
         TrackStreamingResidentMipmaps(mipmaps);
@@ -100,7 +108,10 @@ public partial class XRTexture2D
         // Clear the placeholder state before the source generation advances, so a publisher
         // that sees the new generation also sees real resident data.
         ClearAwaitingFirstResidency();
-        PublishCanonicalSourceContentMutation();
+        if (hadSparseResidency)
+            PublishCanonicalSourceContentMutation();
+        else
+            PublishCanonicalResidencyMutation();
     }
 
     internal ulong CanonicalSourceContentGeneration
@@ -113,7 +124,43 @@ public partial class XRTexture2D
     internal ulong ImportedSourceMetadataEpoch
         => unchecked((ulong)Volatile.Read(ref _importedSourceMetadataEpoch));
 
+    /// <summary>
+    /// True when every content change after <paramref name="capturedGeneration"/> was a dense
+    /// streaming resident commit: the texture got another resident mip chain (other mip count
+    /// or extent), but no capture output, sparse commit or other mutation changed it. A
+    /// published record from that generation then has the same shape as the current image; only
+    /// its width, height, mip count and sampler LOD clamps can be stale.
+    /// </summary>
+    internal bool IsCanonicalResidencyOnlyChangeSince(ulong capturedGeneration)
+    {
+        long lastNonResidency = Volatile.Read(ref _lastNonResidencyContentGeneration);
+        return capturedGeneration != 0UL &&
+            lastNonResidency != long.MaxValue &&
+            unchecked((ulong)lastNonResidency) <= capturedGeneration;
+    }
+
+    private bool HasSparseResidencyState
+        => SparseTextureStreamingEnabled ||
+           SparseTextureStreamingResidentBaseMipLevel != int.MaxValue ||
+           SparseTextureStreamingCommittedBaseMipLevel != int.MaxValue ||
+           SparseTextureStreamingCommittedBytes > 0L;
+
+    /// <summary>
+    /// Advances the content generation for any change that is not a dense resident commit.
+    /// The marker is set to long.MaxValue first, so a reader that sees the new generation
+    /// never sees this change as residency-only.
+    /// </summary>
     private void PublishCanonicalSourceContentMutation()
+    {
+        Volatile.Write(ref _lastNonResidencyContentGeneration, long.MaxValue);
+        long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        if (generation == 0L)
+            generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        Volatile.Write(ref _lastNonResidencyContentGeneration, generation);
+    }
+
+    /// <summary>Advances the content generation for a dense streaming resident commit.</summary>
+    private void PublishCanonicalResidencyMutation()
     {
         long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
         if (generation == 0L)
@@ -473,6 +520,7 @@ public partial class XRTexture2D
                 residentData.Mipmaps.Length);
         }
 
+        bool hadSparseResidency = texture.HasSparseResidencyState;
         texture.ClearSparseTextureStreamingState();
 
         texture.Mipmaps = residentData.Mipmaps;
@@ -484,7 +532,10 @@ public partial class XRTexture2D
         texture.SmallestAllowedMipmapLevel = includeMipChain && residentData.Mipmaps.Length > 0
             ? residentData.Mipmaps.Length - 1
             : 0;
-        texture.PublishCanonicalSourceContentMutation();
+        if (hadSparseResidency)
+            texture.PublishCanonicalSourceContentMutation();
+        else
+            texture.PublishCanonicalResidencyMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;
@@ -540,6 +591,7 @@ public partial class XRTexture2D
                 residentData.Mipmaps.Length);
         }
 
+        bool hadSparseResidency = texture.HasSparseResidencyState;
         texture.ClearSparseTextureStreamingState();
         texture.StreamingLockMipLevel = lockMipLevel;
         texture.Mipmaps = residentData.Mipmaps;
@@ -552,7 +604,10 @@ public partial class XRTexture2D
             smallestAllowedMipmapLevel: includeMipChain && residentData.Mipmaps.Length > 0
                 ? residentData.Mipmaps.Length - 1
                 : 0);
-        texture.PublishCanonicalSourceContentMutation();
+        if (hadSparseResidency)
+            texture.PublishCanonicalSourceContentMutation();
+        else
+            texture.PublishCanonicalResidencyMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;
