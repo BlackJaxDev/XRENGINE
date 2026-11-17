@@ -742,6 +742,21 @@ again. Until then, the slot selection skips it. With the same variable, the log 
 deferred builds since the last summary, the last deferral reason, the poisoned slot mask
 (`PoisonedSlotMask`) and the process totals of every deferral reason and poison cause.
 
+Every preparation deferral, not only the deformation slot ones, has a reason
+(`EAdvancedPreparationDeferral`). `AdvancedPreparationExtractor.Build` gives one to each
+`CreateDeferredPublication` call: a missing canonical snapshot, a busy frame-upload slot, no reusable
+deformation output slot, a failed deformation frame open, a busy or growing deformed-vertex arena, a
+missing or mismatched bounds page, or pending deformation mesh preparation.
+`AdvancedSharedPreparationService` gives one to each rejected frame package (no canonical
+publication, another prepared sequence, a retired publication). It also counts
+`DeferredWorldFrameReused` when a later consumer of the same world frame gets the frame's deferred
+publication; that is not a new deferral. `GetPreparationDeferralCount` keeps process totals and
+`LastPreparationDeferral` names the last reason; counting does not allocate. With the same variable,
+the log gets a `PREP` line for each deferral (reason, frame id, render frame, viewport, consumers and
+the deferral text), and the `SUMMARY` line adds `lastPrepDeferral` and `prep.<reason>` totals.
+Rejected packages and reused deferred frames do not run a build, so the `SUMMARY` `deferred` count
+does not include them; the `prep.` totals do.
+
 ### Extraction lookups
 
 `AdvancedPreparationExtractor.Build` reads each skinned draw's mesh preparation

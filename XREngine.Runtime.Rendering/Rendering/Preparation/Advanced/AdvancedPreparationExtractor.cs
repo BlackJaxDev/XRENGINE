@@ -286,7 +286,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         if (publicationSnapshot is null ||
             publicationSnapshot.Submission.Sequence != publicationReference.Sequence)
             return CreateDeferredPublication(world, consumers, 0u,
-                "The exact canonical scene publication is unavailable for advanced preparation.");
+                "The exact canonical scene publication is unavailable for advanced preparation.",
+                EAdvancedPreparationDeferral.CanonicalSnapshotUnavailable);
 
         ResetTemporalStateForSceneEpoch(world.GpuScene, frameId);
         uint submissionCount = checked((uint)publicationSnapshot.Submission.Records.Length);
@@ -301,7 +302,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
                     (uint)_options.MaximumDraws)),
-                "The advanced frame-upload slot is still owned by an earlier frame.");
+                "The advanced frame-upload slot is still owned by an earlier frame.",
+                EAdvancedPreparationDeferral.FrameUploadSlotBusy);
         }
         // The GPU output slot is chosen by availability (signaled producer fence, no native
         // consumers), not by frame id, so a slot that the GPU still uses one frame longer than the
@@ -316,7 +318,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
                     (uint)_options.MaximumDraws)),
-                "The advanced deformation GPU output slot or static generation is not reusable.");
+                "The advanced deformation GPU output slot or static generation is not reusable.",
+                EAdvancedPreparationDeferral.DeformationOutputSlot);
         }
         if (!_deformedArena.TryBeginFrame(frameId, completedValue, deformationSlot, previousDeformationSlot))
         {
@@ -327,7 +330,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
                     (uint)_options.MaximumDraws)),
-                "The advanced deformation arena slot is still owned by an earlier frame.");
+                "The advanced deformation arena slot is still owned by an earlier frame.",
+                EAdvancedPreparationDeferral.DeformedArenaSlotBusy);
         }
         if (!_gpuDeformation.TryBeginFrame(
                 frameId,
@@ -348,7 +352,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
                     (uint)_options.MaximumDraws)),
-                "The advanced deformation GPU output slot or static generation is not reusable.");
+                "The advanced deformation GPU output slot or static generation is not reusable.",
+                EAdvancedPreparationDeferral.DeformationFrameOpen);
         }
 
         try
@@ -358,7 +363,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             (uint)_options.MaximumDraws));
         if (!TryCaptureGpuBoundsPublication(publicationSnapshot, _drawCount))
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
-                "The covered draw bounds output page is unavailable.");
+                "The covered draw bounds output page is unavailable.",
+                EAdvancedPreparationDeferral.BoundsPageUnavailable);
         _gpuDeformation.SetPhysicsOutputSource(_gpuBoundsDispatcher, _gpuBoundsPage.Token);
         long prePassMark = AdvancedExtractionSubStageTimers.Start();
         bool meshesPrepared = TryPrepareCanonicalDeformationMeshes(publicationSnapshot, _drawCount);
@@ -368,7 +374,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 world,
                 consumers,
                 visibleFallbackCount: checked((uint)_drawCount),
-                "Canonical GPU deformation mesh preparation is still in progress.");
+                "Canonical GPU deformation mesh preparation is still in progress.",
+                EAdvancedPreparationDeferral.DeformationMeshPreparationPending);
 
         ResetDeformationOwnersForGeneration(
             world.GpuScene,
@@ -403,16 +410,19 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         }
         if (_deformationArenaPending)
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
-                "The deformation output arena must grow before this scene can be prepared.");
+                "The deformation output arena must grow before this scene can be prepared.",
+                EAdvancedPreparationDeferral.DeformedArenaGrowth);
         if (_physicsOutputMismatch)
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
-                "The covered draw palette or authored envelope does not match its retained bounds page.");
+                "The covered draw palette or authored envelope does not match its retained bounds page.",
+                EAdvancedPreparationDeferral.BoundsPageMismatch);
         if (_meshPreparationPending)
             return CreateDeferredPublication(
                 world,
                 consumers,
                 visibleFallbackCount: checked((uint)_drawCount),
-                "Canonical GPU deformation mesh preparation is still in progress.");
+                "Canonical GPU deformation mesh preparation is still in progress.",
+                EAdvancedPreparationDeferral.DeformationMeshPreparationPending);
         LastExtractionTicks = Stopwatch.GetTimestamp() - extractionStarted;
 
         _admission = _deformationJobs.FinalizeJobs(
@@ -1636,9 +1646,11 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         in RenderWorldSnapshot world,
         EAdvancedPreparationConsumer consumers,
         uint visibleFallbackCount,
-        string reason)
+        string reason,
+        EAdvancedPreparationDeferral deferral)
     {
         LastDeferralReason = reason;
+        NotePreparationDeferral(deferral, world.FrameId, consumers, reason);
         _preparedSceneIdentity = 0u;
         _preparedScenePublication = default;
         _drawCount = 0;

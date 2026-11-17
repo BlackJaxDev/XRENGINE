@@ -22,6 +22,53 @@ public sealed partial class AdvancedPreparationExtractor
     /// <summary>Seconds between two summary lines.</summary>
     private const double PreparationSummaryIntervalSeconds = 5.0;
 
+    // Process totals of every preparation deferral reason. Written under the shared preparation
+    // service lock; read by the summary line.
+    private readonly long[] _preparationDeferralCounts = new long[(int)EAdvancedPreparationDeferral.Count];
+
+    /// <summary>Process total of preparation deferrals for <paramref name="reason"/>.</summary>
+    internal long GetPreparationDeferralCount(EAdvancedPreparationDeferral reason)
+        => (uint)reason < (uint)_preparationDeferralCounts.Length ? _preparationDeferralCounts[(int)reason] : 0L;
+
+    /// <summary>The reason of the last preparation deferral, or None.</summary>
+    internal EAdvancedPreparationDeferral LastPreparationDeferral { get; private set; }
+
+    /// <summary>
+    /// Counts one preparation deferral (or one reuse of a deferred world frame) and, while the
+    /// deformation slot diagnostics are on, writes one PREP line: the reason, the frame id, the
+    /// render frame, the active viewport, the consumers and the deferral text. Counting does
+    /// not allocate; only the line does.
+    /// </summary>
+    internal void NotePreparationDeferral(
+        EAdvancedPreparationDeferral reason,
+        ulong frameId,
+        EAdvancedPreparationConsumer consumers,
+        string text)
+    {
+        if ((uint)reason < (uint)_preparationDeferralCounts.Length)
+            _preparationDeferralCounts[(int)reason]++;
+        if (reason != EAdvancedPreparationDeferral.DeferredWorldFrameReused)
+            LastPreparationDeferral = reason;
+        if (!s_deformationSlotDiagnostics)
+            return;
+        Debug.WriteAuxiliaryLog(
+            DeformationSlotDiagnosticsLogFileName,
+            FormattableString.Invariant(
+                $"PREP reason={reason} frame={frameId} renderFrame={RuntimeEngine.Rendering.State.RenderFrameId} viewport={ResolveDiagnosticViewportKind()} consumers={consumers} text=\"{text}\""));
+    }
+
+    /// <summary>Names the viewport of the active render for diagnostics: OpenXR stereo, an eye, a window or none.</summary>
+    private static string ResolveDiagnosticViewportKind()
+    {
+        XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport as XRViewport;
+        RuntimeVrState vr = RuntimeEngine.VRState;
+        return viewport is null ? "none"
+            : ReferenceEquals(viewport, vr.OpenXRApi?.StereoViewport) ? "openxr-stereo"
+            : ReferenceEquals(viewport, vr.LeftEyeViewport) ? "left-eye"
+            : ReferenceEquals(viewport, vr.RightEyeViewport) ? "right-eye"
+            : "window";
+    }
+
     private long _summaryStartTimestamp;
     private long _summaryPublishedCount;
     private long _summaryDeferredCount;
@@ -69,11 +116,19 @@ public sealed partial class AdvancedPreparationExtractor
             if (count != 0)
                 totals.Append(" poison.").Append(cause).Append('=').Append(count);
         }
+        for (EAdvancedPreparationDeferral reason = EAdvancedPreparationDeferral.PackageWithoutCanonicalPublication;
+            reason < EAdvancedPreparationDeferral.Count;
+            ++reason)
+        {
+            long count = GetPreparationDeferralCount(reason);
+            if (count != 0)
+                totals.Append(" prep.").Append(reason).Append('=').Append(count);
+        }
 
         Debug.WriteAuxiliaryLog(
             DeformationSlotDiagnosticsLogFileName,
             FormattableString.Invariant(
-                $"SUMMARY renderFrame={RuntimeEngine.Rendering.State.RenderFrameId} windowSeconds={Stopwatch.GetElapsedTime(_summaryStartTimestamp, now).TotalSeconds:F1} published={_summaryPublishedCount} deferred={_summaryDeferredCount} lastDeferral=\"{LastDeferralReason}\" lastBeginFrameDeferral={deformation.LastBeginFrameDeferral} poisonedMask=0x{deformation.PoisonedSlotMask:X} slots={deformation.OutputSlotCount} totals:{totals}"));
+                $"SUMMARY renderFrame={RuntimeEngine.Rendering.State.RenderFrameId} windowSeconds={Stopwatch.GetElapsedTime(_summaryStartTimestamp, now).TotalSeconds:F1} published={_summaryPublishedCount} deferred={_summaryDeferredCount} lastDeferral=\"{LastDeferralReason}\" lastPrepDeferral={LastPreparationDeferral} lastBeginFrameDeferral={deformation.LastBeginFrameDeferral} poisonedMask=0x{deformation.PoisonedSlotMask:X} slots={deformation.OutputSlotCount} totals:{totals}"));
         _summaryStartTimestamp = now;
         _summaryPublishedCount = 0L;
         _summaryDeferredCount = 0L;
@@ -94,13 +149,7 @@ public sealed partial class AdvancedPreparationExtractor
 
         AdvancedGpuDeformationResources deformation = _gpuDeformation;
         _ = deformation.TryDescribeOutputSlot(slot, out ulong producerFrameId, out ulong fenceTarget, out ulong fenceCompleted);
-        XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport as XRViewport;
-        RuntimeVrState vr = RuntimeEngine.VRState;
-        string viewportKind = viewport is null ? "none"
-            : ReferenceEquals(viewport, vr.OpenXRApi?.StereoViewport) ? "openxr-stereo"
-            : ReferenceEquals(viewport, vr.LeftEyeViewport) ? "left-eye"
-            : ReferenceEquals(viewport, vr.RightEyeViewport) ? "right-eye"
-            : "window";
+        string viewportKind = ResolveDiagnosticViewportKind();
 
         StringBuilder totals = new();
         for (EAdvancedDeformationSlotDeferral reason = EAdvancedDeformationSlotDeferral.SlotPoisoned;

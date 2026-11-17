@@ -159,13 +159,15 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                     : default;
             if (package is not null && !requested.IsValid)
                 return RejectRequest(world, consumers, requested,
-                    "The active frame package has no canonical publication from this world GPU scene.");
+                    "The active frame package has no canonical publication from this world GPU scene.",
+                    EAdvancedPreparationDeferral.PackageWithoutCanonicalPublication);
 
             if (_publication.GpuResourcesPublished && _publication.FrameId == world.FrameId &&
                 ReferenceEquals(_publishedScene, world.GpuScene) &&
                 _publishedSource != requested.Publication)
                 return RejectRequest(world, consumers, requested,
-                    $"The world frame already prepared scene sequence {_publishedSource.Sequence}; the active package requests sequence {requested.Sequence}. Recollect a matching package.");
+                    $"The world frame already prepared scene sequence {_publishedSource.Sequence}; the active package requests sequence {requested.Sequence}. Recollect a matching package.",
+                    EAdvancedPreparationDeferral.PackageSequenceMismatch);
 
             if (_publication.FrameId == world.FrameId &&
                 ReferenceEquals(_publishedScene, world.GpuScene) &&
@@ -174,6 +176,8 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 _cacheHitCount++;
                 if (!_publication.GpuResourcesPublished)
                 {
+                    _extractor.NotePreparationDeferral(
+                        EAdvancedPreparationDeferral.DeferredWorldFrameReused, world.FrameId, consumers, _extractor.LastDeferralReason);
                     // A deferred build has not begun the current visibility planner.
                     // Repeated consumers must not advance history for unpublished work.
                     _publication = _publication with
@@ -221,7 +225,8 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             {
                 candidateLease.Dispose();
                 return RejectRequest(world, consumers, requested,
-                    $"The active frame package publication sequence {requested.Sequence} is no longer available.");
+                    $"The active frame package publication sequence {requested.Sequence} is no longer available.",
+                    EAdvancedPreparationDeferral.PackagePublicationRetired);
             }
 
             _rebuildCount++;
@@ -274,12 +279,14 @@ public sealed class AdvancedSharedPreparationService : IDisposable
         }
     }
 
-    private static AdvancedPreparationPublication RejectRequest(
+    private AdvancedPreparationPublication RejectRequest(
         in RenderWorldSnapshot world,
         EAdvancedPreparationConsumer consumers,
         in AdvancedGpuScenePublicationReference requested,
-        string reason)
+        string reason,
+        EAdvancedPreparationDeferral deferral)
     {
+        _extractor.NotePreparationDeferral(deferral, world.FrameId, consumers, reason);
         Debug.RenderingWarningEvery(
             "AdvancedPreparation.CanonicalPublicationUnavailable",
             TimeSpan.FromSeconds(30),
