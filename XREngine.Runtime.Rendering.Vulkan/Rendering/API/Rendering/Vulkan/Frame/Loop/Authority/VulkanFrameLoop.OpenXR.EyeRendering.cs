@@ -166,27 +166,27 @@ internal sealed partial class VulkanFrameLoop
             // eyes' resource preparation before either command buffer captures descriptors.
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareLeftEye"))
             {
-                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared, out string firstFailure))
+                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared))
                 {
                     throw CreateOpenXrEyePresentNowFailure(
                         firstEye.OpenXrViewIndex,
                         EVulkanPresentNowReadinessStage.FramePlanSeal,
                         "left-eye-prepare",
                         "OpenXREyeSubmit -> left logical plan",
-                        "Foreground left-eye preparation returned no immutable input: " + firstFailure);
+                        "Foreground left-eye preparation returned no immutable input: " + _openXrEyePreparationFailureReason);
                 }
             }
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareRightEye"))
             {
-                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out secondPrepared, out string secondFailure))
+                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out secondPrepared))
                 {
                     throw CreateOpenXrEyePresentNowFailure(
                         secondEye.OpenXrViewIndex,
                         EVulkanPresentNowReadinessStage.FramePlanSeal,
                         "right-eye-prepare",
                         "OpenXREyeSubmit -> right logical plan",
-                        "Foreground right-eye preparation returned no immutable input: " + secondFailure);
+                        "Foreground right-eye preparation returned no immutable input: " + _openXrEyePreparationFailureReason);
                 }
             }
 
@@ -364,26 +364,18 @@ internal sealed partial class VulkanFrameLoop
         {
             if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(
                     request,
-                    out prepared,
-                    out string prepareFailure))
-            {
-                throw CreateOpenXrEyePresentNowFailure(
-                    request.OpenXrViewIndex,
-                    EVulkanPresentNowReadinessStage.FramePlanSeal,
-                    "single-eye-plan",
-                    "OpenXREyeSubmit -> single logical plan",
-                    "Foreground single-eye preparation returned no input: " + prepareFailure);
-            }
-            if (!TryCreateSingleOpenXrLogicalPlan(
+                    out prepared) ||
+                !TryCreateSingleOpenXrLogicalPlan(
                     in prepared,
                     out FramePlan logicalPlan))
             {
+                // The reason is empty when the preparation succeeded and only the plan failed.
                 throw CreateOpenXrEyePresentNowFailure(
                     request.OpenXrViewIndex,
                     EVulkanPresentNowReadinessStage.FramePlanSeal,
                     "single-eye-plan",
                     "OpenXREyeSubmit -> single logical plan",
-                    "Foreground single-eye preparation returned no sealed logical plan.");
+                    "Foreground single-eye preparation returned no sealed logical plan. " + _openXrEyePreparationFailureReason);
             }
 
             prepared = BindOpenXrEyeOutputContract(in prepared, logicalPlan);
@@ -398,22 +390,28 @@ internal sealed partial class VulkanFrameLoop
     }
 
     /// <summary>
+    /// Why the last <see cref="TryPrepareOpenXrEyeSwapchainCommandBuffer"/> call returned no input,
+    /// or empty after a successful preparation. Render-thread state: every path prepares its eyes on
+    /// the render thread. The callers put it in their readiness failure, so the reason also reaches
+    /// the render readiness failure log in Release builds.
+    /// </summary>
+    private string _openXrEyePreparationFailureReason = string.Empty;
+
+    /// <summary>
     /// Prepares the immutable recording input of one per-eye OpenXR swapchain render: selects the
     /// frame-data slot, captures and normalizes the eye frame operations, and plans the eye
-    /// resources. Returns false with <paramref name="failureReason"/> when the eye cannot record in
-    /// this frame; the caller puts the reason in its readiness failure, so the reason also reaches
-    /// the render readiness failure log in Release builds.
+    /// resources. Returns false and sets <see cref="_openXrEyePreparationFailureReason"/> when the
+    /// eye cannot record in this frame.
     /// </summary>
     private bool TryPrepareOpenXrEyeSwapchainCommandBuffer(
         in OpenXrEyeSwapchainRenderRequest request,
-        out OpenXrPreparedEyeCommandBufferInput prepared,
-        out string failureReason)
+        out OpenXrPreparedEyeCommandBufferInput prepared)
     {
         prepared = default;
-        failureReason = string.Empty;
+        _openXrEyePreparationFailureReason = string.Empty;
         if (request.Image.Handle == 0 || request.Extent.Width == 0 || request.Extent.Height == 0)
         {
-            failureReason = "The eye swapchain image or extent is empty.";
+            _openXrEyePreparationFailureReason = "The eye swapchain image or extent is empty.";
             return false;
         }
 
@@ -423,7 +421,7 @@ internal sealed partial class VulkanFrameLoop
                 $"OpenXR.Vulkan.DynamicRenderingRequired.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
                 "[OpenXR] Vulkan OpenXR eye rendering requires dynamic rendering render targets.");
-            failureReason = "Vulkan OpenXR eye rendering requires dynamic rendering render targets.";
+            _openXrEyePreparationFailureReason = "Vulkan OpenXR eye rendering requires dynamic rendering render targets.";
             return false;
         }
 
@@ -460,7 +458,7 @@ internal sealed partial class VulkanFrameLoop
                         out recordImageIndex,
                         out frameDataSlotCompletionProven))
                 {
-                    failureReason =
+                    _openXrEyePreparationFailureReason =
                         "Both frame-data slots of the eye stayed owned by in-flight submissions after the bounded wait.";
                     return false;
                 }
@@ -511,7 +509,7 @@ internal sealed partial class VulkanFrameLoop
                         TimeSpan.FromSeconds(1),
                         "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
                         scopedResourceWorkReason);
-                    failureReason = "Scoped eye resource work is pending: " + scopedResourceWorkReason;
+                    _openXrEyePreparationFailureReason = "Scoped eye resource work is pending: " + scopedResourceWorkReason;
                     return false;
                 }
 
@@ -537,7 +535,7 @@ internal sealed partial class VulkanFrameLoop
                         $"OpenXR.Vulkan.NoEyeFrameOps.{GetHashCode()}",
                         TimeSpan.FromSeconds(1),
                         "[OpenXR] Vulkan eye rendering produced no frame operations.");
-                    failureReason = "The eye produced no frame operations.";
+                    _openXrEyePreparationFailureReason = "The eye produced no frame operations.";
                     return false;
                 }
                 ops = NormalizeOpenXrExternalSwapchainFrameOps(ops, request.Extent);
@@ -566,7 +564,7 @@ internal sealed partial class VulkanFrameLoop
                             TimeSpan.FromSeconds(1),
                             "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
                             prePlanFailureReason);
-                        failureReason = "A recent resource allocation failed: " + prePlanFailureReason;
+                        _openXrEyePreparationFailureReason = "A recent resource allocation failed: " + prePlanFailureReason;
                         return false;
                     }
 
@@ -582,7 +580,7 @@ internal sealed partial class VulkanFrameLoop
                             TimeSpan.FromSeconds(1),
                             "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
                             refreshFailureReason);
-                        failureReason = "The eye frame-operation resource refresh did not complete: " + refreshFailureReason;
+                        _openXrEyePreparationFailureReason = "The eye frame-operation resource refresh did not complete: " + refreshFailureReason;
                         return false;
                     }
                     if (!PrewarmOpenXrFrameOpResources(
@@ -590,7 +588,7 @@ internal sealed partial class VulkanFrameLoop
                             targetContext.FrameDataSlotIndex,
                             sealFrameManifest: true))
                     {
-                        failureReason = "Prewarm of the eye frame-operation resources did not complete.";
+                        _openXrEyePreparationFailureReason = "Prewarm of the eye frame-operation resources did not complete.";
                         return false;
                     }
 
@@ -663,7 +661,7 @@ internal sealed partial class VulkanFrameLoop
                 "[OpenXR] Vulkan eye render failed. Target={0}. Error={1}",
                 targetContext.IsValid ? DescribeOpenXrEyeRenderTargetContext(in targetContext) : "<not prepared>",
                 ex.Message);
-            failureReason = "Eye preparation threw " + ex.GetType().Name + ": " + ex.Message;
+            _openXrEyePreparationFailureReason = "Eye preparation threw " + ex.GetType().Name + ": " + ex.Message;
             return false;
         }
         finally

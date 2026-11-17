@@ -406,7 +406,7 @@ public sealed class OpenXrTimingPipelineContractTests
             vulkanRendererOpenXr,
             "private bool TryRecordOpenXrEyeSwapchainCommandBuffer",
             "private bool TryRecordPreparedOpenXrEyeSwapchainCommandBuffer");
-        int directPrepare = directEyeRecord.IndexOf("TryPrepareOpenXrFrameDataSlot(", StringComparison.Ordinal);
+        int directPrepare = directEyeRecord.IndexOf("TryAcquireOpenXrEyeFrameDataSlot(", StringComparison.Ordinal);
         directPrepare.ShouldBeGreaterThanOrEqualTo(0);
         directPrepare.ShouldBeLessThan(directEyeRecord.IndexOf(
             "ReopenOpenXrFrameDataSlot(recordImageIndex, frameDataSlotCompletionProven);",
