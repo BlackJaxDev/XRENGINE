@@ -685,6 +685,15 @@ internal sealed partial class VulkanFrameLoop
         return false;
     }
 
+    /// <summary>
+    /// Decides whether per-eye OpenXR preparation must skip this frame. It defers only for work
+    /// that changes what the eye records or that risks a failed allocation: an unavailable device,
+    /// texture descriptor publications that are still pending, and high Vulkan allocator pressure.
+    /// Texture transfers in flight and active upload preparation do not defer the eye, because
+    /// the eye keeps binding the resident texture until the publication. The recent
+    /// allocation-failure cooldown is checked separately in the eye preparation, after the eye
+    /// enters its own planner scope.
+    /// </summary>
     internal bool ShouldDeferOpenXrEyeRenderingWork(out string reason)
     {
         reason = string.Empty;
@@ -695,9 +704,15 @@ internal sealed partial class VulkanFrameLoop
             return true;
         }
 
-        if (ImportedTextureStreamingManager.Instance.TryDescribeBlockingOpenXrEyeTextureWork(out string textureWorkReason))
+        if (VulkanTextureUploadService.TryDescribePendingDescriptorPublications(out string publicationReason))
         {
-            reason = textureWorkReason;
+            reason = publicationReason;
+            return true;
+        }
+
+        if (TryDescribeOpenXrVulkanAllocatorPressure(out string allocatorPressureReason))
+        {
+            reason = allocatorPressureReason;
             return true;
         }
 

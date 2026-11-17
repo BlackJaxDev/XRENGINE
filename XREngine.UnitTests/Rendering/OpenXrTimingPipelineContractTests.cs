@@ -517,7 +517,11 @@ public sealed class OpenXrTimingPipelineContractTests
             "internal bool ShouldDeferOpenXrEyeRenderingWork",
             "internal bool ShouldDeferTextureUploadPreparationForOpenXrPriority");
 
-        eyeRenderingGate.ShouldContain("TryDescribeBlockingOpenXrEyeTextureWork");
+        // The eye defers for descriptor publications and allocator pressure, not for texture
+        // transfers in flight or active upload preparation.
+        eyeRenderingGate.ShouldContain("VulkanTextureUploadService.TryDescribePendingDescriptorPublications");
+        eyeRenderingGate.ShouldContain("TryDescribeOpenXrVulkanAllocatorPressure");
+        eyeRenderingGate.ShouldNotContain("TryDescribeBlockingOpenXrEyeTextureWork");
         eyeRenderingGate.ShouldNotContain("TryDescribeRecentResourceAllocationFailure");
 
         string directEyePrepare = SliceMethod(
