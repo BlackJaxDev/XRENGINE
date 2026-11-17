@@ -1073,6 +1073,15 @@ collection alone does not draw a box. `VPRC_RenderDebugShapes` declares each pas
 to the render graph. The `DebugOverlays` capture policy excludes this work from
 shadow and light-probe outputs.
 
+### Shading debug view for every output
+
+`ShadingDebugView` (`EAdvancedShadingDebugView`) is a property of each Advanced stage family: the
+desktop pipeline, each VR eye pipeline, the single-pass stereo pipeline and the stage family inside
+an RVC pipeline. To compare outputs in one run, set `XRE_ADVANCED_SHADING_DEBUG_VIEW` at launch to a
+view name or number (for example `ShadowFallbackReason` or `9`, `AmbientOcclusion` or `10`). Every
+Advanced stage family then returns that view and ignores its own value. Unset, each pipeline keeps
+its own setting.
+
 ### Debug views for meshlets and occlusion
 
 Two debug views help to check meshlet culling. Both toggles are in the camera

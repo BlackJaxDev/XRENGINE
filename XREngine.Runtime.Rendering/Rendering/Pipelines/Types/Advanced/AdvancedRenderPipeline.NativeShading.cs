@@ -16,11 +16,31 @@ public partial class AdvancedRenderPipeline
     private uint _froxelDepthSlices = AdvancedFroxelGridDimensions.DefaultDepthSlices;
 
     /// <summary>
-    /// Diagnostic visualization mode for native opaque shading and clustered lighting.
+    /// Process-wide shading debug view from <see cref="XREngineEnvironmentVariables.AdvancedShadingDebugView"/>,
+    /// or null when the variable is unset or invalid. Read once at type initialization.
+    /// </summary>
+    private static readonly EAdvancedShadingDebugView? s_shadingDebugViewOverride = ResolveShadingDebugViewOverride();
+
+    private static EAdvancedShadingDebugView? ResolveShadingDebugViewOverride()
+    {
+        string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedShadingDebugView);
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        return Enum.TryParse(value.Trim(), ignoreCase: true, out EAdvancedShadingDebugView view) &&
+               Enum.IsDefined(view)
+            ? view
+            : null;
+    }
+
+    /// <summary>
+    /// Diagnostic visualization mode for native opaque shading and clustered lighting. When
+    /// <see cref="XREngineEnvironmentVariables.AdvancedShadingDebugView"/> is set, every Advanced
+    /// stage family (desktop, per-eye, stereo and RVC) returns that view instead of its own value,
+    /// so one launch shows the same view in every output.
     /// </summary>
     public EAdvancedShadingDebugView ShadingDebugView
     {
-        get => _shadingDebugView;
+        get => s_shadingDebugViewOverride ?? _shadingDebugView;
         set
         {
             if (!SetField(ref _shadingDebugView, value))

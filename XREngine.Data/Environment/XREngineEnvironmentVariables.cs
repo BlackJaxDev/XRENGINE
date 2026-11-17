@@ -120,6 +120,13 @@ public static class XREngineEnvironmentVariables
     /// </summary>
     public const string OpenXrEyeViewDiagnostics = "XRE_OPENXR_EYE_VIEW_DIAGNOSTICS";
     /// <summary>
+    /// Sets the Advanced native shading debug view of every Advanced stage family (desktop, VR eyes,
+    /// stereo and RVC) for the whole process: an <c>EAdvancedShadingDebugView</c> name or number,
+    /// for example <c>ShadowFallbackReason</c> (9) or <c>AmbientOcclusion</c> (10). Unset keeps each
+    /// pipeline's own setting.
+    /// </summary>
+    public const string AdvancedShadingDebugView = "XRE_ADVANCED_SHADING_DEBUG_VIEW";
+    /// <summary>
     /// OpenXR eye mesh-operation reuse across frames (Vulkan). On by default. <c>0</c> materializes
     /// every eye mesh request each frame. <c>witness</c> materializes each reused request again,
     /// enqueues the fresh operation, and logs structural differences to <c>openxr-mesh-cohort-witness.log</c>.
