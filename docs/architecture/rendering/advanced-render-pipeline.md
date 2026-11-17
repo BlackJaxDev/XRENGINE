@@ -730,11 +730,14 @@ and authority, the frame that produced the slot and its age in frames, the produ
 target and the completed timeline value, the active viewport (`openxr-stereo`, `left-eye`,
 `right-eye`, `window` or `none`), the requested consumers, and the totals of every reason.
 
-A slot is poisoned (never reused until the renderer is retired) when the backend accepted
-deformation work without a completion fence, when the slot still held a fence, or when the dispatch
-threw (`EAdvancedDeformationSlotPoisonCause`). Every later preparation that lands on a poisoned slot
-defers, so one poisoned slot of three defers a third of the preparations, and three poisoned slots
-defer all of them. With the same variable, the log also gets a `POISON` line for each poisoned slot
+A slot is poisoned when the backend accepted deformation work without a completion fence (the
+ordered compute fence returns null when the renderer has no ordered compute work or the current pass
+is not valid for the frame's pass metadata), when the slot still held a fence, or when the dispatch
+threw (`EAdvancedDeformationSlotPoisonCause`). The slot records the frame that poisoned it. It is
+released when another slot's producer fence from a later frame was submitted and has signaled: a
+signal operation covers every command submitted to its queue before it, so the poisoned work is done
+(`SlotPoisonRecoveryCount`). The backend's buffer reuse query still runs before the slot is written
+again. Until then, the slot selection skips it. With the same variable, the log also gets a `POISON` line for each poisoned slot
 (cause, frame, mask and exception), and a `SUMMARY` line every 5 seconds with the published and
 deferred builds since the last summary, the last deferral reason, the poisoned slot mask
 (`PoisonedSlotMask`) and the process totals of every deferral reason and poison cause.

@@ -48,6 +48,45 @@ public sealed partial class AdvancedGpuDeformationResources
 
     private readonly long[] _slotPoisonCounts = new long[(int)EAdvancedDeformationSlotPoisonCause.Count];
 
+    // Frame id of the preparation that poisoned each slot. A producer fence of a later frame that
+    // has signaled proves that the poisoned slot's work is done.
+    private readonly ulong[] _slotPoisonFrameIds = new ulong[MaximumSelectableOutputSlots];
+    private long _slotPoisonRecoveries;
+
+    /// <summary>Process total of poisoned slots that a later completed producer fence released.</summary>
+    public long SlotPoisonRecoveryCount => Volatile.Read(ref _slotPoisonRecoveries);
+
+    /// <summary>
+    /// Releases the poison of <paramref name="slot"/> when another slot's producer fence from a
+    /// later frame was submitted and has signaled. A signal operation covers every command that was
+    /// submitted to its queue before it, so the poisoned slot's work, which was recorded in an
+    /// earlier frame, is complete. The slot's own fence (if any) is dropped; the caller then still
+    /// runs the backend's buffer reuse query before the slot is written again.
+    /// </summary>
+    private bool TryRecoverPoisonedSlot(uint slot)
+    {
+        ulong poisonFrame = _slotPoisonFrameIds[slot];
+        for (int other = 0; other < _frameSlotCount; other++)
+        {
+            if (other == slot || _slotReusePoisoned[other] ||
+                _slotProducerFrameIds[other] <= poisonFrame)
+                continue;
+            XRGpuFence? laterFence = _slotProducerFences[other];
+            if (laterFence is null || laterFence.IsDisposed ||
+                laterFence.SubmissionStatus != EGpuFenceSubmissionStatus.Submitted ||
+                laterFence.Poll() != EGpuFenceStatus.Signaled)
+                continue;
+
+            _slotProducerFences[slot]?.Dispose();
+            _slotProducerFences[slot] = null;
+            _slotOutputValid[slot] = false;
+            _slotReusePoisoned[slot] = false;
+            Interlocked.Increment(ref _slotPoisonRecoveries);
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>The output slot of the last frame that opened, or -1 before the first frame.</summary>
     private int _lastOpenedOutputSlot = -1;
 
@@ -151,6 +190,7 @@ public sealed partial class AdvancedGpuDeformationResources
     private void PoisonCurrentSlot(EAdvancedDeformationSlotPoisonCause cause, Exception? exception)
     {
         _slotReusePoisoned[_currentFrameSlot] = true;
+        _slotPoisonFrameIds[_currentFrameSlot] = _frameId;
         if ((uint)cause < (uint)_slotPoisonCounts.Length)
             Interlocked.Increment(ref _slotPoisonCounts[(int)cause]);
         if (!AdvancedPreparationExtractor.DeformationSlotDiagnosticsEnabled)
@@ -218,7 +258,7 @@ public sealed partial class AdvancedGpuDeformationResources
         LastOutputReuseSlot = slot;
         LastOutputReuseAuthority = "ProducerFence";
         LastOutputReuseDeferral = EAdvancedDeformationSlotDeferral.None;
-        if (_slotReusePoisoned[slot])
+        if (_slotReusePoisoned[slot] && !TryRecoverPoisonedSlot(slot))
         {
             LastOutputReuseAuthority = "MissingProducerFence";
             LastOutputReuseStatus = EGpuBufferContentReuseStatus.Superseded;
