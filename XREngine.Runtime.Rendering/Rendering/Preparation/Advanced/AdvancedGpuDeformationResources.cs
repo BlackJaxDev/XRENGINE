@@ -529,6 +529,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         _frameId = frameId;
+        _lastOpenedOutputSlot = (int)currentFrameSlot;
         // The static generation and the preparation policy can change at a frame boundary.
         _meshSliceRevision++;
         _meshPreparationPolicy = ResolveMeshPreparationPolicy();

@@ -303,7 +303,22 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                     (uint)_options.MaximumDraws)),
                 "The advanced frame-upload slot is still owned by an earlier frame.");
         }
-        if (!_deformedArena.TryBeginFrame(frameId, completedValue))
+        // The GPU output slot is chosen by availability (signaled producer fence, no native
+        // consumers), not by frame id, so a slot that the GPU still uses one frame longer than the
+        // ring expects does not defer the whole preparation while another slot is free.
+        if (!_gpuDeformation.TrySelectOutputSlot(out uint deformationSlot, out uint previousDeformationSlot))
+        {
+            LogDeformationSlotDeferral(frameId, deformationSlot, consumers);
+            _frameUploadArena.EndFrame(frameId);
+            return CreateDeferredPublication(
+                world,
+                consumers,
+            visibleFallbackCount: checked((uint)Math.Min(
+                    submissionCount,
+                    (uint)_options.MaximumDraws)),
+                "The advanced deformation GPU output slot or static generation is not reusable.");
+        }
+        if (!_deformedArena.TryBeginFrame(frameId, completedValue, deformationSlot, previousDeformationSlot))
         {
             _frameUploadArena.EndFrame(frameId);
             return CreateDeferredPublication(

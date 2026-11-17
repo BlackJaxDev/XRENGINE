@@ -48,6 +48,81 @@ public sealed partial class AdvancedGpuDeformationResources
 
     private readonly long[] _slotPoisonCounts = new long[(int)EAdvancedDeformationSlotPoisonCause.Count];
 
+    /// <summary>The output slot of the last frame that opened, or -1 before the first frame.</summary>
+    private int _lastOpenedOutputSlot = -1;
+
+    /// <summary>Upper bound of output slots that <see cref="TrySelectOutputSlot"/> orders on the stack.</summary>
+    private const int MaximumSelectableOutputSlots = 16;
+
+    /// <summary>
+    /// Chooses the output slot that the next deformation frame writes, by availability instead of
+    /// by frame id. The previous slot is the slot of the last frame that opened, because that frame
+    /// wrote the history that this frame reads, so it is never a candidate. The other slots are
+    /// tried from the oldest producer frame to the newest (unused slots first), and the first slot
+    /// whose producer fence is signaled and whose output buffer no command buffer still uses (the
+    /// same checks as <c>TryAcquireOutputSlot</c>) is taken. When every candidate is busy, the method
+    /// returns false and <see cref="LastOutputReuseDeferral"/> describes the oldest candidate.
+    /// </summary>
+    public bool TrySelectOutputSlot(out uint currentFrameSlot, out uint previousFrameSlot)
+    {
+        int slotCount = _frameSlotCount;
+        if (slotCount < 2 || slotCount > MaximumSelectableOutputSlots)
+            throw new InvalidOperationException(
+                $"Deformation output slot selection supports 2 to {MaximumSelectableOutputSlots} slots, not {slotCount}.");
+
+        int previous = _lastOpenedOutputSlot;
+        Span<int> candidates = stackalloc int[MaximumSelectableOutputSlots];
+        int candidateCount = 0;
+        for (int slot = 0; slot < slotCount; slot++)
+        {
+            if (slot == previous)
+                continue;
+            // Insertion by producer frame keeps the order stable for equal frames (unused slots
+            // have frame 0 and keep their index order).
+            int insert = candidateCount;
+            while (insert > 0 && _slotProducerFrameIds[candidates[insert - 1]] > _slotProducerFrameIds[slot])
+            {
+                candidates[insert] = candidates[insert - 1];
+                insert--;
+            }
+            candidates[insert] = slot;
+            candidateCount++;
+        }
+
+        EAdvancedDeformationSlotDeferral firstDeferral = EAdvancedDeformationSlotDeferral.None;
+        EGpuBufferContentReuseStatus firstStatus = EGpuBufferContentReuseStatus.Ready;
+        string firstAuthority = "None";
+        uint firstSlot = 0u;
+        for (int index = 0; index < candidateCount; index++)
+        {
+            uint slot = (uint)candidates[index];
+            if (TryAcquireOutputSlot(slot))
+            {
+                currentFrameSlot = slot;
+                previousFrameSlot = previous >= 0
+                    ? (uint)previous
+                    : (slot + (uint)slotCount - 1u) % (uint)slotCount;
+                return true;
+            }
+            if (index == 0)
+            {
+                firstDeferral = LastOutputReuseDeferral;
+                firstStatus = LastOutputReuseStatus;
+                firstAuthority = LastOutputReuseAuthority;
+                firstSlot = slot;
+            }
+        }
+
+        // Report the oldest candidate: it is the slot that frees first.
+        LastOutputReuseDeferral = firstDeferral;
+        LastOutputReuseStatus = firstStatus;
+        LastOutputReuseAuthority = firstAuthority;
+        LastOutputReuseSlot = firstSlot;
+        currentFrameSlot = firstSlot;
+        previousFrameSlot = previous >= 0 ? (uint)previous : 0u;
+        return RecordBeginFrameDeferral(firstDeferral);
+    }
+
     /// <summary>Process total of slots poisoned for <paramref name="cause"/>.</summary>
     public long GetSlotPoisonCount(EAdvancedDeformationSlotPoisonCause cause)
         => (uint)cause < (uint)_slotPoisonCounts.Length ? Volatile.Read(ref _slotPoisonCounts[(int)cause]) : 0L;

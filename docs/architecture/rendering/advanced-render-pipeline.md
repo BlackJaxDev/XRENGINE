@@ -708,11 +708,18 @@ preparation completed. An output-arena allocation failure defers the entire
 preparation attempt until boundary growth succeeds. A diagnostic slice must not
 be published as GPU-deformed output.
 
-The deformation output has three slots (`AdvancedPreparationOptions.DeformedArena.FrameSlotCount`),
-selected by the preparation frame id modulo 3. `AdvancedGpuDeformationResources.TryBeginFrame`
-opens a slot only when its producer fence was submitted and signaled and, on Vulkan, the native
-reuse query reports no command buffer that still uses the slot's output buffer; it then selects a
-static input generation. When either fails, the whole preparation defers. The
+The deformation output has five slots (`AdvancedPreparationOptions.DeformedArena.FrameSlotCount`;
+each holds `VertexCapacity` x 64 bytes of deformed vertices, 64 MiB at 1M vertices).
+`AdvancedGpuDeformationResources.TrySelectOutputSlot` chooses the slot by availability, not by frame
+id: the previous slot is the slot of the last frame that opened (it holds the history that this frame
+reads) and is never a candidate; the other slots are tried from the oldest producer frame to the
+newest, unused slots first, and the first slot whose producer fence was submitted and signaled and,
+on Vulkan, whose output buffer the native reuse query reports free, is taken. The deformed-vertex
+arena then opens on the same explicit slots. When every candidate is busy, the whole preparation
+defers, and the oldest candidate gives the reported reason. The frame-id ring (frame id modulo 3)
+made a slot that the GPU still used one frame longer defer the preparation while other slots were
+free. `TryBeginFrame` then selects a static input generation; when that fails, the preparation
+also defers. The
 `completedValue` argument (the frame id minus 1) is not used for the deformation slot; only the
 upload and deformed-vertex arenas compare it with their own recorded frame ids.
 `LastBeginFrameDeferral` (`EAdvancedDeformationSlotDeferral`) names the failed check, and
