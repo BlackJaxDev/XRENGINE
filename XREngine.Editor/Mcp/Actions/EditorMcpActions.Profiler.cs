@@ -893,6 +893,7 @@ namespace XREngine.Editor.Mcp
                         process_openxr_eye_primary_record_overlap_ms = JsonFinite(VrStats.VrProcessOpenXrEyePrimaryRecordOverlapMs),
                         process_openxr_parallel_eye_record_serialized_frames = VrStats.VrProcessOpenXrParallelEyeRecordSerializedFrames,
                         process_openxr_parallel_eye_record_failed_batches = VrStats.VrProcessOpenXrParallelEyeRecordFailedBatches,
+                        process_openxr_no_layer_frames = BuildOpenXrNoLayerFrameTelemetry(),
                         render_submit_ms = JsonFinite(VrStats.VrRenderSubmitTimeMs),
                         xr_wait_frame_block_ms = JsonFinite(VrStats.VrXrWaitFrameBlockTimeMs),
                         xr_end_frame_submit_ms = JsonFinite(VrStats.VrXrEndFrameSubmitTimeMs),
@@ -1847,6 +1848,19 @@ namespace XREngine.Editor.Mcp
                 total_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetTotalMicroseconds(source),
                 max_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetMaxMicroseconds(source),
             };
+
+        private static object BuildOpenXrNoLayerFrameTelemetry()
+        {
+            Dictionary<string, long> counters = [];
+            for (XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason reason = 0;
+                reason < XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.Count;
+                ++reason)
+            {
+                counters[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(reason.ToString())] =
+                    VrStats.GetVrProcessOpenXrNoLayerFrames(reason);
+            }
+            return counters;
+        }
 
         private static object BuildXrCollectPacingTelemetry()
         {

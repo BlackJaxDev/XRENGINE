@@ -33,6 +33,8 @@ namespace XREngine
                     private static long _vrProcessOpenXrEyePrimaryRecordOverlapTicks;
                     private static long _vrProcessOpenXrParallelEyeRecordSerializedFrames;
                     private static long _vrProcessOpenXrParallelEyeRecordFailedBatches;
+                    private static readonly long[] _vrProcessOpenXrNoLayerFrames =
+                        new long[(int)XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.Count];
                     private static long _vrRenderSubmitTimeTicks;
                     private static long _lastFrameVrRenderSubmitTimeTicks;
                     private static long _vrXrWaitFrameBlockTimeTicks;
@@ -129,6 +131,16 @@ namespace XREngine
                     /// </summary>
                     public static long VrProcessOpenXrParallelEyeRecordFailedBatches =>
                         Volatile.Read(ref _vrProcessOpenXrParallelEyeRecordFailedBatches);
+
+                    /// <summary>
+                    /// Gets the number of OpenXR frames in this process that ended without projection
+                    /// layers through the exit <paramref name="reason"/>.
+                    /// </summary>
+                    public static long GetVrProcessOpenXrNoLayerFrames(
+                        XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason reason)
+                        => (uint)reason < (uint)_vrProcessOpenXrNoLayerFrames.Length
+                            ? Volatile.Read(ref _vrProcessOpenXrNoLayerFrames[(int)reason])
+                            : 0L;
                     public static double VrRenderSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrRenderSubmitTimeTicks).TotalMilliseconds;
                     public static double VrXrWaitFrameBlockTimeMs => TimeSpan.FromTicks(_lastFrameVrXrWaitFrameBlockTimeTicks).TotalMilliseconds;
                     public static double VrXrEndFrameSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrXrEndFrameSubmitTimeTicks).TotalMilliseconds;
@@ -413,6 +425,18 @@ namespace XREngine
                     /// </summary>
                     public static void RecordVrOpenXrParallelEyeRecordFailedBatch()
                         => Interlocked.Increment(ref _vrProcessOpenXrParallelEyeRecordFailedBatches);
+
+                    /// <summary>
+                    /// Counts one OpenXR frame that ended without projection layers through the exit
+                    /// <paramref name="reason"/>. The count ignores <see cref="EnableTracking"/>,
+                    /// because it reports a frame that the headset did not receive.
+                    /// </summary>
+                    public static void RecordVrOpenXrNoLayerFrame(
+                        XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason reason)
+                    {
+                        if ((uint)reason < (uint)_vrProcessOpenXrNoLayerFrames.Length)
+                            Interlocked.Increment(ref _vrProcessOpenXrNoLayerFrames[(int)reason]);
+                    }
 
                     public static void RecordVrRenderSubmitTime(TimeSpan submitTime)
                     {

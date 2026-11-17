@@ -1452,6 +1452,15 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_overlap_ms", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordOverlapMs, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_parallel_eye_record_serialized_frames", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrParallelEyeRecordSerializedFrames, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_parallel_eye_record_failed_batches", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrParallelEyeRecordFailedBatches, ref first);
+            for (int reason = 0; reason < s_openXrNoLayerFrameFieldNames.Length; reason++)
+            {
+                AppendNumberField(
+                    s_lineBuilder,
+                    s_openXrNoLayerFrameFieldNames[reason],
+                    RuntimeEngine.Rendering.Stats.Vr.GetVrProcessOpenXrNoLayerFrames(
+                        (XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason)reason),
+                    ref first);
+            }
             AppendNumberField(s_lineBuilder, "vulkan_visible_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanVisibleMeshDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_unique_visible_materials", RuntimeEngine.Rendering.Stats.Vulkan.VulkanUniqueVisibleMaterials, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshDraws, ref first);
@@ -2221,6 +2230,23 @@ public static partial class Engine
         {
             AppendFieldPrefix(builder, name, ref first);
             builder.Append(value ? "true" : "false");
+        }
+
+        // One capture field name per no-layer exit, built once so the capture line does not
+        // format names on every sample.
+        private static readonly string[] s_openXrNoLayerFrameFieldNames = CreateOpenXrNoLayerFrameFieldNames();
+
+        private static string[] CreateOpenXrNoLayerFrameFieldNames()
+        {
+            int count = (int)XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.Count;
+            string[] names = new string[count];
+            for (int reason = 0; reason < count; reason++)
+            {
+                string name = ((XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason)reason).ToString();
+                names[reason] = "vr_process_openxr_no_layer_frames_" +
+                    System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(name);
+            }
+            return names;
         }
 
         private static void AppendNumberField(StringBuilder builder, string name, int value, ref bool first)
