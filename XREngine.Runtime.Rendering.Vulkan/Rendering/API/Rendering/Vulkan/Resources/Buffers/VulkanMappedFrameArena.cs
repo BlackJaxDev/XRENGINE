@@ -11,7 +11,13 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal unsafe sealed class VulkanMappedFrameArena
 {
-    internal const int MaximumFrameSlotCount = 8;
+    /// <summary>
+    /// Upper bound of frame-data slots: the desktop slots (at least two, one for each desktop
+    /// swapchain image) plus two slots for each OpenXR eye. Ten slots admit a desktop swapchain
+    /// with up to six images while OpenXR is active. Only small CPU tables and per-slot
+    /// descriptor sets are sized by this bound; native chunks exist only for slots in use.
+    /// </summary>
+    internal const int MaximumFrameSlotCount = 10;
     private const int MaxReservations = 131_072;
     private static long s_nextArenaIdentity;
     private static long s_nextAllocationIdentity;

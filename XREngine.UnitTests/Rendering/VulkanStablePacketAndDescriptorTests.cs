@@ -57,7 +57,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     {
         string arena = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs");
-        arena.ShouldContain("internal const int MaximumFrameSlotCount = 8;");
+        arena.ShouldContain("internal const int MaximumFrameSlotCount = 10;");
         arena.ShouldContain("private const int MaxReservations = 131_072;");
         arena.ShouldContain("if ((uint)requiredFrameSlots > MaximumFrameSlotCount)");
         arena.ShouldContain("_reservations.Count + _frequencyReservations.Count >= MaxReservations");
