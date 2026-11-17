@@ -517,6 +517,20 @@ callbacks on cancellation, and times out after 20 seconds. GPU cleanup already
 in flight can finish after cancellation; a completed readback is still required
 before any successful response.
 
+### Directional Shadow Cascade Export
+
+`export_directional_shadow_cascades` writes the directional shadow cascades that the
+Advanced shading samples. Set `source` to `hmd` or `desktop`. Set `cascade_index` to one
+cascade, or to `-1` for all cascades of the set. For each cascade, the tool writes the atlas
+page layer that holds the tile and a crop of the tile UV rectangle as grayscale depth PNGs.
+The PNGs are normalized to the minimum and maximum of each image, so use the JSON values to
+compare depth. The JSON file records the rendered and current world-to-light matrix, the split,
+the UV rectangle, the page and layer, residency, the active fallback, the last render frame and
+the current atlas frame. `crop_depth` gives the raw minimum, maximum and mean depth of the tile,
+and the share of texels at the minimum and at the maximum. A share of 1.0 at the clear value
+shows an empty tile. The tool reads all cascades of one call on the render thread after the
+viewports render, so they come from the same frame. Pass `output_dir` under the task run.
+
 ### Viewport Sequence Capture Sessions
 
 Image analysis resamples each captured frame to exact analysis dimensions. The
@@ -702,6 +716,7 @@ The edits enter Undo and do not save assets.
 | `evaluate_expression` | Evaluate a dot-separated property chain expression on an XRBase object (e.g. 'Transform.WorldMatrix.Translation.X'). |
 | `evaluate_gpu_hiz_crossover` | Evaluate caller-supplied, parity-proven matched GPU Hi-Z timings into an offline calibration artifact. This does not alter engine policy or forced modes. |
 | `exit_play_mode` | Exit play mode. |
+| `export_directional_shadow_cascades` | Export the directional shadow cascades that the Advanced shading samples: for each cascade, the atlas page layer that holds it and a crop of its UV rectangle as normalized grayscale depth PNGs, plus a JSON file with the rendered and current matrix, split, UV rectangle, page, layer, residency, fallback and last render frame. Choose the Hmd or Desktop cascade set and one cascade or all. |
 | `export_scene` | Export a scene asset to a directory. |
 | `find_asset` | Find a project asset by ID, path, or name. |
 | `find_nodes_by_name` | Find scene nodes by name (exact or contains). |
