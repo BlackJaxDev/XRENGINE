@@ -238,6 +238,12 @@ cascade order, blend band, filter and shadow reason codes as the uncached path. 
 lights, a light with more than 8 cascades, and the MSAA kernel keep the uncached path.
 At 2688x2688 for each eye this saves about 0.5 to 0.8 ms of native opaque shading.
 
+The same fill computes the Vogel tap offsets of the cached light once per work group: one
+table for the blocker search and one for the filter, 16 entries each. A Vogel tap depends
+only on its index, the tap count and the fixed rotation, so the pixels read the table
+instead of computing sqrt, cos and sin for every tap. A tap count above 16, or a count that
+differs from the table, uses the computed offsets. The values are the same in both cases.
+
 The Uber kernel (`ShadeNativeUber.glslinc`) evaluates the shadow of the primary directional
 light once, before its light loop, because the source-lighting modes need that value. The
 light loop visits the same light again with the same direction. It uses the stored value

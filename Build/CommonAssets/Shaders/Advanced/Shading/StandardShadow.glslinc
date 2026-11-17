@@ -180,6 +180,28 @@ vec2 XR_ADV_ShadowTapOffset(uint pattern, int index, int count, float rotation)
     return vec2(cos(angle), sin(angle)) * radius;
 }
 
+#if defined(XR_ADV_SHADOW_GROUP_CACHE)
+// Vogel tap tables of the cached directional light, filled once per work group by
+// XR_ADV_FillShadowGroupCache. A Vogel tap depends only on its index, the tap count and
+// the fixed rotation, so every pixel of the group would compute the same sqrt, cos and
+// sin. Table 0 holds the blocker search taps and table 1 the filter taps. A count of 0
+// means that the table is not filled (no cached light, or more taps than the table holds).
+#define XR_ADV_SHADOW_TAP_TABLE_SIZE 16u
+shared uint s_shadowTapCounts[2];
+shared vec2 s_shadowTapTables[2][XR_ADV_SHADOW_TAP_TABLE_SIZE];
+#endif
+
+// Returns Vogel tap `index` of `count` taps. The cached kernels read the work-group table
+// when it was filled for the same tap count; the values are the same as the computed ones.
+vec2 XR_ADV_VogelTapOffset(uint table, int index, int count, float rotation)
+{
+#if defined(XR_ADV_SHADOW_GROUP_CACHE)
+    if (uint(count) == s_shadowTapCounts[table])
+        return s_shadowTapTables[table][index];
+#endif
+    return XR_ADV_ShadowTapOffset(XR_ADV_SHADOW_TAPS_VOGEL, index, count, rotation);
+}
+
 float XR_ADV_DirectionalTapDepth(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
     XRAdvancedEncodedTextureReference textureReference, vec2 localUv, vec2 lower, vec2 upper)
 {
@@ -209,7 +231,7 @@ float XR_ADV_DirectionalPenumbra(XRAdvancedShadowRecord record, XRAdvancedTextur
     {
         if (i >= samples) break;
         float depth = XR_ADV_DirectionalTapDepth(record, textureRecord, textureReference,
-            localUv + XR_ADV_ShadowTapOffset(XR_ADV_SHADOW_TAPS_VOGEL, i, samples, rotation) * searchRadius,
+            localUv + XR_ADV_VogelTapOffset(0u, i, samples, rotation) * searchRadius,
             lower, upper);
         if (depth < receiver)
         {
@@ -274,9 +296,11 @@ float XR_ADV_SampleDirectionalFiltered(XRAdvancedShadowRecord record, XRAdvanced
     for (int i = 0; i < XR_ADV_MAX_SHADOW_TAPS; ++i)
     {
         if (i >= tapCount) break;
+        vec2 offset = pattern == XR_ADV_SHADOW_TAPS_VOGEL
+            ? XR_ADV_VogelTapOffset(1u, i, tapCount, rotation)
+            : XR_ADV_ShadowTapOffset(pattern, i, tapCount, rotation);
         lit += XR_ADV_DirectionalTapLit(record, textureRecord, textureReference,
-            localUv + XR_ADV_ShadowTapOffset(pattern, i, tapCount, rotation) * radius,
-            lower, upper, receiver);
+            localUv + offset * radius, lower, upper, receiver);
     }
     return lit / float(tapCount);
 }
@@ -505,6 +529,8 @@ void XR_ADV_FillShadowGroupCache(uint viewIndex, uint lightCount)
         s_shadowCacheRootReason = XR_ADV_SHADOW_OK;
         s_shadowCacheCascadeOffset = 0u;
         s_shadowCacheCascadeCount = 0u;
+        s_shadowTapCounts[0] = 0u;
+        s_shadowTapCounts[1] = 0u;
         for (uint i = 0u; i < lightCount; ++i)
         {
             XRAdvancedLightRecord light = XR_ADV_LoadLight(i);
@@ -542,11 +568,34 @@ void XR_ADV_FillShadowGroupCache(uint viewIndex, uint lightCount)
                 s_shadowCacheRootReason = rootReason;
                 s_shadowCacheCascadeOffset = cascadeOffset;
                 s_shadowCacheCascadeCount = cascadeCount;
+                if (cascadeCount > 0u)
+                {
+                    // The tap counts that the filter uses with the Vogel pattern: the blocker
+                    // search always, and the filter in VogelDisk (3) and ContactHardeningPcss (2).
+                    XRAdvancedShadowRecord first = XR_ADV_Shadows.records[cascadeOffset];
+                    uint blockerTaps = uint(clamp(int(first.blockerSamples), 1, XR_ADV_MAX_SHADOW_TAPS));
+                    uint filterTaps = uint(clamp(int(first.softShadowMode == 3u ? first.vogelTapCount : first.filterSamples),
+                        1, XR_ADV_MAX_SHADOW_TAPS));
+                    if (blockerTaps <= XR_ADV_SHADOW_TAP_TABLE_SIZE) s_shadowTapCounts[0] = blockerTaps;
+                    if (filterTaps <= XR_ADV_SHADOW_TAP_TABLE_SIZE) s_shadowTapCounts[1] = filterTaps;
+                }
             }
             break;
         }
     }
     barrier();
+    // One invocation per table entry fills the Vogel tables with the same rotation that
+    // XR_ADV_SampleDirectionalFiltered uses.
+    uint tapLane = gl_LocalInvocationIndex;
+    if (tapLane < 2u * XR_ADV_SHADOW_TAP_TABLE_SIZE)
+    {
+        uint table = tapLane / XR_ADV_SHADOW_TAP_TABLE_SIZE;
+        uint tap = tapLane % XR_ADV_SHADOW_TAP_TABLE_SIZE;
+        uint count = s_shadowTapCounts[table];
+        if (tap < count)
+            s_shadowTapTables[table][tap] = XR_ADV_ShadowTapOffset(XR_ADV_SHADOW_TAPS_VOGEL, int(tap), int(count),
+                XR_ADV_ShadowNoise() * 6.28318531);
+    }
     uint cascade = gl_LocalInvocationIndex;
     if (s_shadowCacheLight != XR_ADV_SHADOW_CACHE_NO_LIGHT && cascade < s_shadowCacheCascadeCount)
     {
