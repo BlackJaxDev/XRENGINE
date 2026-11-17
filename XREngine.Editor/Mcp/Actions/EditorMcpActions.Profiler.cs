@@ -1807,6 +1807,8 @@ namespace XREngine.Editor.Mcp
                         // The collect thread prepares the gate decision in prepare_swap_publication_event_ms. A hit
                         // replaces the row walk in row_gate_ms; a miss runs the swap-time row walk.
                         prepared_gate = BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetry.Capture()),
+                        // Publications that patched moved dynamic rows instead of running the whole-scene plan.
+                        moved_row_patch = BuildAdvancedMovedRowPatchTelemetry(),
                     },
                     viewports_ms = swap.ViewportsMilliseconds,
                     main_view_swap_calls = swap.MainViewSwapCalls,
@@ -1911,6 +1913,25 @@ namespace XREngine.Editor.Mcp
                 domains[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(domain.ToString())] = counters;
             }
             return domains;
+        }
+
+        private static object BuildAdvancedMovedRowPatchTelemetry()
+        {
+            Dictionary<string, long> fallbacks = [];
+            for (EAdvancedMovedRowPatchFallback reason = 0;
+                reason < EAdvancedMovedRowPatchFallback.Count;
+                ++reason)
+            {
+                fallbacks[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(reason.ToString())] =
+                    AdvancedMovedRowPatchTelemetry.GetFallbacks(reason);
+            }
+
+            return new
+            {
+                moved_row_patches = AdvancedMovedRowPatchTelemetry.Patches,
+                moved_rows_patched = AdvancedMovedRowPatchTelemetry.RowsPatched,
+                moved_row_fallbacks = fallbacks,
+            };
         }
 
         private static object BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetrySnapshot snapshot)

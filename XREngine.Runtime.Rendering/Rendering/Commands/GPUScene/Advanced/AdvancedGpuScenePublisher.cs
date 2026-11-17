@@ -224,6 +224,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         _lastSourceGroupReuseCount = 0;
         _lastSourceGroupRebuildCount = 0;
         _lastUnchangedRowGateHitCount = 0;
+        // The moved-row list belongs to one gate walk. Clear it here, so a publication that
+        // passes the prepared verdict without a walk never patches rows of an earlier walk.
+        _lastMovedRowPatchCount = 0;
+        _movedRowCount = 0;
         _lastPublicationCommittedRetainedRows = false;
         _publicationStartMembershipGeneration = _registrationMembershipGeneration;
         _useRetainedIdentityGroups = false;

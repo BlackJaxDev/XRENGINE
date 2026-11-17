@@ -416,8 +416,47 @@ The gate passes only when all of these conditions are true:
   semantic (a legacy material), with current 2D or CPU-backed cube bindings.
 - Each active registration belongs to one row.
 
-Any difference runs the full plan with no change in behavior. Thus a rejected
-bounds route rejects in the full plan with its usual reason.
+Any other difference runs the full plan with no change in behavior. Thus a
+rejected bounds route rejects in the full plan with its usual reason.
+
+### Moved-row patch
+
+A moving object no longer forces the full plan. The swap-time gate walk
+(`TryPassUnchangedRowGate`) accepts a supported row whose only differences are
+its world matrix, its previous world matrix, and (for a CPU-owned bound) its cull
+bound version, when the planned draw row is a dynamic shadow caster
+(`GPUIndirectRenderFlags.ShadowCasterDynamic`). Every other row check still
+runs, including frame continuity (`LastSeenFrameId + 1`), the source flat
+direction, the material, and the registration. The walk stores the new matrices
+and bound of each moved row in fixed storage of `MovedRowPatchLimit` (64) rows.
+
+The publication then commits the retained rows (a reuse cannot change content)
+and, inside the transaction, `ApplyMovedRowPatches` replaces the current and
+previous transform records and the instance record of each moved row, as the
+content update of the full plan does. It recomputes the content signature with
+`ComputeContentSignature`, writes the new matrices, bound, and signature to the
+retained plan entry and the registration, and advances the content generation.
+So the next gate compares against the published state. The submission records
+hold no matrices and stay unchanged, and every row stays temporally valid
+because the gate proved frame continuity and unchanged topology.
+
+The full plan still runs when:
+
+- a static row moves (`StaticRow`). A transform change promotes a static caster
+  to dynamic, and the swap that carries the new flag changes the draw row, so
+  the row takes the full plan once and qualifies after that;
+- more than `MovedRowPatchLimit` rows moved (`LimitExceeded`);
+- the publisher has no retained submission rows (`NoRetainedRows`);
+- the transform or instance table cannot take the replacements, or a moved row's
+  records are not current (`TableCapacity`, `RegistrationNotCurrent`).
+
+The prepare and the prepared-verdict consume never accept a moved row; a moved
+row makes the verdict miss, and the swap-time walk handles it.
+`get_render_profiler_stats` reports
+`frame_lifecycle.collect_stages.swap.advanced_publication.moved_row_patch`
+(`moved_row_patches`, `moved_rows_patched`, and `moved_row_fallbacks` by
+reason), and `get_render_state` reports the latest patched row count as
+`canonicalResidentScene.movedRowPatchCount`.
 
 Native Uber reuse keeps the five material revision checks and the committed
 layout, coverage, render-state, and header checks. It encodes the current texture
@@ -536,8 +575,11 @@ successful caller retry must deliver the accepted publication and clear every
 pending recipient before the image becomes consumable.
 `AdvancedGpuSceneUnchangedRowGateTests` checks that an unchanged scene skips the
 full plan, that a pinned publication is reused, that a global change commits the
-retained rows unchanged, and that material, raster, geometry, transform, mesh,
-header, frame-gap, and membership changes run the full plan.
+retained rows unchanged, and that material, raster, geometry, static-row
+transform, mesh, header, frame-gap, and membership changes run the full plan. It
+also checks that a moved dynamic row is patched without the full plan (same draw
+handle, new content generation, the plan entry follows the published row) and
+that a static row that starts to move runs the full plan.
 
 ### Prepared unchanged-row verdict
 

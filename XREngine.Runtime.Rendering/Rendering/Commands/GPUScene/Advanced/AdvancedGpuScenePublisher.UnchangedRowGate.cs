@@ -119,6 +119,8 @@ public sealed partial class AdvancedGpuScenePublisher
         }
 
         UnchangedRowGateScratch scratch = default;
+        scratch.AcceptMovedRows = true;
+        _movedRowCount = 0;
         int rowCount = _plannedCommandCount;
         bool rowsUnchanged = true;
         int commandIndex = 0;
@@ -127,12 +129,20 @@ public sealed partial class AdvancedGpuScenePublisher
             rowsUnchanged = EvaluateUnchangedRow(scene, commandIndex, frameId, preparing: false, ref scratch);
             if (!rowsUnchanged)
                 break;
+            if (scratch.RowMoved && !TryRecordMovedRow(commandIndex, ref scratch))
+            {
+                rowsUnchanged = false;
+                scratch.RowMismatch = EAdvancedPreparedGateOutcome.RowMoved;
+                scratch.RowMismatchDetail = null;
+                break;
+            }
         }
 
         reusedStaticPlans = scratch.ReusedStaticPlans;
         materialResolveAttempts = scratch.MaterialResolveAttempts;
         if (!rowsUnchanged)
         {
+            _movedRowCount = 0;
             mismatch = scratch.RowMismatch;
             if (scratch.RowMismatchDetail is { } detail)
                 ReportRowInputFailure(commandIndex, mismatch, detail);
@@ -297,9 +307,23 @@ public sealed partial class AdvancedGpuScenePublisher
         // late render-thread write. The swap-time evaluation runs after a swap that can deliver
         // new matrices, so there a difference means that the row moved.
         if (world != plan.World || previousWorld != plan.PreviousWorld)
-            return FailRow(ref scratch,
-                preparing ? EAdvancedPreparedGateOutcome.LateWorldWrite : EAdvancedPreparedGateOutcome.RowMoved,
-                world != plan.World ? "World" : "PreviousWorld");
+        {
+            // The swap-time gate walk can patch a moved dynamic row instead of running the
+            // whole-scene plan (AdvancedGpuScenePublisher.MovedRows.cs). The row still has to
+            // pass every other check below.
+            if (preparing || !scratch.AcceptMovedRows || !CanPatchMovedRow(in plan, in identity))
+            {
+                if (!preparing && scratch.AcceptMovedRows)
+                    AdvancedMovedRowPatchTelemetry.RecordFallback(EAdvancedMovedRowPatchFallback.StaticRow);
+                return FailRow(ref scratch,
+                    preparing ? EAdvancedPreparedGateOutcome.LateWorldWrite : EAdvancedPreparedGateOutcome.RowMoved,
+                    world != plan.World ? "World" : "PreviousWorld");
+            }
+            scratch.RowMoved = true;
+            scratch.RowMovedWorld = world;
+            scratch.RowMovedPreviousWorld = previousWorld;
+            scratch.RowMovedCullBounds = cullBounds;
+        }
         if (!IsUnchangedSupportedRow(
                 commandIndex,
                 frameId,
@@ -640,9 +664,11 @@ public sealed partial class AdvancedGpuScenePublisher
         if (!SameRenderState(in scratch.RowRenderState, in plan.RenderState))
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RenderOptionsChanged);
 
-        // A CPU-owned bound enters the content signature through its version.
+        // A CPU-owned bound enters the content signature through its version. A moved row
+        // carries its new bound into the patch, which recomputes the content signature.
         if (plan.GpuBoundsSource is null &&
-            cullBounds.BoundsVersion != plan.Bounds.BoundsVersion)
+            cullBounds.BoundsVersion != plan.Bounds.BoundsVersion &&
+            !scratch.RowMoved)
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged, "BoundsVersion");
 
         ref readonly AdvancedResidentRegistration registration =
@@ -867,10 +893,22 @@ public sealed partial class AdvancedGpuScenePublisher
         int materialResolveAttempts)
     {
         AdvancedGpuScenePublicationReference candidate = _currentPublication;
-        // A reuse needs the retained image; a commit needs the retained rows.
-        bool publicationRetained = IsPublicationRetainedForReuse(in candidate);
+        // A reuse needs the retained image; a commit needs the retained rows. Moved rows
+        // change content, so they always need a commit of the retained rows.
+        bool hasMovedRows = _movedRowCount > 0;
+        bool publicationRetained = !hasMovedRows && IsPublicationRetainedForReuse(in candidate);
         if (!publicationRetained && !_committedSubmissionRowsValid)
+        {
+            if (hasMovedRows)
+                AdvancedMovedRowPatchTelemetry.RecordFallback(EAdvancedMovedRowPatchFallback.NoRetainedRows);
+            _movedRowCount = 0;
             return false;
+        }
+        if (hasMovedRows && !CanApplyMovedRowPatches())
+        {
+            _movedRowCount = 0;
+            return false;
+        }
 
         // No row changes material or resource ownership in this publication.
         _plannedMaterialCount = 0;
@@ -906,6 +944,7 @@ public sealed partial class AdvancedGpuScenePublisher
             CommitRetainedRows(frameId, resourceMutation);
         else
             ReuseUnchangedRows(frameId, in candidate);
+        _movedRowCount = 0;
         return true;
     }
 
@@ -1011,6 +1050,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 // resource acquisitions, rows, and releases.
                 ApplyPreflightedMaterialTransitions();
                 ApplyPreflightedGlobalResources();
+                ApplyMovedRowPatches();
                 StampUnchangedRows(frameId);
                 CompletePreflightedMaterialTransitions();
                 if (HasDirtyLogicalLookups())
@@ -1033,6 +1073,9 @@ public sealed partial class AdvancedGpuScenePublisher
             ClearPendingIdentityRecipients();
             ClearPublicationFailure();
             MarkUnchangedRowBaseline(submissionRowsValid: true);
+            _lastMovedRowPatchCount = _movedRowCount;
+            if (_movedRowCount > 0)
+                AdvancedMovedRowPatchTelemetry.RecordPatch(_movedRowCount);
         }
         catch (Exception exception)
         {
