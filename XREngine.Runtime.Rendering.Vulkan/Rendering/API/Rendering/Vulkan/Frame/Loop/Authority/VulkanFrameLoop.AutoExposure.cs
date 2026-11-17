@@ -120,8 +120,10 @@ internal sealed partial class VulkanFrameLoop
             }
             layerCount = (int)Math.Max(source2DArray.Depth, 1u);
             program = _resourceRuntime.AutoExposureComputeProgram2DArray;
+            // A constant key: this runs on every stereo exposure update, and a key built from the
+            // texture name allocated a string each time.
             Debug.VulkanEvery(
-                $"Vulkan.AutoExposure.HeadsetSharedArray.{source2DArray.Name ?? source2DArray.SamplerName ?? "<unnamed>"}",
+                "Vulkan.AutoExposure.HeadsetSharedArray",
                 TimeSpan.FromSeconds(30),
                 "[Vulkan] Auto exposure policy=HeadsetShared source='{0}' layers={1}; luminance is averaged across stereo array layers.",
                 source2DArray.Name ?? source2DArray.SamplerName ?? "<unnamed>",
@@ -235,9 +237,10 @@ internal sealed partial class VulkanFrameLoop
 
     /// <summary>
     /// Writes the headset exposure buffer into the 1x1 exposure texture of the right eye of a
-    /// two-pass VR eye pair, clamped to the exposure bounds of the shared settings. The barriers
-    /// before and after the dispatch order it after the left eye's publish (earlier in queue
-    /// submission order) and before the tonemap samples the texture.
+    /// two-pass VR eye pair, clamped to the exposure bounds of the shared settings. The storage
+    /// barrier at the end of the left eye's publish orders this read after it (earlier in queue
+    /// submission order); the barrier after this dispatch orders it before the tonemap samples
+    /// the texture.
     /// </summary>
     internal bool FollowHeadsetAutoExposureGpu(XRTexture2D exposureTex, ColorGradingSettings settings)
     {
@@ -250,7 +253,8 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        EnqueueMemoryBarrier(EMemoryBarrierMask.ShaderStorage);
+        // No leading barrier: the left eye's publish ends with a storage barrier, and barriers
+        // order every later command in queue submission order, including this read.
         bool managedByRenderGraph = PrepareExposureImageForStorage(exposureTex);
 
         settings.GetResolvedExposureBounds(out float minExposure, out float maxExposure);

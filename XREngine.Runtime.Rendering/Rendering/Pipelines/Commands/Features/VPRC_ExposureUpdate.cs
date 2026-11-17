@@ -111,34 +111,53 @@ namespace XREngine.Rendering.Pipelines.Commands
             => RuntimeEngine.Rendering.State.IsStereoPass
             || AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget == true;
 
-        private static void ReportVrAutoExposurePolicy(
+        // Last policy outcome that this command reported. The VR policy reports run every frame
+        // on an eye, so they log only when the outcome changes: no per-frame key string,
+        // argument array or boxing.
+        private EVrAutoExposurePolicy? _reportedPolicy;
+        private Type? _reportedSourceType;
+        private bool _reportedSkipped;
+
+        private bool IsReportedOutcome(EVrAutoExposurePolicy policy, XRTexture sourceTexture, bool skipped)
+        {
+            Type sourceType = sourceTexture.GetType();
+            if (_reportedPolicy == policy && ReferenceEquals(_reportedSourceType, sourceType) && _reportedSkipped == skipped)
+                return true;
+            _reportedPolicy = policy;
+            _reportedSourceType = sourceType;
+            _reportedSkipped = skipped;
+            return false;
+        }
+
+        private void ReportVrAutoExposurePolicy(
             EVrAutoExposurePolicy policy,
             XRTexture sourceTexture,
             string reason)
         {
-            if (!IsVrOrStereoExposureContext())
+            if (!IsVrOrStereoExposureContext() || IsReportedOutcome(policy, sourceTexture, skipped: false))
                 return;
 
-            Debug.RenderingEvery(
-                $"ExposureUpdate.VrPolicy.{policy}.{sourceTexture.GetType().Name}",
-                TimeSpan.FromSeconds(5),
+            Debug.Rendering(
                 "[ExposureUpdate] VR auto exposure policy={0} source={1} reason={2}",
                 policy,
                 sourceTexture.GetType().Name,
                 reason);
         }
 
-        private static void ReportSkippedVrAutoExposure(
+        private void ReportSkippedVrAutoExposure(
             EVrAutoExposurePolicy policy,
             XRTexture sourceTexture,
             string reason)
-            => Debug.RenderingWarningEvery(
-                $"ExposureUpdate.VrPolicySkipped.{policy}.{sourceTexture.GetType().Name}",
-                TimeSpan.FromSeconds(1),
+        {
+            if (IsReportedOutcome(policy, sourceTexture, skipped: true))
+                return;
+
+            Debug.RenderingWarning(
                 "[ExposureUpdate] Skipping VR auto exposure policy={0} source={1}: {2}",
                 policy,
                 sourceTexture.GetType().Name,
                 reason);
+        }
 
         protected override void Execute()
         {
