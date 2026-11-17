@@ -187,8 +187,7 @@ internal sealed partial class VulkanFrameLoop
 
         Debug.VulkanWarning(
             "[OpenXR] VR.ViewRenderMode=ParallelCommandBufferRecording records both eyes on render lane {0}, one after the other, " +
-            "because the render work domain has {1} lane(s) and needs 2. The engine does not add a render worker for this mode; " +
-            "set {2} to 1 or more to record the eyes on separate lanes. " +
+            "because the render work domain has {1} lane(s) and needs 2. Set {2} to 1 or more to record the eyes in parallel. " +
             "The stat vr.process_openxr_parallel_eye_record_serialized_frames counts the affected frames.",
             laneId,
             _commandRuntime.RenderLogicalLaneCount,
