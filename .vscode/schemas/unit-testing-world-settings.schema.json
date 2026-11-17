@@ -1009,6 +1009,10 @@
           "$ref": "#/definitions/UnitTestingVrFoveationSettings",
           "description": "Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback."
         },
+        "EyeFeatures": {
+          "$ref": "#/definitions/UnitTestingVrEyeFeatureSettings",
+          "description": "Optional rendering features of every VR eye frame (single-pass stereo and per-eye, all VR pipelines). Shared by both eyes; the desktop is never affected."
+        },
         "OpenXrEyeResolution": {
           "$ref": "#/definitions/UnitTestingOpenXrEyeResolutionSettings",
           "description": "OpenXR per-eye swapchain resolution preset, custom size, and scalar for reproducible headset-resolution testing."
@@ -1111,6 +1115,40 @@
         "Aggressive"
       ],
       "markdownDescription": "Supported values: `Conservative`, `Balanced`, `Aggressive`."
+    },
+    "UnitTestingVrEyeFeatureSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "AmbientOcclusion": {
+          "type": "boolean",
+          "description": "Enables or disables AmbientOcclusion."
+        },
+        "FogAndAerialPerspective": {
+          "type": "boolean",
+          "description": "Enables or disables FogAndAerialPerspective."
+        },
+        "OrderIndependentTransparency": {
+          "type": "boolean",
+          "description": "Enables or disables OrderIndependentTransparency."
+        },
+        "DepthOfField": {
+          "type": "boolean",
+          "description": "Enables or disables DepthOfField."
+        },
+        "MotionBlur": {
+          "type": "boolean",
+          "description": "Enables or disables MotionBlur."
+        },
+        "DeferredMsaa": {
+          "type": "boolean",
+          "description": "Enables or disables DeferredMsaa."
+        },
+        "ForwardPlusLightCulling": {
+          "type": "boolean",
+          "description": "Enables or disables ForwardPlusLightCulling."
+        }
+      }
     },
     "UnitTestingOpenXrEyeResolutionSettings": {
       "type": "object",

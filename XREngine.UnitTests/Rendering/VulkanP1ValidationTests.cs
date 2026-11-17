@@ -710,7 +710,10 @@ public sealed class VulkanP1ValidationTests
         defaultPipeline.ShouldContain("for (int sourceIndex = 0; sourceIndex < probes.Count; sourceIndex++)");
         defaultPipeline.ShouldContain("for (int index = 0; index < probes.Count; index++)");
         defaultPipeline.ShouldNotContain("foreach (LightProbeComponent probe in probes)");
-        defaultPipeline.ShouldContain("UnitTestEnvironmentRequestsOpenXr");
+        // The VR eye feature profile replaced the OpenXR startup-safe predicate, so no frame condition
+        // of the Default pipeline reads the unit-test VR launch variables.
+        defaultPipeline.ShouldNotContain("XREngineEnvironmentVariables.UnitTestVrMode");
+        defaultPipeline.ShouldNotContain("XREngineEnvironmentVariables.UnitTestUseOpenXr");
         planner.ShouldContain("Enum.IsDefined<EDefaultRenderPass>");
         planner.ShouldContain("PassMetadataContainsPassIndex(passMetadata!, passIndex)");
         planner.ShouldNotContain("passMetadata!.Any(m => m.PassIndex");

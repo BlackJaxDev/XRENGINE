@@ -224,14 +224,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             var renderer = AbstractRenderer.Current;
             EVrEyeExposureRole eyeRole = ResolveEyeExposureRole(ActivePipelineInstance.Pipeline, grading, renderer);
 
-            // The startup-safe hold protects an external eye target that has no eye pair. A paired
-            // eye owns its adaptation state and its exposure texture, so it adapts every frame.
-            if (eyeRole == EVrEyeExposureRole.None && DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath)
+            // An external eye target without an eye pair holds its exposure. A paired eye owns its
+            // adaptation state and its exposure texture, so it adapts every frame.
+            if (eyeRole == EVrEyeExposureRole.None && VrEyeFrameRules.IsExternalEyeTargetFrame())
             {
                 Debug.RenderingEvery(
-                    "ExposureUpdate.Skip.OpenXrVulkanDesktopStartup",
+                    "ExposureUpdate.Skip.UnpairedExternalEyeTarget",
                     TimeSpan.FromSeconds(2),
-                    "[ExposureUpdate] Holding auto exposure on OpenXR Vulkan desktop startup/mirror frame.");
+                    "[ExposureUpdate] Holding auto exposure on an external eye target without an eye pair.");
                 return;
             }
 

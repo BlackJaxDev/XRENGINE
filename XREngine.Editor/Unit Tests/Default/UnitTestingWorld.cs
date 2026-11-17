@@ -163,6 +163,7 @@ public static partial class EditorUnitTests
             s.VrAdvancedEdgeHalfRateRadius = runtimeSettings.VR.AdvancedEdgeHalfRateRadius;
             s.VrAdvancedEdgeHalfRateDebugTint = runtimeSettings.VR.AdvancedEdgeHalfRateDebugTint;
             s.VrAdvancedShadowFilterTaps = runtimeSettings.VR.AdvancedShadowFilterTaps;
+            runtimeSettings.VR.EyeFeatures.ApplyTo(s.VrEyeFeatures);
             s.VrFoveationMode = runtimeSettings.VR.Foveation.Mode;
             s.VrFoveationQualityPreset = runtimeSettings.VR.Foveation.QualityPreset;
             s.VrFoveationRequireRequested = runtimeSettings.VR.Foveation.RequireRequested;

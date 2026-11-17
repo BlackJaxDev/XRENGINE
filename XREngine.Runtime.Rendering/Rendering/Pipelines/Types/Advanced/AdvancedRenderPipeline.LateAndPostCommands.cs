@@ -379,7 +379,7 @@ public partial class AdvancedRenderPipeline
 
     private bool ShouldRunAdvancedAtmosphericScattering()
     {
-        if (!AllowsBloomAndDepthOfField || Stereo || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!AllowsBloomAndDepthOfField || Stereo || !VrEyeFrameRules.AllowsFogAndAerialPerspective())
             return false;
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var settings = GetSettings<AtmosphericScatteringSettings>(state) ?? AtmosphericScatteringSettings.Default;
@@ -389,7 +389,7 @@ public partial class AdvancedRenderPipeline
 
     private bool ShouldRunAdvancedVolumetricFog()
     {
-        if (!AllowsBloomAndDepthOfField || Stereo || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!AllowsBloomAndDepthOfField || Stereo || !VrEyeFrameRules.AllowsFogAndAerialPerspective())
             return false;
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var settings = GetSettings<VolumetricFogSettings>(state);
