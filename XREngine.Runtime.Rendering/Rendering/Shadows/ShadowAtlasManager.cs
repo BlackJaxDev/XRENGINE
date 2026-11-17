@@ -2246,6 +2246,7 @@ public sealed partial class ShadowAtlasManager
 
         ShadowAtlasRenderPlan plan = SelectRenderPlanForExecution(renderPlanIndex);
         ReadOnlySpan<ShadowAtlasRenderPlanEntry> entries = plan.Entries;
+        ReleaseDirectionalStaticCascadeTilesAfterReset();
         FailUnconsumedAdvancedLaneGroups();
         if (_advancedLaneTargetFrameId != SubmissionTrackingRenderFrameId)
         {
@@ -3070,6 +3071,8 @@ public sealed partial class ShadowAtlasManager
 
         for (int encoding = 0; encoding < ShadowEncodingCount; encoding++)
             GetEncodingState(atlasKind, (EShadowMapEncoding)encoding).ResetResources();
+        if (atlasKind == EShadowAtlasKind.Directional)
+            RequestDirectionalStaticCascadeTileRelease();
         RemoveRenderedCompletionOverlays(atlasKind);
 
         RemoveAllocationsForAtlasKind(_previousAllocations, atlasKind);
@@ -5196,6 +5199,7 @@ public sealed partial class ShadowAtlasManager
         ResetSubmissionTracking();
         for (int i = 0; i < _encodingStates.Length; i++)
             _encodingStates[i].ResetResources();
+        RequestDirectionalStaticCascadeTileRelease();
 
         lock (_completionSync)
         {

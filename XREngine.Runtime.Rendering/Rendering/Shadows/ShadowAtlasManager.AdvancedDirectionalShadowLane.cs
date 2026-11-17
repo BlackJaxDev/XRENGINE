@@ -65,6 +65,12 @@ public sealed partial class ShadowAtlasManager
     // Directional cascade plan entries that waited in a render frame without a lane owner, because
     // the generic path has no caster producer for that frame's submission strategy.
     private long _advancedLaneOwnerlessDeferredEntries;
+    // One when a directional atlas reset released the cascade allocations and the static cascade
+    // tiles still hold content of the old page. The planning thread sets it; the render thread
+    // releases the tiles at its next scheduled-tile pass, because only that thread uses them.
+    private int _directionalStaticTileReleasePending;
+    // Directional atlas resets that released the static cascade tiles.
+    private long _directionalAtlasResets;
     // Generic directional cascade renders that were declined because the generic path has no
     // caster producer (see TryDeclineGenericDirectionalCascadeRender). All atlas managers add to it.
     private static long s_genericCascadeNoCasterProducerDeclines;
@@ -179,6 +185,7 @@ public sealed partial class ShadowAtlasManager
             _advancedLaneOwnerAbsentGroups,
             _advancedLaneGenericGroups,
             _advancedLaneOwnerlessDeferredEntries,
+            Interlocked.Read(ref _directionalAtlasResets),
             Interlocked.Read(ref s_genericCascadeNoCasterProducerDeclines),
             _advancedLaneLastDeclineReason ?? _advancedLaneConsumerReason,
             _advancedLaneCasterProducer,
@@ -823,6 +830,40 @@ public sealed partial class ShadowAtlasManager
             tile.Invalidate();
     }
 
+    /// <summary>
+    /// Called on the planning thread when an atlas reset releases the directional cascade
+    /// allocations. The reset creates new page storage, so a static cascade tile copy would put
+    /// casters of the old page fit into a tile that the new plan must draw in full. Counts the
+    /// reset and asks the render thread to release every static cascade tile.
+    /// </summary>
+    private void RequestDirectionalStaticCascadeTileRelease()
+    {
+        Interlocked.Increment(ref _directionalAtlasResets);
+        Interlocked.Exchange(ref _directionalStaticTileReleasePending, 1);
+    }
+
+    /// <summary>
+    /// Releases every static cascade tile after a directional atlas reset. Runs on the render
+    /// thread at the start of the scheduled-tile pass, before the lane attaches tiles to new
+    /// groups, so the first refresh of each cascade after the reset draws all of its casters.
+    /// </summary>
+    private void ReleaseDirectionalStaticCascadeTilesAfterReset()
+    {
+        if (Interlocked.Exchange(ref _directionalStaticTileReleasePending, 0) == 0)
+            return;
+
+        for (int i = 0; i < _directionalStaticCascadeTiles.Length; i++)
+        {
+            DirectionalCascadeStaticTile? tile = _directionalStaticCascadeTiles[i];
+            if (tile is null)
+                continue;
+
+            tile.Destroy();
+            _directionalStaticCascadeTiles[i] = null;
+            DirectionalShadowStaticCacheDiagnostics.RecordTileReleased();
+        }
+    }
+
     private static AdvancedDirectionalShadowLaneRequest[] CreateAdvancedLaneRequests()
     {
         AdvancedDirectionalShadowLaneRequest[] requests =
@@ -854,6 +895,7 @@ public readonly record struct AdvancedDirectionalShadowLaneDiagnostics(
     long OwnerAbsentGroups,
     long GenericGroups,
     long OwnerlessDeferredEntries,
+    long DirectionalAtlasResets,
     long GenericNoCasterProducerDeclines,
     string? LastDeclineReason,
     string? CasterProducer,
