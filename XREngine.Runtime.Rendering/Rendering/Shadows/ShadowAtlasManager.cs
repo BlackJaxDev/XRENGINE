@@ -2239,6 +2239,7 @@ public sealed partial class ShadowAtlasManager
         int failedRender = 0;
         int deferredByBudget = 0;
         int deferredByTexture = 0;
+        int deferredByLaneOwner = 0;
         int firstDeferredRequestIndex = -1;
         int attemptedEntries = 0;
         int criticalBypassEntries = 0;
@@ -2266,6 +2267,20 @@ public sealed partial class ShadowAtlasManager
             {
                 LogDirectionalRequestRenderState(request, allocation, "SkippedClean", requiresRender: false);
                 skippedClean++;
+                continue;
+            }
+
+            // In a render frame without a lane owner, the generic path cannot draw the casters of a
+            // GPU zero-readback meshlet frame. The directional cascade entry keeps its last valid
+            // tiles and stays dirty for the next frame with an owner. This is a deferral, not a
+            // failed render, so it does not use the tile budget.
+            if ((entry.Kind == ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup ||
+                 request.ProjectionType == EShadowProjectionType.DirectionalCascade) &&
+                IsOwnerlessDirectionalCascadeDeferralFrame())
+            {
+                LogDirectionalRequestRenderState(request, allocation, "DeferredNoLaneOwner", requiresRender: true);
+                _advancedLaneOwnerlessDeferredEntries++;
+                deferredByLaneOwner += tileCost;
                 continue;
             }
 
@@ -2327,7 +2342,7 @@ public sealed partial class ShadowAtlasManager
 
         _tilesScheduledThisFrame = scheduled;
         double elapsedMs = ElapsedMilliseconds(frameStart);
-        int deferredTotal = deferredByBudget + deferredByTexture;
+        int deferredTotal = deferredByBudget + deferredByTexture + deferredByLaneOwner;
         RenderWorkBudgetCoordinator.RecordShadowAtlasQueue(deferredTotal);
         RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.ShadowAtlas, elapsedMs);
         if (deferredByTexture > 0)

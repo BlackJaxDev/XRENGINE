@@ -62,6 +62,16 @@ public sealed partial class ShadowAtlasManager
     // Unconsumed groups whose owner did not run its stage in their frame. They start no hold.
     private long _advancedLaneOwnerAbsentGroups;
     private long _advancedLaneGenericGroups;
+    // Directional cascade plan entries that waited in a render frame without a lane owner, because
+    // the generic path has no caster producer for that frame's submission strategy.
+    private long _advancedLaneOwnerlessDeferredEntries;
+
+    /// <summary>
+    /// Lane decline reason in a render frame without a lane owner when the generic path cannot draw
+    /// the casters of the frame's submission strategy.
+    /// </summary>
+    private const string OwnerlessFrameNoGenericProducerReason =
+        "No Advanced view renders the scene in this render frame, and the generic cascade path has no caster producer for GPU zero-readback meshlet frames. The cascade group waits for a frame with a lane owner.";
 
     private enum PendingAdvancedLaneGroupState : byte
     {
@@ -159,6 +169,7 @@ public sealed partial class ShadowAtlasManager
             _advancedLaneUnconsumedGroups,
             _advancedLaneOwnerAbsentGroups,
             _advancedLaneGenericGroups,
+            _advancedLaneOwnerlessDeferredEntries,
             _advancedLaneLastDeclineReason ?? _advancedLaneConsumerReason,
             _advancedLaneCasterProducer,
             _advancedLaneCasterProducerReason);
@@ -233,6 +244,13 @@ public sealed partial class ShadowAtlasManager
         bool hmdViewsRenderBeforeOwner = false)
     {
         AssertRenderThread();
+        // A frame without an owner may use the generic path only when that path can draw the
+        // casters. In a GPU zero-readback meshlet frame it cannot, so the groups wait.
+        if (!ownerExpected && !GenericDirectionalCascadePathHasCasterProducer())
+        {
+            genericFallbackAllowed = false;
+            reason ??= OwnerlessFrameNoGenericProducerReason;
+        }
         if (_advancedLaneAuthorityFrameId == renderFrameId)
             _advancedLaneHmdViewsBeforeOwner |= hmdViewsRenderBeforeOwner;
         else
@@ -606,6 +624,26 @@ public sealed partial class ShadowAtlasManager
             reason);
     }
 
+    /// <summary>
+    /// True when the generic directional cascade path can draw casters for the current submission
+    /// strategy. In a GPU zero-readback meshlet frame it cannot: the cascade collection skips the
+    /// CPU traversal (the GPU scene owns caster membership), and the meshlet raster has no shadow
+    /// producer, so a generic render would clear the tile and draw nothing. Only the Advanced lane
+    /// draws meshlet-frame casters (CPU-masked indexed draws of the canonical geometry).
+    /// </summary>
+    internal static bool GenericDirectionalCascadePathHasCasterProducer()
+        => !RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsZeroReadbackMeshletStrategy();
+
+    /// <summary>
+    /// True in a render frame without a lane owner in which the generic path may not draw
+    /// directional cascades (<see cref="PublishAdvancedDirectionalShadowConsumerAuthority"/>). The
+    /// scheduled-tile pass then defers directional cascade entries to a frame with an owner.
+    /// </summary>
+    private bool IsOwnerlessDirectionalCascadeDeferralFrame()
+        => _advancedLaneAuthorityFrameId == SubmissionTrackingRenderFrameId &&
+           !_advancedLaneOwnerExpected &&
+           !_advancedLaneGenericFallbackAllowed;
+
     private bool RequiresStrictDirectionalShadowLane()
     {
         if (_advancedLaneAuthorityFrameId == SubmissionTrackingRenderFrameId)
@@ -785,6 +823,7 @@ public readonly record struct AdvancedDirectionalShadowLaneDiagnostics(
     long UnconsumedGroups,
     long OwnerAbsentGroups,
     long GenericGroups,
+    long OwnerlessDeferredEntries,
     string? LastDeclineReason,
     string? CasterProducer,
     string? CasterProducerReason);

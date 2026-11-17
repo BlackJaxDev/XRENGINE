@@ -255,6 +255,7 @@ namespace XREngine.Editor.Mcp
                 unconsumedGroups = lane.UnconsumedGroups,
                 ownerAbsentGroups = lane.OwnerAbsentGroups,
                 genericGroups = lane.GenericGroups,
+                ownerlessDeferredEntries = lane.OwnerlessDeferredEntries,
                 lastDeclineReason = lane.LastDeclineReason,
                 casterProducer = lane.CasterProducer,
                 casterProducerReason = lane.CasterProducerReason,
