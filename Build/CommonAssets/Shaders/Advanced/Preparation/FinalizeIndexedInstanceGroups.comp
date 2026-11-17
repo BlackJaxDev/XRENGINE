@@ -8,9 +8,14 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityPreparationPush
     uint rangeBase;
 } XR_ADV_VisibilityPush;
 
-#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityPush.viewIndex
+// gl_WorkGroupID.y selects the view of a multi-view dispatch
+// (VisibilityPreparationViews.glslinc).
+#define XR_ADV_PREP_VIEW_OFFSET gl_WorkGroupID.y
+#define XR_ADV_PREP_VIEW_INDEX (XR_ADV_VisibilityPush.viewIndex + XR_ADV_PREP_VIEW_OFFSET)
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_PREP_VIEW_INDEX
 #define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
 #include "../Visibility/VisibilityInterface.glslinc"
+#include "VisibilityPreparationViews.glslinc"
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -46,7 +51,7 @@ void main()
 
     XRAdvancedIndexedInstanceGroup group =
         XR_ADV_VisibilityInstanceGroups.records[groupIndex];
-    uint countIndex = XR_ADV_VisibilityPush.viewIndex * groupCount + groupIndex;
+    uint countIndex = XR_ADV_PREP_VIEW_INDEX * groupCount + groupIndex;
 #if defined(XR_ADV_LATE_GROUPS)
     if (countIndex >= uint(XR_ADV_VisibilityLateGroupCounts.records.length()))
         return;
@@ -71,13 +76,13 @@ void main()
         return;
     }
 
-    uint rangeBegin = XR_ADV_VisibilityPush.payloadBase +
+    uint rangeBegin = XR_ADV_PREP_PAYLOAD_BASE +
         XR_ADV_VisibilityRangeOffsets.records[group.rangeIndex];
-    uint rangeEnd = XR_ADV_VisibilityPush.payloadBase +
+    uint rangeEnd = XR_ADV_PREP_PAYLOAD_BASE +
         (group.rangeIndex + 1u < rangeCount
             ? XR_ADV_VisibilityRangeOffsets.records[group.rangeIndex + 1u]
             : XR_ADV_VisibilityPush.payloadCapacity);
-    uint rangeCounter = XR_ADV_VisibilityPush.rangeBase + group.rangeIndex;
+    uint rangeCounter = XR_ADV_PREP_RANGE_BASE + group.rangeIndex;
     uint argumentWords =
 #if defined(XR_ADV_LATE_GROUPS)
         uint(XR_ADV_VisibilityLateIndexedArguments.records.length());
@@ -113,13 +118,13 @@ void main()
     XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 2u] = representative.firstIndex;
     XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 3u] = 0u;
     XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 4u] =
-        XR_ADV_VisibilityPush.payloadBase + group.firstMember;
+        XR_ADV_PREP_PAYLOAD_BASE + group.firstMember;
 #else
     XR_ADV_VisibilityIndexedArguments.records[argumentBase] = representative.indexCount;
     XR_ADV_VisibilityIndexedArguments.records[argumentBase + 1u] = instanceCount;
     XR_ADV_VisibilityIndexedArguments.records[argumentBase + 2u] = representative.firstIndex;
     XR_ADV_VisibilityIndexedArguments.records[argumentBase + 3u] = 0u;
     XR_ADV_VisibilityIndexedArguments.records[argumentBase + 4u] =
-        XR_ADV_VisibilityPush.payloadBase + group.firstMember;
+        XR_ADV_PREP_PAYLOAD_BASE + group.firstMember;
 #endif
 }

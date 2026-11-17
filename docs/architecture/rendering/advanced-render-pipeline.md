@@ -828,6 +828,46 @@ the flat identity values that `VisibilityRaster.frag` reads (locations 0-5 and
 keep the interpolated coverage attributes (locations 6 and 11-16). OpenGL does
 not set the define.
 
+Vulkan visibility preparation records its compute stages once for all views of
+a family. A desktop view, each per-eye pipeline (Sequential and Parallel eye
+recording) and each RVC single-view stage family have one view. SinglePassStereo
+and RVC stereo families have two or more.
+- `EarlyVisibility.comp`, `BuildVisibilityIndirect.comp` and both
+  `FinalizeIndexedInstanceGroups.comp` variants run as one dispatch each with one
+  Y workgroup row for each view. The push constants hold the view 0 segment. The
+  shaders add `gl_WorkGroupID.y` to the view index, `gl_WorkGroupID.y *
+  payloadCapacity` to the payload base, and `gl_WorkGroupID.y *` (range offset
+  table length) to the range base (`VisibilityPreparationViews.glslinc`). These
+  are the strides of `VulkanAdvancedVisibilityResourceState.TryGetViewSegment`;
+  `SupportsMultiViewPreparation` checks them before recording. OpenGL still
+  dispatches each view with one row, so the offset is zero there.
+- The per-view outputs, counter records and argument segments do not change.
+  The views write disjoint segments, so one storage barrier between stages
+  serves all views.
+- The depth pyramid build and `LateVisibility.comp` bind the images of one view
+  through that view's descriptor tables, so they still run once per view. The
+  late test results of all views then get one storage barrier, and the late
+  group finalize runs as one multi-view dispatch with one more barrier.
+- The late test uses `vkCmdDispatchIndirect`. `BuildVisibilityIndirect.comp`
+  writes one dispatch record per view after the indexed arguments of all views
+  in the early argument stream (`TryGetLateDispatchArgumentOffset`; 16 bytes per
+  view). The X count is `max(1, ceil(max(early, deferred) / 256))`, with both
+  counts bounded by the payload capacity. At least one workgroup runs, because
+  the late test also clears the view's current meshlet history set. The early
+  raster read barrier makes the records visible to the indirect dispatch.
+- Dispatch and barrier counts for the visibility preparation of one family with
+  V views and indexed instance groups (single-sample, with the depth pyramid):
+
+  | Stage | Dispatches before | Dispatches now | Barriers before | Barriers now |
+  | --- | --- | --- | --- | --- |
+  | Early, indirect, group finalize | 3V | 3 | 3 | 3 |
+  | Depth pyramid build | V | V | 3V image | 3V image |
+  | Late test | V (over the capacity) | V (indirect, live count) | V | 1 |
+  | Late group finalize | V | 1 | V | 1 |
+
+  Without indexed instance groups, the group finalize rows have no dispatch and
+  no barrier.
+
 The Vulkan meshlet visibility raster has a task stage, `VisibilityRaster.task`,
 in front of `VisibilityRaster.mesh`.
 - `BuildVisibilityIndirect.comp` and `LateVisibility.comp` write
