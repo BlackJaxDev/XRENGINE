@@ -287,9 +287,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// pair (<see cref="RenderPipeline.IsVrEyePostProcessPair"/>) get an eye role.
         /// <see cref="ColorGradingSettings.IndependentEyeExposure"/> selects between one headset
         /// exposure (the owner eye leads, the other eye follows) and an independent exposure per
-        /// eye. A renderer without headset exposure sharing lets each eye adapt on its own and
-        /// reports that once per interval.
+        /// eye. Vulkan and OpenGL share the headset exposure. A renderer without that support
+        /// lets each eye adapt on its own and logs this once per session.
         /// </summary>
+        // Set after the one-time report that the renderer has no headset exposure sharing.
+        private static bool s_reportedHeadsetSharedUnavailable;
+
         private static EVrEyeExposureRole ResolveEyeExposureRole(
             RenderPipeline? pipeline,
             ColorGradingSettings grading,
@@ -301,10 +304,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return EVrEyeExposureRole.IndependentEye;
             if (renderer?.SupportsHeadsetSharedAutoExposure != true)
             {
-                Debug.RenderingWarningEvery(
-                    "ExposureUpdate.HeadsetSharedUnavailable",
-                    TimeSpan.FromSeconds(5),
-                    "[ExposureUpdate] This renderer cannot share one headset exposure between the eye pipelines; each eye adapts its own exposure.");
+                if (!s_reportedHeadsetSharedUnavailable)
+                {
+                    s_reportedHeadsetSharedUnavailable = true;
+                    Debug.RenderingWarning(
+                        "[ExposureUpdate] This renderer cannot share one headset exposure between the eye pipelines; each eye adapts its own exposure.");
+                }
                 return EVrEyeExposureRole.IndependentEye;
             }
             return pipeline.PostProcessStateOwner is not null

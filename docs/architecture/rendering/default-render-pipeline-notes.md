@@ -1506,10 +1506,14 @@ Current policy:
     own exposure texture (`FollowHeadsetAutoExposureGpu`) and does not meter.
     In queue order the right eye reads the value of the same frame; when its
     command buffer runs first, it reads the value of the previous frame.
+    OpenGL runs one context in order and renders the left eye first, so the
+    right eye always reads the value of the same frame.
   - On (`EVrAutoExposurePolicy.PerEye`): each eye meters its own image and
     adapts on its own, so the eyes can differ in brightness.
-  A renderer without headset sharing (`SupportsHeadsetSharedAutoExposure`,
-  Vulkan has it) uses the independent mode and logs a warning. A paired eye
+  Vulkan and OpenGL share the headset exposure
+  (`SupportsHeadsetSharedAutoExposure`), so OpenVR and OpenXR two-pass eyes
+  get it on both backends. A renderer without it uses the independent mode
+  and logs this once per session. A paired eye
   is not held by the OpenXR Vulkan startup-safe path. An external per-eye
   target without an eye pair still skips auto exposure to avoid last-eye-wins
   mutation of one exposure state.

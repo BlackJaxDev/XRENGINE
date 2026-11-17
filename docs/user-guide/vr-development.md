@@ -126,6 +126,8 @@ always use the same settings:
   - On: each eye meters its own image and adapts on its own, as real eyes do. The eyes can
     then differ in brightness.
   Single-pass stereo always meters both eye layers together and ignores this setting.
+  Vulkan and OpenGL both support the shared headset exposure, so it works for OpenVR and
+  OpenXR two-pass eyes.
 
 ## Testing
 

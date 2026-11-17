@@ -53,6 +53,43 @@ OpenXR eye submission is separate from desktop output. A mirror mode change neve
 
 The reconstruction path must publish per-eye color, per-eye linear depth, frame identity, matrices, depth convention metadata, and output dimensions before composition. It rejects mixed-frame inputs and must not mutate swapchain images. Vulkan is the primary implementation path because it already has per-eye mirror color publication infrastructure. OpenGL needs per-eye sampleable color and depth targets before it can use the same composition contract.
 
+## Known limitation: per-eye eye feature profile
+
+`UseOpenXrVulkanDesktopStartupSafePath` (`DefaultRenderPipeline` and `AdvancedRenderPipeline`) is
+true for every render on Vulkan, with OpenXR requested, that is not a stereo pass and whose
+viewport writes an external swapchain image. In practice this is every per-eye OpenXR Vulkan
+eye frame (Advanced and RVC `SequentialViews` and `ParallelCommandBufferRecording`, and Default
+eyes). The desktop never takes it.
+
+History:
+
+- 37cdc6d67 (2026-07-07) added the predicate as Vulkan + OpenXR requested + not a stereo pass,
+  to speed up the VR loop while it was debugged. At that time it removed heavy passes from every
+  mono render of an OpenXR session, which in practice meant the desktop view.
+- 7c11bf62f (2026-07-08) added `IsOpenXrExternalSwapchainTargetPass`, and ef3d2aa1f (2026-07-08)
+  removed its `LastWindowViewport` fallback so that eye state cannot leak into desktop
+  evaluation. Since then the predicate selects only the per-eye eye renders.
+
+The name ("desktop startup") and the first reason (a faster desktop next to VR) no longer
+describe it: it is a permanent reduced profile for per-eye eyes. Per-eye eyes now have their
+own pipelines, resource generations and VR policies (`EVrTemporalHistoryPolicy`, the headset
+shadow taps, the VR atmosphere and fog history guards), so the blanket gate is not needed for
+correctness. It still saves GPU time at headset rates. Each feature should become an explicit
+decision of the eye profile (`EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye`) instead of
+this predicate. Until then, per-eye eye frames run without:
+
+- Advanced and RVC: the camera AO passes (only the neutral native AO fill runs, so there is no
+  GTAO), atmospheric scattering and aerial perspective, volumetric fog, motion blur, depth of
+  field, exact transparency, the weighted blended OIT passes, deferred MSAA, and Forward+ local
+  light culling (`VPRC_ForwardPlusLightCullingPass` resets its published state).
+- Default: the same post effects, plus the MSAA command graph, the forward pre-pass, vendor
+  upscale and the debug visualizations.
+
+Auto exposure is no longer held for a paired eye: each eye pipeline adapts with its own state,
+with one headset exposure or an independent exposure per eye (see the VR auto exposure notes in
+[default-render-pipeline-notes.md](default-render-pipeline-notes.md)). An unpaired external eye
+target is still held.
+
 ## Swapchain and device lifetime
 
 The OpenXR host owns native swapchain handles and an authoritative acquired-image ledger. A successful `xrAcquireSwapchainImage` adds ownership. Only a successful `xrReleaseSwapchainImage` removes it, except explicit terminal abandonment after device loss. Normal teardown waits for acquired images to release before destroying swapchains. Runtime loss, graphics loss, and renderer recreation record a loss reason and use custody objects so native parents outlive children.
