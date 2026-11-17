@@ -64,6 +64,17 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     EVrViewRenderMode VrViewRenderMode { get; }
 
     /// <summary>
+    /// Gets the stopwatch timestamp at which the independent VR desktop output needs its next
+    /// frame under the XR-first desktop admission: the last admitted desktop frame plus the
+    /// minimum desktop frame interval. XR collect pacing of two-pass eyes ends its wait for the
+    /// next XR frame at this time, so the desktop keeps its minimum rate. <see cref="long.MaxValue"/>
+    /// means that no independent desktop output stays live in VR. 0 means that desktop frames do
+    /// not wait for XR frames (desktop priority, or the over-budget skip is off), so two-pass
+    /// collect pacing does not apply. The default implementation returns 0.
+    /// </summary>
+    long VrIndependentDesktopNextDueTimestamp => 0L;
+
+    /// <summary>
     /// Gets the requested VR eye pipeline family.
     /// </summary>
     EVrRenderPipeline VrRenderPipeline => RuntimeRenderingHostServiceDefaults.VrRenderPipeline;

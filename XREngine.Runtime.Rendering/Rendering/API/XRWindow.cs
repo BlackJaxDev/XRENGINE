@@ -3376,6 +3376,7 @@ namespace XREngine.Rendering
                 return;
 
             AdvancedDirectionalShadowConsumerAuthority authority = default;
+            XRViewport? owner = null;
             int candidateCount = 0;
             bool genericFallbackAllowed = true;
             bool eyesRender = VrEyesRenderThisFrame();
@@ -3386,11 +3387,11 @@ namespace XREngine.Rendering
                 // viewport instead. The query reads only assigned pipelines, so exactly one of the
                 // two eye families is a candidate in a frame.
                 ConsiderAdvancedDirectionalShadowConsumer(RuntimeEngine.VRState.OpenXRApi?.StereoViewport, world!, renderFrameId,
-                    ref authority, ref candidateCount, ref genericFallbackAllowed);
+                    ref authority, ref candidateCount, ref genericFallbackAllowed, ref owner);
                 ConsiderAdvancedDirectionalShadowConsumer(RuntimeEngine.VRState.LeftEyeViewport, world!, renderFrameId,
-                    ref authority, ref candidateCount, ref genericFallbackAllowed);
+                    ref authority, ref candidateCount, ref genericFallbackAllowed, ref owner);
                 ConsiderAdvancedDirectionalShadowConsumer(RuntimeEngine.VRState.RightEyeViewport, world!, renderFrameId,
-                    ref authority, ref candidateCount, ref genericFallbackAllowed);
+                    ref authority, ref candidateCount, ref genericFallbackAllowed, ref owner);
             }
             // Eyes that render without an Advanced pipeline sample the HMD cascades before a
             // desktop owner runs.
@@ -3413,7 +3414,7 @@ namespace XREngine.Rendering
                     if (!viewport.RendersSceneThisFrame)
                         continue;
                     ConsiderAdvancedDirectionalShadowConsumer(viewport, world!, renderFrameId,
-                        ref authority, ref candidateCount, ref genericFallbackAllowed);
+                        ref authority, ref candidateCount, ref genericFallbackAllowed, ref owner);
                 }
             }
 
@@ -3423,13 +3424,60 @@ namespace XREngine.Rendering
             atlas.PublishAdvancedDirectionalShadowConsumerAuthority(
                 renderFrameId, authority, candidateCount != 0,
                 genericFallbackAllowed, reason, hmdViewsRenderBeforeOwner);
+            LogAdvancedDirectionalShadowOwner(
+                renderFrameId, eyesRender, owner, authority, candidateCount,
+                hmdViewsRenderBeforeOwner, genericFallbackAllowed);
+        }
+
+        /// <summary>
+        /// True when <see cref="XREngineEnvironmentVariables.AdvancedDirectionalShadowOwnerDiagnostics"/>
+        /// is on. Read once, so the off state costs one static read per render frame.
+        /// </summary>
+        private static readonly bool s_advancedDirectionalShadowOwnerDiagnostics =
+            XREnvironment.IsEnabled(XREngineEnvironmentVariables.AdvancedDirectionalShadowOwnerDiagnostics);
+
+        /// <summary>Auxiliary log of the owner line. Release sessions also write it.</summary>
+        private const string AdvancedDirectionalShadowOwnerLogFileName = "advanced-directional-shadow-owner.log";
+
+        /// <summary>
+        /// Writes one line for this render frame that names the owner of the Advanced directional
+        /// shadow lane: whether VR eyes render, the owner viewport and its kind (OpenXR stereo, left
+        /// or right eye viewport, or another window viewport), its pipeline type, whether its
+        /// authority is valid and its submission strategy, the candidate count, whether headset
+        /// views sample the cascades before the owner, and whether a declined group may take the
+        /// generic path. Writes nothing unless the diagnostic is on.
+        /// </summary>
+        private static void LogAdvancedDirectionalShadowOwner(
+            ulong renderFrameId,
+            bool eyesRender,
+            XRViewport? owner,
+            in AdvancedDirectionalShadowConsumerAuthority authority,
+            int candidateCount,
+            bool hmdViewsRenderBeforeOwner,
+            bool genericFallbackAllowed)
+        {
+            if (!s_advancedDirectionalShadowOwnerDiagnostics)
+                return;
+
+            RuntimeVrState vr = RuntimeEngine.VRState;
+            string ownerKind = owner is null ? "none"
+                : ReferenceEquals(owner, vr.OpenXRApi?.StereoViewport) ? "openxr-stereo"
+                : ReferenceEquals(owner, vr.LeftEyeViewport) ? "left-eye"
+                : ReferenceEquals(owner, vr.RightEyeViewport) ? "right-eye"
+                : "window";
+            string pipeline = owner?.RenderPipelineInstance.PipelineIfAssigned?.GetType().Name ?? "<none>";
+            Debug.WriteAuxiliaryLog(
+                AdvancedDirectionalShadowOwnerLogFileName,
+                FormattableString.Invariant(
+                    $"renderFrame={renderFrameId} eyesRender={eyesRender} owner={ownerKind} ownerIndex={owner?.Index ?? -1} pipeline={pipeline} authorityValid={authority.IsValid} strategy={authority.Strategy} candidates={candidateCount} hmdViewsRenderBeforeOwner={hmdViewsRenderBeforeOwner} genericFallbackAllowed={genericFallbackAllowed}"));
         }
 
         /// <summary>
         /// Adds <paramref name="viewport"/> to the consumer candidates of this frame when it renders
         /// <paramref name="world"/> with an Advanced pipeline. The first candidate becomes the
         /// owner. Every candidate decides whether a group that the lane declines may use the
-        /// generic path: only CPU-direct frames may.
+        /// generic path: only CPU-direct frames may. <paramref name="owner"/> receives the first
+        /// candidate viewport.
         /// </summary>
         private static void ConsiderAdvancedDirectionalShadowConsumer(
             XRViewport? viewport,
@@ -3437,7 +3485,8 @@ namespace XREngine.Rendering
             ulong renderFrameId,
             ref AdvancedDirectionalShadowConsumerAuthority authority,
             ref int candidateCount,
-            ref bool genericFallbackAllowed)
+            ref bool genericFallbackAllowed,
+            ref XRViewport? owner)
         {
             // Read the assigned pipeline only. This query runs every frame for the eye viewports
             // too, and OpenXR true single-pass stereo holds those without a pipeline; reading
@@ -3452,7 +3501,10 @@ namespace XREngine.Rendering
             genericFallbackAllowed &= captured &&
                 candidate.Strategy == EMeshSubmissionStrategy.CpuDirect;
             if (++candidateCount == 1)
+            {
                 authority = candidate;
+                owner = viewport;
+            }
         }
 
         /// <summary>

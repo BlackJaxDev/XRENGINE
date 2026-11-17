@@ -30,9 +30,12 @@ public readonly record struct AdvancedPreparationOptions(
         // One desktop view plus the maximum OpenXR view set can coexist in
         // the same prepared world frame.
         MaximumViews: RenderFrameViewSet.MaxViewCount + 1,
+        // Five output slots: the slot is chosen by availability, and the GPU can still read a slot
+        // for several frames (a GPU-bound XR frame in flight for each eye plus the desktop). Each
+        // slot holds VertexCapacity x 64 bytes of deformed vertices (64 MiB at 1M vertices).
         DeformedArena: new AdvancedDeformedVertexArenaOptions(
             InitialVertexCapacity: 65_536u,
-            FrameSlotCount: 3,
+            FrameSlotCount: 5,
             OwnerCapacity: 4_096,
             RetiredGenerationCapacity: 4),
         DeformationBudget: new AdvancedDeformationBudget(

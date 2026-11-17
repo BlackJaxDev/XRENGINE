@@ -124,8 +124,20 @@ public static partial class EditorUnitTests
         public bool AllowDesktopEditing { get; set; } = true; //When a VR pawn is active, keeps a desktop editing camera/pawn available.
         public XREngine.Components.VR.EVrDesktopView DesktopView { get; set; } = XREngine.Components.VR.EVrDesktopView.EditorCamera; //Desktop view at OpenXR startup when AllowDesktopEditing is on. EditorCamera gives mouse and keyboard to the editor camera and pauses VR action input such as thumbstick locomotion; head and hand tracking continue. FirstPerson, Spectator, and TextureOutput keep input on the VR pawn.
         public UnitTestingVrFoveationSettings Foveation { get; set; } = new(); //Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback.
+        public UnitTestingVrEyeFeatureSettings EyeFeatures { get; set; } = new(); //Optional rendering features of every VR eye frame (single-pass stereo and per-eye, all VR pipelines). Shared by both eyes; the desktop is never affected.
         public UnitTestingOpenXrEyeResolutionSettings OpenXrEyeResolution { get; set; } = new(); //OpenXR per-eye swapchain resolution preset, custom size, and scalar for reproducible headset-resolution testing.
         public string? OpenXrRuntimeJson { get; set; } = null; //Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes. Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects common Monado install/build locations when this is unset.
+    }
+
+    public class UnitTestingVrEyeFeatureSettings
+    {
+        public bool AmbientOcclusion { get; set; } = true; //Allows camera ambient occlusion (for example GTAO) in VR eye frames.
+        public bool FogAndAerialPerspective { get; set; } = true; //Allows volumetric fog and atmospheric aerial perspective in VR eye frames.
+        public bool OrderIndependentTransparency { get; set; } = true; //Allows weighted blended OIT and the exact transparency techniques in VR eye frames.
+        public bool DepthOfField { get; set; } = false; //Allows depth of field in VR eye frames. Off by default for comfort.
+        public bool MotionBlur { get; set; } = false; //Allows motion blur in VR eye frames. Off by default for comfort.
+        public bool DeferredMsaa { get; set; } = true; //Allows the deferred MSAA path in VR eye frames when the eye camera selects MSAA.
+        public bool ForwardPlusLightCulling { get; set; } = true; //Allows Forward+ local light culling in VR eye frames. Without it, forward and transparent surfaces in the eyes get no local lights.
     }
 
     public class UnitTestingVrFoveationSettings

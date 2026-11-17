@@ -547,8 +547,8 @@ frame and their finalize framebuffer exists
 (`AdvancedRenderPipeline.AmbientOcclusionPassesReplaceNeutralFill`), the native stage
 records no neutral-fill dispatch (`SkipNeutralAmbientOcclusionFill`): the finalize quad
 overwrites the whole image before shading reads it. The stage operation and its
-transitions still run. AO off, VXAO, the startup-safe path, a missing camera and a
-missing finalize target keep the fill.
+transitions still run. AO off, VXAO, a VR eye frame whose eye feature profile turns
+ambient occlusion off, a missing camera and a missing finalize target keep the fill.
 All native, surface-export, depth-comparison, and MSAA shading recipes declare
 `XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1`. Runtime validation rejects older
 recipes before binding the neutral texture, despite the unchanged 160-byte
@@ -1518,9 +1518,9 @@ Current policy:
   (`SupportsHeadsetSharedAutoExposure`), so OpenVR and OpenXR two-pass eyes
   get it on both backends. A renderer without it uses the independent mode
   and logs this once per session. A paired eye
-  is not held by the OpenXR Vulkan startup-safe path. An external per-eye
-  target without an eye pair still skips auto exposure to avoid last-eye-wins
-  mutation of one exposure state.
+  adapts every frame. An external per-eye target without an eye pair
+  (`VrEyeFrameRules.IsExternalEyeTargetFrame`) still skips auto exposure to avoid
+  last-eye-wins mutation of one exposure state.
 - Atmosphere and volumetric-fog temporal history stay mono-only until their
   half-resolution color/depth/history resources and reprojection/upscale shaders
   are stereo-array aware.

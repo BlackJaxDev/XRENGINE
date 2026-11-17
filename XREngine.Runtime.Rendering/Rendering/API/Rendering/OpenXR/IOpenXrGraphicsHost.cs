@@ -18,6 +18,13 @@ public interface IOpenXrGraphicsHost
     void SetSwapchain(uint viewIndex, ulong swapchainHandle, uint imageCount);
     ulong DetachSwapchain(uint viewIndex);
     bool HasAcquiredImage(ulong swapchainHandle);
+    /// <summary>
+    /// True when an OpenXR call returned a runtime loss code (session lost, instance lost, runtime
+    /// failure or runtime unavailable) and the runtime loss transition has not completed yet.
+    /// <see cref="CheckResult"/> marks the loss. A binding uses this to tell a lost runtime, where
+    /// the swapchain ownership ledger no longer applies, from a real ownership failure.
+    /// </summary>
+    bool IsRuntimeLossPending { get; }
     bool AreSwapchainImagesReleased(ReadOnlySpan<ulong> swapchainHandles);
     void AbandonAcquiredImagesAfterDeviceLoss();
     void AbandonActiveSwapchainsAfterDeviceLoss();

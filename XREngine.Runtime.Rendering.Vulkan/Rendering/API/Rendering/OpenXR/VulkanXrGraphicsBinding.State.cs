@@ -22,6 +22,13 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private XRViewport? _openXrRightViewport => Context.RightViewport;
     private XRViewport? _openXrStereoViewport => Context.StereoViewport;
 
+    /// <summary>
+    /// Set by the eye batch when an eye image wait or release failed because the OpenXR runtime
+    /// was lost. <see cref="TryRenderViewsBatch"/> then ends the frame without layers instead of
+    /// treating the unreleased images as an ownership failure. Render-thread state.
+    /// </summary>
+    private bool _eyeImageReleaseRuntimeLost;
+
     private int _openXrPendingFrameNumber => Context.PendingFrameNumber;
     private ulong _openXrLastRenderedFrameId => Context.LastRenderedFrameId;
     private OpenXrStrictSpsFailureStage _strictSpsInjectedFailureStage

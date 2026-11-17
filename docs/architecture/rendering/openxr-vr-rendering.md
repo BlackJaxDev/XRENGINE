@@ -14,9 +14,17 @@ The graphics binding sees a native-free host and exact signed OpenXR result code
 
 The engine separates frame preparation, visibility collection, and rendering. The runtime polls events and session state, waits for the runtime predicted display time, locates predicted views for visible collection, then locates late views near rendering. Eye cameras and controller or tracker transforms select explicit predicted or late pose caches. A runtime-specific pose-time offset affects locate calls without changing the display time submitted to the runtime.
 
-For each eye, the binding acquires an image, waits for that image, renders to the external swapchain viewport, flushes as required, and releases it. A wait failure does not authorize a release. A failed release keeps the runtime acquired ownership in the OpenXR host ledger. The frame ends without a projection layer, and swapchain destruction is deferred. The OpenXR leaf stages native projection views in cached storage and calls `xrEndFrame` synchronously with the pointer graph still valid. No per-frame neutral projection array is handed across the renderer boundary.
+For each eye, the binding acquires an image, waits for that image, renders to the external swapchain viewport, flushes as required, and releases it. A wait failure does not authorize a release. A failed release keeps the runtime acquired ownership in the OpenXR host ledger. The frame ends without a projection layer, and swapchain destruction is deferred. When the wait or release fails because the runtime is lost (session lost, instance lost, runtime failure or runtime unavailable, for example when the runtime process stops), `CheckResult` marks the runtime loss, the ownership ledger no longer applies, and the Vulkan eye batch ends the frame without layers instead of throwing to the render circuit breaker (`IOpenXrGraphicsHost.IsRuntimeLossPending`). The OpenXR leaf stages native projection views in cached storage and calls `xrEndFrame` synchronously with the pointer graph still valid. No per-frame neutral projection array is handed across the renderer boundary.
+
+A frame can end without projection layers through several exits, and each exit has its own process counter (`EOpenXrNoLayerFrameReason`, in `get_render_profiler_stats` as `vr.process_openxr_no_layer_frames` and in the profile capture line as `vr_process_openxr_no_layer_frames_<reason>`): `frame_skip` (the runtime returned `shouldRender = false`), `unsupported_view_mode`, `eye_pipeline_pending`, `eye_pipeline_rejected`, `eye_render_failure` (an eye did not render or submit, for example a failed parallel eye batch), `frame_exception` (the cleanup ended a frame that threw), and `prepare_aborted` (the pacing owner began the frame but view location or the pose update failed). A frame that the render thread never takes because its collect did not publish it in time is not a no-layer frame: the pacing owner waits for it before it begins the next one.
 
 `SequentialViews` renders eyes separately. OpenXR Vulkan `SinglePassStereo` is strict. It uses the layered multiview path only when required capabilities and resource generation are available. If it cannot honor that path, it reports the rejection and submits no projection layer. Choose `SequentialViews` explicitly to request per-eye rendering. Desktop mirror composition remains renderer-owned.
+
+On Vulkan, each eye owns two frame-data slots after the desktop slots (`ResolveOpenXrRecordImageIndex`, slot parity 0 and 1). Eye submissions are asynchronous, so a per-eye recording alternates between the two slots of its eye: the next frame of an eye records into one slot while the GPU still reads the other. When the expected slot is still owned by an in-flight submission, the preparation uses the other slot of the eye. When both are busy, it waits for the older slot for at most one predicted display period (one 90 Hz period before the runtime reports a period). If the slot is still busy, the preparation fails and the frame ends without layers (`eye_render_failure`). Single-pass stereo, the mirror and prewarm use only the parity 0 slots. A slot holds only per-frame CPU-written data: mapped uniform arena chunks, frame-data arena chunks (about 82 MiB for each slot at the initial sizes, most of it device-local host-visible memory), descriptors, command buffers and timing queries. Eye render targets, depth targets and temporal history (TSR, auto exposure, GTAO) stay per eye. The process counters `vr.process_openxr_eye_frame_data_slot_alternates`, `..._waits` and `..._busy_failures` (`get_render_profiler_stats`; capture fields `vr_process_openxr_eye_frame_data_slot_*`) count these cases. When a per-eye preparation returns no input, its readiness failure, and so the render readiness failure log, names the reason.
+
+Before a per-eye preparation records, `ShouldDeferOpenXrEyeRenderingWork` can skip the frame (readiness ticket `openxr-eye-resource-work`, the frame ends without layers). It defers only for an unavailable device, texture descriptor publications that are still pending (`VulkanTextureUploadService.TryDescribePendingDescriptorPublications`; a publication changes the descriptors that the eye captures), and high Vulkan allocator pressure (`TryDescribeOpenXrVulkanAllocatorPressure`: 90% of the largest device-local heap or less than 512 MiB left). Texture transfers in flight and active upload preparation do not defer the eye, because the eye keeps binding the resident texture until the publication. The recent allocation-failure cooldown is checked later in the eye preparation, inside the eye planner scope. History: the gate came from a startup memory-pressure and device-loss incident (d7fcbcb20) and first deferred the eye for any texture upload work; at that time it dropped about 200 per-eye frames after each camera placement while textures streamed in, which single-pass stereo does not do.
+
+`XRE_OPENXR_EYE_VIEW_DIAGNOSTICS=N` (a positive XR frame interval) writes one line for each eye every `N` XR frames to the auxiliary log `openxr-eye-view-diagnostics.log`, also in Release sessions. Per-eye rendering writes it right before each eye renders and single-pass stereo writes it for both eyes after the late eye pose. Each line holds the path, the viewport display and internal size, the internal-to-output scale, the anti-aliasing mode and TSR scale of the last frame profile, the camera FOV angles, the camera render-matrix translation (the late eye pose) and the camera position of the same view in the published view set (the collect-time pose), so one run in each mode compares how the two paths set up an eye.
 
 ## View render modes and view-scoped state
 
@@ -26,7 +34,11 @@ For each eye, the binding acquires an image, waits for that image, renders to th
 |---|---|---|
 | `SequentialViews` | OpenGL, Vulkan | Each eye is one view context. This is the reference path. |
 | `SinglePassStereo` | OpenGL, Vulkan | One stereo context renders both eyes into an engine-owned layered target (`OpenXrStereoRenderTarget`, `XRViewport.RenderStereo(...)`), then publishes each layer to its eye swapchain. Vulkan uses `GL_EXT_multiview` or `gl_ViewIndex`, never NV stereo semantics. |
-| `ParallelCommandBufferRecording` | Vulkan only | The default mode in settings. It has the same output contract as `SequentialViews`. `OpenXrEyeRecordWorkerScheduler` records left and right primary command buffers on bounded workers after all eye inputs are prepared. OpenGL rejects this mode with a diagnostic, so OpenGL VR must select `SequentialViews`. |
+| `ParallelCommandBufferRecording` | Vulkan only | The default mode in settings. It has the same output contract as `SequentialViews`. `OpenXrEyeRecordWorkerScheduler` records left and right primary command buffers on bounded workers after all eye inputs are prepared. The left eye uses render lane 0 (the render thread) and the right eye uses lane 1 (a render worker), so the mode needs at least one render worker; startup adds one when OpenXR starts in this mode (see `XRE_RENDER_WORKER_THREADS` in the [job system guide](../../developer-guides/runtime/job-system.md#environment-variables)). With one lane, both eyes record one after the other on the render thread, the renderer logs one warning, and `vr.process_openxr_parallel_eye_record_serialized_frames` counts the frames. OpenGL rejects this mode with a diagnostic, so OpenGL VR must select `SequentialViews`. |
+
+Measured on Monado with the Sponza avatar benchmark (Vulkan, per-eye; values are for the sun / near camera poses). Two frame-data slots for each eye lowered `eye_render_failure` from about 0.9 to less than 0.01 for each XR frame: the Advanced pipeline went from 27.7 / 28.2 Hz to 38.1 / 38.4 Hz, and RVC with `ParallelCommandBufferRecording` and no render worker went from 29.3 / 31.0 Hz to 36.6 / 40.5 Hz. With one render worker (the startup default for this mode), RVC reached 40.6 / 42.5 Hz: the two eye recordings overlapped for about 86% of their span (span 4.5 / 4.1 ms, overlap 3.5 / 3.1 ms), and the publication age was 8 to 9 ms.
+
+A per-eye eye render is a mono pass, but its frame view is an eye view: `RenderFrameViewSetCapture` gives an OpenXR per-eye render (a viewport that writes an external eye swapchain image, with an eye camera) the `LeftEye` or `RightEye` kind and the eye history key (`LeftEyeHistoryKey` or `RightEyeHistoryKey`), as for a stereo eye. The eye kind sets the stereo eye flag of the Advanced view record, so the shading samples the headset directional shadow cascades (fitted to the eye cameras) and not the desktop cascades, and the eye history keys keep the two eyes' visibility plans and depth-pyramid history apart. A single-view set uses the mono temporal jitter and history, also for a right eye. Desktop renders keep `DesktopEditor` and `MonoHistoryKey`.
 
 Mutable render state belongs to a view, not to the renderer. On Vulkan, each eye recording receives an immutable `OpenXrEyeRenderTargetContext` with eye index, acquired image index, image and view handles, format, extent, depth target, external region, command-chain key, and planner key. `VulkanOpenXrViewResourcePlannerContextKey` scopes resource-planner state, allocator-backed image views, framebuffers, and descriptor image info per view. Primary command-buffer cache keys include the eye, swapchain image, depth generation, planner signature, and secondary-buffer generations. Eyes and images cannot alias. Recorded texture uploads publish only after the submit that used them completes. Uploads that belong to a failed recording are cancelled. If one eye fails to record, the renderer submits neither eye and releases the acquired images in OpenXR order.
 
@@ -53,42 +65,56 @@ OpenXR eye submission is separate from desktop output. A mirror mode change neve
 
 The reconstruction path must publish per-eye color, per-eye linear depth, frame identity, matrices, depth convention metadata, and output dimensions before composition. It rejects mixed-frame inputs and must not mutate swapchain images. Vulkan is the primary implementation path because it already has per-eye mirror color publication infrastructure. OpenGL needs per-eye sampleable color and depth targets before it can use the same composition contract.
 
-## Known limitation: per-eye eye feature profile
+## VR eye feature profile
 
-`UseOpenXrVulkanDesktopStartupSafePath` (`DefaultRenderPipeline` and `AdvancedRenderPipeline`) is
-true for every render on Vulkan, with OpenXR requested, that is not a stereo pass and whose
-viewport writes an external swapchain image. In practice this is every per-eye OpenXR Vulkan
-eye frame (Advanced and RVC `SequentialViews` and `ParallelCommandBufferRecording`, and Default
-eyes). The desktop never takes it.
+The engine setting `VrEyeFeatures` (`VrEyeFeatureProfile`, editor: engine settings, category
+**VR**, **VR Eye Features**) selects the optional rendering features of every VR eye frame:
+single-pass stereo and per-eye (`SequentialViews`, `ParallelCommandBufferRecording`), the
+Default, Advanced and RVC pipelines, and OpenXR and OpenVR. Both eyes use this one profile, and
+the desktop and other cameras never read it. The Unit Testing World sets it through
+`VR.EyeFeatures`.
 
-History:
+| Setting | Default | Controls |
+|---|---|---|
+| `AmbientOcclusion` | on | Camera AO passes (for example GTAO). Off keeps the neutral AO fill. |
+| `FogAndAerialPerspective` | on | Volumetric fog and atmospheric scattering aerial perspective. |
+| `OrderIndependentTransparency` | on | Weighted blended OIT and the exact transparency techniques. |
+| `DepthOfField` | off | Depth of field. Off for comfort in a headset. |
+| `MotionBlur` | off | Motion blur. Off for comfort in a headset. |
+| `DeferredMsaa` | on | The deferred MSAA path when the eye camera selects MSAA. |
+| `ForwardPlusLightCulling` | on | Forward+ local light culling. Off leaves forward and transparent surfaces without local lights. |
 
-- 37cdc6d67 (2026-07-07) added the predicate as Vulkan + OpenXR requested + not a stereo pass,
-  to speed up the VR loop while it was debugged. At that time it removed heavy passes from every
-  mono render of an OpenXR session, which in practice meant the desktop view.
-- 7c11bf62f (2026-07-08) added `IsOpenXrExternalSwapchainTargetPass`, and ef3d2aa1f (2026-07-08)
-  removed its `LastWindowViewport` fallback so that eye state cannot leak into desktop
-  evaluation. Since then the predicate selects only the per-eye eye renders.
+A feature runs in an eye frame only when the profile allows it and the eye camera's own settings
+enable it (the shared eye post-process state and render overrides that `VrEyeCameraSettingsLink`
+keeps equal for both eyes). The profile cannot add a feature that the active pipeline does not
+support for the view; for example, the stereo resource profiles still exclude exact transparency,
+fog and aerial perspective.
 
-The name ("desktop startup") and the first reason (a faster desktop next to VR) no longer
-describe it: it is a permanent reduced profile for per-eye eyes. Per-eye eyes now have their
-own pipelines, resource generations and VR policies (`EVrTemporalHistoryPolicy`, the headset
-shadow taps, the VR atmosphere and fog history guards), so the blanket gate is not needed for
-correctness. It still saves GPU time at headset rates. Each feature should become an explicit
-decision of the eye profile (`EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye`) instead of
-this predicate. Until then, per-eye eye frames run without:
+The profile does not change the eye camera's own stage settings. For an eye output, the MCP tool
+`get_camera_post_process` adds `vrEyeFeatureProfile` (the seven values) and, for each stage,
+`disabledByVrEyeFeatureProfile` (`VrEyeFeatureProfile.AllowsPostProcessStage`), so an ambient
+occlusion stage that reads `Enabled = true` shows that the profile turns it off.
 
-- Advanced and RVC: the camera AO passes (only the neutral native AO fill runs, so there is no
-  GTAO), atmospheric scattering and aerial perspective, volumetric fog, motion blur, depth of
-  field, exact transparency, the weighted blended OIT passes, deferred MSAA, and Forward+ local
-  light culling (`VPRC_ForwardPlusLightCullingPass` resets its published state).
-- Default: the same post effects, plus the MSAA command graph, the forward pre-pass, vendor
-  upscale and the debug visualizations.
+`VrEyeFrameRules` decides whether a render is an eye frame: a stereo pass, or a mono render whose
+viewport camera is an eye camera (`XRCamera.StereoEyeLeft`) or whose viewport writes an external
+swapchain image. Scene and light probe captures are never eye frames. Resource keys pass their
+viewport and the pipeline's stereo flag, so a key built inside and outside the eye render agrees.
+Without a viewport (command chain and resource generation), a query is not an eye frame, so the
+generated graph keeps every feature and the render-time conditions decide.
 
-Auto exposure is no longer held for a paired eye: each eye pipeline adapts with its own state,
-with one headset exposure or an independent exposure per eye (see the VR auto exposure notes in
-[default-render-pipeline-notes.md](default-render-pipeline-notes.md)). An unpaired external eye
-target is still held.
+Two rules stay tied to the OpenXR external eye target (`VrEyeFrameRules.IsExternalEyeTargetFrame`)
+and are not features: the final output of such a target goes straight to the runtime image, so
+vendor upscalers do not run there, and an external eye target without an eye exposure pair holds
+its auto exposure. Auto exposure of paired eyes follows the headset or independent mode (see the
+VR auto exposure notes in [default-render-pipeline-notes.md](default-render-pipeline-notes.md)).
+
+History: until this profile, a blanket predicate (`UseOpenXrVulkanDesktopStartupSafePath`, Vulkan
+plus OpenXR plus a mono external swapchain target) removed AO, fog and aerial perspective, motion
+blur, depth of field, OIT and exact transparency, deferred MSAA, Forward+ culling and, in the
+Default pipeline, bloom, the MSAA targets, the forward pre-pass and the debug visualizations from
+every per-eye OpenXR Vulkan eye frame. Single-pass stereo and OpenVR eyes were not affected. The
+profile replaces it, so per-eye eyes now get the same features as single-pass stereo eyes unless
+the profile turns them off.
 
 ## Swapchain and device lifetime
 

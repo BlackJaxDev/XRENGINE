@@ -103,7 +103,9 @@ internal static class VulkanFrameWaitInstrumentation
 
 /// <summary>
 /// Monitor lease that takes the zero-timestamp fast path when uncontended and
-/// publishes only waits above the causal-capture threshold.
+/// publishes only waits above the causal-capture threshold. A contended wait
+/// also reaches <see cref="VulkanLockContentionTelemetry"/> when the lease names
+/// a contention site.
 /// </summary>
 internal readonly ref struct VulkanFrameLockScope
 {
@@ -111,7 +113,8 @@ internal readonly ref struct VulkanFrameLockScope
 
     private VulkanFrameLockScope(
         object gate,
-        EVulkanFrameWaitReason reason)
+        EVulkanFrameWaitReason reason,
+        EVulkanLockContentionSite site)
     {
         _gate = gate;
         if (Monitor.TryEnter(gate))
@@ -119,20 +122,48 @@ internal readonly ref struct VulkanFrameLockScope
 
         long started = Stopwatch.GetTimestamp();
         Monitor.Enter(gate);
+        long elapsedTicks = Stopwatch.GetTimestamp() - started;
         VulkanFrameWaitInstrumentation.RecordCurrentThreadWait(
             reason,
-            Stopwatch.GetElapsedTime(started));
+            Stopwatch.GetElapsedTime(started, started + elapsedTicks));
+        VulkanLockContentionTelemetry.Record(site, elapsedTicks);
     }
 
     public static VulkanFrameLockScope Enter(
         object gate,
         EVulkanFrameWaitReason reason)
-        => new(gate, reason);
+        => new(gate, reason, ResolveContentionSite(reason));
+
+    /// <summary>
+    /// Enters <paramref name="gate"/> and counts a contended wait at <paramref name="site"/>.
+    /// Pass <see cref="EVulkanFrameWaitReason.None"/> for locks that are not desktop frame waits.
+    /// </summary>
+    public static VulkanFrameLockScope Enter(
+        object gate,
+        EVulkanFrameWaitReason reason,
+        EVulkanLockContentionSite site)
+        => new(gate, reason, site);
 
     public static VulkanFrameThreadingLockScope Enter(
         Lock gate,
         EVulkanFrameWaitReason reason)
-        => new(gate, reason);
+        => new(gate, reason, ResolveContentionSite(reason));
+
+    /// <summary>
+    /// Enters <paramref name="gate"/> and counts a contended wait at <paramref name="site"/>.
+    /// Pass <see cref="EVulkanFrameWaitReason.None"/> for locks that are not desktop frame waits.
+    /// </summary>
+    public static VulkanFrameThreadingLockScope Enter(
+        Lock gate,
+        EVulkanFrameWaitReason reason,
+        EVulkanLockContentionSite site)
+        => new(gate, reason, site);
+
+    /// <summary>Counts descriptor publication waits; other wait reasons have no contention site.</summary>
+    private static EVulkanLockContentionSite ResolveContentionSite(EVulkanFrameWaitReason reason)
+        => reason == EVulkanFrameWaitReason.DescriptorPublicationLock
+            ? EVulkanLockContentionSite.DescriptorPublication
+            : EVulkanLockContentionSite.None;
 
     public void Dispose()
         => Monitor.Exit(_gate);
@@ -148,7 +179,8 @@ internal readonly ref struct VulkanFrameThreadingLockScope
 
     internal VulkanFrameThreadingLockScope(
         Lock gate,
-        EVulkanFrameWaitReason reason)
+        EVulkanFrameWaitReason reason,
+        EVulkanLockContentionSite site)
     {
         _gate = gate;
         if (gate.TryEnter())
@@ -156,9 +188,11 @@ internal readonly ref struct VulkanFrameThreadingLockScope
 
         long started = Stopwatch.GetTimestamp();
         gate.Enter();
+        long elapsedTicks = Stopwatch.GetTimestamp() - started;
         VulkanFrameWaitInstrumentation.RecordCurrentThreadWait(
             reason,
-            Stopwatch.GetElapsedTime(started));
+            Stopwatch.GetElapsedTime(started, started + elapsedTicks));
+        VulkanLockContentionTelemetry.Record(site, elapsedTicks);
     }
 
     public void Dispose()

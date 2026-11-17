@@ -128,6 +128,13 @@ always use the same settings:
   Single-pass stereo always meters both eye layers together and ignores this setting.
   Vulkan and OpenGL both support the shared headset exposure, so it works for OpenVR and
   OpenXR two-pass eyes.
+- The engine setting **VR Eye Features** (engine settings, category **VR**; `VrEyeFeatures`)
+  turns optional features on or off for every VR eye frame, in every view mode and pipeline:
+  ambient occlusion, fog and aerial perspective, order-independent transparency, depth of
+  field, motion blur, deferred MSAA and Forward+ light culling. Depth of field and motion blur
+  are off by default for comfort; the other features are on. A feature also needs the eye
+  camera's own setting (for example an enabled ambient occlusion stage). The desktop camera
+  never reads this profile. In the Unit Testing World, set `VR.EyeFeatures`.
 
 ## Testing
 

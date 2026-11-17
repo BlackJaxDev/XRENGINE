@@ -70,6 +70,7 @@ public unsafe partial class OpenXRAPI
 
         if (Volatile.Read(ref _frameSkipRender) != 0)
         {
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.FrameSkip);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -87,6 +88,7 @@ public unsafe partial class OpenXRAPI
 
         if (!TryResolveOpenXrViewRenderModeForCurrentBackend(out _))
         {
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.UnsupportedViewMode);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -105,6 +107,9 @@ public unsafe partial class OpenXRAPI
         if (!TryValidateOpenXrEyePipelineSelection(out string pipelineDiagnostic, out bool pipelinePending))
         {
             ReportOpenXrEyePipelineSelectionRejected(pipelineDiagnostic, pipelinePending);
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(pipelinePending
+                ? XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.EyePipelinePending
+                : XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.EyePipelineRejected);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -183,6 +188,7 @@ public unsafe partial class OpenXRAPI
 
         if (!allEyesRendered)
         {
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.EyeRenderFailure);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -232,6 +238,7 @@ public unsafe partial class OpenXRAPI
             {
                 try
                 {
+                    RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.FrameException);
                     FrameEndInfo cleanupEndInfo = new()
                     {
                         Type = StructureType.FrameEndInfo,
@@ -1693,6 +1700,7 @@ public unsafe partial class OpenXRAPI
                 stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
                 _openXrStereoUpdatingBufferFree = true;
                 Volatile.Write(ref _lastPublishedTrueSinglePassStereo, 1);
+                Volatile.Write(ref _lastPublishedTwoPassEyes, 0);
                 SwapOpenXrInsetPairCommands();
                 Debug.RenderingEvery(
                     $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
@@ -1717,6 +1725,7 @@ public unsafe partial class OpenXRAPI
             _openXrLeftViewport.SwapBuffers(leftCommands, allowScreenSpaceUISwap: false);
             _openXrRightViewport.SwapBuffers(rightCommands, allowScreenSpaceUISwap: false);
             Volatile.Write(ref _lastPublishedTrueSinglePassStereo, 0);
+            Volatile.Write(ref _lastPublishedTwoPassEyes, 1);
         }
 
         Interlocked.Exchange(ref _framePrepared, 1);
@@ -1857,6 +1866,7 @@ public unsafe partial class OpenXRAPI
 
     private void EndBegunFrameWithoutLayers(int frameNo, string reason)
     {
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.PrepareAborted);
         try
         {
             var frameEndInfoNoLayers = new FrameEndInfo

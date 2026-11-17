@@ -156,7 +156,11 @@ successor asset.
   native compute closure that cannot find a required image or buffer are written to the
   auxiliary log `render-readiness-failures.log` (`RenderReadinessFailureLog`), which Release
   sessions also write. Each line names the category, pipeline, resource key (with the feature
-  mask) and reason, and one failure repeats at most once per 5 seconds.
+  mask) and reason, and one failure repeats at most once per 5 seconds. OpenXR parallel eye
+  recording writes to the same log: `OpenXrParallelEyeRecord` for each failed eye (eye, frame,
+  swapchain image, render lane, managed thread, and the exception type and message) and
+  `OpenXrParallelEyeBatch` for each batch that ended with an exception, whose frame ends
+  without projection layers.
 - A retired generation stays alive until its completion receipt signals. The
   retired-generation count limit is soft. Unsignaled generations are kept, and
   the instance drains them after they signal.

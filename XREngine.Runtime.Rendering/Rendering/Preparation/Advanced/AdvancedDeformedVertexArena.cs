@@ -80,14 +80,33 @@ public sealed class AdvancedDeformedVertexArena
     public bool IsFrameOpen => _frameOpen;
 
     public bool TryBeginFrame(ulong frameId, ulong completedValue)
+        => TryBeginFrame(
+            frameId,
+            completedValue,
+            AdvancedFrameSlotContract.Resolve(frameId, checked((uint)_options.FrameSlotCount)));
+
+    /// <summary>
+    /// Opens a frame on explicit slots: <paramref name="currentFrameSlot"/> receives this frame's
+    /// deformed vertices and <paramref name="previousFrameSlot"/> holds the last frame's. The shared
+    /// preparation passes the slots that <see cref="AdvancedGpuDeformationResources.TrySelectOutputSlot"/>
+    /// chose by availability, so the arena slices and the GPU output buffers use the same slots.
+    /// </summary>
+    public bool TryBeginFrame(ulong frameId, ulong completedValue, uint currentFrameSlot, uint previousFrameSlot)
+    {
+        uint slotCount = checked((uint)_options.FrameSlotCount);
+        if (currentFrameSlot >= slotCount || previousFrameSlot >= slotCount || currentFrameSlot == previousFrameSlot)
+            throw new ArgumentOutOfRangeException(nameof(currentFrameSlot),
+                $"Deformation arena slots must be distinct and below {slotCount} (current {currentFrameSlot}, previous {previousFrameSlot}).");
+        return TryBeginFrame(frameId, completedValue, new AdvancedFrameSlotPair(currentFrameSlot, previousFrameSlot));
+    }
+
+    private bool TryBeginFrame(ulong frameId, ulong completedValue, AdvancedFrameSlotPair slots)
     {
         if (_frameOpen)
             throw new InvalidOperationException("The deformation arena frame is already open.");
 
         DrainRetired(completedValue);
-        _slots = AdvancedFrameSlotContract.Resolve(
-            frameId,
-            checked((uint)_options.FrameSlotCount));
+        _slots = slots;
         if (_slotSubmissionValues[_slots.Current] > completedValue)
         {
             _slotReuseDeferralCount++;

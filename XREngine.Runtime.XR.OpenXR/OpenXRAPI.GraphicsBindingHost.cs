@@ -69,6 +69,9 @@ public unsafe partial class OpenXRAPI
         public bool HasAcquiredImage(ulong swapchainHandle)
             => owner.HasAcquiredImage(swapchainHandle);
 
+        public bool IsRuntimeLossPending
+            => owner.IsOpenXrRuntimeLossPending();
+
         public bool AreSwapchainImagesReleased(ReadOnlySpan<ulong> swapchainHandles)
             => owner.AreSwapchainImagesReleased(swapchainHandles);
 

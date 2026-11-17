@@ -31,7 +31,15 @@ internal sealed class AdvancedGpuSceneIdentityCacheFixture : IDisposable
 
     public AdvancedGpuScenePublisher Publisher { get; } = new();
 
-    public RenderInfo3D AddSource(out RenderCommandMesh3D command, int primitiveCount = 1)
+    /// <summary>
+    /// Adds one source with <paramref name="primitiveCount"/> primitives to the scene. With
+    /// <paramref name="shadowCasterDynamic"/>, the owner is a dynamic shadow caster before the
+    /// scene converts the command, so its draw row carries the dynamic flag from the start.
+    /// </summary>
+    public RenderInfo3D AddSource(
+        out RenderCommandMesh3D command,
+        int primitiveCount = 1,
+        bool shadowCasterDynamic = false)
     {
         if (primitiveCount < 1)
             throw new ArgumentOutOfRangeException(nameof(primitiveCount));
@@ -45,6 +53,8 @@ internal sealed class AdvancedGpuSceneIdentityCacheFixture : IDisposable
         command = new RenderCommandMesh3D(pass) { Mesh = renderer };
         AdvancedGpuSceneIdentityTestRenderable owner = new();
         RenderInfo3D info = RenderInfo3D.New(owner, command);
+        if (shadowCasterDynamic)
+            info.SetShadowCasterMotionDynamic(true);
         owner.RenderedObjects = [info];
         _owners.Add(owner);
         _commands.Add(command);

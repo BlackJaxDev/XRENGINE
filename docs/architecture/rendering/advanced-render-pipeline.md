@@ -422,8 +422,47 @@ The gate passes only when all of these conditions are true:
   semantic (a legacy material), with current 2D or CPU-backed cube bindings.
 - Each active registration belongs to one row.
 
-Any difference runs the full plan with no change in behavior. Thus a rejected
-bounds route rejects in the full plan with its usual reason.
+Any other difference runs the full plan with no change in behavior. Thus a
+rejected bounds route rejects in the full plan with its usual reason.
+
+### Moved-row patch
+
+A moving object no longer forces the full plan. The swap-time gate walk
+(`TryPassUnchangedRowGate`) accepts a supported row whose only differences are
+its world matrix, its previous world matrix, and (for a CPU-owned bound) its cull
+bound version, when the planned draw row is a dynamic shadow caster
+(`GPUIndirectRenderFlags.ShadowCasterDynamic`). Every other row check still
+runs, including frame continuity (`LastSeenFrameId + 1`), the source flat
+direction, the material, and the registration. The walk stores the new matrices
+and bound of each moved row in fixed storage of `MovedRowPatchLimit` (64) rows.
+
+The publication then commits the retained rows (a reuse cannot change content)
+and, inside the transaction, `ApplyMovedRowPatches` replaces the current and
+previous transform records and the instance record of each moved row, as the
+content update of the full plan does. It recomputes the content signature with
+`ComputeContentSignature`, writes the new matrices, bound, and signature to the
+retained plan entry and the registration, and advances the content generation.
+So the next gate compares against the published state. The submission records
+hold no matrices and stay unchanged, and every row stays temporally valid
+because the gate proved frame continuity and unchanged topology.
+
+The full plan still runs when:
+
+- a static row moves (`StaticRow`). A transform change promotes a static caster
+  to dynamic, and the swap that carries the new flag changes the draw row, so
+  the row takes the full plan once and qualifies after that;
+- more than `MovedRowPatchLimit` rows moved (`LimitExceeded`);
+- the publisher has no retained submission rows (`NoRetainedRows`);
+- the transform or instance table cannot take the replacements, or a moved row's
+  records are not current (`TableCapacity`, `RegistrationNotCurrent`).
+
+The prepare and the prepared-verdict consume never accept a moved row; a moved
+row makes the verdict miss, and the swap-time walk handles it.
+`get_render_profiler_stats` reports
+`frame_lifecycle.collect_stages.swap.advanced_publication.moved_row_patch`
+(`moved_row_patches`, `moved_rows_patched`, and `moved_row_fallbacks` by
+reason), and `get_render_state` reports the latest patched row count as
+`canonicalResidentScene.movedRowPatchCount`.
 
 Native Uber reuse keeps the five material revision checks and the committed
 layout, coverage, render-state, and header checks. It encodes the current texture
@@ -542,8 +581,11 @@ successful caller retry must deliver the accepted publication and clear every
 pending recipient before the image becomes consumable.
 `AdvancedGpuSceneUnchangedRowGateTests` checks that an unchanged scene skips the
 full plan, that a pinned publication is reused, that a global change commits the
-retained rows unchanged, and that material, raster, geometry, transform, mesh,
-header, frame-gap, and membership changes run the full plan.
+retained rows unchanged, and that material, raster, geometry, static-row
+transform, mesh, header, frame-gap, and membership changes run the full plan. It
+also checks that a moved dynamic row is patched without the full plan (same draw
+handle, new content generation, the plan entry follows the published row) and
+that a static row that starts to move runs the full plan.
 
 ### Prepared unchanged-row verdict
 
@@ -607,10 +649,31 @@ the seal; the global preflight and the identity delivery are about 0.05 ms each.
 With `XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS=1`, the swap gate also writes a
 bounded sample of its row failures to `advanced-scene-publication-diagnostics.log`:
 `row-input-miss` names the compared value (`World`, `PreviousWorld`, `Command`,
-`BoundsVersion`, `RowLookup`) with the mesh, material, and owner type of the row,
+`BoundsVersion`, `RowLookup`) with the mesh, material, and owner type of the row
+(a `World` or `PreviousWorld` difference is `RowMoved` in the swap-time evaluation, where
+a command swap delivered new matrices, and `LateWorldWrite` only in the prepare, where the
+row inputs are unchanged since the last swap),
 and `unsupported-miss` names the failed step of an unsupported row (`Geometry`,
 `Layout`, or `LateRejection` when the full plan rejected the row after the layout
-selection) with both compatibility reasons. `swap_gate_failures` counts each
+selection) with both compatibility reasons.
+
+An unsupported row that the native Uber material encoder rejected
+(`UnsupportedResourceBinding`) is unchanged when its captured inputs are
+unchanged: it still has no registration, its draw row, renderer, mesh and
+material are the planned ones, the mesh geometry values and the material binding
+layout, value and resource versions, shader state revision and Uber state
+revision equal the plan, and the raster state of its render options is equal.
+Each input of that encoder advances one of these values (the engine semantic
+advances the shader state revision, and every `UberAuthoredState` change
+advances the Uber state revision). Rows that the resource encoder rejected for a
+texture state, such as an empty texture, depend on texture contents that no
+material version tracks, so they keep the geometry and layout comparison and
+still fail with `LateRejection`. `late-world-write` lines come from
+`RenderCommandMesh3D.ReportLateRenderWorldWrite`: each sampled render-thread
+`WorldMatrix` write that advances the late-write epoch (and so fails the gate
+with `LateWorldWrite`) gives the command type, the owner type, the mesh name,
+the stable query key, and the first five callers of the setter. The sampler
+writes the first 12 writes, then 1 in 128. `swap_gate_failures` counts each
 world-swap publication whose swap-time gate failed, by the reason of the first
 row or check that failed. Each of these publications plans and commits the whole
 scene, so these reasons name what keeps the scene off the unchanged-row path.
@@ -650,6 +713,55 @@ describe the selected inputs. The publication and deferral fields show whether
 preparation completed. An output-arena allocation failure defers the entire
 preparation attempt until boundary growth succeeds. A diagnostic slice must not
 be published as GPU-deformed output.
+
+The deformation output has five slots (`AdvancedPreparationOptions.DeformedArena.FrameSlotCount`;
+each holds `VertexCapacity` x 64 bytes of deformed vertices, 64 MiB at 1M vertices).
+`AdvancedGpuDeformationResources.TrySelectOutputSlot` chooses the slot by availability, not by frame
+id: the previous slot is the slot of the last frame that opened (it holds the history that this frame
+reads) and is never a candidate; the other slots are tried from the oldest producer frame to the
+newest, unused slots first, and the first slot whose producer fence was submitted and signaled and,
+on Vulkan, whose output buffer the native reuse query reports free, is taken. The deformed-vertex
+arena then opens on the same explicit slots. When every candidate is busy, the whole preparation
+defers, and the oldest candidate gives the reported reason. The frame-id ring (frame id modulo 3)
+made a slot that the GPU still used one frame longer defer the preparation while other slots were
+free. `TryBeginFrame` then selects a static input generation; when that fails, the preparation
+also defers. The
+`completedValue` argument (the frame id minus 1) is not used for the deformation slot; only the
+upload and deformed-vertex arenas compare it with their own recorded frame ids.
+`LastBeginFrameDeferral` (`EAdvancedDeformationSlotDeferral`) names the failed check, and
+`GetBeginFrameDeferralCount` keeps process totals. `XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS=1`
+writes one line for each such deferral to the auxiliary log `advanced-deformation-slot.log` (also
+in Release sessions): the frame id and render frame, the slot, the failed check, the reuse status
+and authority, the frame that produced the slot and its age in frames, the producer fence's timeline
+target and the completed timeline value, the active viewport (`openxr-stereo`, `left-eye`,
+`right-eye`, `window` or `none`), the requested consumers, and the totals of every reason.
+
+A slot is poisoned when the backend accepted deformation work without a completion fence (the
+ordered compute fence returns null when the renderer has no ordered compute work or the current pass
+is not valid for the frame's pass metadata), when the slot still held a fence, or when the dispatch
+threw (`EAdvancedDeformationSlotPoisonCause`). The slot records the frame that poisoned it. It is
+released when another slot's producer fence from a later frame was submitted and has signaled: a
+signal operation covers every command submitted to its queue before it, so the poisoned work is done
+(`SlotPoisonRecoveryCount`). The backend's buffer reuse query still runs before the slot is written
+again. Until then, the slot selection skips it. With the same variable, the log also gets a `POISON` line for each poisoned slot
+(cause, frame, mask and exception), and a `SUMMARY` line every 5 seconds with the published and
+deferred builds since the last summary, the last deferral reason, the poisoned slot mask
+(`PoisonedSlotMask`) and the process totals of every deferral reason and poison cause.
+
+Every preparation deferral, not only the deformation slot ones, has a reason
+(`EAdvancedPreparationDeferral`). `AdvancedPreparationExtractor.Build` gives one to each
+`CreateDeferredPublication` call: a missing canonical snapshot, a busy frame-upload slot, no reusable
+deformation output slot, a failed deformation frame open, a busy or growing deformed-vertex arena, a
+missing or mismatched bounds page, or pending deformation mesh preparation.
+`AdvancedSharedPreparationService` gives one to each rejected frame package (no canonical
+publication, another prepared sequence, a retired publication). It also counts
+`DeferredWorldFrameReused` when a later consumer of the same world frame gets the frame's deferred
+publication; that is not a new deferral. `GetPreparationDeferralCount` keeps process totals and
+`LastPreparationDeferral` names the last reason; counting does not allocate. With the same variable,
+the log gets a `PREP` line for each deferral (reason, frame id, render frame, viewport, consumers and
+the deferral text), and the `SUMMARY` line adds `lastPrepDeferral` and `prep.<reason>` totals.
+Rejected packages and reused deferred frames do not run a build, so the `SUMMARY` `deferred` count
+does not include them; the `prep.` totals do.
 
 ### Extraction lookups
 
@@ -1016,6 +1128,15 @@ collection alone does not draw a box. `VPRC_RenderDebugShapes` declares each pas
 to the render graph. The `DebugOverlays` capture policy excludes this work from
 shadow and light-probe outputs.
 
+### Shading debug view for every output
+
+`ShadingDebugView` (`EAdvancedShadingDebugView`) is a property of each Advanced stage family: the
+desktop pipeline, each VR eye pipeline, the single-pass stereo pipeline and the stage family inside
+an RVC pipeline. To compare outputs in one run, set `XRE_ADVANCED_SHADING_DEBUG_VIEW` at launch to a
+view name or number (for example `ShadowFallbackReason` or `9`, `AmbientOcclusion` or `10`). Every
+Advanced stage family then returns that view and ignores its own value. Unset, each pipeline keeps
+its own setting.
+
 ### Debug views for meshlets and occlusion
 
 Two debug views help to check meshlet culling. Both toggles are in the camera
@@ -1206,7 +1327,8 @@ always set, so a debug resource gated on one of those bits is always allocated.
 - An unsupported opaque material in a required Advanced mode renders an observable error material or fails selection. It does not enter the classic opaque renderer.
 - A canonical texture whose image is still loading does not fail the frame. Its row keeps the non-resident encoded reference, so each material binding samples its own fallback (for example black, white, or a flat normal) until the image is ready. Every frame builds the scene publication again, so the real image (the streaming preview first, then the full image) replaces the fallback as soon as it is ready. A texture view with the wrong shape still fails the publication.
 - An imported texture starts with a small loading placeholder: the red and blue filler checker for color slots and a flat normal for normal slots. The model importer marks this placeholder with `XRTexture2D.MarkAwaitingFirstResidency()`. While a texture is in this state, the Vulkan publication treats it as still loading, so the binding fallback shows instead of the checker. The first imported resident publication clears the state. This includes the filler data of a missing source file, so a missing texture still shows the checker. The state is runtime-only: it is not serialized and is not part of the asset or a cache key.
-- Readiness is backend state that the canonical table generations do not cover. The Vulkan runtime keeps a texture readiness generation that advances when the encoded reference of any texture row changes. The resident texture table stores the generation it wrote. A different generation blocks the unchanged reuse and the journal patch, and forces one full rewrite of the texture table in that frame slot.
+- Before the Vulkan runtime admits a canonical package or lowers its texture table, it encodes each retained texture source again and compares it with the published record (`TryValidatePublicationSources`). Any difference fails with `SourceMismatch`, and the frame retries on a later publication, with one exception. A dense streaming resident commit (`XRTexture2D.CommitImportedResidentPublication` or `ApplyResidentData`) replaces the mip chain, so the mip count, the extent and the sampler LOD clamps change, but the shape does not. `XRTexture2D` records the content generation of its last other mutation (capture outputs, sparse commits, a dense commit that leaves sparse residency). When every change after the published generation was a dense resident commit (`AdvancedTextureResidencyDrift.IsResidencyOnlyChange`), the check compares only the shape: dimension, flags, layer count, format class, UV scale and bias, and the sampler filter, flags, address modes, compare operation, LOD bias, anisotropy and border color. The descriptor binds the current image, and the texture row gets the current width, height and mip count. Vulkan clamps the sampled LOD to the levels of the bound view, so the published LOD clamps can stay. Arrays, cubes, capture outputs and sparse textures keep the exact check.
+- Readiness is backend state that the canonical table generations do not cover. The Vulkan runtime keeps a texture readiness generation that advances when the encoded reference, width, height or mip count of any texture row changes. The resident texture table stores the generation it wrote. A different generation blocks the unchanged reuse and the journal patch, and forces one full rewrite of the texture table in that frame slot.
 - Imported transparent materials draw in the late lane. `XRMaterial.ResolveAdvancedLatePassMetadata()` returns the explicit `AdvancedLatePassMetadata` when a material authors it. Otherwise it derives shared, immutable metadata from the transparency mode: `AlphaBlend` in the `TransparentForward` pass becomes sorted alpha, and `WeightedBlendedOit` in the weighted blended OIT pass becomes OIT. Derived metadata never requests the scene color snapshot, and it is not serialized, so no asset changes. A material that samples scene color must author its metadata.
 - The model importers resolve a material opacity: `Opacity` when present, otherwise one minus `TransparencyFactor` times `TransparentColor` (white when absent). A transparent color with a zero factor is opaque. An untextured material below the opaque threshold becomes lit forward glass (`LitColoredForward.fs`, opacity in `MatColor.a`). A textured blended material keeps `LitTexturedForward.fs` and gets `MaterialTransparency = 1 - opacity`; an unset uniform reads 0, so other users of that shader stay opaque. Imported blended materials use sorted alpha; weighted blended OIT needs the explicit Blended import option. Imported transparent surfaces cast no shadows and have no refraction.
 - A viewport whose scene is not due skips its swap (for example the desktop view with the VR mirror off, or a desktop held for XR frames). Its last rendering package and its picking leases would then pin one old scene publication. The table journals cannot reclaim past that pin, so the database rejects every later publication and each collect swap stalls. On each skipped swap, `XRViewport` therefore drops the rendering package pin (`RenderCommandCollection.ReleaseLaggingRenderingCanonicalPin`) and the picking leases (`XRRenderPipelineInstance.ReleaseLaggingAdvancedPickingRetention`) when they lag more than 16 publications behind the newest one. The next swap takes a new pin before the viewport renders its scene again.

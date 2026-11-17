@@ -9,6 +9,7 @@ using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
@@ -207,6 +208,8 @@ internal sealed partial class VulkanFrameLoop
 
     private void DrainRetiredResourcesFromCompletedSubmittedFrameSlots()
     {
+        // Let the completion frontier follow the GPU before the eye frame reuses resources.
+        _ = ResourceRuntime.SweepLifetimeSubmissionCompletions();
         ResourceRuntime.Descriptors.DrainReleasedMaterialDescriptorClosures();
         _commandRuntime.DrainRetiredSynchronousSubmissions();
         using VulkanDesktopFrameRetirementScope retirement =
@@ -317,6 +320,94 @@ internal sealed partial class VulkanFrameLoop
             ArrayPool<bool>.Shared.Return(rentedDrainableSlots);
         }
     }
+    /// <summary>
+    /// Upper bound of the wait for a busy eye frame-data slot when the runtime has not reported a
+    /// display period yet: one period at 90 Hz.
+    /// </summary>
+    private const ulong OpenXrEyeFrameDataSlotFallbackWaitNanoseconds = 1_000_000_000UL / 90UL;
+
+    /// <summary>
+    /// True for an eye when its next per-eye preparation starts with the second frame-data slot of
+    /// the eye (parity 1). Indexed by eye. Render-thread state: both eyes are prepared on the render
+    /// thread, also on the parallel recording path.
+    /// </summary>
+    private readonly bool[] _openXrEyeUsesAlternateFrameDataSlot = new bool[OpenXrEyeResourcePlannerStateCount];
+
+    /// <summary>
+    /// Selects and opens a frame-data slot for one per-eye OpenXR recording. Each eye owns two
+    /// slots and alternates between them, because the submission of the previous frame of the eye
+    /// can still be on the GPU. When the expected slot is busy, the method tries the other slot of
+    /// the eye. When both are busy, it waits for the older slot for at most one display period.
+    /// </summary>
+    /// <remarks>
+    /// Only per-frame CPU-written data (mapped arena chunks, frame-data arena chunks, descriptors,
+    /// command buffers and timing queries) is per slot. Eye render targets, depth targets and
+    /// temporal history stay per eye, so the slot that an eye uses does not change its history.
+    /// </remarks>
+    private bool TryAcquireOpenXrEyeFrameDataSlot(
+        int resourcePlannerStateIndex,
+        int desktopSwapchainImageCount,
+        out uint recordImageIndex,
+        out bool completionProven)
+    {
+        const string slotReason = "eye swapchain render";
+        int eyeIndex = NormalizeOpenXrResourcePlannerStateIndex(resourcePlannerStateIndex);
+        int preferredParity = _openXrEyeUsesAlternateFrameDataSlot[eyeIndex] ? 1 : 0;
+        uint preferredSlot = ResolveOpenXrRecordImageIndex(eyeIndex, desktopSwapchainImageCount, preferredParity);
+        uint otherSlot = ResolveOpenXrRecordImageIndex(eyeIndex, desktopSwapchainImageCount, 1 - preferredParity);
+
+        recordImageIndex = preferredSlot;
+        if (!TryPrepareOpenXrFrameDataSlot(preferredSlot, slotReason, out completionProven))
+        {
+            if (TryPrepareOpenXrFrameDataSlot(otherSlot, slotReason, out completionProven))
+            {
+                recordImageIndex = otherSlot;
+                RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrEyeFrameDataSlotAlternate();
+            }
+            else
+            {
+                // The preferred slot is the one the eye used two frames ago, so its submission is
+                // the older one and completes first.
+                RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrEyeFrameDataSlotWait();
+                if (!TryWaitForOpenXrFrameDataSlotRelease(preferredSlot) ||
+                    !TryPrepareOpenXrFrameDataSlot(preferredSlot, slotReason, out completionProven))
+                {
+                    RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrEyeFrameDataSlotBusyFailure();
+                    return false;
+                }
+            }
+        }
+
+        // The next frame of this eye starts with the slot that this frame does not use.
+        _openXrEyeUsesAlternateFrameDataSlot[eyeIndex] =
+            recordImageIndex == ResolveOpenXrRecordImageIndex(eyeIndex, desktopSwapchainImageCount, 0);
+        return true;
+    }
+
+    private bool TryWaitForOpenXrFrameDataSlotRelease(uint frameDataImageIndex)
+        => _commandRuntime.OpenXrSubmissionTracker.TryWaitForRegisteredFrameDataSlotRelease(
+            frameDataImageIndex,
+            _commandRuntime.MappedFrameArena,
+            _commandRuntime.MappedFrameArena?.Generation ?? 0UL,
+            _commandRuntime.ResourceRuntime.FrameDataArena,
+            _commandRuntime.ResourceRuntime.FrameDataArena?.Generation ?? 0UL,
+            ResolveOpenXrEyeFrameDataSlotWaitNanoseconds());
+
+    /// <summary>
+    /// Returns the predicted display period of the last XR frame in nanoseconds, so that a wait
+    /// for a busy eye slot never takes longer than one frame. Uses one 90 Hz period when the
+    /// runtime has not reported a period yet.
+    /// </summary>
+    private static ulong ResolveOpenXrEyeFrameDataSlotWaitNanoseconds()
+    {
+        long periodTicks = (RuntimeEngine.VRState.OpenXRApi as IOpenXrCollectPacing)?.DisplayPeriodTicks ?? 0L;
+        if (periodTicks <= 0L)
+            return OpenXrEyeFrameDataSlotFallbackWaitNanoseconds;
+
+        double nanoseconds = periodTicks * (1_000_000_000.0 / Stopwatch.Frequency);
+        return nanoseconds >= 1.0 ? (ulong)nanoseconds : OpenXrEyeFrameDataSlotFallbackWaitNanoseconds;
+    }
+
     private bool TryPrepareOpenXrFrameDataSlot(
         uint frameDataImageIndex,
         string reason,
@@ -596,6 +687,15 @@ internal sealed partial class VulkanFrameLoop
         return false;
     }
 
+    /// <summary>
+    /// Decides whether per-eye OpenXR preparation must skip this frame. It defers only for work
+    /// that changes what the eye records or that risks a failed allocation: an unavailable device,
+    /// texture descriptor publications that are still pending, and high Vulkan allocator pressure.
+    /// Texture transfers in flight and active upload preparation do not defer the eye, because
+    /// the eye keeps binding the resident texture until the publication. The recent
+    /// allocation-failure cooldown is checked separately in the eye preparation, after the eye
+    /// enters its own planner scope.
+    /// </summary>
     internal bool ShouldDeferOpenXrEyeRenderingWork(out string reason)
     {
         reason = string.Empty;
@@ -606,9 +706,15 @@ internal sealed partial class VulkanFrameLoop
             return true;
         }
 
-        if (ImportedTextureStreamingManager.Instance.TryDescribeBlockingOpenXrEyeTextureWork(out string textureWorkReason))
+        if (VulkanTextureUploadService.TryDescribePendingDescriptorPublications(out string publicationReason))
         {
-            reason = textureWorkReason;
+            reason = publicationReason;
+            return true;
+        }
+
+        if (TryDescribeOpenXrVulkanAllocatorPressure(out string allocatorPressureReason))
+        {
+            reason = allocatorPressureReason;
             return true;
         }
 

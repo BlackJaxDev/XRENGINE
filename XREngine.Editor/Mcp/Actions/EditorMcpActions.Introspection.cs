@@ -435,6 +435,7 @@ namespace XREngine.Editor.Mcp
                     nativeUberLayoutProofHitCount = activeGpuScene.AdvancedNativeUberLayoutProofHitCount,
                     nativeUberLayoutProofCount = activeGpuScene.AdvancedNativeUberLayoutProofCount,
                     unchangedRowGateHitCount = activeGpuScene.AdvancedUnchangedRowGateHitCount,
+                    movedRowPatchCount = activeGpuScene.AdvancedMovedRowPatchCount,
                     retainedRowCommit = activeGpuScene.AdvancedRetainedRowCommit,
                     geometryCompactionReplacementCount = activeGpuScene.AdvancedGeometryCompactionReplacementCount,
                     geometryCompactionReclaimedBytes = activeGpuScene.AdvancedGeometryCompactionReclaimedBytes,

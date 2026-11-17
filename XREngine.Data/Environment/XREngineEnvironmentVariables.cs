@@ -107,6 +107,42 @@ public static class XREngineEnvironmentVariables
     /// </summary>
     public const string OpenXrCollectPacing = "XRE_OPENXR_COLLECT_PACING";
     /// <summary>
+    /// Set to <c>0</c> to keep two-pass OpenXR eyes (sequential views and parallel command buffer
+    /// recording) on render pacing. On by default: a two-pass collect waits for the next located
+    /// XR frame. The <c>OpenXrCollectPacing</c> setting does not affect two-pass pacing.
+    /// </summary>
+    public const string OpenXrTwoPassCollectPacing = "XRE_OPENXR_TWO_PASS_COLLECT_PACING";
+    /// <summary>
+    /// Set to a positive frame interval <c>N</c> to write one line for each eye every <c>N</c> XR frames
+    /// to <c>openxr-eye-view-diagnostics.log</c> (Vulkan per-eye and single-pass stereo): viewport
+    /// display and internal size, TSR state, camera FOV angles, the late eye pose translation and the
+    /// published view-set position. Off when unset or 0.
+    /// </summary>
+    public const string OpenXrEyeViewDiagnostics = "XRE_OPENXR_EYE_VIEW_DIAGNOSTICS";
+    /// <summary>
+    /// Sets the Advanced native shading debug view of every Advanced stage family (desktop, VR eyes,
+    /// stereo and RVC) for the whole process: an <c>EAdvancedShadingDebugView</c> name or number,
+    /// for example <c>ShadowFallbackReason</c> (9) or <c>AmbientOcclusion</c> (10). Unset keeps each
+    /// pipeline's own setting.
+    /// </summary>
+    public const string AdvancedShadingDebugView = "XRE_ADVANCED_SHADING_DEBUG_VIEW";
+    /// <summary>
+    /// Set to <c>1</c> to write one line per render frame to <c>advanced-directional-shadow-owner.log</c>:
+    /// which viewport owns the Advanced directional shadow lane in that frame (OpenXR stereo, an eye
+    /// viewport or a window viewport), whether VR eyes render, the owner's authority and strategy,
+    /// whether headset views sample before the owner, and whether a declined cascade group may take
+    /// the generic path. Off by default.
+    /// </summary>
+    public const string AdvancedDirectionalShadowOwnerDiagnostics = "XRE_ADVANCED_DIRECTIONAL_SHADOW_OWNER_DIAGNOSTICS";
+    /// <summary>
+    /// Set to <c>1</c> to write one line to <c>advanced-deformation-slot.log</c> each time the shared
+    /// Advanced preparation defers because the GPU deformation frame cannot open: the failed check
+    /// (output slot fence, native buffer consumers, static generation), the slot's producer frame and
+    /// age, the fence's timeline target and completed value, the active viewport and process totals.
+    /// Off by default.
+    /// </summary>
+    public const string AdvancedDeformationSlotDiagnostics = "XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS";
+    /// <summary>
     /// OpenXR eye mesh-operation reuse across frames (Vulkan). On by default. <c>0</c> materializes
     /// every eye mesh request each frame. <c>witness</c> materializes each reused request again,
     /// enqueues the fresh operation, and logs structural differences to <c>openxr-mesh-cohort-witness.log</c>.

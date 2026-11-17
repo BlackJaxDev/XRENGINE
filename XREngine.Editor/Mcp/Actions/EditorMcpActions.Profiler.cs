@@ -891,6 +891,12 @@ namespace XREngine.Editor.Mcp
                         process_openxr_eye_primary_record_samples = VrStats.VrProcessOpenXrEyePrimaryRecordSamples,
                         process_openxr_eye_primary_record_span_ms = JsonFinite(VrStats.VrProcessOpenXrEyePrimaryRecordSpanMs),
                         process_openxr_eye_primary_record_overlap_ms = JsonFinite(VrStats.VrProcessOpenXrEyePrimaryRecordOverlapMs),
+                        process_openxr_parallel_eye_record_serialized_frames = VrStats.VrProcessOpenXrParallelEyeRecordSerializedFrames,
+                        process_openxr_parallel_eye_record_failed_batches = VrStats.VrProcessOpenXrParallelEyeRecordFailedBatches,
+                        process_openxr_no_layer_frames = BuildOpenXrNoLayerFrameTelemetry(),
+                        process_openxr_eye_frame_data_slot_alternates = VrStats.VrProcessOpenXrEyeFrameDataSlotAlternates,
+                        process_openxr_eye_frame_data_slot_waits = VrStats.VrProcessOpenXrEyeFrameDataSlotWaits,
+                        process_openxr_eye_frame_data_slot_busy_failures = VrStats.VrProcessOpenXrEyeFrameDataSlotBusyFailures,
                         render_submit_ms = JsonFinite(VrStats.VrRenderSubmitTimeMs),
                         xr_wait_frame_block_ms = JsonFinite(VrStats.VrXrWaitFrameBlockTimeMs),
                         xr_end_frame_submit_ms = JsonFinite(VrStats.VrXrEndFrameSubmitTimeMs),
@@ -907,6 +913,7 @@ namespace XREngine.Editor.Mcp
                     },
                     vulkan = new
                     {
+                        lock_contention = BuildVulkanLockContentionTelemetry(),
                         descriptor_heap = new
                         {
                             sampler_binds_total = VulkanStats.DescriptorHeapSamplerBinds,
@@ -1804,6 +1811,8 @@ namespace XREngine.Editor.Mcp
                         // The collect thread prepares the gate decision in prepare_swap_publication_event_ms. A hit
                         // replaces the row walk in row_gate_ms; a miss runs the swap-time row walk.
                         prepared_gate = BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetry.Capture()),
+                        // Publications that patched moved dynamic rows instead of running the whole-scene plan.
+                        moved_row_patch = BuildAdvancedMovedRowPatchTelemetry(),
                     },
                     viewports_ms = swap.ViewportsMilliseconds,
                     main_view_swap_calls = swap.MainViewSwapCalls,
@@ -1845,6 +1854,50 @@ namespace XREngine.Editor.Mcp
                 total_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetTotalMicroseconds(source),
                 max_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetMaxMicroseconds(source),
             };
+
+        /// <summary>
+        /// Builds one entry for each counted Vulkan lock (snake-case site name), with the contended
+        /// wait count, total wait in milliseconds and longest wait in microseconds, split into the
+        /// render thread and all other threads. The values are process totals since start.
+        /// </summary>
+        private static object BuildVulkanLockContentionTelemetry()
+        {
+            Dictionary<string, object> sites = [];
+            for (XREngine.Rendering.Vulkan.EVulkanLockContentionSite site = XREngine.Rendering.Vulkan.EVulkanLockContentionSite.BindState;
+                site < XREngine.Rendering.Vulkan.EVulkanLockContentionSite.Count;
+                ++site)
+            {
+                sites[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(site.ToString())] = new
+                {
+                    render_thread = BuildVulkanLockContentionThreadClass(site, renderThread: true),
+                    other_threads = BuildVulkanLockContentionThreadClass(site, renderThread: false),
+                };
+            }
+            return sites;
+        }
+
+        private static object BuildVulkanLockContentionThreadClass(
+            XREngine.Rendering.Vulkan.EVulkanLockContentionSite site,
+            bool renderThread)
+            => new
+            {
+                count = XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetCount(site, renderThread),
+                wait_ms = JsonFinite(XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetWaitMilliseconds(site, renderThread)),
+                max_us = JsonFinite(XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetMaxWaitMicroseconds(site, renderThread)),
+            };
+
+        private static object BuildOpenXrNoLayerFrameTelemetry()
+        {
+            Dictionary<string, long> counters = [];
+            for (XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason reason = 0;
+                reason < XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.Count;
+                ++reason)
+            {
+                counters[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(reason.ToString())] =
+                    VrStats.GetVrProcessOpenXrNoLayerFrames(reason);
+            }
+            return counters;
+        }
 
         private static object BuildXrCollectPacingTelemetry()
         {
@@ -1895,6 +1948,25 @@ namespace XREngine.Editor.Mcp
                 domains[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(domain.ToString())] = counters;
             }
             return domains;
+        }
+
+        private static object BuildAdvancedMovedRowPatchTelemetry()
+        {
+            Dictionary<string, long> fallbacks = [];
+            for (EAdvancedMovedRowPatchFallback reason = 0;
+                reason < EAdvancedMovedRowPatchFallback.Count;
+                ++reason)
+            {
+                fallbacks[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(reason.ToString())] =
+                    AdvancedMovedRowPatchTelemetry.GetFallbacks(reason);
+            }
+
+            return new
+            {
+                moved_row_patches = AdvancedMovedRowPatchTelemetry.Patches,
+                moved_rows_patched = AdvancedMovedRowPatchTelemetry.RowsPatched,
+                moved_row_fallbacks = fallbacks,
+            };
         }
 
         private static object BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetrySnapshot snapshot)

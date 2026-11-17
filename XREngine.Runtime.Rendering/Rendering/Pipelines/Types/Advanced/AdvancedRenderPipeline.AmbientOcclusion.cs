@@ -61,7 +61,7 @@ public partial class AdvancedRenderPipeline
     /// <summary>Gets the AO mode for the resources of one generation. Zero means no AO resources.</summary>
     private ulong BuildAmbientOcclusionFeatureMask(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
-        if (!UsesAmbientOcclusionPasses || UsesOpenXrVulkanSafePathResources(viewport))
+        if (!UsesAmbientOcclusionPasses || ExcludesAmbientOcclusionForEyeResources(viewport))
             return 0UL;
 
         AmbientOcclusionSettings? settings = ResolveAmbientOcclusionSettings(instance, viewport);
@@ -87,21 +87,14 @@ public partial class AdvancedRenderPipeline
     }
 
     /// <summary>
-    /// True when the resources of this pipeline serve an OpenXR Vulkan eye target that renders on
-    /// the startup-safe path (a mono pipeline whose viewport writes an external swapchain image).
-    /// The resource key reads only the explicit viewport and this pipeline's stereo flag. The
-    /// ambient <see cref="UseOpenXrVulkanDesktopStartupSafePath"/> reads the viewport and stereo
-    /// pass of the render that runs on this thread, so a key built inside the eye render and one
-    /// built outside it (resize, resource requests) got different AO masks for the same eye. Only
-    /// a call without a viewport falls back to the ambient state.
+    /// True when the resources of this pipeline serve a VR eye frame whose eye feature profile
+    /// turns ambient occlusion off. The resource key reads only the explicit viewport and this
+    /// pipeline's stereo flag, so a key built inside the eye render and one built outside it
+    /// (resize, resource requests) get the same AO mask for the same eye. Only a call without a
+    /// viewport reads the render that runs on this thread.
     /// </summary>
-    private bool UsesOpenXrVulkanSafePathResources(XRViewport? viewport)
-        => viewport is null
-            ? UseOpenXrVulkanDesktopStartupSafePath
-            : !Stereo &&
-              IsVulkanRuntimeActiveOrExpected() &&
-              IsOpenXrRuntimeRequestedOrExpected() &&
-              IsOpenXrExternalSwapchainTargetPass(viewport);
+    private bool ExcludesAmbientOcclusionForEyeResources(XRViewport? viewport)
+        => !VrEyeFrameRules.AllowsAmbientOcclusion(viewport, Stereo);
 
     private static int DecodeAmbientOcclusionMode(RenderPipelineResourceProfile profile)
         => (int)((profile.FeatureMask & AoModeFieldMask) >> AoModeFieldShift);
@@ -136,11 +129,11 @@ public partial class AdvancedRenderPipeline
     /// stage: the passes run (<see cref="AppendAdvancedAmbientOcclusionCommands"/>), and the
     /// finalize framebuffer exists in the current resource generation. The native stage then
     /// skips its neutral fill, because the finalize quad overwrites it before shading reads it.
-    /// AO off, VXAO, the startup-safe path, a missing camera and a missing finalize target all
-    /// keep the fill.
+    /// AO off, VXAO, an eye frame whose eye feature profile turns AO off, a missing camera and
+    /// a missing finalize target all keep the fill.
     /// </summary>
     internal bool AmbientOcclusionPassesReplaceNeutralFill(XRRenderPipelineInstance instance)
-        => UsesAmbientOcclusionPasses && !UseOpenXrVulkanDesktopStartupSafePath &&
+        => UsesAmbientOcclusionPasses && VrEyeFrameRules.AllowsAmbientOcclusion() &&
             AoModeRunsPasses(EvaluateAmbientOcclusionMode()) &&
             instance.Resources.TryGetFrameBuffer(AoFinalizeFBOName, out XRFrameBuffer? finalize) &&
             finalize is not null;
@@ -148,7 +141,7 @@ public partial class AdvancedRenderPipeline
     /// <summary>Gets the mode that the camera selects now, in the same form as the resource mask.</summary>
     private int EvaluateAmbientOcclusionMode()
     {
-        if (!UsesAmbientOcclusionPasses || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!UsesAmbientOcclusionPasses || !VrEyeFrameRules.AllowsAmbientOcclusion())
             return 0;
 
         AmbientOcclusionSettings? settings = ResolveAmbientOcclusionSettings();

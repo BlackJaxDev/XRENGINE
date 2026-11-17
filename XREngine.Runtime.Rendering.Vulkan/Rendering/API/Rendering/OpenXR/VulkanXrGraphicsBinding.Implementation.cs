@@ -1658,8 +1658,20 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     (rightInsetAcquired && Host.HasAcquiredImage(_swapchains[3])))
                 {
                     handled = true;
-                    throw new InvalidOperationException(
-                        "OpenXR batched eye image ownership remains with the runtime after a wait or release failure. The frame must end without projection layers; retrying eye acquisition would violate the runtime ownership ledger.");
+                    // A wait or release that returned a runtime loss code (for example when the
+                    // runtime process stops) already marked the loss through CheckResult. The
+                    // instance is gone, so its image ownership ledger no longer applies; the caller
+                    // ends the frame without layers instead of tripping the render circuit breaker.
+                    if (Host.IsRuntimeLossPending)
+                    {
+                        _eyeImageReleaseRuntimeLost = true;
+                        requestSequentialFallback = false;
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            "OpenXR batched eye image ownership remains with the runtime after a wait or release failure. The frame must end without projection layers; retrying eye acquisition would violate the runtime ownership ledger.");
+                    }
                 }
             }
 
@@ -1956,6 +1968,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         ApplyOpenXrEyePoseForRenderThread(leftView);
         ApplyOpenXrEyePoseForRenderThread(rightView);
+        LogOpenXrEyeViewDiagnostics("stereo", leftView, stereoViewport, leftCamera);
+        LogOpenXrEyeViewDiagnostics("stereo", rightView, stereoViewport, rightCamera);
 
         if (VulkanCaptureEyeOutputs)
         {

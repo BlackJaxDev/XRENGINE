@@ -90,7 +90,7 @@ public partial class AdvancedRenderPipeline
         => !VPRC_TemporalAccumulationPass.TryUseHistoryBasedVrEffects(out _, out _);
 
     private static bool ShouldUseMotionBlur()
-        => !AdvancedRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath
+        => VrEyeFrameRules.AllowsMotionBlur()
         && !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && GetMotionBlurSettings() is { Enabled: true };
@@ -108,7 +108,7 @@ public partial class AdvancedRenderPipeline
     }
 
     private static bool ShouldUseDepthOfField()
-        => !AdvancedRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath
+        => VrEyeFrameRules.AllowsDepthOfField()
         && !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && GetDepthOfFieldSettings() is { Enabled: true };

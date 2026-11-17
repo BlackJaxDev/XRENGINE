@@ -114,6 +114,24 @@ public sealed partial class AdvancedGpuScenePublisher
         public string? RowMismatchDetail;
 
         /// <summary>
+        /// True when the walk may accept a moved dynamic row (the swap-time gate walk). The
+        /// prepare and the prepared-verdict consume leave it false, because they do not patch rows.
+        /// </summary>
+        public bool AcceptMovedRows;
+
+        /// <summary>True when the current row passed every check except its matrices or its CPU cull bound.</summary>
+        public bool RowMoved;
+
+        /// <summary>The new world matrix of a moved row.</summary>
+        public System.Numerics.Matrix4x4 RowMovedWorld;
+
+        /// <summary>The new previous world matrix of a moved row.</summary>
+        public System.Numerics.Matrix4x4 RowMovedPreviousWorld;
+
+        /// <summary>The cull bound that the gate read for a moved row with a CPU-owned bound.</summary>
+        public BoundsGpu RowMovedCullBounds;
+
+        /// <summary>
         /// Clears the row fields before the next row is evaluated, so that no
         /// value of a previous row stays in the outputs.
         /// </summary>
@@ -144,6 +162,7 @@ public sealed partial class AdvancedGpuScenePublisher
             RowHeaderState = default;
             RowMismatch = EAdvancedPreparedGateOutcome.None;
             RowMismatchDetail = null;
+            RowMoved = false;
         }
     }
 }

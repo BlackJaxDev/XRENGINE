@@ -52,6 +52,11 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
     private DescriptorImageInfo[] _cubeImageDescriptorScratch = [];
     private DescriptorImageInfo[] _samplerDescriptorScratch = [];
     private byte[] _samplerValidationScratch = [];
+    // Per dense texture row, written by TryValidatePublicationSources: 1 when the source only
+    // changed residency after publication, with its current encoding in the record scratch.
+    // TryPrepareTextureRows writes those width, height and mip count values into the GPU row.
+    private byte[] _textureResidencyDriftScratch = [];
+    private AdvancedTextureRecord[] _currentTextureRecordScratch = [];
     private VulkanDeviceContext? _device;
     private DescriptorSetLayout _globalDescriptorSetLayout;
     private DescriptorSetLayout _resourceDescriptorSetLayout;
@@ -1203,6 +1208,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             snapshot.Textures.PhysicalHandles;
         ReadOnlySpan<byte> textureOccupancy =
             snapshot.Textures.PhysicalOccupancy;
+        int driftRows = Math.Min(textureRecords.Length, _textureResidencyDriftScratch.Length);
+        _textureResidencyDriftScratch.AsSpan(0, driftRows).Clear();
         for (int denseIndex = 0; denseIndex < textureRecords.Length; ++denseIndex)
         {
             if (textureOccupancy[denseIndex] == 0)
@@ -1244,17 +1251,32 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} source revalidation failed: {encodeReason}";
                 return false;
             }
-            if (current.SourceContentGeneration != capturedSourceContentGeneration ||
+            // A dense streaming resident commit after publication may change only the mip
+            // count, extent and sampler LOD clamps. The descriptor binds the current image, so
+            // the shape fields must still match and the residency fields are taken from the
+            // current encoding. Every other change must match exactly.
+            bool residencyDrift = AdvancedTextureResidencyDrift.IsResidencyOnlyChange(
+                source, capturedSourceContentGeneration, current.SourceContentGeneration);
+            if ((current.SourceContentGeneration != capturedSourceContentGeneration && !residencyDrift) ||
                 !canonical.DefaultSampler.IsValid ||
                 !snapshot.Samplers.TryGet(canonical.DefaultSampler, out AdvancedSamplerRecord canonicalDefaultSampler) ||
                 !snapshot.Samplers.TryGetDenseIndex(canonical.DefaultSampler, out uint defaultSamplerDense) ||
-                !TextureMetadataStateEquals(current.TextureRecord, canonical) ||
-                !SamplerStateEquals(current.SamplerRecord, canonicalDefaultSampler))
+                !(residencyDrift
+                    ? AdvancedTextureResidencyDrift.TextureShapeEquals(current.TextureRecord, canonical)
+                    : TextureMetadataStateEquals(current.TextureRecord, canonical)) ||
+                !(residencyDrift
+                    ? AdvancedTextureResidencyDrift.SamplerShapeEquals(current.SamplerRecord, canonicalDefaultSampler)
+                    : SamplerStateEquals(current.SamplerRecord, canonicalDefaultSampler)))
             {
                 failure =
                     EVulkanAdvancedSceneResourceFailure.SourceMismatch;
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication: {DescribeTextureStateMismatch(current.TextureRecord, canonical)}";
                 return false;
+            }
+            if (residencyDrift && denseIndex < driftRows)
+            {
+                _textureResidencyDriftScratch[denseIndex] = 1;
+                _currentTextureRecordScratch[denseIndex] = current.TextureRecord;
             }
             // Global textures (shadow atlases, environments, and GI resources)
             // retain their default sampler through the texture publication even
@@ -1274,7 +1296,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             if (!binding.Sampler.Handle.IsValid ||
                 !snapshot.Textures.TryGet(textureHandle, out AdvancedTextureRecord canonicalTexture) ||
                 !snapshot.Samplers.TryGet(binding.Sampler.Handle, out AdvancedSamplerRecord canonicalSampler) ||
-                !resources.TryGetTextureSource(textureHandle, out XRTexture source))
+                !resources.TryGetTextureSource(textureHandle, out XRTexture source, out ulong capturedBindingGeneration))
             {
                 failure =
                     EVulkanAdvancedSceneResourceFailure.SourceMismatch;
@@ -1293,10 +1315,16 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 reason = $"Material texture binding {bindingIndex} source revalidation failed: {encodeReason}";
                 return false;
             }
+            bool bindingResidencyDrift = AdvancedTextureResidencyDrift.IsResidencyOnlyChange(
+                source, capturedBindingGeneration, current.SourceContentGeneration);
             if (!canonicalTexture.DefaultSampler.IsValid ||
                 !snapshot.Samplers.TryGet(canonicalTexture.DefaultSampler, out _) ||
-                !TextureMetadataStateEquals(current.TextureRecord, canonicalTexture) ||
-                !SamplerStateEquals(current.SamplerRecord, canonicalSampler))
+                !(bindingResidencyDrift
+                    ? AdvancedTextureResidencyDrift.TextureShapeEquals(current.TextureRecord, canonicalTexture)
+                    : TextureMetadataStateEquals(current.TextureRecord, canonicalTexture)) ||
+                !(bindingResidencyDrift
+                    ? AdvancedTextureResidencyDrift.SamplerShapeEquals(current.SamplerRecord, canonicalSampler)
+                    : SamplerStateEquals(current.SamplerRecord, canonicalSampler)))
             {
                 failure =
                     EVulkanAdvancedSceneResourceFailure.SourceMismatch;
@@ -1465,6 +1493,11 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} ('{source.Name ?? source.GetType().Name}', sourceId={RuntimeHelpers.GetHashCode(source)}, framebufferAttachment={source.FrameBufferAttachment.HasValue}, dimension={record.Dimension}, sourceGeneration={record.Generation}, descriptorGeneration={descriptorSource.DescriptorGeneration}, wrapper={descriptorSource.GetType().Name}, ready={descriptorSource.IsDescriptorReady}, snapshotReady={descriptorReady}, snapshotView=0x{descriptor.View.Handle:X}, snapshotType={descriptor.ViewType}, snapshotSamples={descriptor.Samples}, snapshotLayers={descriptor.ArrayLayers}, compatibleLayers={HasCompatibleLayerCount(record, descriptor.ArrayLayers)}, viewAvailable={_resources.Images.IsAvailableForDescriptor(descriptor.View)}) is not ready for an exact Vulkan sampled-image descriptor after bounded cold preparation.";
                 return false;
             }
+
+            // The source only changed residency after publication: describe the bound image.
+            if (denseIndex < _textureResidencyDriftScratch.Length &&
+                _textureResidencyDriftScratch[denseIndex] != 0)
+                AdvancedTextureResidencyDrift.ApplyResidency(ref record, _currentTextureRecordScratch[denseIndex]);
 
             uint defaultSamplerDescriptor = 0u;
             if (record.DefaultSampler.IsValid &&
@@ -2968,6 +3001,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         _samplerDescriptorScratch =
             new DescriptorImageInfo[descriptorCount];
         _samplerValidationScratch = new byte[descriptorCount];
+        _textureResidencyDriftScratch = new byte[descriptorCount];
+        _currentTextureRecordScratch = new AdvancedTextureRecord[descriptorCount];
     }
 
     private VulkanAdvancedScenePublicationAllocationPlan

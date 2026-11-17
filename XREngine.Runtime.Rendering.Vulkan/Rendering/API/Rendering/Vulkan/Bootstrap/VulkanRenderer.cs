@@ -930,7 +930,9 @@ public sealed partial class VulkanRenderer :
     /// <summary>No Vulkan image allocation is deferred by throwing, so no exception is an expected deferral.</summary>
     public bool IsExpectedImageAllocationDeferral(Exception exception) => false;
     public EGpuBufferContentReuseStatus QueryBufferContentReuse(XRDataBuffer buffer)
-        => _resourceRuntime.QueryBufferContentReuse(buffer);    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
+        => _resourceRuntime.QueryBufferContentReuse(buffer);
+    public string? DescribeBufferContentReuse(XRDataBuffer buffer)
+        => _resourceRuntime.DescribeBufferContentReuse(buffer);    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
     public bool TryEnsureComputeBufferReady(XRDataBuffer buffer)
     {
         // The retained command lookup cannot create a cold buffer wrapper.

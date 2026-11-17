@@ -38,7 +38,7 @@ The resources are stereo-compatible. Exact transparency disables stereo today, b
 
 ## Exact Transparency
 
-Exact transparency is an editor diagnostic feature. It is disabled for stereo and for the OpenXR Vulkan desktop startup-safe path. The editor preference `EnableExactTransparencyTechniques` gates the passes.
+Exact transparency is an editor diagnostic feature. It is disabled for stereo and for VR eye frames whose eye feature profile turns `OrderIndependentTransparency` off (`VrEyeFrameRules`). The editor preference `EnableExactTransparencyTechniques` gates the passes.
 
 PPLL uses:
 

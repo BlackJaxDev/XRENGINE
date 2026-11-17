@@ -168,28 +168,10 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     protected static EMeshSubmissionStrategy MeshSubmissionStrategy
         => RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
 
-    internal static bool UseOpenXrVulkanDesktopStartupSafePath
-        => UseOpenXrVulkanDesktopStartupSafePathForViewport(null);
-
-    internal static bool UseOpenXrVulkanDesktopStartupSafePathForViewport(XRViewport? viewport)
-        => IsVulkanRuntimeActiveOrExpected() &&
-           IsOpenXrRuntimeRequestedOrExpected() &&
-           !RuntimeEngine.Rendering.State.IsStereoPass &&
-           IsOpenXrExternalSwapchainTargetPass(viewport);
-
-    private static bool IsOpenXrExternalSwapchainTargetPass(XRViewport? explicitViewport)
-    {
-        XRViewport? viewport = explicitViewport ??
-            RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport ??
-            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport;
-
-        // Resource and command generation have no active viewport. Keep their
-        // full graph so pass conditions can select the eye path at render time.
-        return viewport?.RendersToExternalSwapchainTarget == true &&
-            !RuntimeEngine.Rendering.State.IsSceneCapturePass &&
-            !RuntimeEngine.Rendering.State.IsLightProbePass;
-    }
-
+    /// <summary>
+    /// True when the active backend is Vulkan, or when the unit-testing world asks for Vulkan
+    /// before the renderer exists. Resource keys use it for Vulkan-only output choices.
+    /// </summary>
     private static bool IsVulkanRuntimeActiveOrExpected()
     {
         if (RuntimeEngine.Rendering.State.IsVulkan ||
@@ -202,39 +184,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         return string.Equals(unitTestRenderApi, "Vulkan", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsOpenXrRuntimeRequestedOrExpected()
-    {
-        if (RuntimeRenderingHostServices.Presentation.IsOpenXrRuntimeRequested ||
-            RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
-            RuntimeEngine.VRState.IsOpenXRActive ||
-            RuntimeEngine.VRState.OpenXRApi is not null)
-        {
-            return true;
-        }
-
-        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
-        if (string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
-    }
-
-    private static bool IsTruthyEnvironmentValue(string? value)
-        => !string.IsNullOrWhiteSpace(value) &&
-           (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
-
-    private static bool EnableComputeDependentPasses
-        => VulkanFeatureProfile.EnableComputeDependentPasses &&
-           !UseOpenXrVulkanDesktopStartupSafePath;
-
+    /// <summary>
+    /// True unless a VR eye frame runs with order-independent transparency off in the eye
+    /// feature profile (<see cref="VrEyeFrameRules"/>).
+    /// </summary>
     private static bool EnableWeightedBlendedOitPasses
-        => !UseOpenXrVulkanDesktopStartupSafePath;
+        => VrEyeFrameRules.AllowsOrderIndependentTransparency();
 
     private bool EnableTransparencySceneCopyResources
         => EnableWeightedBlendedOitPasses || ExactTransparencyEnabled;
@@ -1679,7 +1634,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     /// </summary>
     internal static bool RuntimeEnableMsaaDeferred
         => RuntimeEnableMsaa
-        && !UseOpenXrVulkanDesktopStartupSafePath
+        && VrEyeFrameRules.AllowsDeferredMsaa()
         && RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.ResolveAdvancedStageFamily()?.EnableDeferredMsaa == true;
 
     private const string TonemappingStageKey = CommonPostProcessStages.StageKeys.Tonemapping;

@@ -798,6 +798,8 @@ internal sealed partial class VulkanFrameLoop
         RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.Frames);
         VulkanFrameAttempt attempt = new(in identity);
         FramePacingTimeline.Mark(EFramePacingMark.DesktopTransactionStart);
+        // Let the completion frontier follow the GPU before this frame reuses resources.
+        _ = _resourceRuntime.SweepLifetimeSubmissionCompletions();
         try
         {
             attempt.Timing = _telemetry.BeginFrame(identity);

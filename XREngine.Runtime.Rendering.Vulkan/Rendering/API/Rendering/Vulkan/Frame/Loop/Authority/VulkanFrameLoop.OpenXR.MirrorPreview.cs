@@ -1143,8 +1143,13 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    /// <summary>
+    /// Returns the desktop frame-data slots plus the eye slots. The eye slots follow the desktop
+    /// slots: first one slot for each eye (parity 0), then the second slot for each eye (parity 1).
+    /// </summary>
     private static int ResolveOpenXrFrameDataSlotCount(int desktopSwapchainImageCount)
-        => ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount) + OpenXrEyeResourcePlannerStateCount;
+        => ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount) +
+            OpenXrEyeResourcePlannerStateCount * OpenXrEyeFrameDataSlotsPerEye;
 
     private static int ResolveOpenXrDesktopFrameDataSlotCount(int desktopSwapchainImageCount)
         => Math.Max(Math.Max(desktopSwapchainImageCount, DesktopFrameSlotCount), 1);
@@ -1155,13 +1160,20 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     private bool _openXrStereoUsesAlternateFrameDataSlot;
 
+    /// <summary>
+    /// Returns the frame-data slot of one eye. Parity 0 is the slot that single-pass stereo, the
+    /// mirror and prewarm also use; parity 1 is the second slot of the eye, which only per-eye
+    /// rendering uses (see <see cref="TryAcquireOpenXrEyeFrameDataSlot"/>).
+    /// </summary>
     private static uint ResolveOpenXrRecordImageIndex(
         int resourcePlannerStateIndex,
-        int desktopSwapchainImageCount)
+        int desktopSwapchainImageCount,
+        int slotParity = 0)
     {
         int eyeIndex = NormalizeOpenXrResourcePlannerStateIndex(resourcePlannerStateIndex);
         int desktopFrameDataSlotCount = ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount);
-        return (uint)(desktopFrameDataSlotCount + eyeIndex);
+        int parityOffset = (slotParity & 1) * OpenXrEyeResourcePlannerStateCount;
+        return (uint)(desktopFrameDataSlotCount + eyeIndex + parityOffset);
     }
 
     private void EnsureOpenXrFrameDataSlotCapacity(int frameDataSlotCount)

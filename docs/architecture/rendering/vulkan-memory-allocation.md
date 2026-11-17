@@ -97,6 +97,14 @@ logs a rate-limited warning with the buffer name, its size and the actual memory
 `bufferOwners` section of `list_vulkan_image_allocation_diagnostics` lists the live buffer bytes by
 registering owner and memory type.
 
+`VulkanMappedFrameArena` has one host-writer gate for each frame slot (`TryBeginWrite` and
+`EndWrite`). A slice writes only its own slot chunk, and each chunk keeps its own dirty range, so two
+threads can write two slots at the same time; the two eyes of parallel OpenXR recording do this. A
+second write to the same slot fails until the first one ends, and `TryPrepareFrameSlotForSubmission`
+fails while its own slot has an open write. Capacity growth and `Destroy` require that no slot has an
+open write. `MaximumFrameSlotCount` (10) bounds the slots: the desktop slots plus two slots for each
+OpenXR eye.
+
 ## Failure And Fallback Policy
 
 - A missing, wrong-architecture, or incompatible bridge DLL (`DllNotFoundException`, `EntryPointNotFoundException`, `BadImageFormatException`) becomes a `NotSupportedException` that names the DLL and tells the user to build the bridge or select `Managed`.

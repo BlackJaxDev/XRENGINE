@@ -28,9 +28,16 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 ///      engine timer publishes the generation after this gate, so the render thread receives
 ///      frame N+1 with its commands in one publication.
 ///
-/// Pacing applies only to single-pass stereo with the speculative collect, while a focused session
-/// renders eyes with the dedicated pacing thread. Two-pass and emulated stereo collect the eyes
-/// with the located views, so a collect cannot overlap <c>xrWaitFrame</c>; they keep render pacing.
+/// Single-pass stereo with the speculative collect uses these steps while a focused session renders
+/// eyes with the dedicated pacing thread. Two-pass eyes (sequential views and parallel command
+/// buffer recording) collect with the located views, so a collect cannot overlap
+/// <c>xrWaitFrame</c>. Their paced collect waits in step 2 for the next located frame instead,
+/// then collects and publishes it. That wait also ends when the independent desktop output needs
+/// its next frame. Without it, the loop collected and published after each render dispatch, about
+/// 3.7 times for each XR frame in the per-eye benchmark, and only one of those publications fed the
+/// eyes. Two-pass pacing is on by default and does not need the <c>OpenXrCollectPacing</c>
+/// setting, which controls only single-pass pacing. Desktop priority keeps two-pass eyes on render
+/// pacing.
 /// A frame without eyes, focus loss, a session stop or a runtime loss turns it off at once: the
 /// waits return, and the collect loop goes back to render pacing (a collect after each render
 /// dispatch). Every wait has a time limit, so a stalled frame cannot hold the collect thread.
@@ -48,6 +55,14 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
 
     private static readonly bool? OpenXrCollectPacingOverride =
         XREnvironment.GetBooleanOverride(XREngineEnvironmentVariables.OpenXrCollectPacing);
+
+    /// <summary>
+    /// False when <see cref="XREngineEnvironmentVariables.OpenXrTwoPassCollectPacing"/> is 0: two-pass
+    /// eyes then keep render pacing. True by default, independent of the
+    /// <c>OpenXrCollectPacing</c> setting.
+    /// </summary>
+    private static readonly bool OpenXrTwoPassCollectPacingEnabled =
+        XREnvironment.GetBooleanOverride(XREngineEnvironmentVariables.OpenXrTwoPassCollectPacing) ?? true;
 
     /// <summary>
     /// Set by the render thread when it ends the XR frame of a publication (also without layers).
@@ -105,6 +120,9 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
     /// <summary>1 when the last eye publication was a true single-pass stereo swap; 0 after a two-pass swap.</summary>
     private int _lastPublishedTrueSinglePassStereo;
 
+    /// <summary>1 when the last eye publication was a two-pass swap (left and right eye viewports); 0 after a single-pass swap.</summary>
+    private int _lastPublishedTwoPassEyes;
+
     /// <summary>Last measured time from <c>xrWaitFrame</c> return to <c>xrEndFrame</c> return, in stopwatch ticks.</summary>
     private long LastXrFrameWorkTicks => Volatile.Read(ref _lastFrameWorkTicks);
 
@@ -112,15 +130,14 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
         => OpenXrCollectPacingOverride ?? RuntimeEngine.Rendering.Settings.OpenXrCollectPacing;
 
     /// <summary>
-    /// True while the collect loop paces to XR frames: the setting is on, the speculative stereo
-    /// collect is on and the last eye publication used true single-pass stereo, the dedicated
-    /// pacing thread runs, the session is begun and focused, no runtime loss is pending, and the
-    /// last ended XR frame submitted its eyes.
+    /// True while the collect loop paces to XR frames: the last eye publication can be paced (a
+    /// single-pass publication with the <c>OpenXrCollectPacing</c> setting on, see
+    /// <see cref="IsSinglePassPacingEligible"/>, or a two-pass publication, see
+    /// <see cref="IsTwoPassPacingEligible"/>), the dedicated pacing thread runs, the session is
+    /// begun and focused, no runtime loss is pending, and the last ended XR frame submitted its eyes.
     /// </summary>
     private bool IsCollectPacingActive
-        => IsOpenXrCollectPacingEnabled &&
-           OpenXrSpeculativeCollectEnabled &&
-           Volatile.Read(ref _lastPublishedTrueSinglePassStereo) != 0 &&
+        => ((IsOpenXrCollectPacingEnabled && IsSinglePassPacingEligible) || IsTwoPassPacingEligible) &&
            OpenXrRenderPacingHandling == global::XREngine.Rendering.API.Rendering.OpenXR.OpenXrRenderPacingMode.DedicatedThread &&
            _openXrPacingThread is not null &&
            _sessionBegun &&
@@ -129,13 +146,34 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
            !IsOpenXrRuntimeLossPending();
 
     /// <summary>
+    /// True when the last eye publication used true single-pass stereo with the speculative
+    /// collect. That collect runs before <c>xrWaitFrame</c> returns.
+    /// </summary>
+    private bool IsSinglePassPacingEligible
+        => OpenXrSpeculativeCollectEnabled &&
+           Volatile.Read(ref _lastPublishedTrueSinglePassStereo) != 0;
+
+    /// <summary>
+    /// True when the last eye publication was a two-pass swap and the independent desktop output
+    /// waits for XR frames. Two-pass eyes collect with the located views, so a paced two-pass
+    /// collect waits for the next located frame instead of running after each render dispatch.
+    /// Desktop priority (a due time of 0) keeps render pacing, because each desktop frame needs a
+    /// collect of its own.
+    /// </summary>
+    private bool IsTwoPassPacingEligible
+        => OpenXrTwoPassCollectPacingEnabled &&
+           Volatile.Read(ref _lastPublishedTwoPassEyes) != 0 &&
+           RuntimeRenderingHostServices.Presentation.VrIndependentDesktopNextDueTimestamp != 0L;
+
+    /// <summary>
     /// True when the next collect can run before <c>xrWaitFrame</c> returns: the last swap
-    /// published stereo commands, so the updating buffer is free for the speculative collect. It
-    /// is false after a speculative collect could not be assigned to its frame; the next collect
-    /// is then a full collect with the located views.
+    /// published single-pass stereo commands, so the updating buffer is free for the speculative
+    /// collect. It is false after a speculative collect could not be assigned to its frame, and
+    /// after a two-pass swap; the next collect is then a full collect with the located views.
     /// </summary>
     private bool CanCollectAheadOfFrameWait
-        => _openXrStereoUpdatingBufferFree;
+        => _openXrStereoUpdatingBufferFree &&
+           Volatile.Read(ref _lastPublishedTrueSinglePassStereo) != 0;
 
     long IOpenXrCollectPacing.DisplayPeriodTicks
         => Volatile.Read(ref _lastFramePeriodNanoseconds) * Stopwatch.Frequency / 1_000_000_000L;
@@ -157,7 +195,8 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
     private EOpenXrCollectPacingWait WaitForCollectRelease()
     {
         _currentCollectPaced = false;
-        if (!IsOpenXrCollectPacingEnabled)
+        bool singlePassPacingOn = IsOpenXrCollectPacingEnabled;
+        if (!singlePassPacingOn && !OpenXrTwoPassCollectPacingEnabled)
         {
             _collectPacingArmed = 0;
             return EOpenXrCollectPacingWait.NotPaced;
@@ -166,12 +205,17 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
         if (!IsCollectPacingActive)
         {
             _collectPacingArmed = 0;
-            if (_sessionBegun)
+            // Count only collects that a pacing mode could have paced: any collect with the
+            // setting on, or a two-pass collect with it off.
+            if (_sessionBegun && (singlePassPacingOn || Volatile.Read(ref _lastPublishedTwoPassEyes) != 0))
                 XrCollectPacingTelemetry.Count(EXrCollectPacingCounter.RenderPacedCollects);
             return EOpenXrCollectPacingWait.NotPaced;
         }
 
         XrCollectPacingTelemetry.Count(EXrCollectPacingCounter.PacedCollects);
+        bool twoPass = Volatile.Read(ref _lastPublishedTwoPassEyes) != 0;
+        if (twoPass)
+            XrCollectPacingTelemetry.Count(EXrCollectPacingCounter.TwoPassPacedCollects);
         _currentCollectPaced = true;
         EOpenXrCollectPacingWait result = EOpenXrCollectPacingWait.Ready;
         if (_collectPacingArmed != 0)
@@ -203,6 +247,18 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
         if (CanCollectAheadOfFrameWait || IsNewerFramePending(this))
             return result;
 
+        if (twoPass)
+        {
+            // Two-pass eyes collect with the located views. Wait for the next located frame, but
+            // stop when the independent desktop output needs its next frame.
+            XrCollectPacingTelemetry.Count(EXrCollectPacingCounter.TwoPassFrameWaits);
+            EOpenXrCollectPacingWait frameWait = WaitForPendingFrame(
+                RuntimeRenderingHostServices.Presentation.VrIndependentDesktopNextDueTimestamp);
+            if (frameWait is not (EOpenXrCollectPacingWait.Waited or EOpenXrCollectPacingWait.Ready))
+                _currentCollectPaced = false;
+            return frameWait;
+        }
+
         XrCollectPacingTelemetry.Count(EXrCollectPacingCounter.LocatedFrameWaitsBeforeCollect);
         return WaitForPendingFrame();
     }
@@ -210,7 +266,7 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
     /// <inheritdoc cref="IOpenXrCollectPacing.CompletePacedFramePublication"/>
     private EOpenXrCollectPacingWait CompletePacedFramePublication()
     {
-        if (!IsOpenXrCollectPacingEnabled || !IsCollectPacingActive)
+        if (!IsCollectPacingActive)
             return EOpenXrCollectPacingWait.NotPaced;
 
         // The swap callback already assigned the frame (xrWaitFrame returned before the swap).
@@ -256,8 +312,13 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
         XrCollectPacingTelemetry.Count(EXrCollectPacingCounter.PublicationsWithXrFrame);
     }
 
-    /// <summary>Waits (bounded) until the pacing owner has located the next XR frame.</summary>
-    private EOpenXrCollectPacingWait WaitForPendingFrame()
+    /// <summary>
+    /// Waits (bounded) until the pacing owner has located the next XR frame. A wait also stops at
+    /// <paramref name="desktopDueTimestamp"/> (a stopwatch timestamp; <see cref="long.MaxValue"/>
+    /// for none), so a two-pass collect does not hold the independent desktop output past its
+    /// minimum rate.
+    /// </summary>
+    private EOpenXrCollectPacingWait WaitForPendingFrame(long desktopDueTimestamp = long.MaxValue)
     {
         if (IsNewerFramePending(this))
             return EOpenXrCollectPacingWait.Ready;
@@ -266,12 +327,15 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
         FramePacingTimeline.Mark(EFramePacingMark.CollectWaitXrFrameStart);
         EOpenXrCollectPacingWait result = WaitForPacingEvent(
             _pendingFrameEvent,
-            static api => IsNewerFramePending(api));
+            static api => IsNewerFramePending(api),
+            desktopDueTimestamp);
         long end = Stopwatch.GetTimestamp();
         FramePacingTimeline.Mark(EFramePacingMark.CollectWaitXrFrameEnd);
         XrCollectPacingTelemetry.AddElapsed(EXrCollectPacingCounter.FrameWaitMicroseconds, start, end);
         if (result == EOpenXrCollectPacingWait.TimedOut)
             XrCollectPacingTelemetry.Count(EXrCollectPacingCounter.FrameWaitTimeouts);
+        else if (result == EOpenXrCollectPacingWait.DesktopDue)
+            XrCollectPacingTelemetry.Count(EXrCollectPacingCounter.TwoPassDesktopDueWakes);
         return result;
     }
 
@@ -282,9 +346,14 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
     /// </summary>
     private EOpenXrCollectPacingWait WaitForPacingEvent(
         ManualResetEventSlim signal,
-        Func<OpenXRAPI, bool> condition)
+        Func<OpenXRAPI, bool> condition,
+        long desktopDueTimestamp = long.MaxValue)
     {
         long limit = Stopwatch.GetTimestamp() + GetCollectPacingWaitLimitTicks();
+        // A desktop due time before the pacing limit ends the wait with DesktopDue instead.
+        bool desktopLimited = desktopDueTimestamp < limit;
+        if (desktopLimited)
+            limit = desktopDueTimestamp;
         while (true)
         {
             if (signal.IsSet)
@@ -305,7 +374,7 @@ public unsafe partial class OpenXRAPI : IOpenXrCollectPacing
 
             long remaining = limit - Stopwatch.GetTimestamp();
             if (remaining <= 0L)
-                return EOpenXrCollectPacingWait.TimedOut;
+                return desktopLimited ? EOpenXrCollectPacingWait.DesktopDue : EOpenXrCollectPacingWait.TimedOut;
 
             int sliceMs = (int)Math.Clamp(remaining * 1000L / Stopwatch.Frequency, 1L, CollectPacingWaitSliceMs);
             signal.Wait(sliceMs);
