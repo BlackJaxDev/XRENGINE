@@ -402,7 +402,10 @@ prepare or swap stage, failed predicate, row, source and material identities,
 committed-plan state, and material revisions. A separate sampled counter records
 material-plan reuse failures, including source eligibility, changed draw inputs,
 material identity and revisions, variants, payloads, texture bindings, and
-headers. These records include the material name and semantic. The diagnostic
+headers. These records include the material name and semantic. A third sampled
+record, `late-world-write`, names each render-thread mesh `WorldMatrix` write
+that makes the prepared gate fail with `LateWorldWrite`: the command type, the
+owner type, the mesh name, and the callers of the setter. The diagnostic
 does not change publication admission. Keep this flag disabled for throughput
 measurements.
 

@@ -20,6 +20,13 @@ public sealed partial class AdvancedGpuScenePublisher
 {
     private static readonly bool s_scenePublicationDiagnostics =
         Environment.GetEnvironmentVariable("XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS") == "1";
+
+    /// <summary>
+    /// Gets whether XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS=1 enables the sampled lines of
+    /// advanced-scene-publication-diagnostics.log. Writers outside the publisher, such as the
+    /// late render-thread world write of a mesh command, read it to add their own lines.
+    /// </summary>
+    internal static bool ScenePublicationDiagnosticsEnabled => s_scenePublicationDiagnostics;
     private long _registrationDiagnosticMisses;
     // True while the retained plan, the ordered identities, the legacy mappings,
     // and the command draw handles describe the current publication.

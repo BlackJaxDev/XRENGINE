@@ -604,7 +604,12 @@ bounded sample of its row failures to `advanced-scene-publication-diagnostics.lo
 `BoundsVersion`, `RowLookup`) with the mesh, material, and owner type of the row,
 and `unsupported-miss` names the failed step of an unsupported row (`Geometry`,
 `Layout`, or `LateRejection` when the full plan rejected the row after the layout
-selection) with both compatibility reasons. `swap_gate_failures` counts each
+selection) with both compatibility reasons. `late-world-write` lines come from
+`RenderCommandMesh3D.ReportLateRenderWorldWrite`: each sampled render-thread
+`WorldMatrix` write that advances the late-write epoch (and so fails the gate
+with `LateWorldWrite`) gives the command type, the owner type, the mesh name,
+the stable query key, and the first five callers of the setter. The sampler
+writes the first 12 writes, then 1 in 128. `swap_gate_failures` counts each
 world-swap publication whose swap-time gate failed, by the reason of the first
 row or check that failed. Each of these publications plans and commits the whole
 scene, so these reasons name what keeps the scene off the unchanged-row path.
