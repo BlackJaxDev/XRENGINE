@@ -108,8 +108,8 @@ public static class XREngineEnvironmentVariables
     public const string OpenXrCollectPacing = "XRE_OPENXR_COLLECT_PACING";
     /// <summary>
     /// Set to <c>0</c> to keep two-pass OpenXR eyes (sequential views and parallel command buffer
-    /// recording) on render pacing while XR collect pacing is on. On by default: with collect
-    /// pacing on, a two-pass collect waits for the next located XR frame.
+    /// recording) on render pacing. On by default: a two-pass collect waits for the next located
+    /// XR frame. The <c>OpenXrCollectPacing</c> setting does not affect two-pass pacing.
     /// </summary>
     public const string OpenXrTwoPassCollectPacing = "XRE_OPENXR_TWO_PASS_COLLECT_PACING";
     /// <summary>

@@ -105,7 +105,7 @@ Set `XRE_OPENXR_SPECULATIVE_COLLECT=0` to turn this off. Parallel command buffer
 
 ## XR collect pacing
 
-The engine setting `OpenXrCollectPacing` (off by default) paces the collect loop to OpenXR frames. `XRE_OPENXR_COLLECT_PACING=1` or `0` overrides the setting. Without it, the collect loop publishes again after each render dispatch (render pacing), also while the render thread only waits for the next XR frame. In the avatar benchmark that was about 2.6 publications for each XR frame, and an XR frame waited for the collect that was in progress when `xrWaitFrame` returned.
+The engine setting `OpenXrCollectPacing` (off by default) paces the collect loop to OpenXR frames for true single-pass stereo. `XRE_OPENXR_COLLECT_PACING=1` or `0` overrides the setting. Two-pass eyes use their own pacing, which is on by default (see below). Without it, the collect loop publishes again after each render dispatch (render pacing), also while the render thread only waits for the next XR frame. In the avatar benchmark that was about 2.6 publications for each XR frame, and an XR frame waited for the collect that was in progress when `xrWaitFrame` returned.
 
 With pacing, there is one collect and one publication for each XR frame:
 
@@ -113,9 +113,18 @@ With pacing, there is one collect and one publication for each XR frame:
 2. The collect runs the next-frame (speculative) stereo collect described above, while the render thread is still in `xrEndFrame` and the pacing thread then blocks in `xrWaitFrame` for N+1.
 3. After the swap, a publication gate waits for a located frame newer than N, assigns the speculative commands to it and marks it prepared. Only then does the engine timer publish the generation, so the render thread receives frame N+1 and its commands together.
 
-Pacing applies to true single-pass stereo with the next-frame collect and to two-pass eyes (`SequentialViews` and `ParallelCommandBufferRecording`), with the dedicated pacing thread (`OpenXrRenderPacingMode.DedicatedThread`), while the session is focused and the last XR frame submitted its eyes. Focus loss, a session stop, a frame without eyes and a runtime loss use render pacing at once.
+Pacing applies to true single-pass stereo with the next-frame collect (when `OpenXrCollectPacing` is on) and to two-pass eyes (`SequentialViews` and `ParallelCommandBufferRecording`, on by default), with the dedicated pacing thread (`OpenXrRenderPacingMode.DedicatedThread`), while the session is focused and the last XR frame submitted its eyes. Focus loss, a session stop, a frame without eyes and a runtime loss use render pacing at once.
 
-Two-pass eyes collect with the located views, so their collect cannot run before `xrWaitFrame` returns. Without pacing, the loop collected, swapped and published after each render dispatch, also when no XR frame was located: about 3.7 times for each XR frame in the per-eye avatar benchmark, and only one of those publications fed the eyes. With pacing, a two-pass collect waits for the render thread to enter `xrEndFrame` of the last published frame (step 1), then waits for the next located frame, and then collects and publishes that frame. The located-frame wait also ends when the independent desktop output needs its next frame: `IRuntimeRenderPresentationServices.VrIndependentDesktopNextDueTimestamp` gives the last admitted desktop frame plus the 15 Hz minimum desktop interval. That collect uses render pacing. With desktop priority, or with `VrDesktopAutoSkipWhenOverBudget` off, two-pass eyes keep render pacing, because each desktop frame then needs its own collect. `XRE_OPENXR_TWO_PASS_COLLECT_PACING=0` keeps two-pass eyes on render pacing while single-pass pacing stays on.
+Two-pass eyes collect with the located views, so their collect cannot run before `xrWaitFrame` returns. Without pacing, the loop collected, swapped and published after each render dispatch, also when no XR frame was located: about 3.7 times for each XR frame in the per-eye avatar benchmark, and only one of those publications fed the eyes. With pacing, a two-pass collect waits for the render thread to enter `xrEndFrame` of the last published frame (step 1), then waits for the next located frame, and then collects and publishes that frame. The located-frame wait also ends when the independent desktop output needs its next frame: `IRuntimeRenderPresentationServices.VrIndependentDesktopNextDueTimestamp` gives the last admitted desktop frame plus the 15 Hz minimum desktop interval. That collect uses render pacing. With desktop priority, or with `VrDesktopAutoSkipWhenOverBudget` off, two-pass eyes keep render pacing, because each desktop frame then needs its own collect. Two-pass pacing does not depend on the `OpenXrCollectPacing` setting. `XRE_OPENXR_TWO_PASS_COLLECT_PACING=0` turns it off.
+
+Measured on Monado with the Sponza avatar benchmark (Vulkan, Advanced pipeline, per-eye `SequentialViews`, default desktop view):
+
+| View | Two-pass pacing off | Two-pass pacing on |
+|---|---|---|
+| Sun | 27.2 Hz | 28.9 Hz |
+| Near | 27.7 Hz | 35.6 Hz |
+
+With pacing, collect/swap cycles fell from 4.97 to 3.51 (sun) and from 4.78 to 2.70 (near) for each XR frame, the publication age fell from 37 ms to 24 ms (sun) and from 36 ms to 16.6 ms (near), and no located-frame wait reached its time limit. The desktop-due wake ended about one wait for each XR frame (1.22 at the sun, 1.00 near).
 
 While OpenXR is active, the render thread waits at most 8 ms for a publication before it returns to the host event pump (the editor always does this), so window events do not wait for a paced publication. Each wait is bounded: the limit is the larger of four display periods and two times the largest wake-to-end work of the last four frames, at most 100 ms. A wait that reaches the limit uses render pacing for that collect and is counted.
 
