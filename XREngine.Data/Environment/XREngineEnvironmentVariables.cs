@@ -113,6 +113,13 @@ public static class XREngineEnvironmentVariables
     /// </summary>
     public const string OpenXrTwoPassCollectPacing = "XRE_OPENXR_TWO_PASS_COLLECT_PACING";
     /// <summary>
+    /// Set to a positive frame interval <c>N</c> to write one line for each eye every <c>N</c> XR frames
+    /// to <c>openxr-eye-view-diagnostics.log</c> (Vulkan per-eye and single-pass stereo): viewport
+    /// display and internal size, TSR state, camera FOV angles, the late eye pose translation and the
+    /// published view-set position. Off when unset or 0.
+    /// </summary>
+    public const string OpenXrEyeViewDiagnostics = "XRE_OPENXR_EYE_VIEW_DIAGNOSTICS";
+    /// <summary>
     /// OpenXR eye mesh-operation reuse across frames (Vulkan). On by default. <c>0</c> materializes
     /// every eye mesh request each frame. <c>witness</c> materializes each reused request again,
     /// enqueues the fresh operation, and logs structural differences to <c>openxr-mesh-cohort-witness.log</c>.

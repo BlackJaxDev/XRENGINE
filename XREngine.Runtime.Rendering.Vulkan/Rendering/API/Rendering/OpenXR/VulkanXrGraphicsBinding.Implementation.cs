@@ -1968,6 +1968,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         ApplyOpenXrEyePoseForRenderThread(leftView);
         ApplyOpenXrEyePoseForRenderThread(rightView);
+        LogOpenXrEyeViewDiagnostics("stereo", leftView, stereoViewport, leftCamera);
+        LogOpenXrEyeViewDiagnostics("stereo", rightView, stereoViewport, rightCamera);
 
         if (VulkanCaptureEyeOutputs)
         {
