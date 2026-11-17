@@ -61,7 +61,7 @@ public partial class AdvancedRenderPipeline
     /// <summary>Gets the AO mode for the resources of one generation. Zero means no AO resources.</summary>
     private ulong BuildAmbientOcclusionFeatureMask(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
-        if (!UsesAmbientOcclusionPasses || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!UsesAmbientOcclusionPasses || UsesOpenXrVulkanSafePathResources(viewport))
             return 0UL;
 
         AmbientOcclusionSettings? settings = ResolveAmbientOcclusionSettings(instance, viewport);
@@ -85,6 +85,23 @@ public partial class AdvancedRenderPipeline
         };
         return (mode << AoModeFieldShift) | (resolution << AoGtaoResolutionFieldShift);
     }
+
+    /// <summary>
+    /// True when the resources of this pipeline serve an OpenXR Vulkan eye target that renders on
+    /// the startup-safe path (a mono pipeline whose viewport writes an external swapchain image).
+    /// The resource key reads only the explicit viewport and this pipeline's stereo flag. The
+    /// ambient <see cref="UseOpenXrVulkanDesktopStartupSafePath"/> reads the viewport and stereo
+    /// pass of the render that runs on this thread, so a key built inside the eye render and one
+    /// built outside it (resize, resource requests) got different AO masks for the same eye. Only
+    /// a call without a viewport falls back to the ambient state.
+    /// </summary>
+    private bool UsesOpenXrVulkanSafePathResources(XRViewport? viewport)
+        => viewport is null
+            ? UseOpenXrVulkanDesktopStartupSafePath
+            : !Stereo &&
+              IsVulkanRuntimeActiveOrExpected() &&
+              IsOpenXrRuntimeRequestedOrExpected() &&
+              IsOpenXrExternalSwapchainTargetPass(viewport);
 
     private static int DecodeAmbientOcclusionMode(RenderPipelineResourceProfile profile)
         => (int)((profile.FeatureMask & AoModeFieldMask) >> AoModeFieldShift);

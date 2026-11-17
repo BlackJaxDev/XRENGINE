@@ -116,6 +116,18 @@ always use the same settings:
   `RenderPipeline.PostProcessStateOwner`. Both eyes then read and write one state.
 - Single-pass stereo uses one pipeline for both eyes and reads the left eye camera.
 - The editor and MCP (`vr_eye` = `left`, `right` or `stereo`) edit this one eye state.
+- Auto exposure is the only adaptation that can differ between the eyes. The exposure
+  settings stay shared, but each eye pipeline keeps its own adapted exposure. The Color
+  Grading setting **Independent Eye Exposure** (`IndependentEyeExposure`) selects the mode
+  for two-pass eyes:
+  - Off (default): one headset exposure. The left eye meters its own image, and the right
+    eye uses the left eye's value (the same frame, or the previous frame when the right eye
+    renders first).
+  - On: each eye meters its own image and adapts on its own, as real eyes do. The eyes can
+    then differ in brightness.
+  Single-pass stereo always meters both eye layers together and ignores this setting.
+  Vulkan and OpenGL both support the shared headset exposure, so it works for OpenVR and
+  OpenXR two-pass eyes.
 
 ## Testing
 

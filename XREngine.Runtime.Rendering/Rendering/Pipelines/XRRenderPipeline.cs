@@ -187,6 +187,8 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     // Runtime-only link, not serialized. A plain field: SetField would add the owner pipeline
     // (an asset) to this pipeline's asset graph and raise change events for a runtime pairing.
     private RenderPipeline? _postProcessStateOwner;
+    // Number of pipelines that name this pipeline as their post-process state owner.
+    private int _postProcessStateFollowerCount;
 
     /// <summary>
     /// The pipeline whose camera post-process state this pipeline reads and writes, or null for
@@ -202,9 +204,34 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         set
         {
             RenderPipeline? owner = value?.ResolvePostProcessStateOwner();
-            _postProcessStateOwner = ReferenceEquals(owner, this) ? null : owner;
+            if (ReferenceEquals(owner, this))
+                owner = null;
+            if (ReferenceEquals(owner, _postProcessStateOwner))
+                return;
+
+            if (_postProcessStateOwner is not null)
+                _postProcessStateOwner._postProcessStateFollowerCount =
+                    Math.Max(0, _postProcessStateOwner._postProcessStateFollowerCount - 1);
+            _postProcessStateOwner = owner;
+            if (owner is not null)
+                owner._postProcessStateFollowerCount++;
         }
     }
+
+    /// <summary>
+    /// True when another pipeline names this pipeline as its <see cref="PostProcessStateOwner"/>:
+    /// this is the left (owner) eye of a two-pass VR eye pair.
+    /// </summary>
+    internal bool HasPostProcessStateFollower
+        => _postProcessStateFollowerCount > 0;
+
+    /// <summary>
+    /// True when this pipeline renders one eye of a two-pass VR eye pair: it either follows an
+    /// owner (the right eye) or leads a follower (the left eye). Auto exposure uses this to keep
+    /// the adaptation of each eye apart and to share one headset exposure between them.
+    /// </summary>
+    internal bool IsVrEyePostProcessPair
+        => _postProcessStateOwner is not null || _postProcessStateFollowerCount > 0;
 
     /// <summary>Returns the pipeline that keys the camera post-process state of this pipeline.</summary>
     internal RenderPipeline ResolvePostProcessStateOwner()
