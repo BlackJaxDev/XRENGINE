@@ -1693,6 +1693,7 @@ public unsafe partial class OpenXRAPI
                 stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
                 _openXrStereoUpdatingBufferFree = true;
                 Volatile.Write(ref _lastPublishedTrueSinglePassStereo, 1);
+                Volatile.Write(ref _lastPublishedTwoPassEyes, 0);
                 SwapOpenXrInsetPairCommands();
                 Debug.RenderingEvery(
                     $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
@@ -1717,6 +1718,7 @@ public unsafe partial class OpenXRAPI
             _openXrLeftViewport.SwapBuffers(leftCommands, allowScreenSpaceUISwap: false);
             _openXrRightViewport.SwapBuffers(rightCommands, allowScreenSpaceUISwap: false);
             Volatile.Write(ref _lastPublishedTrueSinglePassStereo, 0);
+            Volatile.Write(ref _lastPublishedTwoPassEyes, 1);
         }
 
         Interlocked.Exchange(ref _framePrepared, 1);

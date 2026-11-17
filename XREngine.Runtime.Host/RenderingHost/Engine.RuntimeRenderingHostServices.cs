@@ -1656,6 +1656,26 @@ internal sealed class EngineRuntimeRenderingHostServices :
            RuntimeEngine.VRState.IsOpenXRActive &&
            ShouldKeepIndependentDesktopLive(RuntimeEngine.Rendering.Settings.VrMirrorMode);
 
+    /// <inheritdoc/>
+    public long VrIndependentDesktopNextDueTimestamp
+    {
+        get
+        {
+            if (!IsIndependentDesktopRetentionInScope)
+                return long.MaxValue;
+            // With desktop priority or without the over-budget skip, the desktop admission does
+            // not hold desktop frames for XR, so a desktop frame can be due at any time.
+            if (Engine.UserSettings.VrRenderPriority == EVrRenderPriority.Desktop ||
+                !RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget)
+                return 0L;
+
+            long lastAdmitted = Volatile.Read(ref _independentDesktopLastAdmittedTicks);
+            return lastAdmitted == 0L
+                ? 0L
+                : lastAdmitted + (long)(System.Diagnostics.Stopwatch.Frequency / MinimumIndependentDesktopRateHz);
+        }
+    }
+
     /// <summary>
     /// Admits at most one independent desktop frame per XR frame, and only when it can finish
     /// before the next XR frame. A minimum rate keeps the window live. A frame admitted at this

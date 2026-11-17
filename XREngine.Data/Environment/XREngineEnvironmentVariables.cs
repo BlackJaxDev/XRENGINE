@@ -107,6 +107,12 @@ public static class XREngineEnvironmentVariables
     /// </summary>
     public const string OpenXrCollectPacing = "XRE_OPENXR_COLLECT_PACING";
     /// <summary>
+    /// Set to <c>0</c> to keep two-pass OpenXR eyes (sequential views and parallel command buffer
+    /// recording) on render pacing while XR collect pacing is on. On by default: with collect
+    /// pacing on, a two-pass collect waits for the next located XR frame.
+    /// </summary>
+    public const string OpenXrTwoPassCollectPacing = "XRE_OPENXR_TWO_PASS_COLLECT_PACING";
+    /// <summary>
     /// OpenXR eye mesh-operation reuse across frames (Vulkan). On by default. <c>0</c> materializes
     /// every eye mesh request each frame. <c>witness</c> materializes each reused request again,
     /// enqueues the fresh operation, and logs structural differences to <c>openxr-mesh-cohort-witness.log</c>.

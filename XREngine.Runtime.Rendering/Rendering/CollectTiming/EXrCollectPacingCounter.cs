@@ -34,6 +34,15 @@ public enum EXrCollectPacingCounter
     PublicationsWithXrFrame,
     /// <summary>Paced publications that carried no XR frame (the frame was not ready or its collect failed).</summary>
     PublicationsWithoutXrFrame,
+    /// <summary>
+    /// Paced collects of two-pass eyes (sequential views or parallel command buffer recording).
+    /// Each one replaces the render-paced collects that ran between two XR frames.
+    /// </summary>
+    TwoPassPacedCollects,
+    /// <summary>Two-pass collect starts that waited for the next located XR frame before they collected.</summary>
+    TwoPassFrameWaits,
+    /// <summary>Two-pass located-frame waits that stopped early because the independent desktop output was due.</summary>
+    TwoPassDesktopDueWakes,
     /// <summary>Number of counters. Not a counter.</summary>
     Count,
 }

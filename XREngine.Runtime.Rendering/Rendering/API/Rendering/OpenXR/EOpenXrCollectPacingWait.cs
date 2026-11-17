@@ -17,4 +17,9 @@ public enum EOpenXrCollectPacingWait
 
     /// <summary>Pacing stopped during the wait (focus loss, session stop, frame without eyes).</summary>
     Deactivated,
+    /// <summary>
+    /// A two-pass located-frame wait stopped because the independent VR desktop output needed its
+    /// next frame. The loop collects now for the desktop, with render pacing for this collect.
+    /// </summary>
+    DesktopDue,
 }

@@ -240,7 +240,10 @@ namespace XREngine
             runUntilPredicate => Time.Timer.BlockForRendering(runUntilPredicate),
             // The collapsed editor owns native events on this thread. Return before
             // acquiring visibility when collection is slow so the host can pump again.
-            () => Time.Timer.WaitToRender(Engine.IsEditor ? 8 : Timeout.Infinite),
+            // With OpenXR, XR collect pacing can hold a publication for up to one XR frame
+            // (or its wait limit), so other hosts pump on the same short interval.
+            () => Time.Timer.WaitToRender(
+                Engine.IsEditor || RuntimeEngine.VRState.IsOpenXRActive ? 8 : Timeout.Infinite),
             () => Time.Timer.Stop());
         internal static RuntimeRenderThreadHost RenderThreadHost => s_renderThreadHost;
         internal static bool StartupOpenXrRuntimeRequested { get; private set; }
