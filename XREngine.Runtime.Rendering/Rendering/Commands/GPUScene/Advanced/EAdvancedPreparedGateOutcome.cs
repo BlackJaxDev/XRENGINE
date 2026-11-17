@@ -60,7 +60,11 @@ public enum EAdvancedPreparedGateOutcome : byte
     /// <summary>The publication frame does not follow the frame of the last row stamp.</summary>
     FrameGap,
 
-    /// <summary>The render thread wrote a late world matrix of a mesh command.</summary>
+    /// <summary>
+    /// The render thread wrote a late world matrix of a mesh command. The prepared verdict
+    /// reports it from the late-write epoch, and the prepare reports it for a row whose world or
+    /// previous world differs while the row inputs are unchanged since the last swap.
+    /// </summary>
     LateWorldWrite,
 
     /// <summary>A renderer changed its bone-set generation or its GPU coverage.</summary>
@@ -94,6 +98,13 @@ public enum EAdvancedPreparedGateOutcome : byte
     /// The registration count or the committed bounds epoch of the covered rows changed.
     /// </summary>
     BoundsRouteChanged,
+
+    /// <summary>
+    /// The swap-time row evaluation found a row whose world or previous world differs from the
+    /// last accepted plan: the object moved, or its previous world settled one frame after the
+    /// motion. A command swap delivered the new matrices, so this is not a late write.
+    /// </summary>
+    RowMoved,
 
     /// <summary>The number of values. This value is not a result.</summary>
     Count,

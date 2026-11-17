@@ -601,7 +601,10 @@ the seal; the global preflight and the identity delivery are about 0.05 ms each.
 With `XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS=1`, the swap gate also writes a
 bounded sample of its row failures to `advanced-scene-publication-diagnostics.log`:
 `row-input-miss` names the compared value (`World`, `PreviousWorld`, `Command`,
-`BoundsVersion`, `RowLookup`) with the mesh, material, and owner type of the row,
+`BoundsVersion`, `RowLookup`) with the mesh, material, and owner type of the row
+(a `World` or `PreviousWorld` difference is `RowMoved` in the swap-time evaluation, where
+a command swap delivered new matrices, and `LateWorldWrite` only in the prepare, where the
+row inputs are unchanged since the last swap),
 and `unsupported-miss` names the failed step of an unsupported row (`Geometry`,
 `Layout`, or `LateRejection` when the full plan rejected the row after the layout
 selection) with both compatibility reasons.

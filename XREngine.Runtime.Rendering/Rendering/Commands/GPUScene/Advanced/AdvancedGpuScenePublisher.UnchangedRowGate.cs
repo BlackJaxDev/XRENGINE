@@ -292,10 +292,13 @@ public sealed partial class AdvancedGpuScenePublisher
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged, "Command");
         if (!ReferenceEquals(renderer, plan.Renderer))
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.CommandChanged);
-        // A command swap that changes the matrices also advances the scene row
-        // inputs. With equal row inputs, only a late render-thread write remains.
+        // The prepare runs only while the row inputs are unchanged since the last swap
+        // (TryCaptureAdvancedRowBaseline), so a matrix difference there can come only from a
+        // late render-thread write. The swap-time evaluation runs after a swap that can deliver
+        // new matrices, so there a difference means that the row moved.
         if (world != plan.World || previousWorld != plan.PreviousWorld)
-            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.LateWorldWrite,
+            return FailRow(ref scratch,
+                preparing ? EAdvancedPreparedGateOutcome.LateWorldWrite : EAdvancedPreparedGateOutcome.RowMoved,
                 world != plan.World ? "World" : "PreviousWorld");
         if (!IsUnchangedSupportedRow(
                 commandIndex,
