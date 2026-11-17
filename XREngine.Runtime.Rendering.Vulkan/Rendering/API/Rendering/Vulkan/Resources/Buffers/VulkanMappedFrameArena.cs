@@ -37,8 +37,15 @@ internal unsafe sealed class VulkanMappedFrameArena
     private ulong _generation;
     private ulong _capacity;
     private int _active;
-    private int _writerThreadId;
-    private int _writerDepth;
+    // One host writer for each frame slot. A slot is the isolation unit: every slice validates
+    // against its own slot chunk, and each chunk keeps its own dirty range. So two threads can
+    // write two slots at the same time, for example the two eyes of parallel OpenXR recording.
+    // Indexed by frame slot.
+    private readonly int[] _slotWriterDepths = new int[MaximumFrameSlotCount];
+    private readonly int[] _slotWriterThreadIds = new int[MaximumFrameSlotCount];
+    // Set while Destroy owns the whole arena. A writer that takes its slot gate while this is set
+    // releases the gate and fails.
+    private int _teardownDepth;
     private long _reservationHighWater;
     private long _mappedBytesHighWater;
     private long _flushExpansionBytes;
@@ -262,7 +269,7 @@ internal unsafe sealed class VulkanMappedFrameArena
     {
         if (requiredCapacity <= _capacity)
             return true;
-        if (IsActive || Volatile.Read(ref _writerDepth) != 0)
+        if (IsActive || Volatile.Read(ref _teardownDepth) != 0 || HasAnySlotWriter())
             return false;
 
         ulong newCapacity = _capacity;
@@ -497,29 +504,46 @@ internal unsafe sealed class VulkanMappedFrameArena
             : chunk.GetState(slice.Generation);
         return $"active={IsActive}, operational={_backend.IsOperational}, arenaGeneration={Generation}, " +
             $"sliceGeneration={slice.Generation}, frameSlot={slice.FrameSlot}/{_chunks.Length}, " +
-            $"slotState={slotState}, writerDepth={Volatile.Read(ref _writerDepth)}, " +
-            $"writerThread={Volatile.Read(ref _writerThreadId)}, currentThread={Environment.CurrentManagedThreadId}, " +
+            $"slotState={slotState}, slotWriterDepth={ReadSlotWriterDepth(slice.FrameSlot)}, " +
+            $"slotWriterThread={ReadSlotWriterThreadId(slice.FrameSlot)}, teardown={Volatile.Read(ref _teardownDepth)}, " +
+            $"currentThread={Environment.CurrentManagedThreadId}, " +
             $"offset={slice.Offset}, length={slice.Length}";
     }
 
+    /// <summary>
+    /// Opens a host write to <paramref name="slice"/>. Takes the writer gate of the slice's frame
+    /// slot, so writes to different slots can run on different threads at the same time, and a
+    /// second write to the same slot fails until <see cref="EndWrite"/>.
+    /// </summary>
     internal bool TryBeginWrite(VulkanMappedFrameSlice slice, out VulkanMappedFrameWriteScope scope)
     {
         scope = default;
-        int currentThreadId = Environment.CurrentManagedThreadId;
-        if (Interlocked.CompareExchange(ref _writerDepth, 1, 0) != 0)
+        int frameSlot = slice.FrameSlot;
+        if ((uint)frameSlot >= (uint)MaximumFrameSlotCount)
             return false;
 
-        Volatile.Write(ref _writerThreadId, currentThreadId);
+        int currentThreadId = Environment.CurrentManagedThreadId;
+        if (Interlocked.CompareExchange(ref _slotWriterDepths[frameSlot], 1, 0) != 0)
+            return false;
+        // Destroy sets the teardown gate and then checks every slot gate. The interlocked
+        // exchanges on both sides make sure that one of the two sees the other.
+        if (Volatile.Read(ref _teardownDepth) != 0)
+        {
+            ReleaseSlotWriterGate(frameSlot);
+            return false;
+        }
+
+        Volatile.Write(ref _slotWriterThreadIds[frameSlot], currentThreadId);
         VulkanMappedFrameAllocation? allocation = slice.Allocation;
         if (allocation is null || !allocation.TryRetainAuthoring())
         {
-            ReleaseHostAccessGate();
+            ReleaseSlotWriterGate(frameSlot);
             return false;
         }
         if (!TryValidateWritableSlice(slice, out Chunk? chunk) || chunk is null)
         {
             allocation.ReleaseAuthoring();
-            ReleaseHostAccessGate();
+            ReleaseSlotWriterGate(frameSlot);
             return false;
         }
 
@@ -595,7 +619,8 @@ internal unsafe sealed class VulkanMappedFrameArena
                 VulkanMappedFrameSlotState.Prepared))
             return false;
 
-        if (Volatile.Read(ref _writerDepth) != 0)
+        // Only a writer of this slot blocks its submission; writers of other slots do not.
+        if (Volatile.Read(ref _slotWriterDepths[frameSlot]) != 0)
         {
             _ = chunk.TryTransition(
                 generation,
@@ -636,7 +661,7 @@ internal unsafe sealed class VulkanMappedFrameArena
             $"generation={Generation}, frameSlot={frameSlot}/{_chunks.Length}, " +
             $"chunk={(chunk is null ? "missing" : "ready")}, " +
             $"state={chunk?.GetState(generation).ToString() ?? "unavailable"}, " +
-            $"writerDepth={Volatile.Read(ref _writerDepth)}";
+            $"slotWriterDepth={ReadSlotWriterDepth(unchecked((int)frameSlot))}";
     }
 
     /// <summary>
@@ -791,12 +816,14 @@ internal unsafe sealed class VulkanMappedFrameArena
 
     internal void Destroy()
     {
-        if (Interlocked.CompareExchange(ref _writerDepth, 1, 0) != 0)
+        if (Interlocked.CompareExchange(ref _teardownDepth, 1, 0) != 0)
+            throw new InvalidOperationException("Cannot destroy a mapped frame arena while another teardown is active.");
+        if (HasAnySlotWriter())
+        {
+            Volatile.Write(ref _teardownDepth, 0);
             throw new InvalidOperationException("Cannot destroy a mapped frame arena while a host write is active.");
+        }
 
-        Volatile.Write(
-            ref _writerThreadId,
-            Environment.CurrentManagedThreadId);
         Volatile.Write(ref _active, 0);
         try
         {
@@ -826,19 +853,24 @@ internal unsafe sealed class VulkanMappedFrameArena
         }
         finally
         {
-            ReleaseHostAccessGate();
+            Volatile.Write(ref _teardownDepth, 0);
         }
     }
 
+    /// <summary>
+    /// Closes the host write that <see cref="TryBeginWrite"/> opened: records the written range as
+    /// dirty in the slot chunk and releases the writer gate of the slot.
+    /// </summary>
     internal void EndWrite(in VulkanMappedFrameSlice slice)
     {
-        if ((uint)slice.FrameSlot >= (uint)_chunks.Length)
+        int frameSlot = slice.FrameSlot;
+        if ((uint)frameSlot >= (uint)_chunks.Length || (uint)frameSlot >= (uint)MaximumFrameSlotCount)
             throw new InvalidOperationException("Mapped-frame write scope ended with an invalid frame slot.");
-        if (Volatile.Read(ref _writerDepth) != 1 ||
-            Volatile.Read(ref _writerThreadId) != Environment.CurrentManagedThreadId)
-            throw new InvalidOperationException("Mapped-frame arena permits exactly one active host writer.");
+        if (Volatile.Read(ref _slotWriterDepths[frameSlot]) != 1 ||
+            Volatile.Read(ref _slotWriterThreadIds[frameSlot]) != Environment.CurrentManagedThreadId)
+            throw new InvalidOperationException("Mapped-frame arena permits exactly one active host writer per frame slot.");
         MarkDirty(slice);
-        ReleaseHostAccessGate();
+        ReleaseSlotWriterGate(frameSlot);
         slice.Allocation!.ReleaseAuthoring();
     }
 
@@ -980,11 +1012,26 @@ internal unsafe sealed class VulkanMappedFrameArena
         return chunk.GetState(slice.Generation) == VulkanMappedFrameSlotState.Writable;
     }
 
-    private void ReleaseHostAccessGate()
+    private void ReleaseSlotWriterGate(int frameSlot)
     {
-        Volatile.Write(ref _writerThreadId, 0);
-        Volatile.Write(ref _writerDepth, 0);
+        Volatile.Write(ref _slotWriterThreadIds[frameSlot], 0);
+        Volatile.Write(ref _slotWriterDepths[frameSlot], 0);
     }
+
+    /// <summary>True when any frame slot has an open host write. Growth and Destroy require none.</summary>
+    private bool HasAnySlotWriter()
+    {
+        for (int frameSlot = 0; frameSlot < _slotWriterDepths.Length; frameSlot++)
+            if (Volatile.Read(ref _slotWriterDepths[frameSlot]) != 0)
+                return true;
+        return false;
+    }
+
+    private int ReadSlotWriterDepth(int frameSlot)
+        => (uint)frameSlot < (uint)_slotWriterDepths.Length ? Volatile.Read(ref _slotWriterDepths[frameSlot]) : -1;
+
+    private int ReadSlotWriterThreadId(int frameSlot)
+        => (uint)frameSlot < (uint)_slotWriterThreadIds.Length ? Volatile.Read(ref _slotWriterThreadIds[frameSlot]) : -1;
 
     private Chunk CreateChunk(ulong capacity)
     {
