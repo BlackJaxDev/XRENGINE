@@ -1036,8 +1036,11 @@ public sealed partial class ShadowAtlasManager
                 request.Encoding,
                 allocation.AtlasId,
                 allocation.PageIndex);
+            // A cascade whose last submission failed renders again in its group: as a single
+            // tile entry it would have no producer in a GPU zero-readback meshlet frame.
             if (!_directionalCascadeFullGroupKeys.Contains(key) &&
-                !DirectionalCascadeRequestRenders(request))
+                !DirectionalCascadeRequestRenders(request) &&
+                !IsSubmissionRetryPendingForPlanning(request.Key))
             {
                 continue;
             }
@@ -2281,6 +2284,19 @@ public sealed partial class ShadowAtlasManager
             {
                 LogDirectionalRequestRenderState(request, allocation, "DeferredNoLaneOwner", requiresRender: true);
                 _advancedLaneOwnerlessDeferredEntries++;
+                deferredByLaneOwner += tileCost;
+                continue;
+            }
+
+            // The lane draws only cascade groups. In a GPU zero-readback meshlet frame the generic
+            // path has no casters either, so a single cascade tile waits, dirty, until its cascade
+            // joins a group. This is a deferral, not a failed render.
+            if (entry.Kind == ShadowAtlasRenderPlanEntryKind.Tile &&
+                request.ProjectionType == EShadowProjectionType.DirectionalCascade &&
+                !GenericDirectionalCascadePathHasCasterProducer())
+            {
+                _directionalTileNoProducerDeferrals++;
+                _advancedLaneLastDeclineReason = DirectionalTileNoProducerReason;
                 deferredByLaneOwner += tileCost;
                 continue;
             }

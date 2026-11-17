@@ -7,6 +7,11 @@ public sealed partial class ShadowAtlasManager
     private const int InitialSubmissionCandidateCapacity = 32;
 
     private readonly HashSet<ShadowRequestKey> _submissionRetryKeys = new();
+    // Copy of _submissionRetryKeys for the planning thread. The render thread owns the retry keys;
+    // the planning thread reads this copy when it groups the cascades of the next render plan,
+    // so a cascade that only waits for a retry still joins its cascade group.
+    private readonly HashSet<ShadowRequestKey> _planningSubmissionRetryKeys = new();
+    private readonly object _planningSubmissionRetrySync = new();
     private readonly HashSet<ShadowRequestKey> _submissionCandidateKeySet = new();
     private readonly Dictionary<ShadowRequestKey, ulong> _latestSubmissionFrameByKey = new();
     private readonly XRGpuFence?[] _pendingSubmissionFences = new XRGpuFence?[PendingSubmissionReceiptCapacity];
@@ -48,6 +53,8 @@ public sealed partial class ShadowAtlasManager
             Math.Max(MaxGroupedSubmissionCandidateCount, renderCandidateCapacity));
 
         _submissionRetryKeys.EnsureCapacity(maxRequestCount);
+        lock (_planningSubmissionRetrySync)
+            _planningSubmissionRetryKeys.EnsureCapacity(maxRequestCount);
         _latestSubmissionFrameByKey.EnsureCapacity(maxRequestCount);
         _submissionCandidateKeySet.EnsureCapacity(candidateCapacity);
         if (_submissionCandidateKeys.Length < candidateCapacity)
@@ -138,11 +145,11 @@ public sealed partial class ShadowAtlasManager
                 _latestSubmissionFrameByKey.Remove(key);
                 if (submitted)
                 {
-                    _submissionRetryKeys.Remove(key);
+                    RemoveSubmissionRetryKey(key);
                     continue;
                 }
 
-                _submissionRetryKeys.Add(key);
+                AddSubmissionRetryKey(key);
                 InvalidateDirectionalStaticCascadeTile(key, submissionFrameId);
                 retryCount++;
             }
@@ -160,6 +167,42 @@ public sealed partial class ShadowAtlasManager
 
             ReleasePendingSubmissionReceipt(slot, fence, keyCount);
         }
+    }
+
+    /// <summary>Adds a retry key on the render thread and to the planning copy.</summary>
+    private void AddSubmissionRetryKey(ShadowRequestKey key)
+    {
+        if (!_submissionRetryKeys.Add(key))
+            return;
+        lock (_planningSubmissionRetrySync)
+            _planningSubmissionRetryKeys.Add(key);
+    }
+
+    /// <summary>Removes a retry key on the render thread and from the planning copy.</summary>
+    private void RemoveSubmissionRetryKey(ShadowRequestKey key)
+    {
+        if (!_submissionRetryKeys.Remove(key))
+            return;
+        lock (_planningSubmissionRetrySync)
+            _planningSubmissionRetryKeys.Remove(key);
+    }
+
+    /// <summary>Clears the retry keys on the render thread and the planning copy.</summary>
+    private void ClearSubmissionRetryKeys()
+    {
+        _submissionRetryKeys.Clear();
+        lock (_planningSubmissionRetrySync)
+            _planningSubmissionRetryKeys.Clear();
+    }
+
+    /// <summary>
+    /// True on the planning thread when the last render-thread state holds a submission retry for
+    /// <paramref name="key"/>.
+    /// </summary>
+    private bool IsSubmissionRetryPendingForPlanning(in ShadowRequestKey key)
+    {
+        lock (_planningSubmissionRetrySync)
+            return _planningSubmissionRetryKeys.Count != 0 && _planningSubmissionRetryKeys.Contains(key);
     }
 
     private bool RequiresSubmissionRetry(
@@ -194,7 +237,7 @@ public sealed partial class ShadowAtlasManager
         if (!_trackingSubmissionCandidates)
             return;
 
-        _submissionRetryKeys.Remove(key);
+        RemoveSubmissionRetryKey(key);
         if (!_submissionCandidateKeySet.Add(key))
             return;
 
@@ -202,7 +245,7 @@ public sealed partial class ShadowAtlasManager
         {
             _submissionCandidateKeySet.Remove(key);
             _latestSubmissionFrameByKey.Remove(key);
-            _submissionRetryKeys.Add(key);
+            AddSubmissionRetryKey(key);
             _queueOverflowCount++;
             return;
         }
@@ -232,7 +275,7 @@ public sealed partial class ShadowAtlasManager
                     {
                         ShadowRequestKey key = _submissionCandidateKeys[i];
                         _latestSubmissionFrameByKey.Remove(key);
-                        _submissionRetryKeys.Add(key);
+                        AddSubmissionRetryKey(key);
                     }
 
                     XREngine.Debug.LightingWarningEvery(
@@ -253,7 +296,7 @@ public sealed partial class ShadowAtlasManager
                 {
                     ShadowRequestKey key = _submissionCandidateKeys[i];
                     _latestSubmissionFrameByKey.Remove(key);
-                    _submissionRetryKeys.Add(key);
+                    AddSubmissionRetryKey(key);
                 }
 
                 XREngine.Debug.LightingWarningEvery(
@@ -336,7 +379,7 @@ public sealed partial class ShadowAtlasManager
         _submissionCandidateCount = 0;
         _lastSubmissionTrackingFrameId = ulong.MaxValue;
         _trackingSubmissionCandidates = false;
-        _submissionRetryKeys.Clear();
+        ClearSubmissionRetryKeys();
         _submissionCandidateKeySet.Clear();
         _latestSubmissionFrameByKey.Clear();
     }

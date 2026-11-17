@@ -71,6 +71,15 @@ public sealed partial class ShadowAtlasManager
     private int _directionalStaticTileReleasePending;
     // Directional atlas resets that released the static cascade tiles.
     private long _directionalAtlasResets;
+    // Single directional cascade tile entries that waited because no producer can draw them: the
+    // lane draws only cascade groups, and the generic path has no casters in the frame's strategy.
+    private long _directionalTileNoProducerDeferrals;
+
+    /// <summary>
+    /// Decline reason of a single directional cascade tile entry in a GPU zero-readback meshlet frame.
+    /// </summary>
+    private const string DirectionalTileNoProducerReason =
+        "A single directional cascade tile has no producer in a GPU zero-readback meshlet frame: the lane draws only cascade groups, and the generic path has no casters. The tile stays dirty until its cascade joins a group.";
     // Generic directional cascade renders that were declined because the generic path has no
     // caster producer (see TryDeclineGenericDirectionalCascadeRender). All atlas managers add to it.
     private static long s_genericCascadeNoCasterProducerDeclines;
@@ -186,6 +195,7 @@ public sealed partial class ShadowAtlasManager
             _advancedLaneGenericGroups,
             _advancedLaneOwnerlessDeferredEntries,
             Interlocked.Read(ref _directionalAtlasResets),
+            _directionalTileNoProducerDeferrals,
             Interlocked.Read(ref s_genericCascadeNoCasterProducerDeclines),
             _advancedLaneLastDeclineReason ?? _advancedLaneConsumerReason,
             _advancedLaneCasterProducer,
@@ -896,6 +906,7 @@ public readonly record struct AdvancedDirectionalShadowLaneDiagnostics(
     long GenericGroups,
     long OwnerlessDeferredEntries,
     long DirectionalAtlasResets,
+    long DirectionalTileNoProducerDeferrals,
     long GenericNoCasterProducerDeclines,
     string? LastDeclineReason,
     string? CasterProducer,

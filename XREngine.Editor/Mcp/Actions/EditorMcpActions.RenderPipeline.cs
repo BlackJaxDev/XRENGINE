@@ -257,6 +257,7 @@ namespace XREngine.Editor.Mcp
                 genericGroups = lane.GenericGroups,
                 ownerlessDeferredEntries = lane.OwnerlessDeferredEntries,
                 directionalAtlasResets = lane.DirectionalAtlasResets,
+                directionalTileNoProducerDeferrals = lane.DirectionalTileNoProducerDeferrals,
                 genericNoCasterProducerDeclines = lane.GenericNoCasterProducerDeclines,
                 lastDeclineReason = lane.LastDeclineReason,
                 casterProducer = lane.CasterProducer,
