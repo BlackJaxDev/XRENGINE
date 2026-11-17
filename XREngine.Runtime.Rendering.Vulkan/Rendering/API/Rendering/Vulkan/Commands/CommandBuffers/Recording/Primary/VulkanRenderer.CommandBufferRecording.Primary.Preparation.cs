@@ -1512,6 +1512,13 @@ namespace XREngine.Rendering.Vulkan
                     closureProbe.End(S13aAdvancedFamilyStep.NativeClosureCapture);
                     if (!closureCaptured)
                     {
+                        // The output stops here every frame, so the reason must reach a log that
+                        // Release sessions write.
+                        XREngine.Rendering.Resources.RenderReadinessFailureLog.Report(
+                            "NativeComputeClosure",
+                            request.Reservation.OutputId.ToString(),
+                            $"view={request.NativeViewIndex} msaa={request.MsaaSampleCount} stage={request.Stage}",
+                            nativeClosureReason);
                         recordingState.RecordingDeferredReason =
                             $"Advanced visibility operation is Unsupported: sealed native-compute closure failed: {nativeClosureReason}.";
                         recordingState.FailureKind =
