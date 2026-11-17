@@ -137,6 +137,16 @@ successor asset.
   `ReservedViewCount`, `ReservedEyeIndex`, `ExternalTargetKind`,
   `SettingsRevision`, `PipelineRevision`, and `ResourceVariant`. A change to HDR
   output also changes `OutputColorFormat`.
+- `SettingsRevision` names the content of the settings snapshot of one output kind.
+  Equal content keeps one revision: the instance keeps the last four distinct
+  snapshots per output kind, and a snapshot that returns to earlier content (A, B,
+  A) gets the earlier revision again. An external swapchain generation compares the
+  revision, so a new revision for equal content made the OpenXR eye key never match
+  its active generation, and every eye frame was declined.
+- Feature-mask inputs read only the explicit viewport and pipeline flags, not the
+  render state of the thread. The Advanced AO mask uses the eye's viewport and the
+  pipeline's stereo flag to decide the OpenXR Vulkan eye safe path, so keys built
+  inside and outside the eye render agree.
 - A retired generation stays alive until its completion receipt signals. The
   retired-generation count limit is soft. Unsignaled generations are kept, and
   the instance drains them after they signal.
