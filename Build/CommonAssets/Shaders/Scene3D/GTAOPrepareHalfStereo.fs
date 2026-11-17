@@ -1,9 +1,11 @@
 #version 460
 #extension GL_OVR_multiview2 : require
 // Reduces the full-resolution depth to the GTAO resolution (one texel per 2x2 block) and
-// writes the world normal of the chosen depth sample. GTAO generation and the blur passes
-// then read these small targets, which use the texture cache better than wide taps into the
-// full-resolution depth. GTAOUpsampleStereo.fs uses the same block rule to find the depth of
+// writes the world normal of the chosen depth sample. It also writes the positive linear view
+// depth of that sample (0 for the far plane), so GTAO generation rebuilds each tap position from
+// a few projection terms instead of a 4x4 inverse projection and a divide. The blur passes read
+// the raw reduced depth. These small targets use the texture cache better than wide taps into
+// the full-resolution depth. GTAOUpsampleStereo.fs uses the same block rule to find the depth of
 // each reduced texel again.
 #include "AOCommon.glsl"
 #include "GTAOHalfDepthCommon.glsl"
@@ -11,6 +13,7 @@
 
 layout(location = 0) out vec2 OutNormal;
 layout(location = 1) out float OutDepth;
+layout(location = 2) out float OutLinearDepth;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2DArray DepthView;
@@ -50,6 +53,7 @@ void main()
     int pick = XR_GTAO_HalfBlockPick(block, halfTexel);
     float depth = block[pick];
     OutDepth = depth;
+    OutLinearDepth = 0.0f;
     if (AOIsFarDepth(depth))
     {
         OutNormal = XRENGINE_EncodeNormal(vec3(0.0f, 0.0f, 1.0f));
@@ -59,6 +63,9 @@ void main()
     mat4 inverseProjMatrix = gl_ViewID_OVR == 0 ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
     ivec2 texel = XR_GTAO_HalfBlockTexel(halfTexel, pick, fullSize);
     vec3 center = ViewPositionAtTexel(texel, fullSize, inverseProjMatrix);
+    // The same view z as the raw-depth reconstruction in GTAOGenStereo.fs (it does not depend on the
+    // texture coordinate for a perspective or orthographic projection).
+    OutLinearDepth = -center.z;
     vec3 normal = normalize(cross(
         ClosestDifference(center, texel, ivec2(1, 0), fullSize, inverseProjMatrix),
         ClosestDifference(center, texel, ivec2(0, 1), fullSize, inverseProjMatrix)));

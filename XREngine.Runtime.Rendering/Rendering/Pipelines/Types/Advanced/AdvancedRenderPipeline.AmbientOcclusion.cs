@@ -34,6 +34,8 @@ public partial class AdvancedRenderPipeline
     private const string AoFinalizeFBOName = "AdvancedAoFinalizeFBO";
     // Half-resolution GTAO inputs: one depth sample and its normal per 2x2 block.
     private const string AoHalfDepthTextureName = "AdvancedAoHalfDepth";
+    // Positive linear view depth at GTAO resolution (0 for the far plane). Only GTAO generation reads it.
+    private const string AoHalfLinearDepthTextureName = "AdvancedAoHalfLinearDepth";
     private const string AoPrepareQuadFBOName = "AdvancedAoPrepareQuadFBO";
     private const string AoPrepareFBOName = "AdvancedAoPrepareFBO";
     private const string AoUpsampleQuadFBOName = "AdvancedAoUpsampleQuadFBO";
@@ -164,7 +166,8 @@ public partial class AdvancedRenderPipeline
                 .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
                     .SampleTexture(DepthViewTextureName)
                     .UseColorTexture(AoNormalTextureName)
-                    .UseColorTexture(AoHalfDepthTextureName));
+                    .UseColorTexture(AoHalfDepthTextureName)
+                    .UseColorTexture(AoHalfLinearDepthTextureName));
             var normals = new ViewportRenderCommandContainer(this);
             normals.Add<VPRC_RenderQuadToFBO>()
                 .SetTargets(AoNormalQuadFBOName, AoNormalFBOName)
@@ -258,6 +261,7 @@ public partial class AdvancedRenderPipeline
         pass.SetOutputNames(AmbientOcclusionIntensityTextureName, AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName,
             GTAOBlurIntermediateFBOName, AoIntensityFBOName, GTAORawTextureName, GTAOBlurIntermediateTextureName);
         pass.ReducedInputDepthTextureName = AoHalfDepthTextureName;
+        pass.ReducedInputLinearDepthTextureName = AoHalfLinearDepthTextureName;
         _gtaoAoProvider = pass;
     }
 
@@ -282,7 +286,7 @@ public partial class AdvancedRenderPipeline
             .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
                 .UseColorTexture(GTAORawTextureName)
                 .SampleTexture(AoNormalTextureName)
-                .SampleTexture(AoHalfDepthTextureName));
+                .SampleTexture(AoHalfLinearDepthTextureName));
         reduced.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName, matchDestinationRenderArea: true)
             .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
@@ -461,11 +465,13 @@ public partial class AdvancedRenderPipeline
         {
             DeclareLatePostColor(builder, AoHalfDepthTextureName, reducedSize, layers,
                 EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f);
+            DeclareLatePostColor(builder, AoHalfLinearDepthTextureName, reducedSize, layers,
+                EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f);
             builder.QuadMaterial(AoPrepareQuadFBOName).Lifetime(RenderResourceLifetime.Transient)
                 .DependsOn(DepthViewTextureName).Factory(CreateAoPrepareQuadFbo).Add();
             builder.FrameBuffer(AoPrepareFBOName).Size(reducedSize).Lifetime(RenderResourceLifetime.Persistent)
                 .Usage(RenderPipelineResourceUsage.ColorAttachment)
-                .Color(0, AoNormalTextureName).Color(1, AoHalfDepthTextureName)
+                .Color(0, AoNormalTextureName).Color(1, AoHalfDepthTextureName).Color(2, AoHalfLinearDepthTextureName)
                 .Factory(CreateAoPrepareFbo).Add();
             builder.QuadMaterial(AoUpsampleQuadFBOName).Lifetime(RenderResourceLifetime.Transient)
                 .DependsOn(GTAORawTextureName, DepthViewTextureName).Factory(CreateAoUpsampleQuadFbo).Add();
@@ -669,12 +675,14 @@ public partial class AdvancedRenderPipeline
     private XRFrameBuffer CreateAoPrepareFbo()
     {
         if (GetTexture<XRTexture>(AoNormalTextureName) is not IFrameBufferAttachement normal ||
-            GetTexture<XRTexture>(AoHalfDepthTextureName) is not IFrameBufferAttachement depth)
+            GetTexture<XRTexture>(AoHalfDepthTextureName) is not IFrameBufferAttachement depth ||
+            GetTexture<XRTexture>(AoHalfLinearDepthTextureName) is not IFrameBufferAttachement linearDepth)
             throw new InvalidOperationException("The GTAO prepare targets must be FBO-attachable.");
 
         return new XRFrameBuffer(
             (normal, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (depth, EFrameBufferAttachment.ColorAttachment1, 0, -1))
+            (depth, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+            (linearDepth, EFrameBufferAttachment.ColorAttachment2, 0, -1))
         {
             Name = AoPrepareFBOName
         };

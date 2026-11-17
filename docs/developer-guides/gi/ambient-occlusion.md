@@ -120,6 +120,16 @@ half-resolution inputs:
    a depth edge keep AO samples. This pass replaces the full-resolution AO normal pass.
 2. Generation and both blur passes read only the half-resolution depth and normals. The step
    radius limit is halved with them, so the largest AO radius on screen does not change.
+   The prepare pass also writes the positive linear view depth of each reduced texel
+   (`AdvancedAoHalfLinearDepth`, R32F, point sampled, 0 for the far plane). Generation reads
+   that texture (`DepthViewIsLinear`) and rebuilds each tap position as
+   `vec3(clipXY * scale + bias, -1) * linearDepth`. Scale and bias are the diagonal and
+   translation terms of the same inverse projection (also per eye), so the jitter, the depth
+   range, reversed depth and the texture Y direction do not change. This replaces a 4x4 inverse
+   projection and a divide for each of the center, normal and step taps. A projection without
+   the perspective form (orthographic, oblique) solves the clip depth from the linear depth and
+   uses the full matrix. The blur passes keep the raw reduced depth, because their depth weights
+   use raw depth differences.
 3. A depth-aware upsample (`GTAOUpsample.fs` / `GTAOUpsampleStereo.fs`) writes the
    full-resolution AO texture. Each pixel blends its four nearest reduced texels with bilinear
    weights, scaled by how close their depth is to the pixel depth, so AO does not bleed across

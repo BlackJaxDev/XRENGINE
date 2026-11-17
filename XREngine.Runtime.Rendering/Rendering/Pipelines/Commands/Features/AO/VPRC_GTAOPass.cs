@@ -49,6 +49,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public string? ReducedInputDepthTextureName { get; set; }
 
+        /// <summary>
+        /// Half-resolution linear view depth (0 for the far plane) that GTAO generation reads instead
+        /// of <see cref="ReducedInputDepthTextureName"/> when the pipeline declares it. Generation then
+        /// rebuilds each tap position from a few projection terms (<c>DepthViewIsLinear</c>). The blur
+        /// passes keep the raw reduced depth, because their depth weights use raw depth differences.
+        /// </summary>
+        public string? ReducedInputLinearDepthTextureName { get; set; }
+
         // Largest GTAO step radius, in full-resolution pixels.
         private const float MaxRadiusFullResolutionPixels = 192.0f;
 
@@ -191,6 +199,15 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private string InputDepthTextureName(XRRenderPipelineInstance instance)
             => UsesReducedInputs(instance) ? ReducedInputDepthTextureName! : DepthViewTextureName;
+
+        /// <summary>True when GTAO generation reads the reduced linear view depth.</summary>
+        private bool UsesLinearGenerationDepth(XRRenderPipelineInstance? instance)
+            => UsesReducedInputs(instance) &&
+                ReducedInputLinearDepthTextureName is not null &&
+                instance?.GetTexture<XRTexture>(ReducedInputLinearDepthTextureName) is not null;
+
+        private string GenerationDepthTextureName(XRRenderPipelineInstance instance)
+            => UsesLinearGenerationDepth(instance) ? ReducedInputLinearDepthTextureName! : InputDepthTextureName(instance);
 
         public void SetOptions(bool stereo)
             => Stereo = stereo;
@@ -371,7 +388,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRShader genShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, GTAOGenShaderName()), EShaderType.Fragment);
             XRMaterial genMaterial = new([
                 RequireTexture(instance, NormalTextureName),
-                RequireTexture(instance, InputDepthTextureName(instance))], genShader) { RenderOptions = renderParams };
+                RequireTexture(instance, GenerationDepthTextureName(instance))], genShader) { RenderOptions = renderParams };
             if (UsesReducedInputs(instance))
             {
                 // The generation quad is only a source. Its declared attachment is the
@@ -447,6 +464,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("MaxRadiusPixels", UsesReducedInputs(ActivePipelineInstance)
                 ? MaxRadiusFullResolutionPixels * 0.5f
                 : MaxRadiusFullResolutionPixels);
+            // Matches the depth texture that CreateDeclaredFrameBuffer bound to the generation material.
+            program.Uniform("DepthViewIsLinear", UsesLinearGenerationDepth(ActivePipelineInstance));
             AmbientOcclusionSettings? settings = GetCurrentSettings();
             if (settings is not null)
             {
