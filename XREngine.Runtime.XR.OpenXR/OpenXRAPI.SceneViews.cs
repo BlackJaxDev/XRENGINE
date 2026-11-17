@@ -170,7 +170,7 @@ public unsafe partial class OpenXRAPI
         {
             _openXrLeftEyeCamera = null;
             _openXrRightEyeCamera = null;
-            UpdateOpenXrEyeSettingsSubscriptions(null, null);
+            DetachOpenXrEyeSettings();
             Debug.RenderingWarningEvery(
                 "OpenXR.EyeCameras.NoRequiredVrRig",
                 TimeSpan.FromSeconds(1),

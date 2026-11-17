@@ -604,7 +604,7 @@ namespace XREngine
                 if (ViewInformation.RightEyeCamera is not null)
                     RightEyeViewport!.Camera = ViewInformation.RightEyeCamera;
 
-                ShareEyePostProcessStates(ViewInformation.LeftEyeCamera, ViewInformation.RightEyeCamera);
+                LinkOpenVrEyeCameraSettings(ViewInformation.LeftEyeCamera, ViewInformation.RightEyeCamera);
 
                 if (ViewInformation.World is not null)
                 {
@@ -617,6 +617,29 @@ namespace XREngine
                 RecalculateStereoCullingFrustum();
             }
 
+            // Keeps the OpenVR eye cameras on one post-process state collection and the same
+            // render overrides. OpenXR owns its own link for its eye cameras.
+            private static readonly VrEyeCameraSettingsLink s_openVrEyeSettingsLink = new();
+
+            /// <summary>
+            /// Links the OpenVR eye cameras: one shared post-process state collection, and a change
+            /// to a render override (anti-aliasing mode, MSAA, HDR output, TSR render scale) on either
+            /// eye camera is copied to the other. The eyes have their own settings, separate from the
+            /// desktop camera, but the left and right eye must never differ. The right eye pipeline
+            /// also names the left eye pipeline as its state owner (see <see cref="RemakeTwoPass"/>),
+            /// because a collection keeps one state per pipeline ID.
+            /// </summary>
+            private static void LinkOpenVrEyeCameraSettings(XRCamera? leftEyeCamera, XRCamera? rightEyeCamera)
+            {
+                if (leftEyeCamera is null || rightEyeCamera is null)
+                {
+                    s_openVrEyeSettingsLink.Detach();
+                    return;
+                }
+
+                s_openVrEyeSettingsLink.Attach(leftEyeCamera, rightEyeCamera);
+            }
+
             /// <summary>
             /// Creates one two-pass eye viewport that owns its pipeline instance and command
             /// collection. The eyes collect, swap and render through the viewport boundary so
@@ -627,24 +650,6 @@ namespace XREngine
             /// Camera synchronization stays off so the eye camera's own pipeline cannot
             /// replace the selected family.
             /// </summary>
-            /// <summary>
-            /// Gives both eye cameras the left eye camera's post-process state collection. The
-            /// eyes have their own settings, separate from the desktop camera, but the left and
-            /// right eye must never differ. The right eye pipeline also names the left eye pipeline
-            /// as its state owner (see <see cref="RemakeTwoPass"/>), because a collection keeps one
-            /// state per pipeline ID.
-            /// </summary>
-            private static void ShareEyePostProcessStates(XRCamera? leftEyeCamera, XRCamera? rightEyeCamera)
-            {
-                if (leftEyeCamera is null || rightEyeCamera is null ||
-                    ReferenceEquals(rightEyeCamera.PostProcessStates, leftEyeCamera.PostProcessStates))
-                {
-                    return;
-                }
-
-                rightEyeCamera.PostProcessStates = leftEyeCamera.PostProcessStates;
-            }
-
             private static XRViewport CreateTwoPassEyeViewport(XRWindow window, int index, RenderPipeline pipeline)
             {
                 XRViewport viewport = new(window)
@@ -765,6 +770,7 @@ namespace XREngine
                 StereoLeftViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 0u, 1u, ESizedInternalFormat.Rgb8, false, false);
                 StereoRightViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 1u, 1u, ESizedInternalFormat.Rgb8, false, false);
 
+                LinkOpenVrEyeCameraSettings(ViewInformation.LeftEyeCamera, ViewInformation.RightEyeCamera);
                 ConfigureDesktopViewportForVrWindow(window);
             }
 
@@ -1240,7 +1246,9 @@ namespace XREngine
                     // stereo viewport exists.
                     _viewInformation.left?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
                     _viewInformation.right?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
-                    ShareEyePostProcessStates(value.LeftEyeCamera, value.RightEyeCamera);
+                    // OpenXR links its own eye cameras; this link serves the OpenVR runtime only.
+                    if (IsOpenVRActive)
+                        LinkOpenVrEyeCameraSettings(value.LeftEyeCamera, value.RightEyeCamera);
 
                     // ViewInformation can be set before VR rendering has been initialized (e.g., during component activation).
                     // Only compute the stereo culling frustum once the VR viewports exist; otherwise we can end up querying

@@ -1254,7 +1254,7 @@ public unsafe partial class OpenXRAPI
         XRCamera rightEyeCamera,
         VrViewRenderModeResolution viewModeResolution)
     {
-        XRCamera sourceCamera = ReferenceEquals(_openXrEyeSettingsSourceCamera, rightEyeCamera)
+        XRCamera sourceCamera = ReferenceEquals(_openXrEyeSettingsLink.SourceCamera, rightEyeCamera)
             ? rightEyeCamera
             : leftEyeCamera;
         XRCamera secondaryCamera = ReferenceEquals(sourceCamera, leftEyeCamera)
@@ -1290,13 +1290,13 @@ public unsafe partial class OpenXRAPI
 
         try
         {
-            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 1);
+            _openXrEyeSettingsLink.BeginMirroringSuppression();
             ApplyOpenXrEyeCameraRenderSettings(leftEyeCamera, antiAliasingOverride, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
             ApplyOpenXrEyeCameraRenderSettings(rightEyeCamera, antiAliasingOverride, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
         }
         finally
         {
-            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 0);
+            _openXrEyeSettingsLink.EndMirroringSuppression();
         }
     }
 

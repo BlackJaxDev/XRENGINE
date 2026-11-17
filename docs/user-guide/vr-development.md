@@ -105,8 +105,12 @@ The VR eyes have their own post-process settings (AO, bloom, color grading and t
 camera stages). They are separate from the desktop camera, and the left and right eye
 always use the same settings:
 
-- Both eye cameras use one post-process state collection. OpenXR shares it in
-  `OpenXRAPI.EnsureOpenXrEyeSettingsOwnership`; OpenVR shares it when the eye cameras are set.
+- `VrEyeCameraSettingsLink` links the two eye cameras. OpenXR and OpenVR each own one link
+  (`OpenXRAPI.EnsureOpenXrEyeSettingsOwnership`, `EngineVrLifecycle.LinkOpenVrEyeCameraSettings`).
+- Both eye cameras use one post-process state collection.
+- The per-camera render overrides (anti-aliasing mode, MSAA sample count, HDR output, TSR render
+  scale, post-process material) are mirrored: a change on either eye camera is copied to the other
+  at once. OpenXR also rewrites both eyes from the last edited eye each frame.
 - A camera keeps one state per pipeline ID. In two-pass modes each eye has its own pipeline
   object, so the right eye pipeline names the left eye pipeline as its
   `RenderPipeline.PostProcessStateOwner`. Both eyes then read and write one state.
