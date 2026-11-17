@@ -203,12 +203,19 @@ namespace XREngine
                         _lastFrameVrRightEyeVisible = Interlocked.Exchange(ref _vrRightEyeVisible, 0);
                         _lastFrameVrLeftWorkerBuildTimeTicks = Interlocked.Exchange(ref _vrLeftWorkerBuildTimeTicks, 0);
                         _lastFrameVrRightWorkerBuildTimeTicks = Interlocked.Exchange(ref _vrRightWorkerBuildTimeTicks, 0);
-                        _lastFrameVrOpenXrEyePrimaryRecordSpanTicks = Interlocked.Exchange(
-                            ref _vrOpenXrEyePrimaryRecordSpanTicks,
-                            0);
-                        _lastFrameVrOpenXrEyePrimaryRecordOverlapTicks = Interlocked.Exchange(
-                            ref _vrOpenXrEyePrimaryRecordOverlapTicks,
-                            0);
+                        // A per-eye XR frame has several render iterations, and most of them record
+                        // other VR stats but no eye batch. Publish the eye record span and overlap
+                        // only from a snapshot that has a recorded batch, and keep the last values
+                        // otherwise, so the gauges show the last eye batch instead of 0. The
+                        // recorder writes the overlap before the span, so a span read here has its
+                        // overlap.
+                        long eyeRecordSpanTicks = Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordSpanTicks, 0);
+                        long eyeRecordOverlapTicks = Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordOverlapTicks, 0);
+                        if (eyeRecordSpanTicks > 0)
+                        {
+                            _lastFrameVrOpenXrEyePrimaryRecordSpanTicks = eyeRecordSpanTicks;
+                            _lastFrameVrOpenXrEyePrimaryRecordOverlapTicks = eyeRecordOverlapTicks;
+                        }
                         _lastFrameVrRenderSubmitTimeTicks = Interlocked.Exchange(ref _vrRenderSubmitTimeTicks, 0);
                         _lastFrameVrXrWaitFrameBlockTimeTicks = Interlocked.Exchange(ref _vrXrWaitFrameBlockTimeTicks, 0);
                         _lastFrameVrXrEndFrameSubmitTimeTicks = Interlocked.Exchange(ref _vrXrEndFrameSubmitTimeTicks, 0);
@@ -380,10 +387,11 @@ namespace XREngine
 
                         long overlapTicks = Math.Clamp(overlap.Ticks, 0, span.Ticks);
                         MarkFrameScopedStatsActive();
-                        Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordSpanTicks, span.Ticks);
+                        // Overlap first: the snapshot publishes the pair only when it reads a span.
                         Interlocked.Exchange(
                             ref _vrOpenXrEyePrimaryRecordOverlapTicks,
                             overlapTicks);
+                        Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordSpanTicks, span.Ticks);
                         Interlocked.Increment(ref _vrProcessOpenXrEyePrimaryRecordSamples);
                         Interlocked.Add(ref _vrProcessOpenXrEyePrimaryRecordSpanTicks, span.Ticks);
                         Interlocked.Add(

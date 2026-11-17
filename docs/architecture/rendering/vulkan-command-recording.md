@@ -1005,6 +1005,9 @@ the exception keeps its stack) counts it in
 `render-readiness-failures.log`, which Release sessions also write. A failed eye
 adds its own line with the eye, frame, lane and thread. Only batches whose two
 eyes recorded give the `openxr_eye_primary_record_span_ms` and overlap samples.
+These two gauges keep the values of the last recorded batch: a stats snapshot
+without an eye batch (most render iterations of a per-eye XR frame) does not
+reset them to 0. The `process_` totals count every successful batch.
 
 The two-eye API contract treats the first request as left and the second as
 right. Both preparation phases finish before either worker records. Regardless
