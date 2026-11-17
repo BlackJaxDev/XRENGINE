@@ -9,6 +9,7 @@ using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Vulkan;
 using Debug = XREngine.Debug;
 using VkExtent2D = Silk.NET.Vulkan.Extent2D;
@@ -1980,7 +1981,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 Context.PendingPredictedDisplayTime);
             if (!stereoViewport.TryCaptureRenderingBackendReadyFramePackageAuthority(
                     out var packageAuthority))
+            {
+                LogOpenXrStereoPackageUnavailable(pair, stereoMeshCommands, stereoViewport);
                 return false;
+            }
 
             var renderRequest = new OpenXrEyeMirrorRenderRequest(
                 target.FrameBuffer,
@@ -2783,6 +2787,40 @@ Target:                 new RenderFrameViewTargetDescriptor(
         => Enum.IsDefined(typeof(VkFormat), (VkFormat)format)
             ? $"{(VkFormat)format}({format})"
             : $"0x{format:X}";
+
+    /// <summary>
+    /// Reports why a stereo view pair has no published backend-ready frame package to render.
+    /// It reads the package state, the command counts, and the applied pipeline, so a pair
+    /// that never collects can be told apart from a pair whose package is not yet published.
+    /// </summary>
+    private void LogOpenXrStereoPackageUnavailable(uint pair, RenderCommandCollection commands, XRViewport viewport)
+    {
+        EBackendReadyFramePackageState state;
+        long packageGeneration;
+        long collectGeneration;
+        using (commands.EnterRenderingBufferReadScope())
+        {
+            BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+            state = package.State;
+            packageGeneration = package.PackageGeneration;
+            collectGeneration = package.Identity.CollectGeneration;
+        }
+
+        XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
+        Debug.VulkanWarningEvery(
+            $"OpenXR.Vulkan.TrueSinglePassStereo.NoPublishedPackage.{pair}.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[OpenXR] Vulkan true stereo pair {0} has no published frame package. state={1} packageGeneration={2} collectGeneration={3} rendering={4} updating={5} applied='{6}' assigned='{7}' decline='{8}'",
+            pair,
+            state,
+            packageGeneration,
+            collectGeneration,
+            commands.GetRenderingCommandCount(),
+            commands.GetUpdatingCommandCount(),
+            instance.GetFullyAppliedPipeline()?.DebugName ?? "<none>",
+            instance.AssignedPipeline?.DebugName ?? "<none>",
+            instance.LastRenderDeclineReason ?? "<none>");
+    }
 
     private bool LogVulkanEyeRenderNotReady(uint viewIndex, uint imageIndex, string reason)
     {

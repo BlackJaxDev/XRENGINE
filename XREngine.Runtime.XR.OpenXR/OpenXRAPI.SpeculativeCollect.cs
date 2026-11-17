@@ -66,6 +66,10 @@ public unsafe partial class OpenXRAPI
                 out long buildTicks))
             return false;
 
+        // With quad view, the inset pair publishes its own commands with the same swap.
+        if (!TryRunOpenXrSpeculativeInsetCollect(world, OpenXrSpeculativeCullProjectionScale))
+            return false;
+
         RuntimeEngine.Rendering.Stats.Vr.RecordVrPerViewVisibleCounts((uint)commandsAdded, (uint)commandsAdded);
         RuntimeEngine.Rendering.Stats.Vr.RecordVrPerViewDrawCounts((uint)commandsAdded, (uint)commandsAdded);
         TimeSpan buildTime = TimeSpan.FromSeconds(buildTicks / (double)System.Diagnostics.Stopwatch.Frequency);

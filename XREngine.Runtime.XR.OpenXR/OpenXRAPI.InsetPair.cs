@@ -16,6 +16,7 @@ public unsafe partial class OpenXRAPI
     private XRCamera? _openXrRightInsetEyeCamera;
     private XRViewport? _openXrInsetStereoViewport;
     private RenderPipeline? _openXrInsetStereoRenderPipeline;
+    private RenderPipeline? _openXrInsetPostProcessCopiedPipeline;
 
     /// <summary>True when the quad-view configuration is active with four views.</summary>
     private bool IsOpenXrInsetPairActive
@@ -107,26 +108,75 @@ public unsafe partial class OpenXRAPI
         if (!ReferenceEquals(viewport.RenderPipeline, insetPipeline))
             viewport.RenderPipeline = insetPipeline;
 
-        // The inset shows the same scene as the wide pair, so it takes the wide
-        // eye cameras' post-process state.
-        CopyPostProcessState(widePipeline, insetPipeline, _openXrLeftEyeCamera!, left);
-        CopyPostProcessState(widePipeline, insetPipeline, _openXrRightEyeCamera!, right);
+        // The inset shows the same scene as the wide pair, so it takes the wide eye
+        // cameras' post-process state. Copy it once per inset pipeline: a copy every
+        // frame can change the inset's resource settings between collect and render.
+        if (!ReferenceEquals(_openXrInsetPostProcessCopiedPipeline, insetPipeline))
+        {
+            CopyPostProcessState(widePipeline, insetPipeline, _openXrLeftEyeCamera!, left);
+            CopyPostProcessState(widePipeline, insetPipeline, _openXrRightEyeCamera!, right);
+            _openXrInsetPostProcessCopiedPipeline = insetPipeline;
+        }
         left.RenderPipeline = insetPipeline;
         right.RenderPipeline = insetPipeline;
+        return CollectPreparedOpenXrInsetPair(world, cullProjectionScale: 1.0f, out commandsAdded);
+    }
+
+    /// <summary>
+    /// Collects the inset pair again for the next frame, with the cameras, viewport, and
+    /// pipeline that the last full collect prepared. The speculative stereo collect calls
+    /// this after it collects the wide pair. Without it, the inset commands are never
+    /// refreshed, and the inset pair has no frame package to render.
+    /// </summary>
+    private bool TryRunOpenXrSpeculativeInsetCollect(IRuntimeRenderWorld world, float cullProjectionScale)
+    {
+        if (!IsOpenXrInsetPairActive)
+            return true;
+        if (_openXrInsetStereoViewport is null ||
+            _openXrLeftInsetEyeCamera is null ||
+            _openXrRightInsetEyeCamera is null)
+            return false;
+        return CollectPreparedOpenXrInsetPair(world, cullProjectionScale, out _);
+    }
+
+    /// <summary>
+    /// Applies the inset field of view of views 2 and 3 to the inset cameras, then collects
+    /// the combined stereo visibility of both inset views into the inset command collection.
+    /// </summary>
+    private bool CollectPreparedOpenXrInsetPair(
+        IRuntimeRenderWorld world,
+        float cullProjectionScale,
+        out int commandsAdded)
+    {
+        XRViewport viewport = _openXrInsetStereoViewport!;
+        XRCamera left = _openXrLeftInsetEyeCamera!;
+        XRCamera right = _openXrRightInsetEyeCamera!;
         UpdateOpenXrEyeCameraFromView(left, 2u);
         UpdateOpenXrEyeCameraFromView(right, 3u);
 
         RenderCommandCollection meshCommands = viewport.RenderPipelineInstance.MeshRenderCommands;
         meshCommands.SetOwnerPipeline(viewport.RenderPipelineInstance);
-        return CollectOpenXrStereoVisible(
+        bool collected = CollectOpenXrStereoVisible(
             world,
             left,
             right,
             viewport,
             meshCommands,
-            cullProjectionScale: 1.0f,
+            cullProjectionScale,
             out commandsAdded,
             out _);
+        // Reports the inset collect result, so an inset pair that collects no commands
+        // can be traced to its pipeline state.
+        Debug.RenderingEvery(
+            "OpenXR.CollectVisible.InsetPair",
+            TimeSpan.FromSeconds(1),
+            "[OpenXR] Inset pair collect: collected={0} added={1} updating={2} rendering={3} applied='{4}'",
+            collected,
+            commandsAdded,
+            meshCommands.GetUpdatingCommandCount(),
+            meshCommands.GetRenderingCommandCount(),
+            viewport.RenderPipelineInstance.GetFullyAppliedPipeline()?.DebugName ?? "<none>");
+        return collected;
     }
 
     /// <summary>
