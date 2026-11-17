@@ -36,10 +36,53 @@ internal sealed partial class VulkanResourceRuntime
                 AllowAsyncBackendCompile = true
             };
 
+            HeadsetExposurePublishProgram = new XRRenderProgram(
+                linkNow: true,
+                separable: false,
+                new XRShader(EShaderType.Compute, HeadsetExposurePublishShaderSource)
+                {
+                    Name = "VulkanHeadsetExposurePublish.comp"
+                })
+            {
+                Name = "VulkanHeadsetExposurePublish",
+                AllowAsyncBackendCompile = true
+            };
+
+            HeadsetExposureFollowProgram = new XRRenderProgram(
+                linkNow: true,
+                separable: false,
+                new XRShader(EShaderType.Compute, HeadsetExposureFollowShaderSource)
+                {
+                    Name = "VulkanHeadsetExposureFollow.comp"
+                })
+            {
+                Name = "VulkanHeadsetExposureFollow",
+                AllowAsyncBackendCompile = true
+            };
+
+            // One vec4 for the whole renderer: x = headset exposure, y = 1 after the first
+            // publish. Zero content means that no eye has published a value yet.
+            HeadsetExposureBuffer = new XRDataBuffer(
+                "HeadsetAutoExposure",
+                XREngine.Data.Rendering.EBufferTarget.ShaderStorageBuffer,
+                1u,
+                XREngine.Data.Rendering.EComponentType.Float,
+                4u,
+                normalize: false,
+                integral: false)
+            {
+                Usage = XREngine.Data.Rendering.EBufferUsage.StaticCopy,
+            };
+            HeadsetExposureBuffer.SetDataRaw(new float[4]);
+            HeadsetExposureBuffer.PushData();
+
             // Binding updates are event-driven. Attach the native owners before
             // the first update, including hosts that have no desktop window.
             CreateAPIRenderObject(AutoExposureComputeProgram2D);
             CreateAPIRenderObject(AutoExposureComputeProgram2DArray);
+            CreateAPIRenderObject(HeadsetExposurePublishProgram);
+            CreateAPIRenderObject(HeadsetExposureFollowProgram);
+            CreateAPIRenderObject(HeadsetExposureBuffer);
             AutoExposureComputeInitialized = true;
         }
         catch (Exception ex)
@@ -56,10 +99,66 @@ internal sealed partial class VulkanResourceRuntime
     {
         AutoExposureComputeProgram2D?.Destroy();
         AutoExposureComputeProgram2DArray?.Destroy();
+        HeadsetExposurePublishProgram?.Destroy();
+        HeadsetExposureFollowProgram?.Destroy();
+        HeadsetExposureBuffer?.Dispose();
         AutoExposureComputeProgram2D = null;
         AutoExposureComputeProgram2DArray = null;
+        HeadsetExposurePublishProgram = null;
+        HeadsetExposureFollowProgram = null;
+        HeadsetExposureBuffer = null;
         AutoExposureComputeInitialized = false;
     }
+
+    // Copies the 1x1 exposure of the left eye of a two-pass VR eye pair into the headset
+    // exposure buffer. An invalid exposure (not finite or not positive) is not published.
+    private const string HeadsetExposurePublishShaderSource = @"#version 460
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(r32f, binding = 1) uniform image2D ExposureOut;
+layout(std430, binding = 2) buffer HeadsetExposureBlock
+{
+    vec4 HeadsetExposure;
+};
+
+void main()
+{
+    float exposure = imageLoad(ExposureOut, ivec2(0, 0)).r;
+    if (isnan(exposure) || isinf(exposure) || !(exposure > 0.0))
+        return;
+    HeadsetExposure = vec4(exposure, 1.0, 0.0, 0.0);
+}
+";
+
+    // Writes the headset exposure into the 1x1 exposure of the right eye of a two-pass VR eye
+    // pair. Before the first publish, the image keeps its own valid value or gets the fallback
+    // exposure, with the same rules as the auto exposure shaders.
+    private const string HeadsetExposureFollowShaderSource = @"#version 460
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(r32f, binding = 1) uniform image2D ExposureOut;
+layout(std430, binding = 2) buffer HeadsetExposureBlock
+{
+    vec4 HeadsetExposure;
+};
+
+uniform float MinExposure;
+uniform float MaxExposure;
+uniform float FallbackExposure;
+
+void main()
+{
+    float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
+    bool currentValid = !(isnan(current) || isinf(current)) && current >= MinExposure && current <= MaxExposure;
+    float result = currentValid ? current : clamp(FallbackExposure, MinExposure, MaxExposure);
+
+    vec4 headset = HeadsetExposure;
+    if (headset.y > 0.5 && !(isnan(headset.x) || isinf(headset.x)) && headset.x > 0.0)
+        result = clamp(headset.x, MinExposure, MaxExposure);
+
+    imageStore(ExposureOut, ivec2(0, 0), vec4(result, 0.0, 0.0, 0.0));
+}
+";
 
     private const string AutoExposureComputeShaderSource2D = @"#version 460
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;

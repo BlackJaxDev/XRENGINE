@@ -1493,8 +1493,26 @@ Current policy:
   are stereo arrays.
 - Auto exposure uses `EVrAutoExposurePolicy.HeadsetShared`: stereo-array HDR
   sources are averaged across both eye layers into one shared exposure value.
-  Per-eye external swapchain sources skip auto exposure to avoid last-eye-wins
-  mutation of the shared 1x1 exposure texture.
+- Two-pass VR eyes (one pipeline per eye, OpenXR or OpenVR) are an eye pair
+  (`RenderPipeline.IsVrEyePostProcessPair`, set by the post-process state
+  owner link). Each eye pipeline instance keeps its own adaptation state
+  (`AutoExposureRuntimeState` in `ColorGradingSettings`: GPU-ready flag, update
+  timing, CPU-adapted exposure) and its own 1x1 exposure texture, so the eyes
+  cannot overwrite each other. `ColorGradingSettings.IndependentEyeExposure`
+  selects the mode:
+  - Off (default), one headset exposure: the left (owner) eye meters its own
+    HDR image and copies its adapted value into one renderer-wide buffer
+    (`PublishHeadsetAutoExposureGpu`). The right eye copies that value into its
+    own exposure texture (`FollowHeadsetAutoExposureGpu`) and does not meter.
+    In queue order the right eye reads the value of the same frame; when its
+    command buffer runs first, it reads the value of the previous frame.
+  - On (`EVrAutoExposurePolicy.PerEye`): each eye meters its own image and
+    adapts on its own, so the eyes can differ in brightness.
+  A renderer without headset sharing (`SupportsHeadsetSharedAutoExposure`,
+  Vulkan has it) uses the independent mode and logs a warning. A paired eye
+  is not held by the OpenXR Vulkan startup-safe path. An external per-eye
+  target without an eye pair still skips auto exposure to avoid last-eye-wins
+  mutation of one exposure state.
 - Atmosphere and volumetric-fog temporal history stay mono-only until their
   half-resolution color/depth/history resources and reprojection/upscale shaders
   are stereo-array aware.

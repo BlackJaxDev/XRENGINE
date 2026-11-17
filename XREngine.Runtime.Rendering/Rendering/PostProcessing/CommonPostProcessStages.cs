@@ -178,6 +178,14 @@ public static class CommonPostProcessStages
 
         bool IsAutoExposure(object o) => ((ColorGradingSettings)o).AutoExposure;
         bool IsManualExposure(object o) => IsArtistMode(o) && !((ColorGradingSettings)o).AutoExposure;
+
+        // Two-pass VR eyes only: off shares one headset exposure, on adapts each eye on its own.
+        stage.AddParameter(
+            nameof(ColorGradingSettings.IndependentEyeExposure),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Independent Eye Exposure",
+            visibilityCondition: IsAutoExposure);
         bool IsIgnoreTopPercent(object o)
             => IsAutoExposure(o)
             && ((ColorGradingSettings)o).AutoExposureMetering == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent;
