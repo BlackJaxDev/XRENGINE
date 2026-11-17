@@ -525,6 +525,20 @@ public sealed partial class RenderWorkDomain : IDisposable
         _ = inlineOnly;
     }
 
+    /// <summary>
+    /// Wakes the lane-0 owner of a synchronous batch that just became quiescent. The owner
+    /// waits on the lane-0 signal in <see cref="ExecuteAndWait"/> with a short timeout as a
+    /// safety net; this signal ends that wait at once. A signal that no wait consumes only
+    /// makes the next lane-0 wait return early and check its batch again.
+    /// </summary>
+    internal void WakeLaneZeroForBatchQuiescence()
+    {
+        if (Volatile.Read(ref _disposedState) != 0)
+            return;
+
+        _laneSignals[0].Set();
+    }
+
     internal void WakeForTerminalDrain()
     {
         if (Volatile.Read(ref _disposedState) != 0)

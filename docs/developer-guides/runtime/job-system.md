@@ -146,6 +146,12 @@ signals until work or shutdown arrives; they do not wake on a polling timer.
   preallocated `RenderWorkItem` and dependency storage, calls
   `ExecuteAndWait`, then disposes the lease. Stale or cross-domain leases are
   rejected.
+- While `ExecuteAndWait` runs, lane 0 executes its own items and waits on the
+  lane-0 signal between them. When the batch becomes quiescent, the batch sets
+  that signal (`RenderWorkDomain.WakeLaneZeroForBatchQuiescence`), so a batch
+  whose last item finished on a background lane returns at once. The wait keeps
+  a 1 ms timeout only as a safety net: without the signal, that timeout could
+  last a full system timer tick (about 15.6 ms on Windows).
 - Batches with four or fewer items default to lane-0 inline execution. For a
   larger batch, the domain admits at most `4 * logicalLaneCount` migratable
   items; deterministic surplus items are pinned to lane 0 instead of expanding
