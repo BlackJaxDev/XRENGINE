@@ -21,7 +21,7 @@ namespace XREngine.Rendering;
 /// every feature and the render-time conditions decide.
 /// </para>
 /// </remarks>
-internal static class VrEyeFrameRules
+public static class VrEyeFrameRules
 {
     private static VrEyeFeatureProfile Profile => RuntimeEngine.Rendering.Settings.VrEyeFeatures;
 
@@ -43,6 +43,14 @@ internal static class VrEyeFrameRules
         return target is not null &&
             (target.RendersToExternalSwapchainTarget || target.ActiveCamera?.StereoEyeLeft is not null);
     }
+
+    /// <summary>
+    /// True when <paramref name="viewport"/> renders a VR eye: it writes an external eye swapchain
+    /// image, or its camera is an eye camera. Readouts outside a render use it to apply the eye
+    /// feature profile to that viewport.
+    /// </summary>
+    public static bool IsEyeOutput(XRViewport viewport)
+        => viewport.RendersToExternalSwapchainTarget || viewport.ActiveCamera?.StereoEyeLeft is not null;
 
     /// <summary>
     /// True when the render is an OpenXR per-eye frame that writes an external swapchain image

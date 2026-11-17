@@ -78,6 +78,11 @@ keeps equal for both eyes). The profile cannot add a feature that the active pip
 support for the view; for example, the stereo resource profiles still exclude exact transparency,
 fog and aerial perspective.
 
+The profile does not change the eye camera's own stage settings. For an eye output, the MCP tool
+`get_camera_post_process` adds `vrEyeFeatureProfile` (the seven values) and, for each stage,
+`disabledByVrEyeFeatureProfile` (`VrEyeFeatureProfile.AllowsPostProcessStage`), so an ambient
+occlusion stage that reads `Enabled = true` shows that the profile turns it off.
+
 `VrEyeFrameRules` decides whether a render is an eye frame: a stereo pass, or a mono render whose
 viewport camera is an eye camera (`XRCamera.StereoEyeLeft`) or whose viewport writes an external
 swapchain image. Scene and light probe captures are never eye frames. Resource keys pass their

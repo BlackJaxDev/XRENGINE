@@ -1,6 +1,7 @@
 using MemoryPack;
 using System.ComponentModel;
 using XREngine.Data.Core;
+using XREngine.Rendering.PostProcessing;
 
 namespace XREngine;
 
@@ -107,4 +108,23 @@ public partial class VrEyeFeatureProfile : XRBase
         get => _forwardPlusLightCulling;
         set => SetField(ref _forwardPlusLightCulling, value);
     }
+
+    /// <summary>
+    /// False when this profile turns off the feature that the post-process stage
+    /// <paramref name="stageKey"/> (a <see cref="CommonPostProcessStages.StageKeys"/> value) renders
+    /// in eye frames: ambient occlusion, atmospheric scattering, volumetric fog, depth of field
+    /// or motion blur. Other stages are not part of the profile and return true. Readouts use it
+    /// to show the effective state of an eye camera's stage, whose own <c>Enabled</c> value does
+    /// not change.
+    /// </summary>
+    public bool AllowsPostProcessStage(string? stageKey)
+        => stageKey switch
+        {
+            CommonPostProcessStages.StageKeys.AmbientOcclusion => AmbientOcclusion,
+            CommonPostProcessStages.StageKeys.AtmosphericScattering or
+            CommonPostProcessStages.StageKeys.VolumetricFog => FogAndAerialPerspective,
+            CommonPostProcessStages.StageKeys.DepthOfField => DepthOfField,
+            CommonPostProcessStages.StageKeys.MotionBlur => MotionBlur,
+            _ => true,
+        };
 }
