@@ -33,6 +33,9 @@ namespace XREngine
                     private static long _vrProcessOpenXrEyePrimaryRecordOverlapTicks;
                     private static long _vrProcessOpenXrParallelEyeRecordSerializedFrames;
                     private static long _vrProcessOpenXrParallelEyeRecordFailedBatches;
+                    private static long _vrProcessOpenXrEyeFrameDataSlotAlternates;
+                    private static long _vrProcessOpenXrEyeFrameDataSlotWaits;
+                    private static long _vrProcessOpenXrEyeFrameDataSlotBusyFailures;
                     private static readonly long[] _vrProcessOpenXrNoLayerFrames =
                         new long[(int)XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.Count];
                     private static long _vrRenderSubmitTimeTicks;
@@ -131,6 +134,29 @@ namespace XREngine
                     /// </summary>
                     public static long VrProcessOpenXrParallelEyeRecordFailedBatches =>
                         Volatile.Read(ref _vrProcessOpenXrParallelEyeRecordFailedBatches);
+
+                    /// <summary>
+                    /// Gets the number of per-eye OpenXR preparations in this process that found the
+                    /// expected frame-data slot of the eye still in use and recorded into the other slot
+                    /// of the eye instead.
+                    /// </summary>
+                    public static long VrProcessOpenXrEyeFrameDataSlotAlternates =>
+                        Volatile.Read(ref _vrProcessOpenXrEyeFrameDataSlotAlternates);
+
+                    /// <summary>
+                    /// Gets the number of per-eye OpenXR preparations in this process that found both
+                    /// frame-data slots of the eye in use and waited (at most one display period) for
+                    /// the older slot.
+                    /// </summary>
+                    public static long VrProcessOpenXrEyeFrameDataSlotWaits =>
+                        Volatile.Read(ref _vrProcessOpenXrEyeFrameDataSlotWaits);
+
+                    /// <summary>
+                    /// Gets the number of per-eye OpenXR preparations in this process that failed
+                    /// because both frame-data slots of the eye stayed in use after the bounded wait.
+                    /// </summary>
+                    public static long VrProcessOpenXrEyeFrameDataSlotBusyFailures =>
+                        Volatile.Read(ref _vrProcessOpenXrEyeFrameDataSlotBusyFailures);
 
                     /// <summary>
                     /// Gets the number of OpenXR frames in this process that ended without projection
@@ -425,6 +451,18 @@ namespace XREngine
                     /// </summary>
                     public static void RecordVrOpenXrParallelEyeRecordFailedBatch()
                         => Interlocked.Increment(ref _vrProcessOpenXrParallelEyeRecordFailedBatches);
+
+                    /// <summary>Counts one eye preparation that used the other frame-data slot of the eye.</summary>
+                    public static void RecordVrOpenXrEyeFrameDataSlotAlternate()
+                        => Interlocked.Increment(ref _vrProcessOpenXrEyeFrameDataSlotAlternates);
+
+                    /// <summary>Counts one eye preparation that waited because both slots of the eye were in use.</summary>
+                    public static void RecordVrOpenXrEyeFrameDataSlotWait()
+                        => Interlocked.Increment(ref _vrProcessOpenXrEyeFrameDataSlotWaits);
+
+                    /// <summary>Counts one eye preparation that failed because both slots of the eye stayed in use.</summary>
+                    public static void RecordVrOpenXrEyeFrameDataSlotBusyFailure()
+                        => Interlocked.Increment(ref _vrProcessOpenXrEyeFrameDataSlotBusyFailures);
 
                     /// <summary>
                     /// Counts one OpenXR frame that ended without projection layers through the exit

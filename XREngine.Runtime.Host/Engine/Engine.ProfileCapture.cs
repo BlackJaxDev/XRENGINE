@@ -1452,6 +1452,9 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_overlap_ms", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordOverlapMs, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_parallel_eye_record_serialized_frames", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrParallelEyeRecordSerializedFrames, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_parallel_eye_record_failed_batches", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrParallelEyeRecordFailedBatches, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_frame_data_slot_alternates", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyeFrameDataSlotAlternates, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_frame_data_slot_waits", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyeFrameDataSlotWaits, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_frame_data_slot_busy_failures", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyeFrameDataSlotBusyFailures, ref first);
             for (int reason = 0; reason < s_openXrNoLayerFrameFieldNames.Length; reason++)
             {
                 AppendNumberField(

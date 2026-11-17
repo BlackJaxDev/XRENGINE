@@ -622,26 +622,103 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         ulong frameDataGeneration)
     {
         lock (_gate)
+            return FindRegisteredFrameDataSlotOwnerNoLock(
+                frameSlot,
+                mappedFrameArena,
+                mappedFrameGeneration,
+                frameDataArena,
+                frameDataGeneration) is not null;
+    }
+
+    /// <summary>
+    /// Waits for the GPU to complete the submission that owns <paramref name="frameSlot"/>, for at
+    /// most <paramref name="timeoutNanoseconds"/>, and then settles completed submissions so that
+    /// the slot is released. Returns true when no submission owns the slot after the wait.
+    /// </summary>
+    /// <remarks>
+    /// Per-eye OpenXR preparation calls this only when both frame-data slots of an eye are still
+    /// owned. A submission that is not committed yet (no timeline value) cannot be waited on, so
+    /// the method only settles and checks again.
+    /// </remarks>
+    internal bool TryWaitForRegisteredFrameDataSlotRelease(
+        uint frameSlot,
+        VulkanMappedFrameArena? mappedFrameArena,
+        ulong mappedFrameGeneration,
+        VulkanFrameDataArena? frameDataArena,
+        ulong frameDataGeneration,
+        ulong timeoutNanoseconds)
+    {
+        VulkanSemaphore ownerSemaphore = default;
+        ulong ownerTimelineValue = 0UL;
+        lock (_gate)
         {
-            for (int i = 0; i < _inFlight.Length; i++)
+            InFlightSubmission? owner = FindRegisteredFrameDataSlotOwnerNoLock(
+                frameSlot,
+                mappedFrameArena,
+                mappedFrameGeneration,
+                frameDataArena,
+                frameDataGeneration);
+            if (owner is null)
+                return true;
+            if (owner.Active && !owner.PendingCommit && !owner.Cancelled && !owner.CompletionProven)
             {
-                InFlightSubmission entry = _inFlight[i];
-                if (!entry.Active && !entry.Retiring && !entry.PendingCommit)
-                    continue;
-                bool mappedArenaMatches = mappedFrameArena is not null &&
-                    ReferenceEquals(entry.MappedFrameArena, mappedFrameArena) &&
-                    entry.MappedFrameGeneration == mappedFrameGeneration;
-                bool frameDataArenaMatches = frameDataArena is not null &&
-                    ReferenceEquals(entry.FrameDataArena, frameDataArena) &&
-                    entry.FrameDataGeneration == frameDataGeneration;
-                if (!mappedArenaMatches && !frameDataArenaMatches)
-                    continue;
-                for (int slotIndex = 0; slotIndex < entry.FrameSlotCount; slotIndex++)
-                    if (entry.FrameSlots[slotIndex] == frameSlot)
-                        return true;
+                ownerSemaphore = owner.TimelineSemaphore;
+                ownerTimelineValue = owner.TimelineValue;
             }
-            return false;
         }
+
+        if (ownerSemaphore.Handle != 0 && ownerTimelineValue != 0UL &&
+            _commandRuntime.DeviceContext.IsOperational)
+        {
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "OpenXR.Vulkan.EyeFrameDataSlotWait"))
+            {
+                Result waitResult = _commandRuntime.Synchronization.WaitForTimelineCompletion(
+                    _commandRuntime.Api,
+                    _commandRuntime.DeviceContext,
+                    _commandRuntime.ResourceRuntime.Lifetime.Tracker,
+                    ownerSemaphore,
+                    ownerTimelineValue,
+                    timeoutNanoseconds);
+                if (waitResult != Result.Success && waitResult != Result.Timeout)
+                    return false;
+            }
+        }
+
+        PollCompletions();
+        return !OwnsRegisteredFrameDataSlot(
+            frameSlot,
+            mappedFrameArena,
+            mappedFrameGeneration,
+            frameDataArena,
+            frameDataGeneration);
+    }
+
+    private InFlightSubmission? FindRegisteredFrameDataSlotOwnerNoLock(
+        uint frameSlot,
+        VulkanMappedFrameArena? mappedFrameArena,
+        ulong mappedFrameGeneration,
+        VulkanFrameDataArena? frameDataArena,
+        ulong frameDataGeneration)
+    {
+        for (int i = 0; i < _inFlight.Length; i++)
+        {
+            InFlightSubmission entry = _inFlight[i];
+            if (!entry.Active && !entry.Retiring && !entry.PendingCommit)
+                continue;
+            bool mappedArenaMatches = mappedFrameArena is not null &&
+                ReferenceEquals(entry.MappedFrameArena, mappedFrameArena) &&
+                entry.MappedFrameGeneration == mappedFrameGeneration;
+            bool frameDataArenaMatches = frameDataArena is not null &&
+                ReferenceEquals(entry.FrameDataArena, frameDataArena) &&
+                entry.FrameDataGeneration == frameDataGeneration;
+            if (!mappedArenaMatches && !frameDataArenaMatches)
+                continue;
+            for (int slotIndex = 0; slotIndex < entry.FrameSlotCount; slotIndex++)
+                if (entry.FrameSlots[slotIndex] == frameSlot)
+                    return entry;
+        }
+        return null;
     }
 
     internal void NotifyRegisteredFrameDataSlotPressure()
