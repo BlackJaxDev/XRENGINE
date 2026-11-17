@@ -849,7 +849,7 @@ public unsafe partial class OpenXRAPI
         if (ReferenceEquals(RuntimeEngine.VRState.RightEyeViewport, _openXrRightViewport))
             RuntimeEngine.VRState.RightEyeViewport = null;
 
-        UpdateOpenXrEyeSettingsSubscriptions(null, null);
+        DetachOpenXrEyeSettings();
 
         _openXrLeftViewport?.Camera = null;
         _openXrRightViewport?.Camera = null;

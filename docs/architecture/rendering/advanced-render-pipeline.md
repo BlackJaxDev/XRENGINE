@@ -301,7 +301,10 @@ the swapchain size:
   scale when the eye runs the Advanced stage family with a bound output (Advanced, or the
   Advanced stage family of RVC). `VPRC_TemporalAccumulationPass.ResolveHistoryIsolationPolicy`
   gives such an eye the `PerEye` policy: each eye has its own viewport and pipeline instance,
-  so the temporal state of the instance holds only that eye. The per-eye viewport keeps the
+  so the temporal state of the instance holds only that eye. `VrViewRenderModeResolver` reports
+  the same `PerEye` policy for Vulkan Advanced and RVC per-eye modes, so OpenXR keeps the eye
+  anti-aliasing mode (it sets the eye cameras to no anti-aliasing only when the resolved policy
+  has no history). The per-eye viewport keeps the
   swapchain size as display size; the internal size can be smaller. The Vulkan per-eye checks
   (`ValidateOpenXrEyeViewportExtent`, `ValidateOpenXrExternalFrameOpContexts`) accept an
   internal size between 1 and the swapchain size.

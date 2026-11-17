@@ -99,6 +99,24 @@ while VR is active. The engine reads it each frame.
 The FPS overlay shows the presented desktop rate and the OpenXR submitted rate,
 so you can compare the two modes.
 
+## VR Eye Post-Process Settings
+
+The VR eyes have their own post-process settings (AO, bloom, color grading and the other
+camera stages). They are separate from the desktop camera, and the left and right eye
+always use the same settings:
+
+- `VrEyeCameraSettingsLink` links the two eye cameras. OpenXR and OpenVR each own one link
+  (`OpenXRAPI.EnsureOpenXrEyeSettingsOwnership`, `EngineVrLifecycle.LinkOpenVrEyeCameraSettings`).
+- Both eye cameras use one post-process state collection.
+- The per-camera render overrides (anti-aliasing mode, MSAA sample count, HDR output, TSR render
+  scale, post-process material) are mirrored: a change on either eye camera is copied to the other
+  at once. OpenXR also rewrites both eyes from the last edited eye each frame.
+- A camera keeps one state per pipeline ID. In two-pass modes each eye has its own pipeline
+  object, so the right eye pipeline names the left eye pipeline as its
+  `RenderPipeline.PostProcessStateOwner`. Both eyes then read and write one state.
+- Single-pass stereo uses one pipeline for both eyes and reads the left eye camera.
+- The editor and MCP (`vr_eye` = `left`, `right` or `stereo`) edit this one eye state.
+
 ## Testing
 
 The Unit Testing World supports `VR.Mode = "Emulated"` for desktop stereo

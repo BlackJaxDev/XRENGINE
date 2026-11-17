@@ -139,6 +139,23 @@ public sealed class VrViewRenderModeContractTests
     }
 
     [Test]
+    public void ViewRenderModeResolver_GivesVulkanAdvancedAndRvcPerEyeEyesTheirOwnHistory()
+    {
+        VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.SequentialViews,
+                requestedPipeline: EVrRenderPipeline.Advanced)
+            .TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.PerEye);
+        VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.ParallelCommandBufferRecording,
+                requestedPipeline: EVrRenderPipeline.Rvc)
+            .TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.PerEye);
+        VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.SequentialViews,
+                requestedPipeline: EVrRenderPipeline.Default)
+            .TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
+        VrViewRenderModeResolver.Resolve(ERenderLibrary.OpenGL, EVrViewRenderMode.SequentialViews,
+                requestedPipeline: EVrRenderPipeline.Advanced)
+            .TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
+    }
+
+    [Test]
     public void ViewRenderModeResolver_RequiresTrueStereoAndNeverSelectsCompatibilityFallback()
     {
         VrViewRenderModeResolution unavailable = VrViewRenderModeResolver.Resolve(
