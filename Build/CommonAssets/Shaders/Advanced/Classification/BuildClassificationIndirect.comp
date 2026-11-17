@@ -22,7 +22,19 @@ void main()
         atomicAdd(kernelTileTotal, membershipCount);
     barrier();
     if (gl_LocalInvocationIndex == 0u)
+    {
         XR_ADV_ClassificationCounters.counters.kernelTileCount = kernelTileTotal;
+        // The overflow repair dispatch reads the command after the kernel range. It launches the
+        // full tile grid of one view only when classification overflowed, and no work groups
+        // otherwise. Every view is classified before any view is shaded, so the command written
+        // after the last view matches the overflow flag that the repair kernel reads.
+        if (XR_ADV_MAX_SHADING_KERNELS < uint(XR_ADV_ClassificationDispatch.commands.length()))
+        {
+            bool overflow = XR_ADV_ClassificationCounters.counters.overflowFlags != 0u;
+            XR_ADV_ClassificationDispatch.commands[XR_ADV_MAX_SHADING_KERNELS] = XRAdvancedDispatchIndirectCommand(
+                overflow ? u_Push.tilesCount.x : 0u, overflow ? u_Push.tilesCount.y : 1u, 1u, 0u);
+        }
+    }
 
     if (!validKernel || kernel >= uint(XR_ADV_ClassificationDispatch.commands.length())) return;
     uint capacity = XR_ADV_TotalTileCount();

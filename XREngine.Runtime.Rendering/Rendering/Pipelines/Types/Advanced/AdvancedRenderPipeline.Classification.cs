@@ -75,6 +75,20 @@ public partial class AdvancedRenderPipeline
     public const uint DefaultMaxShadingKernels = 128u;
 
     /// <summary>
+    /// Index of the overflow repair command in the classification dispatch arguments, after the
+    /// per-kernel commands. Classification writes the full tile grid of one view there when it
+    /// overflowed and zero work groups otherwise, so a frame without overflow launches no repair
+    /// groups.
+    /// </summary>
+    public const uint OverflowRepairDispatchIndex = DefaultMaxShadingKernels;
+
+    /// <summary>
+    /// Number of commands in the classification dispatch arguments: the per-kernel commands and
+    /// the overflow repair command.
+    /// </summary>
+    public const uint ClassificationDispatchCommandCount = DefaultMaxShadingKernels + 1u;
+
+    /// <summary>
     /// Number of per-kernel ranges in the kernel-tile membership buffer. Each range holds one
     /// record per tile, and kernel k owns range k, so this bounds the dense kernel indices that
     /// classification can store. The kernel table gives a new kernel the lowest free dense
@@ -119,11 +133,12 @@ public partial class AdvancedRenderPipeline
                 .DebugLabel($"Advanced kernel-tile memberships slot {slot}")
                 .Add();
 
-            // 3. Indirect Compute Dispatch Arguments
+            // 3. Indirect Compute Dispatch Arguments: one command per shading kernel, then the
+            // overflow repair command (OverflowRepairDispatchIndex).
             VisibilityBuffer<AdvancedClassificationDispatchArguments>(
                     builder,
                     AdvancedClassificationResourceNames.DispatchArgs(slot),
-                    DefaultMaxShadingKernels,
+                    ClassificationDispatchCommandCount,
                     EBufferTarget.DispatchIndirectBuffer,
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)

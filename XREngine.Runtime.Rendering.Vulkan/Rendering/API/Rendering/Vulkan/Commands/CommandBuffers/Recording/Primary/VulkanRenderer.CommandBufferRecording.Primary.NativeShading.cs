@@ -124,7 +124,7 @@ internal sealed partial class VulkanCommandRuntime
         uint depthSlices = checked((uint)(closure.FroxelGrid.NativeSize / 16UL / totalTiles));
         if (depthSlices == 0 || closure.ActiveTiles.NativeSize < checked(totalTiles * 16UL) ||
             closure.KernelCounts.NativeSize < AdvancedRenderPipeline.DefaultMaxShadingKernels * 4UL ||
-            closure.DispatchArguments.NativeSize < AdvancedRenderPipeline.DefaultMaxShadingKernels * 16UL)
+            closure.DispatchArguments.NativeSize < AdvancedRenderPipeline.ClassificationDispatchCommandCount * 16UL)
             throw new VulkanPlanPreconditionException("Advanced native output capacity does not match the admitted extent and view count.");
         var clear = RuntimeEngine.StartupPresentationClearColor;
         VulkanAdvancedNativeShadingPushConstants push = new(width, height, tilesX, tilesY,
@@ -323,8 +323,8 @@ internal sealed partial class VulkanCommandRuntime
         VulkanAdvancedNativeShadingPushConstants repairPush = push with { Flags = push.Flags | 1u };
         if (!closure.UsesMultisampleVisibility)
         {
-            RecordNativeDispatch(state.CommandBuffer, in payload, shade,
-                in repairPush, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, parameterAddress);
+            RecordNativeOverflowRepairDispatch(state.CommandBuffer, in payload, in closure, shade,
+                in repairPush, "Advanced.NativeOpaque.GpuOverflowRepair", parameterAddress);
             RecordNativeShadingRootUse(shade.UsesAddressRoot, checked((int)AdvancedRenderPipeline.DefaultMaxShadingKernels + 1));
         }
         else
@@ -350,8 +350,8 @@ internal sealed partial class VulkanCommandRuntime
             // The standard repair shades every pixel in an overflow frame, and the Uber repair
             // then overwrites the Uber pixels. This barrier keeps that order.
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
-            RecordNativeDispatch(state.CommandBuffer, in payload, uberShade,
-                in repairPush, tilesX, tilesY, 1, "Advanced.NativeOpaque.Uber.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, uberParameterAddress);
+            RecordNativeOverflowRepairDispatch(state.CommandBuffer, in payload, in closure, uberShade,
+                in repairPush, "Advanced.NativeOpaque.Uber.GpuOverflowRepair", uberParameterAddress);
             RecordNativeShadingRootUse(uberShade.UsesAddressRoot, checked((int)AdvancedRenderPipeline.DefaultMaxShadingKernels + 1));
         }
         push = repairPush;
@@ -470,6 +470,29 @@ internal sealed partial class VulkanCommandRuntime
             pipeline.Program.PipelineLayout, in payload, payload.NativeComputeDescriptorSet);
         PushNativeConstants(commandBuffer, pipeline, in push, parameterAddress);
         Api.CmdDispatch(commandBuffer, x, y, z);
+        CmdEndLabel(commandBuffer);
+    }
+
+    /// <summary>
+    /// Records an overflow repair dispatch. It reads its work group counts from the repair command
+    /// in the classification dispatch arguments, which classification writes as the full tile grid
+    /// of one view after an overflow and as zero work groups otherwise. A frame without overflow
+    /// therefore launches no repair groups, where a direct full-grid dispatch launched every group
+    /// only for it to return after reading the overflow flag.
+    /// </summary>
+    private void RecordNativeOverflowRepairDispatch(CommandBuffer commandBuffer,
+        in VulkanAdvancedVisibilityOperationPayload payload, in VulkanAdvancedNativeComputeClosure closure,
+        in VulkanAdvancedComputePipeline pipeline, in VulkanAdvancedNativeShadingPushConstants push, string label,
+        ulong parameterAddress)
+    {
+        using var profilerScope = TryBeginVulkanGpuProfilerScope(commandBuffer, NativeOpaqueRepairGpuProfilerPath);
+        CmdBeginLabel(commandBuffer, label);
+        BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline.Pipeline);
+        BindAdvancedVisibilityDescriptorSets(commandBuffer, PipelineBindPoint.Compute,
+            pipeline.Program.PipelineLayout, in payload, payload.NativeComputeDescriptorSet);
+        PushNativeConstants(commandBuffer, pipeline, in push, parameterAddress);
+        Api.CmdDispatchIndirect(commandBuffer, closure.DispatchArguments.NativeBuffer,
+            closure.DispatchArguments.NativeOffset + AdvancedRenderPipeline.OverflowRepairDispatchIndex * 16UL);
         CmdEndLabel(commandBuffer);
     }
 

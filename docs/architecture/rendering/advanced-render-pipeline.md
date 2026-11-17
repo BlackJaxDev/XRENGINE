@@ -1159,9 +1159,17 @@ reads data from the first, or when both write the same pixels:
 Synchronization validation reports the disjoint-pixel dispatches above as hazards; see the
 known false positives in [Vulkan Diagnostics](../../developer-guides/rendering/vulkan-diagnostics.md#synchronization-validation-coverage).
 
-Because these dispatches overlap, the GPU profiler scope `Advanced > Shading > GpuOverflowRepair`
-starts while the main kernels still run. Its time includes the main kernels. Use the
-`Advanced > Shading` scope for the stage total.
+The repair dispatches are indirect. `BuildClassificationIndirect.comp` writes one more command
+after the per-kernel commands (`AdvancedRenderPipeline.OverflowRepairDispatchIndex`): the full tile
+grid of one view when classification overflowed, and zero work groups otherwise. Every view is
+classified before any view is shaded, so the command written after the last view matches the
+overflow flag that the repair kernel reads. A frame without overflow launches no repair groups.
+Before this, each repair launched the full grid, and every group returned after it read the flag.
+
+With the full-grid repair, the GPU profiler scope `Advanced > Shading > GpuOverflowRepair` started
+while the main kernels still ran and counted them a second time (about 7.5 ms at 2688x2688
+stereo), so the `Advanced` total was too high. The empty indirect repair now reads about 0 ms, and
+the `Advanced` total is correct. After an overflow, the repair scope still overlaps the main kernels.
 
 ### Resource ownership
 
