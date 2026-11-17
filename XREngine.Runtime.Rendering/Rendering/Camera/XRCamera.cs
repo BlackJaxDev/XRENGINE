@@ -551,6 +551,8 @@ namespace XREngine.Rendering
         /// <summary>
         /// Gets the post-process state for a specific render pipeline.
         /// When no pipeline is supplied, prefers the pipeline currently rendering this camera.
+        /// A pipeline with a <see cref="RenderPipeline.PostProcessStateOwner"/> (the right VR eye)
+        /// returns the state of its owner, so paired eye pipelines share one state.
         /// </summary>
         /// <param name="pipeline">The pipeline whose state should be returned.</param>
         /// <returns>The post-process state for the resolved pipeline, or null if no pipeline is available.</returns>
@@ -560,6 +562,7 @@ namespace XREngine.Rendering
             pipeline ??= _renderPipeline ?? RenderPipeline;
             if (pipeline is null)
                 return null;
+            pipeline = pipeline.ResolvePostProcessStateOwner();
             return _renderPipeline is null && ReferenceEquals(pipeline, _defaultRenderPipeline)
                 ? _postProcessStates.GetOrCreateDefaultState(pipeline)
                 : _postProcessStates.GetOrCreateState(pipeline);
@@ -572,6 +575,7 @@ namespace XREngine.Rendering
         /// <summary>Gets an existing post-process state without creating or rebinding it.</summary>
         public PipelinePostProcessState? GetExistingPostProcessState(RenderPipeline? pipeline)
         {
+            pipeline = pipeline?.ResolvePostProcessStateOwner();
             if (pipeline is null || !_postProcessStates.TryGetState(pipeline.ID, out PipelinePostProcessState? state))
                 return null;
 

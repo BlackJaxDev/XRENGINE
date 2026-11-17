@@ -168,6 +168,10 @@ parameter values, ranges and enum options. Select a desktop viewport with
 with `vr_eye` (`left`, `right`, or `stereo`).
 `set_camera_post_process_parameter` changes one declared `stage_key` and
 `parameter_name` through the existing backing settings, then returns its value.
+The VR eyes have one shared set of post-process settings, separate from the
+desktop camera: `vr_eye` `left`, `right` and `stereo` all read and edit the same
+eye settings, so the two eyes cannot differ. A desktop selector does not change
+the eyes.
 It requires mutation permission. Numeric ranges and enum values are validated;
 vectors use finite numeric `x`/`y`/`z`/`w` object members as appropriate.
 For reproducible captures, for example, set `colorGrading.AutoExposure` to

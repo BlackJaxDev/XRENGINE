@@ -918,6 +918,11 @@ public unsafe partial class OpenXRAPI
             {
                 leftEyePipeline = GetOrCreateOpenXrPipeline(sourcePipeline, eyeIndex: 0);
                 rightEyePipeline = GetOrCreateOpenXrPipeline(sourcePipeline, eyeIndex: 1);
+                // The eye cameras share one state collection, and a collection keys its states by
+                // pipeline ID. The right eye pipeline reads the left eye pipeline's state, so the
+                // two eyes always use the same post-process settings.
+                leftEyePipeline.PostProcessStateOwner = null;
+                rightEyePipeline.PostProcessStateOwner = leftEyePipeline;
                 if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, leftEyePipeline))
                     _openXrLeftViewport.RenderPipeline = leftEyePipeline;
                 if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, rightEyePipeline))

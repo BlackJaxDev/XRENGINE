@@ -604,6 +604,8 @@ namespace XREngine
                 if (ViewInformation.RightEyeCamera is not null)
                     RightEyeViewport!.Camera = ViewInformation.RightEyeCamera;
 
+                ShareEyePostProcessStates(ViewInformation.LeftEyeCamera, ViewInformation.RightEyeCamera);
+
                 if (ViewInformation.World is not null)
                 {
                     LeftEyeViewport!.WorldInstanceOverride = ViewInformation.World;
@@ -625,6 +627,24 @@ namespace XREngine
             /// Camera synchronization stays off so the eye camera's own pipeline cannot
             /// replace the selected family.
             /// </summary>
+            /// <summary>
+            /// Gives both eye cameras the left eye camera's post-process state collection. The
+            /// eyes have their own settings, separate from the desktop camera, but the left and
+            /// right eye must never differ. The right eye pipeline also names the left eye pipeline
+            /// as its state owner (see <see cref="RemakeTwoPass"/>), because a collection keeps one
+            /// state per pipeline ID.
+            /// </summary>
+            private static void ShareEyePostProcessStates(XRCamera? leftEyeCamera, XRCamera? rightEyeCamera)
+            {
+                if (leftEyeCamera is null || rightEyeCamera is null ||
+                    ReferenceEquals(rightEyeCamera.PostProcessStates, leftEyeCamera.PostProcessStates))
+                {
+                    return;
+                }
+
+                rightEyeCamera.PostProcessStates = leftEyeCamera.PostProcessStates;
+            }
+
             private static XRViewport CreateTwoPassEyeViewport(XRWindow window, int index, RenderPipeline pipeline)
             {
                 XRViewport viewport = new(window)
@@ -693,6 +713,13 @@ namespace XREngine
                     window, 0, BootstrapRenderSettings.CreateSceneRenderPipeline(stereo: false));
                 XRViewport rightViewport = CreateTwoPassEyeViewport(
                     window, 1, BootstrapRenderSettings.CreateSceneRenderPipeline(stereo: false));
+                // Each eye records its own pipeline, but both read the left eye pipeline's
+                // post-process state, so the eyes cannot diverge.
+                if (leftViewport.RenderPipeline is { } leftEyePipeline && rightViewport.RenderPipeline is { } rightEyePipeline)
+                {
+                    leftEyePipeline.PostProcessStateOwner = null;
+                    rightEyePipeline.PostProcessStateOwner = leftEyePipeline;
+                }
                 VRLeftEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRLeftEyeViewTexture = left, leftViewport);
                 VRRightEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRRightEyeViewTexture = right, rightViewport);
                 LeftEyeViewport = leftViewport;
@@ -1213,6 +1240,7 @@ namespace XREngine
                     // stereo viewport exists.
                     _viewInformation.left?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
                     _viewInformation.right?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
+                    ShareEyePostProcessStates(value.LeftEyeCamera, value.RightEyeCamera);
 
                     // ViewInformation can be set before VR rendering has been initialized (e.g., during component activation).
                     // Only compute the stereo culling frustum once the VR viewports exist; otherwise we can end up querying

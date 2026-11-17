@@ -184,6 +184,31 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     private RenderPipelinePostProcessSchema _postProcessSchema = RenderPipelinePostProcessSchema.Empty;
+    // Runtime-only link, not serialized. A plain field: SetField would add the owner pipeline
+    // (an asset) to this pipeline's asset graph and raise change events for a runtime pairing.
+    private RenderPipeline? _postProcessStateOwner;
+
+    /// <summary>
+    /// The pipeline whose camera post-process state this pipeline reads and writes, or null for
+    /// this pipeline. A camera keeps one post-process state per pipeline ID. The two VR eyes render
+    /// with separate pipeline objects in two-pass modes (each eye records its own command chain),
+    /// so the right eye pipeline names the left eye pipeline as its owner. Both eyes then resolve
+    /// to one state and cannot diverge. The setter stores the end of the owner chain and ignores a
+    /// link back to this pipeline.
+    /// </summary>
+    internal RenderPipeline? PostProcessStateOwner
+    {
+        get => _postProcessStateOwner;
+        set
+        {
+            RenderPipeline? owner = value?.ResolvePostProcessStateOwner();
+            _postProcessStateOwner = ReferenceEquals(owner, this) ? null : owner;
+        }
+    }
+
+    /// <summary>Returns the pipeline that keys the camera post-process state of this pipeline.</summary>
+    internal RenderPipeline ResolvePostProcessStateOwner()
+        => _postProcessStateOwner ?? this;
 
     /// <summary>
     /// Structured description of the post-processing controls exposed by this pipeline.
