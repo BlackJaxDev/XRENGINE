@@ -473,6 +473,38 @@ public sealed class OpenXrTimingPipelineContractTests
     }
 
     [Test]
+    public void VulkanOpenXr_EyeImageReleaseAfterRuntimeLossEndsFrameWithoutOwnershipThrow()
+    {
+        string implementation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
+        string binding = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.cs");
+        string host = ReadWorkspaceFile(
+            "XREngine.Runtime.XR.OpenXR/OpenXRAPI.GraphicsBindingHost.cs");
+
+        // A lost runtime is not an ownership failure: the release path checks the pending loss
+        // before it throws, and the batch entry then ends the frame without layers.
+        int lossCheck = implementation.IndexOf("if (Host.IsRuntimeLossPending)", StringComparison.Ordinal);
+        int ownershipThrow = implementation.IndexOf(
+            "OpenXR batched eye image ownership remains with the runtime", StringComparison.Ordinal);
+        lossCheck.ShouldBeGreaterThanOrEqualTo(0);
+        ownershipThrow.ShouldBeGreaterThan(lossCheck);
+        implementation.ShouldContain("_eyeImageReleaseRuntimeLost = true;");
+
+        string batchEntry = SliceMethod(
+            binding,
+            "public unsafe bool TryRenderViewsBatch(",
+            "public bool TryRenderEye(");
+        batchEntry.ShouldContain("_eyeImageReleaseRuntimeLost = false;");
+        batchEntry.ShouldContain("if (!_eyeImageReleaseRuntimeLost)");
+        batchEntry.ShouldContain("handled = true;");
+        batchEntry.ShouldContain("return false;");
+
+        host.ShouldContain("public bool IsRuntimeLossPending");
+        host.ShouldContain("=> owner.IsOpenXrRuntimeLossPending();");
+    }
+
+    [Test]
     public void VulkanOpenXr_EyeRenderingGateDoesNotInheritDesktopAllocationBackoff()
     {
         string resourcePressure = ReadWorkspaceFile(
