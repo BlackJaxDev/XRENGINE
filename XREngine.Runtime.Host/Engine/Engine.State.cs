@@ -105,6 +105,48 @@ namespace XREngine
             return SplitDesktopRenderWorkerCount;
         }
 
+        /// <summary>
+        /// Render workers that OpenXR parallel eye recording needs. One background worker
+        /// gives the render work domain a second lane: the left eye records on lane 0 (the
+        /// render thread) while the right eye records on lane 1 (the worker).
+        /// </summary>
+        private const int ParallelEyeRecordingRenderWorkerCount = 1;
+
+        /// <summary>
+        /// Raises a 0 or automatic render worker request to one worker when OpenXR starts with
+        /// <see cref="EVrViewRenderMode.ParallelCommandBufferRecording"/>. With no background
+        /// worker the render work domain has one lane, both eyes map to it, and the eyes record
+        /// one after the other on the render thread. A count of 1 or more stays unchanged. A
+        /// value from <see cref="XREngineEnvironmentVariables.RenderWorkerThreads"/> also stays
+        /// unchanged, so a user can still force lane 0 only; the eye renderer then logs a warning
+        /// and counts the serialized frames. The view mode is read before the unit-testing world
+        /// applies it, so its environment override is read here too.
+        /// </summary>
+        private static int ResolveParallelEyeRecordingRenderWorkerCount(
+            int requestedRenderWorkers,
+            EEngineExecutionSettingSource requestSource)
+        {
+            if (requestedRenderWorkers > 0 ||
+                requestSource == EEngineExecutionSettingSource.Environment ||
+                !StartupOpenXrRuntimeRequested ||
+                GameSettings is IVRGameStartupSettings { EnableOpenXrVulkanParallelRendering: false })
+                return requestedRenderWorkers;
+
+            EVrViewRenderMode mode = Enum.TryParse(
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrViewRenderMode),
+                    ignoreCase: true,
+                    out EVrViewRenderMode environmentMode)
+                ? environmentMode
+                : RuntimeEngine.Rendering.Settings.VrViewRenderMode;
+            if (mode != EVrViewRenderMode.ParallelCommandBufferRecording)
+                return requestedRenderWorkers;
+
+            Debug.Out(
+                $"[ExecutionTopology] OpenXR ParallelCommandBufferRecording needs {ParallelEyeRecordingRenderWorkerCount} render worker " +
+                $"to record the two eyes in parallel; raised the render worker request from {requestedRenderWorkers} to {ParallelEyeRecordingRenderWorkerCount}.");
+            return ParallelEyeRecordingRenderWorkerCount;
+        }
+
         internal static EngineExecutionTopology ResolveExecutionTopology()
         {
             int generalWorkers = ReadExecutionIntegerOverride(
@@ -123,6 +165,7 @@ namespace XREngine
                 MapExecutionSettingSource(EffectiveSettings.GetRenderWorkerThreadCountSource()),
                 out EEngineExecutionSettingSource renderWorkersSource);
             renderWorkers = ResolveSplitDesktopRenderWorkerCount(renderWorkers);
+            renderWorkers = ResolveParallelEyeRecordingRenderWorkerCount(renderWorkers, renderWorkersSource);
             int renderWorkerCap = ReadExecutionIntegerOverride(
                 XREngineEnvironmentVariables.RenderWorkerThreadCap,
                 EffectiveSettings.RenderWorkerThreadCap,

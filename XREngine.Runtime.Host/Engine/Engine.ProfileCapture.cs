@@ -1450,6 +1450,7 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_samples", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordSamples, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_span_ms", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordSpanMs, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_overlap_ms", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordOverlapMs, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_parallel_eye_record_serialized_frames", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrParallelEyeRecordSerializedFrames, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_visible_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanVisibleMeshDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_unique_visible_materials", RuntimeEngine.Rendering.Stats.Vulkan.VulkanUniqueVisibleMaterials, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshDraws, ref first);

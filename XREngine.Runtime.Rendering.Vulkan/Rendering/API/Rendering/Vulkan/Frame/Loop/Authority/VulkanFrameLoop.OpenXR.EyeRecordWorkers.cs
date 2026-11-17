@@ -68,6 +68,8 @@ internal sealed partial class VulkanFrameLoop
 
             int firstLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(0);
             int secondLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(1);
+            if (firstLaneId == secondLaneId)
+                ReportSerializedParallelEyeRecording(firstLaneId);
             // Claim both eye lanes before the freeze touches their backend attachments.
             claimedEyeLease = OpenXrEyeRecordWorkerScheduler.RentAndClaimLanes(
                 _commandRuntime,
@@ -159,6 +161,30 @@ internal sealed partial class VulkanFrameLoop
                 _commandRuntime.OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
             }
         }
+    }
+
+    // Set after the first serialized-recording warning, so this frame loop warns once.
+    private int _serializedParallelEyeRecordingWarned;
+
+    /// <summary>
+    /// Reports a parallel eye recording request that has only one render lane. Both eyes then
+    /// map to that lane, and the render work domain records them one after the other on the
+    /// render thread. The method counts every such frame in the VR stats and logs one warning
+    /// for this frame loop. The frame still renders; only the recording is serial.
+    /// </summary>
+    private void ReportSerializedParallelEyeRecording(int laneId)
+    {
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrParallelEyeRecordSerialized();
+        if (System.Threading.Interlocked.Exchange(ref _serializedParallelEyeRecordingWarned, 1) != 0)
+            return;
+
+        Debug.VulkanWarning(
+            "[OpenXR] VR.ViewRenderMode=ParallelCommandBufferRecording records both eyes on render lane {0}, one after the other, " +
+            "because the render work domain has {1} lane(s) and needs 2. Set {2} to 1 or more to record the eyes in parallel. " +
+            "The stat vr.process_openxr_parallel_eye_record_serialized_frames counts the affected frames.",
+            laneId,
+            _commandRuntime.RenderLogicalLaneCount,
+            XREngineEnvironmentVariables.RenderWorkerThreads);
     }
 
     private void DestroyOpenXrEyeRecordWorkers()

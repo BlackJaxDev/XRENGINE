@@ -31,6 +31,7 @@ namespace XREngine
                     private static long _vrProcessOpenXrEyePrimaryRecordSamples;
                     private static long _vrProcessOpenXrEyePrimaryRecordSpanTicks;
                     private static long _vrProcessOpenXrEyePrimaryRecordOverlapTicks;
+                    private static long _vrProcessOpenXrParallelEyeRecordSerializedFrames;
                     private static long _vrRenderSubmitTimeTicks;
                     private static long _lastFrameVrRenderSubmitTimeTicks;
                     private static long _vrXrWaitFrameBlockTimeTicks;
@@ -115,6 +116,12 @@ namespace XREngine
                         TimeSpan.FromTicks(
                             Volatile.Read(ref _vrProcessOpenXrEyePrimaryRecordOverlapTicks))
                             .TotalMilliseconds;
+                    /// <summary>
+                    /// Gets the number of OpenXR frames in this process that requested parallel eye
+                    /// recording but recorded both eyes on one render lane, one after the other.
+                    /// </summary>
+                    public static long VrProcessOpenXrParallelEyeRecordSerializedFrames =>
+                        Volatile.Read(ref _vrProcessOpenXrParallelEyeRecordSerializedFrames);
                     public static double VrRenderSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrRenderSubmitTimeTicks).TotalMilliseconds;
                     public static double VrXrWaitFrameBlockTimeMs => TimeSpan.FromTicks(_lastFrameVrXrWaitFrameBlockTimeTicks).TotalMilliseconds;
                     public static double VrXrEndFrameSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrXrEndFrameSubmitTimeTicks).TotalMilliseconds;
@@ -376,6 +383,14 @@ namespace XREngine
                             ref _vrProcessOpenXrEyePrimaryRecordOverlapTicks,
                             overlapTicks);
                     }
+
+                    /// <summary>
+                    /// Counts one OpenXR frame that requested parallel eye recording but had only one
+                    /// render lane for both eyes. The count ignores <see cref="EnableTracking"/>,
+                    /// because it reports a fallback from the requested path.
+                    /// </summary>
+                    public static void RecordVrOpenXrParallelEyeRecordSerialized()
+                        => Interlocked.Increment(ref _vrProcessOpenXrParallelEyeRecordSerializedFrames);
 
                     public static void RecordVrRenderSubmitTime(TimeSpan submitTime)
                     {

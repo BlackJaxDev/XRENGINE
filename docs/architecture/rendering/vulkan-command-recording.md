@@ -986,6 +986,18 @@ The OpenXR path has a setting named `ParallelCommandBufferRecording` and
 persistent workers for the two eye primaries. That mechanism is not the same as
 desktop command-chain secondary recording.
 
+The eye workers are render work domain lanes. `ResolveOpenXrEyeRenderLaneId`
+maps the left eye to lane 0, which the render thread runs inside
+`RenderWorkDomain.ExecuteAndWait`, and the right eye to lane 1, which a
+background render worker runs. The domain has one lane per background worker
+plus lane 0, so with zero render workers both eyes map to lane 0 and record one
+after the other. Startup prevents that case: `Engine.ResolveExecutionTopology`
+raises a `0` or automatic worker request to 1 when OpenXR starts in this mode.
+An explicit `XRE_RENDER_WORKER_THREADS` value is kept. When the eyes still share
+one lane, `VulkanFrameLoop.ReportSerializedParallelEyeRecording` logs one
+warning and increments
+`vr.process_openxr_parallel_eye_record_serialized_frames` on each frame.
+
 The two-eye API contract treats the first request as left and the second as
 right. Both preparation phases finish before either worker records. Regardless
 of worker completion order, submission builds one graphics-queue `SubmitInfo`

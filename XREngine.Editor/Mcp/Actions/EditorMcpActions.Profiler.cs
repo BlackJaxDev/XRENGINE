@@ -891,6 +891,7 @@ namespace XREngine.Editor.Mcp
                         process_openxr_eye_primary_record_samples = VrStats.VrProcessOpenXrEyePrimaryRecordSamples,
                         process_openxr_eye_primary_record_span_ms = JsonFinite(VrStats.VrProcessOpenXrEyePrimaryRecordSpanMs),
                         process_openxr_eye_primary_record_overlap_ms = JsonFinite(VrStats.VrProcessOpenXrEyePrimaryRecordOverlapMs),
+                        process_openxr_parallel_eye_record_serialized_frames = VrStats.VrProcessOpenXrParallelEyeRecordSerializedFrames,
                         render_submit_ms = JsonFinite(VrStats.VrRenderSubmitTimeMs),
                         xr_wait_frame_block_ms = JsonFinite(VrStats.VrXrWaitFrameBlockTimeMs),
                         xr_end_frame_submit_ms = JsonFinite(VrStats.VrXrEndFrameSubmitTimeMs),

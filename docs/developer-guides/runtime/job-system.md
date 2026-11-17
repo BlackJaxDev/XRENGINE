@@ -370,7 +370,14 @@ var response = await Engine.Jobs.ScheduleRemote(new RemoteJobRequest
   or `1..32` at engine startup).
 - `XR_JOB_WORKER_CAP`: General worker cap (`1..32`, default 16).
 - `XRE_RENDER_WORKER_THREADS`: Renderer-neutral render-domain request (`-1`
-  auto, `0` lane-0 only, or `1..32` background workers; default 0).
+  auto, `0` lane-0 only, or `1..32` background workers; default 0). Startup
+  raises a `0` or `-1` request from settings when a mode needs more lanes:
+  the `WorkerRecord` VR desktop mode raises it to 2, and OpenXR with
+  `ParallelCommandBufferRecording` raises it to 1, so that the two eyes record
+  on lanes 0 and 1 at the same time. A value set in this environment variable
+  is not raised for parallel eye recording. With one lane, the eyes record one
+  after the other; the renderer logs one warning and counts those frames in
+  `vr.process_openxr_parallel_eye_record_serialized_frames`.
 - `XRE_RENDER_WORKER_THREAD_CAP`: Render-domain auto cap (`1..32`, default 8).
 - `XRE_RESERVED_FOREGROUND_THREADS`: Foreground-loop reservation (`-1` auto or
   `1..32`).
