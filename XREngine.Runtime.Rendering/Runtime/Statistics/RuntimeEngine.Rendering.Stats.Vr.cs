@@ -32,6 +32,7 @@ namespace XREngine
                     private static long _vrProcessOpenXrEyePrimaryRecordSpanTicks;
                     private static long _vrProcessOpenXrEyePrimaryRecordOverlapTicks;
                     private static long _vrProcessOpenXrParallelEyeRecordSerializedFrames;
+                    private static long _vrProcessOpenXrParallelEyeRecordFailedBatches;
                     private static long _vrRenderSubmitTimeTicks;
                     private static long _lastFrameVrRenderSubmitTimeTicks;
                     private static long _vrXrWaitFrameBlockTimeTicks;
@@ -122,6 +123,12 @@ namespace XREngine
                     /// </summary>
                     public static long VrProcessOpenXrParallelEyeRecordSerializedFrames =>
                         Volatile.Read(ref _vrProcessOpenXrParallelEyeRecordSerializedFrames);
+                    /// <summary>
+                    /// Gets the number of parallel OpenXR eye batches in this process that ended with an
+                    /// exception. The frame of each such batch ends without projection layers.
+                    /// </summary>
+                    public static long VrProcessOpenXrParallelEyeRecordFailedBatches =>
+                        Volatile.Read(ref _vrProcessOpenXrParallelEyeRecordFailedBatches);
                     public static double VrRenderSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrRenderSubmitTimeTicks).TotalMilliseconds;
                     public static double VrXrWaitFrameBlockTimeMs => TimeSpan.FromTicks(_lastFrameVrXrWaitFrameBlockTimeTicks).TotalMilliseconds;
                     public static double VrXrEndFrameSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrXrEndFrameSubmitTimeTicks).TotalMilliseconds;
@@ -391,6 +398,13 @@ namespace XREngine
                     /// </summary>
                     public static void RecordVrOpenXrParallelEyeRecordSerialized()
                         => Interlocked.Increment(ref _vrProcessOpenXrParallelEyeRecordSerializedFrames);
+
+                    /// <summary>
+                    /// Counts one parallel OpenXR eye batch that ended with an exception. The count
+                    /// ignores <see cref="EnableTracking"/>, because it reports a dropped eye frame.
+                    /// </summary>
+                    public static void RecordVrOpenXrParallelEyeRecordFailedBatch()
+                        => Interlocked.Increment(ref _vrProcessOpenXrParallelEyeRecordFailedBatches);
 
                     public static void RecordVrRenderSubmitTime(TimeSpan submitTime)
                     {

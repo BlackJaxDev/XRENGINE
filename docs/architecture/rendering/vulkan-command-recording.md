@@ -998,6 +998,14 @@ one lane, `VulkanFrameLoop.ReportSerializedParallelEyeRecording` logs one
 warning and increments
 `vr.process_openxr_parallel_eye_record_serialized_frames` on each frame.
 
+A parallel batch that ends with an exception ends its frame without projection
+layers. `VulkanFrameLoop.ReportParallelEyeBatchFailure` (an exception filter, so
+the exception keeps its stack) counts it in
+`vr.process_openxr_parallel_eye_record_failed_batches` and writes the reason to
+`render-readiness-failures.log`, which Release sessions also write. A failed eye
+adds its own line with the eye, frame, lane and thread. Only batches whose two
+eyes recorded give the `openxr_eye_primary_record_span_ms` and overlap samples.
+
 The two-eye API contract treats the first request as left and the second as
 right. Both preparation phases finish before either worker records. Regardless
 of worker completion order, submission builds one graphics-queue `SubmitInfo`

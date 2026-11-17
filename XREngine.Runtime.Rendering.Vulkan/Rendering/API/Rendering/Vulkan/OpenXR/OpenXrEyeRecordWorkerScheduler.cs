@@ -101,19 +101,24 @@ internal sealed class OpenXrEyeRecordWorkerScheduler : IDisposable
 
         OpenXrEyeRecordWorkerResult left = _executor.GetResult(0);
         OpenXrEyeRecordWorkerResult right = _executor.GetResult(1);
-        TimeSpan recordSpan = ComputeOpenXrEyeRecordSpan(
-            left.StartTimestamp,
-            left.EndTimestamp,
-            right.StartTimestamp,
-            right.EndTimestamp);
-        TimeSpan recordOverlap = ComputeOpenXrEyeRecordOverlap(
-            left.StartTimestamp,
-            left.EndTimestamp,
-            right.StartTimestamp,
-            right.EndTimestamp);
-        RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrEyePrimaryRecordTiming(
-            recordSpan,
-            recordOverlap);
+        // Only a batch whose two eyes recorded gives a timing sample. A failed batch ends its
+        // frame without layers, and the failure counter counts it instead.
+        if (left.Success && right.Success)
+        {
+            TimeSpan recordSpan = ComputeOpenXrEyeRecordSpan(
+                left.StartTimestamp,
+                left.EndTimestamp,
+                right.StartTimestamp,
+                right.EndTimestamp);
+            TimeSpan recordOverlap = ComputeOpenXrEyeRecordOverlap(
+                left.StartTimestamp,
+                left.EndTimestamp,
+                right.StartTimestamp,
+                right.EndTimestamp);
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrEyePrimaryRecordTiming(
+                recordSpan,
+                recordOverlap);
+        }
 
         return new OpenXrEyeRecordWorkerBatchResult(left, right, waitTime);
     }

@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using XREngine.Execution;
 using XREngine.Rendering.OutputDomains;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -122,7 +123,7 @@ internal sealed partial class VulkanFrameLoop
             OpenXrEyeRecordWorkerBatchResult batch = result.Batch;
             if (!batch.Left.Success || !batch.Right.Success)
             {
-                LogOpenXrEyeRecordWorkerFailure(in batch);
+                LogOpenXrEyeRecordWorkerFailure(in batch, in firstEye, in secondEye, firstLaneId, secondLaneId);
                 throw CreateOpenXrEyePresentNowFailure(
                     firstEye.OpenXrViewIndex,
                     EVulkanPresentNowReadinessStage.PipelineCompilation,
@@ -141,6 +142,12 @@ internal sealed partial class VulkanFrameLoop
             }
 
             return result.Submitted;
+        }
+        catch (Exception ex) when (ReportParallelEyeBatchFailure(ex, in firstEye))
+        {
+            // Not reached: the filter reports the failure and returns false, so the exception
+            // continues to the caller with its original stack.
+            throw;
         }
         finally
         {
@@ -187,6 +194,23 @@ internal sealed partial class VulkanFrameLoop
             XREngineEnvironmentVariables.RenderWorkerThreads);
     }
 
+    private void ReportOpenXrEyeRecordWorkerFailure(
+        string eye,
+        OpenXrEyeRecordWorkerResult result,
+        in OpenXrEyeSwapchainRenderRequest request,
+        int laneId)
+    {
+        string reason = result.Failure?.SourceException is { } exception
+            ? $"{exception.GetType().Name}: {exception.Message}"
+            : result.ErrorMessage ?? "The eye recording service returned false without an exception.";
+        RenderReadinessFailureLog.Report(
+            "OpenXrParallelEyeRecord",
+            $"OpenXR eye {eye}",
+            $"frame={request.SubmissionMetadata.FrameId} attempt={AcceptedAttemptCount} view={request.OpenXrViewIndex} " +
+            $"image={request.OpenXrImageIndex} lane={laneId} thread={result.ThreadId}",
+            reason);
+    }
+
     private void DestroyOpenXrEyeRecordWorkers()
         => _commandRuntime.OpenXrEyeWorkers.Dispose();
 
@@ -208,8 +232,41 @@ internal sealed partial class VulkanFrameLoop
             prepared.DescriptorGeneration,
             OwnedByOpenXrPrimaryCache: true);
 
-    private static void LogOpenXrEyeRecordWorkerFailure(in OpenXrEyeRecordWorkerBatchResult batch)
+    /// <summary>
+    /// Counts a parallel eye batch that ended with an exception and writes its reason to
+    /// <see cref="RenderReadinessFailureLog"/>, which Release sessions also write. The frame of
+    /// such a batch ends without projection layers. The method runs as an exception filter, so it
+    /// returns false and the exception keeps its stack; only the failure path allocates.
+    /// </summary>
+    private bool ReportParallelEyeBatchFailure(Exception exception, in OpenXrEyeSwapchainRenderRequest firstEye)
     {
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrParallelEyeRecordFailedBatch();
+        RenderReadinessFailureLog.Report(
+            "OpenXrParallelEyeBatch",
+            "OpenXR eyes",
+            $"frame={firstEye.SubmissionMetadata.FrameId} attempt={AcceptedAttemptCount} image={firstEye.OpenXrImageIndex}",
+            $"{exception.GetType().Name}: {exception.Message}");
+        return false;
+    }
+
+    /// <summary>
+    /// Writes the reason of each failed eye of a parallel batch to
+    /// <see cref="RenderReadinessFailureLog"/> (rate-limited, also in Release sessions): the eye,
+    /// the frame, the swapchain image, the render lane, the managed thread and the exception type
+    /// and message, or the false result of the recording service.
+    /// </summary>
+    private void LogOpenXrEyeRecordWorkerFailure(
+        in OpenXrEyeRecordWorkerBatchResult batch,
+        in OpenXrEyeSwapchainRenderRequest firstEye,
+        in OpenXrEyeSwapchainRenderRequest secondEye,
+        int firstLaneId,
+        int secondLaneId)
+    {
+        if (!batch.Left.Success)
+            ReportOpenXrEyeRecordWorkerFailure("left", batch.Left, in firstEye, firstLaneId);
+        if (!batch.Right.Success)
+            ReportOpenXrEyeRecordWorkerFailure("right", batch.Right, in secondEye, secondLaneId);
+
         Debug.VulkanWarningEvery(
             "OpenXR.Vulkan.ParallelCommandBufferRecording.RecordFailure",
             TimeSpan.FromSeconds(1),
