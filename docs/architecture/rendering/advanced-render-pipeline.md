@@ -708,6 +708,21 @@ preparation completed. An output-arena allocation failure defers the entire
 preparation attempt until boundary growth succeeds. A diagnostic slice must not
 be published as GPU-deformed output.
 
+The deformation output has three slots (`AdvancedPreparationOptions.DeformedArena.FrameSlotCount`),
+selected by the preparation frame id modulo 3. `AdvancedGpuDeformationResources.TryBeginFrame`
+opens a slot only when its producer fence was submitted and signaled and, on Vulkan, the native
+reuse query reports no command buffer that still uses the slot's output buffer; it then selects a
+static input generation. When either fails, the whole preparation defers. The
+`completedValue` argument (the frame id minus 1) is not used for the deformation slot; only the
+upload and deformed-vertex arenas compare it with their own recorded frame ids.
+`LastBeginFrameDeferral` (`EAdvancedDeformationSlotDeferral`) names the failed check, and
+`GetBeginFrameDeferralCount` keeps process totals. `XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS=1`
+writes one line for each such deferral to the auxiliary log `advanced-deformation-slot.log` (also
+in Release sessions): the frame id and render frame, the slot, the failed check, the reuse status
+and authority, the frame that produced the slot and its age in frames, the producer fence's timeline
+target and the completed timeline value, the active viewport (`openxr-stereo`, `left-eye`,
+`right-eye`, `window` or `none`), the requested consumers, and the totals of every reason.
+
 ### Extraction lookups
 
 `AdvancedPreparationExtractor.Build` reads each skinned draw's mesh preparation

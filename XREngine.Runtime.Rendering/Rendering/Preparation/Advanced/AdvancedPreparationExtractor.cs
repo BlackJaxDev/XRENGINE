@@ -324,6 +324,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 publicationReference.Publication.DatabaseEpoch,
                 deformationSourceGeneration))
         {
+            LogDeformationSlotDeferral(frameId, _deformedArena.CurrentFrameSlot, consumers);
             _deformedArena.EndFrame(frameId);
             _frameUploadArena.EndFrame(frameId);
             return CreateDeferredPublication(

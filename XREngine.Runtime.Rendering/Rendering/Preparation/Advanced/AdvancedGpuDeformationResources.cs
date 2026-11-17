@@ -30,6 +30,8 @@ public sealed partial class AdvancedGpuDeformationResources :
     private readonly Dictionary<(XRMeshRenderer Renderer, XRMesh Mesh), AdvancedGpuDeformationPoseEntry>
         _poseEntries;
     private readonly XRGpuFence?[] _slotProducerFences;
+    // Frame id of the preparation that inserted each slot's producer fence. Diagnostics only.
+    private readonly ulong[] _slotProducerFrameIds;
     private readonly bool[] _slotOutputValid;
     private readonly bool[] _slotReusePoisoned;
     private readonly AdvancedPhysicsOutputSource[] _slotPhysicsSources;
@@ -144,6 +146,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             _frameSlotCount,
             initialVertices);
         _slotProducerFences = new XRGpuFence?[_frameSlotCount];
+        _slotProducerFrameIds = new ulong[_frameSlotCount];
         _slotOutputValid = new bool[_frameSlotCount];
         _slotReusePoisoned = new bool[_frameSlotCount];
         _slotPhysicsSources = new AdvancedPhysicsOutputSource[_frameSlotCount];
@@ -458,8 +461,9 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         _ = completedValue;
+        LastBeginFrameDeferral = EAdvancedDeformationSlotDeferral.None;
         if (!TryAcquireOutputSlot(currentFrameSlot))
-            return false;
+            return RecordBeginFrameDeferral(LastOutputReuseDeferral);
         ReleaseStaticGenerationPin(currentFrameSlot);
         _staticGeneration.EnsureInitialized();
         return TryOpenFrame(
@@ -493,11 +497,12 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         _ = completedValue;
+        LastBeginFrameDeferral = EAdvancedDeformationSlotDeferral.None;
         if (!TryAcquireOutputSlot(currentFrameSlot))
-            return false;
+            return RecordBeginFrameDeferral(LastOutputReuseDeferral);
         ReleaseStaticGenerationPin(currentFrameSlot);
         if (!TrySelectStaticGeneration(scene, databaseEpoch, sourceGeneration))
-            return false;
+            return RecordBeginFrameDeferral(EAdvancedDeformationSlotDeferral.StaticGeneration);
 
         return TryOpenFrame(
             frameId,
@@ -515,11 +520,10 @@ public sealed partial class AdvancedGpuDeformationResources :
         bool outputReplaced = false;
         if (requiredOutputVertexCapacity > _outputBuffers.VertexCapacity)
         {
-            if (!TryAcquireAllOutputSlots() ||
-                !TryReplaceOutputBuffers(requiredOutputVertexCapacity))
-            {
-                return false;
-            }
+            if (!TryAcquireAllOutputSlots())
+                return RecordBeginFrameDeferral(LastOutputReuseDeferral);
+            if (!TryReplaceOutputBuffers(requiredOutputVertexCapacity))
+                return RecordBeginFrameDeferral(EAdvancedDeformationSlotDeferral.OutputGrowth);
             ReleaseAllStaticGenerationPins();
             outputReplaced = true;
         }
@@ -898,6 +902,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             }
 
             _slotProducerFences[_currentFrameSlot] = producerFence;
+            _slotProducerFrameIds[_currentFrameSlot] = _frameId;
             _slotOutputValid[_currentFrameSlot] = executed;
             _slotPhysicsSources[_currentFrameSlot] = executed ? _pendingPhysicsSource : default;
             return executed;

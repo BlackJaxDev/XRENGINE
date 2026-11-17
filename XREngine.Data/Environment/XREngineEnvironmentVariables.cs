@@ -135,6 +135,14 @@ public static class XREngineEnvironmentVariables
     /// </summary>
     public const string AdvancedDirectionalShadowOwnerDiagnostics = "XRE_ADVANCED_DIRECTIONAL_SHADOW_OWNER_DIAGNOSTICS";
     /// <summary>
+    /// Set to <c>1</c> to write one line to <c>advanced-deformation-slot.log</c> each time the shared
+    /// Advanced preparation defers because the GPU deformation frame cannot open: the failed check
+    /// (output slot fence, native buffer consumers, static generation), the slot's producer frame and
+    /// age, the fence's timeline target and completed value, the active viewport and process totals.
+    /// Off by default.
+    /// </summary>
+    public const string AdvancedDeformationSlotDiagnostics = "XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS";
+    /// <summary>
     /// OpenXR eye mesh-operation reuse across frames (Vulkan). On by default. <c>0</c> materializes
     /// every eye mesh request each frame. <c>witness</c> materializes each reused request again,
     /// enqueues the fresh operation, and logs structural differences to <c>openxr-mesh-cohort-witness.log</c>.
