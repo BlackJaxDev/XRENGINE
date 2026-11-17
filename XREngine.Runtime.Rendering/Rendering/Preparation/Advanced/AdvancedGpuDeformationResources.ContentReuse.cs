@@ -14,6 +14,13 @@ public sealed partial class AdvancedGpuDeformationResources
     /// <summary>Identifies the completion authority responsible for the last reuse decision.</summary>
     public string LastOutputReuseAuthority { get; private set; } = "None";
 
+    /// <summary>
+    /// Diagnostics only: the backend's description of the last native reuse refusal (the
+    /// completion frontier that held the output buffer), written only while the deformation slot
+    /// diagnostics are on.
+    /// </summary>
+    public string? LastNativeReuseDetail { get; private set; }
+
     /// <summary>The check that refused the last output slot acquisition, or None.</summary>
     public EAdvancedDeformationSlotDeferral LastOutputReuseDeferral { get; private set; }
 
@@ -344,6 +351,9 @@ public sealed partial class AdvancedGpuDeformationResources
                 EGpuBufferContentReuseStatus.Ready)
             {
                 LastOutputReuseDeferral = EAdvancedDeformationSlotDeferral.NativeConsumers;
+                LastNativeReuseDetail = AdvancedPreparationExtractor.DeformationSlotDiagnosticsEnabled
+                    ? capability.DescribeBufferContentReuse(_outputBuffers.Buffers[slot])
+                    : null;
                 return false;
             }
         }

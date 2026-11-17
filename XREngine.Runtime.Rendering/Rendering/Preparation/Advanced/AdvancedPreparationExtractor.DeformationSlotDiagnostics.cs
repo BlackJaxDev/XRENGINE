@@ -115,6 +115,6 @@ public sealed partial class AdvancedPreparationExtractor
         Debug.WriteAuxiliaryLog(
             DeformationSlotDiagnosticsLogFileName,
             FormattableString.Invariant(
-                $"frame={frameId} renderFrame={RuntimeEngine.Rendering.State.RenderFrameId} slot={slot} reason={deformation.LastBeginFrameDeferral} status={deformation.LastOutputReuseStatus} authority={deformation.LastOutputReuseAuthority} producerFrame={producerFrameId} frameAge={(producerFrameId == 0UL ? 0UL : frameId - producerFrameId)} fenceTarget={fenceTarget} fenceCompleted={fenceCompleted} viewport={viewportKind} consumers={consumers} totals:{totals}"));
+                $"frame={frameId} renderFrame={RuntimeEngine.Rendering.State.RenderFrameId} slot={slot} reason={deformation.LastBeginFrameDeferral} status={deformation.LastOutputReuseStatus} authority={deformation.LastOutputReuseAuthority} producerFrame={producerFrameId} frameAge={(producerFrameId == 0UL ? 0UL : frameId - producerFrameId)} fenceTarget={fenceTarget} fenceCompleted={fenceCompleted} viewport={viewportKind} consumers={consumers} native=[{(deformation.LastBeginFrameDeferral == EAdvancedDeformationSlotDeferral.NativeConsumers ? deformation.LastNativeReuseDetail ?? "none" : "n/a")}] totals:{totals}"));
     }
 }

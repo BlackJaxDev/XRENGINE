@@ -208,6 +208,8 @@ internal sealed partial class VulkanFrameLoop
 
     private void DrainRetiredResourcesFromCompletedSubmittedFrameSlots()
     {
+        // Let the completion frontier follow the GPU before the eye frame reuses resources.
+        _ = ResourceRuntime.SweepLifetimeSubmissionCompletions();
         ResourceRuntime.Descriptors.DrainReleasedMaterialDescriptorClosures();
         _commandRuntime.DrainRetiredSynchronousSubmissions();
         using VulkanDesktopFrameRetirementScope retirement =

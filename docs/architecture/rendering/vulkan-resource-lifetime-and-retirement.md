@@ -32,6 +32,35 @@ registries, retirement queues, or completion watermarks.
    forced-retirement scope. It still passes through the same completion path
    and records forced-destruction diagnostics.
 
+## Completion Frontier
+
+Each queue domain (graphics, transfer, other) has a completion frontier
+(`VulkanResourceLifetimeTracker.CompletedGraphicsSequence` and the others). It stops one below the
+oldest submission of the domain whose completion nobody has observed yet. A submission owner
+reports completion through `CompleteTrackedFence` or `CompleteTrackedTimeline`, and some owners do
+that only later (a desktop frame slot when it is reused, a GPU-statistics readback when it is read,
+an Advanced queue-overlap slot when it is reused). Until then, every newer resource looked in use, so
+`QueryBufferContentReuse` refused buffers whose work had already finished.
+
+`VulkanResourceLifetimeTracker.SweepCompletions` closes that gap without waiting. It copies up to 64
+unobserved submissions under `SyncRoot`, queries each one outside the lock
+(`vkGetSemaphoreCounterValue` for a timeline submission, `vkGetFenceStatus` for a fence submission;
+`VulkanResourceRuntime.SweepLifetimeSubmissionCompletions`), and marks the completed ones under the
+lock with `MarkQueueSequenceCompletedNoLock`, the call that the owners use. A completed later
+submission on a queue also marks the earlier ones on that queue, because a signal covers every
+command submitted before it. Entries stay in the list until their owner removes them. The sweep
+runs at the start of each desktop frame transaction, in the eye-frame retirement drain, and in
+`QueryBufferContentReuse` before it reports `PendingCompletion`. It allocates nothing.
+
+Each `VulkanLifetimeSubmission` also records a kind id (`VulkanLifetimeSubmissionKinds`, the
+submission diagnostic kind or the retirement marker operation) and its submit time, for
+diagnostics. `VulkanResourceRuntime.DescribeBufferContentReuse` (and
+`IGpuBufferContentReuseCapability.DescribeBufferContentReuse`) reports, for a buffer, the
+completed, observed and last graphics sequences, the buffer's last graphics use and queued
+references, the number of unobserved graphics submissions, and the oldest one (sequence, queue,
+kind and age). The Advanced deformation slot log prints it on `NativeConsumers` lines
+(`XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS=1`).
+
 ## Ownership Boundaries
 
 - `VulkanBufferResourceManager` owns buffer allocator selection, engine buffer

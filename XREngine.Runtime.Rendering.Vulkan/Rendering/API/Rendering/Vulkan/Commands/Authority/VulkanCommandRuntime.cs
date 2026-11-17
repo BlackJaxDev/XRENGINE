@@ -635,7 +635,9 @@ internal sealed partial class VulkanCommandRuntime
                 sequence,
                 0,
                 0,
-                unchecked((ulong)fence.Handle)));
+                unchecked((ulong)fence.Handle),
+                KindId: VulkanLifetimeSubmissionKinds.GetId(operation),
+                SubmitTimestamp: System.Diagnostics.Stopwatch.GetTimestamp()));
         }
         return result;
     }
