@@ -991,10 +991,9 @@ maps the left eye to lane 0, which the render thread runs inside
 `RenderWorkDomain.ExecuteAndWait`, and the right eye to lane 1, which a
 background render worker runs. The domain has one lane per background worker
 plus lane 0, so with zero render workers both eyes map to lane 0 and record one
-after the other. Startup prevents that case: `Engine.ResolveExecutionTopology`
-raises a `0` or automatic worker request to 1 when OpenXR starts in this mode.
-An explicit `XRE_RENDER_WORKER_THREADS` value is kept. When the eyes still share
-one lane, `VulkanFrameLoop.ReportSerializedParallelEyeRecording` logs one
+after the other. Startup does not add a render worker for this mode; set
+`XRE_RENDER_WORKER_THREADS` to 1 or more for separate eye lanes. When the eyes
+share one lane, `VulkanFrameLoop.ReportSerializedParallelEyeRecording` logs one
 warning and increments
 `vr.process_openxr_parallel_eye_record_serialized_frames` on each frame.
 

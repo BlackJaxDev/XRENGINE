@@ -87,11 +87,10 @@ domain and retains the batch instead of silently recycling partial output.
 - `XR_JOB_WORKER_CAP`: general worker cap (`1..32`).
 - `XRE_RENDER_WORKER_THREADS`: render-domain workers used by renderer-neutral
   preparation and lane-affine backend recording (`-1` for auto, `0` for lane 0
-  only, or `1..32` background lanes). When OpenXR starts with the
-  `ParallelCommandBufferRecording` view mode and this variable is not set, the
-  engine uses at least 1 worker, so the two eyes record in parallel. If you set
-  this variable to `0`, the eyes record one after the other and the log shows a
-  warning.
+  only, or `1..32` background lanes). The OpenXR
+  `ParallelCommandBufferRecording` view mode records the two eyes in parallel
+  only with 1 or more workers. With `0`, the eyes record one after the other and
+  the log shows a warning.
 - `XRE_RENDER_WORKER_THREAD_CAP`: render-domain background-lane auto cap
   (`1..32`).
 - `XRE_RESERVED_FOREGROUND_THREADS`: foreground-loop reservation (`-1` for auto,
