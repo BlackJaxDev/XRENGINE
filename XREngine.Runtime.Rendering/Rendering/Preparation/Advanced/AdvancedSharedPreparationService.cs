@@ -231,6 +231,7 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             {
                 AdvancedPreparationPublication built = _extractor.Build(
                     world, viewSet, consumers, submissionStrategy, requested, snapshot);
+                _extractor.NotePreparationOutcome(built.GpuResourcesPublished);
                 _buildTicks += Stopwatch.GetTimestamp() - buildStarted;
                 _buildAllocatedBytes +=
                     GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;

@@ -891,13 +891,13 @@ public sealed partial class AdvancedGpuDeformationResources :
             {
                 // Accepted work without a completion marker has unknown lifetime.
                 // Poison the slot and retain its static source generation.
-                _slotReusePoisoned[_currentFrameSlot] = true;
+                PoisonCurrentSlot(EAdvancedDeformationSlotPoisonCause.NoProducerFence, null);
                 return false;
             }
             if (_slotProducerFences[_currentFrameSlot] is not null)
             {
                 producerFence.Dispose();
-                _slotReusePoisoned[_currentFrameSlot] = true;
+                PoisonCurrentSlot(EAdvancedDeformationSlotPoisonCause.ProducerFenceAlreadyPresent, null);
                 return false;
             }
 
@@ -907,9 +907,9 @@ public sealed partial class AdvancedGpuDeformationResources :
             _slotPhysicsSources[_currentFrameSlot] = executed ? _pendingPhysicsSource : default;
             return executed;
         }
-        catch
+        catch (Exception ex)
         {
-            _slotReusePoisoned[_currentFrameSlot] = true;
+            PoisonCurrentSlot(EAdvancedDeformationSlotPoisonCause.DispatchException, ex);
             throw;
         }
     }

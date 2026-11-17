@@ -46,6 +46,46 @@ public sealed partial class AdvancedGpuDeformationResources
             fence.TryGetTimelineDiagnostic(out fenceTarget, out fenceCompleted);
     }
 
+    private readonly long[] _slotPoisonCounts = new long[(int)EAdvancedDeformationSlotPoisonCause.Count];
+
+    /// <summary>Process total of slots poisoned for <paramref name="cause"/>.</summary>
+    public long GetSlotPoisonCount(EAdvancedDeformationSlotPoisonCause cause)
+        => (uint)cause < (uint)_slotPoisonCounts.Length ? Volatile.Read(ref _slotPoisonCounts[(int)cause]) : 0L;
+
+    /// <summary>Bit <c>n</c> is set when output slot <c>n</c> is poisoned (never reusable again).</summary>
+    public uint PoisonedSlotMask
+    {
+        get
+        {
+            uint mask = 0u;
+            for (int slot = 0; slot < _slotReusePoisoned.Length && slot < 32; slot++)
+                if (_slotReusePoisoned[slot])
+                    mask |= 1u << slot;
+            return mask;
+        }
+    }
+
+    /// <summary>Number of deformation output slots.</summary>
+    public int OutputSlotCount => _frameSlotCount;
+
+    /// <summary>
+    /// Marks the current output slot as never reusable, counts the cause, and writes one
+    /// diagnostic line when <see cref="XREngineEnvironmentVariables.AdvancedDeformationSlotDiagnostics"/>
+    /// is on. A poisoned slot defers every later preparation that lands on it.
+    /// </summary>
+    private void PoisonCurrentSlot(EAdvancedDeformationSlotPoisonCause cause, Exception? exception)
+    {
+        _slotReusePoisoned[_currentFrameSlot] = true;
+        if ((uint)cause < (uint)_slotPoisonCounts.Length)
+            Interlocked.Increment(ref _slotPoisonCounts[(int)cause]);
+        if (!AdvancedPreparationExtractor.DeformationSlotDiagnosticsEnabled)
+            return;
+        Debug.WriteAuxiliaryLog(
+            AdvancedPreparationExtractor.DeformationSlotDiagnosticsLogFileName,
+            FormattableString.Invariant(
+                $"POISON frame={_frameId} renderFrame={RuntimeEngine.Rendering.State.RenderFrameId} slot={_currentFrameSlot} cause={cause} poisonedMask=0x{PoisonedSlotMask:X} slots={_frameSlotCount} exception={(exception is null ? "none" : exception.GetType().Name + ": " + exception.Message)}"));
+    }
+
     private bool RecordBeginFrameDeferral(EAdvancedDeformationSlotDeferral reason)
     {
         LastBeginFrameDeferral = reason;

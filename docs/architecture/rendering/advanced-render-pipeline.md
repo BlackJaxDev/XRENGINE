@@ -723,6 +723,15 @@ and authority, the frame that produced the slot and its age in frames, the produ
 target and the completed timeline value, the active viewport (`openxr-stereo`, `left-eye`,
 `right-eye`, `window` or `none`), the requested consumers, and the totals of every reason.
 
+A slot is poisoned (never reused until the renderer is retired) when the backend accepted
+deformation work without a completion fence, when the slot still held a fence, or when the dispatch
+threw (`EAdvancedDeformationSlotPoisonCause`). Every later preparation that lands on a poisoned slot
+defers, so one poisoned slot of three defers a third of the preparations, and three poisoned slots
+defer all of them. With the same variable, the log also gets a `POISON` line for each poisoned slot
+(cause, frame, mask and exception), and a `SUMMARY` line every 5 seconds with the published and
+deferred builds since the last summary, the last deferral reason, the poisoned slot mask
+(`PoisonedSlotMask`) and the process totals of every deferral reason and poison cause.
+
 ### Extraction lookups
 
 `AdvancedPreparationExtractor.Build` reads each skinned draw's mesh preparation
