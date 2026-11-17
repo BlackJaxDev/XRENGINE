@@ -1108,9 +1108,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.HDRSceneTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
                     .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName));
-                // OpenXR eye outputs without a shading debug view do not declare the diagnostics image.
+                // OpenXR eye outputs without a shading debug view do not declare the diagnostics
+                // image. They bind the 1x1 placeholder instead, which the graph keeps in General.
                 if (hasShadingDiagnostics)
                     builder.ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnostics));
+                else if (context.HasResource(AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder))
+                    builder.ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder));
                 if (requiresMaterialSurfaceExports)
                 {
                     builder.WriteTexture(Tex(AdvancedRenderPipeline.NormalTextureName))

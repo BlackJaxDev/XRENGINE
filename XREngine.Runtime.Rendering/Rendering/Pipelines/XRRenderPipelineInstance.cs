@@ -2203,6 +2203,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         _failedGenerationRetryAfterTimestamp = System.Diagnostics.Stopwatch.GetTimestamp()
             + StopwatchTicksFromMilliseconds(FailedGenerationRetryBackoffMilliseconds);
         SetField(ref _lastResourceGenerationFailure, reason, nameof(LastResourceGenerationFailure));
+        RenderReadinessFailureLog.Report("ResourceGeneration", ProfilerKey, key.ToString(), reason);
 
         Debug.RenderingWarning(
             "[RenderResources] Generation retry backoff armed. Pipeline={0} Reason={1} Target={2} RetryAfterMs={3:F0}",

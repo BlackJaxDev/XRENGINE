@@ -142,7 +142,7 @@ internal sealed partial class VulkanCommandRuntime
                 payload.Request.AdvancedEdgeHalfRateShading, payload.Request.AdvancedEdgeHalfRateRadius,
                 payload.Request.AdvancedEdgeHalfRateDebugTint, closure.UsesMultisampleVisibility) |
             (payload.Request.DecalBufferEnabled && closure.HasDecalBuffer ? NativeDecalBufferShadingFlag : 0u) |
-            (closure.ShadingDiagnosticsAliased ? ShadingDiagnosticsDisabledFlag : 0u), depthSlices,
+            (closure.ShadingDiagnosticsPlaceholder ? ShadingDiagnosticsDisabledFlag : 0u), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
             checked((uint)(closure.KernelTiles.NativeSize / 16u)),
@@ -526,11 +526,13 @@ internal sealed partial class VulkanCommandRuntime
     /// declare that image, binding 18 holds the metadata image, which the shading passes only
     /// sample, so no write transition is emitted for it.
     /// </summary>
+    /// <summary>
+    /// Moves the diagnostics binding's image (the real diagnostics image or the 1x1 placeholder)
+    /// to General for storage access. The placeholder starts undefined, so it needs the same
+    /// transition as the real image.
+    /// </summary>
     private void TransitionNativeDiagnosticsOutput(CommandBuffer commandBuffer, in VulkanAdvancedNativeComputeClosure closure)
-    {
-        if (!closure.ShadingDiagnosticsAliased)
-            TransitionNativeOutput(commandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
-    }
+        => TransitionNativeOutput(commandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
 
     private void TransitionNativeOutput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)
         => EmitAdvancedVisibilityImageBarrier(commandBuffer, group, 0, view,

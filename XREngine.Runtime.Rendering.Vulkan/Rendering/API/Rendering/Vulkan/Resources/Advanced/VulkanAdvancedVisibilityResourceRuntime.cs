@@ -2069,7 +2069,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 out VulkanPhysicalImageGroup? depthMultisample,
                 out VulkanPhysicalImageGroup? selectionMultisample,
                 out VulkanPhysicalImageGroup? samplePositionMultisample,
-                out bool shadingDiagnosticsAliased,
+                out bool shadingDiagnosticsPlaceholder,
+                out string? missingImage,
                 msaaSampleCount,
                 ambientOcclusionTargetName) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, activeTiles, out VulkanFrozenBufferBarrier active) ||
@@ -2083,7 +2084,10 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, decalFroxels, out VulkanFrozenBufferBarrier decalFroxelGrid) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, decalIndices, out VulkanFrozenBufferBarrier decalIndexList))
         {
-            reason = "The frozen graph is missing one or more required advanced native compute images or buffers.";
+            reason = missingImage is not null
+                ? $"The frozen graph has no allocation for the required advanced native compute image '{missingImage}'."
+                : "The frozen graph is missing one or more required advanced native compute buffers " +
+                  $"({DescribeMissingFrozenBuffers(graphPlan.Barriers.BufferBarriers, activeTiles, kernelTiles, counters, dispatchArgs, kernelCounts, froxels, lightIndices, lightingCounters, decalFroxels, decalIndices)}).";
             return false;
         }
 
@@ -2116,6 +2120,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         if (!TryValidateNativeComputeResources(
                 in generation.State,
                 identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics,
+                shadingDiagnosticsPlaceholder,
                 ambientOcclusion,
                 frameSlot,
                 activeTiles, kernelTiles, counters, dispatchArgs, kernelCounts, froxels,
@@ -2273,7 +2278,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 viewIndex)
             {
                 DdgiSurface = ddgiSurface,
-                ShadingDiagnosticsAliased = shadingDiagnosticsAliased,
+                ShadingDiagnosticsPlaceholder = shadingDiagnosticsPlaceholder,
                 RvcTelemetryCounters = rvcTelemetry,
                 RvcIdentityArrayResource = rvcIdentityArrayResource,
                 RvcDepthArrayResource = rvcDepthArrayResource,
@@ -2345,24 +2350,27 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         out VulkanPhysicalImageGroup? depthMultisample,
         out VulkanPhysicalImageGroup? selectionMultisample,
         out VulkanPhysicalImageGroup? samplePositionMultisample,
-        out bool shadingDiagnosticsAliased,
+        out bool shadingDiagnosticsPlaceholder,
+        out string? missingImage,
         uint msaaSampleCount,
         string ambientOcclusionTargetName)
     {
-        bool found = allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.Identity, out identity);
-        found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.Metadata, out metadata);
-        found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.DepthStencil, out depth);
-        found &= allocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.HDRSceneTextureName, out hdr);
-        found &= allocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.VelocityTextureName, out velocity);
-        found &= allocator.TryGetPhysicalGroupForResource(AdvancedShadingResourceNames.ReactiveMask, out reactive);
+        missingImage = null;
+        bool found = Find(allocator, AdvancedVisibilityResourceNames.Identity, out identity, ref missingImage);
+        found &= Find(allocator, AdvancedVisibilityResourceNames.Metadata, out metadata, ref missingImage);
+        found &= Find(allocator, AdvancedVisibilityResourceNames.DepthStencil, out depth, ref missingImage);
+        found &= Find(allocator, DefaultRenderPipeline.HDRSceneTextureName, out hdr, ref missingImage);
+        found &= Find(allocator, DefaultRenderPipeline.VelocityTextureName, out velocity, ref missingImage);
+        found &= Find(allocator, AdvancedShadingResourceNames.ReactiveMask, out reactive, ref missingImage);
         // OpenXR eye outputs without a shading debug view do not declare the diagnostics image.
-        // Binding 18 then holds the metadata image (also R32_UINT storage, in General layout),
-        // and the shading push flag ShadingDiagnosticsDisabledFlag stops every store to it.
-        shadingDiagnosticsAliased = !allocator.TryGetPhysicalGroupForResource(
+        // Binding 18 then holds the dedicated 1x1 placeholder image, and the shading push flag
+        // ShadingDiagnosticsDisabledFlag stops every store to it. The placeholder is not bound
+        // anywhere else, so the shading dispatches have no read/write hazard on it.
+        shadingDiagnosticsPlaceholder = !allocator.TryGetPhysicalGroupForResource(
             AdvancedShadingResourceNames.ShadingDiagnostics, out shadingDiagnostics);
-        if (shadingDiagnosticsAliased)
-            shadingDiagnostics = metadata;
-        found &= allocator.TryGetPhysicalGroupForResource(ambientOcclusionTargetName, out ambientOcclusion);
+        if (shadingDiagnosticsPlaceholder)
+            found &= Find(allocator, AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder, out shadingDiagnostics, ref missingImage);
+        found &= Find(allocator, ambientOcclusionTargetName, out ambientOcclusion, ref missingImage);
         identityMultisample = null;
         metadataMultisample = null;
         depthMultisample = null;
@@ -2370,13 +2378,44 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         samplePositionMultisample = null;
         if (msaaSampleCount > 1u)
         {
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.IdentityMultisample, out identityMultisample);
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.MetadataMultisample, out metadataMultisample);
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.DepthStencilMultisample, out depthMultisample);
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.SelectionMultisample, out selectionMultisample);
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.SamplePositionMultisample, out samplePositionMultisample);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.IdentityMultisample, out identityMultisample, ref missingImage);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.MetadataMultisample, out metadataMultisample, ref missingImage);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.DepthStencilMultisample, out depthMultisample, ref missingImage);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.SelectionMultisample, out selectionMultisample, ref missingImage);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.SamplePositionMultisample, out samplePositionMultisample, ref missingImage);
         }
         return found;
+
+        // Looks up one image and keeps the name of the first image that has no allocation, so
+        // the readiness failure names it.
+        static bool Find(
+            VulkanResourceAllocator allocator,
+            string name,
+            out VulkanPhysicalImageGroup? group,
+            ref string? missing)
+        {
+            if (allocator.TryGetPhysicalGroupForResource(name, out group))
+                return true;
+            missing ??= name;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Lists the native compute buffers that the frozen graph does not hold. Only the failure
+    /// path calls it.
+    /// </summary>
+    private static string DescribeMissingFrozenBuffers(
+        ReadOnlySpan<VulkanFrozenBufferBarrier> barriers,
+        params string[] names)
+    {
+        var missing = new System.Collections.Generic.List<string>();
+        foreach (string name in names)
+        {
+            if (!TryFindFrozenBuffer(barriers, name, out _))
+                missing.Add(name);
+        }
+        return missing.Count == 0 ? "none" : string.Join(", ", missing);
     }
 
     private static bool TryFindFrozenBuffer(

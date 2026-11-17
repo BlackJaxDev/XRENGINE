@@ -467,6 +467,7 @@ public partial class AdvancedRenderPipeline
             .RequiresStorageUsage(storage)
             .Factory(() => CreateVisibilityTexture(
                 name,
+                size,
                 internalFormat,
                 pixelFormat,
                 pixelType,
@@ -514,8 +515,16 @@ public partial class AdvancedRenderPipeline
                 target,
                 usage));
 
+    /// <summary>
+    /// Creates the texture of one visibility-family resource. The extent follows the declared size
+    /// policy: the depth tile grid uses one texel per 64x64 tile, an absolute policy uses its pixel
+    /// size (for example the 1x1 shading diagnostics placeholder), and every other resource uses
+    /// the internal resolution. The resource manager rejects a texture whose extent differs from
+    /// the declared policy, so the factory must resolve the same extent.
+    /// </summary>
     private XRTexture CreateVisibilityTexture(
         string name,
+        RenderResourceSizePolicy size,
         EPixelInternalFormat internalFormat,
         EPixelFormat pixelFormat,
         EPixelType pixelType,
@@ -527,8 +536,11 @@ public partial class AdvancedRenderPipeline
         bool isDepthTileGrid = name is
             AdvancedVisibilityResourceNames.CurrentDepthPyramid or
             AdvancedVisibilityResourceNames.PreviousDepthPyramid;
-        uint width = isDepthTileGrid ? DivideRoundUp(InternalWidth, 64u) : InternalWidth;
-        uint height = isDepthTileGrid ? DivideRoundUp(InternalHeight, 64u) : InternalHeight;
+        bool absoluteSize = size.SizeClass == RenderResourceSizeClass.AbsolutePixels;
+        uint width = isDepthTileGrid ? DivideRoundUp(InternalWidth, 64u)
+            : absoluteSize ? Math.Max(1u, size.Width) : InternalWidth;
+        uint height = isDepthTileGrid ? DivideRoundUp(InternalHeight, 64u)
+            : absoluteSize ? Math.Max(1u, size.Height) : InternalHeight;
         XRTexture texture;
         if (layers > 1u)
         {

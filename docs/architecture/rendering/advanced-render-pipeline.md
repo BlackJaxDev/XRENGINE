@@ -128,12 +128,15 @@ preamble define `XR_ADV_NATIVE_SHADING_FAMILY` selects the family:
   debug view and no debug overlays are on. No frame pass reads that image, and in
   the 2688x2688 VR benchmark it costs about 55 MB per eye output. The resource profile then sets a
   feature bit that removes the declaration, and the shading stage does not declare
-  the image. Binding 18 (the OpenGL image unit 3) holds the visibility metadata image
-  in its place, which is also R32_UINT storage. Push flag bit 31
-  (`XR_ADV_SHADING_DIAGNOSTICS_DISABLED`) stops every store to it in the shading,
-  background and foveated fill kernels, and Vulkan records no write transition for
-  it. The desktop output and offscreen captures keep the image. Set a shading debug
-  view to capture it on an eye output.
+  the image. On Vulkan, binding 18 then holds a dedicated 1x1 R32_UINT storage image
+  (`AdvancedShading.ShadingDiagnosticsPlaceholder`, one layer per view), which the same
+  feature bit declares with the resource generation. No other binding refers to it, so
+  the shading dispatches have no read/write hazard against the visibility metadata image.
+  The OpenGL image unit 3 holds the visibility metadata image in its place, which is also
+  R32_UINT storage. Push flag bit 31 (`XR_ADV_SHADING_DIAGNOSTICS_DISABLED`) stops every
+  store to the placeholder or the metadata image in the shading, background and foveated
+  fill kernels. The desktop output and offscreen captures keep the image. Set a shading
+  debug view to capture it on an eye output.
 - Single-sample OpenXR eye outputs on Vulkan also omit the visibility selection image
   (`Advanced.Visibility.Selection`, R32_UINT, about 55 MB per eye output at 2688x2688)
   while no visibility debug output is on. Only editor picking (which rejects eye

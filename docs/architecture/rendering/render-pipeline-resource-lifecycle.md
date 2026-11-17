@@ -147,6 +147,16 @@ successor asset.
   render state of the thread. The Advanced AO mask uses the eye's viewport and the
   pipeline's stereo flag to decide the OpenXR Vulkan eye safe path, so keys built
   inside and outside the eye render agree.
+- A resource factory must create its texture with the extent of the declared size policy:
+  the resource manager rejects any other extent and fails the generation. The Advanced
+  visibility texture factory (`CreateVisibilityTexture`) resolves absolute sizes (for
+  example the 1x1 shading diagnostics placeholder), the 64x64 depth tile grid and the
+  internal resolution.
+- A failed generation (layout description, materialization or backend commit) and an Advanced
+  native compute closure that cannot find a required image or buffer are written to the
+  auxiliary log `render-readiness-failures.log` (`RenderReadinessFailureLog`), which Release
+  sessions also write. Each line names the category, pipeline, resource key (with the feature
+  mask) and reason, and one failure repeats at most once per 5 seconds.
 - A retired generation stays alive until its completion receipt signals. The
   retired-generation count limit is soft. Unsignaled generations are kept, and
   the instance drains them after they signal.

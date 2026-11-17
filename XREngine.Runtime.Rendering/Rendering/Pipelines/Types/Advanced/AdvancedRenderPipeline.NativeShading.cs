@@ -264,6 +264,26 @@ public partial class AdvancedRenderPipeline
             .DebugLabel("Advanced native shading diagnostics")
             .Add();
 
+        // 7b. Shading diagnostics placeholder. An output that omits the diagnostics image (OpenXR
+        // eyes without a shading debug view) still needs an image at the diagnostics binding. A
+        // dedicated 1x1 image, created with the resource generation, fills it. It has the same
+        // layer count, so each view gets its own layer view like the real image. The shading push
+        // flag stops every store to it, and no other binding refers to it, so sync validation sees
+        // no hazard against the visibility inputs.
+        ReconstructionTexture(
+                builder,
+                AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder,
+                RenderResourceSizePolicy.Absolute(1u, 1u),
+                EPixelInternalFormat.R32ui,
+                EPixelFormat.RedInteger,
+                EPixelType.UnsignedInt,
+                ESizedInternalFormat.R32ui)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .When(static profile => (profile.FeatureMask & ShadingDiagnosticsOmittedFeatureBit) != 0UL)
+            .DebugLabel("Advanced native shading diagnostics placeholder")
+            .Add();
+
         // 8. Ambient Occlusion Output Texture
         ReconstructionTexture(
                 builder,
