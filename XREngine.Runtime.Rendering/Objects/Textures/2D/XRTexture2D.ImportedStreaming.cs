@@ -20,6 +20,11 @@ public partial class XRTexture2D
     // source check reads it to accept a publication whose texture only changed residency.
     private long _lastNonResidencyContentGeneration = 1L;
 
+    // The content generation of the resident commit that ended the loading placeholder state,
+    // or 0 when the texture never was a placeholder (or still is one). A publication from an
+    // older generation described the placeholder, which never drew.
+    private long _firstResidentContentGeneration;
+
     // Imported-streaming metadata is written as one logical transaction. This is
     // deliberately separate from CanonicalSourceContentGeneration: capture outputs
     // also advance that generation, but their values do not carry seqlock parity.
@@ -90,6 +95,7 @@ public partial class XRTexture2D
         // Sparse samplers clamp relative to the resident base. A change away from sparse
         // residency is therefore not a residency-only change for the published sampler.
         bool hadSparseResidency = HasSparseResidencyState;
+        bool wasPlaceholder = IsAwaitingFirstResidency;
         SetField(ref _streamingLockMipLevel, plan.LockMipLevel, publishNotifications: false);
         SetField(ref _mipmaps, mipmaps, publishNotifications: false);
         TrackStreamingResidentMipmaps(mipmaps);
@@ -108,10 +114,11 @@ public partial class XRTexture2D
         // Clear the placeholder state before the source generation advances, so a publisher
         // that sees the new generation also sees real resident data.
         ClearAwaitingFirstResidency();
-        if (hadSparseResidency)
-            PublishCanonicalSourceContentMutation();
-        else
-            PublishCanonicalResidencyMutation();
+        long generation = hadSparseResidency
+            ? PublishCanonicalSourceContentMutation()
+            : PublishCanonicalResidencyMutation();
+        if (wasPlaceholder)
+            Volatile.Write(ref _firstResidentContentGeneration, generation);
     }
 
     internal ulong CanonicalSourceContentGeneration
@@ -139,6 +146,23 @@ public partial class XRTexture2D
             unchecked((ulong)lastNonResidency) <= capturedGeneration;
     }
 
+    /// <summary>
+    /// True when <paramref name="capturedGeneration"/> is from before the resident commit that
+    /// ended the loading placeholder state, and every change after that commit was also a dense
+    /// resident commit. A publication from that generation described the placeholder, which
+    /// the renderers never drew (they used the binding fallback instead).
+    /// </summary>
+    internal bool WasCanonicalPlaceholderAt(ulong capturedGeneration)
+    {
+        long firstResident = Volatile.Read(ref _firstResidentContentGeneration);
+        long lastNonResidency = Volatile.Read(ref _lastNonResidencyContentGeneration);
+        return firstResident != 0L &&
+            capturedGeneration != 0UL &&
+            capturedGeneration < unchecked((ulong)firstResident) &&
+            lastNonResidency != long.MaxValue &&
+            lastNonResidency <= firstResident;
+    }
+
     private bool HasSparseResidencyState
         => SparseTextureStreamingEnabled ||
            SparseTextureStreamingResidentBaseMipLevel != int.MaxValue ||
@@ -150,21 +174,23 @@ public partial class XRTexture2D
     /// The marker is set to long.MaxValue first, so a reader that sees the new generation
     /// never sees this change as residency-only.
     /// </summary>
-    private void PublishCanonicalSourceContentMutation()
+    private long PublishCanonicalSourceContentMutation()
     {
         Volatile.Write(ref _lastNonResidencyContentGeneration, long.MaxValue);
         long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
         if (generation == 0L)
             generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
         Volatile.Write(ref _lastNonResidencyContentGeneration, generation);
+        return generation;
     }
 
-    /// <summary>Advances the content generation for a dense streaming resident commit.</summary>
-    private void PublishCanonicalResidencyMutation()
+    /// <summary>Advances the content generation for a dense streaming resident commit and returns it.</summary>
+    private long PublishCanonicalResidencyMutation()
     {
         long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
         if (generation == 0L)
-            _ = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+            generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        return generation;
     }
 
     private void BeginImportedSourceMetadataWrite()

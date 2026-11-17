@@ -52,9 +52,10 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
     private DescriptorImageInfo[] _cubeImageDescriptorScratch = [];
     private DescriptorImageInfo[] _samplerDescriptorScratch = [];
     private byte[] _samplerValidationScratch = [];
-    // Per dense texture row, written by TryValidatePublicationSources: 1 when the source only
-    // changed residency after publication, with its current encoding in the record scratch.
-    // TryPrepareTextureRows writes those width, height and mip count values into the GPU row.
+    // Per dense texture row, written by TryValidatePublicationSources: the
+    // EAdvancedTextureDriftKind of a source that changed through a streaming commit after
+    // publication (0 = exact), with its current encoding in the record scratch.
+    // TryPrepareTextureRows writes the changed fields into the GPU row.
     private byte[] _textureResidencyDriftScratch = [];
     private AdvancedTextureRecord[] _currentTextureRecordScratch = [];
     private VulkanDeviceContext? _device;
@@ -1184,9 +1185,31 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         return false;
     }
 
+    /// <summary>
+    /// Checks that every retained texture source still matches the published records, and
+    /// counts each failure reason in <see cref="AdvancedTextureSourceMismatchDiagnostics"/>.
+    /// A failed reason text starts with the reason name in brackets.
+    /// </summary>
     private bool TryValidatePublicationSources(
         AdvancedGpuScenePublicationSnapshot snapshot,
         out EVulkanAdvancedSceneResourceFailure failure,
+        out string reason)
+    {
+        if (TryValidatePublicationSourcesCore(snapshot, out EAdvancedTextureSourceMismatch mismatch, out reason))
+        {
+            failure = EVulkanAdvancedSceneResourceFailure.None;
+            return true;
+        }
+
+        AdvancedTextureSourceMismatchDiagnostics.Note(mismatch);
+        failure = EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+        reason = $"[{mismatch}] {reason}";
+        return false;
+    }
+
+    private bool TryValidatePublicationSourcesCore(
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        out EAdvancedTextureSourceMismatch mismatch,
         out string reason)
     {
         if (!snapshot.Draws.HasRecordImage || !snapshot.Instances.HasRecordImage ||
@@ -1194,7 +1217,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             !snapshot.RenderStates.HasRecordImage || !snapshot.EditorIdentities.HasRecordImage ||
             !snapshot.Geometry.HasRecordImage)
         {
-            failure = EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+            mismatch = EAdvancedTextureSourceMismatch.RecordImageMissing;
             reason = "The canonical scene publication must retain every native draw dependency's record and lookup image; structural journals alone are not renderable.";
             return false;
         }
@@ -1227,15 +1250,13 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 canonical.Generation != handle.Generation ||
                 canonical.EncodedReferenceIndex != 0u)
             {
-                failure =
-                    EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+                mismatch = EAdvancedTextureSourceMismatch.HandleMetadata;
                 reason = $"Canonical texture row {denseIndex} has inconsistent handle metadata for {handle.Index}:{handle.Generation}.";
                 return false;
             }
             if (!resources.TryGetTextureSource(handle, out XRTexture source, out ulong capturedSourceContentGeneration))
             {
-                failure =
-                    EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+                mismatch = EAdvancedTextureSourceMismatch.NoRetainedSource;
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} has no retained strong source reference.";
                 return false;
             }
@@ -1246,36 +1267,40 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     out _,
                     out string encodeReason))
             {
-                failure =
-                    EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+                mismatch = EAdvancedTextureSourceMismatch.RevalidationFailed;
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} source revalidation failed: {encodeReason}";
                 return false;
             }
-            // A dense streaming resident commit after publication may change only the mip
-            // count, extent and sampler LOD clamps. The descriptor binds the current image, so
-            // the shape fields must still match and the residency fields are taken from the
-            // current encoding. Every other change must match exactly.
-            bool residencyDrift = AdvancedTextureResidencyDrift.IsResidencyOnlyChange(
-                source, capturedSourceContentGeneration, current.SourceContentGeneration);
-            if ((current.SourceContentGeneration != capturedSourceContentGeneration && !residencyDrift) ||
-                !canonical.DefaultSampler.IsValid ||
+            if (!canonical.DefaultSampler.IsValid ||
                 !snapshot.Samplers.TryGet(canonical.DefaultSampler, out AdvancedSamplerRecord canonicalDefaultSampler) ||
-                !snapshot.Samplers.TryGetDenseIndex(canonical.DefaultSampler, out uint defaultSamplerDense) ||
-                !(residencyDrift
-                    ? AdvancedTextureResidencyDrift.TextureShapeEquals(current.TextureRecord, canonical)
-                    : TextureMetadataStateEquals(current.TextureRecord, canonical)) ||
-                !(residencyDrift
-                    ? AdvancedTextureResidencyDrift.SamplerShapeEquals(current.SamplerRecord, canonicalDefaultSampler)
-                    : SamplerStateEquals(current.SamplerRecord, canonicalDefaultSampler)))
+                !snapshot.Samplers.TryGetDenseIndex(canonical.DefaultSampler, out uint defaultSamplerDense))
             {
-                failure =
-                    EVulkanAdvancedSceneResourceFailure.SourceMismatch;
-                reason = $"Canonical texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication: {DescribeTextureStateMismatch(current.TextureRecord, canonical)}";
+                mismatch = EAdvancedTextureSourceMismatch.HandleMetadata;
+                reason = $"Canonical texture {handle.Index}:{handle.Generation} has no retained default sampler row.";
                 return false;
             }
-            if (residencyDrift && denseIndex < driftRows)
+            // A streaming commit after publication may replace the placeholder or change the
+            // resident mip chain. The descriptor binds the current image, so such a change
+            // passes when the shape the shaders see is the same, and the GPU row gets the
+            // current values (AdvancedTextureResidencyDrift). Every other change must match.
+            EAdvancedTextureDriftKind drift = AdvancedTextureResidencyDrift.Classify(
+                source, capturedSourceContentGeneration, current.SourceContentGeneration);
+            mismatch = AdvancedTextureResidencyDrift.CompareTexture(
+                drift,
+                current.SourceContentGeneration != capturedSourceContentGeneration,
+                current.TextureRecord,
+                canonical);
+            if (mismatch == EAdvancedTextureSourceMismatch.None &&
+                !AdvancedTextureResidencyDrift.SamplerEquals(drift, current.SamplerRecord, canonicalDefaultSampler))
+                mismatch = EAdvancedTextureSourceMismatch.SamplerChanged;
+            if (mismatch != EAdvancedTextureSourceMismatch.None)
             {
-                _textureResidencyDriftScratch[denseIndex] = 1;
+                reason = $"Canonical texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication ({drift}): {DescribeTextureStateMismatch(current.TextureRecord, canonical)}";
+                return false;
+            }
+            if (drift != EAdvancedTextureDriftKind.Exact && denseIndex < driftRows)
+            {
+                _textureResidencyDriftScratch[denseIndex] = (byte)drift;
                 _currentTextureRecordScratch[denseIndex] = current.TextureRecord;
             }
             // Global textures (shadow atlases, environments, and GI resources)
@@ -1296,10 +1321,11 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             if (!binding.Sampler.Handle.IsValid ||
                 !snapshot.Textures.TryGet(textureHandle, out AdvancedTextureRecord canonicalTexture) ||
                 !snapshot.Samplers.TryGet(binding.Sampler.Handle, out AdvancedSamplerRecord canonicalSampler) ||
-                !resources.TryGetTextureSource(textureHandle, out XRTexture source, out ulong capturedBindingGeneration))
+                !resources.TryGetTextureSource(textureHandle, out XRTexture source, out ulong capturedBindingGeneration) ||
+                !canonicalTexture.DefaultSampler.IsValid ||
+                !snapshot.Samplers.TryGet(canonicalTexture.DefaultSampler, out _))
             {
-                failure =
-                    EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+                mismatch = EAdvancedTextureSourceMismatch.BindingUnresolved;
                 reason = $"Material texture binding {bindingIndex} does not resolve its retained texture/sampler publication.";
                 return false;
             }
@@ -1310,33 +1336,32 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     out _,
                     out string encodeReason))
             {
-                failure =
-                    EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+                mismatch = EAdvancedTextureSourceMismatch.RevalidationFailed;
                 reason = $"Material texture binding {bindingIndex} source revalidation failed: {encodeReason}";
                 return false;
             }
-            bool bindingResidencyDrift = AdvancedTextureResidencyDrift.IsResidencyOnlyChange(
+            // The texture loop above already rejected a content generation change that is not
+            // a streaming commit; the binding compares the metadata and its own sampler.
+            EAdvancedTextureDriftKind drift = AdvancedTextureResidencyDrift.Classify(
                 source, capturedBindingGeneration, current.SourceContentGeneration);
-            if (!canonicalTexture.DefaultSampler.IsValid ||
-                !snapshot.Samplers.TryGet(canonicalTexture.DefaultSampler, out _) ||
-                !(bindingResidencyDrift
-                    ? AdvancedTextureResidencyDrift.TextureShapeEquals(current.TextureRecord, canonicalTexture)
-                    : TextureMetadataStateEquals(current.TextureRecord, canonicalTexture)) ||
-                !(bindingResidencyDrift
-                    ? AdvancedTextureResidencyDrift.SamplerShapeEquals(current.SamplerRecord, canonicalSampler)
-                    : SamplerStateEquals(current.SamplerRecord, canonicalSampler)))
+            mismatch = AdvancedTextureResidencyDrift.CompareTexture(
+                drift,
+                generationChanged: false,
+                current.TextureRecord,
+                canonicalTexture);
+            if (mismatch == EAdvancedTextureSourceMismatch.None &&
+                !AdvancedTextureResidencyDrift.SamplerEquals(drift, current.SamplerRecord, canonicalSampler))
+                mismatch = EAdvancedTextureSourceMismatch.SamplerChanged;
+            if (mismatch != EAdvancedTextureSourceMismatch.None)
             {
-                failure =
-                    EVulkanAdvancedSceneResourceFailure.SourceMismatch;
-                reason = $"Material texture binding {bindingIndex} source '{source.Name ?? source.GetType().Name}' changed after publication: texture=({DescribeTextureStateMismatch(current.TextureRecord, canonicalTexture)}), sampler=({DescribeSamplerStateMismatch(current.SamplerRecord, canonicalSampler)})";
+                reason = $"Material texture binding {bindingIndex} source '{source.Name ?? source.GetType().Name}' changed after publication ({drift}): texture=({DescribeTextureStateMismatch(current.TextureRecord, canonicalTexture)}), sampler=({DescribeSamplerStateMismatch(current.SamplerRecord, canonicalSampler)})";
                 return false;
             }
             if (!snapshot.Samplers.TryGetDenseIndex(
                     binding.Sampler.Handle,
                     out uint samplerDense))
             {
-                failure =
-                    EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+                mismatch = EAdvancedTextureSourceMismatch.BindingSamplerMissing;
                 reason = $"Material texture binding {bindingIndex} sampler handle is absent from the retained dense image.";
                 return false;
             }
@@ -1354,12 +1379,12 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             {
                 AdvancedGpuHandle handle =
                     snapshot.Samplers.PhysicalHandles[denseIndex];
-                failure = EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+                mismatch = EAdvancedTextureSourceMismatch.UnwitnessedSampler;
                 reason = $"Canonical sampler {handle.Index}:{handle.Generation} has no retained texture or material binding that can revalidate its source state.";
                 return false;
             }
 
-        failure = EVulkanAdvancedSceneResourceFailure.None;
+        mismatch = EAdvancedTextureSourceMismatch.None;
         reason = "Ready";
         return true;
     }
@@ -1494,10 +1519,14 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 return false;
             }
 
-            // The source only changed residency after publication: describe the bound image.
+            // The source changed through a streaming commit after publication (placeholder or
+            // residency drift): write the current values, so the row describes the bound image.
             if (denseIndex < _textureResidencyDriftScratch.Length &&
                 _textureResidencyDriftScratch[denseIndex] != 0)
-                AdvancedTextureResidencyDrift.ApplyResidency(ref record, _currentTextureRecordScratch[denseIndex]);
+                AdvancedTextureResidencyDrift.Apply(
+                    (EAdvancedTextureDriftKind)_textureResidencyDriftScratch[denseIndex],
+                    ref record,
+                    _currentTextureRecordScratch[denseIndex]);
 
             uint defaultSamplerDescriptor = 0u;
             if (record.DefaultSampler.IsValid &&
@@ -3324,28 +3353,6 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             0u,
             0u,
             EAdvancedResourceReferenceFlags.Fallback);
-
-    private static bool TextureStateEquals(
-        in AdvancedTextureRecord left,
-        in AdvancedTextureRecord right)
-        => left.Dimension == right.Dimension &&
-           left.Flags == right.Flags && left.Width == right.Width &&
-           left.Height == right.Height &&
-           left.DepthOrLayers == right.DepthOrLayers &&
-           left.MipCount == right.MipCount &&
-           left.FormatClass == right.FormatClass &&
-           left.UvScaleBias == right.UvScaleBias;
-
-    private static bool TextureMetadataStateEquals(
-        in AdvancedTextureRecord left,
-        in AdvancedTextureRecord right)
-    {
-        AdvancedTextureRecord leftWithoutSampler = left;
-        AdvancedTextureRecord rightWithoutSampler = right;
-        leftWithoutSampler.DefaultSampler = AdvancedGpuHandle.Invalid;
-        rightWithoutSampler.DefaultSampler = AdvancedGpuHandle.Invalid;
-        return TextureStateEquals(leftWithoutSampler, rightWithoutSampler);
-    }
 
     private static string DescribeTextureStateMismatch(
         in AdvancedTextureRecord current,
