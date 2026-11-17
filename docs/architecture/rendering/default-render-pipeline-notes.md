@@ -404,6 +404,10 @@ therefore follow the active passes through the resource feature mask:
   GTAO at half resolution declares the AO normals at half resolution, adds a
   half-resolution R32F depth target and the prepare framebuffer, and drops the
   full-resolution AO normal framebuffer.
+- Advanced declares the FXAA output and the SMAA edge, blend and output targets, with their
+  framebuffers, only while the profile AA mode is FXAA or SMAA, as Default does. The AA mode is
+  part of the generation key, so a mode switch builds a generation that declares them. With TSR
+  this saves about 661 MiB for the 2688x2688 eye pair and about 101 MiB for a 1920x1080 desktop.
 - The bloom chain is R11G11B10F in both pipelines. No bloom consumer reads alpha
   (the format drops what the bloom copy passes through) and every consumer
   samples `.rgb`; keep it that way or move bloom back to RGBA16F. In Advanced

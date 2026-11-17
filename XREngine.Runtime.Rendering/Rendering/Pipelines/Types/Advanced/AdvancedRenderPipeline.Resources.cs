@@ -387,10 +387,18 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostColor(builder, TemporalColorInputTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TemporalExposureVarianceTextureName, internalSize, layers, EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f);
         DeclareLatePostColor(builder, HistoryExposureVarianceTextureName, internalSize, layers, EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f, history: true);
-        DeclareLatePostColor(builder, FxaaOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
-        DeclareLatePostColor(builder, SmaaEdgeTextureName, windowSize, layers, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8);
-        DeclareLatePostColor(builder, SmaaBlendTextureName, windowSize, layers, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8);
-        DeclareLatePostColor(builder, SmaaOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        // The FXAA and SMAA outputs run only in their own AA mode. The AA mode is part of the
+        // generation key, so a mode switch builds a new generation that declares them.
+        bool fxaa = builder.Profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;
+        bool smaa = builder.Profile.AntiAliasingMode == EAntiAliasingMode.Smaa;
+        if (fxaa)
+            DeclareLatePostColor(builder, FxaaOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        if (smaa)
+        {
+            DeclareLatePostColor(builder, SmaaEdgeTextureName, windowSize, layers, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8);
+            DeclareLatePostColor(builder, SmaaBlendTextureName, windowSize, layers, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8);
+            DeclareLatePostColor(builder, SmaaOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        }
         DeclareLatePostColor(builder, TsrOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrAccumulationTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrHistoryColorTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
@@ -448,10 +456,14 @@ public partial class AdvancedRenderPipeline
             .Factory(CreateTemporalAccumulationFBO).Add();
         builder.FrameBuffer(HistoryExposureFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, HistoryExposureVarianceTextureName).Factory(CreateHistoryExposureFBO).Add();
-        DeclareLatePostDestination(builder, FxaaFBOName, FxaaOutputTextureName, windowSize, CreateFxaaFBO);
-        DeclareLatePostDestination(builder, SmaaEdgeFBOName, SmaaEdgeTextureName, windowSize, CreateSmaaEdgeFBO);
-        DeclareLatePostDestination(builder, SmaaBlendFBOName, SmaaBlendTextureName, windowSize, CreateSmaaBlendFBO);
-        DeclareLatePostDestination(builder, SmaaFBOName, SmaaOutputTextureName, windowSize, CreateSmaaFBO);
+        if (fxaa)
+            DeclareLatePostDestination(builder, FxaaFBOName, FxaaOutputTextureName, windowSize, CreateFxaaFBO);
+        if (smaa)
+        {
+            DeclareLatePostDestination(builder, SmaaEdgeFBOName, SmaaEdgeTextureName, windowSize, CreateSmaaEdgeFBO);
+            DeclareLatePostDestination(builder, SmaaBlendFBOName, SmaaBlendTextureName, windowSize, CreateSmaaBlendFBO);
+            DeclareLatePostDestination(builder, SmaaFBOName, SmaaOutputTextureName, windowSize, CreateSmaaFBO);
+        }
         DeclareLatePostDestination(builder, TsrHistoryColorFBOName, TsrHistoryColorTextureName, windowSize, CreateTsrHistoryColorFBO);
         DeclareLatePostDestination(builder, TsrAccumulationFBOName, TsrAccumulationTextureName, windowSize, CreateTsrAccumulationFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataOutputTextureName, windowSize, CreateTsrHistoryMetadataOutputFBO);
