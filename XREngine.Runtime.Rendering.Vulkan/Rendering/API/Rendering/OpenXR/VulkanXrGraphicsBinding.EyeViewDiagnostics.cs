@@ -45,10 +45,16 @@ internal sealed partial class VulkanXrGraphicsBinding
         XRRenderPipelineInstance pipeline = viewport.RenderPipelineInstance;
         float outputScale = viewport.Width > 0 ? viewport.InternalWidth / (float)viewport.Width : 0.0f;
         Vector3 renderTranslation = camera.Transform.RenderMatrix.Translation;
-        string fov = camera.Parameters is XROpenXRFovCameraParameters fovParameters
-            ? FormattableString.Invariant(
-                $"{fovParameters.AngleLeft:F4}/{fovParameters.AngleRight:F4}/{fovParameters.AngleUp:F4}/{fovParameters.AngleDown:F4}")
-            : camera.Parameters?.GetType().Name ?? "<none>";
+        string fov = camera.Parameters switch
+        {
+            XROpenXRFovCameraParameters fovParameters => FormattableString.Invariant(
+                $"{fovParameters.AngleLeft:F4}/{fovParameters.AngleRight:F4}/{fovParameters.AngleUp:F4}/{fovParameters.AngleDown:F4}"),
+            // OpenVR-style eye parameters read the located OpenXR angles when they build the projection.
+            XROVRCameraParameters ovrParameters when RuntimeEngine.VRState.OpenXRApi is { } openXr &&
+                openXr.TryGetEyeFovAngles(ovrParameters.LeftEye, out float left, out float right, out float up, out float down)
+                => FormattableString.Invariant($"{left:F4}/{right:F4}/{up:F4}/{down:F4} ({(ovrParameters.LeftEye ? "left" : "right")})"),
+            _ => camera.Parameters?.GetType().Name ?? "<none>",
+        };
 
         string published = "<none>";
         if (RenderFrameViewSetPublication.TryGetLatest(out RenderFrameViewSet views))
