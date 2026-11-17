@@ -154,7 +154,7 @@ public partial class DefaultRenderPipeline
         => !VPRC_TemporalAccumulationPass.TryUseHistoryBasedVrEffects(out _, out _);
 
     private static bool ShouldUseMotionBlur()
-        => !DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath
+        => VrEyeFrameRules.AllowsMotionBlur()
         && !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && GetMotionBlurSettings() is { Enabled: true };
@@ -172,27 +172,25 @@ public partial class DefaultRenderPipeline
     }
 
     private static bool ShouldUseDepthOfField()
-        => !DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath
+        => VrEyeFrameRules.AllowsDepthOfField()
         && !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && GetDepthOfFieldSettings() is { Enabled: true };
 
     private static bool ShouldUseBloom()
     {
-        bool safePath = DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath;
         bool lightProbe = IsLightProbePass;
         bool sceneCapture = RuntimeEngine.Rendering.State.IsSceneCapturePass;
         bool settingsDisabled = GetBloomSettings() is { Enabled: false };
-        bool result = !safePath && !lightProbe && !sceneCapture && !settingsDisabled;
+        bool result = !lightProbe && !sceneCapture && !settingsDisabled;
 
         if (RenderDiagnosticsFlags.DiagPostProcess)
         {
             Debug.RenderingEvery(
-                $"Bloom.ShouldUse.{result}.{safePath}.{sceneCapture}",
+                $"Bloom.ShouldUse.{result}.{sceneCapture}",
                 TimeSpan.FromSeconds(1),
-                "[BloomDiag] ShouldUseBloom={0} safePath={1} lightProbe={2} sceneCapture={3} settingsDisabled={4} vp='{5}' external={6}",
+                "[BloomDiag] ShouldUseBloom={0} lightProbe={1} sceneCapture={2} settingsDisabled={3} vp='{4}' external={5}",
                 result,
-                safePath,
                 lightProbe,
                 sceneCapture,
                 settingsDisabled,

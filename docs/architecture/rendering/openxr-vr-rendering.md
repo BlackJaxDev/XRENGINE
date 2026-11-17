@@ -53,42 +53,51 @@ OpenXR eye submission is separate from desktop output. A mirror mode change neve
 
 The reconstruction path must publish per-eye color, per-eye linear depth, frame identity, matrices, depth convention metadata, and output dimensions before composition. It rejects mixed-frame inputs and must not mutate swapchain images. Vulkan is the primary implementation path because it already has per-eye mirror color publication infrastructure. OpenGL needs per-eye sampleable color and depth targets before it can use the same composition contract.
 
-## Known limitation: per-eye eye feature profile
+## VR eye feature profile
 
-`UseOpenXrVulkanDesktopStartupSafePath` (`DefaultRenderPipeline` and `AdvancedRenderPipeline`) is
-true for every render on Vulkan, with OpenXR requested, that is not a stereo pass and whose
-viewport writes an external swapchain image. In practice this is every per-eye OpenXR Vulkan
-eye frame (Advanced and RVC `SequentialViews` and `ParallelCommandBufferRecording`, and Default
-eyes). The desktop never takes it.
+The engine setting `VrEyeFeatures` (`VrEyeFeatureProfile`, editor: engine settings, category
+**VR**, **VR Eye Features**) selects the optional rendering features of every VR eye frame:
+single-pass stereo and per-eye (`SequentialViews`, `ParallelCommandBufferRecording`), the
+Default, Advanced and RVC pipelines, and OpenXR and OpenVR. Both eyes use this one profile, and
+the desktop and other cameras never read it. The Unit Testing World sets it through
+`VR.EyeFeatures`.
 
-History:
+| Setting | Default | Controls |
+|---|---|---|
+| `AmbientOcclusion` | on | Camera AO passes (for example GTAO). Off keeps the neutral AO fill. |
+| `FogAndAerialPerspective` | on | Volumetric fog and atmospheric scattering aerial perspective. |
+| `OrderIndependentTransparency` | on | Weighted blended OIT and the exact transparency techniques. |
+| `DepthOfField` | off | Depth of field. Off for comfort in a headset. |
+| `MotionBlur` | off | Motion blur. Off for comfort in a headset. |
+| `DeferredMsaa` | on | The deferred MSAA path when the eye camera selects MSAA. |
+| `ForwardPlusLightCulling` | on | Forward+ local light culling. Off leaves forward and transparent surfaces without local lights. |
 
-- 37cdc6d67 (2026-07-07) added the predicate as Vulkan + OpenXR requested + not a stereo pass,
-  to speed up the VR loop while it was debugged. At that time it removed heavy passes from every
-  mono render of an OpenXR session, which in practice meant the desktop view.
-- 7c11bf62f (2026-07-08) added `IsOpenXrExternalSwapchainTargetPass`, and ef3d2aa1f (2026-07-08)
-  removed its `LastWindowViewport` fallback so that eye state cannot leak into desktop
-  evaluation. Since then the predicate selects only the per-eye eye renders.
+A feature runs in an eye frame only when the profile allows it and the eye camera's own settings
+enable it (the shared eye post-process state and render overrides that `VrEyeCameraSettingsLink`
+keeps equal for both eyes). The profile cannot add a feature that the active pipeline does not
+support for the view; for example, the stereo resource profiles still exclude exact transparency,
+fog and aerial perspective.
 
-The name ("desktop startup") and the first reason (a faster desktop next to VR) no longer
-describe it: it is a permanent reduced profile for per-eye eyes. Per-eye eyes now have their
-own pipelines, resource generations and VR policies (`EVrTemporalHistoryPolicy`, the headset
-shadow taps, the VR atmosphere and fog history guards), so the blanket gate is not needed for
-correctness. It still saves GPU time at headset rates. Each feature should become an explicit
-decision of the eye profile (`EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye`) instead of
-this predicate. Until then, per-eye eye frames run without:
+`VrEyeFrameRules` decides whether a render is an eye frame: a stereo pass, or a mono render whose
+viewport camera is an eye camera (`XRCamera.StereoEyeLeft`) or whose viewport writes an external
+swapchain image. Scene and light probe captures are never eye frames. Resource keys pass their
+viewport and the pipeline's stereo flag, so a key built inside and outside the eye render agrees.
+Without a viewport (command chain and resource generation), a query is not an eye frame, so the
+generated graph keeps every feature and the render-time conditions decide.
 
-- Advanced and RVC: the camera AO passes (only the neutral native AO fill runs, so there is no
-  GTAO), atmospheric scattering and aerial perspective, volumetric fog, motion blur, depth of
-  field, exact transparency, the weighted blended OIT passes, deferred MSAA, and Forward+ local
-  light culling (`VPRC_ForwardPlusLightCullingPass` resets its published state).
-- Default: the same post effects, plus the MSAA command graph, the forward pre-pass, vendor
-  upscale and the debug visualizations.
+Two rules stay tied to the OpenXR external eye target (`VrEyeFrameRules.IsExternalEyeTargetFrame`)
+and are not features: the final output of such a target goes straight to the runtime image, so
+vendor upscalers do not run there, and an external eye target without an eye exposure pair holds
+its auto exposure. Auto exposure of paired eyes follows the headset or independent mode (see the
+VR auto exposure notes in [default-render-pipeline-notes.md](default-render-pipeline-notes.md)).
 
-Auto exposure is no longer held for a paired eye: each eye pipeline adapts with its own state,
-with one headset exposure or an independent exposure per eye (see the VR auto exposure notes in
-[default-render-pipeline-notes.md](default-render-pipeline-notes.md)). An unpaired external eye
-target is still held.
+History: until this profile, a blanket predicate (`UseOpenXrVulkanDesktopStartupSafePath`, Vulkan
+plus OpenXR plus a mono external swapchain target) removed AO, fog and aerial perspective, motion
+blur, depth of field, OIT and exact transparency, deferred MSAA, Forward+ culling and, in the
+Default pipeline, bloom, the MSAA targets, the forward pre-pass and the debug visualizations from
+every per-eye OpenXR Vulkan eye frame. Single-pass stereo and OpenVR eyes were not affected. The
+profile replaces it, so per-eye eyes now get the same features as single-pass stereo eyes unless
+the profile turns them off.
 
 ## Swapchain and device lifetime
 

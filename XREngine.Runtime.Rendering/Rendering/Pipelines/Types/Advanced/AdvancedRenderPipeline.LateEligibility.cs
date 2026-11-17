@@ -48,10 +48,10 @@ public partial class AdvancedRenderPipeline
                 "Exact transparency is unsupported by the active stereo resource profile.";
             return false;
         }
-        if (UseOpenXrVulkanDesktopStartupSafePath)
+        if (!VrEyeFrameRules.AllowsOrderIndependentTransparency())
         {
             rejectionReason =
-                "Exact transparency is disabled by the OpenXR Vulkan desktop startup-safe profile.";
+                "Exact transparency is disabled by the VR eye feature profile (OrderIndependentTransparency).";
             return false;
         }
         if (!RuntimeEngine.EditorPreferences.Debug.EnableExactTransparencyTechniques)

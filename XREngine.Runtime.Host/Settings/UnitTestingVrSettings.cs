@@ -57,6 +57,12 @@ public class UnitTestingVrSettings
     /// </summary>
     public XREngine.Components.VR.EVrDesktopView DesktopView { get; set; } = XREngine.Components.VR.EVrDesktopView.EditorCamera;
     public UnitTestingVrFoveationSettings Foveation { get; set; } = new();
+    /// <summary>
+    /// Sets the <c>VrEyeFeatures</c> engine setting: the optional rendering features of every VR
+    /// eye frame (ambient occlusion, fog and aerial perspective, order-independent transparency,
+    /// depth of field, motion blur, deferred MSAA, Forward+ light culling).
+    /// </summary>
+    public UnitTestingVrEyeFeatureSettings EyeFeatures { get; set; } = new();
     public UnitTestingOpenXrEyeResolutionSettings OpenXrEyeResolution { get; set; } = new();
     /// <summary>
     /// Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes.

@@ -30,7 +30,7 @@ public static partial class RuntimeEngine
             {
                 public EngineSettings()
                 {
-                    AttachRenderSubSettings(_execution, _openGL, _vulkan, _browserWebGpuQuality);
+                    AttachRenderSubSettings(_execution, _openGL, _vulkan, _browserWebGpuQuality, _vrEyeFeatures);
                     TrackOverrideableSettings();
                 }
 
@@ -70,7 +70,7 @@ public static partial class RuntimeEngine
                     base.OnPropertyChanged(propName, prev, field);
 
                     if (propName == nameof(Execution) || propName == nameof(OpenGL) || propName == nameof(Vulkan) ||
-                        propName == nameof(BrowserWebGpuQuality))
+                        propName == nameof(BrowserWebGpuQuality) || propName == nameof(VrEyeFeatures))
                         RefreshRenderSubSettings(prev, field);
                 }
 
@@ -2327,6 +2327,22 @@ public static partial class RuntimeEngine
                 {
                     get => _preferNVStereo;
                     set => SetField(ref _preferNVStereo, value);
+                }
+
+                private VrEyeFeatureProfile _vrEyeFeatures = new();
+
+                /// <summary>
+                /// Selects the optional rendering features of every VR eye frame (single-pass stereo
+                /// and per-eye, all VR pipelines, OpenXR and OpenVR). Both eyes use this one profile;
+                /// the desktop does not read it. A feature also needs the eye camera's own settings.
+                /// </summary>
+                [Category("VR")]
+                [DisplayName("VR Eye Features")]
+                [Description("Optional rendering features of VR eye frames, shared by both eyes and separate from the desktop. Depth of field and motion blur are off by default for comfort.")]
+                public VrEyeFeatureProfile VrEyeFeatures
+                {
+                    get => _vrEyeFeatures;
+                    set => SetField(ref _vrEyeFeatures, value ?? new VrEyeFeatureProfile());
                 }
 
                 /// <summary>

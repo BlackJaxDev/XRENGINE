@@ -39,7 +39,7 @@ public partial class DefaultRenderPipeline
 
     private bool ExactTransparencyEnabled
         => !Stereo &&
-           !UseOpenXrVulkanDesktopStartupSafePath &&
+           VrEyeFrameRules.AllowsOrderIndependentTransparency() &&
            RuntimeEngine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
 
     private int ActiveDepthPeelLayerCount
