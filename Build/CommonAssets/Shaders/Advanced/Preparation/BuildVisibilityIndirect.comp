@@ -8,8 +8,13 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityPreparationPush
     uint rangeBase;
 } XR_ADV_VisibilityPush;
 
-#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityPush.viewIndex
+// gl_WorkGroupID.y selects the view of a multi-view dispatch
+// (VisibilityPreparationViews.glslinc).
+#define XR_ADV_PREP_VIEW_OFFSET gl_WorkGroupID.y
+#define XR_ADV_PREP_VIEW_INDEX (XR_ADV_VisibilityPush.viewIndex + XR_ADV_PREP_VIEW_OFFSET)
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_PREP_VIEW_INDEX
 #include "../Visibility/VisibilityInterface.glslinc"
+#include "VisibilityPreparationViews.glslinc"
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -35,9 +40,44 @@ struct DrawMeshTasksIndirect
     uint GroupCountZ;
 };
 
+#if defined(XR_ADV_BACKEND_VULKAN)
+// Writes the VkDispatchIndirectCommand of this view's late visibility test.
+// The Vulkan recorder reserves one four-word record per view after the
+// indexed arguments of all views (word ViewCount * payloadCapacity * 5).
+// The early counters are complete here, because a storage barrier separates
+// early visibility from this dispatch. The late test reads one deferred entry
+// and one early entry per invocation, so it needs the larger bounded count,
+// in 256-invocation workgroups. It always gets at least one workgroup,
+// because the late test also clears the view's current meshlet history set.
+// The recorder dispatches all views of the family from view 0, one Y row per
+// view, so the view count is the Y workgroup count.
+void writeLateDispatchArguments()
+{
+    uint capacity = XR_ADV_VisibilityPush.payloadCapacity;
+    uint viewCount = XR_ADV_VisibilityPush.viewIndex + gl_NumWorkGroups.y;
+    uint liveCount = max(
+        min(XR_ADV_VisibilityCounters.earlyDraws, capacity),
+        min(XR_ADV_VisibilityCounters.deferredCandidates, capacity));
+    uint word = viewCount * capacity * 5u + XR_ADV_PREP_VIEW_INDEX * 4u;
+    if (word + 3u >= uint(XR_ADV_VisibilityIndexedArguments.records.length()))
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return;
+    }
+    XR_ADV_VisibilityIndexedArguments.records[word] = max(1u, (liveCount + 255u) / 256u);
+    XR_ADV_VisibilityIndexedArguments.records[word + 1u] = 1u;
+    XR_ADV_VisibilityIndexedArguments.records[word + 2u] = 1u;
+    XR_ADV_VisibilityIndexedArguments.records[word + 3u] = 0u;
+}
+#endif
+
 void main()
 {
     uint visibleIndex = gl_GlobalInvocationID.x;
+#if defined(XR_ADV_BACKEND_VULKAN)
+    if (visibleIndex == 0u)
+        writeLateDispatchArguments();
+#endif
     uint visibleCapacity = XR_ADV_VisibilityPush.payloadCapacity;
     uint visibleCount = XR_ADV_VisibilityCounters.earlyDraws;
     uint payloadCount =
@@ -52,7 +92,7 @@ void main()
         return;
 
     uint payloadIndex = XR_ADV_VisibilityVisibleIndices.records[
-        XR_ADV_VisibilityPush.payloadBase + visibleIndex];
+        XR_ADV_PREP_PAYLOAD_BASE + visibleIndex];
     if (payloadIndex >= payloadCount)
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
@@ -86,12 +126,12 @@ void main()
         uint groupIndex = groupPlusOne - 1u;
         XRAdvancedIndexedInstanceGroup group =
             XR_ADV_VisibilityInstanceGroups.records[groupIndex];
-        uint groupBase = XR_ADV_VisibilityPush.viewIndex * groupCount;
+        uint groupBase = XR_ADV_PREP_VIEW_INDEX * groupCount;
         uint countIndex = groupBase + groupIndex;
-        uint first = XR_ADV_VisibilityPush.payloadBase + group.firstMember;
+        uint first = XR_ADV_PREP_PAYLOAD_BASE + group.firstMember;
         if (group.rangeIndex != range ||
             countIndex >= uint(XR_ADV_VisibilityEarlyGroupCounts.records.length()) ||
-            first < XR_ADV_VisibilityPush.payloadBase ||
+            first < XR_ADV_PREP_PAYLOAD_BASE ||
             first > uint(XR_ADV_VisibilityMeshPayloads.records.length()) ||
             group.memberCapacity >
                 uint(XR_ADV_VisibilityMeshPayloads.records.length()) - first)
@@ -119,26 +159,26 @@ void main()
     uint argumentCapacity = producer == PRODUCER_INDIRECT_INDEXED
         ? indexedArgumentCapacity
         : meshArgumentCapacity;
-    uint rangeBegin = XR_ADV_VisibilityPush.payloadBase +
+    uint rangeBegin = XR_ADV_PREP_PAYLOAD_BASE +
         XR_ADV_VisibilityRangeOffsets.records[range];
-    uint rangeEnd = XR_ADV_VisibilityPush.payloadBase +
+    uint rangeEnd = XR_ADV_PREP_PAYLOAD_BASE +
         (range + 1u < rangeCount
             ? XR_ADV_VisibilityRangeOffsets.records[range + 1u]
             : argumentCapacity);
     if (rangeBegin > rangeEnd ||
-        rangeEnd > XR_ADV_VisibilityPush.payloadBase + argumentCapacity)
+        rangeEnd > XR_ADV_PREP_PAYLOAD_BASE + argumentCapacity)
     {
         atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
         return;
     }
     uint rangeCapacity = rangeEnd - rangeBegin;
     uint rangeLocal = atomicAdd(
-        XR_ADV_VisibilityRangeCounts.records[XR_ADV_VisibilityPush.rangeBase + range],
+        XR_ADV_VisibilityRangeCounts.records[XR_ADV_PREP_RANGE_BASE + range],
         0u);
     while (rangeLocal < rangeCapacity)
     {
         uint prior = atomicCompSwap(
-            XR_ADV_VisibilityRangeCounts.records[XR_ADV_VisibilityPush.rangeBase + range],
+            XR_ADV_VisibilityRangeCounts.records[XR_ADV_PREP_RANGE_BASE + range],
             rangeLocal,
             rangeLocal + 1u);
         if (prior == rangeLocal)

@@ -22,7 +22,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
     // segments. Keeping these in set 1 removes any mutable set-0 uniform
     // dependency from the preparation/raster family.
     private const uint CounterByteLength = 160u;
-    private const uint IndexedIndirectArgumentByteLength = 20u;
+    private const uint IndexedIndirectArgumentByteLength =
+        VulkanAdvancedVisibilityResourceState.IndexedIndirectArgumentByteLength;
     private const uint MeshIndirectArgumentByteLength = 12u;
     private const uint PersistentStateRecordByteLength = 32u;
     private const ulong PersistentStateCapacityBytes = 16UL * 1024UL * 1024UL;
@@ -287,6 +288,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             uint totalIndexBytes;
             uint totalRangeBytes;
             uint totalIndirectBytes;
+            uint earlyIndirectBytes;
             uint totalMeshArgumentBytes;
             uint totalCounterBytes;
             uint indexedGroupBytes;
@@ -311,6 +313,10 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 totalIndexBytes = checked(perViewIndexBytes * viewCount);
                 totalRangeBytes = checked(perViewRangeBytes * viewCount);
                 totalIndirectBytes = checked(perViewIndirectBytes * viewCount);
+                // The early argument stream also holds one late-test dispatch
+                // record per view after the indexed arguments of all views.
+                earlyIndirectBytes = checked(totalIndirectBytes +
+                    VulkanAdvancedVisibilityResourceState.LateDispatchArgumentByteLength * viewCount);
                 totalMeshArgumentBytes = checked(perViewMeshArgumentBytes * viewCount);
                 totalCounterBytes = checked(CounterByteLength * viewCount);
                 indexedGroupBytes = checked(Math.Max(1u, (uint)input.IndexedInstanceGroups.Length) *
@@ -348,7 +354,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 AlignedStorageBytes(totalIndexBytes) * 5UL +
                 AlignedStorageBytes(totalRangeBytes) * 2UL +
                 AlignedStorageBytes(totalCounterBytes) +
-                AlignedStorageBytes(totalIndirectBytes) * 2UL +
+                AlignedStorageBytes(earlyIndirectBytes) +
+                AlignedStorageBytes(totalIndirectBytes) +
                 AlignedStorageBytes(totalMeshArgumentBytes) * 2UL;
             if (requiredBytes > StorageCapacityPerFrameSlot)
             {
@@ -380,7 +387,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 !arena.TryAllocate(
                     frameSlot,
                     EVulkanFrameDataLane.AdvancedVisibilityStorage,
-                    totalIndirectBytes,
+                    earlyIndirectBytes,
                     StorageAlignment,
                     out VulkanFrameDataSlice arguments))
             {
