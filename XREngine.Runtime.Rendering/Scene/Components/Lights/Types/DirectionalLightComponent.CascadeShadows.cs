@@ -2757,6 +2757,79 @@ namespace XREngine.Components.Lights
             CommitRenderedCascadeAtlasSlots(commits);
         }
 
+        /// <summary>
+        /// Copies the cascade slot and rendered sample of <paramref name="index"/> in <paramref name="source"/>,
+        /// so the shadow atlas can restore them when the submission of a later commit fails.
+        /// </summary>
+        internal void CaptureCascadeAtlasSlotState(
+            ShadowRequestSource source,
+            int index,
+            out DirectionalCascadeAtlasSlot slot,
+            out DirectionalCascadeSampleState sample)
+        {
+            slot = default;
+            sample = default;
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                slot = state.AtlasSlots[index];
+                sample = state.RenderedSamples[index];
+            }
+        }
+
+        /// <summary>
+        /// Restores the cascade slot and rendered sample of <paramref name="index"/> after the submission
+        /// of a commit failed. Applies only while the slot still holds that commit: the rendered sample
+        /// has the content hash and render frame that the commit of <paramref name="committedSample"/>
+        /// and <paramref name="committedAllocation"/> wrote. A newer commit stays.
+        /// </summary>
+        internal void RevertRenderedCascadeAtlasSlot(
+            ShadowRequestSource source,
+            int index,
+            in ShadowAtlasAllocation committedAllocation,
+            in DirectionalCascadeSampleState committedSample,
+            in DirectionalCascadeAtlasSlot previousSlot,
+            in DirectionalCascadeSampleState previousSample)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            ulong committedHash = committedSample.ContentHash != 0u
+                ? committedSample.ContentHash
+                : committedAllocation.ContentVersion;
+            ulong committedFrame = committedSample.RenderedFrame != 0u
+                ? committedSample.RenderedFrame
+                : committedAllocation.LastRenderedFrame;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                DirectionalCascadeSampleState current = state.RenderedSamples[index];
+                if (!current.IsValid ||
+                    current.ContentHash != committedHash ||
+                    current.RenderedFrame != committedFrame)
+                {
+                    return;
+                }
+
+                state.RenderedSamples[index] = previousSample;
+                state.AtlasSlots[index] = previousSlot;
+                if (_directionalAtlasSlotPublishInProgress &&
+                    state.PendingAtlasSlots[index].LastRenderedFrame == committedFrame)
+                {
+                    state.PendingAtlasSlots[index] = previousSlot;
+                }
+            }
+        }
+
         internal void CommitRenderedCascadeAtlasSlots(ReadOnlySpan<DirectionalCascadeAtlasRenderCommit> commits)
         {
             lock (_cascadeDataLock)

@@ -189,7 +189,8 @@ public sealed partial class ShadowAtlasManager
         float NearPlane,
         float FarPlane,
         uint DesiredResolution,
-        DirectionalCascadeSampleState DirectionalCascadeSample);
+        DirectionalCascadeSampleState DirectionalCascadeSample,
+        bool Revert = false);
 
     private readonly record struct DirectionalAtlasRenderEvent(
         Guid LightId,
@@ -317,6 +318,10 @@ public sealed partial class ShadowAtlasManager
     private readonly List<ShadowTileCompletion> _completionDrainScratch = new();
     private ShadowTileCompletion[] _tileCompletions = new ShadowTileCompletion[256];
     private ShadowTileCompletion[] _renderedCompletionOverlays = new ShadowTileCompletion[256];
+    // Light cascade slots and rendered samples before a grouped commit, one per group member.
+    private readonly DirectionalLightComponent.DirectionalCascadeAtlasSlot[] _revertSlotScratch =
+        new DirectionalLightComponent.DirectionalCascadeAtlasSlot[8];
+    private readonly DirectionalCascadeSampleState[] _revertSampleScratch = new DirectionalCascadeSampleState[8];
     private int _renderedCompletionOverlayCount;
     private int _tileCompletionHead;
     private int _tileCompletionTail;
@@ -3452,10 +3457,41 @@ public sealed partial class ShadowAtlasManager
             request,
             allocation,
             recordIndex);
-        TrackSubmissionCandidate(completion.Key);
+        bool hasCascadeSlot = TryCaptureCascadeSlotForRevert(
+            in completion,
+            out DirectionalLightComponent.DirectionalCascadeAtlasSlot previousSlot,
+            out DirectionalCascadeSampleState previousSample);
         PublishRenderedCompletionOverlay(completion);
         CommitRenderedTileToLightSlot(completion);
         EnqueueTileCompletion(completion);
+        TrackSubmissionCandidate(new SubmissionRevert(
+            completion, allocation, hasCascadeSlot, previousSlot, previousSample));
+    }
+
+    /// <summary>
+    /// Copies the light's cascade slot and rendered sample before a directional cascade commit, so a
+    /// failed submission can restore them. Returns false for other projections.
+    /// </summary>
+    private static bool TryCaptureCascadeSlotForRevert(
+        in ShadowTileCompletion completion,
+        out DirectionalLightComponent.DirectionalCascadeAtlasSlot previousSlot,
+        out DirectionalCascadeSampleState previousSample)
+    {
+        if (completion.Key.ProjectionType == EShadowProjectionType.DirectionalCascade &&
+            completion.DirectionalCascadeSample.IsValid &&
+            completion.Light is DirectionalLightComponent light)
+        {
+            light.CaptureCascadeAtlasSlotState(
+                completion.Key.Source,
+                completion.Key.FaceOrCascadeIndex,
+                out previousSlot,
+                out previousSample);
+            return true;
+        }
+
+        previousSlot = default;
+        previousSample = default;
+        return false;
     }
 
     private static ShadowTileCompletion CreateTileCompletion(
@@ -3671,6 +3707,56 @@ public sealed partial class ShadowAtlasManager
             completion.DirectionalCascadeSample);
     }
 
+    /// <summary>
+    /// Applies a revert completion of a failed atlas writer submission. When the resident allocation
+    /// still holds the failed commit (same last render frame and physical tile), it gets back the
+    /// content version and last render frame of the content that the tile still holds. A tile that
+    /// was never valid gets last render frame 0, so it renders again and no consumer samples it.
+    /// </summary>
+    private void ReconcileRevertedTileCompletion(in ShadowTileCompletion completion)
+    {
+        if (!TryGetResidentAllocation(completion.Key, out ShadowAtlasAllocation current) ||
+            !current.IsResident ||
+            current.LastRenderedFrame != completion.FrameId ||
+            !IsSamePhysicalAllocation(current, completion.Allocation))
+        {
+            return;
+        }
+
+        ShadowAtlasAllocation reverted = current with
+        {
+            ContentVersion = completion.Allocation.ContentVersion,
+            LastRenderedFrame = completion.Allocation.LastRenderedFrame,
+        };
+
+        ulong lastRequestedFrame = _frameId;
+        if (_residentAllocations.TryGetValue(completion.Key, out ShadowResidentEntry existing))
+            lastRequestedFrame = existing.LastRequestedFrame;
+
+        AddOrUpdateResidentAllocation(completion.Key, reverted, lastRequestedFrame);
+        _previousAllocations[completion.Key] = reverted;
+    }
+
+    /// <summary>Removes the rendered overlay of one commit of <paramref name="key"/> in render frame <paramref name="frameId"/>.</summary>
+    private void RemoveRenderedCompletionOverlay(in ShadowRequestKey key, ulong frameId)
+    {
+        lock (_completionSync)
+        {
+            for (int i = 0; i < _renderedCompletionOverlayCount; i++)
+            {
+                ShadowTileCompletion overlay = _renderedCompletionOverlays[i];
+                if (overlay.Key != key || overlay.FrameId != frameId)
+                    continue;
+
+                int last = _renderedCompletionOverlayCount - 1;
+                _renderedCompletionOverlays[i] = _renderedCompletionOverlays[last];
+                _renderedCompletionOverlays[last] = default;
+                _renderedCompletionOverlayCount = last;
+                return;
+            }
+        }
+    }
+
     private void DrainTileCompletions()
     {
         _completionDrainScratch.Clear();
@@ -3692,6 +3778,12 @@ public sealed partial class ShadowAtlasManager
 
     private void ReconcileTileCompletion(in ShadowTileCompletion completion)
     {
+        if (completion.Revert)
+        {
+            ReconcileRevertedTileCompletion(in completion);
+            return;
+        }
+
         LogTileCompletionLatency(completion);
 
         if (!TryGetResidentAllocation(completion.Key, out ShadowAtlasAllocation allocation) ||
@@ -4121,6 +4213,12 @@ public sealed partial class ShadowAtlasManager
             if (!plan.TryGetMember(entry.MemberStart + i, out ShadowAtlasRenderPlanMember member))
                 return;
 
+            light.CaptureCascadeAtlasSlotState(
+                member.Request.Key.Source,
+                member.Request.Key.FaceOrCascadeIndex,
+                out _revertSlotScratch[i],
+                out _revertSampleScratch[i]);
+
             ShadowTileCompletion completion = CreateTileCompletion(
                 plan.FrameId,
                 plan.PlanId,
@@ -4145,7 +4243,8 @@ public sealed partial class ShadowAtlasManager
                 completion.DirectionalCascadeSample);
         }
 
-        if (commitCount == entry.MemberCount && commitCount > 0)
+        bool committedSlots = commitCount == entry.MemberCount && commitCount > 0;
+        if (committedSlots)
             light.CommitRenderedCascadeAtlasSlots(commits[..commitCount]);
 
         for (int i = 0; i < entry.MemberCount; i++)
@@ -4159,9 +4258,14 @@ public sealed partial class ShadowAtlasManager
                 member.Request,
                 member.Allocation,
                 member.RecordIndex);
-            TrackSubmissionCandidate(completion.Key);
             PublishRenderedCompletionOverlay(completion);
             EnqueueTileCompletion(completion);
+            TrackSubmissionCandidate(new SubmissionRevert(
+                completion,
+                member.Allocation,
+                committedSlots && completion.DirectionalCascadeSample.IsValid,
+                _revertSlotScratch[i],
+                _revertSampleScratch[i]));
         }
     }
 
