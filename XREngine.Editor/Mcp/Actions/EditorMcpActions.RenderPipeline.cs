@@ -258,6 +258,13 @@ namespace XREngine.Editor.Mcp
                 lastDeclineReason = lane.LastDeclineReason,
                 casterProducer = lane.CasterProducer,
                 casterProducerReason = lane.CasterProducerReason,
+                // Process totals of texture source mismatches that failed a canonical package
+                // check (admission or lowering), by reason, and the last reason.
+                sourceMismatch = new
+                {
+                    last = XREngine.Rendering.Commands.AdvancedTextureSourceMismatchDiagnostics.Last.ToString(),
+                    totals = XREngine.Rendering.Commands.AdvancedTextureSourceMismatchDiagnostics.CaptureTotals(),
+                },
             };
         }
 

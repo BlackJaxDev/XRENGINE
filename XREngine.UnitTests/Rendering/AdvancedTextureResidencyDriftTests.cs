@@ -9,8 +9,9 @@ namespace XREngine.UnitTests.Rendering;
 
 /// <summary>
 /// Checks which texture changes after an Advanced publication the Vulkan source check may
-/// accept: a dense streaming resident commit (other mip count or extent, same shape) is
-/// accepted, while a shape change or a capture-output content change is still rejected.
+/// accept: a dense streaming resident commit (other mip count, extent, or format inside one
+/// format family) and the replacement of the loading placeholder are accepted, while a shape
+/// change, a format change outside the family or a capture-output content change is rejected.
 /// </summary>
 [TestFixture]
 public sealed class AdvancedTextureResidencyDriftTests
@@ -145,6 +146,148 @@ public sealed class AdvancedTextureResidencyDriftTests
         tracker.Update(rows).ShouldBeTrue();
         tracker.Generation.ShouldNotBe(before);
     }
+
+    [Test]
+    public void PlaceholderPublication_ToFirstResidentCommit_IsPlaceholderDrift()
+    {
+        XRTexture2D texture = new() { Mipmaps = CreateChain(1) };
+        texture.MarkAwaitingFirstResidency();
+        ulong captured = texture.CanonicalSourceContentGeneration;
+
+        CommitResident(texture, mipCount: 5);
+
+        AdvancedTextureResidencyDrift.Classify(texture, captured, texture.CanonicalSourceContentGeneration)
+            .ShouldBe(EAdvancedTextureDriftKind.Placeholder);
+
+        // A later resident commit keeps the placeholder classification for the old publication.
+        CommitResident(texture, mipCount: 4);
+        AdvancedTextureResidencyDrift.Classify(texture, captured, texture.CanonicalSourceContentGeneration)
+            .ShouldBe(EAdvancedTextureDriftKind.Placeholder);
+
+        // A capture output after the first residency needs the exact check again.
+        ulong current = texture.AdvanceCanonicalGpuContentGeneration();
+        AdvancedTextureResidencyDrift.Classify(texture, captured, current).ShouldBe(EAdvancedTextureDriftKind.Exact);
+    }
+
+    [Test]
+    public void PlaceholderToBc4_IsAccepted_AndTheRowIsReplaced()
+    {
+        AdvancedTextureRecord placeholder = Record(EAdvancedTextureFormatClass.Rgb8, extent: 8u, mips: 1u);
+        placeholder.StableTextureId = 141u;
+        placeholder.Generation = 1u;
+        placeholder.EncodedReferenceIndex = 9u;
+        AdvancedTextureRecord current = Record(EAdvancedTextureFormatClass.Bc4Unorm, extent: 64u, mips: 1u);
+
+        AdvancedTextureResidencyDrift.CompareTexture(EAdvancedTextureDriftKind.Placeholder, true, current, placeholder)
+            .ShouldBe(EAdvancedTextureSourceMismatch.None);
+        AdvancedTextureResidencyDrift.SamplerEquals(EAdvancedTextureDriftKind.Placeholder, default, Sampler()).ShouldBeTrue();
+
+        AdvancedTextureRecord row = placeholder;
+        AdvancedTextureResidencyDrift.Apply(EAdvancedTextureDriftKind.Placeholder, ref row, current);
+        row.FormatClass.ShouldBe((uint)EAdvancedTextureFormatClass.Bc4Unorm);
+        row.Width.ShouldBe(64u);
+        row.Height.ShouldBe(64u);
+        row.StableTextureId.ShouldBe(141u);
+        row.Generation.ShouldBe(1u);
+        row.EncodedReferenceIndex.ShouldBe(9u);
+    }
+
+    [Test]
+    public void PlaceholderShapeChange_IsRejected()
+    {
+        AdvancedTextureRecord placeholder = Record(EAdvancedTextureFormatClass.Rgb8, extent: 8u, mips: 1u);
+
+        AdvancedTextureResidencyDrift.CompareTexture(
+                EAdvancedTextureDriftKind.Placeholder, true,
+                placeholder with { Dimension = EAdvancedTextureDimension.Texture2DArray }, placeholder)
+            .ShouldBe(EAdvancedTextureSourceMismatch.TextureShapeChanged);
+        AdvancedTextureResidencyDrift.CompareTexture(
+                EAdvancedTextureDriftKind.Placeholder, true,
+                placeholder with { Flags = EAdvancedTextureRecordFlags.Depth }, placeholder)
+            .ShouldBe(EAdvancedTextureSourceMismatch.TextureShapeChanged);
+    }
+
+    [TestCase(EAdvancedTextureFormatClass.Rgb8, EAdvancedTextureFormatClass.Bc4Unorm, EAdvancedTextureSourceMismatch.None)]
+    [TestCase(EAdvancedTextureFormatClass.Rgba8, EAdvancedTextureFormatClass.Bc7Unorm, EAdvancedTextureSourceMismatch.None)]
+    [TestCase(EAdvancedTextureFormatClass.Rgb8, EAdvancedTextureFormatClass.Bc7Unorm, EAdvancedTextureSourceMismatch.None)]
+    [TestCase(EAdvancedTextureFormatClass.Srgb8, EAdvancedTextureFormatClass.Bc7Srgb, EAdvancedTextureSourceMismatch.None)]
+    [TestCase(EAdvancedTextureFormatClass.Rgb8, EAdvancedTextureFormatClass.Rgba16Float, EAdvancedTextureSourceMismatch.TextureFormatChanged)]
+    [TestCase(EAdvancedTextureFormatClass.Bc7Srgb, EAdvancedTextureFormatClass.Rgb8, EAdvancedTextureSourceMismatch.TextureFormatChanged)]
+    [TestCase(EAdvancedTextureFormatClass.Rgb8, EAdvancedTextureFormatClass.Bc5Unorm, EAdvancedTextureSourceMismatch.TextureFormatChanged)]
+    [TestCase(EAdvancedTextureFormatClass.Rgba8, EAdvancedTextureFormatClass.Rgba8Snorm, EAdvancedTextureSourceMismatch.TextureFormatChanged)]
+    public void ResidencyFormatChange_UsesTheFormatFamily(
+        EAdvancedTextureFormatClass published,
+        EAdvancedTextureFormatClass current,
+        EAdvancedTextureSourceMismatch expected)
+        => AdvancedTextureResidencyDrift.CompareTexture(
+                EAdvancedTextureDriftKind.Residency, true,
+                Record(current, extent: 64u, mips: 7u),
+                Record(published, extent: 8u, mips: 4u))
+            .ShouldBe(expected);
+
+    [Test]
+    public void ResidencySrgbFlagChange_IsRejected()
+    {
+        AdvancedTextureRecord published = Record(EAdvancedTextureFormatClass.Rgb8, extent: 8u, mips: 4u);
+        AdvancedTextureRecord current = Record(EAdvancedTextureFormatClass.Bc7Unorm, extent: 64u, mips: 7u) with
+        {
+            Flags = EAdvancedTextureRecordFlags.Srgb,
+        };
+
+        AdvancedTextureResidencyDrift.CompareTexture(EAdvancedTextureDriftKind.Residency, true, current, published)
+            .ShouldBe(EAdvancedTextureSourceMismatch.TextureShapeChanged);
+    }
+
+    [Test]
+    public void ExactGenerationChange_IsContentGenerationChanged()
+    {
+        AdvancedTextureRecord record = Record(EAdvancedTextureFormatClass.Rgba8, extent: 16u, mips: 5u);
+
+        AdvancedTextureResidencyDrift.CompareTexture(EAdvancedTextureDriftKind.Exact, true, record, record)
+            .ShouldBe(EAdvancedTextureSourceMismatch.ContentGenerationChanged);
+        AdvancedTextureResidencyDrift.CompareTexture(EAdvancedTextureDriftKind.Exact, false, record with { MipCount = 4u }, record)
+            .ShouldBe(EAdvancedTextureSourceMismatch.TextureExtentOrMipsChanged);
+        AdvancedTextureResidencyDrift.CompareTexture(EAdvancedTextureDriftKind.Exact, false, record, record)
+            .ShouldBe(EAdvancedTextureSourceMismatch.None);
+    }
+
+    [Test]
+    public void SourceMismatchCounter_CountsEachReasonAndTheLast()
+    {
+        long before = AdvancedTextureSourceMismatchDiagnostics.GetCount(EAdvancedTextureSourceMismatch.TextureFormatChanged);
+
+        AdvancedTextureSourceMismatchDiagnostics.Note(EAdvancedTextureSourceMismatch.TextureFormatChanged);
+        AdvancedTextureSourceMismatchDiagnostics.Note(EAdvancedTextureSourceMismatch.None);
+
+        AdvancedTextureSourceMismatchDiagnostics.GetCount(EAdvancedTextureSourceMismatch.TextureFormatChanged)
+            .ShouldBeGreaterThanOrEqualTo(before + 1L);
+        AdvancedTextureSourceMismatchDiagnostics.CaptureTotals()
+            .ShouldContainKey(nameof(EAdvancedTextureSourceMismatch.TextureFormatChanged));
+        System.Text.StringBuilder line = new();
+        AdvancedTextureSourceMismatchDiagnostics.AppendTotals(line);
+        line.ToString().ShouldContain(" srcMismatch.TextureFormatChanged=");
+    }
+
+    private static AdvancedTextureRecord Record(EAdvancedTextureFormatClass format, uint extent, uint mips)
+        => new()
+        {
+            Dimension = EAdvancedTextureDimension.Texture2D,
+            Width = extent,
+            Height = extent,
+            DepthOrLayers = 1u,
+            MipCount = mips,
+            FormatClass = (uint)format,
+            UvScaleBias = new Vector4(1f, 1f, 0f, 0f),
+        };
+
+    private static AdvancedSamplerRecord Sampler()
+        => new()
+        {
+            Filter = EAdvancedSamplerFilter.Linear,
+            AddressU = EAdvancedSamplerAddressMode.Repeat,
+            AddressV = EAdvancedSamplerAddressMode.Repeat,
+            LodBiasMinMaxAnisotropy = new Vector4(0f, 0f, 4f, 1f),
+        };
 
     private static XRTexture2D CreateTexture(int mipCount)
     {

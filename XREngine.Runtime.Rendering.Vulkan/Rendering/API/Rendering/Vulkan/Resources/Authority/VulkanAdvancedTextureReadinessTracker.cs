@@ -3,10 +3,10 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Tracks the backend state of each dense texture row. The Vulkan runtime writes
 /// <see cref="AdvancedTextureRecord.EncodedReferenceIndex"/> into the resident texture
-/// table, and, for a source that only changed residency after publication, the width, height
-/// and mip count of the bound image. This is backend state: a texture can become
-/// descriptor-ready, leave its loading placeholder, or get another resident mip chain without
-/// a change to the canonical table generations. The generation from this tracker lets the
+/// table, and, for a source that changed through a streaming commit after publication, the
+/// width, height, mip count, format class, flags and dimension of the bound image. This is
+/// backend state: a texture can become descriptor-ready, leave its loading placeholder, or get
+/// another resident mip chain without a change to the canonical table generations. The generation from this tracker lets the
 /// resident table see such a change.
 /// </summary>
 internal sealed class VulkanAdvancedTextureReadinessTracker
@@ -16,7 +16,7 @@ internal sealed class VulkanAdvancedTextureReadinessTracker
 
     /// <summary>
     /// Gets the readiness generation. It advances each time <see cref="Update"/> sees a row
-    /// whose encoded reference, width, height or mip count differs from the previous update.
+    /// whose encoded reference or bound-image fields differ from the previous update.
     /// Zero means no update yet.
     /// </summary>
     internal ulong Generation { get; private set; }
@@ -44,7 +44,7 @@ internal sealed class VulkanAdvancedTextureReadinessTracker
         for (int index = 0; index < rows.Length; ++index)
         {
             ref readonly AdvancedTextureRecord row = ref rows[index];
-            RowState state = new(row.EncodedReferenceIndex, row.Width, row.Height, row.MipCount);
+            RowState state = new(row.EncodedReferenceIndex, row.Width, row.Height, row.MipCount, row.FormatClass, row.Flags, row.Dimension);
             if (_rows[index] == state)
                 continue;
 
@@ -58,5 +58,12 @@ internal sealed class VulkanAdvancedTextureReadinessTracker
         return changed;
     }
 
-    private readonly record struct RowState(uint EncodedReferenceIndex, uint Width, uint Height, uint MipCount);
+    private readonly record struct RowState(
+        uint EncodedReferenceIndex,
+        uint Width,
+        uint Height,
+        uint MipCount,
+        uint FormatClass,
+        EAdvancedTextureRecordFlags Flags,
+        EAdvancedTextureDimension Dimension);
 }
