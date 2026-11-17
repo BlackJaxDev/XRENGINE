@@ -19,6 +19,14 @@ internal sealed partial class VulkanResourceLifetimeTracker
     /// in use.
     /// </summary>
     /// <remarks>
+    /// Only submissions that signal a registered timeline semaphore
+    /// (<see cref="RegisterSweepableTimeline"/>) are queried. Those semaphores live as long as the
+    /// frame loop and are unregistered before they are destroyed, so the sweep never queries a
+    /// destroyed handle. Fence submissions are not queried: many owners destroy or reset their
+    /// fences on their own schedule. A fence submission is still marked when a later timeline
+    /// submission on the same queue completes, because a signal covers every command submitted to
+    /// its queue before it.
+    /// <para>
     /// The sweep copies at most <see cref="MaximumSweptSubmissions"/> unobserved submissions under
     /// <see cref="SyncRoot"/>, releases the lock, queries each one through
     /// <typeparamref name="TStatus"/> (no wait), and then marks the completed ones under the lock
@@ -26,6 +34,7 @@ internal sealed partial class VulkanResourceLifetimeTracker
     /// queries never run under the lock, so the lock order of the existing completion callers does
     /// not change. Entries stay in the list (marked observed) until their owner removes them or
     /// <see cref="ReapObservedSubmissionsNoLock"/> compacts them. Allocation-free.
+    /// </para>
     /// </remarks>
     /// <returns>The number of submissions that this sweep marked complete.</returns>
     internal int SweepCompletions<TStatus>(ref TStatus status)
@@ -44,7 +53,9 @@ internal sealed partial class VulkanResourceLifetimeTracker
                 for (int index = 0; index < LifetimeSubmissions.Count && count < buffer.Length; ++index)
                 {
                     VulkanLifetimeSubmission submission = LifetimeSubmissions[index];
-                    if (!submission.CompletionObserved)
+                    if (!submission.CompletionObserved &&
+                        submission.TimelineValue != 0UL &&
+                        IsSweepableTimelineNoLock(submission.TimelineSemaphoreHandle))
                         buffer[count++] = submission;
                 }
             }
@@ -67,6 +78,61 @@ internal sealed partial class VulkanResourceLifetimeTracker
             }
             return completed;
         }
+    }
+
+    // Timeline semaphores that the sweep may query. Guarded by SyncRoot.
+    private readonly ulong[] _sweepableTimelines = new ulong[4];
+
+    /// <summary>
+    /// Lets <see cref="SweepCompletions{TStatus}"/> query submissions that signal
+    /// <paramref name="semaphoreHandle"/>. The owner must call
+    /// <see cref="UnregisterSweepableTimeline"/> before it destroys the semaphore.
+    /// </summary>
+    internal void RegisterSweepableTimeline(ulong semaphoreHandle)
+    {
+        if (semaphoreHandle == 0UL)
+            return;
+        using (VulkanFrameLockScope.Enter(SyncRoot, EVulkanFrameWaitReason.ResourceLifetimeLock))
+        {
+            int free = -1;
+            for (int index = 0; index < _sweepableTimelines.Length; ++index)
+            {
+                if (_sweepableTimelines[index] == semaphoreHandle)
+                    return;
+                if (free < 0 && _sweepableTimelines[index] == 0UL)
+                    free = index;
+            }
+            if (free >= 0)
+                _sweepableTimelines[free] = semaphoreHandle;
+        }
+    }
+
+    /// <summary>Stops the sweep from querying <paramref name="semaphoreHandle"/>. Call before destroying it.</summary>
+    internal void UnregisterSweepableTimeline(ulong semaphoreHandle)
+    {
+        if (semaphoreHandle == 0UL)
+            return;
+        // SweepGate first: a sweep that already copied this semaphore finishes its native queries
+        // before the owner can destroy the handle.
+        lock (SweepGate)
+        {
+            using (VulkanFrameLockScope.Enter(SyncRoot, EVulkanFrameWaitReason.ResourceLifetimeLock))
+            {
+                for (int index = 0; index < _sweepableTimelines.Length; ++index)
+                    if (_sweepableTimelines[index] == semaphoreHandle)
+                        _sweepableTimelines[index] = 0UL;
+            }
+        }
+    }
+
+    private bool IsSweepableTimelineNoLock(ulong semaphoreHandle)
+    {
+        if (semaphoreHandle == 0UL)
+            return false;
+        for (int index = 0; index < _sweepableTimelines.Length; ++index)
+            if (_sweepableTimelines[index] == semaphoreHandle)
+                return true;
+        return false;
     }
 
     // Reused copy target of SweepCompletions. The render thread runs the sweep at frame start, and

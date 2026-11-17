@@ -13,6 +13,7 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class VulkanLifetimeCompletionSweepTests
 {
     private const ulong Queue = 0x10UL;
+    private const ulong Timeline = 0x50UL;
 
     [Test]
     public void CompletedUnobservedSubmission_AdvancesTheGraphicsFrontier()
@@ -52,6 +53,33 @@ public sealed class VulkanLifetimeCompletionSweepTests
     }
 
     [Test]
+    public void FenceOnlySubmissions_AreNotQueried()
+    {
+        VulkanResourceLifetimeTracker tracker = new();
+        tracker.RegisterSweepableTimeline(Timeline);
+        ulong sequence = ++tracker.LastGraphicsSequence;
+        tracker.LifetimeSubmissions.Add(new VulkanLifetimeSubmission(
+            Queue, EVulkanLifetimeQueueDomain.Graphics, sequence,
+            TimelineSemaphoreHandle: 0UL, TimelineValue: 0UL, FenceHandle: 0x100UL));
+
+        // A fence owner can destroy or reset its fence on its own schedule, so the sweep never
+        // queries a fence.
+        FakeStatus status = new(completedThroughSequence: 1UL);
+        tracker.SweepCompletions(ref status).ShouldBe(0);
+        tracker.CompletedGraphicsSequence.ShouldBe(0UL);
+    }
+
+    [Test]
+    public void UnregisteredTimeline_IsNotQueried()
+    {
+        VulkanResourceLifetimeTracker tracker = CreateTracker(submissionCount: 1);
+        tracker.UnregisterSweepableTimeline(Timeline);
+
+        FakeStatus status = new(completedThroughSequence: 1UL);
+        tracker.SweepCompletions(ref status).ShouldBe(0);
+    }
+
+    [Test]
     public void DeviceLost_SweepsNothing()
     {
         VulkanResourceLifetimeTracker tracker = CreateTracker(submissionCount: 1);
@@ -64,6 +92,7 @@ public sealed class VulkanLifetimeCompletionSweepTests
     private static VulkanResourceLifetimeTracker CreateTracker(int submissionCount)
     {
         VulkanResourceLifetimeTracker tracker = new();
+        tracker.RegisterSweepableTimeline(Timeline);
         for (int index = 0; index < submissionCount; index++)
         {
             ulong sequence = ++tracker.LastGraphicsSequence;
@@ -71,9 +100,9 @@ public sealed class VulkanLifetimeCompletionSweepTests
                 Queue,
                 EVulkanLifetimeQueueDomain.Graphics,
                 sequence,
-                TimelineSemaphoreHandle: 0UL,
-                TimelineValue: 0UL,
-                FenceHandle: 0x100UL + sequence));
+                TimelineSemaphoreHandle: Timeline,
+                TimelineValue: sequence,
+                FenceHandle: 0UL));
         }
         return tracker;
     }

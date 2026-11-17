@@ -43,10 +43,14 @@ an Advanced queue-overlap slot when it is reused). Until then, every newer resou
 `QueryBufferContentReuse` refused buffers whose work had already finished.
 
 `VulkanResourceLifetimeTracker.SweepCompletions` closes that gap without waiting. It copies up to 64
-unobserved submissions under `SyncRoot`, queries each one outside the lock
-(`vkGetSemaphoreCounterValue` for a timeline submission, `vkGetFenceStatus` for a fence submission;
-`VulkanResourceRuntime.SweepLifetimeSubmissionCompletions`), and marks the completed ones under the
-lock with `MarkQueueSequenceCompletedNoLock`, the call that the owners use. A completed later
+unobserved submissions that signal a registered timeline semaphore under `SyncRoot`, queries each one
+outside the lock with `vkGetSemaphoreCounterValue` (`VulkanResourceRuntime.SweepLifetimeSubmissionCompletions`),
+and marks the completed ones under the lock with `MarkQueueSequenceCompletedNoLock`, the call that the
+owners use. Only the frame loop's graphics, present and transfer timeline semaphores are registered
+(`RegisterSweepableTimeline` in `CreateSyncObjects`); `DestroySyncObjects` unregisters them before it
+destroys them, and unregistering waits for a sweep that is querying them. The sweep never queries a
+fence, because many owners destroy or reset their fences on their own schedule. A fence submission is
+still marked when a later timeline submission on the same queue completes. A completed later
 submission on a queue also marks the earlier ones on that queue, because a signal covers every
 command submitted before it. Entries stay in the list until their owner removes them. The sweep
 runs at the start of each desktop frame transaction, in the eye-frame retirement drain, and in
