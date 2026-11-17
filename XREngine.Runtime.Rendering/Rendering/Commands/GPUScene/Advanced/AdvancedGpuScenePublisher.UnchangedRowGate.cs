@@ -271,6 +271,8 @@ public sealed partial class AdvancedGpuScenePublisher
 
         if (!plan.Supported)
         {
+            if (IsUnsupportedRowRejectionStable(in plan, in identity, in command, renderer, mesh, material, renderOptions))
+                return true;
             if (IsUnchangedUnsupportedRow(in plan, in identity, in command, mesh, material,
                     ref scratch.MaterialResolveAttempts,
                     out EAdvancedCanonicalCompatibilityReason currentReason,
@@ -433,6 +435,63 @@ public sealed partial class AdvancedGpuScenePublisher
     /// derived and the step that failed, for diagnostics. "LateRejection" means that the layout
     /// selection passed, so the full plan rejected the row in a later step that the gate does not repeat.
     /// </remarks>
+    /// <summary>
+    /// Returns true when an unsupported row that the material encoder rejected still has every
+    /// input that decided the rejection. <see cref="IsUnchangedUnsupportedRow"/> runs only the
+    /// geometry and layout stages again, so a row that a later stage rejected never compared as
+    /// unchanged and failed the gate on every frame. Running that later stage again would mean
+    /// a full material encode, so this check compares the captured inputs instead:
+    /// <list type="bullet">
+    /// <item>the row still has no registration;</item>
+    /// <item>the draw row, the renderer, the mesh and the material are the planned ones;</item>
+    /// <item>the mesh geometry values and the material binding layout, value and resource
+    /// versions, shader state revision and Uber state revision are the planned values;</item>
+    /// <item>the raster state of the render options is the planned state.</item>
+    /// </list>
+    /// Only <see cref="EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding"/>
+    /// takes this path. The native Uber encoder gives it from the engine semantic (which
+    /// advances the shader state revision), the Uber authored state (Uber state revision), the
+    /// alpha-to-coverage option (render options), the parameter values (value version), and the
+    /// texture list and sampler names (layout and resource versions); the remaining case is a
+    /// fixed schema size. The texture-state reasons of the resource encoder, such as an empty
+    /// texture, also depend on texture contents that no material version tracks, so they keep
+    /// the stage comparison. A false result only sends the row to that comparison.
+    /// </summary>
+    private static bool IsUnsupportedRowRejectionStable(
+        in AdvancedGpuSceneCommandTransition plan,
+        in OrderedRegistrationIdentity identity,
+        in DrawMetadata command,
+        XRMeshRenderer? renderer,
+        XRMesh? mesh,
+        XRMaterial? material,
+        RenderingParameters? renderOptions)
+    {
+        if (plan.CompatibilityReason != EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding ||
+            identity.RegistrationIndex >= 0 || identity.Draw.IsValid ||
+            mesh is null || material is null ||
+            !command.Equals(plan.Command) ||
+            !ReferenceEquals(renderer, plan.Renderer) ||
+            !ReferenceEquals(mesh, plan.Mesh) ||
+            !ReferenceEquals(material, plan.MaterialSource))
+            return false;
+
+        if (Math.Max(0, mesh.VertexCount) != plan.MeshVertexCount ||
+            Math.Max(0, mesh.IndexCount) != plan.MeshIndexCount ||
+            mesh.GeometryRevision != plan.MeshGeometryRevision ||
+            mesh.Type != plan.MeshPrimitiveTopology)
+            return false;
+
+        if (material.BindingLayoutVersion != plan.MaterialBindingLayoutVersion ||
+            material.BindingValueVersion != plan.MaterialBindingValueVersion ||
+            material.BindingResourceVersion != plan.MaterialBindingResourceVersion ||
+            material.ShaderStateRevision != plan.MaterialShaderStateRevision ||
+            material.UberStateRevision != plan.MaterialUberStateRevision)
+            return false;
+
+        AdvancedRenderStateRecord renderState = CreateRenderState(mesh, renderOptions, in command);
+        return SameRenderState(in renderState, in plan.RenderState);
+    }
+
     private static bool IsUnchangedUnsupportedRow(
         in AdvancedGpuSceneCommandTransition plan,
         in OrderedRegistrationIdentity identity,

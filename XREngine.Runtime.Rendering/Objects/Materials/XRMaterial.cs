@@ -230,7 +230,14 @@ namespace XREngine.Rendering
         public UberMaterialAuthoredState UberAuthoredState
         {
             get => _uberAuthoredState;
-            set => SetField(ref _uberAuthoredState, value ?? UberMaterialAuthoredState.Empty);
+            set
+            {
+                // Every change advances UberStateRevision. Consumers such as the Advanced scene
+                // publisher and the Uber variant builds compare that revision to detect a
+                // changed authored state, so a direct assignment must advance it too.
+                if (SetField(ref _uberAuthoredState, value ?? UberMaterialAuthoredState.Empty))
+                    BumpUberStateRevision();
+            }
         }
 
         /// <summary>
@@ -499,9 +506,9 @@ namespace XREngine.Rendering
             if (current.Equals(next))
                 return false;
 
+            // The UberAuthoredState setter advances UberStateRevision.
             UberAuthoredState = next;
             ClearUberVariantRuntimeState();
-            BumpUberStateRevision();
             MarkDirty();
             return true;
         }

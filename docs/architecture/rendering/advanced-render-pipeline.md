@@ -604,7 +604,20 @@ bounded sample of its row failures to `advanced-scene-publication-diagnostics.lo
 `BoundsVersion`, `RowLookup`) with the mesh, material, and owner type of the row,
 and `unsupported-miss` names the failed step of an unsupported row (`Geometry`,
 `Layout`, or `LateRejection` when the full plan rejected the row after the layout
-selection) with both compatibility reasons. `late-world-write` lines come from
+selection) with both compatibility reasons.
+
+An unsupported row that the native Uber material encoder rejected
+(`UnsupportedResourceBinding`) is unchanged when its captured inputs are
+unchanged: it still has no registration, its draw row, renderer, mesh and
+material are the planned ones, the mesh geometry values and the material binding
+layout, value and resource versions, shader state revision and Uber state
+revision equal the plan, and the raster state of its render options is equal.
+Each input of that encoder advances one of these values (the engine semantic
+advances the shader state revision, and every `UberAuthoredState` change
+advances the Uber state revision). Rows that the resource encoder rejected for a
+texture state, such as an empty texture, depend on texture contents that no
+material version tracks, so they keep the geometry and layout comparison and
+still fail with `LateRejection`. `late-world-write` lines come from
 `RenderCommandMesh3D.ReportLateRenderWorldWrite`: each sampled render-thread
 `WorldMatrix` write that advances the late-write epoch (and so fails the gate
 with `LateWorldWrite`) gives the command type, the owner type, the mesh name,
