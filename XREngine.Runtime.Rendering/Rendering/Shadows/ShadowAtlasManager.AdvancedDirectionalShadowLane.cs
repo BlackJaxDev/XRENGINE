@@ -65,6 +65,15 @@ public sealed partial class ShadowAtlasManager
     // Directional cascade plan entries that waited in a render frame without a lane owner, because
     // the generic path has no caster producer for that frame's submission strategy.
     private long _advancedLaneOwnerlessDeferredEntries;
+    // Generic directional cascade renders that were declined because the generic path has no
+    // caster producer (see TryDeclineGenericDirectionalCascadeRender). All atlas managers add to it.
+    private static long s_genericCascadeNoCasterProducerDeclines;
+
+    /// <summary>
+    /// Decline reason of a generic directional cascade render in a GPU zero-readback meshlet frame.
+    /// </summary>
+    internal const string GenericCascadeNoCasterProducerReason =
+        "GPU zero-readback meshlet frame: the generic cascade path has no caster producer (no CPU collection, and the meshlet raster has no shadow producer). The cascade tile keeps its last valid content and stays dirty.";
 
     /// <summary>
     /// Lane decline reason in a render frame without a lane owner when the generic path cannot draw
@@ -170,6 +179,7 @@ public sealed partial class ShadowAtlasManager
             _advancedLaneOwnerAbsentGroups,
             _advancedLaneGenericGroups,
             _advancedLaneOwnerlessDeferredEntries,
+            Interlocked.Read(ref s_genericCascadeNoCasterProducerDeclines),
             _advancedLaneLastDeclineReason ?? _advancedLaneConsumerReason,
             _advancedLaneCasterProducer,
             _advancedLaneCasterProducerReason);
@@ -635,6 +645,26 @@ public sealed partial class ShadowAtlasManager
         => !RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsZeroReadbackMeshletStrategy();
 
     /// <summary>
+    /// Declines a generic directional cascade render that has no caster producer
+    /// (<see cref="GenericDirectionalCascadePathHasCasterProducer"/>). The caller does not render
+    /// or clear the tile, and does not mark it rendered, so the tile keeps its last valid content
+    /// and stays dirty. Counts the decline for diagnostics and returns true with
+    /// <paramref name="declineReason"/> set to a constant reason.
+    /// </summary>
+    internal static bool TryDeclineGenericDirectionalCascadeRender(out string? declineReason)
+    {
+        if (GenericDirectionalCascadePathHasCasterProducer())
+        {
+            declineReason = null;
+            return false;
+        }
+
+        Interlocked.Increment(ref s_genericCascadeNoCasterProducerDeclines);
+        declineReason = GenericCascadeNoCasterProducerReason;
+        return true;
+    }
+
+    /// <summary>
     /// True in a render frame without a lane owner in which the generic path may not draw
     /// directional cascades (<see cref="PublishAdvancedDirectionalShadowConsumerAuthority"/>). The
     /// scheduled-tile pass then defers directional cascade entries to a frame with an owner.
@@ -824,6 +854,7 @@ public readonly record struct AdvancedDirectionalShadowLaneDiagnostics(
     long OwnerAbsentGroups,
     long GenericGroups,
     long OwnerlessDeferredEntries,
+    long GenericNoCasterProducerDeclines,
     string? LastDeclineReason,
     string? CasterProducer,
     string? CasterProducerReason);

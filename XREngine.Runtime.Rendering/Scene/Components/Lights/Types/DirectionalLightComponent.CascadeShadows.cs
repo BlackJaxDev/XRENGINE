@@ -5530,6 +5530,9 @@ namespace XREngine.Components.Lights
                 return DeclineCascadeAtlasRender(out declineReason, "Cascaded shadows are disabled for this light or backend.");
             if (renderRect.Width <= 0 || renderRect.Height <= 0)
                 return DeclineCascadeAtlasRender(out declineReason, "The cascade atlas tile rectangle is empty.");
+            // Without a caster producer, a render would clear the tile and draw nothing.
+            if (ShadowAtlasManager.TryDeclineGenericDirectionalCascadeRender(out declineReason))
+                return false;
 
             DirectionalCascadeSourceState sourceState = GetCascadeSourceState(source);
             XRViewport[] cascadeShadowViewports = sourceState.Viewports;
@@ -5598,6 +5601,9 @@ namespace XREngine.Components.Lights
                 return DeclineCascadeAtlasRender(out declineReason, "The grouped cascade allocation is incomplete.");
             if (atlasFbo.Width <= 0 || atlasFbo.Height <= 0)
                 return DeclineCascadeAtlasRender(out declineReason, "The atlas page framebuffer has no extent.");
+            // Without a caster producer, a render would clear the tiles and draw nothing.
+            if (ShadowAtlasManager.TryDeclineGenericDirectionalCascadeRender(out declineReason))
+                return false;
 
             ShadowRequestSource source = group.Source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop
