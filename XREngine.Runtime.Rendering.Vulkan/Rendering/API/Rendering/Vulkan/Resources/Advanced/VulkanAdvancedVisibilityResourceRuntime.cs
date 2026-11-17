@@ -2069,7 +2069,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 out VulkanPhysicalImageGroup? depthMultisample,
                 out VulkanPhysicalImageGroup? selectionMultisample,
                 out VulkanPhysicalImageGroup? samplePositionMultisample,
-                out bool shadingDiagnosticsAliased,
+                out bool shadingDiagnosticsPlaceholder,
                 msaaSampleCount,
                 ambientOcclusionTargetName) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, activeTiles, out VulkanFrozenBufferBarrier active) ||
@@ -2116,6 +2116,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         if (!TryValidateNativeComputeResources(
                 in generation.State,
                 identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics,
+                shadingDiagnosticsPlaceholder,
                 ambientOcclusion,
                 frameSlot,
                 activeTiles, kernelTiles, counters, dispatchArgs, kernelCounts, froxels,
@@ -2273,7 +2274,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 viewIndex)
             {
                 DdgiSurface = ddgiSurface,
-                ShadingDiagnosticsAliased = shadingDiagnosticsAliased,
+                ShadingDiagnosticsPlaceholder = shadingDiagnosticsPlaceholder,
                 RvcTelemetryCounters = rvcTelemetry,
                 RvcIdentityArrayResource = rvcIdentityArrayResource,
                 RvcDepthArrayResource = rvcDepthArrayResource,
@@ -2345,7 +2346,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         out VulkanPhysicalImageGroup? depthMultisample,
         out VulkanPhysicalImageGroup? selectionMultisample,
         out VulkanPhysicalImageGroup? samplePositionMultisample,
-        out bool shadingDiagnosticsAliased,
+        out bool shadingDiagnosticsPlaceholder,
         uint msaaSampleCount,
         string ambientOcclusionTargetName)
     {
@@ -2356,12 +2357,14 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         found &= allocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.VelocityTextureName, out velocity);
         found &= allocator.TryGetPhysicalGroupForResource(AdvancedShadingResourceNames.ReactiveMask, out reactive);
         // OpenXR eye outputs without a shading debug view do not declare the diagnostics image.
-        // Binding 18 then holds the metadata image (also R32_UINT storage, in General layout),
-        // and the shading push flag ShadingDiagnosticsDisabledFlag stops every store to it.
-        shadingDiagnosticsAliased = !allocator.TryGetPhysicalGroupForResource(
+        // Binding 18 then holds the dedicated 1x1 placeholder image, and the shading push flag
+        // ShadingDiagnosticsDisabledFlag stops every store to it. The placeholder is not bound
+        // anywhere else, so the shading dispatches have no read/write hazard on it.
+        shadingDiagnosticsPlaceholder = !allocator.TryGetPhysicalGroupForResource(
             AdvancedShadingResourceNames.ShadingDiagnostics, out shadingDiagnostics);
-        if (shadingDiagnosticsAliased)
-            shadingDiagnostics = metadata;
+        if (shadingDiagnosticsPlaceholder)
+            found &= allocator.TryGetPhysicalGroupForResource(
+                AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder, out shadingDiagnostics);
         found &= allocator.TryGetPhysicalGroupForResource(ambientOcclusionTargetName, out ambientOcclusion);
         identityMultisample = null;
         metadataMultisample = null;

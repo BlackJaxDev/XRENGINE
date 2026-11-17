@@ -11,7 +11,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
         VulkanPhysicalImageGroup identity, VulkanPhysicalImageGroup metadata,
         VulkanPhysicalImageGroup depth, VulkanPhysicalImageGroup hdr,
         VulkanPhysicalImageGroup velocity, VulkanPhysicalImageGroup reactive,
-        VulkanPhysicalImageGroup diagnostics, VulkanPhysicalImageGroup ambientOcclusion, uint slot,
+        VulkanPhysicalImageGroup diagnostics, bool diagnosticsPlaceholder,
+        VulkanPhysicalImageGroup ambientOcclusion, uint slot,
         string activeName, string kernelName, string counterName, string dispatchName,
         string countName, string froxelName, string indexName, string lightingName,
         string decalFroxelName, string decalIndexName,
@@ -31,7 +32,9 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             !HasImage(metadata, Format.R32Uint, ImageUsageFlags.SampledBit | ImageUsageFlags.StorageBit) ||
             !HasDepth(depth) || !HasOutput(hdr, Format.R16G16B16A16Sfloat, identity) ||
             !HasOutput(velocity, Format.R16G16Sfloat, identity) || !HasOutput(reactive, Format.R8Unorm, identity) ||
-            !HasOutput(diagnostics, Format.R32Uint, identity) ||
+            !(diagnosticsPlaceholder
+                ? HasPlaceholderOutput(diagnostics, Format.R32Uint, identity)
+                : HasOutput(diagnostics, Format.R32Uint, identity)) ||
             !HasImage(ambientOcclusion, Format.R8Unorm, ImageUsageFlags.StorageBit | ImageUsageFlags.SampledBit) ||
             !HasSameExtent(ambientOcclusion, identity) ||
             !HasSameExtent(metadata, identity) || !HasSameExtent(depth, identity))
@@ -99,6 +102,14 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
 
     private static bool HasOutput(VulkanPhysicalImageGroup group, Format format, VulkanPhysicalImageGroup reference)
         => HasImage(group, format, ImageUsageFlags.StorageBit) && HasSameExtent(group, reference);
+
+    /// <summary>
+    /// A placeholder output receives no stores, so only its format, storage usage and layer
+    /// count must match: each view binds its own layer. Its extent is 1x1.
+    /// </summary>
+    private static bool HasPlaceholderOutput(VulkanPhysicalImageGroup group, Format format, VulkanPhysicalImageGroup reference)
+        => HasImage(group, format, ImageUsageFlags.StorageBit) &&
+           Math.Max(1u, group.Template.Layers) == Math.Max(1u, reference.Template.Layers);
 
     /// <summary>
     /// Compares the resolved extents field by field and then the layer counts. Silk.NET
