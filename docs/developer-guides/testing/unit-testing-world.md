@@ -259,7 +259,7 @@ Lane 1 is scene-only VR. It builds the VR-shaped pawn, transforms, and stereo pr
 }
 ```
 
-Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runtime selected per process with `XR_RUNTIME_JSON`. You can leave `OpenXrRuntimeJson` as `null` to auto-detect common Monado install/build locations, or set it explicitly:
+Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runtime selected per process with `XR_RUNTIME_JSON`. `XR_RUNTIME_JSON` only selects the runtime; `VR.Mode` requests OpenXR, so a `Desktop` session with `XR_RUNTIME_JSON` set starts without OpenXR. You can leave `OpenXrRuntimeJson` as `null` to auto-detect common Monado install/build locations, or set it explicitly:
 
 ```jsonc
 {
