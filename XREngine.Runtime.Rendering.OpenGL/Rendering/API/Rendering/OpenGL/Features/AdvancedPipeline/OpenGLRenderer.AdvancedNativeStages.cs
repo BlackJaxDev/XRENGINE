@@ -140,7 +140,8 @@ public partial class OpenGLRenderer
         for (uint kernel = 0u; kernel < 128u; ++kernel)
         {
             buffers.BindPushConstants(view, kernel);
-            RawGL.DispatchComputeIndirect((nint)(kernel * 16u));
+            // The command block of this view launches only the work groups of this view's tiles.
+            RawGL.DispatchComputeIndirect((nint)(AdvancedRenderPipeline.KernelDispatchIndex(view, kernel) * 16u));
         }
         RawGL.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit);
         buffers.BindPushConstants(view, 0u, overflowRepair: true);

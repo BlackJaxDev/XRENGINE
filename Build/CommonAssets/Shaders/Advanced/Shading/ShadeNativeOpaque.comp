@@ -74,8 +74,15 @@ void main()
         if (tileCapacity == 0u || u_Push.kernelIndex > membershipCapacity / tileCapacity) return;
         uint rangeBase = u_Push.kernelIndex * tileCapacity;
         uint rangeCapacity = min(tileCapacity, membershipCapacity - rangeBase);
-        if (localTile >= min(XR_ADV_KernelCounts.counts[u_Push.kernelIndex], rangeCapacity)) return;
-        uint membership = rangeBase + localTile;
+        // This view's dispatch launches only its own memberships: the range
+        // [end(view - 1), end(view)) of the kernel's list.
+        uint viewEnd = min(XR_ADV_KernelCounts.counts[
+            XR_ADV_KERNEL_VIEW_END_INDEX(u_Push.viewIndex, u_Push.kernelIndex)], rangeCapacity);
+        uint viewBase = u_Push.viewIndex == 0u ? 0u : XR_ADV_KernelCounts.counts[
+            XR_ADV_KERNEL_VIEW_END_INDEX(u_Push.viewIndex - 1u, u_Push.kernelIndex)];
+        uint rangeIndex = viewBase + localTile;
+        if (rangeIndex >= viewEnd) return;
+        uint membership = rangeBase + rangeIndex;
         XRAdvancedKernelTile kernelTile = XR_ADV_KernelTiles.records[membership];
         if (kernelTile.shadingKernelId != u_Push.kernelIndex) return;
         kernelTileFlags = kernelTile.flags;

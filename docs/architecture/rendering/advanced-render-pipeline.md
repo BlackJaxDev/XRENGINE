@@ -1323,17 +1323,23 @@ reads data from the first, or when both write the same pixels:
   pixel belongs to one kernel, and the Uber kernels shade only Uber kernel tiles.
 - The barrier before the Uber repair dispatch stays. In an overflow frame, the standard repair
   shades every pixel and the Uber repair then overwrites the Uber pixels.
-- Classification runs once per view and every view uses the same tile lists, counters and
-  indirect arguments. The first view clears the counters. Each later view starts with a global
-  compute-to-compute barrier, because it appends to the earlier views' lists and writes the
-  indirect arguments again, and the barrier after the earlier `BuildArguments` covers only
-  indirect reads of those arguments.
+- Classification runs once per view and every view uses the same tile lists and counters. The
+  first view clears the counters. Each later view starts with a global compute-to-compute
+  barrier, because it appends to the earlier views' lists, and the barrier after the earlier
+  `BuildArguments` covers only indirect reads of the arguments.
+- Because the views classify in order, each kernel's membership list holds the tiles of view 0,
+  then those of view 1. After each view, `BuildClassificationIndirect.comp` stores the count of
+  each kernel in a per-view block of the kernel count buffer
+  (`AdvancedRenderPipeline.KernelCountWordCount`) and writes that view's block of indirect commands
+  (`AdvancedRenderPipeline.KernelDispatchIndex`). Each view's shading dispatch reads its own block
+  and launches only the work groups of its own tiles; the shading kernel adds the end of the
+  previous view's range to the tile index. A single view keeps 129 commands.
 
 Synchronization validation reports the disjoint-pixel dispatches above as hazards; see the
 known false positives in [Vulkan Diagnostics](../../developer-guides/rendering/vulkan-diagnostics.md#synchronization-validation-coverage).
 
 The repair dispatches are indirect. `BuildClassificationIndirect.comp` writes one more command
-after the per-kernel commands (`AdvancedRenderPipeline.OverflowRepairDispatchIndex`): the full tile
+after the per-kernel commands of all views (`AdvancedRenderPipeline.OverflowRepairDispatchIndex`): the full tile
 grid of one view when classification overflowed, and zero work groups otherwise. Every view is
 classified before any view is shaded, so the command written after the last view matches the
 overflow flag that the repair kernel reads. A frame without overflow launches no repair groups.

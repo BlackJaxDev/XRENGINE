@@ -31,7 +31,8 @@ internal sealed partial class VulkanCommandRuntime
 
     /// <summary>
     /// Records one indirect dispatch for each dense shading kernel in <paramref name="kernels"/>.
-    /// The other family's kernels are not dispatched.
+    /// Each dispatch reads the command block of this view, so it launches only the work groups of
+    /// this view's tiles. The other family's kernels are not dispatched.
     /// </summary>
     private void RecordNativeKernelDispatches(CommandBuffer commandBuffer, in VulkanAdvancedNativeComputeClosure closure,
         in VulkanAdvancedComputePipeline shade, ref VulkanAdvancedNativeShadingPushConstants push, ulong parameterAddress,
@@ -44,7 +45,8 @@ internal sealed partial class VulkanCommandRuntime
             push = push with { KernelIndex = kernel };
             PushNativeConstants(commandBuffer, shade, in push, parameterAddress);
             Api.CmdDispatchIndirect(commandBuffer, closure.DispatchArguments.NativeBuffer,
-                closure.DispatchArguments.NativeOffset + kernel * 16UL);
+                closure.DispatchArguments.NativeOffset +
+                AdvancedRenderPipeline.KernelDispatchIndex(closure.ViewIndex, kernel) * 16UL);
         }
     }
     // Nest under the Advanced root: a separate root scope measured from the start of the frame.
@@ -123,8 +125,8 @@ internal sealed partial class VulkanCommandRuntime
         uint totalTiles = checked(tilesX * tilesY * payload.State.ViewCount);
         uint depthSlices = checked((uint)(closure.FroxelGrid.NativeSize / 16UL / totalTiles));
         if (depthSlices == 0 || closure.ActiveTiles.NativeSize < checked(totalTiles * 16UL) ||
-            closure.KernelCounts.NativeSize < AdvancedRenderPipeline.DefaultMaxShadingKernels * 4UL ||
-            closure.DispatchArguments.NativeSize < AdvancedRenderPipeline.ClassificationDispatchCommandCount * 16UL)
+            closure.KernelCounts.NativeSize < AdvancedRenderPipeline.KernelCountWordCount(payload.State.ViewCount) * 4UL ||
+            closure.DispatchArguments.NativeSize < AdvancedRenderPipeline.ClassificationDispatchCommandCount(payload.State.ViewCount) * 16UL)
             throw new VulkanPlanPreconditionException("Advanced native output capacity does not match the admitted extent and view count.");
         var clear = RuntimeEngine.StartupPresentationClearColor;
         VulkanAdvancedNativeShadingPushConstants push = new(width, height, tilesX, tilesY,
@@ -492,7 +494,8 @@ internal sealed partial class VulkanCommandRuntime
             pipeline.Program.PipelineLayout, in payload, payload.NativeComputeDescriptorSet);
         PushNativeConstants(commandBuffer, pipeline, in push, parameterAddress);
         Api.CmdDispatchIndirect(commandBuffer, closure.DispatchArguments.NativeBuffer,
-            closure.DispatchArguments.NativeOffset + AdvancedRenderPipeline.OverflowRepairDispatchIndex * 16UL);
+            closure.DispatchArguments.NativeOffset +
+            AdvancedRenderPipeline.OverflowRepairDispatchIndex(payload.State.ViewCount) * 16UL);
         CmdEndLabel(commandBuffer);
     }
 

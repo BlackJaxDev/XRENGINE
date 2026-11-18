@@ -49,7 +49,10 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
         ReadOnlySpan<nuint> bytes =
         [
             CheckedBytes(_capacityTiles, 16u), CheckedBytes(_capacityTiles, MaxKernels * 16u), 32u,
-            MaxKernels * 16u, MaxKernels * 4u, CheckedBytes(checked(_capacityTiles * _capacityDepthSlices), 16u),
+            // Dispatch commands: one block per view, then the overflow repair command (129 for one view).
+            CheckedBytes(AdvancedRenderPipeline.ClassificationDispatchCommandCount(_capacityViews), 16u),
+            CheckedBytes(AdvancedRenderPipeline.KernelCountWordCount(_capacityViews), 4u),
+            CheckedBytes(checked(_capacityTiles * _capacityDepthSlices), 16u),
             MaxLightIndices * 4u, 16u, CheckedBytes(checked(_capacityTiles * _capacityDepthSlices), 8u), MaxDecalIndices * 4u,
         ];
         for (int index = 0; index < _buffers.Length; ++index)

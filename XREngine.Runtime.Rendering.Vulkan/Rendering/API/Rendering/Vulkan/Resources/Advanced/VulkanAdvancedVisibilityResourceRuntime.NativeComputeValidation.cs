@@ -63,8 +63,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
         return Check(in plannerState, activeName, ref active, activeBytes, EBufferTarget.ShaderStorageBuffer, false, false, out reason) &&
             Check(in plannerState, kernelName, ref kernels, kernelBytes, EBufferTarget.ShaderStorageBuffer, false, false, out reason) &&
             Check(in plannerState, counterName, ref counters, 32UL, EBufferTarget.ShaderStorageBuffer, false, true, out reason) &&
-            Check(in plannerState, dispatchName, ref dispatch, AdvancedRenderPipeline.ClassificationDispatchCommandCount * 16UL, EBufferTarget.DispatchIndirectBuffer, true, false, out reason) &&
-            Check(in plannerState, countName, ref counts, AdvancedRenderPipeline.DefaultMaxShadingKernels * sizeof(uint), EBufferTarget.ShaderStorageBuffer, false, true, out reason) &&
+            Check(in plannerState, dispatchName, ref dispatch, AdvancedRenderPipeline.ClassificationDispatchCommandCount(Math.Max(1u, identity.Template.Layers)) * 16UL, EBufferTarget.DispatchIndirectBuffer, true, false, out reason) &&
+            Check(in plannerState, countName, ref counts, AdvancedRenderPipeline.KernelCountWordCount(Math.Max(1u, identity.Template.Layers)) * sizeof(uint), EBufferTarget.ShaderStorageBuffer, false, true, out reason) &&
             CheckFroxels(in plannerState, froxelName, ref froxels, tiles, out reason) &&
             Check(in plannerState, indexName, ref indices, AdvancedRenderPipeline.DefaultLightIndexListCapacity * sizeof(uint), EBufferTarget.ShaderStorageBuffer, false, false, out reason) &&
             Check(in plannerState, lightingName, ref lighting, 4UL * sizeof(uint), EBufferTarget.ShaderStorageBuffer, false, true, out reason) &&
