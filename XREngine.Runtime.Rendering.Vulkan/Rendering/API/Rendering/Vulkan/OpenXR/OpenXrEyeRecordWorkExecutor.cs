@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using XREngine.Execution;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -57,6 +58,8 @@ internal sealed class OpenXrEyeRecordWorkExecutor : IRenderWorkExecutor
 
     public void Execute(in RenderWorkItem item, ref RenderWorkerContext context)
     {
+        // The worker records eye work, so its work belongs to the XR domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (item.OperationKind != EyePrimaryOperationKind ||
             item.SourceCount != 1 ||
             (uint)item.SourceStart >= (uint)_inputs.Length)

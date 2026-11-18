@@ -966,7 +966,10 @@ internal sealed partial class ImportedTextureStreamingManager
         // Advance for the next collection phase.  Every viewport that runs
         // during the upcoming CollectVisible tick will tag usages with the new
         // value, and the following PostCollectVisible will evaluate against it.
-        Interlocked.Increment(ref _collectFrameId);
+        // The clock counts budget periods, not collects: with XR collect pacing
+        // one collect stands for several display periods, so the per-frame
+        // allowances above and the cooldowns in frames keep their real-time rate.
+        Interlocked.Add(ref _collectFrameId, CollectBudgetPeriods.Current);
     }
 
     private void OnSwapBuffers()
@@ -1009,7 +1012,7 @@ internal sealed partial class ImportedTextureStreamingManager
         WeakReference<ImportedTextureStreamingRecord>[] refs = _registry.GetRecordReferencesSnapshot();
         for (int i = 0; i < refs.Length; i++)
         {
-            if (completedFinalizations >= MaxSparseFinalizationsPerFrame)
+            if (completedFinalizations >= CollectBudgetPeriods.Scale(MaxSparseFinalizationsPerFrame))
                 break;
 
             if (!refs[i].TryGetTarget(out ImportedTextureStreamingRecord? record)
@@ -1340,13 +1343,13 @@ internal sealed partial class ImportedTextureStreamingManager
                     if (!visibleThisFrame)
                         return false;
 
-                    if (queuedPromotionBytes + deltaBytes > MaxImportEraPromotionBytesPerFrame)
+                    if (queuedPromotionBytes + deltaBytes > CollectBudgetPeriods.Scale(MaxImportEraPromotionBytesPerFrame))
                         return false;
                 }
 
-                if (queuedTransitions >= MaxResidentTransitionsPerFrame
-                    || queuedPromotions >= MaxPromotionTransitionsPerFrame
-                    || (queuedPromotions > 0 && queuedPromotionBytes + deltaBytes > MaxPromotionBytesPerFrame))
+                if (queuedTransitions >= CollectBudgetPeriods.Scale(MaxResidentTransitionsPerFrame)
+                    || queuedPromotions >= CollectBudgetPeriods.Scale(MaxPromotionTransitionsPerFrame)
+                    || (queuedPromotions > 0 && queuedPromotionBytes + deltaBytes > CollectBudgetPeriods.Scale(MaxPromotionBytesPerFrame)))
                 {
                     return false;
                 }
@@ -1385,7 +1388,7 @@ internal sealed partial class ImportedTextureStreamingManager
                     }
                 }
 
-                if (queuedTransitions >= MaxResidentTransitionsPerFrame)
+                if (queuedTransitions >= CollectBudgetPeriods.Scale(MaxResidentTransitionsPerFrame))
                     return false;
             }
 
@@ -1559,7 +1562,8 @@ internal sealed partial class ImportedTextureStreamingManager
 
         for (int i = 0; i < deferredPromotions.Count; i++)
         {
-            if (queuedTransitions >= MaxResidentTransitionsPerFrame || queuedPromotions >= MaxPromotionTransitionsPerFrame)
+            if (queuedTransitions >= CollectBudgetPeriods.Scale(MaxResidentTransitionsPerFrame) ||
+                queuedPromotions >= CollectBudgetPeriods.Scale(MaxPromotionTransitionsPerFrame))
                 break;
 
             DeferredPromotionCandidate deferred = deferredPromotions[i];

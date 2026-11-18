@@ -87,6 +87,10 @@ public static class GltfImportKeyUtilities
 
             if (material.PbrMetallicRoughness?.MetallicRoughnessTexture is { } metallicRoughnessTexture)
             {
+                // The packed source texture feeds the surface bindings; the split textures feed
+                // the legacy sampler slots.
+                if (TryEmit(document, metallicRoughnessTexture.Index, null, emitted, out string packedKey))
+                    yield return packedKey;
                 if (TryEmit(document, metallicRoughnessTexture.Index, "metallic", emitted, out string metallicKey))
                     yield return metallicKey;
                 if (TryEmit(document, metallicRoughnessTexture.Index, "roughness", emitted, out string roughnessKey))

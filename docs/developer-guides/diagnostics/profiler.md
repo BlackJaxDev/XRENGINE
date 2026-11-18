@@ -190,6 +190,30 @@ destroy events by resource name and reason. Steady-state frames should generally
 show no churn; repeated `Recreated` or `Resized` rows point to a resource
 lifetime or size-policy bug rather than normal render cost.
 
+#### OpenXR eye recording scopes
+
+The Vulkan OpenXR eye paths use the same scope names, so per-eye and stereo trees compare
+step by step. Per-eye eyes nest them under `OpenXR.Vulkan.Batch.Prepare*Eye` and
+`OpenXR.Vulkan.Batch.Record*Eye`. True single-pass stereo nests them under
+`OpenXR.Vulkan.TrueSinglePassStereo.RenderAndPublish`.
+
+| Scope | Work |
+|---|---|
+| `OpenXR.Vulkan.RecordEye.PrepareFrameSlot` | Selects and reopens the frame-data slot; runs the OpenXR retirement drain. |
+| `OpenXR.Vulkan.RecordEye.EmitFrameOps` | Runs the viewport render that emits the frame operations. Per-eye splits it into `CaptureFrameOps` (the viewport render and the capture) and `FreezeFrameOps` (the sealed copy of each operation). |
+| `OpenXR.Vulkan.RecordEye.PlanAndSchedule` | Resource planner scope, frame-operation resource refresh, prewarm and image layout reconcile. |
+| `OpenXR.Vulkan.RecordEye.BuildFramePlan` | Stereo only: builds and seals the frame plan. Per-eye eyes seal the paired plan outside the eye scopes. |
+| `OpenXR.Vulkan.RecordEye.FreezeInput` | Per-eye only: the immutable recording input for one eye; contains the next three scopes. |
+| `OpenXR.Vulkan.RecordEye.PrepareStorage` | Immutable storage authority for the operations. |
+| `OpenXR.Vulkan.RecordEye.PrepareCompute` | Compute operation preparation for recording. |
+| `OpenXR.Vulkan.RecordEye.BuildPrimaryPlan` | Command chain schedule, primary command buffer owner and primary plan build. |
+| `OpenXR.Vulkan.RecordEye.RecordCommands` | Native command recording (contains `Vulkan.RecordPrimary.*`). |
+| `OpenXR.Vulkan.Batch.Publish` | Stereo only: the layer blit plan and the publish command buffer. |
+| `OpenXR.Vulkan.Batch.SubmitAndWait` | Queue submission of the eye command buffers. |
+
+The scopes cost one flag read when profiling is off, and use pooled scope objects with constant
+names when it is on, so they do not allocate per frame.
+
 ### Connection States
 
 | State | Menu Bar | Overlay |
@@ -248,6 +272,18 @@ including game-loop CPU timings, render counters, GPU pipeline timing readiness,
 fallback counters, and GPU readback/mapped-buffer totals. `XRE_PROFILE_AUTO_DUMP=1`
 also dumps all GPU render-pipeline timing histories on graceful shutdown; it is
 enabled automatically when `XRE_PROFILE_CAPTURE=1`.
+
+`XRE_PROFILE_VULKAN_GPU_DRIVEN_PROFILE` selects the Vulkan GPU-driven profile for
+one process. The accepted values are the `EVulkanGpuDrivenProfile` names `Auto`,
+`ShippingFast`, `DevParity` and `Diagnostics` (case is ignored). Any other value is
+ignored. The profile capture contract reads it at startup
+(`Engine.ProfileCapture.ApplyPerformanceProfileContract`). The effective setting
+`VulkanGpuDrivenProfile` uses it before the project and engine settings, in
+non-published builds only. With `Diagnostics`, a forced
+`XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuMeshletInstrumented` stays instrumented. With
+any other profile, and with GPU indirect debug logging off, the strategy resolver
+changes it to `GpuMeshletZeroReadback`, so the delayed Advanced visibility counter
+receipts are not recorded.
 
 The game-loop/default-pipeline harness reports both capture-window `Samples` and
 process-lifetime `AllSamples`. If a GPU path freezes during warmup and never reaches
@@ -333,8 +369,11 @@ Frame lifecycle fields identify fence pressure between update, collect/swap, and
 render: `update_frame_id`, `collect_frame_id`, `swap_frame_id`,
 `present_frame_id`, `collect_visible_late_policy`,
 `collect_wait_for_render_ms`, `collect_wait_reason`,
-`render_wait_for_collect_ms`, `render_wait_reason`,
+`render_wait_for_collect_ms`, `render_wait_for_xr_frame_ms`, `render_wait_reason`,
 `skipped_collect_frames`, and `stale_collect_reuse_frames`.
+`render_wait_for_xr_frame_ms` is the part of the render-thread publication wait
+in which OpenXR collect pacing held the publication for `xrWaitFrame`; it is
+not in `render_wait_for_collect_ms`.
 `XRE_COLLECT_VISIBLE_LATE_POLICY=ReusePreviousVisibility` records stale-snapshot
 reuse when render intentionally skips a late collect/swap wait; the default
 `BlockUntilFresh` preserves fresh visibility publication before render.
@@ -387,7 +426,10 @@ prepare or swap stage, failed predicate, row, source and material identities,
 committed-plan state, and material revisions. A separate sampled counter records
 material-plan reuse failures, including source eligibility, changed draw inputs,
 material identity and revisions, variants, payloads, texture bindings, and
-headers. These records include the material name and semantic. The diagnostic
+headers. These records include the material name and semantic. A third sampled
+record, `late-world-write`, names each render-thread mesh `WorldMatrix` write
+that makes the prepared gate fail with `LateWorldWrite`: the command type, the
+owner type, the mesh name, and the callers of the setter. The diagnostic
 does not change publication admission. Keep this flag disabled for throughput
 measurements.
 
@@ -701,6 +743,30 @@ Match samples back to `render_frame_id`, profiler scope names, and the
 `profiler-render-stats.ndjson` timestamp. Hot render scopes should keep stable,
 allocation-free names that match the engine profiler rows; marker creation in
 per-frame paths must not allocate.
+
+Vulkan dense timing also covers the primary-recorded work that the stage and
+fullscreen scopes do not time. Each root gets its own dump file:
+
+- `Compute > <shader>`: each generic compute dispatch in the primary, named by
+  the file of its compute shader (for example `SkinningPrepass`,
+  `AggregateDeformation`, `VulkanAutoExposure2DArray`). `Compute > SecondaryRange`
+  covers a planned range of compute operations that the primary executes as one
+  secondary command buffer.
+- `Advanced > Visibility > Prepare` and `Advanced > Visibility > LateFinalize`:
+  the visibility preparation dispatches and barriers before the early raster,
+  and the group finalize, counter copies and pyramid barriers after the HiZ test.
+- `Passes > <pipeline type> > <pass name>`: one scope per render-graph pass of a
+  primary, from its barrier batch to the end of its render pass. It includes the
+  pass barriers, load, clear, store and resolve work and the generic draws (for
+  example the nested viewport draws of the PreRender pass).
+  A pass that the plan enters without a barrier batch adds its time to the open
+  scope of the previous pass. This root overlaps the `Advanced`, `Stereo` and
+  `Fullscreen` roots; do not add it to them.
+
+Pass scopes write both timestamps outside a render pass. Inside a multiview
+render pass a timestamp also writes one extra query per extra view (as zero),
+which would overwrite the start of a scope that the pass scope contains. The
+dense query budget is 2048 scopes per primary recording.
 
 ### GPU Timestamp Policy
 

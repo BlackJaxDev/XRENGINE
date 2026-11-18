@@ -44,7 +44,8 @@ void main()
 
     vec4 rmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
     if ((flags & 4u) != 0u)
-        rmse.xy *= XR_ADV_StandardTexture(material, 2u, uv, uvDx, uvDy, vec4(1.0)).rg;
+        rmse.xy *= XR_ADV_StandardRoughnessMetallic(flags,
+            XR_ADV_StandardTexture(material, 2u, uv, uvDx, uvDy, vec4(1.0)));
     float roughness = clamp(rmse.x, 0.04, 1.0);
     float metallic = clamp(rmse.y, 0.0, 1.0);
 

@@ -189,7 +189,8 @@ public sealed partial class ShadowAtlasManager
         float NearPlane,
         float FarPlane,
         uint DesiredResolution,
-        DirectionalCascadeSampleState DirectionalCascadeSample);
+        DirectionalCascadeSampleState DirectionalCascadeSample,
+        bool Revert = false);
 
     private readonly record struct DirectionalAtlasRenderEvent(
         Guid LightId,
@@ -287,6 +288,12 @@ public sealed partial class ShadowAtlasManager
     private readonly List<ShadowAtlasAllocation> _frameAllocations;
     private readonly List<ShadowAtlasGroupedDirectionalCascadeAllocation> _directionalCascadeGroups = new();
     private readonly Dictionary<DirectionalCascadeGroupKey, List<ShadowAtlasGroupedAllocationMember>> _directionalCascadeGroupMembersByKey = new();
+    // Groups whose light has a cascade with a new, moved or resized allocation in this
+    // frame. Such a group keeps all cascades, because a stale tile is only valid in
+    // its previous slot.
+    private readonly HashSet<DirectionalCascadeGroupKey> _directionalCascadeFullGroupKeys = new();
+    // Number of eligible cascades of each group key before the render filter.
+    private readonly Dictionary<DirectionalCascadeGroupKey, int> _directionalCascadeEligibleCounts = new();
     private readonly List<DirectionalCascadeGroupKey> _directionalCascadeGroupKeyScratch = new(16);
     private readonly Dictionary<ShadowRequestKey, int> _directionalCascadeGroupIndexByRequest = new();
     private readonly Dictionary<DirectionalCascadeSolveGroupKey, int> _directionalCascadeSolveGroupCounts = new();
@@ -311,6 +318,10 @@ public sealed partial class ShadowAtlasManager
     private readonly List<ShadowTileCompletion> _completionDrainScratch = new();
     private ShadowTileCompletion[] _tileCompletions = new ShadowTileCompletion[256];
     private ShadowTileCompletion[] _renderedCompletionOverlays = new ShadowTileCompletion[256];
+    // Light cascade slots and rendered samples before a grouped commit, one per group member.
+    private readonly DirectionalLightComponent.DirectionalCascadeAtlasSlot[] _revertSlotScratch =
+        new DirectionalLightComponent.DirectionalCascadeAtlasSlot[8];
+    private readonly DirectionalCascadeSampleState[] _revertSampleScratch = new DirectionalCascadeSampleState[8];
     private int _renderedCompletionOverlayCount;
     private int _tileCompletionHead;
     private int _tileCompletionTail;
@@ -976,6 +987,36 @@ public sealed partial class ShadowAtlasManager
         if (!ShouldBuildGroupedAtlasRenderPlanEntries())
             return;
 
+        // A group holds only the cascades that render in this frame. A cascade that
+        // does not render keeps its committed tile and matrix, and the receivers
+        // sample that stale tile. When a cascade of the light has a new, moved or
+        // resized allocation, every cascade renders in one full group instead.
+        _directionalCascadeFullGroupKeys.Clear();
+        _directionalCascadeEligibleCounts.Clear();
+        for (int i = 0; i < _requests.Count; i++)
+        {
+            ShadowMapRequest request = _requests[i];
+            if (request.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+                GetAtlasKind(request.ProjectionType) != EShadowAtlasKind.Directional ||
+                !_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation allocation) ||
+                !CanDirectionalCascadeJoinGroup(allocation))
+            {
+                continue;
+            }
+
+            DirectionalCascadeGroupKey key = new(
+                request.Key.LightId,
+                request.Key.Domain,
+                request.Key.Source,
+                request.Encoding,
+                allocation.AtlasId,
+                allocation.PageIndex);
+            _directionalCascadeEligibleCounts[key] =
+                _directionalCascadeEligibleCounts.GetValueOrDefault(key) + 1;
+            if (HasDirectionalCascadeAllocationMoved(request, allocation))
+                _directionalCascadeFullGroupKeys.Add(key);
+        }
+
         for (int i = 0; i < _requests.Count; i++)
         {
             ShadowMapRequest request = _requests[i];
@@ -1000,6 +1041,14 @@ public sealed partial class ShadowAtlasManager
                 request.Encoding,
                 allocation.AtlasId,
                 allocation.PageIndex);
+            // A cascade whose last submission failed renders again in its group: as a single
+            // tile entry it would have no producer in a GPU zero-readback meshlet frame.
+            if (!_directionalCascadeFullGroupKeys.Contains(key) &&
+                !DirectionalCascadeRequestRenders(request) &&
+                !IsSubmissionRetryPendingForPlanning(request.Key))
+            {
+                continue;
+            }
 
             if (!_directionalCascadeGroupMembersByKey.TryGetValue(key, out List<ShadowAtlasGroupedAllocationMember>? members))
             {
@@ -1025,7 +1074,10 @@ public sealed partial class ShadowAtlasManager
             DirectionalCascadeGroupKey key = _directionalCascadeGroupKeyScratch[i];
             List<ShadowAtlasGroupedAllocationMember> members = _directionalCascadeGroupMembersByKey[key];
             _solveDiagnostics.DirectionalGroupSeedCount++;
-            if (members.Count <= 1)
+            // A one-member group is valid when the light has more cascades: the other
+            // cascades keep their tiles. A light with one cascade keeps the tile path.
+            if (members.Count == 0 ||
+                (members.Count == 1 && _directionalCascadeEligibleCounts.GetValueOrDefault(key) <= 1))
                 continue;
 
             members.Sort(GroupedAllocationMemberComparer.Instance);
@@ -1068,6 +1120,35 @@ public sealed partial class ShadowAtlasManager
                 members.Clear();
 
         _directionalCascadeGroupKeyScratch.Clear();
+    }
+
+    /// <summary>
+    /// True when the cascade request renders in this frame: the same rule that marks
+    /// the cascade for caster collection (<c>MarkDirectionalCascadeAtlasRequest</c>).
+    /// </summary>
+    private static bool DirectionalCascadeRequestRenders(ShadowMapRequest request)
+        => request.ForcedSkipReason == SkipReason.None &&
+            (request.IsDirty || !request.CanReusePreviousFrame);
+
+    /// <summary>
+    /// True when the cascade has no resident allocation from the previous frame, or
+    /// its page, rectangle, resolution or atlas changed, or its dirty reason reports
+    /// an allocation or encoding change. A stale tile is not valid in a new slot.
+    /// </summary>
+    private bool HasDirectionalCascadeAllocationMoved(ShadowMapRequest request, ShadowAtlasAllocation allocation)
+    {
+        if ((request.DirtyReason & (ShadowDirtyReason.AllocationMissing |
+                ShadowDirtyReason.AllocationChanged | ShadowDirtyReason.EncodingChanged)) != 0)
+            return true;
+        if (!TryGetResidentAllocation(request.Key, out ShadowAtlasAllocation prior))
+            return true;
+        return prior.PageIndex != allocation.PageIndex ||
+            prior.PixelRect.X != allocation.PixelRect.X ||
+            prior.PixelRect.Y != allocation.PixelRect.Y ||
+            prior.PixelRect.Width != allocation.PixelRect.Width ||
+            prior.PixelRect.Height != allocation.PixelRect.Height ||
+            prior.Resolution != allocation.Resolution ||
+            prior.AtlasId != allocation.AtlasId;
     }
 
     private static bool CanDirectionalCascadeJoinGroup(ShadowAtlasAllocation allocation)
@@ -1191,13 +1272,12 @@ public sealed partial class ShadowAtlasManager
 
     private static bool ShouldBuildGroupedAtlasRenderPlanEntries()
     {
+        // On Vulkan, the known Monado OpenXR runtime stays on sequential tile entries unless
+        // XRE_VULKAN_DIRECTIONAL_CASCADES overrides it (the same test as the cascade and atlas
+        // gates). SteamVR and ordinary Vulkan sessions can use the grouped multi-viewport or
+        // layered shader path when the renderer reports support.
         if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-        {
-            // Keep the known Monado OpenXR Vulkan path on sequential tile entries.
-            // SteamVR and ordinary Vulkan sessions can use the grouped
-            // multi-viewport/layered shader path when the renderer reports support.
-            return !DirectionalLightComponent.IsKnownMonadoOpenXrRuntime();
-        }
+            return DirectionalLightComponent.AllowsVulkanDirectionalShadowWorkForCurrentRuntime();
 
         return true;
     }
@@ -2167,12 +2247,14 @@ public sealed partial class ShadowAtlasManager
         int failedRender = 0;
         int deferredByBudget = 0;
         int deferredByTexture = 0;
+        int deferredByLaneOwner = 0;
         int firstDeferredRequestIndex = -1;
         int attemptedEntries = 0;
         int criticalBypassEntries = 0;
 
         ShadowAtlasRenderPlan plan = SelectRenderPlanForExecution(renderPlanIndex);
         ReadOnlySpan<ShadowAtlasRenderPlanEntry> entries = plan.Entries;
+        ReleaseDirectionalStaticCascadeTilesAfterReset();
         FailUnconsumedAdvancedLaneGroups();
         if (_advancedLaneTargetFrameId != SubmissionTrackingRenderFrameId)
         {
@@ -2194,6 +2276,33 @@ public sealed partial class ShadowAtlasManager
             {
                 LogDirectionalRequestRenderState(request, allocation, "SkippedClean", requiresRender: false);
                 skippedClean++;
+                continue;
+            }
+
+            // In a render frame without a lane owner, the generic path cannot draw the casters of a
+            // GPU zero-readback meshlet frame. The directional cascade entry keeps its last valid
+            // tiles and stays dirty for the next frame with an owner. This is a deferral, not a
+            // failed render, so it does not use the tile budget.
+            if ((entry.Kind == ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup ||
+                 request.ProjectionType == EShadowProjectionType.DirectionalCascade) &&
+                IsOwnerlessDirectionalCascadeDeferralFrame())
+            {
+                LogDirectionalRequestRenderState(request, allocation, "DeferredNoLaneOwner", requiresRender: true);
+                _advancedLaneOwnerlessDeferredEntries++;
+                deferredByLaneOwner += tileCost;
+                continue;
+            }
+
+            // The lane draws only cascade groups. In a GPU zero-readback meshlet frame the generic
+            // path has no casters either, so a single cascade tile waits, dirty, until its cascade
+            // joins a group. This is a deferral, not a failed render.
+            if (entry.Kind == ShadowAtlasRenderPlanEntryKind.Tile &&
+                request.ProjectionType == EShadowProjectionType.DirectionalCascade &&
+                !GenericDirectionalCascadePathHasCasterProducer())
+            {
+                _directionalTileNoProducerDeferrals++;
+                _advancedLaneLastDeclineReason = DirectionalTileNoProducerReason;
+                deferredByLaneOwner += tileCost;
                 continue;
             }
 
@@ -2255,7 +2364,7 @@ public sealed partial class ShadowAtlasManager
 
         _tilesScheduledThisFrame = scheduled;
         double elapsedMs = ElapsedMilliseconds(frameStart);
-        int deferredTotal = deferredByBudget + deferredByTexture;
+        int deferredTotal = deferredByBudget + deferredByTexture + deferredByLaneOwner;
         RenderWorkBudgetCoordinator.RecordShadowAtlasQueue(deferredTotal);
         RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.ShadowAtlas, elapsedMs);
         if (deferredByTexture > 0)
@@ -2983,6 +3092,8 @@ public sealed partial class ShadowAtlasManager
 
         for (int encoding = 0; encoding < ShadowEncodingCount; encoding++)
             GetEncodingState(atlasKind, (EShadowMapEncoding)encoding).ResetResources();
+        if (atlasKind == EShadowAtlasKind.Directional)
+            RequestDirectionalStaticCascadeTileRelease();
         RemoveRenderedCompletionOverlays(atlasKind);
 
         RemoveAllocationsForAtlasKind(_previousAllocations, atlasKind);
@@ -3346,10 +3457,41 @@ public sealed partial class ShadowAtlasManager
             request,
             allocation,
             recordIndex);
-        TrackSubmissionCandidate(completion.Key);
+        bool hasCascadeSlot = TryCaptureCascadeSlotForRevert(
+            in completion,
+            out DirectionalLightComponent.DirectionalCascadeAtlasSlot previousSlot,
+            out DirectionalCascadeSampleState previousSample);
         PublishRenderedCompletionOverlay(completion);
         CommitRenderedTileToLightSlot(completion);
         EnqueueTileCompletion(completion);
+        TrackSubmissionCandidate(new SubmissionRevert(
+            completion, allocation, hasCascadeSlot, previousSlot, previousSample));
+    }
+
+    /// <summary>
+    /// Copies the light's cascade slot and rendered sample before a directional cascade commit, so a
+    /// failed submission can restore them. Returns false for other projections.
+    /// </summary>
+    private static bool TryCaptureCascadeSlotForRevert(
+        in ShadowTileCompletion completion,
+        out DirectionalLightComponent.DirectionalCascadeAtlasSlot previousSlot,
+        out DirectionalCascadeSampleState previousSample)
+    {
+        if (completion.Key.ProjectionType == EShadowProjectionType.DirectionalCascade &&
+            completion.DirectionalCascadeSample.IsValid &&
+            completion.Light is DirectionalLightComponent light)
+        {
+            light.CaptureCascadeAtlasSlotState(
+                completion.Key.Source,
+                completion.Key.FaceOrCascadeIndex,
+                out previousSlot,
+                out previousSample);
+            return true;
+        }
+
+        previousSlot = default;
+        previousSample = default;
+        return false;
     }
 
     private static ShadowTileCompletion CreateTileCompletion(
@@ -3565,6 +3707,56 @@ public sealed partial class ShadowAtlasManager
             completion.DirectionalCascadeSample);
     }
 
+    /// <summary>
+    /// Applies a revert completion of a failed atlas writer submission. When the resident allocation
+    /// still holds the failed commit (same last render frame and physical tile), it gets back the
+    /// content version and last render frame of the content that the tile still holds. A tile that
+    /// was never valid gets last render frame 0, so it renders again and no consumer samples it.
+    /// </summary>
+    private void ReconcileRevertedTileCompletion(in ShadowTileCompletion completion)
+    {
+        if (!TryGetResidentAllocation(completion.Key, out ShadowAtlasAllocation current) ||
+            !current.IsResident ||
+            current.LastRenderedFrame != completion.FrameId ||
+            !IsSamePhysicalAllocation(current, completion.Allocation))
+        {
+            return;
+        }
+
+        ShadowAtlasAllocation reverted = current with
+        {
+            ContentVersion = completion.Allocation.ContentVersion,
+            LastRenderedFrame = completion.Allocation.LastRenderedFrame,
+        };
+
+        ulong lastRequestedFrame = _frameId;
+        if (_residentAllocations.TryGetValue(completion.Key, out ShadowResidentEntry existing))
+            lastRequestedFrame = existing.LastRequestedFrame;
+
+        AddOrUpdateResidentAllocation(completion.Key, reverted, lastRequestedFrame);
+        _previousAllocations[completion.Key] = reverted;
+    }
+
+    /// <summary>Removes the rendered overlay of one commit of <paramref name="key"/> in render frame <paramref name="frameId"/>.</summary>
+    private void RemoveRenderedCompletionOverlay(in ShadowRequestKey key, ulong frameId)
+    {
+        lock (_completionSync)
+        {
+            for (int i = 0; i < _renderedCompletionOverlayCount; i++)
+            {
+                ShadowTileCompletion overlay = _renderedCompletionOverlays[i];
+                if (overlay.Key != key || overlay.FrameId != frameId)
+                    continue;
+
+                int last = _renderedCompletionOverlayCount - 1;
+                _renderedCompletionOverlays[i] = _renderedCompletionOverlays[last];
+                _renderedCompletionOverlays[last] = default;
+                _renderedCompletionOverlayCount = last;
+                return;
+            }
+        }
+    }
+
     private void DrainTileCompletions()
     {
         _completionDrainScratch.Clear();
@@ -3586,6 +3778,12 @@ public sealed partial class ShadowAtlasManager
 
     private void ReconcileTileCompletion(in ShadowTileCompletion completion)
     {
+        if (completion.Revert)
+        {
+            ReconcileRevertedTileCompletion(in completion);
+            return;
+        }
+
         LogTileCompletionLatency(completion);
 
         if (!TryGetResidentAllocation(completion.Key, out ShadowAtlasAllocation allocation) ||
@@ -3697,6 +3895,19 @@ public sealed partial class ShadowAtlasManager
             prior.Resolution != resolution ||
             prior.AtlasId != GetAtlasId(GetAtlasKind(request.ProjectionType), request.Encoding) ||
             prior.ContentVersion != request.ContentHash;
+    }
+
+    /// <summary>
+    /// Number of cascade viewports that the sequential path must prepare for a group:
+    /// one more than the highest member cascade index. A group can hold only some
+    /// cascades, so its member count is not the highest index.
+    /// </summary>
+    private static int ResolveDirectionalGroupViewportCount(in ShadowAtlasGroupedDirectionalCascadeAllocation group)
+    {
+        int count = 0;
+        for (int i = 0; i < group.CascadeCount && i < group.Members.Length; i++)
+            count = Math.Max(count, group.Members[i].CascadeIndex + 1);
+        return count;
     }
 
     private bool TryGetDirectionalCascadeGroupContainingRequest(
@@ -3929,7 +4140,7 @@ public sealed partial class ShadowAtlasManager
         {
             if (!light.PrepareSequentialCascadeShadowAtlasCommands(
                 entry.DirectionalGroup.Source,
-                entry.DirectionalGroup.CascadeCount,
+                ResolveDirectionalGroupViewportCount(entry.DirectionalGroup),
                 out declineReason))
                 return false;
             collectVisibleNow = false;
@@ -4002,6 +4213,12 @@ public sealed partial class ShadowAtlasManager
             if (!plan.TryGetMember(entry.MemberStart + i, out ShadowAtlasRenderPlanMember member))
                 return;
 
+            light.CaptureCascadeAtlasSlotState(
+                member.Request.Key.Source,
+                member.Request.Key.FaceOrCascadeIndex,
+                out _revertSlotScratch[i],
+                out _revertSampleScratch[i]);
+
             ShadowTileCompletion completion = CreateTileCompletion(
                 plan.FrameId,
                 plan.PlanId,
@@ -4026,7 +4243,8 @@ public sealed partial class ShadowAtlasManager
                 completion.DirectionalCascadeSample);
         }
 
-        if (commitCount == entry.MemberCount && commitCount > 0)
+        bool committedSlots = commitCount == entry.MemberCount && commitCount > 0;
+        if (committedSlots)
             light.CommitRenderedCascadeAtlasSlots(commits[..commitCount]);
 
         for (int i = 0; i < entry.MemberCount; i++)
@@ -4040,9 +4258,14 @@ public sealed partial class ShadowAtlasManager
                 member.Request,
                 member.Allocation,
                 member.RecordIndex);
-            TrackSubmissionCandidate(completion.Key);
             PublishRenderedCompletionOverlay(completion);
             EnqueueTileCompletion(completion);
+            TrackSubmissionCandidate(new SubmissionRevert(
+                completion,
+                member.Allocation,
+                committedSlots && completion.DirectionalCascadeSample.IsValid,
+                _revertSlotScratch[i],
+                _revertSampleScratch[i]));
         }
     }
 
@@ -5096,6 +5319,7 @@ public sealed partial class ShadowAtlasManager
         ResetSubmissionTracking();
         for (int i = 0; i < _encodingStates.Length; i++)
             _encodingStates[i].ResetResources();
+        RequestDirectionalStaticCascadeTileRelease();
 
         lock (_completionSync)
         {

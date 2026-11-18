@@ -76,6 +76,8 @@ public unsafe partial class OpenXRAPI
         if (thread is null)
             return;
 
+        // Collect pacing needs this thread; wake a paced collect so it uses render pacing.
+        StopCollectPacing();
         Volatile.Write(ref _openXrPacingStopRequested, 1);
         _openXrPacingWakeEvent.Set();
 

@@ -261,14 +261,7 @@ internal sealed class VulkanAdvancedGeometryResidentCache
 
         try
         {
-            (Buffer buffer, DeviceMemory memory) = _resources.Buffers.CreateDedicatedRaw(
-                context,
-                capacity,
-                BufferUsageFlags.StorageBufferBit | BufferUsageFlags.VertexBufferBit |
-                BufferUsageFlags.IndexBufferBit | BufferUsageFlags.TransferSrcBit |
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                owner: "AdvancedGeometry.ResidentCache");
+            (Buffer buffer, DeviceMemory memory) = CreateResidentBuffer(context, capacity);
             if (!_resources.Buffers.TryGetAllocation(buffer, out VulkanMemoryAllocation allocation))
             {
                 _resources.Buffers.Retire(buffer, memory, "AdvancedGeometry.ResidentCache.Untracked");
@@ -472,6 +465,45 @@ internal sealed class VulkanAdvancedGeometryResidentCache
             if (_entries[index].Retiring)
                 return true;
         return false;
+    }
+
+    /// <summary>
+    /// Creates one resident geometry buffer. The CPU appends geometry with sequential writes and
+    /// never reads the mapped memory, and the GPU reads vertices and indices from it every frame, so
+    /// it prefers device-local host-visible memory (resizable BAR). Without such memory, or when that
+    /// heap is full, it falls back to system memory with a warning, because GPU reads then cross PCIe.
+    /// </summary>
+    private (Buffer Buffer, DeviceMemory Memory) CreateResidentBuffer(VulkanBackendObjectContext context, ulong capacity)
+    {
+        const BufferUsageFlags usage =
+            BufferUsageFlags.StorageBufferBit | BufferUsageFlags.VertexBufferBit |
+            BufferUsageFlags.IndexBufferBit | BufferUsageFlags.TransferSrcBit |
+            BufferUsageFlags.TransferDstBit;
+        try
+        {
+            return _resources.Buffers.CreateDedicatedRaw(
+                context,
+                capacity,
+                usage,
+                MemoryPropertyFlags.DeviceLocalBit | MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                owner: "AdvancedGeometry.ResidentCache");
+        }
+        catch (VulkanOutOfMemoryException exception)
+        {
+            Debug.VulkanWarningEvery(
+                "AdvancedGeometry.ResidentCache.DeviceLocalFallback",
+                TimeSpan.FromSeconds(10),
+                "[Vulkan] The advanced geometry cache could not place a {0}-byte allocation in device-local host-visible memory ({1}). It uses system memory, so GPU geometry reads cross PCIe.",
+                capacity,
+                exception.Message);
+        }
+
+        return _resources.Buffers.CreateDedicatedRaw(
+            context,
+            capacity,
+            usage,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            owner: "AdvancedGeometry.ResidentCache");
     }
 
     private static ulong CalculateCapacity(ulong requiredBytes)

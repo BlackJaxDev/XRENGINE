@@ -15,6 +15,7 @@ using Debug = XREngine.Debug;
 using VkExtent2D = Silk.NET.Vulkan.Extent2D;
 using VkFormat = Silk.NET.Vulkan.Format;
 using VkImage = Silk.NET.Vulkan.Image;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -858,6 +859,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
     private bool TryRenderVulkanEye(uint viewIndex, uint imageIndex)
     {
+        // One eye of a sequential XR frame. The XR frame count comes from the frame lifecycle,
+        // so this entry only sets the domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (Window?.Renderer is not VulkanRenderer renderer)
             return false;
 
@@ -1288,6 +1292,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
     private bool TryRenderVulkanEyesBatch(out bool handled)
     {
+        // One XR frame of the XR output domain: both eyes, any view mode.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
+        RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.Frames);
         global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.EyeBatchStart);
         bool strictSinglePassStereoRequested =
             RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
@@ -1652,8 +1659,20 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     (rightInsetAcquired && Host.HasAcquiredImage(_swapchains[3])))
                 {
                     handled = true;
-                    throw new InvalidOperationException(
-                        "OpenXR batched eye image ownership remains with the runtime after a wait or release failure. The frame must end without projection layers; retrying eye acquisition would violate the runtime ownership ledger.");
+                    // A wait or release that returned a runtime loss code (for example when the
+                    // runtime process stops) already marked the loss through CheckResult. The
+                    // instance is gone, so its image ownership ledger no longer applies; the caller
+                    // ends the frame without layers instead of tripping the render circuit breaker.
+                    if (Host.IsRuntimeLossPending)
+                    {
+                        _eyeImageReleaseRuntimeLost = true;
+                        requestSequentialFallback = false;
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            "OpenXR batched eye image ownership remains with the runtime after a wait or release failure. The frame must end without projection layers; retrying eye acquisition would violate the runtime ownership ledger.");
+                    }
                 }
             }
 
@@ -1950,6 +1969,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         ApplyOpenXrEyePoseForRenderThread(leftView);
         ApplyOpenXrEyePoseForRenderThread(rightView);
+        LogOpenXrEyeViewDiagnostics("stereo", leftView, stereoViewport, leftCamera);
+        LogOpenXrEyeViewDiagnostics("stereo", rightView, stereoViewport, rightCamera);
 
         if (VulkanCaptureEyeOutputs)
         {
@@ -2737,6 +2758,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
         }
     }
 
+    /// <summary>
+    /// Checks that a per-eye viewport describes its swapchain image. The display extent must be the
+    /// swapchain extent. The internal extent can be smaller (the TSR render scale), but it must not be
+    /// empty or larger than the display extent.
+    /// </summary>
     private static void ValidateOpenXrEyeViewportExtent(
         XRViewport viewport,
         uint viewIndex,
@@ -2752,8 +2778,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
         int height = (int)expectedHeight;
         if (viewport.Width == width &&
             viewport.Height == height &&
-            viewport.InternalWidth == width &&
-            viewport.InternalHeight == height &&
+            viewport.InternalWidth > 0 &&
+            viewport.InternalHeight > 0 &&
+            viewport.InternalWidth <= width &&
+            viewport.InternalHeight <= height &&
             viewport.RendersToExternalSwapchainTarget &&
             viewport.Window is null)
         {
@@ -2761,7 +2789,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         }
 
         throw new InvalidOperationException(
-            $"OpenXR eye {viewIndex} viewport does not exactly match the swapchain extent. " +
+            $"OpenXR eye {viewIndex} viewport does not match the swapchain extent. " +
             $"Expected={width}x{height}; Viewport={viewport.Width}x{viewport.Height}; " +
             $"Internal={viewport.InternalWidth}x{viewport.InternalHeight}; " +
             $"ExternalTarget={viewport.RendersToExternalSwapchainTarget}; " +

@@ -152,6 +152,12 @@ internal sealed partial class VulkanFramePlanner
         // FrameOpContext is large; read it by reference and copy only the result.
         int bestIndex = 0;
         int bestScore = int.MinValue;
+        // The registry record collections are concurrent dictionaries, so each Count takes all
+        // of their locks. The operations of one view almost always share one registry, so the
+        // registry part of the score is computed once per distinct registry.
+        RenderResourceRegistry? scoredRegistry = null;
+        int registryScore = 0;
+        FrameBufferTargetScoreCache targetScores = default;
 
         for (int index = 0; index < count; index++)
         {
@@ -160,14 +166,20 @@ internal sealed partial class VulkanFramePlanner
             if (context.ResourceRegistry is null)
                 continue;
 
-            int score = 1;
-            score += Math.Min(context.ResourceRegistry.TextureRecords.Count, 128);
-            score += Math.Min(context.ResourceRegistry.FrameBufferRecords.Count, 128) * 2;
+            if (!ReferenceEquals(context.ResourceRegistry, scoredRegistry))
+            {
+                scoredRegistry = context.ResourceRegistry;
+                registryScore = Math.Min(scoredRegistry.TextureRecords.Count, 128) +
+                    Math.Min(scoredRegistry.FrameBufferRecords.Count, 128) * 2;
+                targetScores = default;
+            }
+
+            int score = 1 + registryScore;
             score += (context.PassMetadata?.Count ?? 0) * 4;
             if (VulkanSwapchainContextCoalescer.TargetsSwapchain(op))
                 score += 16;
 
-            score += ScoreFrameOpFrameBufferTargets(op, context.ResourceRegistry);
+            score += ScoreFrameOpFrameBufferTargets(op, scoredRegistry, ref targetScores);
 
             if (score > bestScore ||
                 (score == bestScore &&
@@ -191,6 +203,54 @@ internal sealed partial class VulkanFramePlanner
             score += ScoreFrameOpFrameBufferTarget(blit.OutFbo, registry);
         }
 
+        return score;
+    }
+
+    /// <summary>
+    /// The last two framebuffer targets scored against one registry and their scores. Operations
+    /// of one view usually alternate between few targets, so the name lookups repeat often.
+    /// </summary>
+    private struct FrameBufferTargetScoreCache
+    {
+        public XRFrameBuffer? First;
+        public int FirstScore;
+        public XRFrameBuffer? Second;
+        public int SecondScore;
+    }
+
+    private static int ScoreFrameOpFrameBufferTargets(
+        FrameOp op,
+        RenderResourceRegistry registry,
+        ref FrameBufferTargetScoreCache cache)
+    {
+        int score = ScoreCachedFrameBufferTarget(op.ContextReference.OutputFrameBuffer, registry, ref cache);
+        score += ScoreCachedFrameBufferTarget(op.Target, registry, ref cache);
+        if (op is BlitOp blit)
+        {
+            score += ScoreCachedFrameBufferTarget(blit.InFbo, registry, ref cache);
+            score += ScoreCachedFrameBufferTarget(blit.OutFbo, registry, ref cache);
+        }
+
+        return score;
+    }
+
+    private static int ScoreCachedFrameBufferTarget(
+        XRFrameBuffer? target,
+        RenderResourceRegistry registry,
+        ref FrameBufferTargetScoreCache cache)
+    {
+        if (target is null)
+            return 0;
+        if (ReferenceEquals(target, cache.First))
+            return cache.FirstScore;
+        if (ReferenceEquals(target, cache.Second))
+            return cache.SecondScore;
+
+        int score = ScoreFrameOpFrameBufferTarget(target, registry);
+        cache.Second = cache.First;
+        cache.SecondScore = cache.FirstScore;
+        cache.First = target;
+        cache.FirstScore = score;
         return score;
     }
 

@@ -43,13 +43,29 @@ public sealed partial class EditorMcpActions
         if (state is null)
             return Task.FromResult(new McpToolResponse(error ?? "The selected output has no camera post-process state.", isError: true));
 
+        // A VR eye output shows which stages the eye feature profile turns off. The stage's own
+        // Enabled value stays as authored, so the readout reports both.
+        VrEyeFeatureProfile? eyeProfile = VrEyeFrameRules.IsEyeOutput(viewport!)
+            ? RuntimeEngine.Rendering.Settings.VrEyeFeatures
+            : null;
         return Task.FromResult(new McpToolResponse("Read camera post-process settings.", new
         {
             pipeline = state.PipelineName,
             tsrRenderScaleOverride = viewport!.ActiveCamera!.TsrRenderScaleOverride,
+            vrEyeFeatureProfile = eyeProfile is null ? null : new
+            {
+                eyeProfile.AmbientOcclusion,
+                eyeProfile.FogAndAerialPerspective,
+                eyeProfile.OrderIndependentTransparency,
+                eyeProfile.DepthOfField,
+                eyeProfile.MotionBlur,
+                eyeProfile.DeferredMsaa,
+                eyeProfile.ForwardPlusLightCulling,
+            },
             stages = state.Stages.Values.Select(stage => new
             {
                 key = stage.StageKey,
+                disabledByVrEyeFeatureProfile = eyeProfile is not null && !eyeProfile.AllowsPostProcessStage(stage.StageKey),
                 parameters = stage.Descriptor?.Parameters.Select(parameter => new
                 {
                     name = parameter.Name,

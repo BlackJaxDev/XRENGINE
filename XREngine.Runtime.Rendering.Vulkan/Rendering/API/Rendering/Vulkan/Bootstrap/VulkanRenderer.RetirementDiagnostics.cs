@@ -48,6 +48,10 @@ public sealed partial class VulkanRenderer
             presentation?.CapacityDeferrals ?? 0, presentation?.HasUnprovenLegacyPresent ?? false,
             _frameLoop.DeviceWaitIdleCalls, lifetime.LiveResourceCount,
             lifetime.TrackedDescriptorSetCount, lifetime.PendingRetirementCount,
-            lifetime.OldestPendingRetirementAgeMilliseconds);
+            lifetime.OldestPendingRetirementAgeMilliseconds,
+            _resourceRuntime.SupersededResourceGenerationsDrained,
+            _resourceRuntime.SupersededDescriptorOwnersReleased,
+            _resourceRuntime.SupersededDescriptorOwnerDrainDeferrals,
+            _resourceRuntime.PendingSupersededResourceGenerationCount);
     }
 }

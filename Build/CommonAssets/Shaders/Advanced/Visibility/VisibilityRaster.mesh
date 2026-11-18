@@ -23,24 +23,44 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
 #define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityRasterPush.viewIndex
 #define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
 #include "VisibilityInterface.glslinc"
+#include "VisibilityMeshletCulling.glslinc"
 
+// VisibilityRaster.task writes the payload row and the surviving global meshlet
+// indices. Each mesh workgroup draws one surviving meshlet.
+taskPayloadSharedEXT XRAdvancedVisibilityTaskPayload XR_ADV_TaskPayload;
+
+// Redeclare the per-primitive built-in block with only the member that this stage
+// writes. The implicit block also declares gl_Layer, and a mesh stage with a Layer
+// output is not valid in a multiview pipeline (a nonzero view mask), which the
+// single-pass stereo raster uses.
+perprimitiveEXT out gl_MeshPerPrimitiveEXT
+{
+    int gl_PrimitiveID;
+} gl_MeshPrimitivesEXT[];
+
+// Opaque visibility programs define XR_ADV_VISIBILITY_IDENTITY_ONLY. Their
+// fragment stage reads only the flat identity values, so this stage does not
+// write the interpolated coverage attributes. This also makes the per-meshlet
+// output block smaller. Masked programs keep all outputs.
 layout(location = 0) flat out uint VisibilityDrawIndex[];
 layout(location = 1) flat out uint VisibilitySelectionId[];
 layout(location = 2) flat out uint VisibilityProducer[];
 layout(location = 3) flat out uint VisibilityViewIndex[];
 layout(location = 4) flat out uint VisibilityOrigin[];
 layout(location = 5) flat out uint VisibilityVelocityValid[];
-layout(location = 6) out vec2 VisibilityCoverageUv[];
 layout(location = 7) flat out uint VisibilityPrimitiveBase[];
 layout(location = 8) flat out uint VisibilityMeshletIndex[];
 layout(location = 9) flat out uint VisibilityMaterialDenseIndex[];
 layout(location = 10) flat out uint VisibilityEditorFlags[];
+#if !defined(XR_ADV_VISIBILITY_IDENTITY_ONLY)
+layout(location = 6) out vec2 VisibilityCoverageUv[];
 layout(location = 11) out vec2 VisibilityCoverageUv1[];
 layout(location = 12) out vec4 VisibilityCoverageColor[];
 layout(location = 13) out vec3 VisibilityCoverageWorldPosition[];
 layout(location = 14) out vec3 VisibilityCoverageLocalPosition[];
 layout(location = 15) out vec2 VisibilityCoverageUv2[];
 layout(location = 16) out vec2 VisibilityCoverageUv3[];
+#endif
 
 const uint XR_ADV_MESH_GROUP_SIZE = 32u;
 const uint XR_ADV_MESH_MAX_VERTICES = 64u;
@@ -87,22 +107,9 @@ void main()
         return;
     }
 #endif
-    uint drawArgumentIndex = XR_ADV_VisibilityRasterPush.meshArgumentBase + uint(gl_DrawID);
-    bool late = (XR_ADV_VisibilityRasterPush.producerAndOrigin & 8u) != 0u;
-    uint payloadTableLength = late
-        ? uint(XR_ADV_VisibilityLateMeshPayloads.records.length())
-        : uint(XR_ADV_VisibilityMeshPayloads.records.length());
-    if (drawArgumentIndex < XR_ADV_VisibilityRasterPush.meshArgumentBase ||
-        drawArgumentIndex >= payloadTableLength)
-    {
-        SetMeshOutputsEXT(0u, 0u);
-        return;
-    }
-
-    uint payloadIndex = late
-        ? XR_ADV_VisibilityLateMeshPayloads.records[drawArgumentIndex]
-        : XR_ADV_VisibilityMeshPayloads.records[drawArgumentIndex];
-    if (payloadIndex >= uint(XR_ADV_VisibilityPayloads.records.length()))
+    uint payloadIndex = XR_ADV_TaskPayload.payloadIndex;
+    if (payloadIndex >= uint(XR_ADV_VisibilityPayloads.records.length()) ||
+        gl_WorkGroupID.x >= XR_ADV_TASK_MESHLETS_PER_GROUP)
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         SetMeshOutputsEXT(0u, 0u);
@@ -111,8 +118,8 @@ void main()
 
     XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
     uint producer = XR_ADV_VisibilityProducers.records[payloadIndex];
-    uint meshletIndex = payload.meshletOffset + gl_WorkGroupID.x;
-    if (meshletIndex < payload.meshletOffset || gl_WorkGroupID.x >= payload.meshletCount ||
+    uint meshletIndex = XR_ADV_TaskPayload.meshletIndex[gl_WorkGroupID.x];
+    if (meshletIndex < payload.meshletOffset || meshletIndex - payload.meshletOffset >= payload.meshletCount ||
         meshletIndex >= uint(XR_ADV_VisibilityMeshlets.records.length()) || meshletIndex > 0xFFFFFFu)
     {
         atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
@@ -268,6 +275,7 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
             temporalInputsValid
                 ? 1u
                 : 0u;
+#if !defined(XR_ADV_VISIBILITY_IDENTITY_ONLY)
         VisibilityCoverageUv[vertex] = unpackHalf2x16(statik.texCoord0Half);
         VisibilityCoverageUv1[vertex] =
             (statik.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u
@@ -284,6 +292,7 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
         VisibilityCoverageColor[vertex] = unpackUnorm4x8(statik.color0Rgba8);
         VisibilityCoverageWorldPosition[vertex] = worldPosition.xyz;
         VisibilityCoverageLocalPosition[vertex] = current.position;
+#endif
         VisibilityPrimitiveBase[vertex] = 0u;
         VisibilityMeshletIndex[vertex] = meshletIndex;
         VisibilityMaterialDenseIndex[vertex] = materialDense;

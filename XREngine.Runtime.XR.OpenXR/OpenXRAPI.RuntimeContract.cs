@@ -13,6 +13,8 @@ public unsafe partial class OpenXRAPI : IOpenXrRuntime
 
     long IOpenXrRuntime.LastFrameWakeTicks => Volatile.Read(ref _lastFrameWakeTicks);
 
+    bool IOpenXrRuntime.HasPreparedEyeFrame => Volatile.Read(ref _framePrepared) != 0;
+
     bool IOpenXrRuntime.PrepareRendererDeviceTeardown(AbstractRenderer renderer, string reason)
         => PrepareRendererDeviceTeardown(renderer, reason);
 

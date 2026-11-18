@@ -975,7 +975,8 @@ internal sealed class FrameOperationStream
         VulkanAdvancedVisibilityOperationPayload payload =
             _payloads.AdvancedVisibilities[header.PayloadIndex];
         if (!payload.Request.Equals(request) || payload.LateTargetClosure is not { } closure ||
-            descriptorSetCount != checked(2 * (int)closure.ViewCount) ||
+            descriptorSetCount != checked(
+                VulkanAdvancedVisibilityLateTargetClosure.DescriptorRolesPerView * (int)closure.ViewCount) ||
             descriptorSets.Length < descriptorSetCount)
             return false;
 
@@ -992,6 +993,52 @@ internal sealed class FrameOperationStream
             },
         };
         return true;
+    }
+
+    /// <summary>
+    /// Copies the sealed late closure of the family's late compute operation
+    /// into its late raster operation. The late meshlet task stage binds the
+    /// per-view late raster tables (role 2) of that closure: they hold this
+    /// view's depth pyramid layer for the Hi-Z test. The late compute operation is
+    /// sealed earlier in the same frame, so the search runs backward from the
+    /// late raster operation. Returns false when no sealed closure exists.
+    /// </summary>
+    internal bool TryAttachAdvancedVisibilityLateRasterClosure(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request)
+    {
+        if ((uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility ||
+            request.Phase != EAdvancedVisibilityStageBackendPhase.LateRaster)
+            return false;
+
+        ref readonly FrameOperationHeader rasterHeader = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload rasterPayload =
+            _payloads.AdvancedVisibilities[rasterHeader.PayloadIndex];
+        if (!rasterPayload.Request.Equals(request))
+            return false;
+
+        for (int candidate = index - 1; candidate >= 0; --candidate)
+        {
+            ref readonly FrameOperationHeader header = ref _headers[candidate];
+            if (header.OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+                continue;
+            VulkanAdvancedVisibilityOperationPayload payload =
+                _payloads.AdvancedVisibilities[header.PayloadIndex];
+            if (payload.Request.Phase != EAdvancedVisibilityStageBackendPhase.LateCompute ||
+                payload.Request.Reservation != request.Reservation ||
+                payload.Request.RenderFrameId != request.RenderFrameId)
+                continue;
+            if (payload.LateTargetClosure is not { IsRecordingReady: true } closure ||
+                closure.ViewCount != (uint)request.Views.ViewCount)
+                return false;
+            _payloads.AdvancedVisibilities[rasterHeader.PayloadIndex] = rasterPayload with
+            {
+                LateTargetClosure = closure,
+            };
+            return true;
+        }
+        return false;
     }
 
     private static VulkanAdvancedVisibilityPipelineReadiness DescribeAdvancedVisibilityPipelineReadiness(

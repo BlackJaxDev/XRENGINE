@@ -51,6 +51,7 @@ public static class ModelImportMeshletCooker
         int meshletCount = 0;
         int payloadCount = 0;
         int generatedLodCount = 0;
+        ClusterHierarchyTotals hierarchyTotals = default;
 
         for (int subMeshIndex = 0; subMeshIndex < ordered.Count; subMeshIndex++)
         {
@@ -97,6 +98,8 @@ public static class ModelImportMeshletCooker
                 cache?.Record(payload);
                 payloadCount++;
                 meshletCount += payload.Meshlets.Length;
+                if (payload.HasClusterHierarchy)
+                    hierarchyTotals.Add(payload);
                 lodIndex++;
             }
         }
@@ -105,6 +108,8 @@ public static class ModelImportMeshletCooker
             SavePayloadCache(cache);
 
         cookStopwatch.Stop();
+        if (hierarchyTotals.PayloadCount > 0)
+            WriteClusterHierarchySummary(stableModelIdentity, hierarchyTotals, cookStopwatch.Elapsed, cache);
         RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletColdImport(
             buildTime: cookStopwatch.Elapsed,
             allocatedBytes: Math.Max(0L, GC.GetAllocatedBytesForCurrentThread() - allocationStart),
@@ -112,6 +117,62 @@ public static class ModelImportMeshletCooker
             payloads: payloadCount,
             meshlets: meshletCount);
         return new ModelImportMeshletCookResult(ordered.Count, generatedLodCount, payloadCount, meshletCount);
+    }
+
+    /// <summary>Totals of the cluster hierarchy payloads of one model cook, for the cook summary.</summary>
+    private struct ClusterHierarchyTotals
+    {
+        public int PayloadCount;
+        public long Clusters;
+        public long Level0Clusters;
+        public long Groups;
+        public int MaxLevels;
+        public long SourceTriangles;
+        public long HierarchyTriangles;
+        public long Level0Triangles;
+
+        public void Add(MeshletPayload payload)
+        {
+            PayloadCount++;
+            Clusters += payload.Meshlets.Length;
+            Level0Clusters += payload.ClusterLevel0Count;
+            Groups += payload.LodGroups.Length;
+            int levels = 0;
+            foreach (MeshletLodGroupRecord group in payload.LodGroups)
+                levels = Math.Max(levels, group.Depth + 1);
+            MaxLevels = Math.Max(MaxLevels, levels);
+            SourceTriangles += payload.SourceTriangleCount;
+            for (int i = 0; i < payload.Meshlets.Length; i++)
+            {
+                HierarchyTriangles += payload.Meshlets[i].TriangleCount;
+                if (i < payload.ClusterLevel0Count)
+                    Level0Triangles += payload.Meshlets[i].TriangleCount;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Writes one line per model cook with cluster hierarchy payloads to meshlet-cache.log: payloads,
+    /// clusters (all levels and level 0), groups, the deepest hierarchy, triangle totals, the cook
+    /// time (cache hits included) and the size of the model's meshlet cache file.
+    /// </summary>
+    private static void WriteClusterHierarchySummary(string modelIdentity, ClusterHierarchyTotals totals, TimeSpan cookTime, ModelImportMeshletPayloadCache? cache)
+    {
+        long cacheBytes = cache is not null && File.Exists(cache.FilePath) ? new FileInfo(cache.FilePath).Length : -1L;
+        Debug.WriteAuxiliaryLog(
+            "meshlet-cache.log",
+            $"[ClusterHierarchy] model={modelIdentity} payloads={totals.PayloadCount} clusters={totals.Clusters} level0Clusters={totals.Level0Clusters} " +
+            $"groups={totals.Groups} maxLevels={totals.MaxLevels} sourceTriangles={totals.SourceTriangles} level0Triangles={totals.Level0Triangles} " +
+            $"allLevelTriangles={totals.HierarchyTriangles} triangleRatio={(totals.Level0Triangles == 0 ? 0.0 : (double)totals.HierarchyTriangles / totals.Level0Triangles):F2} " +
+            $"cookMs={cookTime.TotalMilliseconds:F0} cacheBytes={cacheBytes} cacheHits={cache?.HitCount ?? 0} cacheMisses={cache?.MissCount ?? 0}");
+        // Crack-free checks of the hierarchies built (not read from the cache) in this process.
+        MeshletClusterHierarchyBuilder.InvariantReport checks = MeshletClusterHierarchyBuilder.InvariantTotals;
+        Debug.WriteAuxiliaryLog(
+            "meshlet-cache.log",
+            $"[ClusterHierarchyChecks] cookVersion={MeshletClusterHierarchyBuilder.CookVersion} " +
+            $"self={checks.SelfFailures}/{checks.SelfChecks} monotonic={checks.MonotonicFailures}/{checks.MonotonicChecks} " +
+            $"containment={checks.ContainmentFailures}/{checks.ContainmentChecks} (failures/checks) " +
+            $"borderRejected={checks.BorderRejections}/{checks.BorderChecks} (rejected simplifications/checks)");
     }
 
     private static ModelImportMeshletPayloadCache? OpenPayloadCache(string stableModelIdentity)
@@ -227,7 +288,7 @@ public static class ModelImportMeshletCooker
             MinTriangles = source.MinTriangles, MaxTriangles = source.MaxTriangles, ConeWeight = source.ConeWeight,
             SplitFactor = source.SplitFactor, FillWeight = source.FillWeight, OptimizeMeshlets = source.OptimizeMeshlets,
             OptimizeLevel = source.OptimizeLevel, ComputeBounds = source.ComputeBounds, EncodeMeshlets = source.EncodeMeshlets,
-            EncodeVertexReferences = source.EncodeVertexReferences,
+            EncodeVertexReferences = source.EncodeVertexReferences, BuildClusterHierarchy = source.BuildClusterHierarchy,
         };
 
     private static MeshLodGenerationSettings Clone(MeshLodGenerationSettings source)

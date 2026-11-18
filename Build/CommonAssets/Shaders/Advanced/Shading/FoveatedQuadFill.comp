@@ -44,7 +44,9 @@ void main()
     imageStore(HDRSceneColor, target, imageLoad(HDRSceneColor, source));
     imageStore(Velocity, target, imageLoad(Velocity, source));
     imageStore(ReactiveMask, target, imageLoad(ReactiveMask, source));
-    imageStore(ShadingDiagnostics, target, imageLoad(ShadingDiagnostics, source));
+    // Bit 31 matches XR_ADV_SHADING_DIAGNOSTICS_DISABLED: the diagnostics image is not allocated.
+    if ((u_Push.flags & (1u << 31u)) == 0u)
+        imageStore(ShadingDiagnostics, target, imageLoad(ShadingDiagnostics, source));
     if ((u_Push.flags & XR_ADV_FOVEATED_FILL_MATERIAL_EXPORTS) != 0u)
     {
         imageStore(EmissionColor, target, imageLoad(EmissionColor, source));

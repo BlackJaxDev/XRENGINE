@@ -226,12 +226,13 @@ internal sealed class AdvancedCanonicalGeometryPrepackCache
             bool useMeshlets = payload is { HasMeshlets: true } && payload.IsValidatedFor(mesh);
             if (useMeshlets)
             {
-                AdvancedMeshletDescriptor[] descriptors = new AdvancedMeshletDescriptor[payload!.Meshlets.Length];
-                AdvancedGpuScenePublisher.ConvertMeshletDescriptors(payload.Meshlets.AsSpan(), descriptors);
-                uint[] triangleWords = new uint[checked((int)(((long)payload.TriangleIndices.Length + 3L) / 4L))];
-                AdvancedGpuScenePublisher.PackMeshletTriangleWords(payload.TriangleIndices.AsSpan(), triangleWords);
+                AdvancedPublishedMeshletLayout layout = AdvancedPublishedMeshletLayout.For(payload!);
+                AdvancedMeshletDescriptor[] descriptors = new AdvancedMeshletDescriptor[layout.DescriptorCount];
+                uint[] vertexIndices = new uint[layout.VertexIndexCount];
+                uint[] triangleWords = new uint[layout.TriangleWordCount];
+                layout.Pack(payload!, descriptors, vertexIndices, triangleWords);
                 entry.MeshletDescriptors = descriptors;
-                entry.MeshletVertexIndices = payload.VertexIndices.AsSpan().ToArray();
+                entry.MeshletVertexIndices = vertexIndices;
                 entry.MeshletTriangleWords = triangleWords;
             }
 

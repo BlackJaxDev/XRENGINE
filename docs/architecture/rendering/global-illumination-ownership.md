@@ -46,6 +46,12 @@ Current descriptors:
 - Execution anchors are `ScenePreparation`, `FieldUpdate`, `SurfaceResolve`, `MaterialSampling`, and `DebugPresentation`. A module uses only the anchors it needs.
 - Advanced keeps its ordered stage identities and execution owner. The adapter never creates a nested Default or Advanced pipeline instance.
 - Advanced admission reads the plan, not provider classes. `GlobalIlluminationPlan.RequiresNativeMaterialSurfaceExports` sets `AdvancedVisibilityStageBackendRequest.RequiresMaterialSurfaceExports` (OpenGL and Vulkan). `RequiresNativeProbeIblBindings` and `ReplacesProbeDiffuse` drive probe binding and diffuse suppression.
+- With material surface exports on, the native opaque shading kernel writes neutral surface inputs
+  (emission, albedo, normal, RMSE) only for uncovered pixels. Every covered pixel gets its surface
+  inputs from the one kernel dispatch that shades it. A classification tile is in the lists of
+  several kernels, and the kernel dispatches run without a barrier between them, so a neutral store
+  for a pixel of another kernel could overwrite that kernel's inputs in an order that is not fixed.
+  The VR avatar benchmark runs without a screen-space diffuse provider and does not exercise this path.
 
 ## Module Rules
 

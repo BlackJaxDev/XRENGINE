@@ -106,9 +106,54 @@ aoSettings.GTAOUseVisibilityBitmask = true;
 aoSettings.GTAOVisibilityBitmaskThickness = 0.12f;
 aoSettings.GTAOMultiBounceEnabled = true;
 aoSettings.GTAOSpecularOcclusionEnabled = true;
+aoSettings.GTAOUseMaterialNormals = false; // Advanced pipeline normal-map micro-occlusion
 aoSettings.GTAOResolution = GroundTruthAmbientOcclusionSettings.EResolution.Half;
 aoSettings.GTAOUseNormalWeightedBlur = true;
 ```
+
+In `AdvancedRenderPipeline`, `EResolution.Half` (the default) runs the whole GTAO chain on
+half-resolution inputs:
+
+1. A prepare pass (`GTAOPrepareHalf.fs` / `GTAOPrepareHalfStereo.fs`) reduces the depth to one
+   sample per 2x2 block and writes the world normal of that sample. The reduced texels pick the
+   nearest and the farthest sample of their block in a checkerboard pattern, so both surfaces at
+   a depth edge keep AO samples. This pass replaces the full-resolution AO normal pass.
+2. Generation and both blur passes read only the half-resolution depth and normals. The step
+   radius limit is halved with them, so the largest AO radius on screen does not change.
+3. A depth-aware upsample (`GTAOUpsample.fs` / `GTAOUpsampleStereo.fs`) writes the
+   full-resolution AO texture. Each pixel blends its four nearest reduced texels with bilinear
+   weights, scaled by how close their depth is to the pixel depth, so AO does not bleed across
+   depth edges. The forward shaders and the native shading AO image read this texture as before.
+
+On the 2688x2688 VR benchmark this lowers the stereo AO chain from about 4.5 ms to 3.6 ms with
+no visible change. `Full` and `Quarter` keep full-resolution inputs, and `DefaultRenderPipeline`
+keeps its existing GTAO path.
+
+### Normal-map micro-occlusion
+
+GTAO reads only depth, so the small creases of a normal map get no AO.
+`GroundTruth.UseMaterialNormals` (`GTAOUseMaterialNormals`, default false, shown as
+"Normal-Map Micro-Occlusion") adds a cheap per-pixel term in `AdvancedRenderPipeline` native
+shading. No extra pass runs:
+
+- `AdvancedRenderPipeline.ResolveCanonicalViewPolicyFlags` reads the camera GTAO settings when
+  the frame package captures its views. It sets the view record flag
+  `EAdvancedViewRecordFlags.GtaoMaterialNormals` (bit 9) when GTAO is the active AO type and the
+  setting is true. RVC eyes use the same rule through their Advanced stage family.
+- A camera keeps one post-process state per pipeline ID. An RVC eye runs the Advanced stage
+  family inside the RVC pipeline, so the family reads the AO settings (this flag, multi-bounce,
+  specular occlusion, and the AO resource layout) from the camera state of the RVC pipeline,
+  the state that the editor and the MCP post-process tools write.
+- The VR eye cameras share one post-process state, separate from the desktop camera. To
+  change the eyes, write the eye state (MCP `vr_eye` = `left`, `right` or `stereo`, which all
+  edit that one state). A write to the desktop camera does not reach the eyes. See
+  [VR eye post-process settings](../../user-guide/vr-development.md#vr-eye-post-process-settings).
+- After the normal map is applied, the shading kernel multiplies the AO value by
+  `0.5 + 0.5 * saturate(dot(mappedNormal, surfaceNormal))`. The term never darkens more than 30
+  percent (`XR_ADV_GTAO_MICRO_OCCLUSION_MAX_DARKENING`). Like GTAO, it darkens only indirect light.
+- The flag is uniform for a shading dispatch, so the term costs nothing when the setting is off.
+  Surfaces without a normal map get no term.
+- `DefaultRenderPipeline` and the Native Uber path ignore the setting.
 
 When visibility-bitmask mode is enabled, GTAO replaces the classic horizon accumulation with hemisphere sector coverage. It applies distance falloff and thin-occluder attenuation to both the marked angular thickness and each newly covered sector's weight, so weak same-plane samples do not claim full-dark sectors. The raw gather and denoise passes also keep screen-edge fading narrow, which prevents missing off-screen samples from turning into a visible border halo.
 

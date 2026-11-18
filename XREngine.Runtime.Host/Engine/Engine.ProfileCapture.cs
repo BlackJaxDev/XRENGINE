@@ -780,6 +780,7 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "render_wait_reason", RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitReason, ref first);
             AppendNumberField(s_lineBuilder, "skipped_collect_frames", RuntimeEngine.Rendering.Stats.FrameLifecycle.SkippedCollectFrames, ref first);
             AppendNumberField(s_lineBuilder, "stale_collect_reuse_frames", RuntimeEngine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames, ref first);
+            AppendNumberField(s_lineBuilder, "render_circuit_breaker_trips", RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderCircuitBreakerTrips, ref first);
             AppendNumberField(s_lineBuilder, "frame_package_production_ms", RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageProductionMs, ref first);
             AppendNumberField(s_lineBuilder, "frame_package_publication_ms", RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackagePublicationMs, ref first);
             AppendNumberField(s_lineBuilder, "frame_package_validation_ms", RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageValidationMs, ref first);
@@ -1449,6 +1450,29 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_samples", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordSamples, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_span_ms", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordSpanMs, ref first);
             AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_overlap_ms", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordOverlapMs, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_parallel_eye_record_serialized_frames", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrParallelEyeRecordSerializedFrames, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_parallel_eye_record_failed_batches", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrParallelEyeRecordFailedBatches, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_frame_data_slot_alternates", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyeFrameDataSlotAlternates, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_frame_data_slot_waits", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyeFrameDataSlotWaits, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_frame_data_slot_busy_failures", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyeFrameDataSlotBusyFailures, ref first);
+            for (int site = 0; site < s_vulkanLockContentionFieldNames.Length; site++)
+            {
+                var contentionSite = (XREngine.Rendering.Vulkan.EVulkanLockContentionSite)(site + 1);
+                string[] names = s_vulkanLockContentionFieldNames[site];
+                AppendNumberField(s_lineBuilder, names[0], XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetCount(contentionSite, renderThread: true), ref first);
+                AppendNumberField(s_lineBuilder, names[1], XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetWaitMilliseconds(contentionSite, renderThread: true), ref first);
+                AppendNumberField(s_lineBuilder, names[2], XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetCount(contentionSite, renderThread: false), ref first);
+                AppendNumberField(s_lineBuilder, names[3], XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetWaitMilliseconds(contentionSite, renderThread: false), ref first);
+            }
+            for (int reason = 0; reason < s_openXrNoLayerFrameFieldNames.Length; reason++)
+            {
+                AppendNumberField(
+                    s_lineBuilder,
+                    s_openXrNoLayerFrameFieldNames[reason],
+                    RuntimeEngine.Rendering.Stats.Vr.GetVrProcessOpenXrNoLayerFrames(
+                        (XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason)reason),
+                    ref first);
+            }
             AppendNumberField(s_lineBuilder, "vulkan_visible_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanVisibleMeshDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_unique_visible_materials", RuntimeEngine.Rendering.Stats.Vulkan.VulkanUniqueVisibleMaterials, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshDraws, ref first);
@@ -2218,6 +2242,46 @@ public static partial class Engine
         {
             AppendFieldPrefix(builder, name, ref first);
             builder.Append(value ? "true" : "false");
+        }
+
+        // Four capture field names per counted Vulkan lock (render thread count and wait ms, other
+        // threads count and wait ms), built once so the capture line does not format names per sample.
+        private static readonly string[][] s_vulkanLockContentionFieldNames = CreateVulkanLockContentionFieldNames();
+
+        private static string[][] CreateVulkanLockContentionFieldNames()
+        {
+            int count = (int)XREngine.Rendering.Vulkan.EVulkanLockContentionSite.Count - 1;
+            string[][] names = new string[count][];
+            for (int site = 0; site < count; site++)
+            {
+                string name = System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(
+                    ((XREngine.Rendering.Vulkan.EVulkanLockContentionSite)(site + 1)).ToString());
+                names[site] =
+                [
+                    $"vulkan_lock_contention_{name}_render_thread_count",
+                    $"vulkan_lock_contention_{name}_render_thread_wait_ms",
+                    $"vulkan_lock_contention_{name}_other_threads_count",
+                    $"vulkan_lock_contention_{name}_other_threads_wait_ms",
+                ];
+            }
+            return names;
+        }
+
+        // One capture field name per no-layer exit, built once so the capture line does not
+        // format names on every sample.
+        private static readonly string[] s_openXrNoLayerFrameFieldNames = CreateOpenXrNoLayerFrameFieldNames();
+
+        private static string[] CreateOpenXrNoLayerFrameFieldNames()
+        {
+            int count = (int)XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.Count;
+            string[] names = new string[count];
+            for (int reason = 0; reason < count; reason++)
+            {
+                string name = ((XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason)reason).ToString();
+                names[reason] = "vr_process_openxr_no_layer_frames_" +
+                    System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(name);
+            }
+            return names;
         }
 
         private static void AppendNumberField(StringBuilder builder, string name, int value, ref bool first)

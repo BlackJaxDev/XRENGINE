@@ -25,6 +25,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             /// Gets or sets a value indicating whether the render-graph pass should use the destination FBO's depth-stencil attachment.
             /// </summary>
             public bool UseDestinationDepthStencil { get; set; }
+            /// <summary>Access of the destination stencil attachment alone, or null when the pass does not use it.</summary>
+            public ERenderGraphAccess? DestinationStencilAccess { get; set; }
+            /// <summary>Load operation of the destination stencil attachment (<see cref="DestinationStencilAccess"/>).</summary>
+            public ERenderPassLoadOp DestinationStencilLoad { get; set; } = ERenderPassLoadOp.Load;
             /// <summary>Declares a depth-only output independently of stencil for shader depth resolves.</summary>
             public ERenderGraphAccess? DestinationDepthAccess { get; set; }
 
@@ -224,6 +228,19 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ERenderGraphPassStage stage = ERenderGraphPassStage.Graphics)
             {
                 _dependentPasses.Add(new(passIndex, passName, stage));
+                return this;
+            }
+
+            /// <summary>
+            /// Uses only the stencil attachment of the destination FBO, with the given access and load
+            /// operation. A clear load operation clears every multiview layer as the pass begins.
+            /// </summary>
+            public RenderGraphResourceDescriptor UseDestinationStencilAttachment(
+                ERenderGraphAccess access,
+                ERenderPassLoadOp load = ERenderPassLoadOp.Load)
+            {
+                DestinationStencilAccess = access;
+                DestinationStencilLoad = load;
                 return this;
             }
 

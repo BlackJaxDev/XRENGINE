@@ -162,6 +162,7 @@ internal sealed partial class VulkanFrameLoop
 
         VulkanPendingDesktopRecord record = _desktopWorkerCarry.Record;
         bool submitted = false;
+        bool poolOwnershipBegun = false;
         try
         {
             admission = domain.TryReserveAsynchronousLanes(lease, 1UL << DesktopRecordLaneId);
@@ -172,8 +173,10 @@ internal sealed partial class VulkanFrameLoop
             }
 
             int laneFrameSlot = _commandRuntime.ResolveRenderLaneFrameSlot(input.FrameDataSlotIndex);
+            VulkanLaneCommandFamilyArena laneArena =
+                _commandRuntime.GetRenderLaneAttachment(DesktopRecordLaneId, laneFrameSlot).Graphics;
             record.BeginPreparation(
-                _commandRuntime.GetRenderLaneAttachment(DesktopRecordLaneId, laneFrameSlot).Graphics,
+                laneArena,
                 DesktopRecordLaneId,
                 laneFrameSlot,
                 input.FrameDataSlotIndex);
@@ -192,6 +195,11 @@ internal sealed partial class VulkanFrameLoop
                     EstimatedCost: 64));
             long submitTicks = System.Diagnostics.Stopwatch.GetTimestamp();
             FramePacingTimeline.Mark(EFramePacingMark.DesktopWorkerSubmit);
+            // The worker owns its command pools from here until the join. Begin the
+            // ownership before the submit, so that no render-thread maintenance write
+            // to these pools can overlap the first worker command.
+            _commandRuntime.BeginDesktopWorkerPoolOwnership(laneArena);
+            poolOwnershipBegun = true;
             domain.SubmitAsynchronous(lease, _desktopRecordExecutor, laneFrameSlot);
             submitted = true;
             record.MarkSubmitted(in lease);
@@ -213,6 +221,9 @@ internal sealed partial class VulkanFrameLoop
         {
             if (submitted)
                 _ = domain.JoinAsynchronous(lease);
+            // The batch is joined or never ran, so the render thread owns the pools again.
+            if (poolOwnershipBegun)
+                _commandRuntime.EndDesktopWorkerPoolOwnership();
             _desktopRecordExecutor.Clear();
             if (record.Phase == EVulkanPendingDesktopRecordPhase.Submitted)
                 record.MarkJoined(default);
@@ -289,6 +300,9 @@ internal sealed partial class VulkanFrameLoop
         RecordWorkerTiming(carry.SubmitTicks, System.Diagnostics.Stopwatch.GetTimestamp());
         record.MarkJoined(in batchResult);
         record.Lease.Dispose();
+        // The worker is done, so the render thread owns the worker pools again. This
+        // also frees the retired command buffers that waited for the join.
+        _commandRuntime.EndDesktopWorkerPoolOwnership();
         if (!batchResult.Succeeded)
         {
             _desktopRecordExecutor.Clear();

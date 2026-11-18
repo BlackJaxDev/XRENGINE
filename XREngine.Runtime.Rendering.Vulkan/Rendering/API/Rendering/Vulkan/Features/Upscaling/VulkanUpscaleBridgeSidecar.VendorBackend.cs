@@ -203,7 +203,8 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar
             aspect,
             (uint)Math.Max(1, size.X),
             (uint)Math.Max(1, size.Y),
-            source as IVkFrameBufferAttachmentSource);
+            source as IVkFrameBufferAttachmentSource,
+            texture);
         return true;
     }
 

@@ -42,6 +42,50 @@ internal sealed class VulkanGpuDiagnosticReadbackSidecar
     }
 
     internal int Capacity => _slots.Length;
+
+    /// <summary>
+    /// Counts the ring slots by state. The read is not atomic across slots, so the counts can
+    /// mix two moments; use it for diagnostics only.
+    /// </summary>
+    internal VulkanGpuDiagnosticReadbackSidecarDiagnostic CaptureDiagnostic()
+    {
+        int idle = 0, reserved = 0, reservedPrimary = 0, submitted = 0, decoding = 0;
+        ulong oldestReserved = 0UL;
+        for (int index = 0; index < _slots.Length; ++index)
+        {
+            VulkanGpuDiagnosticReadbackSidecarSlot slot = _slots[index];
+            switch ((EVulkanGpuDiagnosticReadbackSidecarSlotState)Volatile.Read(ref slot.State))
+            {
+                case EVulkanGpuDiagnosticReadbackSidecarSlotState.Idle:
+                    idle++;
+                    break;
+                case EVulkanGpuDiagnosticReadbackSidecarSlotState.Reserved:
+                    reserved++;
+                    if (slot.PrimaryCommandBuffer.Handle != 0)
+                        reservedPrimary++;
+                    if (oldestReserved == 0UL || slot.FrameIdentity < oldestReserved)
+                        oldestReserved = slot.FrameIdentity;
+                    break;
+                case EVulkanGpuDiagnosticReadbackSidecarSlotState.Submitted:
+                    submitted++;
+                    break;
+                case EVulkanGpuDiagnosticReadbackSidecarSlotState.Decoding:
+                    decoding++;
+                    break;
+            }
+        }
+
+        return new VulkanGpuDiagnosticReadbackSidecarDiagnostic(
+            _slots.Length,
+            idle,
+            reserved,
+            reservedPrimary,
+            submitted,
+            decoding,
+            oldestReserved,
+            DroppedReservationCount,
+            CompletedReservationCount);
+    }
     internal long DroppedReservationCount => Interlocked.Read(ref _droppedReservationCount);
     internal long CompletedReservationCount => Interlocked.Read(ref _completedReservationCount);
 
@@ -119,10 +163,17 @@ internal sealed class VulkanGpuDiagnosticReadbackSidecar
         if (!IsEligible(in node, purpose))
             return false;
 
+        // The last quarter of the ring serves only the per-view counter receipts. Per-bin copies
+        // ask for thousands of slots per second and would otherwise take every slot, so the
+        // counter receipts (a few per frame) would never get one.
+        int counterSlots = _slots.Length >= 8 ? _slots.Length / 4 : 0;
+        bool counterCopy = IsCounterReceiptDecoder(node.Decoder);
+        int first = counterCopy && counterSlots > 0 ? _slots.Length - counterSlots : 0;
+        int count = counterCopy && counterSlots > 0 ? counterSlots : _slots.Length - counterSlots;
         int start = Math.Abs(Interlocked.Increment(ref _cursor));
-        for (int attempt = 0; attempt < _slots.Length; ++attempt)
+        for (int attempt = 0; attempt < count; ++attempt)
         {
-            int index = (start + attempt) % _slots.Length;
+            int index = first + (start + attempt) % count;
             if (TryReserve(in node, frameIdentity, index, purpose, out reservation))
                 return true;
         }
@@ -130,6 +181,12 @@ internal sealed class VulkanGpuDiagnosticReadbackSidecar
         Interlocked.Increment(ref _droppedReservationCount);
         return false;
     }
+
+    private static bool IsCounterReceiptDecoder(EGpuDiagnosticReadbackDecoder decoder)
+        => decoder is EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters or
+            EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters or
+            EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters or
+            EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry;
 
     private static bool IsEligible(
         in GpuDiagnosticReadbackPlanNode node,

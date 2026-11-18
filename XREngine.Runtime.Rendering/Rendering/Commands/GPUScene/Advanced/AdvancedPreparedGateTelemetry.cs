@@ -35,6 +35,7 @@ public static class AdvancedPreparedGateTelemetry
     private static readonly long[] s_refusals = new long[ReasonCount];
     private static readonly long[] s_misses = new long[ReasonCount];
     private static readonly long[] s_verifyDisagreements = new long[ReasonCount];
+    private static readonly long[] s_swapGateFailures = new long[ReasonCount];
     private static long s_prepared;
     private static long s_hits;
     private static long s_reevaluatedRows;
@@ -92,6 +93,15 @@ public static class AdvancedPreparedGateTelemetry
         => Interlocked.Increment(ref s_verifyDisagreements[ToIndex(reason)]);
 
     /// <summary>
+    /// Counts one world-swap publication whose swap-time unchanged-row gate
+    /// failed, with the reason of the first row or check that failed. The swap
+    /// then plans and commits the whole scene, so these reasons name what keeps
+    /// the publication off the unchanged-row path.
+    /// </summary>
+    internal static void RecordSwapGateFailure(EAdvancedPreparedGateOutcome reason)
+        => Interlocked.Increment(ref s_swapGateFailures[ToIndex(reason)]);
+
+    /// <summary>
     /// Captures all cumulative counters. This method allocates the reason
     /// arrays of the snapshot. Do not call it on a frame path.
     /// </summary>
@@ -106,6 +116,7 @@ public static class AdvancedPreparedGateTelemetry
             CopyCounts(s_refusals),
             CopyCounts(s_misses),
             CopyCounts(s_verifyDisagreements),
+            CopyCounts(s_swapGateFailures),
             Volatile.Read(ref s_lastExceptionType),
             Volatile.Read(ref s_lastExceptionMessage),
             Volatile.Read(ref s_lastExceptionHResult));

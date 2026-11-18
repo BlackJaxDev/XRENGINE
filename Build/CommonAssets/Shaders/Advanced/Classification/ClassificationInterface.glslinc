@@ -83,9 +83,21 @@ XR_ADV_CLASSIFICATION_PASS_LAYOUT(7) buffer XRAdvancedDispatchIndirectBuffer
 
 // One initialized compact range per dense kernel. Each range has totalTiles
 // capacity: a tile emits at most one membership for a particular kernel.
+// counts[0, MAX) hold the membership count of each kernel over the views classified so far.
+// Then one block of MAX entries per view holds the count of each kernel after that view
+// (BuildClassificationIndirect writes it, clamped to the range capacity). Views classify in
+// order with a barrier between them, so the memberships of view v of kernel k are the range
+// [end(v - 1), end(v)) of that kernel's list, with end(-1) = 0.
 XR_ADV_CLASSIFICATION_PASS_LAYOUT(9) buffer XRAdvancedKernelCountsBuffer
 {
     uint counts[];
 } XR_ADV_KernelCounts;
+
+// Index of the count of kernel k after view v in XR_ADV_KernelCounts.counts.
+#define XR_ADV_KERNEL_VIEW_END_INDEX(view, kernel) (XR_ADV_MAX_SHADING_KERNELS * ((view) + 1u) + (kernel))
+// Index of the indirect command of kernel k for view v. The commands of all views come first,
+// then the overflow repair command.
+#define XR_ADV_KERNEL_DISPATCH_INDEX(view, kernel) (XR_ADV_MAX_SHADING_KERNELS * (view) + (kernel))
+#define XR_ADV_OVERFLOW_REPAIR_DISPATCH_INDEX(viewCount) (XR_ADV_MAX_SHADING_KERNELS * max((viewCount), 1u))
 
 #endif // XR_ADVANCED_CLASSIFICATION_INTERFACE_GLSLINC

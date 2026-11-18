@@ -69,7 +69,8 @@ void XR_ADV_StoreUncoveredMsaaPixel(uvec2 pixel, uint viewIndex)
         vec4(max(u_Push.backgroundColor.rgb, vec3(0.0)), 0.0));
     imageStore(Velocity, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
     imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
-    imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(0u));
+    if (XR_ADV_StoresShadingDiagnostics())
+        imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(0u));
     if (!XR_ADV_ExportsMaterialSurfaceInputs()) return;
     imageStore(EmissionColor, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
     imageStore(AlbedoOpacity, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));

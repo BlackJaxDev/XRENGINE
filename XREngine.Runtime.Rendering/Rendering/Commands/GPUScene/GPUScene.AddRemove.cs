@@ -765,7 +765,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            uint meshletCount = (uint)payload.Meshlets.Length;
+            uint meshletCount = (uint)payload.Level0MeshletCount;
             if (_meshletFreshnessByMeshId.TryGetValue(meshID, out ulong oldFreshness) &&
                 oldFreshness == payload.FreshnessHash &&
                 _meshletRangesByMeshId.TryGetValue(meshID, out GpuMeshletRange existingRange) &&
@@ -781,7 +781,9 @@ namespace XREngine.Rendering.Commands
             uint vertexIndexCount = (uint)payload.VertexIndices.Length;
             uint triangleByteCount = (uint)payload.TriangleIndices.Length;
 
-            for (int index = 0; index < payload.Meshlets.Length; index++)
+            // A cluster hierarchy payload uploads its whole streams, but this path has no cut
+            // selection, so it publishes only the level-0 descriptors (a prefix of the streams).
+            for (int index = 0; index < payload.Level0MeshletCount; index++)
             {
                 GpuMeshletDescriptor descriptor = ToGpuSceneMeshletDescriptor(payload.Meshlets[index], vertexIndexOffset, triangleByteOffset);
                 _meshletDescriptors.Add(descriptor);
@@ -824,7 +826,7 @@ namespace XREngine.Rendering.Commands
                 return false;
 
             return payload.HasMeshlets
-                ? existingRange.MeshletCount == (uint)payload.Meshlets.Length
+                ? existingRange.MeshletCount == (uint)payload.Level0MeshletCount
                 : !existingRange.HasMeshlets;
         }
 

@@ -1031,17 +1031,37 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return;
         }
 
-        var dispatched = new HashSet<XRMeshRenderer>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-        var renderers = new List<XRMeshRenderer>();
-        foreach (var meshCmd in commands.EnumerateRenderingMeshCommands())
+        // RunVisible runs on the render thread, one view at a time, so the scratch containers
+        // are reused from call to call.
+        List<XRMeshRenderer> visible = _runVisibleRenderers;
+        HashSet<XRMeshRenderer> seen = _runVisibleSeen;
+        HashSet<XRMeshRenderer> traditional = _runVisibleTraditional;
+        List<XRMeshRenderer> renderers = _runVisibleDispatch;
+        visible.Clear();
+        seen.Clear();
+        traditional.Clear();
+        renderers.Clear();
+        commands.CollectSkinningPrepassRenderers(visible, seen, traditional);
+
+        // Skip renderers whose prepass output no consumer reads (see SkinningPrepassDemand).
+        // The Advanced canonical path draws them from the aggregate deformation arena.
+        ulong frameId = State.RenderFrameId;
+        bool liveBoundsReaders = RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+        for (int index = 0; index < visible.Count; index++)
         {
-            if (meshCmd.Mesh is not XRMeshRenderer renderer)
+            XRMeshRenderer renderer = visible[index];
+            if (liveBoundsReaders ||
+                traditional.Contains(renderer) ||
+                renderer.IsSkinningPrepassDemanded(frameId) ||
+                renderer.Mesh is not { } mesh ||
+                !(mesh.HasSkinning || mesh.HasBlendshapes))
+            {
+                renderers.Add(renderer);
                 continue;
+            }
 
-            if (!dispatched.Add(renderer))
-                continue;
-
-            renderers.Add(renderer);
+            renderer.MarkSkinningPrepassSkipped(frameId);
+            SkinningPrepassDemand.RecordSkip();
         }
 
         if (renderers.Count == 0)
@@ -1091,8 +1111,16 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
 
         foreach (var renderer in renderers)
+        {
             Run(renderer);
+            renderer.MarkSkinningPrepassRun();
+        }
     }
+
+    private readonly List<XRMeshRenderer> _runVisibleRenderers = [];
+    private readonly List<XRMeshRenderer> _runVisibleDispatch = [];
+    private readonly HashSet<XRMeshRenderer> _runVisibleSeen = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private readonly HashSet<XRMeshRenderer> _runVisibleTraditional = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     private void EnsureProgram()
     {

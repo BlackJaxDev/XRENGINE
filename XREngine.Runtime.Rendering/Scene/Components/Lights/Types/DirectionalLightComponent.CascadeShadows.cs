@@ -129,6 +129,13 @@ namespace XREngine.Components.Lights
         private sealed class DirectionalCascadeSourceState(ShadowRequestSource source)
         {
             public readonly ShadowRequestSource Source = source;
+            // Held cascade fits, per cascade index, in light space. Only the cascade fit on
+            // the collect thread reads and writes them.
+            public readonly bool[] HeldFitValid = new bool[MaxCascadeRenderCount];
+            public readonly Vector3[] HeldFitCenterLS = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] HeldFitHalfExtents = new Vector3[MaxCascadeRenderCount];
+            public readonly uint[] HeldFitResolution = new uint[MaxCascadeRenderCount];
+            public readonly Quaternion[] HeldFitLightRotation = new Quaternion[MaxCascadeRenderCount];
             public readonly List<CascadedShadowAabb> Aabbs = new(4);
             public readonly List<CascadeShadowSlice> Slices = new(MaxCascadeRenderCount);
             public DirectionalCascadeAtlasSlot[] AtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
@@ -139,8 +146,69 @@ namespace XREngine.Components.Lights
             public readonly ulong[] PreviousAtlasRequestContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly int[] StableAtlasRequestFrameCounts = new int[MaxCascadeRenderCount];
             public readonly int[] AtlasCascadeStaleFrameCounts = new int[MaxCascadeRenderCount];
+            // Cascades that may refresh in the current request frame although only their
+            // camera fit changed. Lights3DCollection selects them before it submits the
+            // cascade requests. BeginDirectionalCascadeAtlasRequestFrame clears them.
+            public readonly bool[] AtlasCascadeRefreshGranted = new bool[MaxCascadeRenderCount];
+            // Caster state hash of the last request that asked to render each cascade.
+            public readonly ulong[] RequestedCasterStateHashes = new ulong[MaxCascadeRenderCount];
+            // Shadow atlas frame of the last request that asked to render each cascade.
+            public readonly ulong[] RequestedRefreshFrames = new ulong[MaxCascadeRenderCount];
+            // Caster change epoch of each cascade. It advances when a changed shadow caster
+            // box meets the cascade volume, and it is the cascade's caster command signature.
+            public readonly ulong[] CascadeCasterEpochs = new ulong[MaxCascadeRenderCount];
+            // Per slice index: advances when a static caster change (or a lost record) meets
+            // the cascade tile. The static caster tile of a cascade is valid only for the epoch
+            // that it was drawn with. A change of a dynamic caster does not advance it, because
+            // the static tile does not contain dynamic casters.
+            public readonly ulong[] CascadeStaticCasterEpochs = new ulong[MaxCascadeRenderCount];
+            // Per slice index: update frame of the last dynamic caster change that marked the
+            // cascade (0 when none). The static tile of a cascade exists only while this is recent.
+            public readonly ulong[] CascadeDynamicChangeFrames = new ulong[MaxCascadeRenderCount];
+            // Light-space bounds of the receiver slice of each cascade (the frustum slice
+            // corners, before the sphere fit), per slice index, and the light basis they use.
+            public readonly Vector3[] ReceiverFootprintMinLS = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] ReceiverFootprintMaxLS = new Vector3[MaxCascadeRenderCount];
+            public Matrix4x4 ReceiverFootprintWorldToLight = Matrix4x4.Identity;
+            // Light-space X/Y convex hull of the receiver slice corners of each cascade
+            // (counter-clockwise), ReceiverHullCapacity points per cascade.
+            public readonly Vector2[] ReceiverHullPoints = new Vector2[MaxCascadeRenderCount * ReceiverHullCapacity];
+            public readonly int[] ReceiverHullCounts = new int[MaxCascadeRenderCount];
+            // Six outward light-space planes (normal, distance) of the slice of each source
+            // frustum, ReceiverPlaneCapacity planes per cascade, and the frustum count.
+            public readonly Vector4[] ReceiverSlicePlanes = new Vector4[MaxCascadeRenderCount * ReceiverPlaneCapacity];
+            public readonly int[] ReceiverSliceFrustumCounts = new int[MaxCascadeRenderCount];
+            // Light-space union of the caster changes that met a cascade's tile but not its
+            // receiver footprint since the cascade last rendered. A footprint that later moves
+            // over this region marks the cascade, so no sampled texel keeps stale casters.
+            public readonly Vector3[] PendingDirtyMinLS = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] PendingDirtyMaxLS = new Vector3[MaxCascadeRenderCount];
+            public readonly bool[] PendingDirtyValid = new bool[MaxCascadeRenderCount];
+            // The part of the pending region that comes from static caster changes. Only this
+            // part makes the static caster tile stale when a footprint later meets it; a
+            // dynamic change is never in a static tile.
+            public readonly Vector3[] PendingStaticMinLS = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] PendingStaticMaxLS = new Vector3[MaxCascadeRenderCount];
+            public readonly bool[] PendingStaticValid = new bool[MaxCascadeRenderCount];
+            // Per slice index: the fit (centre, half extents, orientation) and static caster
+            // epoch of the last requested render, and the plan frame of the last requested
+            // render that changes one of them. Such a render draws the static caster tile, so a
+            // demotion in that pass costs no draw of its own.
+            public readonly Vector3[] LastRequestedFitCenters = new Vector3[MaxCascadeRenderCount];
+            public readonly Vector3[] LastRequestedFitHalfExtents = new Vector3[MaxCascadeRenderCount];
+            public readonly Quaternion[] LastRequestedFitOrientations = new Quaternion[MaxCascadeRenderCount];
+            public readonly ulong[] LastRequestedStaticEpochs = new ulong[MaxCascadeRenderCount];
+            public readonly ulong[] StaticRedrawPlannedFrames = new ulong[MaxCascadeRenderCount];
             public readonly ulong[] AtlasCollectedContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeRenderRequested = new bool[MaxCascadeRenderCount];
+            // Matrices that the Advanced capture published for planned refreshes. The
+            // next capture checks that the draw committed them.
+            public readonly Matrix4x4[] PlannedRefreshMatrices = new Matrix4x4[MaxCascadeRenderCount];
+            public readonly bool[] PlannedRefreshPending = new bool[MaxCascadeRenderCount];
+            // Planned refreshes that did not commit their matrix, and the Stopwatch time of
+            // the last log entry about them.
+            public long PlannedRefreshNotCommittedCount;
+            public long PlannedRefreshNotCommittedLogTimestamp;
             public readonly bool[] AtlasCascadeCollectVisibleNeeded = new bool[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeSwapNeeded = new bool[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeVisibleSetCached = new bool[MaxCascadeRenderCount];
@@ -595,17 +663,30 @@ namespace XREngine.Components.Lights
                CanUseDirectionalCascadeShadowAtlasForCurrentBackend(cascadeCount);
 
         private static bool CanRenderDirectionalCascadesForCurrentBackend()
-        {
-            if (!IsVulkanDirectionalShadowBackend())
-                return true;
+            => !IsVulkanDirectionalShadowBackend() ||
+               AllowsVulkanDirectionalShadowWorkForCurrentRuntime();
 
+        /// <summary>
+        /// The one runtime test for Vulkan directional shadow work. Three gates use it: cascade
+        /// rendering (<see cref="CanRenderDirectionalCascadesForCurrentBackend"/>), the cascade shadow
+        /// atlas (<see cref="CanUseDirectionalCascadeShadowAtlasForCurrentBackend"/>), and grouped atlas
+        /// entries (<c>ShadowAtlasManager.ShouldBuildGroupedAtlasRenderPlanEntries</c>), which the
+        /// Advanced directional shadow lane needs. One test keeps the three gates equal.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="XREngineEnvironmentVariables.VulkanDirectionalCascades"/> decides when it is set:
+        /// <c>1</c> turns the three on and <c>0</c> turns them off. Without it, the known Monado OpenXR
+        /// runtime gets no directional cascades, no cascade atlas and no grouped entries. This safety
+        /// stop is for OpenXR + Monado hangs that occurred while shared cascade texture arrays rendered.
+        /// It is not proved that the hang is gone, also not on the atlas path. Use the override on
+        /// Monado for validation, with a guard that stops a session that hangs. SteamVR and ordinary
+        /// Vulkan sessions use the cascade path by default.
+        /// </remarks>
+        internal static bool AllowsVulkanDirectionalShadowWorkForCurrentRuntime()
+        {
             if (TryResolveVulkanDirectionalCascadesOverride(out bool enabled))
                 return enabled;
 
-            // The original Vulkan safety stop was for OpenXR + Monado hangs while
-            // rendering shared cascade texture arrays. Keep that runtime guarded by
-            // default, but allow SteamVR and ordinary Vulkan sessions to exercise the
-            // cascade path.
             return !IsKnownMonadoOpenXrRuntime();
         }
 
@@ -1340,6 +1421,93 @@ namespace XREngine.Components.Lights
             }
         }
 
+        private const string PlannedRefreshLogFileName = "directional-shadow-planned-refresh.log";
+
+        /// <summary>
+        /// Counts a planned cascade refresh that did not commit the matrix that the
+        /// Advanced shading used, and writes the running count to an auxiliary log at most
+        /// every 5 seconds per light and source. The auxiliary log is written in Release
+        /// builds too, so a validation run can count the misses. The caller holds
+        /// <c>_cascadeDataLock</c>.
+        /// </summary>
+        private void LogPlannedRefreshNotCommitted(
+            DirectionalCascadeSourceState state,
+            ShadowRequestSource source,
+            int cascadeIndex)
+        {
+            state.PlannedRefreshNotCommittedCount++;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (state.PlannedRefreshNotCommittedLogTimestamp != 0 &&
+                System.Diagnostics.Stopwatch.GetElapsedTime(state.PlannedRefreshNotCommittedLogTimestamp, now) < TimeSpan.FromSeconds(5))
+                return;
+
+            state.PlannedRefreshNotCommittedLogTimestamp = now;
+            Debug.WriteAuxiliaryLog(
+                PlannedRefreshLogFileName,
+                $"{DateTimeOffset.Now:O} DirectionalShadow.PlannedRefreshNotCommitted: a planned directional cascade refresh did not commit the matrix that the Advanced shading used for one frame. light={ID} source={source} cascade={cascadeIndex} total={state.PlannedRefreshNotCommittedCount}");
+        }
+
+        /// <summary>
+        /// Gives each cascade that this frame refreshes the values of this frame's draw.
+        /// The Advanced capture runs at the swap, before the render thread draws the
+        /// cascades and commits their atlas slots. Without this, a refreshed tile holds
+        /// this frame's fit while its record still holds the previous fit, so shadows
+        /// trail the camera by one frame. The draw uses <c>RenderSliceMatrices</c>, which
+        /// the same swap copied from <c>Slices</c>, so the current slice values are the
+        /// draw values. A cascade without a rendered tile keeps its unsampled record.
+        /// The next call checks that each planned refresh committed its matrix and logs a
+        /// diagnostic when it did not. When <paramref name="refreshesCanDraw"/> is false,
+        /// the Advanced lane will decline this frame's cascade groups and a strict lane
+        /// draws nothing, so the records keep their committed values: a tile that is not
+        /// drawn must keep the matrix that it was rendered with.
+        /// </summary>
+        internal void ApplyPlannedDirectionalCascadeRefreshes(
+            ShadowRequestSource source,
+            Span<DirectionalShadowGpuRecord> records,
+            int cascadeCount,
+            bool refreshesCanDraw)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                int count = Math.Min(
+                    Math.Min(cascadeCount, records.Length),
+                    Math.Min(state.Slices.Count, MaxCascadeRenderCount));
+                for (int i = 0; i < count; i++)
+                {
+                    if (state.PlannedRefreshPending[i])
+                    {
+                        state.PlannedRefreshPending[i] = false;
+                        DirectionalCascadeAtlasSlot committed = state.AtlasSlots[i];
+                        if (!committed.HasCascadeUniformData ||
+                            committed.WorldToLightSpaceMatrix != state.PlannedRefreshMatrices[i])
+                            LogPlannedRefreshNotCommitted(state, resolvedSource, i);
+                    }
+
+                    ref DirectionalShadowGpuRecord record = ref records[i];
+                    if (!refreshesCanDraw || !state.AtlasCascadeRenderRequested[i] || record.AtlasPacked0.X == 0)
+                        continue;
+
+                    record.RenderedWorldToLight = record.CurrentWorldToLight;
+                    record.RenderedSplitBlendBias = record.CurrentSplitBlendBias;
+                    record.ReceiverOffsetsAge = new(
+                        record.ReceiverOffsetsAge.X,
+                        record.ReceiverOffsetsAge.X,
+                        0.0f,
+                        record.ReceiverOffsetsAge.W);
+                    // The capture then takes the UV rectangle of the planned allocation,
+                    // where this frame's draw writes.
+                    record.AtlasUvScaleBias = Vector4.Zero;
+                    state.PlannedRefreshMatrices[i] = record.CurrentWorldToLight;
+                    state.PlannedRefreshPending[i] = true;
+                }
+            }
+        }
+
         /// <summary>
         /// Copies the complete current, rendered, and atlas payload for every
         /// directional cascade while holding the cascade lock exactly once. The
@@ -1707,6 +1875,7 @@ namespace XREngine.Components.Lights
                 int count = Math.Clamp(activeCascadeCount, 0, MaxCascadeRenderCount);
                 for (int i = 0; i < MaxCascadeRenderCount; i++)
                 {
+                    state.AtlasCascadeRefreshGranted[i] = false;
                     state.AtlasRequestContentHashes[i] = 0u;
                     state.AtlasCascadeRenderRequested[i] = false;
                     state.AtlasCascadeCollectVisibleNeeded[i] = false;
@@ -1719,15 +1888,104 @@ namespace XREngine.Components.Lights
                     state.PreviousAtlasRequestContentHashes[i] = 0u;
                     state.StableAtlasRequestFrameCounts[i] = 0;
                     state.AtlasCascadeStaleFrameCounts[i] = 0;
+                    state.RequestedCasterStateHashes[i] = 0u;
+                    state.RequestedRefreshFrames[i] = 0u;
                 }
             }
+        }
+
+        /// <summary>
+        /// Lets the cascade refresh in the current request frame although only its camera
+        /// fit changed. Lights3DCollection calls it, before it submits the cascade
+        /// requests, for the cascades that the per-frame refresh limit selects.
+        /// </summary>
+        internal void GrantDirectionalCascadeRefresh(ShadowRequestSource source, int index)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+                GetCascadeSourceState(resolvedSource).AtlasCascadeRefreshGranted[index] = true;
+        }
+
+        /// <summary>
+        /// True when <see cref="GrantDirectionalCascadeRefresh"/> selected the cascade in
+        /// the current request frame.
+        /// </summary>
+        internal bool IsDirectionalCascadeRefreshGranted(ShadowRequestSource source, int index)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return false;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+                return GetCascadeSourceState(resolvedSource).AtlasCascadeRefreshGranted[index];
+        }
+
+        /// <summary>
+        /// Returns the shadow atlas frame of a cascade refresh that is still in flight, or 0.
+        /// The collect thread plans the next frame while the render thread draws this one,
+        /// so a refresh requested in the previous plan has usually not completed, and the
+        /// allocation still reports the older rendered frame. A refresh is in flight when it
+        /// was requested after <paramref name="lastRenderedFrame"/> and at most two plan
+        /// frames before <paramref name="currentFrameId"/>; an older request was lost.
+        /// </summary>
+        internal ulong GetDirectionalCascadeRefreshInFlightFrame(
+            ShadowRequestSource source,
+            int index,
+            ulong lastRenderedFrame,
+            ulong currentFrameId)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return 0u;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            ulong requested;
+            lock (_cascadeDataLock)
+                requested = GetCascadeSourceState(resolvedSource).RequestedRefreshFrames[index];
+
+            return requested > lastRenderedFrame && requested <= currentFrameId && currentFrameId - requested <= 2u
+                ? requested
+                : 0u;
+        }
+
+        /// <summary>
+        /// True when <paramref name="casterStateHash"/> differs from the caster state hash
+        /// of the last request that asked to render the cascade: a caster moved, entered or
+        /// left the collected set, or the light changed. A stale tile then shows old
+        /// casters, so the cascade refreshes at once and does not wait for the per-frame
+        /// refresh limit.
+        /// </summary>
+        internal bool HasDirectionalCascadeCasterStateChanged(ShadowRequestSource source, int index, ulong casterStateHash)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return true;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+                return GetCascadeSourceState(resolvedSource).RequestedCasterStateHashes[index] != casterStateHash;
         }
 
         internal void MarkDirectionalCascadeAtlasRequest(
             ShadowRequestSource source,
             int index,
             ulong contentHash,
-            bool renderRequested)
+            bool renderRequested,
+            ulong casterStateHash,
+            ulong requestFrameId)
         {
             if ((uint)index >= (uint)MaxCascadeRenderCount)
                 return;
@@ -1773,6 +2031,31 @@ namespace XREngine.Components.Lights
 
                 state.AtlasCascadeRenderRequested[index] = renderRequested;
                 state.AtlasCascadeCollectVisibleNeeded[index] = renderRequested && !cacheHit;
+                if (renderRequested)
+                {
+                    state.RequestedCasterStateHashes[index] = casterStateHash;
+                    state.RequestedRefreshFrames[index] = requestFrameId;
+                    // The render collects the present casters, so earlier changes outside the
+                    // footprint are in the new tile.
+                    state.PendingDirtyValid[index] = false;
+                    state.PendingStaticValid[index] = false;
+                    if (index < state.Slices.Count)
+                    {
+                        CascadeShadowSlice slice = state.Slices[index];
+                        ulong staticEpoch = state.CascadeStaticCasterEpochs[index];
+                        if (slice.Center != state.LastRequestedFitCenters[index] ||
+                            slice.HalfExtents != state.LastRequestedFitHalfExtents[index] ||
+                            slice.Orientation != state.LastRequestedFitOrientations[index] ||
+                            staticEpoch != state.LastRequestedStaticEpochs[index])
+                        {
+                            state.StaticRedrawPlannedFrames[index] = requestFrameId;
+                        }
+                        state.LastRequestedFitCenters[index] = slice.Center;
+                        state.LastRequestedFitHalfExtents[index] = slice.HalfExtents;
+                        state.LastRequestedFitOrientations[index] = slice.Orientation;
+                        state.LastRequestedStaticEpochs[index] = staticEpoch;
+                    }
+                }
             }
         }
 
@@ -2474,6 +2757,79 @@ namespace XREngine.Components.Lights
             CommitRenderedCascadeAtlasSlots(commits);
         }
 
+        /// <summary>
+        /// Copies the cascade slot and rendered sample of <paramref name="index"/> in <paramref name="source"/>,
+        /// so the shadow atlas can restore them when the submission of a later commit fails.
+        /// </summary>
+        internal void CaptureCascadeAtlasSlotState(
+            ShadowRequestSource source,
+            int index,
+            out DirectionalCascadeAtlasSlot slot,
+            out DirectionalCascadeSampleState sample)
+        {
+            slot = default;
+            sample = default;
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                slot = state.AtlasSlots[index];
+                sample = state.RenderedSamples[index];
+            }
+        }
+
+        /// <summary>
+        /// Restores the cascade slot and rendered sample of <paramref name="index"/> after the submission
+        /// of a commit failed. Applies only while the slot still holds that commit: the rendered sample
+        /// has the content hash and render frame that the commit of <paramref name="committedSample"/>
+        /// and <paramref name="committedAllocation"/> wrote. A newer commit stays.
+        /// </summary>
+        internal void RevertRenderedCascadeAtlasSlot(
+            ShadowRequestSource source,
+            int index,
+            in ShadowAtlasAllocation committedAllocation,
+            in DirectionalCascadeSampleState committedSample,
+            in DirectionalCascadeAtlasSlot previousSlot,
+            in DirectionalCascadeSampleState previousSample)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            ulong committedHash = committedSample.ContentHash != 0u
+                ? committedSample.ContentHash
+                : committedAllocation.ContentVersion;
+            ulong committedFrame = committedSample.RenderedFrame != 0u
+                ? committedSample.RenderedFrame
+                : committedAllocation.LastRenderedFrame;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                DirectionalCascadeSampleState current = state.RenderedSamples[index];
+                if (!current.IsValid ||
+                    current.ContentHash != committedHash ||
+                    current.RenderedFrame != committedFrame)
+                {
+                    return;
+                }
+
+                state.RenderedSamples[index] = previousSample;
+                state.AtlasSlots[index] = previousSlot;
+                if (_directionalAtlasSlotPublishInProgress &&
+                    state.PendingAtlasSlots[index].LastRenderedFrame == committedFrame)
+                {
+                    state.PendingAtlasSlots[index] = previousSlot;
+                }
+            }
+        }
+
         internal void CommitRenderedCascadeAtlasSlots(ReadOnlySpan<DirectionalCascadeAtlasRenderCommit> commits)
         {
             lock (_cascadeDataLock)
@@ -2791,12 +3147,25 @@ namespace XREngine.Components.Lights
         /// texel size every frame and made shadow edges shimmer. The radius is rounded up
         /// to a fixed step so float noise cannot change it from frame to frame either.
         /// </summary>
-        private static void ApplySphereFit(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, ref Vector3 min, ref Vector3 max)
+        /// <summary>
+        /// Replaces the slice box with the box of a sphere that holds the slice corners.
+        /// The sphere is centred on the slice centroid, or with <paramref name="cameraCentred"/>
+        /// on the camera position: the mean of the near-plane corners of all source frusta
+        /// (the head for a stereo source). The radius reaches the farthest slice corner and
+        /// is rounded up, so the fit does not change size when the camera turns. A
+        /// camera-centred sphere also keeps its centre when the camera turns.
+        /// </summary>
+        private static void ApplySphereFit(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, bool cameraCentred, ref Vector3 min, ref Vector3 max)
         {
             Vector3 centerLS = Vector3.Zero;
             int cornerCount = 0;
             for (int i = 0; i < cameraFrusta.Length; i++)
-                AccumulateCascadeCentroid(cameraFrusta[i], nearT, farT, worldToLight, ref centerLS, ref cornerCount);
+            {
+                if (cameraCentred)
+                    AccumulateCascadeCentroid(cameraFrusta[i], 0.0f, 0.0f, worldToLight, ref centerLS, ref cornerCount);
+                else
+                    AccumulateCascadeCentroid(cameraFrusta[i], nearT, farT, worldToLight, ref centerLS, ref cornerCount);
+            }
             if (cornerCount == 0)
                 return;
             centerLS /= cornerCount;
@@ -2826,6 +3195,119 @@ namespace XREngine.Components.Lights
             count += 8;
         }
 
+        /// <summary>
+        /// Number of steps that the depth range of a cascade is divided into for the
+        /// depth snap in <see cref="QuantizeCascadeDepthRange"/>.
+        /// </summary>
+        private const float CascadeDepthRangeSteps = 16.0f;
+
+        /// <summary>
+        /// Snaps the light-space depth center of a cascade to a step of 1/16 of its depth
+        /// range and widens the depth half extent by half a step. The X/Y center is
+        /// snapped to texels, but without this the depth range followed the camera in
+        /// every frame. The cascade matrix then changed in every moving frame, the
+        /// content hash changed, and every cascade re-rendered its whole caster set.
+        /// The step depends only on the depth range, which the rounded sphere radius
+        /// keeps constant, so the snap grid is stable. The snapped range contains the
+        /// original range (it only grows outward) and has a constant size, so the
+        /// world-space depth bias, which is scaled by the range, does not change.
+        /// </summary>
+        private static void QuantizeCascadeDepthRange(ref Vector3 centerLS, ref Vector3 halfExtents)
+        {
+            float step = halfExtents.Z * 2.0f / CascadeDepthRangeSteps;
+            if (!float.IsFinite(step) || step <= 0.0f || !float.IsFinite(centerLS.Z))
+                return;
+            centerLS.Z = MathF.Round(centerLS.Z / step) * step;
+            halfExtents.Z += step * 0.5f;
+        }
+
+        /// <summary>
+        /// Keeps the held fit of a cascade when it still covers the camera's slice. The
+        /// slice box (<paramref name="centerLS"/>, <paramref name="halfExtents"/>, before any
+        /// margin) must lie inside the held box in X, Y and depth, and the held box must not
+        /// be larger than the slice box with two margins (a narrower slice gets a tighter
+        /// fit). The light rotation and the fit resolution must not have changed. On success
+        /// the method replaces the slice box with the held box, so the cascade matrix and its
+        /// content hash do not change and the cascade does not re-render. A margin of 0
+        /// turns the hold off.
+        /// </summary>
+        private static bool TryHoldCascadeFit(
+            DirectionalCascadeSourceState state,
+            int cascadeIndex,
+            float margin,
+            uint fitResolution,
+            Quaternion lightRotation,
+            ref Vector3 centerLS,
+            ref Vector3 halfExtents)
+        {
+            if (margin <= 0.0f ||
+                (uint)cascadeIndex >= (uint)MaxCascadeRenderCount ||
+                !state.HeldFitValid[cascadeIndex] ||
+                state.HeldFitResolution[cascadeIndex] != fitResolution ||
+                state.HeldFitLightRotation[cascadeIndex] != lightRotation)
+            {
+                return false;
+            }
+
+            Vector3 heldCenter = state.HeldFitCenterLS[cascadeIndex];
+            Vector3 heldHalf = state.HeldFitHalfExtents[cascadeIndex];
+            Vector3 neededMin = centerLS - halfExtents;
+            Vector3 neededMax = centerLS + halfExtents;
+            Vector3 heldMin = heldCenter - heldHalf;
+            Vector3 heldMax = heldCenter + heldHalf;
+            if (neededMin.X < heldMin.X || neededMin.Y < heldMin.Y || neededMin.Z < heldMin.Z ||
+                neededMax.X > heldMax.X || neededMax.Y > heldMax.Y || neededMax.Z > heldMax.Z)
+            {
+                return false;
+            }
+
+            float neededRadius = MathF.Max(halfExtents.X, halfExtents.Y);
+            float heldRadius = MathF.Max(heldHalf.X, heldHalf.Y);
+            if (heldRadius > neededRadius * (1.0f + 2.0f * margin) + 1e-4f)
+                return false;
+
+            centerLS = heldCenter;
+            halfExtents = heldHalf;
+            return true;
+        }
+
+        /// <summary>
+        /// Grows a new cascade fit so it covers the slice with room for camera movement: X and
+        /// Y by <paramref name="margin"/> times the larger of the two half extents, and depth
+        /// by <paramref name="margin"/> times its own half extent. The texel size and the
+        /// depth step grow by the same fraction.
+        /// </summary>
+        private static void ExpandCascadeFitByMargin(ref Vector3 halfExtents, float margin)
+        {
+            if (margin <= 0.0f)
+                return;
+
+            float grow = MathF.Max(halfExtents.X, halfExtents.Y) * margin;
+            halfExtents.X += grow;
+            halfExtents.Y += grow;
+            halfExtents.Z += halfExtents.Z * margin;
+        }
+
+        /// <summary>Stores a new cascade fit as the held fit, or clears the hold when the margin is 0.</summary>
+        private static void StoreHeldCascadeFit(
+            DirectionalCascadeSourceState state,
+            int cascadeIndex,
+            float margin,
+            uint fitResolution,
+            Quaternion lightRotation,
+            Vector3 centerLS,
+            Vector3 halfExtents)
+        {
+            if ((uint)cascadeIndex >= (uint)MaxCascadeRenderCount)
+                return;
+
+            state.HeldFitValid[cascadeIndex] = margin > 0.0f;
+            state.HeldFitCenterLS[cascadeIndex] = centerLS;
+            state.HeldFitHalfExtents[cascadeIndex] = halfExtents;
+            state.HeldFitResolution[cascadeIndex] = fitResolution;
+            state.HeldFitLightRotation[cascadeIndex] = lightRotation;
+        }
+
         private static void SnapCascadeCenterToTexels(ref Vector3 centerLS, Vector3 halfExtents, uint resolution)
         {
             float texelX = MathF.Max(halfExtents.X * 2.0f / MathF.Max(1.0f, resolution), 1e-6f);
@@ -2834,7 +3316,7 @@ namespace XREngine.Components.Lights
             centerLS.Y = MathF.Round(centerLS.Y / texelY) * texelY;
         }
 
-        private static void GetCascadeBoundsInLightSpace(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, out Vector3 min, out Vector3 max)
+        private static void GetCascadeBoundsInLightSpace(ReadOnlySpan<Frustum> cameraFrusta, float nearT, float farT, Matrix4x4 worldToLight, bool cameraCentred, out Vector3 min, out Vector3 max)
         {
             min = new Vector3(float.MaxValue);
             max = new Vector3(float.MinValue);
@@ -2842,7 +3324,7 @@ namespace XREngine.Components.Lights
             for (int i = 0; i < cameraFrusta.Length; i++)
                 IncludeCascadeBoundsInLightSpace(cameraFrusta[i], nearT, farT, worldToLight, ref min, ref max);
 
-            ApplySphereFit(cameraFrusta, nearT, farT, worldToLight, ref min, ref max);
+            ApplySphereFit(cameraFrusta, nearT, farT, worldToLight, cameraCentred, ref min, ref max);
         }
 
         private void BuildLightSpaceBasis(out Matrix4x4 worldToLight, out Matrix4x4 lightToWorld, out Quaternion lightRotation, out Vector3 lightDir)
@@ -2883,7 +3365,7 @@ namespace XREngine.Components.Lights
             }
 
             EnsureCascadeShadowResources(ShadowRequestSource.Desktop);
-            if (RuntimeEngine.VRState.IsInVR)
+            if (IsHmdCascadeSourceActive)
                 EnsureCascadeShadowResources(ShadowRequestSource.Hmd);
         }
 
@@ -3322,7 +3804,7 @@ namespace XREngine.Components.Lights
             Array.Clear(_cascadeSourceCameras);
             AddCascadeSourceCameraFrustum(primaryCamera, destination, _cascadeSourceCameras, ref count);
 
-            if (source == ShadowRequestSource.Hmd && RuntimeEngine.VRState.IsInVR)
+            if (source == ShadowRequestSource.Hmd && IsHmdCascadeSourceActive)
             {
                 IRuntimeRenderWorld? world = World.GetRenderWorld();
                 AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.LeftEyeViewport, world, destination, _cascadeSourceCameras, ref count);
@@ -3345,8 +3827,31 @@ namespace XREngine.Components.Lights
             if (viewport.CameraComponent is { } cameraComponent)
                 return cameraComponent.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded;
 
-            return viewport.RendersToExternalSwapchainTarget && viewport.ActiveCamera is not null;
+            return (viewport.RendersToExternalSwapchainTarget || IsEmulatedHmdCascadeEyeViewport(viewport)) &&
+                viewport.ActiveCamera is not null;
         }
+
+        /// <summary>
+        /// True when the HMD cascade source has eye viewports to fit and serve: a headset session
+        /// (<c>IsInVR</c>), or emulated VR eyes with the
+        /// <c>EmulatedVrEyesUseHmdDirectionalCascades</c> setting on.
+        /// </summary>
+        internal static bool IsHmdCascadeSourceActive
+            => RuntimeEngine.VRState.IsInVR ||
+               (RuntimeEngine.VRState.EmulatedRenderActive &&
+                RuntimeEngine.Rendering.Settings.EmulatedVrEyesUseHmdDirectionalCascades);
+
+        /// <summary>
+        /// True for an emulated VR eye viewport when the <c>EmulatedVrEyesUseHmdDirectionalCascades</c>
+        /// setting is on. Headset eye viewports render to an external swapchain and prefer cascades
+        /// for that reason; emulated eyes render to internal targets, so this setting makes them
+        /// prefer the HMD cascade source in the same way. The cascade source fit and the primary shadow need test both use it.
+        /// </summary>
+        internal static bool IsEmulatedHmdCascadeEyeViewport(XRViewport viewport)
+            => RuntimeEngine.VRState.EmulatedRenderActive &&
+               RuntimeEngine.Rendering.Settings.EmulatedVrEyesUseHmdDirectionalCascades &&
+               (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
+                ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport));
 
         private static void AddCascadeSourceViewportFrustum(
             XRViewport? viewport,
@@ -3399,7 +3904,7 @@ namespace XREngine.Components.Lights
             ref int count)
         {
             if (count >= destination.Length ||
-                !RuntimeEngine.VRState.IsInVR ||
+                !IsHmdCascadeSourceActive ||
                 !TryGetCascadeSourceEyeCamera(RuntimeEngine.VRState.LeftEyeViewport, world, out XRCamera? leftCamera) ||
                 !TryGetCascadeSourceEyeCamera(RuntimeEngine.VRState.RightEyeViewport, world, out XRCamera? rightCamera))
             {
@@ -3610,6 +4115,13 @@ namespace XREngine.Components.Lights
             CascadeShadowBiasOverride[] biasOverrideSnapshot = _cascadeBiasOverrides;
             CascadeShadowSlice[] nextShadowSlices = ArrayPool<CascadeShadowSlice>.Shared.Rent(maxCascadeCount);
             CascadedShadowAabb[] nextCascadeAabbs = ArrayPool<CascadedShadowAabb>.Shared.Rent(maxCascadeCount);
+            Span<Vector3> footprintMin = stackalloc Vector3[MaxCascadeRenderCount];
+            Span<Vector3> footprintMax = stackalloc Vector3[MaxCascadeRenderCount];
+            Span<Vector2> hullPoints = stackalloc Vector2[MaxCascadeRenderCount * ReceiverHullCapacity];
+            Span<int> hullCounts = stackalloc int[MaxCascadeRenderCount];
+            Span<Vector2> cornerScratch = stackalloc Vector2[ReceiverHullCapacity];
+            Span<Vector4> slicePlanes = stackalloc Vector4[MaxCascadeRenderCount * ReceiverPlaneCapacity];
+            Span<int> sliceFrustumCounts = stackalloc int[MaxCascadeRenderCount];
 
             float cameraNear = playerCamera.NearZ;
             float sourceCameraFar = playerCamera.FarZ;
@@ -3628,6 +4140,10 @@ namespace XREngine.Components.Lights
             float shadowDepth = totalDepth;
             float cumulative = 0.0f;
             int resourceSlot = 0;
+            float refitMargin = RuntimeEngine.Rendering.Settings.DirectionalCascadeRefitMarginFraction;
+            bool cameraCentredFit = (source == ShadowRequestSource.Hmd
+                ? RuntimeEngine.Rendering.Settings.HmdDirectionalCascadeFitCentre
+                : RuntimeEngine.Rendering.Settings.DesktopDirectionalCascadeFitCentre) == EDirectionalCascadeFitCentre.CameraPosition;
 
             try
             {
@@ -3648,7 +4164,12 @@ namespace XREngine.Components.Lights
                     float nearT = Math.Clamp((expandedStart - cameraNear) / sourceFrustumDepth, 0.0f, 1.0f);
                     float farT = Math.Clamp((expandedEnd - cameraNear) / sourceFrustumDepth, 0.0f, 1.0f);
 
-                    GetCascadeBoundsInLightSpace(cascadeFrusta, nearT, farT, worldToLight, out Vector3 min, out Vector3 max);
+                    GetCascadeBoundsInLightSpace(cascadeFrusta, nearT, farT, worldToLight, cameraCentredFit, out Vector3 min, out Vector3 max);
+                    // Receiver footprint: the slice corners in light space, before the sphere fit.
+                    Vector3 receiverMin = new(float.MaxValue);
+                    Vector3 receiverMax = new(float.MinValue);
+                    for (int f = 0; f < cascadeFrusta.Length; f++)
+                        IncludeCascadeBoundsInLightSpace(cascadeFrusta[f], nearT, farT, worldToLight, ref receiverMin, ref receiverMax);
 
                     // With the -Z forward convention, positive light-space Z points toward
                     // the light source. Extend max.Z to capture shadow casters upstream.
@@ -3667,7 +4188,13 @@ namespace XREngine.Components.Lights
                     uint biasResolution = UsesDirectionalShadowAtlasForCurrentEncoding
                         ? GetDesiredShadowAtlasResolution()
                         : fitResolution;
-                    SnapCascadeCenterToTexels(ref centerLS, halfExtents, fitResolution);
+                    if (!TryHoldCascadeFit(state, cascadeIndex, refitMargin, fitResolution, lightRotation, ref centerLS, ref halfExtents))
+                    {
+                        ExpandCascadeFitByMargin(ref halfExtents, refitMargin);
+                        QuantizeCascadeDepthRange(ref centerLS, ref halfExtents);
+                        SnapCascadeCenterToTexels(ref centerLS, halfExtents, fitResolution);
+                        StoreHeldCascadeFit(state, cascadeIndex, refitMargin, fitResolution, lightRotation, centerLS, halfExtents);
+                    }
                     Vector3 centerWS = Vector3.Transform(centerLS, lightToWorld);
 
                     UpdateCascadeShadowCamera(transformsSnapshot[resourceSlot], camerasSnapshot[resourceSlot], centerWS, halfExtents, lightRotation, lightDirection, NearZ);
@@ -3699,6 +4226,19 @@ namespace XREngine.Components.Lights
                     };
 
                     nextCascadeAabbs[resourceSlot] = new CascadedShadowAabb(0, cascadeIndex, centerWS, halfExtents, lightRotation);
+                    footprintMin[resourceSlot] = receiverMin;
+                    footprintMax[resourceSlot] = receiverMax;
+                    int cornerCount = 0;
+                    for (int f = 0; f < cascadeFrusta.Length && cornerCount + 8 <= ReceiverHullCapacity; f++)
+                        AppendSliceCornersXY(cascadeFrusta[f], nearT, farT, worldToLight, cornerScratch, ref cornerCount);
+                    hullCounts[resourceSlot] = BuildConvexHull(
+                        cornerScratch[..cornerCount],
+                        hullPoints.Slice(resourceSlot * ReceiverHullCapacity, ReceiverHullCapacity));
+                    int planeFrusta = Math.Min(cascadeFrusta.Length, ReceiverPlaneCapacity / 6);
+                    for (int f = 0; f < planeFrusta; f++)
+                        BuildSlicePlanes(cascadeFrusta[f], nearT, farT, worldToLight,
+                            slicePlanes.Slice(resourceSlot * ReceiverPlaneCapacity + f * 6, 6));
+                    sliceFrustumCounts[resourceSlot] = planeFrusta;
                     resourceSlot++;
                 }
 
@@ -3711,6 +4251,18 @@ namespace XREngine.Components.Lights
                     state.Aabbs.Clear();
                     for (int i = 0; i < resourceSlot; i++)
                         state.Aabbs.Add(nextCascadeAabbs[i]);
+                    for (int i = 0; i < resourceSlot && i < MaxCascadeRenderCount; i++)
+                    {
+                        state.ReceiverFootprintMinLS[i] = footprintMin[i];
+                        state.ReceiverFootprintMaxLS[i] = footprintMax[i];
+                        state.ReceiverHullCounts[i] = hullCounts[i];
+                        state.ReceiverSliceFrustumCounts[i] = sliceFrustumCounts[i];
+                        slicePlanes.Slice(i * ReceiverPlaneCapacity, sliceFrustumCounts[i] * 6)
+                            .CopyTo(state.ReceiverSlicePlanes.AsSpan(i * ReceiverPlaneCapacity, ReceiverPlaneCapacity));
+                        hullPoints.Slice(i * ReceiverHullCapacity, hullCounts[i])
+                            .CopyTo(state.ReceiverHullPoints.AsSpan(i * ReceiverHullCapacity, ReceiverHullCapacity));
+                    }
+                    state.ReceiverFootprintWorldToLight = worldToLight;
 
                     state.RangeNear = cameraNear;
                     state.RangeFar = effectiveCascadeFar;
@@ -4125,13 +4677,437 @@ namespace XREngine.Components.Lights
                 if ((uint)faceOrCascadeIndex >= (uint)cascadeCount)
                     return 0u;
 
-                int commandViewportIndex = ShouldPrepareAtlasGroupedCascadeCollection(cascadeCount)
-                    ? 0
-                    : faceOrCascadeIndex;
-                return (uint)commandViewportIndex < (uint)viewports.Length
-                    ? viewports[commandViewportIndex].RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature
-                    : 0u;
+                // The caster change epoch of this cascade. The command set of the collection
+                // viewport is the union of the cascades that collect in this frame, so it
+                // changes when only a cascade volume moves; the epoch changes only when a
+                // changed caster box meets this cascade (MarkDirectionalCascadeCasterChanges).
+                return state.CascadeCasterEpochs[faceOrCascadeIndex];
             }
+        }
+
+        /// <summary>
+        /// Advances the caster change epoch of every cascade of <paramref name="source"/> whose
+        /// sampled texels one of the <paramref name="changes"/> can affect. The changes are world
+        /// boxes of shadow casters that moved, got a new deformation pose, or started or stopped
+        /// casting. A cascade is marked when a change can shadow a receiver of its frustum slice
+        /// (<see cref="ReceiverFootprintMeets"/>), when a change in the border band of the
+        /// previous cascade's tile can shadow that cascade's receivers (shading blends into the
+        /// next cascade near a tile border), or when the slice now covers a pending region: a
+        /// change that met the tile but not the footprint since the cascade last rendered. The
+        /// fit sphere alone is not used: a camera-centred fit holds the camera area in every
+        /// cascade, so a caster near the camera would mark every cascade. With
+        /// <paramref name="allChanged"/> (a lost record) every cascade advances.
+        /// The static caster epoch of a cascade advances when a change of a static caster
+        /// (<paramref name="dynamicChanges"/> false) meets the cascade tile, when a pending
+        /// region marks the cascade, or with <paramref name="allChanged"/>. The static caster
+        /// tile of the cascade is then stale, even when no receiver sees the change yet.
+        /// </summary>
+        internal void MarkDirectionalCascadeCasterChanges(
+            ShadowRequestSource source,
+            ReadOnlySpan<AABB> changes,
+            ReadOnlySpan<bool> dynamicChanges,
+            bool allChanged)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                Matrix4x4 worldToLight = state.ReceiverFootprintWorldToLight;
+                ulong updateFrame = RuntimeRenderingHostServices.FrameTiming.UpdateFrameId;
+                int count = Math.Min(state.Slices.Count, MaxCascadeRenderCount);
+                for (int i = 0; i < count; i++)
+                {
+                    Vector3 footprintMin = state.ReceiverFootprintMinLS[i];
+                    Vector3 footprintMax = state.ReceiverFootprintMaxLS[i];
+                    ReadOnlySpan<Vector2> hull = state.ReceiverHullPoints.AsSpan(i * ReceiverHullCapacity, state.ReceiverHullCounts[i]);
+                    ReadOnlySpan<Vector4> planes = state.ReceiverSlicePlanes.AsSpan(i * ReceiverPlaneCapacity, state.ReceiverSliceFrustumCounts[i] * 6);
+                    bool mark = allChanged ||
+                        (state.PendingDirtyValid[i] &&
+                         ReceiverFootprintMeets(footprintMin, footprintMax, hull, planes, state.PendingDirtyMinLS[i], state.PendingDirtyMaxLS[i]));
+                    // Only the static part of the pending region makes the static tile stale.
+                    bool staticMark = allChanged ||
+                        (state.PendingStaticValid[i] &&
+                         ReceiverFootprintMeets(footprintMin, footprintMax, hull, planes, state.PendingStaticMinLS[i], state.PendingStaticMaxLS[i]));
+
+                    CascadeShadowSlice slice = state.Slices[i];
+                    Vector3 tileCenter = Vector3.Transform(slice.Center, worldToLight);
+                    Vector3 tileMin = tileCenter - slice.HalfExtents;
+                    Vector3 tileMax = tileCenter + slice.HalfExtents;
+                    bool hasPrevious = i > 0;
+                    Vector3 previousFootprintMin = hasPrevious ? state.ReceiverFootprintMinLS[i - 1] : default;
+                    Vector3 previousFootprintMax = hasPrevious ? state.ReceiverFootprintMaxLS[i - 1] : default;
+                    ReadOnlySpan<Vector2> previousHull = hasPrevious
+                        ? state.ReceiverHullPoints.AsSpan((i - 1) * ReceiverHullCapacity, state.ReceiverHullCounts[i - 1])
+                        : default;
+                    ReadOnlySpan<Vector4> previousPlanes = hasPrevious
+                        ? state.ReceiverSlicePlanes.AsSpan((i - 1) * ReceiverPlaneCapacity, state.ReceiverSliceFrustumCounts[i - 1] * 6)
+                        : default;
+                    Vector3 previousInnerMin = default;
+                    Vector3 previousInnerMax = default;
+                    if (hasPrevious)
+                    {
+                        CascadeShadowSlice previous = state.Slices[i - 1];
+                        Vector3 previousCenter = Vector3.Transform(previous.Center, worldToLight);
+                        Vector3 inner = previous.HalfExtents * (1.0f - CascadeBorderBandFraction);
+                        previousInnerMin = previousCenter - inner;
+                        previousInnerMax = previousCenter + inner;
+                    }
+
+                    for (int b = 0; b < changes.Length && !(mark && staticMark); b++)
+                    {
+                        bool staticChange = (uint)b >= (uint)dynamicChanges.Length || !dynamicChanges[b];
+                        // A dynamic change cannot change the static tile, so once the cascade is
+                        // marked it needs no more tests.
+                        if (mark && !staticChange)
+                            continue;
+
+                        LightSpaceBounds(changes[b], worldToLight, out Vector3 min, out Vector3 max);
+                        bool meetsTile =
+                            min.X <= tileMax.X && max.X >= tileMin.X &&
+                            min.Y <= tileMax.Y && max.Y >= tileMin.Y &&
+                            max.Z >= tileMin.Z;
+                        if (ReceiverFootprintMeets(footprintMin, footprintMax, hull, planes, min, max))
+                        {
+                            mark = true;
+                            staticMark |= staticChange;
+                            if (!staticChange)
+                                state.CascadeDynamicChangeFrames[i] = updateFrame;
+                        }
+                        else if (hasPrevious &&
+                            ReceiverFootprintMeets(previousFootprintMin, previousFootprintMax, previousHull, previousPlanes, min, max) &&
+                            !(min.X >= previousInnerMin.X && max.X <= previousInnerMax.X &&
+                              min.Y >= previousInnerMin.Y && max.Y <= previousInnerMax.Y))
+                        {
+                            mark = true;
+                            staticMark |= staticChange;
+                            if (!staticChange)
+                                state.CascadeDynamicChangeFrames[i] = updateFrame;
+                        }
+                        else if (meetsTile)
+                        {
+                            staticMark |= staticChange;
+                            if (staticChange)
+                            {
+                                if (state.PendingStaticValid[i])
+                                {
+                                    state.PendingStaticMinLS[i] = Vector3.Min(state.PendingStaticMinLS[i], min);
+                                    state.PendingStaticMaxLS[i] = Vector3.Max(state.PendingStaticMaxLS[i], max);
+                                }
+                                else
+                                {
+                                    state.PendingStaticMinLS[i] = min;
+                                    state.PendingStaticMaxLS[i] = max;
+                                    state.PendingStaticValid[i] = true;
+                                }
+                            }
+                            if (state.PendingDirtyValid[i])
+                            {
+                                state.PendingDirtyMinLS[i] = Vector3.Min(state.PendingDirtyMinLS[i], min);
+                                state.PendingDirtyMaxLS[i] = Vector3.Max(state.PendingDirtyMaxLS[i], max);
+                            }
+                            else
+                            {
+                                state.PendingDirtyMinLS[i] = min;
+                                state.PendingDirtyMaxLS[i] = max;
+                                state.PendingDirtyValid[i] = true;
+                            }
+                        }
+                    }
+
+                    if (mark)
+                        state.CascadeCasterEpochs[i]++;
+                    if (staticMark)
+                        state.CascadeStaticCasterEpochs[i]++;
+                }
+            }
+        }
+
+        /// <summary>
+        /// True when a demotion of a caster with world box <paramref name="worldBounds"/> costs no
+        /// static draw of its own in plan frame <paramref name="planFrame"/>: every cascade of
+        /// <paramref name="source"/> whose tile the box meets (light-space X/Y overlap, and the
+        /// box top above the tile bottom) has a render requested in this frame that changes its
+        /// fit or its static caster epoch, so it draws its static tile anyway.
+        /// </summary>
+        internal bool DirectionalStaticTilesRedrawFor(ShadowRequestSource source, in AABB worldBounds, ulong planFrame)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                Matrix4x4 worldToLight = state.ReceiverFootprintWorldToLight;
+                LightSpaceBounds(worldBounds, worldToLight, out Vector3 min, out Vector3 max);
+                int count = Math.Min(state.Slices.Count, MaxCascadeRenderCount);
+                for (int i = 0; i < count; i++)
+                {
+                    CascadeShadowSlice slice = state.Slices[i];
+                    Vector3 tileCenter = Vector3.Transform(slice.Center, worldToLight);
+                    Vector3 tileMin = tileCenter - slice.HalfExtents;
+                    Vector3 tileMax = tileCenter + slice.HalfExtents;
+                    bool meetsTile =
+                        min.X <= tileMax.X && max.X >= tileMin.X &&
+                        min.Y <= tileMax.Y && max.Y >= tileMin.Y &&
+                        max.Z >= tileMin.Z;
+                    if (meetsTile && state.StaticRedrawPlannedFrames[i] != planFrame)
+                        return false;
+                }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// True when a dynamic caster change marked one cascade of <paramref name="source"/>
+        /// within <paramref name="windowFrames"/> update frames before <paramref name="updateFrame"/>.
+        /// The shadow atlas manager keeps a static caster tile only for such a cascade.
+        /// </summary>
+        internal bool HasRecentDirectionalCascadeDynamicChange(ShadowRequestSource source, int cascadeIndex, ulong updateFrame, ulong windowFrames)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                if ((uint)cascadeIndex >= (uint)MaxCascadeRenderCount)
+                    return false;
+                ulong changed = GetCascadeSourceState(resolvedSource).CascadeDynamicChangeFrames[cascadeIndex];
+                return changed != 0UL && updateFrame >= changed && updateFrame - changed < windowFrames;
+            }
+        }
+
+        /// <summary>
+        /// Returns the static caster epoch of one cascade of <paramref name="source"/>
+        /// (see <see cref="MarkDirectionalCascadeCasterChanges"/>), or 0 when the cascade has
+        /// no slice.
+        /// </summary>
+        internal ulong GetDirectionalCascadeStaticCasterEpoch(ShadowRequestSource source, int cascadeIndex)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                return (uint)cascadeIndex < (uint)MaxCascadeRenderCount
+                    ? state.CascadeStaticCasterEpochs[cascadeIndex]
+                    : 0UL;
+            }
+        }
+
+        /// <summary>Filter margin of the receiver footprint test, as a fraction of the footprint size.</summary>
+        private const float ReceiverFootprintMarginFraction = 0.02f;
+
+        /// <summary>
+        /// Width of the border band of a cascade tile, as a fraction of its half extents. Shading
+        /// near the border of a tile blends into the next cascade, so a change in this band also
+        /// marks the next cascade.
+        /// </summary>
+        private const float CascadeBorderBandFraction = 0.1f;
+
+        /// <summary>Light-space bounds of a world box (its eight corners moved into light space).</summary>
+        private static void LightSpaceBounds(AABB box, Matrix4x4 worldToLight, out Vector3 min, out Vector3 max)
+        {
+            min = new(float.MaxValue);
+            max = new(float.MinValue);
+            for (int corner = 0; corner < 8; corner++)
+            {
+                Vector3 world = new(
+                    (corner & 1) == 0 ? box.Min.X : box.Max.X,
+                    (corner & 2) == 0 ? box.Min.Y : box.Max.Y,
+                    (corner & 4) == 0 ? box.Min.Z : box.Max.Z);
+                Vector3 local = Vector3.Transform(world, worldToLight);
+                min = Vector3.Min(min, local);
+                max = Vector3.Max(max, local);
+            }
+        }
+
+        /// <summary>Maximum number of slice corners (8 per source frustum) and hull points per cascade.</summary>
+        private const int ReceiverHullCapacity = 32;
+
+        /// <summary>Appends the light-space X/Y of the eight slice corners of one source frustum.</summary>
+        private static void AppendSliceCornersXY(Frustum frustum, float nearT, float farT, Matrix4x4 worldToLight, Span<Vector2> destination, ref int count)
+        {
+            AppendXY(EvaluateCascadeCorner(frustum.LeftBottomNear, frustum.LeftBottomFar, nearT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.RightBottomNear, frustum.RightBottomFar, nearT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.LeftTopNear, frustum.LeftTopFar, nearT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.RightTopNear, frustum.RightTopFar, nearT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.LeftBottomNear, frustum.LeftBottomFar, farT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.RightBottomNear, frustum.RightBottomFar, farT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.LeftTopNear, frustum.LeftTopFar, farT, worldToLight), destination, ref count);
+            AppendXY(EvaluateCascadeCorner(frustum.RightTopNear, frustum.RightTopFar, farT, worldToLight), destination, ref count);
+        }
+
+        private static void AppendXY(Vector3 point, Span<Vector2> destination, ref int count)
+            => destination[count++] = new Vector2(point.X, point.Y);
+
+        /// <summary>
+        /// Builds the counter-clockwise convex hull of <paramref name="points"/> (monotone chain)
+        /// in <paramref name="hull"/> and returns its point count. Sorts the points in place; it
+        /// allocates nothing.
+        /// </summary>
+        private static int BuildConvexHull(Span<Vector2> points, Span<Vector2> hull)
+        {
+            int n = points.Length;
+            if (n < 3)
+            {
+                points.CopyTo(hull);
+                return n;
+            }
+
+            for (int i = 1; i < n; i++)
+            {
+                Vector2 key = points[i];
+                int j = i - 1;
+                while (j >= 0 && (points[j].X > key.X || (points[j].X == key.X && points[j].Y > key.Y)))
+                {
+                    points[j + 1] = points[j];
+                    j--;
+                }
+                points[j + 1] = key;
+            }
+
+            int k = 0;
+            for (int i = 0; i < n; i++)
+            {
+                while (k >= 2 && Cross(hull[k - 2], hull[k - 1], points[i]) <= 0.0f)
+                    k--;
+                if (k < hull.Length)
+                    hull[k++] = points[i];
+            }
+            int lower = k + 1;
+            for (int i = n - 2; i >= 0; i--)
+            {
+                while (k >= lower && Cross(hull[k - 2], hull[k - 1], points[i]) <= 0.0f)
+                    k--;
+                if (k < hull.Length)
+                    hull[k++] = points[i];
+            }
+            return Math.Max(k - 1, 0);
+        }
+
+        private static float Cross(Vector2 o, Vector2 a, Vector2 b)
+            => (a.X - o.X) * (b.Y - o.Y) - (a.Y - o.Y) * (b.X - o.X);
+
+        /// <summary>
+        /// True when a light-space caster box (<paramref name="min"/>, <paramref name="max"/>)
+        /// can shadow a receiver of a cascade slice. The box, grown by the filter margin, must
+        /// overlap the slice's light-space X/Y convex hull (<paramref name="hull"/>: the corners
+        /// of every source frustum, both eyes for a stereo source, with the split overlap), and
+        /// its highest point toward the light must be above the slice's lowest point. Positive
+        /// light-space Z points toward the light. The X/Y overlap uses separating axes: the
+        /// box axes (the footprint bounds) and every hull edge normal.
+        /// </summary>
+        private static bool ReceiverFootprintMeets(Vector3 footprintMin, Vector3 footprintMax, ReadOnlySpan<Vector2> hull, ReadOnlySpan<Vector4> slicePlanes, Vector3 min, Vector3 max)
+        {
+            if (footprintMax.X < footprintMin.X)
+                return false;
+
+            Vector3 margin = (footprintMax - footprintMin) * ReceiverFootprintMarginFraction;
+            min -= margin;
+            max += margin;
+            if (min.X > footprintMax.X || max.X < footprintMin.X ||
+                min.Y > footprintMax.Y || max.Y < footprintMin.Y ||
+                max.Z < footprintMin.Z)
+            {
+                return false;
+            }
+
+            if (hull.Length < 3)
+                return true;
+
+            for (int e = 0; e < hull.Length; e++)
+            {
+                Vector2 a = hull[e];
+                Vector2 b = hull[(e + 1) % hull.Length];
+                // Outward normal of a counter-clockwise edge.
+                Vector2 normal = new(b.Y - a.Y, a.X - b.X);
+                // The box corner that reaches farthest against the normal.
+                Vector2 inner = new(normal.X >= 0.0f ? min.X : max.X, normal.Y >= 0.0f ? min.Y : max.Y);
+                if (Vector2.Dot(normal, inner - a) > 0.0f)
+                    return false;
+            }
+
+            return slicePlanes.Length < 6 || ShadowVolumeMeetsSlice(slicePlanes, min, max);
+        }
+
+        /// <summary>Planes stored per cascade: six per source frustum, for up to four frusta.</summary>
+        private const int ReceiverPlaneCapacity = 24;
+
+        /// <summary>
+        /// Builds the six outward light-space planes (near, far, left, right, bottom, top) of
+        /// the slice of one source frustum. Each plane is (normal, distance) with
+        /// dot(normal, p) - distance > 0 outside. The normals point away from the slice centre.
+        /// </summary>
+        private static void BuildSlicePlanes(Frustum frustum, float nearT, float farT, Matrix4x4 worldToLight, Span<Vector4> planes)
+        {
+            Span<Vector3> c = stackalloc Vector3[8];
+            c[0] = EvaluateCascadeCorner(frustum.LeftBottomNear, frustum.LeftBottomFar, nearT, worldToLight);
+            c[1] = EvaluateCascadeCorner(frustum.RightBottomNear, frustum.RightBottomFar, nearT, worldToLight);
+            c[2] = EvaluateCascadeCorner(frustum.LeftTopNear, frustum.LeftTopFar, nearT, worldToLight);
+            c[3] = EvaluateCascadeCorner(frustum.RightTopNear, frustum.RightTopFar, nearT, worldToLight);
+            c[4] = EvaluateCascadeCorner(frustum.LeftBottomNear, frustum.LeftBottomFar, farT, worldToLight);
+            c[5] = EvaluateCascadeCorner(frustum.RightBottomNear, frustum.RightBottomFar, farT, worldToLight);
+            c[6] = EvaluateCascadeCorner(frustum.LeftTopNear, frustum.LeftTopFar, farT, worldToLight);
+            c[7] = EvaluateCascadeCorner(frustum.RightTopNear, frustum.RightTopFar, farT, worldToLight);
+            Vector3 centre = Vector3.Zero;
+            for (int i = 0; i < 8; i++)
+                centre += c[i];
+            centre /= 8.0f;
+
+            planes[0] = OutwardPlane(c[0], c[1], c[3], centre); // near
+            planes[1] = OutwardPlane(c[4], c[5], c[7], centre); // far
+            planes[2] = OutwardPlane(c[0], c[2], c[6], centre); // left
+            planes[3] = OutwardPlane(c[1], c[3], c[7], centre); // right
+            planes[4] = OutwardPlane(c[0], c[1], c[5], centre); // bottom
+            planes[5] = OutwardPlane(c[2], c[3], c[7], centre); // top
+        }
+
+        private static Vector4 OutwardPlane(Vector3 a, Vector3 b, Vector3 c, Vector3 inside)
+        {
+            Vector3 normal = Vector3.Cross(b - a, c - a);
+            float length = normal.Length();
+            if (length < 1e-12f)
+                return new Vector4(0.0f, 0.0f, 0.0f, -1.0f); // Degenerate: never separates.
+            normal /= length;
+            float distance = Vector3.Dot(normal, a);
+            if (Vector3.Dot(normal, inside) - distance > 0.0f)
+            {
+                normal = -normal;
+                distance = -distance;
+            }
+            return new Vector4(normal, distance);
+        }
+
+        /// <summary>
+        /// True when the shadow volume of a light-space caster box (the box extruded away from
+        /// the light to unlimited depth: X/Y from <paramref name="min"/> to <paramref name="max"/>,
+        /// Z up to max.Z) meets the slice of at least one source frustum. A slice is missed
+        /// when one of its planes has the whole volume outside. The volume reaches unlimited
+        /// depth, so a plane whose normal points away from the light never separates it.
+        /// </summary>
+        private static bool ShadowVolumeMeetsSlice(ReadOnlySpan<Vector4> slicePlanes, Vector3 min, Vector3 max)
+        {
+            for (int f = 0; f + 6 <= slicePlanes.Length; f += 6)
+            {
+                bool separated = false;
+                for (int k = 0; k < 6 && !separated; k++)
+                {
+                    Vector4 plane = slicePlanes[f + k];
+                    if (plane.Z > 0.0f)
+                        continue; // The volume reaches -infinity in Z on this plane's inner side.
+                    float x = plane.X >= 0.0f ? min.X : max.X;
+                    float y = plane.Y >= 0.0f ? min.Y : max.Y;
+                    float z = max.Z;
+                    if (plane.X * x + plane.Y * y + plane.Z * z - plane.W > 0.0f)
+                        separated = true;
+                }
+                if (!separated)
+                    return true;
+            }
+            return false;
         }
 
         private void CollectCascadeSourceVisibleItems(ShadowRequestSource source)
@@ -4363,13 +5339,9 @@ namespace XREngine.Components.Lights
             if (!UsesDirectionalShadowAtlasForCurrentEncoding)
                 return false;
 
+            // Grouped atlas rendering is gated separately, by the same runtime test.
             if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-            {
-                // Keep the known Monado OpenXR Vulkan path protected, but let
-                // SteamVR and ordinary Vulkan sessions exercise the atlas toggle.
-                // Grouped atlas rendering is still gated separately.
-                return !IsKnownMonadoOpenXrRuntime();
-            }
+                return AllowsVulkanDirectionalShadowWorkForCurrentRuntime();
 
             return cascadeCount > 0;
         }
@@ -4395,7 +5367,7 @@ namespace XREngine.Components.Lights
                 !EnableCascadedShadows ||
                 !CanRenderDirectionalCascadesForCurrentBackend() ||
                 World is null ||
-                group.CascadeCount <= 1 ||
+                group.CascadeCount < 1 ||
                 group.Members is null ||
                 group.Members.Length < group.CascadeCount)
             {
@@ -4507,6 +5479,7 @@ namespace XREngine.Components.Lights
             int publishedMatrixCount = CopyPublishedCascadeMatrices(source, publishedMatrices);
             Span<Matrix4x4> orderedMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
             Span<BoundingRectangle> orderedRects = stackalloc BoundingRectangle[MaxCascadeRenderCount];
+            Span<int> orderedCascades = stackalloc int[MaxCascadeRenderCount];
             int groupedCount = Math.Min(group.CascadeCount, MaxCascadeRenderCount);
             for (int i = 0; i < groupedCount; i++)
             {
@@ -4521,18 +5494,19 @@ namespace XREngine.Components.Lights
 
                 orderedMatrices[member.ViewportScissorIndex] = publishedMatrices[member.CascadeIndex];
                 orderedRects[member.ViewportScissorIndex] = member.InnerPixelRect;
+                orderedCascades[member.ViewportScissorIndex] = member.CascadeIndex;
             }
 
             // The generic layered pass clears every tile to 1.0 and tests Lequal:
             // shadow cameras keep normal depth regardless of the scene camera.
             if (sourceState.Viewports[0].Camera is not { } collectionCamera)
                 return DeclineCascadeAtlasRender(out declineReason, "The grouped cascade collection camera is unavailable.");
-            request.Reset(atlasFbo, group.LightId, renderFrameId,
+            request.Reset(atlasFbo, group.LightId, source, renderFrameId,
                 reversedDepth: false, depthClearValue: 1.0f,
                 collectionCamera.CullingLayerMask);
             for (int i = 0; i < groupedCount; i++)
             {
-                if (!request.TryAddCascade(in orderedRects[i], in orderedMatrices[i]))
+                if (!request.TryAddCascade(in orderedRects[i], in orderedMatrices[i], orderedCascades[i]))
                     return DeclineCascadeAtlasRender(out declineReason, "The lane request rejected a cascade tile.");
             }
 
@@ -4629,6 +5603,9 @@ namespace XREngine.Components.Lights
                 return DeclineCascadeAtlasRender(out declineReason, "Cascaded shadows are disabled for this light or backend.");
             if (renderRect.Width <= 0 || renderRect.Height <= 0)
                 return DeclineCascadeAtlasRender(out declineReason, "The cascade atlas tile rectangle is empty.");
+            // Without a caster producer, a render would clear the tile and draw nothing.
+            if (ShadowAtlasManager.TryDeclineGenericDirectionalCascadeRender(out declineReason))
+                return false;
 
             DirectionalCascadeSourceState sourceState = GetCascadeSourceState(source);
             XRViewport[] cascadeShadowViewports = sourceState.Viewports;
@@ -4691,12 +5668,15 @@ namespace XREngine.Components.Lights
                 !CanRenderDirectionalCascadesForCurrentBackend() ||
                 World is null)
                 return DeclineCascadeAtlasRender(out declineReason, "Cascaded shadows are disabled for this light or backend.");
-            if (group.CascadeCount <= 1 ||
+            if (group.CascadeCount < 1 ||
                 group.Members is null ||
                 group.Members.Length < group.CascadeCount)
                 return DeclineCascadeAtlasRender(out declineReason, "The grouped cascade allocation is incomplete.");
             if (atlasFbo.Width <= 0 || atlasFbo.Height <= 0)
                 return DeclineCascadeAtlasRender(out declineReason, "The atlas page framebuffer has no extent.");
+            // Without a caster producer, a render would clear the tiles and draw nothing.
+            if (ShadowAtlasManager.TryDeclineGenericDirectionalCascadeRender(out declineReason))
+                return false;
 
             ShadowRequestSource source = group.Source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop

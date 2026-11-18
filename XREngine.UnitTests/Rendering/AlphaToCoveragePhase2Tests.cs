@@ -76,13 +76,13 @@ public sealed class AlphaToCoveragePhase2Tests
 
         string pipelineSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
         pipelineSource.ShouldContain("public bool EnableDeferredMsaa { get; set; } = true;");
-        pipelineSource.ShouldContain("&& !UseOpenXrVulkanDesktopStartupSafePath\n        && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
+        pipelineSource.ShouldContain("&& VrEyeFrameRules.AllowsDeferredMsaa()\n        && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
         pipelineSource.ShouldContain("public const string ForwardPassMsaaDepthViewTextureName = \"ForwardPassMsaaDepthView\";");
         pipelineSource.ShouldContain("depthViewTextureName: ForwardPassMsaaDepthViewTextureName");
 
         string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs");
         advancedPipelineSource.ShouldContain("public bool EnableDeferredMsaa { get; set; } = true;");
-        advancedPipelineSource.ShouldContain("&& !UseOpenXrVulkanDesktopStartupSafePath\n        && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as AdvancedRenderPipeline)?.EnableDeferredMsaa == true;");
+        advancedPipelineSource.ShouldContain("&& VrEyeFrameRules.AllowsDeferredMsaa()\n        && RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.ResolveAdvancedStageFamily()?.EnableDeferredMsaa == true;");
         advancedPipelineSource.ShouldContain("public const string ForwardPassMsaaDepthViewTextureName = \"ForwardPassMsaaDepthView\";");
 
         string resolveSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ResolveMsaaGBuffer.cs");

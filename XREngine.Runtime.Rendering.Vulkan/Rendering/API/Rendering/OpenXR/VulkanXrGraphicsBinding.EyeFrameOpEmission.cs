@@ -49,6 +49,7 @@ internal sealed partial class VulkanXrGraphicsBinding : IOpenXrEyeFrameOpEmitter
         XRCamera camera = GetOpenXrEyeCamera(emission.ViewIndex)
             ?? throw new InvalidOperationException("OpenXR direct eye preparation requires a camera.");
         ApplyOpenXrEyePoseForRenderThread(emission.ViewIndex);
+        LogOpenXrEyeViewDiagnostics("per-eye", emission.ViewIndex, viewport, camera);
         return viewport.TryRenderOpenXrFramePackage(
             _openXrFrameWorld,
             camera,

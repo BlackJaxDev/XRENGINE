@@ -71,6 +71,14 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     internal VulkanAdvancedDdgiSurfaceClosure DdgiSurface { get; init; }
 
     /// <summary>
+    /// True when the frame does not declare the shading diagnostics image. The diagnostics
+    /// group, resource and descriptor then refer to the dedicated 1x1 placeholder image
+    /// (<c>AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder</c>), and the shading push
+    /// constants carry the diagnostics-disabled flag, so no shader stores to it.
+    /// </summary>
+    internal bool ShadingDiagnosticsPlaceholder { get; init; }
+
+    /// <summary>
     /// RVC shadelet telemetry counters. Absent (default) when the family does not
     /// declare them; only an RVC-hosted family does.
     /// </summary>

@@ -174,9 +174,16 @@ internal unsafe partial class VkMeshRenderer(
     private readonly Dictionary<DescriptorOwnerLookupKey, DescriptorAllocation> _descriptorAllocationsByOwner = new();
     private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, ulong LinkGeneration, ulong MaterialLayoutVersion, XRRenderPipelineInstance? Pipeline), int[]>
         _artifactFrameSourceBindingIndices = [];
-    private readonly Dictionary<(DescriptorAllocation Allocation, int Slot, ComputeDispatchSnapshot Snapshot), ulong> _frameSourceDescriptorRefreshes = new();
+    // Value: render frame of the last refresh and the proof stamp captured after it.
+    private readonly Dictionary<(DescriptorAllocation Allocation, int Slot, ComputeDispatchSnapshot Snapshot), (ulong RenderFrameId, DescriptorProofStamp Stamp)> _frameSourceDescriptorRefreshes = new();
     private const int MaxFrameDescriptorAllocations = 256;
-    private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, int DrawSlot, int FrameIndex), (DescriptorAllocation Allocation, ulong RenderFrameId)> _frameDescriptorAllocations = new();    private readonly Queue<(DescriptorAllocationKey Key, DescriptorAllocation Allocation)>
+    // Value: allocation chosen for the key, the render frame of that choice, and the proof stamp
+    // (valid only when the proof passed without any descriptor write).
+    private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, int DrawSlot, int FrameIndex), (DescriptorAllocation Allocation, ulong RenderFrameId, DescriptorProofStamp Stamp, bool StampValid)> _frameDescriptorAllocations = new();
+    // Counts descriptor set allocations and writes made by this renderer's descriptor preparation.
+    // A proof that leaves it unchanged changed no descriptor.
+    private ulong _descriptorPreparationWrites;
+    private readonly Queue<(DescriptorAllocationKey Key, DescriptorAllocation Allocation)>
         _pendingSupersededDescriptorAllocationRetirements = new();
     private bool _descriptorDirty = true;
     private ulong _descriptorSchemaFingerprint;

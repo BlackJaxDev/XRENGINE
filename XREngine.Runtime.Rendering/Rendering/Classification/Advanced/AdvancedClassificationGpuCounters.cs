@@ -9,8 +9,20 @@ namespace XREngine.Rendering;
 public struct AdvancedClassificationGpuCounters
 {
     public uint ActiveTileCount;
+    /// <summary>
+    /// Kernel tile memberships of the frame: the sum of the per-kernel counts, which the
+    /// indirect-argument pass writes after each view (the counts accumulate over the views).
+    /// </summary>
     public uint KernelTileCount;
+    /// <summary>
+    /// Classified pixels of the frame. Counted only while the diagnostic counter readback is
+    /// active (instrumented submission strategies); otherwise 0.
+    /// </summary>
     public uint ClassifiedPixelCount;
+    /// <summary>
+    /// Background pixels of the frame. Counted only while the diagnostic counter readback is
+    /// active (instrumented submission strategies); otherwise 0.
+    /// </summary>
     public uint BackgroundPixelCount;
     public uint OverflowFlags;
     public uint DroppedPixelCount;

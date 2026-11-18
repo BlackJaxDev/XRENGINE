@@ -18,6 +18,7 @@ public sealed partial class XRRenderPipelineInstance
     private ulong _appliedPipelineRevision;
     private int _pipelineTransitionQueued;
     private int _terminalTeardownRequested;
+    private int _pipelineReleasedByOwner;
     private RenderPipeline? _pipelineTransitionPrevious;
     private RenderPipeline? _pipelineTransitionPublishedPartial;
     private RenderPipeline? _applyingPipeline;
@@ -187,6 +188,42 @@ public sealed partial class XRRenderPipelineInstance
         => RequestPipelineChange(pipeline, viewport, onlyWhenUnassigned: false);
 
     /// <summary>
+    /// Gets whether the owner of this instance released its pipeline on purpose and holds it
+    /// without one. For example, OpenXR true single-pass stereo renders both eyes through its
+    /// stereo viewport and releases the per-eye viewports. A held instance is not
+    /// "unassigned": <see cref="Pipeline"/> returns null and does not create a default pipeline.
+    /// The hold ends when the owner calls <see cref="EndPipelineReleaseByOwner"/> or when a
+    /// pipeline is requested explicitly.
+    /// </summary>
+    public bool IsPipelineReleasedByOwner => Volatile.Read(ref _pipelineReleasedByOwner) != 0;
+
+    /// <summary>
+    /// Gets the applied pipeline, or the pending request while one waits for the render thread.
+    /// Unlike <see cref="Pipeline"/>, this never creates or requests a default pipeline, so
+    /// queries (diagnostics, consumer selection) can read the state without changing it.
+    /// </summary>
+    public RenderPipeline? PipelineIfAssigned => _pipeline ?? EffectiveRequestedPipeline;
+
+    /// <summary>
+    /// Releases the pipeline of this instance on purpose and holds the instance without one
+    /// (see <see cref="IsPipelineReleasedByOwner"/>). The release is a normal pipeline request
+    /// for null, so the render thread applies it like any other transition.
+    /// </summary>
+    internal void ReleasePipelineByOwner(XRViewport? viewport)
+    {
+        Volatile.Write(ref _pipelineReleasedByOwner, 1);
+        if (PipelineIfAssigned is not null)
+            RequestPipelineChange(null, viewport, onlyWhenUnassigned: false);
+    }
+
+    /// <summary>
+    /// Ends the hold of <see cref="ReleasePipelineByOwner"/>. The instance is unassigned again,
+    /// so the next <see cref="Pipeline"/> read may create the default pipeline.
+    /// </summary>
+    internal void EndPipelineReleaseByOwner()
+        => Volatile.Write(ref _pipelineReleasedByOwner, 0);
+
+    /// <summary>
     /// Gets the newest requested pipeline: the pending request while one waits for the render
     /// thread, otherwise the applied pipeline.
     /// </summary>
@@ -225,6 +262,11 @@ public sealed partial class XRRenderPipelineInstance
     {
         if (System.Threading.Volatile.Read(ref _terminalTeardownRequested) != 0)
             return false;
+        // An owner-held instance takes no default; an explicit pipeline ends the hold.
+        if (onlyWhenUnassigned && IsPipelineReleasedByOwner)
+            return false;
+        if (pipeline is not null && !onlyWhenUnassigned)
+            Volatile.Write(ref _pipelineReleasedByOwner, 0);
 
         bool processInline;
         lock (_pipelineTransitionSync)

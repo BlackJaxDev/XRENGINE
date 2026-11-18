@@ -6,10 +6,31 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanResourceRuntime
 {
+    private long _supersededResourceGenerationsDrained;
+    private long _supersededDescriptorOwnersReleased;
+    private long _supersededDescriptorOwnerDrainDeferrals;
+
+    /// <summary>Retired resource generations that <see cref="DrainPendingSupersededDescriptorOwners"/> took from the queue, since launch.</summary>
+    internal long SupersededResourceGenerationsDrained => Interlocked.Read(ref _supersededResourceGenerationsDrained);
+
+    /// <summary>Descriptor cache owners (material program states, mesh allocations, compute pools) that the drain released, since launch.</summary>
+    internal long SupersededDescriptorOwnersReleased => Interlocked.Read(ref _supersededDescriptorOwnersReleased);
+
+    /// <summary>OpenXR boundaries that did not run the drain because a desktop frame was still recording, since launch.</summary>
+    internal long SupersededDescriptorOwnerDrainDeferrals => Interlocked.Read(ref _supersededDescriptorOwnerDrainDeferrals);
+
+    /// <summary>Retired resource generations that wait for the next drain.</summary>
+    internal int PendingSupersededResourceGenerationCount => Lifetime.PendingSupersededResourceDescriptorOwnerCount;
+
+    /// <summary>Counts one OpenXR boundary that left the drain for later because a desktop frame was recording.</summary>
+    internal void RecordSupersededDescriptorOwnerDrainDeferral()
+        => Interlocked.Increment(ref _supersededDescriptorOwnerDrainDeferrals);
+
     /// <summary>
     /// Retires descriptor cache owners which still publish an exact retiring
-    /// native resource generation. Call only at a normal frame preparation boundary,
-    /// before command recording starts for that frame.
+    /// native resource generation. Call only at a frame preparation boundary where
+    /// no command recording reads the material or mesh descriptor caches: the desktop
+    /// frame-slot boundary, or the OpenXR view boundary while no desktop frame is active.
     /// </summary>
     internal int DrainPendingSupersededDescriptorOwners()
     {
@@ -26,6 +47,7 @@ internal sealed partial class VulkanResourceRuntime
         {
             try
             {
+                Interlocked.Increment(ref _supersededResourceGenerationsDrained);
                 VulkanDescriptorSetGenerationReference[] affected =
                     SnapshotDescriptorOwnersForSupersededResource(pending);
                 if (affected.Length == 0)
@@ -62,6 +84,7 @@ internal sealed partial class VulkanResourceRuntime
             }
         }
 
+        Interlocked.Add(ref _supersededDescriptorOwnersReleased, releasedOwnerCount);
         return releasedOwnerCount;
     }
 

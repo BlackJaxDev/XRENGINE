@@ -259,7 +259,7 @@ Lane 1 is scene-only VR. It builds the VR-shaped pawn, transforms, and stereo pr
 }
 ```
 
-Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runtime selected per process with `XR_RUNTIME_JSON`. You can leave `OpenXrRuntimeJson` as `null` to auto-detect common Monado install/build locations, or set it explicitly:
+Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runtime selected per process with `XR_RUNTIME_JSON`. `XR_RUNTIME_JSON` only selects the runtime; `VR.Mode` requests OpenXR, so a `Desktop` session with `XR_RUNTIME_JSON` set starts without OpenXR. You can leave `OpenXrRuntimeJson` as `null` to auto-detect common Monado install/build locations, or set it explicitly:
 
 ```jsonc
 {
@@ -272,7 +272,7 @@ Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runt
 }
 ```
 
-`VR.Mode=Emulated` is scene-only. It does not emulate OpenXR API calls, runtime state, swapchains, poses, or frame submission. `VR.Mode=MonadoOpenXR` uses the real OpenXR loader/API with Monado as the selected runtime. Existing `XR_RUNTIME_JSON` environment values win over `VR.OpenXrRuntimeJson`; when both are empty, startup searches `MONADO_RUNTIME_JSON`, `MONADO_INSTALL_DIR`, common Monado install paths, and repo-local Monado build/dependency paths. In Monado mode, startup also prepends the detected `openxr_loader.dll`, Monado runtime, and Monado service directories to the current process `PATH`, then starts `monado-service.exe` when it is not already running.
+`VR.Mode=Emulated` is scene-only. It does not emulate OpenXR API calls, runtime state, swapchains, poses, or frame submission. Emulated eyes have no HMD cascade source by default: Default-pipeline eyes read the primary directional shadow map, and Advanced eyes (SequentialViews) read the desktop cascades. Set `XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1` (engine setting `EmulatedVrEyesUseHmdDirectionalCascades`) to fit the HMD cascade source to the emulated eyes; Default-pipeline eyes then read it, and Advanced eyes still read the desktop cascades. `VR.Mode=MonadoOpenXR` uses the real OpenXR loader/API with Monado as the selected runtime. Existing `XR_RUNTIME_JSON` environment values win over `VR.OpenXrRuntimeJson`; when both are empty, startup searches `MONADO_RUNTIME_JSON`, `MONADO_INSTALL_DIR`, common Monado install paths, and repo-local Monado build/dependency paths. In Monado mode, startup also prepends the detected `openxr_loader.dll`, Monado runtime, and Monado service directories to the current process `PATH`, then starts `monado-service.exe` when it is not already running.
 
 On Windows, `VR.Mode=MonadoOpenXR` honors the requested `Rendering.RenderBackend`. The Vulkan path queries the selected OpenXR runtime before renderer creation and enables the Vulkan instance/device extensions required by the runtime, then renders each eye into the acquired OpenXR Vulkan swapchain image.
 

@@ -175,7 +175,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     Target = decalTarget,
                     IdentityTargetName = AdvancedVisibilityResourceNames.Identity,
                     MetadataTargetName = AdvancedVisibilityResourceNames.Metadata,
-                    SelectionTargetName = AdvancedVisibilityResourceNames.Selection,
+                    SelectionTargetName = SingleSampleSelectionTargetName(ActivePipelineInstance),
                     DepthTargetName = AdvancedVisibilityResourceNames.DepthStencil,
                 }, DecalBufferPassName);
             }
@@ -384,6 +384,16 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return false;
         }
 
+        // The camera post-process stage owns the per-camera debug toggles. The
+        // meshlet display maps to the meshlet shading debug view when the pipeline
+        // selects no other view.
+        XRCamera? debugCamera = ActivePipelineInstance.RenderState.SceneCamera
+            ?? ActivePipelineInstance.RenderState.RenderingCamera;
+        EAdvancedShadingDebugView shadingDebugView =
+            pipeline.ShadingDebugView == EAdvancedShadingDebugView.Disabled &&
+            GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(debugCamera, pipeline)
+                ? EAdvancedShadingDebugView.MeshletId
+                : pipeline.ShadingDebugView;
         string rawMetadata = packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.MetadataMultisample;
         string rawSelection = packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.SelectionMultisample;
         request = new(
@@ -398,11 +408,11 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             target,
             multisampleRaster ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity,
             multisampleRaster ? rawMetadata : AdvancedVisibilityResourceNames.Metadata,
-            multisampleRaster ? rawSelection : AdvancedVisibilityResourceNames.Selection,
+            multisampleRaster ? rawSelection : SingleSampleSelectionTargetName(ActivePipelineInstance),
             multisampleRaster ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil,
             useNeutralWebAmbientOcclusion ? AdvancedRenderPipeline.WebPostProcessNeutralTextureName : AdvancedAmbientOcclusionContract.ResourceName,
             AdvancedVisibilityResourceNames.CurrentDepthPyramid,
-            pipeline.ShadingDebugView,
+            shadingDebugView,
             RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required ||
             binding.Request.OffscreenIntent.HasValue,
             enableBuiltInAmbientOcclusion,
@@ -431,16 +441,101 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             RecordRvcShadeletTelemetry = requiresNativeOpaqueShading &&
                 pipeline.DeclaresRvcShadeletTelemetry &&
                 ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcShadeletTelemetryEnabled: true },
+            ShowOcclusionCulledBounds = requiresNativeOpaqueShading &&
+                GpuBvhDebugSettings.IsOcclusionCulledBoundsEnabled(
+                    ActivePipelineInstance.RenderState.SceneCamera ?? ActivePipelineInstance.RenderState.RenderingCamera,
+                    pipeline),
             RvcFoveatedQuadShading = requiresNativeOpaqueShading && samples <= 1u &&
                 ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcFoveatedQuadShadingEnabled: true },
+            // Only OpenXR eye instances qualify, so the desktop output always shades at full rate.
+            AdvancedEdgeHalfRateShading = requiresNativeOpaqueShading && samples <= 1u &&
+                RuntimeEngine.Rendering.Settings.VrAdvancedEdgeHalfRateShading &&
+                ActivePipelineInstance.Pipeline is AdvancedRenderPipeline { IsOpenXrEyeProfile: true },
+            AdvancedEdgeHalfRateRadius = RuntimeEngine.Rendering.Settings.VrAdvancedEdgeHalfRateRadius,
+            AdvancedEdgeHalfRateDebugTint = RuntimeEngine.Rendering.Settings.VrAdvancedEdgeHalfRateDebugTint,
+            // Classification skips the hidden tiles and the shading stage fills them, so both
+            // stages carry the same ellipses. Only views that render an OpenXR eye get one; the
+            // desktop output keeps every tile.
+            HiddenAreaEllipses = Stage is EAdvancedRenderStage.WorkClassification or EAdvancedRenderStage.NativeOpaqueShading &&
+                samples <= 1u
+                    ? AdvancedHiddenAreaTiles.ResolveViewEllipses(RuntimeEngine.VRState.OpenXRApi,
+                        ActivePipelineInstance.RenderState.SceneCamera ?? ActivePipelineInstance.RenderState.RenderingCamera,
+                        ActivePipelineInstance.RenderState.StereoRightEyeCamera)
+                    : default,
             DecalBufferEnabled = stageBackend.SupportsAdvancedSurfaceDecalBuffer &&
                 ActivePipelineInstance.Resources.TryGetFrameBuffer(
                     AdvancedDecalBufferResourceNames.FrameBuffer, out XRFrameBuffer? decalBuffer) &&
                 decalBuffer is not null,
+            SkipNeutralAmbientOcclusionFill = Stage == EAdvancedRenderStage.AmbientOcclusion &&
+                !enableBuiltInAmbientOcclusion &&
+                pipeline.AmbientOcclusionPassesReplaceNeutralFill(ActivePipelineInstance),
         };
         if (request.RecordRvcShadeletTelemetry)
             RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryRequest();
         return true;
+    }
+
+    private const string CpuDirectIndexedCasterProducer = "CpuDirectIndexed";
+    private const string GpuIndexedCasterProducer = "GpuIndexed";
+    private const string CpuMaskedIndexedCasterProducer = "CpuMaskedIndexed";
+    private const string CpuDirectCasterReason =
+        "CPU-direct frame: casters draw the frozen indexed arguments with CPU cascade masks.";
+    private const string GpuIndexedCasterReason =
+        "Strict indexed frame: casters are selected per cascade on the GPU.";
+    private const string MeshletCasterReason =
+        "Meshlet frame: the meshlet raster has no shadow producer, so casters draw the frozen indexed arguments of the same canonical geometry with CPU cascade masks.";
+    private const string InstrumentedMeshletCasterReason =
+        "Instrumented meshlet frames are not validated for the directional shadow lane; cascade groups stay on the generic path.";
+    private const string UnsupportedCasterReason =
+        "The frozen directional shadow submission strategy has no supported caster producer.";
+    private const string DirectionalShadowLaneLogFileName = "advanced-directional-shadow-lane.log";
+    private const string MeshletCasterLogMessage =
+        "Advanced directional shadow lane: a meshlet frame draws its casters through CPU-masked indexed draws (CpuMaskedIndexed). A GPU caster cull for meshlet frames does not exist yet.";
+
+    /// <summary>
+    /// Caster producer of the last directional shadow stage execution. A change
+    /// to <see cref="CpuMaskedIndexedCasterProducer"/> writes one log entry.
+    /// </summary>
+    private string? _lastDirectionalShadowCasterProducer;
+
+    /// <summary>
+    /// Selects the caster producer of the directional shadow lane for one frozen
+    /// submission strategy. CPU-direct frames use the frozen indexed arguments.
+    /// Strict indexed frames select casters on the GPU. Meshlet frames have no
+    /// meshlet shadow producer: every sealed record still holds frozen indexed
+    /// arguments of its canonical geometry, so the lane draws those with CPU
+    /// cascade masks. All outputs are constant strings, so the per-frame call
+    /// does not allocate.
+    /// </summary>
+    /// <returns>False when the strategy has no supported caster producer.</returns>
+    private static bool TryResolveDirectionalShadowCasterProducer(
+        EMeshSubmissionStrategy? strategy,
+        out string? producer,
+        out string reason)
+    {
+        switch (strategy)
+        {
+            case EMeshSubmissionStrategy.CpuDirect:
+                producer = CpuDirectIndexedCasterProducer;
+                reason = CpuDirectCasterReason;
+                return true;
+            case EMeshSubmissionStrategy.GpuIndirectZeroReadback:
+                producer = GpuIndexedCasterProducer;
+                reason = GpuIndexedCasterReason;
+                return true;
+            case EMeshSubmissionStrategy.GpuMeshletZeroReadback:
+                producer = CpuMaskedIndexedCasterProducer;
+                reason = MeshletCasterReason;
+                return true;
+            case EMeshSubmissionStrategy.GpuMeshletInstrumented:
+                producer = null;
+                reason = InstrumentedMeshletCasterReason;
+                return false;
+            default:
+                producer = null;
+                reason = UnsupportedCasterReason;
+                return false;
+        }
     }
 
     /// <summary>
@@ -467,6 +562,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         }
 
         string? unavailableReason = null;
+        string? casterProducer = null;
+        string? casterProducerReason = null;
         ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         RenderCommandCollection commands = ActivePipelineInstance.ActiveMeshRenderCommands;
         using var renderingBufferScope = commands.EnterRenderingBufferReadScope();
@@ -475,6 +572,16 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             viewport, ActivePipelineInstance, commands, renderFrameId,
             package.PackageGeneration, package.Identity,
             package.SubmissionResolution.Resolved);
+        // Another pipeline instance (for example the desktop view while this stage renders a VR
+        // eye) owns the groups of this frame. Skip the lane: do not take, reject or report.
+        if (atlas.IsAdvancedDirectionalShadowConsumerOwnedByAnother(in stageAuthority))
+        {
+            PublishStageDiagnostic(
+                EAdvancedVisibilityStageBackendPhase.Complete,
+                EAdvancedProfileStageDiagnosticState.CommandScopeReached,
+                "Another Advanced pipeline instance owns the directional shadow groups of this frame.");
+            return;
+        }
         AdvancedVisibilityStageBackendRequest template = default;
         IAdvancedVisibilityStageBackendCapability? visibility = null;
         bool ready = ShadowAtlasManager.AdvancedDirectionalShadowLaneEnabled;
@@ -492,11 +599,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             ready = false;
         }
-        else if (template.BackendReadyPackage?.SubmissionResolution.Resolved is not
-            (EMeshSubmissionStrategy.CpuDirect or EMeshSubmissionStrategy.GpuIndirectZeroReadback))
+        else if (!TryResolveDirectionalShadowCasterProducer(
+                     template.BackendReadyPackage?.SubmissionResolution.Resolved,
+                     out casterProducer,
+                     out casterProducerReason))
         {
             ready = false;
-            unavailableReason = "The frozen directional shadow submission strategy has no supported caster producer.";
+            unavailableReason = casterProducerReason;
         }
         else if (!stageAuthority.Matches(viewport!, ActivePipelineInstance,
                      commands, package, renderFrameId) ||
@@ -507,10 +616,21 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             unavailableReason = "The directional shadow stage does not own this frame's frozen desktop command package.";
         }
 
+        // Log only when the resolved caster producer changes, never per frame.
+        if (!ReferenceEquals(casterProducer, _lastDirectionalShadowCasterProducer))
+        {
+            _lastDirectionalShadowCasterProducer = casterProducer;
+            // An auxiliary log, so Release sessions also record the entry.
+            if (ReferenceEquals(casterProducer, CpuMaskedIndexedCasterProducer))
+                Debug.WriteAuxiliaryLog(DirectionalShadowLaneLogFileName, MeshletCasterLogMessage);
+        }
         atlas.NotifyAdvancedDirectionalShadowLaneConsumer(
             renderFrameId,
+            ActivePipelineInstance,
             ready,
-            unavailableReason);
+            unavailableReason,
+            casterProducer,
+            casterProducerReason);
 
         int accepted = 0;
         int rejected = 0;
@@ -694,7 +814,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             descriptor.Stage,
             GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true,
             usesMultisampleVisibility, packedSamples,
-            hasAmbientOcclusion ? AdvancedAmbientOcclusionContract.ResourceName : AdvancedRenderPipeline.WebPostProcessNeutralTextureName);
+            hasAmbientOcclusion ? AdvancedAmbientOcclusionContract.ResourceName : AdvancedRenderPipeline.WebPostProcessNeutralTextureName,
+            context.HasResource(AdvancedShadingResourceNames.ShadingDiagnostics), context);
         // RVC telemetry runs after native shading and reads every view layer.
         if (descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
             context.HasResource(RvcShadeletTelemetryResourceNames.Counters(0u)))
@@ -799,7 +920,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         if (usesMultisampleVisibility)
             DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Load, packedSamples);
         else
-            DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Load);
+            DescribeCanonicalRasterAttachments(context, builder, ERenderPassLoadOp.Load);
     }
 
     /// <summary>
@@ -864,7 +985,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         RenderPassBuilder builder,
         EAdvancedRenderStage stage,
         bool requiresMaterialSurfaceExports,
-        bool usesMultisampleVisibility, bool packedSamples, string ambientOcclusionTextureName)
+        bool usesMultisampleVisibility, bool packedSamples, string ambientOcclusionTextureName,
+        bool hasShadingDiagnostics, RenderGraphDescribeContext context)
     {
         switch (stage)
         {
@@ -913,7 +1035,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 if (usesMultisampleVisibility)
                     DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Clear, packedSamples);
                 else
-                    DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Clear);
+                    DescribeCanonicalRasterAttachments(context, builder, ERenderPassLoadOp.Clear);
                 builder
                     .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
                     .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
@@ -985,8 +1107,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 builder.SampleTexture(Tex(ambientOcclusionTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.HDRSceneTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
-                    .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
-                    .ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnostics));
+                    .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName));
+                // OpenXR eye outputs without a shading debug view do not declare the diagnostics
+                // image. They bind the 1x1 placeholder instead, which the graph keeps in General.
+                if (hasShadingDiagnostics)
+                    builder.ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnostics));
+                else if (context.HasResource(AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder))
+                    builder.ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder));
                 if (requiresMaterialSurfaceExports)
                 {
                     builder.WriteTexture(Tex(AdvancedRenderPipeline.NormalTextureName))
@@ -1070,9 +1197,22 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
            && context.HasResource(AdvancedVisibilityResourceNames.IdentityMultisample)
            && context.HasResource(AdvancedVisibilityResourceNames.DepthStencilMultisample);
 
-    private static void DescribeCanonicalRasterAttachments(RenderPassBuilder builder, ERenderPassLoadOp load)
+    /// <summary>
+    /// Name of the single-sample selection image, or an empty name when the profile omits it
+    /// (single-sample OpenXR eyes on Vulkan). The backend then expects a visibility target with
+    /// identity, metadata and depth only.
+    /// </summary>
+    private static string SingleSampleSelectionTargetName(XRRenderPipelineInstance instance)
+        => instance.Resources.TryGetTexture(AdvancedVisibilityResourceNames.Selection, out XRTexture? selection) &&
+            selection is not null
+            ? AdvancedVisibilityResourceNames.Selection
+            : string.Empty;
+
+    private static void DescribeCanonicalRasterAttachments(
+        RenderGraphDescribeContext context, RenderPassBuilder builder, ERenderPassLoadOp load)
     {
-        for (int attachment = 0; attachment < 3; attachment++)
+        int colorAttachments = context.HasResource(AdvancedVisibilityResourceNames.Selection) ? 3 : 2;
+        for (int attachment = 0; attachment < colorAttachments; attachment++)
         {
             builder.UseColorAttachment(
                 RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, attachment),

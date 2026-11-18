@@ -277,7 +277,10 @@ internal sealed class FrameOperationPayloadStore
         ComputeDispatchSnapshot artifact)
     {
         ref ComputeDispatchSnapshot?[]? leases = ref _artifactLeases[GetArtifactLeaseColumn(kind)];
-        leases ??= new ComputeDispatchSnapshot?[GetArtifactLeaseRowCount(kind)];
+        // The payload column can grow after the lease column was created, so the
+        // lease column must follow it, as the interface and sealed-snapshot columns do.
+        if (leases is null || row >= leases.Length)
+            Array.Resize(ref leases, Math.Max(row + 1, GetArtifactLeaseRowCount(kind)));
         if (!artifact.TryAcquireArtifactLease())
             throw new InvalidOperationException(
                 "A frame operation sealed a binding artifact whose last lease already ended.");

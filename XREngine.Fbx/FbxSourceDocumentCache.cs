@@ -105,20 +105,20 @@ public sealed class FbxSourceDocumentCache : IDisposable
     /// </summary>
     public FbxAnimationDocument GetAnimations(
         string path,
-        bool requireLosslessLinearAnimation = false,
+        bool requireStrictAnimation = false,
         FbxSceneSemanticsPolicy? policy = null)
-        => GetAnimationSnapshot(path, requireLosslessLinearAnimation, policy).Animations;
+        => GetAnimationSnapshot(path, requireStrictAnimation, policy).Animations;
 
     /// <summary>
     /// Gets semantic and animation documents from one source revision, with the requested animation validation.
     /// </summary>
     public (FbxSemanticDocument Semantic, FbxAnimationDocument Animations) GetAnimationSnapshot(
         string path,
-        bool requireLosslessLinearAnimation = false,
+        bool requireStrictAnimation = false,
         FbxSceneSemanticsPolicy? policy = null)
     {
         SelectSource(path, policy);
-        FbxAnimationDocument? cached = requireLosslessLinearAnimation ? _strictAnimations : _animations;
+        FbxAnimationDocument? cached = requireStrictAnimation ? _strictAnimations : _animations;
         if (_semantic is not null && cached is not null)
             return (_semantic, cached);
 
@@ -126,11 +126,11 @@ public sealed class FbxSourceDocumentCache : IDisposable
         FbxSemanticDocument semantic = _semantic ?? FbxSemanticParser.Parse(structural, _policy);
         FbxDeformerDocument deformers = _deformers ?? FbxDeformerParser.Parse(structural, semantic);
         FbxAnimationDocument animations = FbxAnimationParser.Parse(
-            structural, semantic, deformers, requireLosslessLinearAnimation);
+            structural, semantic, deformers, requireStrictAnimation);
         ValidateSourceRevision();
         _semantic = semantic;
         _deformers = deformers;
-        if (requireLosslessLinearAnimation)
+        if (requireStrictAnimation)
             _strictAnimations = animations;
         else
             _animations = animations;

@@ -984,8 +984,9 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy,
             base.rgb, rmse.w);
         if ((materialFlags & 4u) != 0u)
-            rmse.xy *= XR_ADV_StandardTexture(material, 2u, surface.texCoord0,
-                surface.texCoord0Dx, surface.texCoord0Dy, float4(1.0)).rg;
+            rmse.xy *= XR_ADV_StandardRoughnessMetallic(materialFlags,
+                XR_ADV_StandardTexture(material, 2u, surface.texCoord0,
+                    surface.texCoord0Dx, surface.texCoord0Dy, float4(1.0)));
         N = normalize(surface.shadingNormal);
         if ((materialFlags & 2u) != 0u &&
             XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT))

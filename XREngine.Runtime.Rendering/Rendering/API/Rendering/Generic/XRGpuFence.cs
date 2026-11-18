@@ -34,6 +34,18 @@ public abstract class XRGpuFence : IDisposable
     public virtual EGpuFenceSubmissionStatus SubmissionStatus
         => EGpuFenceSubmissionStatus.Submitted;
 
+    /// <summary>
+    /// Diagnostics only: the timeline value that the fence waits for and the value that the
+    /// backend's timeline has reached now. Returns false when the backend has no timeline; a
+    /// target of 0 means the fence was not bound to a submission yet. Reads the backend counter.
+    /// </summary>
+    public virtual bool TryGetTimelineDiagnostic(out ulong targetValue, out ulong completedValue)
+    {
+        targetValue = 0UL;
+        completedValue = 0UL;
+        return false;
+    }
+
     public EGpuFenceStatus Poll()
     {
         if (_disposed)

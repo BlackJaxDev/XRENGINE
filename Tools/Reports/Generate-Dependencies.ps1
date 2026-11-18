@@ -1292,7 +1292,7 @@ try {
         $meshoptLicensePath = Join-Path $root 'Build\Dependencies\Meshoptimizer\source\LICENSE.md'
         $nested.Add([pscustomobject]@{
             Name = "meshoptimizer $($meshoptLock.tag)"
-            UsedBy = 'XREngine.Runtime.MeshProcessing.Meshoptimizer'
+            UsedBy = 'XREngine.Runtime.MeshProcessing.Meshoptimizer; XREngine.Runtime.Rendering (MeshletClusterHierarchyBuilder is ported from demo/clusterlod.h)'
             Owner = 'Arseny Kapoulkine'
             Url = "$($meshoptLock.repository)/tree/$($meshoptLock.tag)"
             License = $meshoptLock.license

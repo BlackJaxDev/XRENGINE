@@ -26,6 +26,25 @@ public class UnitTestingVrSettings
     /// <see cref="EVrRenderPipeline.Rvc"/>. The runtime must expose XR_VARJO_quad_views.
     /// </summary>
     public bool RvcQuadView { get; set; } = false;
+    /// <summary>
+    /// Sets the <c>VrAdvancedEdgeHalfRateShading</c> engine setting: Advanced eyes shade the
+    /// 2x2 blocks outside <see cref="AdvancedEdgeHalfRateRadius"/> at half rate.
+    /// </summary>
+    public bool AdvancedEdgeHalfRateShading { get; set; } = false;
+    /// <summary>
+    /// Sets the <c>VrAdvancedEdgeHalfRateRadius</c> engine setting: the full-rate radius around
+    /// the lens center, as a fraction of the half extent of the eye image.
+    /// </summary>
+    public float AdvancedEdgeHalfRateRadius { get; set; } = 0.6f;
+    /// <summary>
+    /// Sets the <c>VrAdvancedEdgeHalfRateDebugTint</c> engine setting: tints the half-rate blocks.
+    /// </summary>
+    public bool AdvancedEdgeHalfRateDebugTint { get; set; } = false;
+    /// <summary>
+    /// Sets the <c>VrAdvancedShadowFilterTaps</c> engine setting: the filter tap count of the
+    /// headset shadow cascades of the primary directional light. 0 uses the values of the light.
+    /// </summary>
+    public int AdvancedShadowFilterTaps { get; set; } = 0;
     public bool PreviewStereoViews { get; set; } = false;
     public bool AllowDesktopEditing { get; set; } = true;
     /// <summary>
@@ -38,6 +57,12 @@ public class UnitTestingVrSettings
     /// </summary>
     public XREngine.Components.VR.EVrDesktopView DesktopView { get; set; } = XREngine.Components.VR.EVrDesktopView.EditorCamera;
     public UnitTestingVrFoveationSettings Foveation { get; set; } = new();
+    /// <summary>
+    /// Sets the <c>VrEyeFeatures</c> engine setting: the optional rendering features of every VR
+    /// eye frame (ambient occlusion, fog and aerial perspective, order-independent transparency,
+    /// depth of field, motion blur, deferred MSAA, Forward+ light culling).
+    /// </summary>
+    public UnitTestingVrEyeFeatureSettings EyeFeatures { get; set; } = new();
     public UnitTestingOpenXrEyeResolutionSettings OpenXrEyeResolution { get; set; } = new();
     /// <summary>
     /// Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes.

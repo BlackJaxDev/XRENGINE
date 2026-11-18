@@ -269,6 +269,43 @@
  \
     float occlusion = 0.0; \
  \
+    /* An orthographic (directional) map has no perspective row. Every step along the */ \
+    /* light direction then projects to the same texel, so fetch the stored depth once. */ \
+    /* The depth difference is in normalized light depth, so scale the thickness window */ \
+    /* (world meters) by the light depth change of one meter along the light direction. */ \
+    if (abs(lightMatrix[0][3]) + abs(lightMatrix[1][3]) + abs(lightMatrix[2][3]) < 0.000001) \
+    { \
+        vec3 originCoord = XRENGINE_ProjectShadowCoord(lightMatrix, rayOrigin); \
+        if (originCoord.x < 0.0 || originCoord.x > 1.0 || originCoord.y < 0.0 || originCoord.y > 1.0) \
+            return 1.0; \
+        float depthPerMeter = XRENGINE_ProjectShadowCoord(lightMatrix, rayOrigin + lightDirWS).z - originCoord.z; \
+        float thicknessPerMeter = contactThickness * abs(depthPerMeter); \
+        float originShadowDepth = XRENGINE_FetchShadowMapTexel(shadowMap, originCoord.xy).r; \
+        for (int i = 0; i < 32; ++i) \
+        { \
+            if (i >= clampedSamples) \
+                break; \
+ \
+            float travel = (float(i) + 0.5 + (noise - 0.5) * jitterStrength) * stepSize; \
+            float stepDepth = originCoord.z + travel * depthPerMeter; \
+            if (stepDepth < 0.0 || stepDepth > 1.0) \
+                continue; \
+ \
+            float blockerDelta = stepDepth - originShadowDepth; \
+            if (blockerDelta <= compareBias) \
+                continue; \
+ \
+            float thickness = max(travel * thicknessPerMeter, compareBias * 4.0); \
+            if (blockerDelta > thickness) \
+                continue; \
+ \
+            float depthWeight = 1.0 - smoothstep(compareBias, thickness, blockerDelta); \
+            float distWeight = 1.0 - (travel / contactDistance); \
+            occlusion = max(occlusion, depthWeight * distWeight); \
+        } \
+        return 1.0 - occlusion * fade; \
+    } \
+ \
     for (int i = 0; i < 32; ++i) \
     { \
         if (i >= clampedSamples) \

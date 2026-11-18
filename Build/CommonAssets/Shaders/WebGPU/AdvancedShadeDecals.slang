@@ -132,7 +132,8 @@ void XR_ADV_ApplyDecalToSurface(uint decalIndex, inout XRAdvancedSurface surface
         base = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD);
         if ((flags & 1u) != 0u) base *= XR_ADV_StandardTexture(material, 0u, uv, uvDx, uvDy, float4(1.0));
         rmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
-        if ((flags & 4u) != 0u) rmse.xy *= XR_ADV_StandardTexture(material, 2u, uv, uvDx, uvDy, float4(1.0)).rg;
+        if ((flags & 4u) != 0u) rmse.xy *= XR_ADV_StandardRoughnessMetallic(flags,
+            XR_ADV_StandardTexture(material, 2u, uv, uvDx, uvDy, float4(1.0)));
         if ((flags & 2u) != 0u)
         {
             float3 localNormal = XR_ADV_StandardTexture(material, 1u, uv, uvDx, uvDy, float4(0.5,0.5,1.0,1.0)).xyz * 2.0 - 1.0;

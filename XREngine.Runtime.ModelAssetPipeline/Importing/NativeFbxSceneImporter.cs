@@ -49,6 +49,10 @@ internal static class NativeFbxSceneImporter
             Source.BlendshapeNames = blendshapeNames;
             if (calculateTangents && !Source.HasTangents)
                 Source.GenerateTangentsFromUv0(Indices);
+            // The importer adds one vertex for each polygon corner. Merge the corners whose
+            // attributes are bit-equal, after tangent generation so that generated tangents
+            // are compared. Skinned and blendshape sources are not changed.
+            Source.WeldExactDuplicates(Indices);
             XRMesh mesh = new(Source, Indices);
             _source = null;
             Indices = [];
@@ -1673,6 +1677,16 @@ internal static class NativeFbxSceneImporter
         return null;
     }
 
+    /// <summary>
+    /// True when a lowercase FBX texture property, display name, and file name name an ambient
+    /// occlusion map: "occlusion", or "ao" as its own token (for example "brick_ao").
+    /// </summary>
+    private static bool IsAmbientOcclusionTextureName(string text)
+        => text.Contains("occlusion") ||
+           text.EndsWith("_ao", StringComparison.Ordinal) ||
+           text.Contains("_ao_", StringComparison.Ordinal) ||
+           text.Contains("_ao ", StringComparison.Ordinal);
+
     private static TextureType MapTextureType(string? propertyName, FbxSceneObject textureObject, string filePath)
     {
         string basis = propertyName ?? textureObject.DisplayName;
@@ -1687,6 +1701,8 @@ internal static class NativeFbxSceneImporter
             var text when text.Contains("emiss") => TextureType.Emissive,
             var text when text.Contains("metal") => TextureType.Metalness,
             var text when text.Contains("rough") => TextureType.Roughness,
+            // An ambient occlusion map must not fall through to the base color default.
+            var text when IsAmbientOcclusionTextureName(text) => TextureType.AmbientOcclusion,
             var text when text.Contains("basecolor") || text.Contains("diffuse") => TextureType.BaseColor,
             _ => TextureType.Diffuse,
         };

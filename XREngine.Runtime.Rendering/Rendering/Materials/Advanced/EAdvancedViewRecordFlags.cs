@@ -28,4 +28,10 @@ public enum EAdvancedViewRecordFlags : uint
     /// capture, preventing a capture from sampling its own reflection output.
     /// </summary>
     ExcludeProjectiveMirrors = 1u << 8,
+    /// <summary>
+    /// The camera of the view enables GTAO normal-map micro-occlusion
+    /// (<see cref="GroundTruthAmbientOcclusionSettings.UseMaterialNormals"/>). Native shading then
+    /// scales the GTAO value by how far the normal-mapped normal bends from the surface normal.
+    /// </summary>
+    GtaoMaterialNormals = 1u << 9,
 }

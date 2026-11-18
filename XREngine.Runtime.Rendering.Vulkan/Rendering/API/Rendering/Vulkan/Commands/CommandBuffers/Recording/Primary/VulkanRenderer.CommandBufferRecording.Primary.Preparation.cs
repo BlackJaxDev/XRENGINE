@@ -13,6 +13,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Diagnostics;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -1511,6 +1512,13 @@ namespace XREngine.Rendering.Vulkan
                     closureProbe.End(S13aAdvancedFamilyStep.NativeClosureCapture);
                     if (!closureCaptured)
                     {
+                        // The output stops here every frame, so the reason must reach a log that
+                        // Release sessions write.
+                        XREngine.Rendering.Resources.RenderReadinessFailureLog.Report(
+                            "NativeComputeClosure",
+                            request.Reservation.OutputId.ToString(),
+                            $"view={request.NativeViewIndex} msaa={request.MsaaSampleCount} stage={request.Stage}",
+                            nativeClosureReason);
                         recordingState.RecordingDeferredReason =
                             $"Advanced visibility operation is Unsupported: sealed native-compute closure failed: {nativeClosureReason}.";
                         recordingState.FailureKind =
@@ -1571,6 +1579,17 @@ namespace XREngine.Rendering.Vulkan
                         {
                             ShadeUber = uberShade,
                             ShadeMultisampleCombined = combinedMultisampleShade,
+                        };
+                    }
+                    // The overlay kernel compiles on first use. Until it is ready,
+                    // shading records no overlay; it never delays admission.
+                    if (request.ShowOcclusionCulledBounds &&
+                        request.Stage == EAdvancedRenderStage.NativeOpaqueShading)
+                    {
+                        nativePipelines = nativePipelines with
+                        {
+                            OcclusionCulledBounds =
+                                ResourceRuntime.AdvancedVisibilityPipelines.TryGetOcclusionCulledBoundsPipeline(),
                         };
                     }
                     S13aPublicationTelemetry.StepProbe nativeAssociationProbe =
@@ -1695,7 +1714,9 @@ namespace XREngine.Rendering.Vulkan
                             return false;
                         }
 
-                        int lateSetCount = checked(2 * (int)familyState.ViewCount);
+                        int lateSetCount = checked(
+                            VulkanAdvancedVisibilityLateTargetClosure.DescriptorRolesPerView *
+                            (int)familyState.ViewCount);
                         DescriptorSet[] lateSets = lateStorage.DescriptorSets;
                         lateSets.AsSpan(0, lateSetCount).Clear();
                         for (uint viewIndex = 0u; viewIndex < familyState.ViewCount; ++viewIndex)
@@ -1742,6 +1763,27 @@ namespace XREngine.Rendering.Vulkan
                                     $"Advanced visibility operation is Unsupported: immutable late-visibility descriptor sealing failed: {lateDescriptorReason}.";
                                 return false;
                             }
+                            // The late meshlet raster samples the pyramid after the
+                            // late compute pass returned it to GENERAL. Its table
+                            // describes that layout, so no transition is needed.
+                            DescriptorImageInfo rasterSampledDescriptor = lateSampledDescriptor;
+                            rasterSampledDescriptor.ImageLayout = ImageLayout.General;
+                            if (!familyResources
+                                    .TryAcquireLateDepthPyramidDescriptorSet(
+                                        in familyState,
+                                        operationIndex,
+                                        viewIndex,
+                                        2u,
+                                        in rasterSampledDescriptor,
+                                        in lateStorageDescriptor,
+                                        out lateSets[lateClosure.DescriptorIndex(
+                                            viewIndex, 2)],
+                                        out string rasterDescriptorReason))
+                            {
+                                recordingState.RecordingDeferredReason =
+                                    $"Advanced visibility operation is Unsupported: immutable late raster descriptor sealing failed: {rasterDescriptorReason}.";
+                                return false;
+                            }
                         }
                         if (!recordingState.Ops.Stream.TrySealAdvancedVisibilityLateDescriptors(
                                 operationIndex,
@@ -1759,6 +1801,16 @@ namespace XREngine.Rendering.Vulkan
                         lateStorage.ReleaseAcquiredViews(ResourceRuntime.Images);
                     }
                     lateProbe.End(S13aAdvancedFamilyStep.LateClosure);
+                }
+                else if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)
+                {
+                    // The late meshlet task stage binds the per-view late raster
+                    // tables sealed by the late compute operation above. A
+                    // family without meshlet bins does not read them, so a
+                    // missing closure fails only when a meshlet bin records.
+                    _ = recordingState.Ops.Stream.TryAttachAdvancedVisibilityLateRasterClosure(
+                        operationIndex,
+                        in request);
                 }
             }
 
@@ -2067,6 +2119,17 @@ namespace XREngine.Rendering.Vulkan
         ];
 
         /// <summary>
+        /// Expected attachment order of a single-sample visibility target without the selection
+        /// image (single-sample OpenXR eyes).
+        /// </summary>
+        private static readonly EFrameBufferAttachment[] VisibilityTargetAttachmentsWithoutSelection =
+        [
+            EFrameBufferAttachment.ColorAttachment0,
+            EFrameBufferAttachment.ColorAttachment1,
+            EFrameBufferAttachment.DepthStencilAttachment,
+        ];
+
+        /// <summary>
         /// Expected attachment order of a multisample advanced visibility raster target. The fourth
         /// color attachment holds the sample positions.
         /// </summary>
@@ -2086,20 +2149,22 @@ namespace XREngine.Rendering.Vulkan
         {
             bool multisampleRaster = request.MsaaSampleCount > 1u &&
                 request.Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
-            int expectedAttachmentCount = multisampleRaster ? 5 : 4;
+            bool omitsSelection = request.OmitsSelectionTarget;
+            ReadOnlySpan<EFrameBufferAttachment> expected = multisampleRaster
+                ? MultisampleVisibilityTargetAttachments
+                : omitsSelection
+                    ? VisibilityTargetAttachmentsWithoutSelection
+                    : VisibilityTargetAttachments;
             if (request.Target.Targets is not { } attachments ||
-                attachments.Length != expectedAttachmentCount)
+                attachments.Length != expected.Length)
             {
-                reason = $"the authoritative framebuffer does not have exactly {(multisampleRaster ? "four" : "three")} color attachments and one depth-stencil attachment";
+                reason = $"the authoritative framebuffer does not have exactly {expected.Length - 1} color attachments and one depth-stencil attachment";
                 return false;
             }
 
-            ReadOnlySpan<EFrameBufferAttachment> expected = multisampleRaster
-                ? MultisampleVisibilityTargetAttachments
-                : VisibilityTargetAttachments;
             for (int index = 0; index < attachments.Length; ++index)
             {
-                string expectedName = GetExpectedVisibilityAttachmentName(in request, index, multisampleRaster);
+                string expectedName = GetExpectedVisibilityAttachmentName(in request, index, multisampleRaster, omitsSelection);
                 if (attachments[index].Attachment != expected[index] ||
                     attachments[index].Target is not GenericRenderObject targetObject ||
                     !string.Equals(
@@ -2128,12 +2193,13 @@ namespace XREngine.Rendering.Vulkan
         private static string GetExpectedVisibilityAttachmentName(
             in VulkanAdvancedVisibilityStageRequest request,
             int index,
-            bool multisampleRaster)
+            bool multisampleRaster,
+            bool omitsSelection)
             => index switch
             {
                 0 => request.IdentityTargetName,
                 1 => request.MetadataTargetName,
-                2 => request.SelectionTargetName,
+                2 when !omitsSelection => request.SelectionTargetName,
                 3 when multisampleRaster => AdvancedVisibilityResourceNames.SamplePositionMultisample,
                 _ => request.DepthTargetName,
             };
@@ -2141,8 +2207,8 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Prepares one deferred cascade group for recording: the family's sealed
         /// bins receive depth-only pipelines for the atlas-page closure.
-        /// CPU-direct work derives record masks. Strict indexed work keeps
-        /// caster selection on the GPU and rejects an incomplete frame.
+        /// CPU-direct and meshlet work derives record masks. Strict indexed work
+        /// keeps caster selection on the GPU and rejects an incomplete frame.
         /// </summary>
         private bool TryPrepareDirectionalShadowLane(
             scoped ref PrimaryCommandBufferRecordingState recordingState,
@@ -2157,10 +2223,11 @@ namespace XREngine.Rendering.Vulkan
             if (!request.BackendPackage.TryGetCurrent(out BackendReadyFramePackage package) ||
                 package.SubmissionResolution.Resolved is not
                     (EMeshSubmissionStrategy.CpuDirect or
-                     EMeshSubmissionStrategy.GpuIndirectZeroReadback))
+                     EMeshSubmissionStrategy.GpuIndirectZeroReadback or
+                     EMeshSubmissionStrategy.GpuMeshletZeroReadback))
             {
                 recordingState.RecordingDeferredReason =
-                    "Advanced directional shadow preparation has no frozen CPU-direct or strict indexed strategy.";
+                    "Advanced directional shadow preparation has no frozen CPU-direct, strict indexed or meshlet strategy.";
                 recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
                 return false;
             }
@@ -2192,13 +2259,31 @@ namespace XREngine.Rendering.Vulkan
                 shadowProbe.End(S13aAdvancedFamilyStep.RasterPipelines);
                 if (shadowReadiness == VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 {
-                    if (strategy == EMeshSubmissionStrategy.CpuDirect)
+                    // CPU-direct and meshlet frames draw the frozen indexed arguments of
+                    // each record. They need CPU cascade masks. Strict indexed frames
+                    // select casters on the GPU instead.
+                    if (strategy is EMeshSubmissionStrategy.CpuDirect or
+                        EMeshSubmissionStrategy.GpuMeshletZeroReadback)
                     {
                         VulkanDirectionalShadowLaneCulling.ComputeRecordMasks(
                             familyBins.Records,
                             input.Candidates,
                             lane.ViewProjections,
                             lane.AcquireRecordMasks(familyBins.RecordCount));
+                        PrepareDirectionalShadowStaticTiles(
+                            lane,
+                            familyBins.Records,
+                            input.Candidates,
+                            recordingState.Policy.AllowSynchronousResourceUploads);
+                    }
+                    else
+                    {
+                        ReadOnlySpan<DirectionalCascadeStaticTile?> staticTiles = lane.StaticTiles;
+                        for (int entry = 0; entry < staticTiles.Length; entry++)
+                        {
+                            if (staticTiles[entry] is not null)
+                                lane.BlockStaticCache(entry, EDirectionalShadowStaticCacheCause.GpuCasterSelection);
+                        }
                     }
                     return true;
                 }
@@ -2209,6 +2294,98 @@ namespace XREngine.Rendering.Vulkan
                 $"Advanced directional shadow preparation requires a fresh-frame retry: {shadowReason}";
             recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
             return false;
+        }
+
+        /// <summary>
+        /// Checks that the static caster tile of each cascade entry can be a render target in
+        /// this frame, and computes the static caster record set of each such cascade: the
+        /// records that cast into the cascade (record mask bit of the entry) and that do not
+        /// carry GPUIndirectRenderFlags.ShadowCasterDynamic. The record set hash is order
+        /// independent and 64 bits wide: a sum and an xor of a 64-bit mix of each record's
+        /// draw handle (index and generation). The record set comes from the frozen stream of
+        /// canonical scene draws, not from a camera-culled list, and the cascade mask of a
+        /// record depends only on its bounds and the cascade matrix. So a camera move inside a
+        /// held fit does not change it. One pass over the records serves all entries. It
+        /// allocates nothing.
+        /// </summary>
+        private void PrepareDirectionalShadowStaticTiles(
+            VulkanAdvancedDirectionalShadowLaneStorage lane,
+            ReadOnlySpan<VulkanPreparedStableBinRecord> records,
+            ReadOnlySpan<AdvancedVisibilityCandidate> candidates,
+            bool allowSynchronousUploads)
+        {
+            ReadOnlySpan<DirectionalCascadeStaticTile?> tiles = lane.StaticTiles;
+            byte preparedMask = 0;
+            for (int entry = 0; entry < tiles.Length; entry++)
+            {
+                if (tiles[entry] is not { } tile)
+                    continue;
+
+                if (ResourceRuntime.BackendObjects.Get(tile.FrameBuffer) is not VkFrameBuffer wrapper)
+                {
+                    lane.BlockStaticCache(entry, EDirectionalShadowStaticCacheCause.TileUnavailable);
+                    continue;
+                }
+                if (allowSynchronousUploads)
+                    wrapper.EnsureCurrent();
+                if (!wrapper.TryCaptureRecordedRenderTargetSnapshot(out VulkanRecordedRenderTargetSnapshot snapshot) ||
+                    snapshot.Width != tile.Width || snapshot.Height != tile.Height)
+                {
+                    lane.BlockStaticCache(entry, EDirectionalShadowStaticCacheCause.TileUnavailable);
+                    continue;
+                }
+                preparedMask |= (byte)(1 << entry);
+            }
+            if (preparedMask == 0)
+                return;
+
+            Span<ulong> sums = stackalloc ulong[VulkanAdvancedDirectionalShadowLaneStorage.MaxCascadeCount];
+            Span<ulong> xors = stackalloc ulong[VulkanAdvancedDirectionalShadowLaneStorage.MaxCascadeCount];
+            Span<int> counts = stackalloc int[VulkanAdvancedDirectionalShadowLaneStorage.MaxCascadeCount];
+            sums.Clear();
+            xors.Clear();
+            counts.Clear();
+            ReadOnlySpan<byte> masks = lane.RecordMasks;
+            for (int recordIndex = 0; recordIndex < records.Length && recordIndex < masks.Length; recordIndex++)
+            {
+                byte mask = (byte)(masks[recordIndex] & preparedMask);
+                if (mask == 0)
+                    continue;
+                ref readonly VulkanPreparedStableBinRecord record = ref records[recordIndex];
+                if ((record.VisibilityDrawFlags & (uint)GPUIndirectRenderFlags.ShadowCasterDynamic) != 0u)
+                    continue;
+
+                int payloadIndex = record.VisibilityPayloadIndex;
+                ulong identity = (uint)payloadIndex < (uint)candidates.Length
+                    ? ((ulong)candidates[payloadIndex].Draw.Generation << 32) | candidates[payloadIndex].Draw.Index
+                    : 0xFFFF_FFFF_0000_0000UL | (uint)recordIndex;
+                ulong mixed = MixStaticRecordIdentity(identity);
+                ulong mixed2 = MixStaticRecordIdentity(mixed ^ 0x9E37_79B9_7F4A_7C15UL);
+                for (int entry = 0; mask != 0; entry++, mask >>= 1)
+                {
+                    if ((mask & 1) == 0)
+                        continue;
+                    sums[entry] = unchecked(sums[entry] + mixed);
+                    xors[entry] ^= mixed2;
+                    counts[entry]++;
+                }
+            }
+
+            for (int entry = 0; entry < tiles.Length; entry++)
+            {
+                if ((preparedMask & (1 << entry)) == 0)
+                    continue;
+                ulong xor = xors[entry];
+                lane.SetStaticTilePrepared(entry, sums[entry] ^ ((xor << 32) | (xor >> 32)), counts[entry]);
+            }
+        }
+
+        /// <summary>SplitMix64 finalizer: a 64-bit mix with good bit diffusion.</summary>
+        private static ulong MixStaticRecordIdentity(ulong value)
+        {
+            value = unchecked((value ^ (value >> 30)) * 0xBF58_476D_1CE4_E5B9UL);
+            value = unchecked((value ^ (value >> 27)) * 0x94D0_49BB_1331_11EBUL);
+            return value ^ (value >> 31);
         }
 
         private static bool TryValidateAdvancedDirectionalShadowTarget(
@@ -2343,7 +2520,8 @@ namespace XREngine.Rendering.Vulkan
         {
             bool multisampleRaster = request.MsaaSampleCount > 1u &&
                 request.Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
-            uint expectedColorCount = multisampleRaster ? 4u : 3u;
+            bool omitsSelection = !multisampleRaster && request.OmitsSelectionTarget;
+            uint expectedColorCount = multisampleRaster ? 4u : omitsSelection ? 2u : 3u;
             SampleCountFlags expectedSamples = request.Phase ==
                 EAdvancedVisibilityStageBackendPhase.MultisampleResolve
                     ? SampleCountFlags.Count1Bit
@@ -2362,7 +2540,7 @@ namespace XREngine.Rendering.Vulkan
                 formats.ColorAttachmentCount == expectedColorCount &&
                 formats.GetColorAttachmentFormat(0u) == Format.R32G32Uint &&
                 formats.GetColorAttachmentFormat(1u) == Format.R32Uint &&
-                formats.GetColorAttachmentFormat(2u) == Format.R32Uint &&
+                (omitsSelection || formats.GetColorAttachmentFormat(2u) == Format.R32Uint) &&
                 (!multisampleRaster ||
                  formats.GetColorAttachmentFormat(3u) == Format.R16G16Sfloat) &&
                 formats.DepthAttachmentFormat == Format.D32SfloatS8Uint &&

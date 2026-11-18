@@ -400,10 +400,31 @@ therefore follow the active passes through the resource feature mask:
   Forward+ oracle schedule none, so OpenXR eyes no longer carry about 0.8 GB of
   unwritten two-layer targets; `VPRC_RvcPass` then describes no resources.
 - AO scratch targets follow the encoded AO mode: SSAO/MVAO/MSVO allocate the
-  shared raw target, HBAO+ and GTAO their own raw and blur targets.
-- The bloom chain is R11G11B10F. No bloom consumer reads alpha (the format
-  drops what the bloom copy passes through) and every consumer samples `.rgb`;
-  keep it that way or move bloom back to RGBA16F.
+  shared raw target, HBAO+ and GTAO their own raw and blur targets. In Advanced,
+  GTAO at half resolution declares the AO normals at half resolution, adds a
+  half-resolution R32F depth target and the prepare framebuffer, and drops the
+  full-resolution AO normal framebuffer.
+- Advanced declares the FXAA output and the SMAA edge, blend and output targets, with their
+  framebuffers, only while the profile AA mode is FXAA or SMAA, as Default does. The AA mode is
+  part of the generation key, so a mode switch builds a generation that declares them. With TSR
+  this saves about 661 MiB for the 2688x2688 eye pair and about 101 MiB for a 1920x1080 desktop.
+- The bloom chain is R11G11B10F in both pipelines. No bloom consumer reads alpha
+  (the format drops what the bloom copy passes through) and every consumer
+  samples `.rgb`; keep it that way or move bloom back to RGBA16F. In Advanced
+  this halves the 2688x2688 eye bloom chain from about 157 MB to 79 MB with no
+  visible change in a same-session A/B; GPU time is unchanged.
+- In Advanced (native renderers), the first bloom downsample reads the HDR scene
+  through a linear, clamp-to-edge view (`VPRC_BloomPass.FirstDownsampleReadsInput`).
+  The copy into bloom mip 0 is a same-size texel copy, so the result is the same,
+  and the copy runs only while the bloom combine reads mip 0 (start mip 0 with a
+  mip 0 weight) or the bloom debug view is on. With the default settings this saves
+  the full-resolution copy (about 0.15 ms for the 2688x2688 eye pair). WebGPU
+  keeps the copy.
+  In this mode the copy pass is declared and run after the downsample and
+  upsample passes. The render-graph planner puts the barrier that makes the HDR
+  scene readable on the first pass that reads it. If the optional copy were that
+  first reader, a frame that skips the copy would also skip the barrier, and the
+  first downsample would sample the HDR scene without one.
 
 ---
 
@@ -521,7 +542,13 @@ The resource-generation key and frozen native stage order preserve the selected
 AO family. On desktop backends, the native stage writes neutral AO. The mode from
 the camera's AO schema then replaces it with the Default pipeline's AO commands
 and shaders, which read normals derived from depth. VXAO stays neutral, because
-the Default pipeline does not implement it.
+the Default pipeline does not implement it. On Vulkan, when the AO passes run in a
+frame and their finalize framebuffer exists
+(`AdvancedRenderPipeline.AmbientOcclusionPassesReplaceNeutralFill`), the native stage
+records no neutral-fill dispatch (`SkipNeutralAmbientOcclusionFill`): the finalize quad
+overwrites the whole image before shading reads it. The stage operation and its
+transitions still run. AO off, VXAO, a VR eye frame whose eye feature profile turns
+ambient occlusion off, a missing camera and a missing finalize target keep the fill.
 All native, surface-export, depth-comparison, and MSAA shading recipes declare
 `XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1`. Runtime validation rejects older
 recipes before binding the neutral texture, despite the unchanged 160-byte
@@ -1222,6 +1249,8 @@ composition is separate.
 
 Contact shadows expose distance, sample count, thickness, fade range, normal offset, and jitter strength. Use the fade range to limit near-field detail work to the camera distances where the extra ray march is visible.
 
+The shadow-map contact march (`XRENGINE_SHADOW_BODY_SampleContactShadow2D` for forward receivers, `XR_ADV_DirectionalContactShadow` for Advanced native shading) steps from the receiver toward the light and darkens where an occluder lies above the step within the thickness window. Distance and thickness are in world meters. The depth difference of a step is in normalized light depth, so the march scales the window by the light depth change of one meter along the light direction (1 / depth range of the map). For an orthographic map (a directional cascade) every step projects to the same texel, so the march fetches the stored depth once and tests each step against it; the sample count then changes only arithmetic. Perspective maps (spot lights) keep one fetch for each step.
+
 Directional lights default to short-range contact shadows enabled with distance `1.0`, `16` samples, thickness `2.0`, fade range `10` to `40`, zero normal offset, and full jitter.
 
 Spot lights default to `512x512` shadow maps, PCSS/contact-hardening filtering, `8` blocker samples, `8` filter samples, blocker-search radius `0.1`, penumbra clamp `0.0002` to `0.05`, source radius `0.1`, and short-range contact shadows with distance `0.1`, `16` samples, thickness `1.0`, fade range `10` to `40`, normal offset `0.036`, and full jitter.
@@ -1393,6 +1422,12 @@ The Default Render Pipeline tonemapping stage now exposes AgX and GT7 in additio
 
 `GT7` is the lightweight Uchimura/Gran Turismo per-channel curve intended for the engine's SDR post-process path. It is not the full GT7 physical HDR/display pipeline with target-display adaptation and perceptual gamut mapping.
 
+**Default operator.** `TonemappingSettings.HostDefaultTonemapping` sets the operator that new tonemapping settings and new post-process schemas start with. Each pipeline copies the value into its schema when it builds the schema, so a host must set it before it creates render pipelines.
+
+- The shared default is `Mobius`. The cooked web Default output route (`Tonemap.slang`) supports only Mobius, and `GetWebPostProcessRejection` rejects other operators. `CreateWebPostProcessAdmissionState` sets Mobius as the browser default before it applies the authored values.
+- Desktop hosts install `GT7`. `DesktopEngineStartupPolicy.Install` sets it when the editor, desktop runtime, VR client or server installs its application services, before any camera exists. Editor, desktop and VR eye cameras therefore start with GT7 without a per-scene step.
+- Authored camera values win over the host default. A camera that keeps GT7 is rejected by the cooked web route.
+
 ---
 
 ## 25. ImGui Platform Viewport Disposal
@@ -1411,13 +1446,16 @@ The stage owns broad render-pipeline diagnostics, not only GPU BVH wireframes. I
 
 - `Full Overdraw`: renders all visible mesh render passes into `FullOverdrawCountTex` using additive `1.0` writes with depth disabled, then presents `FullOverdrawDebugFBO` as a heatmap over `PostProcessOutputTexture`. It resolves the same mesh submission strategy as the main pass: `CpuDirect` redraws the CPU mesh list, while active GPU submission draws GPU-eligible meshes through the GPU render path and leaves forced-CPU / `ExcludeFromGpuIndirect` meshes on the CPU fallback path.
 - `GPU BVH`: the existing zero-readback BVH wireframe controls.
-- `Meshlet Debug Display`: requests meshlet debug colors through production meshlet dispatch when available, or through the diagnostic direct-dispatch overlay on OpenGL NV mesh-shader hardware. Keep `VPRC_RenderMeshletDebugDisplay` wired in both default pipelines so the inspector toggle is visible on the active pipeline as well as V2.
+- `Meshlet Debug Display`: requests meshlet debug colors through production meshlet dispatch when available, or through the diagnostic direct-dispatch overlay on OpenGL NV mesh-shader hardware. Keep `VPRC_RenderMeshletDebugDisplay` wired in both default pipelines so the inspector toggle is visible on the active pipeline as well as V2. The Advanced pipeline reads the same toggle: while its `ShadingDebugView` is `Disabled`, the toggle selects the `MeshletId` shading view. It does not change the submission strategy, so indexed pixels stay neutral grey.
+- `Occlusion-Culled Bounds`: draws the bounds of the units that the occlusion test removed in the current frame. Only the Advanced pipeline implements it today; see [Advanced render pipeline](advanced-render-pipeline.md#debug-views-for-meshlets-and-occlusion).
 
 Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resource caching but before final output. The count pass is intentionally debug-only mesh submission with a forced simple material, so it should not be used for performance numbers except to locate screen regions with repeated pixel coverage.
 
 ---
 
 ## 27. DLAA And MFAA AA Modes
+
+The default AA mode (`EngineSettings.AntiAliasingMode`) is `Tsr`, and the default `TsrRenderScale` is 0.75. TSR renders each axis at 75 percent of the output size and upscales to the output size. At 1.0, TSR renders at full resolution and acts as temporal anti-aliasing. A view without TSR history (for example a Default-pipeline per-eye OpenXR eye) keeps its full internal size. A camera `AntiAliasingModeOverride` or `TsrRenderScaleOverride` replaces these values for one camera.
 
 `DLAA` is a first-class AA mode in the default render pipeline. It requests the existing NVIDIA DLSS vendor path at native internal resolution, bypasses the in-engine FXAA/SMAA/TSR post-AA chain, and fails visibly when the DLSS runtime or compatible NVIDIA path is unavailable.
 
@@ -1459,8 +1497,30 @@ Current policy:
   are stereo arrays.
 - Auto exposure uses `EVrAutoExposurePolicy.HeadsetShared`: stereo-array HDR
   sources are averaged across both eye layers into one shared exposure value.
-  Per-eye external swapchain sources skip auto exposure to avoid last-eye-wins
-  mutation of the shared 1x1 exposure texture.
+- Two-pass VR eyes (one pipeline per eye, OpenXR or OpenVR) are an eye pair
+  (`RenderPipeline.IsVrEyePostProcessPair`, set by the post-process state
+  owner link). Each eye pipeline instance keeps its own adaptation state
+  (`AutoExposureRuntimeState` in `ColorGradingSettings`: GPU-ready flag, update
+  timing, CPU-adapted exposure) and its own 1x1 exposure texture, so the eyes
+  cannot overwrite each other. `ColorGradingSettings.IndependentEyeExposure`
+  selects the mode:
+  - Off (default), one headset exposure: the left (owner) eye meters its own
+    HDR image and copies its adapted value into one renderer-wide buffer
+    (`PublishHeadsetAutoExposureGpu`). The right eye copies that value into its
+    own exposure texture (`FollowHeadsetAutoExposureGpu`) and does not meter.
+    In queue order the right eye reads the value of the same frame; when its
+    command buffer runs first, it reads the value of the previous frame.
+    OpenGL runs one context in order and renders the left eye first, so the
+    right eye always reads the value of the same frame.
+  - On (`EVrAutoExposurePolicy.PerEye`): each eye meters its own image and
+    adapts on its own, so the eyes can differ in brightness.
+  Vulkan and OpenGL share the headset exposure
+  (`SupportsHeadsetSharedAutoExposure`), so OpenVR and OpenXR two-pass eyes
+  get it on both backends. A renderer without it uses the independent mode
+  and logs this once per session. A paired eye
+  adapts every frame. An external per-eye target without an eye pair
+  (`VrEyeFrameRules.IsExternalEyeTargetFrame`) still skips auto exposure to avoid
+  last-eye-wins mutation of one exposure state.
 - Atmosphere and volumetric-fog temporal history stay mono-only until their
   half-resolution color/depth/history resources and reprojection/upscale shaders
   are stereo-array aware.

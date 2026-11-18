@@ -23,6 +23,14 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
     internal VulkanAdvancedComputePipeline FoveatedQuadFill { get; init; }
 
     /// <summary>
+    /// Standard single-sample shading kernel without the debug views, the per-light debug
+    /// globals and the Uber base-color fallback (XR_ADV_SHADE_LEAN). Frames with no shading
+    /// debug view and no Uber fallback use it instead of <see cref="Shade"/>, because the unused
+    /// paths still cost registers. Prepared with the family.
+    /// </summary>
+    internal VulkanAdvancedComputePipeline ShadeLean { get; init; }
+
+    /// <summary>
     /// Native Uber shading kernel. It is prepared only for scenes with Uber kernels, after
     /// the standard kernels are ready. While it is not current, the standard kernel shades
     /// Uber pixels with a base-color fallback. It is not part of <see cref="IsCurrent"/>.
@@ -37,8 +45,15 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
     /// </summary>
     internal VulkanAdvancedComputePipeline ShadeMultisampleCombined { get; init; }
 
+    /// <summary>
+    /// Occlusion-culled bounds overlay kernel. It is requested only while the
+    /// overlay is on and is not part of <see cref="IsCurrent"/>. While it compiles,
+    /// shading records no overlay.
+    /// </summary>
+    internal VulkanAdvancedComputePipeline OcclusionCulledBounds { get; init; }
+
     internal bool IsCurrent => Classify.IsCurrent && BuildArguments.IsCurrent && AmbientOcclusion.IsCurrent &&
-        BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent &&
+        BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent && ShadeLean.IsCurrent &&
         RvcShadeletTelemetry.IsCurrent && FoveatedQuadFill.IsCurrent;
 
     /// <summary>Checks the shading program selected by the sealed visibility mode.</summary>

@@ -239,10 +239,11 @@ internal static class VulkanFrameOperationSemantics
                         ref uses,
                         RenderGraphResourceNames.MakeTexture(visibility.Request.MetadataTargetName),
                         version);
-                    AddLogicalResourceUse(
-                        ref uses,
-                        RenderGraphResourceNames.MakeTexture(visibility.Request.SelectionTargetName),
-                        version);
+                    if (!visibility.Request.OmitsSelectionTarget)
+                        AddLogicalResourceUse(
+                            ref uses,
+                            RenderGraphResourceNames.MakeTexture(visibility.Request.SelectionTargetName),
+                            version);
                     AddLogicalResourceUse(
                         ref uses,
                         RenderGraphResourceNames.MakeTexture(visibility.Request.DepthTargetName),
@@ -377,13 +378,21 @@ internal static class VulkanFrameOperationSemantics
             AddStreamlineUse(ref uses, exposure, version, EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
     }
 
+    /// <summary>
+    /// Adds the use of a Streamline image. An image with an engine texture uses the identity of
+    /// that texture, the same identity as a framebuffer write of the texture, so the graph
+    /// orders the DLSS read after the pass that wrote its input and the DLSS write before its
+    /// readers. An image without an engine texture (a swapchain image) uses its native handle.
+    /// </summary>
     private static void AddStreamlineUse(
         ref FrameOpResourceUseList uses,
         in VulkanStreamlineImage image,
         ulong version,
         EFrameOpResourceAccess access)
     {
-        if (image.Image.Handle != 0UL)
+        if (image.Owner is { } owner)
+            uses.Add(ComputeResourceIdentity(owner), version, access);
+        else if (image.Image.Handle != 0UL)
             uses.Add(image.Image.Handle, version, access);
     }
 

@@ -17,7 +17,28 @@ public partial class AdvancedRenderPipeline
     private const ulong OpenXrTwoPassEyeFamilyFeatureBit = 1UL << 63;
     private const ulong MinimalVisibilityOffscreenFeatureBit = 1UL << 62;
     private const ulong MaterialSurfaceExportResourcesFeatureBit = 1UL << 56;
+    // Declares the late-pass debug output (AdvancedTransparency.DebugOutput), set only while a
+    // late-pass debug view or debug overlays are on. Bits 48-50 hold the visibility resource
+    // features (Core is always set), so this bit must stay outside them.
+    private const ulong LatePassDebugOutputFeatureBit = 1UL << 39;
+    // The shading diagnostics image is not declared: an OpenXR eye output without a shading debug
+    // view or debug overlays. Nothing in the frame reads that image, so the eyes skip it.
+    private const ulong ShadingDiagnosticsOmittedFeatureBit = 1UL << 38;
+    // The visibility selection image is not declared: a single-sample OpenXR eye output on
+    // Vulkan without visibility debug output. It only feeds editor picking and the selection
+    // debug view, which eyes do not use. Bits 0-31 hold no other feature.
+    private const ulong VisibilitySelectionOmittedFeatureBit = 1UL << 30;
     public const string ExternalOutputResourceName = "$ExternalOutput";
+
+    /// <summary>
+    /// True when the profile omits the visibility selection image. The visibility framebuffer
+    /// then has two color attachments (identity, metadata) and depth-stencil, and the raster
+    /// discards its selection output. Multisample visibility always keeps the image, because
+    /// its resolve and shading passes read the selection samples.
+    /// </summary>
+    internal static bool OmitsVisibilitySelection(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & VisibilitySelectionOmittedFeatureBit) != 0UL &&
+            !(profile.AntiAliasingMode == EAntiAliasingMode.Msaa && profile.MsaaSampleCount > 1u);
 
     // Forward late/debug consumers retain the existing probe-array contract.
     // Native shading uses canonical publication resources independently; these
@@ -119,12 +140,26 @@ public partial class AdvancedRenderPipeline
             shadingFeatureMask = (1UL << 40);
         }
 
+        if (IsOpenXrEyeProfile &&
+            ShadingDebugView == EAdvancedShadingDebugView.Disabled &&
+            viewport?.CapturePolicy.RenderDebugOverlays != true)
+        {
+            shadingFeatureMask |= ShadingDiagnosticsOmittedFeatureBit;
+        }
+
+        ulong visibilityOutputFeatureMask = 0UL;
+        if (IsOpenXrEyeProfile && IsVulkanRuntimeActiveOrExpected() &&
+            (visibilityFeatures & AdvancedVisibilityResourceFeature.DebugOutput) == 0)
+        {
+            visibilityOutputFeatureMask = VisibilitySelectionOmittedFeatureBit;
+        }
+
         ulong latePassFeatureMask = 0UL;
         if (!UsesMinimalVisibilityOutput &&
             (LatePassDebugView != EAdvancedLatePassDebugView.Disabled ||
              viewport?.CapturePolicy.RenderDebugOverlays == true))
         {
-            latePassFeatureMask = (1UL << 48);
+            latePassFeatureMask = LatePassDebugOutputFeatureBit;
         }
 
         ulong profileFeatureMask =
@@ -143,6 +178,7 @@ public partial class AdvancedRenderPipeline
             (ulong)reconstructionFeatures |
             ((ulong)classificationFeatures << 32) |
             shadingFeatureMask |
+            visibilityOutputFeatureMask |
             latePassFeatureMask |
             profileFeatureMask |
             BuildAdvancedWebOutputFeatureMask(instance, viewport);
@@ -339,7 +375,11 @@ public partial class AdvancedRenderPipeline
         RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
 
-        DeclareLatePostColor(builder, BloomBlurTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, mips: 5u);
+        // The bloom chain carries RGB light only: every consumer samples .rgb and no consumer
+        // reads alpha, so the packed unsigned-float format holds it in half the memory of
+        // RGBA16F, as in DefaultRenderPipeline.
+        DeclareLatePostColor(builder, BloomBlurTextureName, internalSize, layers,
+            EPixelInternalFormat.R11fG11fB10f, EPixelFormat.Rgb, EPixelType.Float, ESizedInternalFormat.R11fG11fB10f, mips: 5u);
         DeclareLatePostColor(builder, AutoExposureTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), 1u, EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f);
         DeclareLatePostColor(builder, PostProcessOutputTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, FinalPostProcessOutputTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
@@ -347,15 +387,29 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostColor(builder, TemporalColorInputTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TemporalExposureVarianceTextureName, internalSize, layers, EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f);
         DeclareLatePostColor(builder, HistoryExposureVarianceTextureName, internalSize, layers, EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f, history: true);
-        DeclareLatePostColor(builder, FxaaOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
-        DeclareLatePostColor(builder, SmaaEdgeTextureName, windowSize, layers, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8);
-        DeclareLatePostColor(builder, SmaaBlendTextureName, windowSize, layers, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8);
-        DeclareLatePostColor(builder, SmaaOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        // The FXAA and SMAA outputs run only in their own AA mode. The AA mode is part of the
+        // generation key, so a mode switch builds a new generation that declares them.
+        bool fxaa = builder.Profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;
+        bool smaa = builder.Profile.AntiAliasingMode == EAntiAliasingMode.Smaa;
+        if (fxaa)
+            DeclareLatePostColor(builder, FxaaOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        if (smaa)
+        {
+            DeclareLatePostColor(builder, SmaaEdgeTextureName, windowSize, layers, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8);
+            DeclareLatePostColor(builder, SmaaBlendTextureName, windowSize, layers, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8);
+            DeclareLatePostColor(builder, SmaaOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        }
         DeclareLatePostColor(builder, TsrOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrAccumulationTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrHistoryColorTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
         DeclareLatePostColor(builder, TsrHistoryMetadataOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrHistoryMetadataTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
+        if (builder.Profile.Stereo)
+        {
+            // Edge stencil split of the stereo TSR resolve (see TsrResolveForm).
+            DeclareLatePostColor(builder, TsrEdgeMaskTextureName, internalSize, layers, EPixelInternalFormat.R8, EPixelFormat.Red, EPixelType.UnsignedByte, ESizedInternalFormat.R8);
+            DeclareTsrEdgeStencil(builder, windowSize, layers);
+        }
         builder.TextureView(DepthStencilTextureName, AdvancedVisibilityResourceNames.DepthStencil).Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent).Usage(RenderPipelineResourceUsage.DepthStencilAttachment | RenderPipelineResourceUsage.SampledTexture)
             .SizedFormat(ESizedInternalFormat.Depth32fStencil8).LayerRange(0u, layers).Target(array: Stereo, multisample: false)
@@ -408,18 +462,51 @@ public partial class AdvancedRenderPipeline
             .Factory(CreateTemporalAccumulationFBO).Add();
         builder.FrameBuffer(HistoryExposureFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, HistoryExposureVarianceTextureName).Factory(CreateHistoryExposureFBO).Add();
-        DeclareLatePostDestination(builder, FxaaFBOName, FxaaOutputTextureName, windowSize, CreateFxaaFBO);
-        DeclareLatePostDestination(builder, SmaaEdgeFBOName, SmaaEdgeTextureName, windowSize, CreateSmaaEdgeFBO);
-        DeclareLatePostDestination(builder, SmaaBlendFBOName, SmaaBlendTextureName, windowSize, CreateSmaaBlendFBO);
-        DeclareLatePostDestination(builder, SmaaFBOName, SmaaOutputTextureName, windowSize, CreateSmaaFBO);
+        if (fxaa)
+            DeclareLatePostDestination(builder, FxaaFBOName, FxaaOutputTextureName, windowSize, CreateFxaaFBO);
+        if (smaa)
+        {
+            DeclareLatePostDestination(builder, SmaaEdgeFBOName, SmaaEdgeTextureName, windowSize, CreateSmaaEdgeFBO);
+            DeclareLatePostDestination(builder, SmaaBlendFBOName, SmaaBlendTextureName, windowSize, CreateSmaaBlendFBO);
+            DeclareLatePostDestination(builder, SmaaFBOName, SmaaOutputTextureName, windowSize, CreateSmaaFBO);
+        }
         DeclareLatePostDestination(builder, TsrHistoryColorFBOName, TsrHistoryColorTextureName, windowSize, CreateTsrHistoryColorFBO);
         DeclareLatePostDestination(builder, TsrAccumulationFBOName, TsrAccumulationTextureName, windowSize, CreateTsrAccumulationFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataOutputTextureName, windowSize, CreateTsrHistoryMetadataOutputFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataFBOName, TsrHistoryMetadataTextureName, windowSize, CreateTsrHistoryMetadataFBO);
-        builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName)
+        if (!builder.Profile.Stereo)
+        {
+            // The vendor upscaler writes its output here on mono views. Vendor upscalers do not
+            // run on stereo views, so stereo profiles skip the output-size target.
+            DeclareLatePostColor(builder, VendorOutputTextureName, windowSize, 1u, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+            DeclareLatePostDestination(builder, VendorOutputFBOName, VendorOutputTextureName, windowSize, CreateVendorOutputFBO);
+        }
+        if (!builder.Profile.Stereo)
+        {
+            builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
+                .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName)
+                .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName)
+                .IncrementalFactory(CreateTsrUpscaleFBOIncrementally).Add();
+            return;
+        }
+
+        // Edge stencil split: the lean and the full resolve FBOs share the color targets and the
+        // edge stencil. The mask and classify quads write the mask and the stencil.
+        builder.QuadMaterial(TsrEdgeMaskQuadFBOName).Lifetime(RenderResourceLifetime.Persistent)
             .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName)
+            .Factory(CreateTsrEdgeMaskQuadFBO).Add();
+        DeclareLatePostDestination(builder, TsrEdgeMaskFBOName, TsrEdgeMaskTextureName, internalSize, CreateTsrEdgeMaskFBO);
+        builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName).Attachment(TsrEdgeStencilTextureName, TsrEdgeStencilAttachment)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, TsrEdgeStencilTextureName)
             .IncrementalFactory(CreateTsrUpscaleFBOIncrementally).Add();
+        builder.FrameBuffer(TsrUpscaleEdgeFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName).Attachment(TsrEdgeStencilTextureName, TsrEdgeStencilAttachment)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, TsrEdgeStencilTextureName)
+            .IncrementalFactory(CreateTsrUpscaleEdgeFBOIncrementally).Add();
+        builder.QuadMaterial(TsrEdgeClassifyQuadFBOName).Lifetime(RenderResourceLifetime.Persistent)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, TsrEdgeMaskTextureName)
+            .Factory(CreateTsrEdgeClassifyQuadFBO).Add();
 
     }
 
@@ -686,10 +773,49 @@ public partial class AdvancedRenderPipeline
         result.SamplerName = name == DepthOfFieldTextureName ? "ColorSource" :
             // The shared AO blur shaders read the raw AO through this sampler.
             name == AmbientOcclusionRawTextureName ? AmbientOcclusionIntensityTextureName :
-            name == AoNormalTextureName ? "Normal" : name;
+            name == AoNormalTextureName ? "Normal" :
+            // The shared GTAO generation and blur shaders read the half-resolution depth here.
+            name == AoHalfDepthTextureName ? DepthViewTextureName : name;
+        if (name == AoHalfDepthTextureName)
+            SetNearestFilter(result);
         result.AutoGenerateMipmaps = false;
         result.RequiresStorageUsage = !Shaders.Compilation.WebPipelineRasterProgram.IsActive || name == AutoExposureTextureName;
         return result;
+    }
+
+    /// <summary>Uses point sampling, so depth values are never blended across an edge.</summary>
+    private static void SetNearestFilter(XRTexture texture)
+    {
+        if (texture is XRTexture2DArray array)
+        {
+            array.MinFilter = ETexMinFilter.Nearest;
+            array.MagFilter = ETexMagFilter.Nearest;
+        }
+        else if (texture is XRTexture2D mono)
+        {
+            mono.MinFilter = ETexMinFilter.Nearest;
+            mono.MagFilter = ETexMagFilter.Nearest;
+        }
+    }
+
+    /// <summary>Declares the output-size TSR edge stencil (S8 where supported, else D24S8).</summary>
+    private void DeclareTsrEdgeStencil(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy size, uint layers)
+    {
+        RenderPipelineResourceProfile profile = builder.Profile;
+        uint width = ResolveLatePostExtent(size, profile.DisplayWidth, profile.InternalWidth, size.Width, size.ScaleX);
+        uint height = ResolveLatePostExtent(size, profile.DisplayHeight, profile.InternalHeight, size.Height, size.ScaleY);
+        // The texture, its descriptor and the FBO attachment point all use this one choice.
+        ESizedInternalFormat format = ResolveTsrEdgeStencilFormat();
+        _tsrEdgeStencilFormat = format;
+        bool stencilOnly = format == ESizedInternalFormat.StencilIndex8;
+        builder.Texture(TsrEdgeStencilTextureName).Lifetime(RenderResourceLifetime.Persistent).Size(size)
+            .Usage(RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Format(stencilOnly ? EPixelInternalFormat.StencilIndex8 : EPixelInternalFormat.Depth24Stencil8,
+                stencilOnly ? EPixelFormat.StencilIndex : EPixelFormat.DepthStencil,
+                stencilOnly ? EPixelType.UnsignedByte : EPixelType.UnsignedInt248)
+            .SizedFormat(stencilOnly ? ESizedInternalFormat.StencilIndex8 : ESizedInternalFormat.Depth24Stencil8)
+            .Factory(() => CreateTsrEdgeStencilTexture(width, height, layers, format))
+            .Layers(layers).StereoCompatible(layers > 1u).Add();
     }
 
     private static void DeclareLatePostDestination(RenderPipelineResourceLayoutBuilder builder, string fboName, string textureName,

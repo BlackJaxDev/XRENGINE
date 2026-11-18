@@ -135,6 +135,36 @@ internal enum ECollectVisibleStage
     /// </remarks>
     SwapAdvancedCommit,
 
+    /// <summary>
+    /// The whole-scene plan of a full Advanced publication: the row plan, the geometry staging, the global-resource
+    /// preflight and the unchanged-publication check. Parent: <see cref="SwapAdvancedCommit"/>.
+    /// </summary>
+    SwapAdvancedPlan,
+
+    /// <summary>
+    /// The transaction apply of a full Advanced publication: the material and global-resource transitions, the
+    /// per-row registration writes, the submission rows and the tombstones. Parent: <see cref="SwapAdvancedCommit"/>.
+    /// </summary>
+    SwapAdvancedApply,
+
+    /// <summary>
+    /// The seal of a full Advanced publication: the table snapshot copies, the resource and submission captures, the
+    /// commit and the identity delivery. Parent: <see cref="SwapAdvancedCommit"/>.
+    /// </summary>
+    SwapAdvancedSeal,
+
+    /// <summary>
+    /// The global-resource preflight (lights, probes, decals, shadow payloads) of every Advanced publication path
+    /// that runs it. Part of <see cref="SwapAdvancedPlan"/> for the full publications.
+    /// </summary>
+    SwapAdvancedGlobalPreflight,
+
+    /// <summary>
+    /// The identity delivery after an Advanced publication commit: dirty owner ranges and the source draw
+    /// identities. Part of <see cref="SwapAdvancedSeal"/>.
+    /// </summary>
+    SwapAdvancedIdentityDelivery,
+
     /// <summary>The number of stages. This value is not a stage.</summary>
     Count,
 }

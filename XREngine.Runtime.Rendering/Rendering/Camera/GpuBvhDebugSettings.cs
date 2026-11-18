@@ -25,6 +25,7 @@ namespace XREngine.Rendering
         private int _fullOverdrawSaturationCount = DefaultFullOverdrawSaturationCount;
         private float _fullOverdrawOverlayOpacity = 1.0f;
         private bool _meshletDebugDisplayEnabled = false;
+        private bool _occlusionCulledBoundsEnabled = false;
         private bool _enabled = false;
         private int _maxNodes = 16384;
         private float _lineWidth = 0.0015f;
@@ -56,6 +57,18 @@ namespace XREngine.Rendering
         {
             get => _meshletDebugDisplayEnabled;
             set => SetField(ref _meshletDebugDisplayEnabled, value);
+        }
+
+        /// <summary>
+        /// Draws the bounds of the units that the occlusion test removed in the
+        /// current frame: draw boxes for draws that failed the Hi-Z draw test, and
+        /// meshlet boxes for meshlets that failed the late task-stage Hi-Z test.
+        /// The Advanced pipeline draws them on the GPU from its culling results.
+        /// </summary>
+        public bool OcclusionCulledBoundsEnabled
+        {
+            get => _occlusionCulledBoundsEnabled;
+            set => SetField(ref _occlusionCulledBoundsEnabled, value);
         }
 
         public bool Enabled
@@ -128,6 +141,14 @@ namespace XREngine.Rendering
             return TryResolve(camera, pipeline, out GpuBvhDebugSettings? settings) &&
                    settings?.MeshletDebugDisplayEnabled == true;
         }
+
+        /// <summary>
+        /// Resolves whether the occlusion-culled bounds overlay is on for a camera and
+        /// an optional explicit pipeline.
+        /// </summary>
+        public static bool IsOcclusionCulledBoundsEnabled(XRCamera? camera, RenderPipeline? pipeline)
+            => TryResolve(camera, pipeline, out GpuBvhDebugSettings? settings) &&
+               settings?.OcclusionCulledBoundsEnabled == true;
 
         /// <summary>
         /// Returns true when the given render pass is one of the geometry passes

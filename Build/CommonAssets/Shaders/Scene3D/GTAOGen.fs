@@ -23,6 +23,9 @@ uniform float ThicknessHeuristic = 1.0f; // XRENGINE_FREQUENCY(View)
 uniform bool UseInputNormals = true; // XRENGINE_FREQUENCY(View)
 uniform bool UseVisibilityBitmask = true; // XRENGINE_FREQUENCY(View)
 uniform float VisibilityBitmaskThickness = 0.12f; // XRENGINE_FREQUENCY(View)
+// Largest step radius in pixels of the depth input. Half-resolution inputs pass 96, so the
+// largest radius on screen matches 192 full-resolution pixels.
+uniform float MaxRadiusPixels = 192.0f; // XRENGINE_FREQUENCY(View)
 
 uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
@@ -66,7 +69,7 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos)
 float ComputeRadiusPixels(float radiusVS, float viewDepth)
 {
     float projScale = abs(ProjMatrix[1][1]) * 0.5f * float(textureSize(DepthView, 0).y);
-    return clamp(radiusVS * projScale / max(abs(viewDepth), 1e-3f), 1.0f, 192.0f);
+    return clamp(radiusVS * projScale / max(abs(viewDepth), 1e-3f), 1.0f, MaxRadiusPixels);
 }
 
 float InterleavedGradientNoise(vec2 pixel)

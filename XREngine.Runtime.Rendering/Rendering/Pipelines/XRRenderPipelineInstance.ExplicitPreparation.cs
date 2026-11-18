@@ -19,7 +19,7 @@ public sealed partial class XRRenderPipelineInstance
         if (Pipeline is null || RuntimeRenderingHostServices.FrameTiming.IsPlayModeTransitioning)
             return false;
 
-        ApplyCurrentFrameProfile(camera, stereoRightEyeCamera: null, viewport);
+        ApplyCurrentFrameProfile(camera, stereoRightEyeCamera: null, viewport, stereoPass: false);
         if (FinalOutput is null)
             return false;
 

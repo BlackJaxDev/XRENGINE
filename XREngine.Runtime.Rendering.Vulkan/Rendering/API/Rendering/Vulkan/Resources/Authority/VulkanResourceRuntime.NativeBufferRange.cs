@@ -32,9 +32,43 @@ internal sealed partial class VulkanResourceRuntime
         return true;
     }
 
+    /// <summary>
+    /// Reports whether no command buffer still uses <paramref name="owner"/>: no queued reference
+    /// and its last use on each queue domain at or below that domain's completion frontier. When
+    /// only the frontier holds it, the method sweeps the unobserved submissions once
+    /// (<see cref="SweepLifetimeSubmissionCompletions"/>) and checks again, because the frontier can
+    /// lag the GPU until each submission's owner reports its completion.
+    /// </summary>
     internal EGpuBufferContentReuseStatus QueryBufferContentReuse(
         XRDataBuffer owner)
     {
+        EGpuBufferContentReuseStatus status = EvaluateBufferContentReuse(owner, out _, out _);
+        if (status != EGpuBufferContentReuseStatus.PendingCompletion ||
+            SweepLifetimeSubmissionCompletions() == 0)
+            return status;
+        return EvaluateBufferContentReuse(owner, out _, out _);
+    }
+
+    /// <summary>
+    /// Diagnostics only: the reuse status of <paramref name="owner"/> and, when it is still
+    /// pending, a description of the graphics completion frontier that holds it (see
+    /// <see cref="VulkanResourceLifetimeTracker.DescribeGraphicsFrontierNoLock"/>). Allocates.
+    /// </summary>
+    internal string DescribeBufferContentReuse(XRDataBuffer owner)
+    {
+        EGpuBufferContentReuseStatus status = EvaluateBufferContentReuse(owner, out ulong lastGraphics, out int queued);
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        using (VulkanFrameLockScope.Enter(tracker.SyncRoot, EVulkanFrameWaitReason.ResourceLifetimeLock))
+            return $"status={status} " + tracker.DescribeGraphicsFrontierNoLock(lastGraphics, queued);
+    }
+
+    private EGpuBufferContentReuseStatus EvaluateBufferContentReuse(
+        XRDataBuffer owner,
+        out ulong bufferLastGraphicsSequence,
+        out int bufferQueuedReferences)
+    {
+        bufferLastGraphicsSequence = 0UL;
+        bufferQueuedReferences = 0;
         if (Lifetime.Tracker.DeviceLost)
             return EGpuBufferContentReuseStatus.DeviceLost;
         if (owner is null ||
@@ -68,6 +102,8 @@ internal sealed partial class VulkanResourceRuntime
             {
                 return EGpuBufferContentReuseStatus.Superseded;
             }
+            bufferLastGraphicsSequence = record.Pins.LastGraphicsSequence;
+            bufferQueuedReferences = record.Pins.QueuedReferenceCount;
             if (record.Pins.HasQueuedReferences)
                 return EGpuBufferContentReuseStatus.AwaitingSubmission;
             if (record.Pins.LastGraphicsSequence >

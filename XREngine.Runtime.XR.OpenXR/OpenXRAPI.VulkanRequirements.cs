@@ -1046,11 +1046,17 @@ public unsafe partial class OpenXRAPI
         }
     }
 
+    /// <summary>
+    /// Returns true when this run requests OpenXR, so the Vulkan renderer must ask the OpenXR
+    /// runtime for its Vulkan requirements and create its instance through XR_KHR_vulkan_enable2.
+    /// The request comes from the startup settings (VR runtime OpenXR), an active or created
+    /// OpenXR API, or an explicit engine variable (the editor's live desktop-to-OpenXR switch sets
+    /// XRE_UNIT_TEST_OPENXR_RUNTIME_JSON before it recreates the renderer).
+    /// XR_RUNTIME_JSON alone is not a request: it only selects which runtime the OpenXR loader
+    /// uses, and a desktop session with it set must create a plain Vulkan instance.
+    /// </summary>
     private static bool ShouldQueryVulkanRuntimeRequirements()
     {
-        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson)))
-            return true;
-
         if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson)))
             return true;
 
@@ -1060,7 +1066,7 @@ public unsafe partial class OpenXRAPI
         if (TryParseBooleanEnvironment(XREngineEnvironmentVariables.UnitTestUseOpenXr))
             return true;
 
-        return RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR;
+        return RuntimeRenderingHostServices.Presentation.IsOpenXrRuntimeRequested;
     }
 
     private static bool IsUnitTestingOpenXrLaunchMode()
@@ -1088,7 +1094,7 @@ public unsafe partial class OpenXRAPI
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson) ?? string.Empty,
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode) ?? string.Empty,
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr) ?? string.Empty,
-            RuntimeEngine.GameSettings?.VRRuntime.ToString() ?? string.Empty);
+            RuntimeRenderingHostServices.Presentation.IsOpenXrRuntimeRequested ? "openxr-requested" : string.Empty);
 
     private static OpenXrVulkanRuntimeRequirements QueryVulkanRuntimeRequirements()
     {

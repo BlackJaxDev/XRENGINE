@@ -5,6 +5,7 @@ using Silk.NET.Vulkan;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.Vulkan.DeviceBootstrap;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -792,8 +793,13 @@ internal sealed partial class VulkanFrameLoop
 
     private void ExecuteDesktopFrameTransaction(in DesktopFrameIdentity identity)
     {
+        // The whole transaction belongs to the desktop output domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Desktop);
+        RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.Frames);
         VulkanFrameAttempt attempt = new(in identity);
         FramePacingTimeline.Mark(EFramePacingMark.DesktopTransactionStart);
+        // Let the completion frontier follow the GPU before this frame reuses resources.
+        _ = _resourceRuntime.SweepLifetimeSubmissionCompletions();
         try
         {
             attempt.Timing = _telemetry.BeginFrame(identity);
@@ -872,6 +878,32 @@ internal sealed partial class VulkanFrameLoop
             EVulkanFrameStage.CompletionMaintenance);
         if (workerSecondHalf)
         {
+            // The second half acquires a swapchain image and resets the command buffers
+            // that belong to that image (the offscreen copy and the overlays). The first
+            // half did not check the swapchain images, because it acquires none, and while
+            // OpenXR owns the frame deadline the acquire does not wait for them. A buffer
+            // whose earlier submission is still on the GPU cannot be reset, so stop with a
+            // busy slot. The worker carry is not joined yet, so the next desktop
+            // opportunity resumes it. Only one carry exists at a time: a new first half,
+            // and so a new worker submit into the lane arena and its command buffers,
+            // starts only after the second half of the kept carry has submitted or ended
+            // the carry. A kept carry therefore never shares its command buffers with a
+            // later worker recording.
+            if (!AreDesktopImageTimelinesCompleted())
+            {
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordDesktopSecondHalfBusyStop();
+                RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
+                    new FrameOutputWorkTelemetry(GpuBudgetDeferrals: 1));
+                attempt.Stop(EDesktopFrameReason.FrameSlotBusy);
+                _ = CompleteDesktopFramePhase(
+                    ref attempt,
+                    EVulkanFrameStage.CompletionMaintenance,
+                    EDesktopFrameFlow.Stop,
+                    phaseStarted);
+                ReportDesktopSplitOutcome("a swapchain image of the second half is still in use", in attempt, string.Empty);
+                return;
+            }
+
             // The first half prepared this slot, and the worker's commands use its
             // frame data, so the slot must not be reset again.
             attempt.AdvanceTo(EDesktopFramePhase.SlotReady);

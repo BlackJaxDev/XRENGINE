@@ -209,7 +209,7 @@ internal sealed partial class VulkanCommandRuntime
                 "Descriptor heap inheritance was appended without active heap storage.");
         }
 
-        lock (CommandBuffers.BindStateGate)
+        using (VulkanFrameLockScope.Enter(CommandBuffers.BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
         {
             if (!CommandBuffers.BindStates.TryGetValue(handle, out CommandBufferBindState state))
                 throw new InvalidOperationException("Descriptor heap inheritance must be marked after command-buffer recording begins.");
@@ -236,7 +236,7 @@ internal sealed partial class VulkanCommandRuntime
     {
         DescriptorHeapBindingIdentity identity = CaptureDescriptorHeapBindingIdentity();
         bool requiresHeapBinding = false;
-        lock (CommandBuffers.BindStateGate)
+        using (VulkanFrameLockScope.Enter(CommandBuffers.BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
         {
             for (int index = 0; index < secondaries.Length; index++)
             {
@@ -393,7 +393,8 @@ internal sealed partial class VulkanCommandRuntime
             (ulong)Interlocked.Increment(ref CommandBuffers.RecordingGeneration));
         using (VulkanFrameLockScope.Enter(
                    CommandBuffers.BindStateGate,
-                   EVulkanFrameWaitReason.DescriptorPublicationLock))
+                   EVulkanFrameWaitReason.DescriptorPublicationLock,
+                   EVulkanLockContentionSite.BindState))
         {
             CommandBuffers.BindStates[handle] = new CommandBufferBindState
             {
@@ -634,7 +635,9 @@ internal sealed partial class VulkanCommandRuntime
                 sequence,
                 0,
                 0,
-                unchecked((ulong)fence.Handle)));
+                unchecked((ulong)fence.Handle),
+                KindId: VulkanLifetimeSubmissionKinds.GetId(operation),
+                SubmitTimestamp: System.Diagnostics.Stopwatch.GetTimestamp()));
         }
         return result;
     }
@@ -808,6 +811,17 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffers.FrameWideMeshDataManifest.MaintainCaptureFamilies();
         resourceRuntime.MappedFrameArena?.DrainCommandInvalidations(
             _invalidateFrameDataCommand ??= InvalidateFrameDataCommand);
+        ResetInvalidatedCommandBuffers(maxItems);
+    }
+
+    /// <summary>
+    /// Resets up to <paramref name="maxItems"/> invalidated command buffers and
+    /// removes them from the pending set. A buffer that cannot be reset now stays
+    /// in the set for a later call. That includes a buffer whose pool an in-flight
+    /// desktop worker batch owns; the batch join calls this method again.
+    /// </summary>
+    private void ResetInvalidatedCommandBuffers(int maxItems)
+    {
         if (maxItems <= 0 || CommandBuffers.InvalidatedBuffersPendingReset.IsEmpty)
             return;
 
@@ -826,7 +840,8 @@ internal sealed partial class VulkanCommandRuntime
             if (!TryResetCommandBufferWithLifetime(
                     commandBuffer,
                     "InvalidatedCommandBufferDrain",
-                    out Result result))
+                    out Result result,
+                    deferDesktopWorkerPools: true))
                 continue;
             if (result != Result.Success)
                 continue;
@@ -849,10 +864,18 @@ internal sealed partial class VulkanCommandRuntime
         return result;
     }
 
+    /// <summary>
+    /// Resets <paramref name="commandBuffer"/> when no recording, queued submission
+    /// or lifetime pin blocks it. Returns false when the buffer cannot be reset now.
+    /// When <paramref name="deferDesktopWorkerPools"/> is true, it also returns false
+    /// for a buffer whose pool an in-flight desktop worker batch owns, and asks the
+    /// batch join to retry the invalidated resets.
+    /// </summary>
     private bool TryResetCommandBufferWithLifetime(
         CommandBuffer commandBuffer,
         string owner,
-        out Result result)
+        out Result result,
+        bool deferDesktopWorkerPools = false)
     {
         result = Result.ErrorUnknown;
         ulong handle = unchecked((ulong)commandBuffer.Handle);
@@ -869,6 +892,15 @@ internal sealed partial class VulkanCommandRuntime
                        tracker.SyncRoot,
                        EVulkanFrameWaitReason.ResourceLifetimeLock))
             {
+                // vkResetCommandBuffer writes the parent pool. Pools.Gate does not
+                // exclude the desktop worker, so a worker pool waits for the join.
+                if (deferDesktopWorkerPools &&
+                    MustDeferCommandBufferWriteForDesktopWorkerNoLock(tracker, handle))
+                {
+                    Volatile.Write(ref _desktopWorkerDeferredInvalidatedResets, 1);
+                    return false;
+                }
+
                 batch = CommandBuffers.TrackingBatches.GetOrAdd(handle, static _ => new());
                 using (VulkanFrameLockScope.Enter(
                            batch,
@@ -945,6 +977,16 @@ internal sealed partial class VulkanCommandRuntime
                     continue;
                 }
 
+                // vkFreeCommandBuffers writes the parent pool. While a desktop
+                // worker batch owns that pool, the entry stays queued and the
+                // batch join frees it.
+                if (MustDeferCommandPoolWriteForDesktopWorker(candidate.CommandPool.Handle))
+                {
+                    NoteRetiredCommandBufferDeferredForDesktopWorker();
+                    index = (index + 1) % list.Count;
+                    continue;
+                }
+
                 if (!resourceRuntime.RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.CommandArtifact, 1,
                         VulkanResourceRetirementQueue.CountPendingNoLock(resourceRuntime.Lifetime.Retirement.CommandBuffers)))
                     break;
@@ -952,46 +994,65 @@ internal sealed partial class VulkanCommandRuntime
                 list.RemoveAt(index);
             }
             resourceRuntime.RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.CommandArtifact, list, scans, index, list.Count);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPendingRetiredCommandBufferCount(
+                VulkanResourceRetirementQueue.CountPendingNoLock(resourceRuntime.Lifetime.Retirement.CommandBuffers));
         }
 
         for (int index = 0; index < ready.Count; index++)
         {
             RetiredCommandBuffer entry = ready[index];
-            CommandBuffer commandBuffer = entry.CommandBuffer;
-            using (VulkanFrameLockScope.Enter(
-                       Pools.Gate,
-                       EVulkanFrameWaitReason.CommandPool))
-                api.FreeCommandBuffers(
-                    device,
-                    entry.CommandPool,
-                    1,
-                    &commandBuffer);
-
-            RemoveCommandBufferState(entry.CommandBuffer);
-            resourceRuntime.CompleteCommandBufferDestruction(
-                entry.CommandBuffer);
-            using (VulkanFrameLockScope.Enter(
-                       resourceRuntime.Lifetime.Retirement.SyncRoot,
-                       EVulkanFrameWaitReason.ResourceLifetimeLock))
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    unchecked((ulong)entry.CommandBuffer.Handle),
-                    resourceRuntime.Lifetime.Retirement.CommandBufferHandles,
-                    resourceRuntime.Lifetime.Retirement.AllCommandBufferHandles);
+            FreeReadyRetiredCommandBuffer(api, device, resourceRuntime, frameSlot, in entry);
             resourceRuntime.RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.CommandArtifact);
-            if (CommandBuffers.TryReleaseOwnedSecondaryCommandBuffer(
-                    entry.CommandPool,
-                    entry.CommandBuffer,
-                    out CommandPool poolReadyForRetirement))
-            {
-                QueueCommandPoolRetirementTracked(
-                    poolReadyForRetirement,
-                    frameSlot);
-            }
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
             commandBuffers: ready.Count);
+    }
+
+    /// <summary>
+    /// Frees one retired command buffer that is ready for destruction, removes its
+    /// command state and lifetime record, and releases its retirement queue handle.
+    /// When the buffer was the last owned secondary of a command-chain pool, it
+    /// queues that pool for retirement. The caller already removed the entry from
+    /// its retirement list and owns the parent pool on this thread.
+    /// </summary>
+    private unsafe void FreeReadyRetiredCommandBuffer(
+        Vk api,
+        Device device,
+        VulkanResourceRuntime resourceRuntime,
+        int frameSlot,
+        in RetiredCommandBuffer entry)
+    {
+        CommandBuffer commandBuffer = entry.CommandBuffer;
+        using (VulkanFrameLockScope.Enter(
+                   Pools.Gate,
+                   EVulkanFrameWaitReason.CommandPool))
+            api.FreeCommandBuffers(
+                device,
+                entry.CommandPool,
+                1,
+                &commandBuffer);
+
+        RemoveCommandBufferState(entry.CommandBuffer);
+        resourceRuntime.CompleteCommandBufferDestruction(
+            entry.CommandBuffer);
+        using (VulkanFrameLockScope.Enter(
+                   resourceRuntime.Lifetime.Retirement.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+            VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                frameSlot,
+                unchecked((ulong)entry.CommandBuffer.Handle),
+                resourceRuntime.Lifetime.Retirement.CommandBufferHandles,
+                resourceRuntime.Lifetime.Retirement.AllCommandBufferHandles);
+        if (CommandBuffers.TryReleaseOwnedSecondaryCommandBuffer(
+                entry.CommandPool,
+                entry.CommandBuffer,
+                out CommandPool poolReadyForRetirement))
+        {
+            QueueCommandPoolRetirementTracked(
+                poolReadyForRetirement,
+                frameSlot);
+        }
     }
 
     internal unsafe void DrainRetiredCommandPools(
@@ -1045,6 +1106,8 @@ internal sealed partial class VulkanCommandRuntime
                        Pools.Gate,
                        EVulkanFrameWaitReason.CommandPool))
                 api.DestroyCommandPool(device, pool, null);
+            // A new pool can reuse this handle. It must not inherit worker ownership.
+            UnregisterDesktopWorkerPool(pool.Handle);
             resourceRuntime.CompleteCommandPoolChildDestructions(pool);
             resourceRuntime.CompleteCommandPoolDestruction(pool);
             using (VulkanFrameLockScope.Enter(
@@ -1080,11 +1143,19 @@ internal sealed partial class VulkanCommandRuntime
             resourceRuntime.PrepareCommandBufferRetirement(
                 retiring,
                 owner);
-        if (!IsCommandBufferRetirementReady(
+        // An immediate free writes the parent pool. When an in-flight desktop
+        // worker batch owns that pool, queue the buffer instead; the batch join
+        // frees it. This covers command-chain secondary replacement and the
+        // worker's texture-upload command buffer.
+        bool deferForDesktopWorker = MustDeferCommandPoolWriteForDesktopWorker(commandPool.Handle);
+        if (deferForDesktopWorker ||
+            !IsCommandBufferRetirementReady(
                 resourceRuntime,
                 retiring,
                 ticket))
         {
+            if (deferForDesktopWorker)
+                NoteRetiredCommandBufferDeferredForDesktopWorker();
             resourceRuntime.QueueCommandBufferRetirement(
                 commandPool,
                 retiring,

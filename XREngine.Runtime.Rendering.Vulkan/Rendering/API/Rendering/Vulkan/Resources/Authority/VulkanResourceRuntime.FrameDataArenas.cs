@@ -68,7 +68,7 @@ internal sealed partial class VulkanResourceRuntime
             this,
             Allocations.Buffers,
             deviceContext.NonCoherentAtomSize);
-        VulkanFrameDataArena frameData = new(backend, FrameDataArenaInitialChunkCapacity);
+        VulkanFrameDataArena frameData = new(backend, FrameDataArenaInitialChunkCapacity, preferDeviceLocalSceneStorage: true);
         VulkanFrameDataArena readback = new(backend, ReadbackFrameDataArenaInitialChunkCapacity);
         VulkanFrameDataArena gpuStats = new(backend, GpuStatsFrameDataArenaInitialChunkCapacity);
         VulkanFrameDataArena synchronous = new(backend, SynchronousFrameDataArenaInitialChunkCapacity);

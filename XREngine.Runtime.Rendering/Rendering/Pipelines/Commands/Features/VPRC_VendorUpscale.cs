@@ -50,6 +50,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRFrameBuffer? _bridgeExposureTextureFbo;
         private XRTexture? _bridgeExposureTexture;
         private IRuntimeVendorUpscaleSession? _nativeDlssSession;
+        private XRTexture2D? _nativeDlssDestinationOutputTexture;
         private IRuntimeVendorUpscaleSession? _nativeDlssFrameGenerationSession;
         private IVulkanVendorUpscaleBackendCapability? _nativeDlssRenderer;
         private XRTexture2D? _nativeDlssOutputTexture;
@@ -230,6 +231,13 @@ void main()
 
             base.DescribeRenderPass(context);
             var builder = context.GetOrCreateSyntheticPass(passName);
+            // A native vendor evaluate also reads depth, motion vectors and exposure. Declaring
+            // them keeps the resource planner from ending their lifetimes, or aliasing their
+            // memory, before this pass.
+            DescribeVendorInputRead(context, builder, DepthTextureName);
+            DescribeVendorInputRead(context, builder, DepthStencilTextureName);
+            DescribeVendorInputRead(context, builder, MotionTextureName);
+            DescribeVendorInputRead(context, builder, AutoExposureTextureName);
             if (!string.IsNullOrWhiteSpace(SourceTextureName))
             {
                 builder.SampleTexture(MakeTextureResource(SourceTextureName));
@@ -238,6 +246,12 @@ void main()
 
             if (!TryDescribeActualFboColorInputs(builder, SourceQuadFBOName))
                 builder.SampleTexture(MakeFboColorResource(SourceQuadFBOName));
+        }
+
+        private static void DescribeVendorInputRead(RenderGraphDescribeContext context, RenderPassBuilder builder, string? textureName)
+        {
+            if (!string.IsNullOrWhiteSpace(textureName) && (context.ResourceLayout is null || context.HasResource(textureName)))
+                builder.SampleTexture(MakeTextureResource(textureName));
         }
 
         protected override void Execute()
@@ -1254,6 +1268,7 @@ void main()
             _nativeDlssOutputWidth = 0;
             _nativeDlssOutputHeight = 0;
             _nativeDlssOutputHdr = false;
+            _nativeDlssDestinationOutputTexture = null;
             _nativeDlssDispatchHistoryValid = false;
         }
 
@@ -1372,6 +1387,42 @@ void main()
             }
 
             failureReason = string.Empty;
+            return true;
+        }
+
+        /// <summary>
+        /// Returns the color texture of the destination framebuffer
+        /// (<see cref="VPRC_RenderQuadToFBO.DestinationFBOName"/>) as the DLSS output when it is a
+        /// 2D texture of the output size with storage usage. The evaluate then writes the
+        /// pipeline's output target directly. A new texture (after a resize or a resource
+        /// rebuild) resets the DLSS history, because the session's output resource changed.
+        /// </summary>
+        private bool TryResolveDestinationDlssOutputTexture(uint width, uint height, out XRTexture2D? outputTexture)
+        {
+            outputTexture = null;
+            if (string.IsNullOrWhiteSpace(DestinationFBOName))
+                return false;
+
+            XRFrameBuffer? destination = ActivePipelineInstance.GetFBO<XRFrameBuffer>(DestinationFBOName!);
+            if (destination?.Targets is not { Length: > 0 } targets ||
+                targets[0].Target is not XRTexture2D texture ||
+                !texture.RequiresStorageUsage)
+            {
+                return false;
+            }
+
+            (uint textureWidth, uint textureHeight) = ResolveTextureExtent(texture);
+            if (textureWidth != width || textureHeight != height)
+                return false;
+
+            if (!ReferenceEquals(_nativeDlssDestinationOutputTexture, texture))
+            {
+                _nativeDlssDestinationOutputTexture = texture;
+                _nativeDlssSession?.ResetResources();
+                _nativeDlssDispatchHistoryValid = false;
+            }
+
+            outputTexture = texture;
             return true;
         }
 
@@ -1915,7 +1966,10 @@ void main()
             }
 
             XRTexture2D? outputTexture = null;
+            bool writesDestinationTexture = dlssRequested
+                && TryResolveDestinationDlssOutputTexture(outputWidth, outputHeight, out outputTexture);
             if (dlssRequested
+                && !writesDestinationTexture
                 && (!TryEnsureNativeDlssOutputTexture(outputWidth, outputHeight, outputHdr, out outputTexture, out string outputFailure)
                     || outputTexture is null))
             {
@@ -2067,6 +2121,19 @@ void main()
             _fallbackApplySharpen = false;
             _fallbackSharpenStrength = 0.0f;
             RememberNativeDlssDispatch(camera, dispatchParameters);
+
+            if (writesDestinationTexture)
+            {
+                // The evaluate wrote the destination framebuffer's texture directly. The
+                // pipeline's window present shows it, so no copy quad runs here.
+                if (_diagEnabled)
+                {
+                    Debug.Log(
+                        ELogCategory.Rendering,
+                        $"[VendorUpscaleDiag] NativeVulkanDLSS path into destination. Source='{DescribeTexture(sourceColorTexture)}' Depth='{DescribeTexture(depthTexture)}' Motion='{DescribeTexture(motionTexture)}' Output='{DescribeTexture(dlssOutputTexture)}' Pass='{passName}' Frame={dispatchParameters.FrameIndex} Reset={dispatchParameters.ResetHistory}");
+                }
+                return true;
+            }
 
             XRFrameBuffer? destFbo = ResolveDestinationFbo(
                 ActivePipelineInstance,

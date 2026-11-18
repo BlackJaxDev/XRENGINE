@@ -256,12 +256,13 @@ completed.
 
 `GPURenderPassCollection` snapshots the strategy at pass execution:
 
-- `CpuDirect` does not consume GPU Hi-Z visibility snapshots. Hardware CPU queries remain the default occlusion path, and optional CPU masked software occlusion can pre-cull traditional CPU mesh draws before hardware-query submission when explicitly enabled.
+- `CpuDirect` does not consume GPU Hi-Z visibility snapshots. Its occlusion runs only in the traditional CPU mesh pass (`RenderCommandCollection.RenderCPU`) and only when the setting selects a CPU mode: `GpuOcclusionCullingMode = CpuQueryAsync` issues hardware queries, and `CpuSoftwareOcclusion` (or `EnableCpuSoftwareOcclusionCulling`, or `XRE_CPU_SOC_OCCLUSION`) pre-culls CPU mesh draws with the masked software buffer. The default `GpuHiZ` gives `CpuDirect` no occlusion; the occlusion telemetry then reports the effective mode `Disabled`. The Advanced visibility pass does not run `RenderCPU` for its CPU-direct records, so it applies neither CPU mode.
 - The forward depth-normal prepass must resolve the same effective mesh submission strategy as the later lit pass. A forced `CpuDirect` strategy keeps the prepass on CPU even if the legacy GPU-dispatch preference is true; otherwise AO/depth can be populated by GPU draws while the color pass renders CPU. When the lit path is meshlet, the prepass uses the matching traditional GPU indirect strategy because the direct meshlet material-table shader does not support override/depth-normal material variants yet.
 - GPU Hi-Z culling prefers the current-frame depth view. Temporal history depth is only a fallback when the current depth view is unavailable, because history-depth false occlusion rejects whole command records before meshlet expansion can refine visibility. Current-frame depth is explicitly disabled as a Hi-Z occlusion source for `OpaqueForward` and `MaskedForward` while the forward depth-normal prepass is enabled: that prepass can already contain the same candidates, so using it would self-occlude whole commands before per-meshlet culling runs.
 - `GpuIndirectZeroReadback` enables state-class/tier scatter, consumes GPU-written draw counts directly, and does not call CPU readback helpers such as `ReadGpuBatchRanges()` or `ReadUIntAt(...)` for counts. Use `FullBucketScan` when validating the strict no-readback material path; the active-bucket and material-table variants intentionally read back the compact active bucket list for diagnostics.
 - Instrumented strategies are the only strategies allowed to read back batch ranges, count buffers, per-view draw counts, indirect command dumps, or explicitly classified meshlet evidence. `GpuIndirectInstrumented` still uses the material-tier scatter draw path by default so diagnostics render with the same per-material shaders and textures as the production GPU path. CPU masked software occlusion can also run here by preparing CPU occluders, reading the GPU-cull count, and compacting the culled indirect command buffer for validation.
 - `GpuMeshletZeroReadback` uses the same GPU-resident scene database and material-table policy as the zero-readback indirect path, then dispatches mesh tasks from GPU-written task records and counts. It must not read count/visibility buffers back in steady state. The meshlet pass snapshots `MaterialTable` automatically if the global zero-readback draw path is `FullBucketScan` or `ActiveBucketList`.
+- In the Advanced pipeline on Vulkan, `GpuMeshletZeroReadback` draws static and skinned meshlet producers with a task stage in front of the visibility mesh stage. Each task workgroup culls up to 32 meshlets of one visible static draw against the view frustum and their normal cones. Skinned meshlets have only the draw-level test with the instance's published bounds; the task stage does not cull them one by one. Static meshlets also use two-phase occlusion: the early raster draws the meshlets that were visible last frame, and the late raster tests the others against this frame's depth pyramid and records the result for the next frame. Directional shadow casters of a meshlet frame draw as CPU-masked indexed draws. See [Advanced render pipeline](advanced-render-pipeline.md) and [frame loop design](frame-loop-design.md).
 - A diagnostics profile may request fence-delayed meshlet evidence while the
   effective submission strategy remains `GpuMeshletZeroReadback`. These copies
   snapshot immediately after the producer in the ordered frame stream and are
@@ -337,6 +338,117 @@ renderer does not.
   eligibility are separate facts with separate diagnostics.
 
 Broad model and prefab binary-cache hydration is open work.
+
+### Cluster hierarchy payloads
+
+`MeshletGenerationSettings.BuildClusterHierarchy` (off by default; the
+unit-testing world sets it for each model with `GenerateClusterHierarchy`)
+cooks a cluster level-of-detail hierarchy instead of one meshlet level.
+`MeshletClusterHierarchyBuilder` (a port of meshoptimizer's
+`demo/clusterlod.h`, MIT) builds it:
+
+- Level 0 splits the mesh into clusters (`buildMeshletsFlex`, 64 vertices,
+  41 to 124 triangles). Each further level puts about 16 neighbouring clusters
+  into a group (`partitionClusters`), locks the vertices that two groups share
+  (through a position remap, so split attribute vertices lock together),
+  merges and simplifies the group to half its triangles
+  (`simplifyWithAttributes` with `Sparse | ErrorAbsolute | ErrorClamped`, normal
+  and UV0 as attributes), and splits the result into new clusters. A group that
+  keeps more than 85% of its triangles, that simplifies to no triangles, or
+  whose simplification changes the open edges between its locked vertices,
+  ends its branch: its clusters stay as roots of the cut, and their vertices stay
+  locked for every later level, so coarser neighbours keep the shared border.
+  There is no sloppy fallback: it ignores attributes and seams.
+- The group sphere is the merge of its cluster spheres and the group error is
+  the larger of the child errors and the simplify error, so sphere and error
+  grow from child to parent. Locked borders and monotonic bounds make every
+  cut free of cracks.
+- Simplification keeps the original vertices: every cluster of every level
+  refers to the source vertex buffer, so deformation and vertex buffers do not
+  change.
+
+The payload stores every cluster as a meshlet in the normal streams, level 0
+first, and adds `ClusterLevel0Count`, one `MeshletClusterLodRecord` (group,
+refined group; 8 bytes) per meshlet and one `MeshletLodGroupRecord`
+(simplified sphere, error, depth; 32 bytes) per group. Each meshlet keeps its
+own culling sphere and normal cone. Such a payload has payload version 5
+(`MeshletPayload.ClusterHierarchyPayloadVersion`); every payload without a
+hierarchy stays version 4, so existing caches and cooked meshes stay valid.
+The hierarchy flag changes the meshlet settings hash only when it is set; it
+then adds `MeshletClusterHierarchyBuilder.CookVersion`, so a change of the cook
+recooks cached hierarchy payloads only.
+
+The cook checks the properties that make a cut free of cracks and writes the
+totals for the process to `meshlet-cache.log` (`[ClusterHierarchyChecks]`,
+failures/checks): a cluster's own bound equals the record of the group that
+made it; a parent group's error is at least the error of each group that its
+clusters came from; and the parent sphere contains those spheres
+(failures/checks). The open edges between the locked vertices of a group must
+be the same before and after its simplification; the cook rejects a
+simplification that changes them and counts it as `borderRejected`.
+
+A renderer without cut selection draws only the level-0 prefix:
+`MeshletPayload.Level0MeshletCount`, `Level0Meshlets`, `Level0VertexIndices`
+and `Level0TriangleIndices`. `GPUScene`, `MeshletCollection` and the WebGPU
+meshlet geometry use these. The import cook writes one `[ClusterHierarchy]`
+summary line for each model to `meshlet-cache.log`.
+
+The Advanced canonical geometry publisher publishes the full hierarchy
+(`AdvancedPublishedMeshletLayout`): the descriptors and vertex indices of every
+level, and in the triangle-word stream of the geometry, after the packed
+triangle words, one cluster record per meshlet (2 words: group, refined group)
+and then one group record per group (8 words: sphere, error, depth, two
+reserved words; floats as bits). The geometry record keeps its GPU layout:
+`ReservedLayout0` holds the level-0 count (`ClusterLevel0Count`; zero without a
+hierarchy) and `ReservedLayout1` the word offset of the cluster records,
+relative to the geometry's `MeshletTriangleWords` reference, so arena
+compaction keeps it valid. `MeshletCount` counts every level, and
+`DrawMeshletCount` is the level-0 count of a hierarchy geometry. Visibility
+payloads, deformation ranges and deformation witnesses use `DrawMeshletCount`,
+so a draw renders only level 0 unless the cluster cut below is on.
+
+### Cluster cut (Advanced virtual geometry)
+
+The engine setting `AdvancedVirtualGeometry` (off by default; the unit-testing
+world sets it with `Rendering.VirtualGeometry`) makes the Vulkan Advanced
+visibility stage (desktop and VR eyes) draw a cut of each static meshlet draw of
+a cluster hierarchy geometry. `AdvancedVirtualGeometryPixelThreshold`
+(`Rendering.VirtualGeometryPixelThreshold`, default 1, range 0.25 to 16) is the
+largest projected error, in render pixels, that a drawn cluster may have.
+
+- `AdvancedVirtualGeometryPolicy` reads both settings once, at the first
+  Advanced frame with a Vulkan renderer. A change takes effect at the next
+  start. The two consumers below must agree in every frame; a change while they
+  run could draw every level at once.
+- The preparation extractor gives a static draw of a hierarchy geometry the
+  full meshlet range (`MeshletCount`). Skinned draws and every draw while the
+  setting is off keep `DrawMeshletCount`. Other backends never enable the
+  policy, so the OpenGL and WebGPU paths keep level 0.
+- The meshlet task stage is compiled with `XR_ADV_CLUSTER_LOD_CUT` (and the
+  threshold as `XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD`) only while the setting is
+  on. The off variant compiles from the same text as before, so its SPIR-V does
+  not change.
+- Render rule (from `clusterlod.h`): draw a cluster when the projected error of
+  its own group's simplified bound is above the threshold and the cluster is a
+  level-0 cluster or the projected error of the group it was made from is at or
+  below the threshold. Projected error =
+  `error * scale * proj * renderHeight * 0.5 / max(distance - radius * scale, near)`,
+  with `proj` the larger of `|P00|` and `|P11|` and `scale` the largest axis
+  scale of the draw. An unreadable record keeps only level-0 clusters.
+- Stereo: the task stage finds the other eye of a pair (the adjacent view with
+  the opposite `StereoLeft`/`StereoRight` flag) and uses the nearer eye
+  position, so both eyes draw the same clusters.
+- The cut runs before the frustum, cone and history tests. A cluster outside
+  the cut is not drawn and the late task does not set its history bit. A
+  cluster that enters the cut has no history bit, so the late raster tests it
+  against this frame's depth pyramid. Every cluster keeps its own sphere and
+  cone for culling; the group sphere is used only for the error test.
+- Directional shadow casters still draw the full-detail canonical index buffer.
+
+Measured with New Sponza and the prefab avatar at 2688x2688 (RVC, true single
+pass stereo): at the atrium the early raster goes from 5.9 to 3.6 ms and the
+late raster from 0.6 to 1.3 ms (the late pass tests about twice the clusters);
+the eye GPU time goes from 41.0 to 39.1 ms. At the origin nothing changes.
 
 ## Production Closeout Status
 
