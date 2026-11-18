@@ -403,6 +403,7 @@ namespace XREngine.Editor.Mcp
                     active = DescribeResourceMaterialization(instance.ActiveGeneration),
                     pending = DescribeResourceMaterialization(instance.PendingGeneration),
                 },
+                tsrResolveForm = pipeline?.TsrResolveForm.ToString(),
                 temporalHistory = BuildTemporalHistoryDiagnostics(instance),
                 directionalShadowLane = DescribeDirectionalShadowLane(viewport),
                 resources = new

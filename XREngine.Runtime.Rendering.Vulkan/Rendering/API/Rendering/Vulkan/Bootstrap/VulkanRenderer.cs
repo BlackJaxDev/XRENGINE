@@ -585,6 +585,16 @@ public sealed partial class VulkanRenderer :
     public override void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset) => _frameLoop.EnqueueIndirectDraw("MultiDrawElementsIndirectWithOffset", drawCount, stride, byteOffset);
     public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset) => _frameLoop.EnqueueIndirectCountDraw(maxDrawCount, stride, byteOffset, countByteOffset);
     public override bool SupportsIndirectCountDraw() => _commandRuntime.SupportsIndirectCountDraw();
+
+    /// <summary>Reads the optimal-tiling features of the format from the physical device.</summary>
+    public override bool SupportsDepthStencilAttachmentFormat(ESizedInternalFormat format)
+    {
+        Format vkFormat = VkFormatConversions.FromSizedFormat(format);
+        if (vkFormat == Format.Undefined)
+            return false;
+        Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, vkFormat, out FormatProperties properties);
+        return (properties.OptimalTilingFeatures & FormatFeatureFlags.DepthStencilAttachmentBit) != 0;
+    }
     public override void ConfigureVAOAttributesForProgram(XRRenderProgram program, XRMeshRenderer.BaseVersion? version) => _commandRuntime.ConfigureIndirectVertexInput(program, version);
     bool IIndirectDrawStateBackendCapability.TryBeginIndirectDrawState(XRRenderProgram program, XRMaterial? material, in Matrix4x4 modelMatrix, out IndirectDrawStateToken token) => _commandRuntime.TryBeginIndirectDrawState(program, material, modelMatrix, out token);
     void IIndirectDrawStateBackendCapability.EndIndirectDrawState(in IndirectDrawStateToken token) => _commandRuntime.EndIndirectDrawState(token);

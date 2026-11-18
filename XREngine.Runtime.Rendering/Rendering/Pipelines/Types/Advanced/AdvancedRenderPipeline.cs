@@ -1610,6 +1610,75 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string DepthOfFieldTextureName = "DepthOfField";
     public const string TsrHistoryColorTextureName = "TsrHistoryColor";
     public const string TsrHistoryMetadataTextureName = "TsrHistoryMetadata";
+    /// <summary>
+    /// R8 edge mask at internal resolution. The edge-mask pass writes 1 where the internal pixel
+    /// passes the current-frame TSR coverage classification as a 3x3 center. The classify pass
+    /// reads it to mark the output pixels of the full resolve in <see cref="TsrEdgeStencilTextureName"/>.
+    /// </summary>
+    public const string TsrEdgeMaskTextureName = "TsrEdgeMask";
+    public const string TsrEdgeMaskQuadFBOName = "TsrEdgeMaskQuadFBO";
+    public const string TsrEdgeMaskFBOName = "TsrEdgeMaskFBO";
+    /// <summary>
+    /// Output-size stencil of the TSR edge split. The classify pass sets bit 0x01 on pixels whose
+    /// source 3x3 center is an edge; the lean resolve draws where the bit is clear and the full
+    /// resolve where it is set.
+    /// </summary>
+    public const string TsrEdgeStencilTextureName = "TsrEdgeStencil";
+    /// <summary>Full TSR resolve FBO: the same color attachments as <see cref="TsrUpscaleFBOName"/> plus the edge stencil.</summary>
+    public const string TsrUpscaleEdgeFBOName = "TsrUpscaleEdgeFBO";
+    /// <summary>Quad of the edge stencil classify pass; it draws into <see cref="TsrUpscaleEdgeFBOName"/>.</summary>
+    public const string TsrEdgeClassifyQuadFBOName = "TsrEdgeClassifyQuadFBO";
+    /// <summary>Stencil bit that marks TSR edge pixels.</summary>
+    public const uint TsrEdgeStencilBit = 0x01u;
+
+    private static AbstractRenderer? s_tsrEdgeStencilFormatRenderer;
+    private static ESizedInternalFormat s_tsrEdgeStencilFormat;
+    /// <summary>Edge stencil format that the current resource layout declared.</summary>
+    private ESizedInternalFormat _tsrEdgeStencilFormat = ESizedInternalFormat.Depth24Stencil8;
+
+    /// <summary>
+    /// Form of the TSR resolve of this pipeline. Single-pass stereo on Vulkan uses the edge stencil
+    /// split: it records the extra mask and classify passes once for both eyes, and the GPU is the
+    /// limit. Mono views (per-eye eyes and the desktop) use one resolve pass. Per-eye eyes are
+    /// limited by render-thread recording, and two extra passes per eye cost more recording time
+    /// than the split saves on the GPU. Other backends use one resolve pass, because the split is
+    /// validated on Vulkan only.
+    /// </summary>
+    public EAdvancedTsrResolveForm TsrResolveForm
+        => Stereo && ResolveCurrentBackend() == RuntimeGraphicsApiKind.Vulkan
+            ? EAdvancedTsrResolveForm.EdgeStencilSplit
+            : EAdvancedTsrResolveForm.Single;
+
+    /// <summary>Backend of the current renderer, or of the capability result when no renderer is current.</summary>
+    private RuntimeGraphicsApiKind ResolveCurrentBackend()
+        => RuntimeRenderingHostServices.FrameTiming.CurrentRenderer?.GetAdvancedRenderPipelineCapabilities().Backend
+        ?? CapabilityResult.Capabilities.Backend;
+
+    /// <summary>
+    /// Format of the TSR edge stencil: S8 when the current renderer supports it as a depth-stencil
+    /// attachment, otherwise D24S8. The choice is logged and cached for that renderer.
+    /// </summary>
+    private static ESizedInternalFormat ResolveTsrEdgeStencilFormat()
+    {
+        // The layout can build off the render thread, where AbstractRenderer.Current is null; the
+        // frame-timing host falls back to the renderer of the first window.
+        AbstractRenderer? renderer = RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as AbstractRenderer
+            ?? AbstractRenderer.Current;
+        if (renderer is not null && ReferenceEquals(renderer, s_tsrEdgeStencilFormatRenderer))
+            return s_tsrEdgeStencilFormat;
+        bool stencilOnly = renderer?.SupportsDepthStencilAttachmentFormat(ESizedInternalFormat.StencilIndex8) == true;
+        ESizedInternalFormat format = stencilOnly ? ESizedInternalFormat.StencilIndex8 : ESizedInternalFormat.Depth24Stencil8;
+        if (renderer is not null)
+        {
+            s_tsrEdgeStencilFormat = format;
+            s_tsrEdgeStencilFormatRenderer = renderer;
+        }
+        Debug.Rendering(
+            "[TSR] Edge stencil format {0}: S8 depth-stencil attachment {1}.",
+            format,
+            renderer is null ? "unknown (no current renderer)" : stencilOnly ? "supported" : "unsupported");
+        return format;
+    }
 
     // MSAA deferred GBuffer texture names
     public const string MsaaAlbedoOpacityTextureName = "MsaaAlbedoOpacity";

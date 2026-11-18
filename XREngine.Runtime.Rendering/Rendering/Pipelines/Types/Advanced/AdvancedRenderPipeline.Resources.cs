@@ -404,6 +404,12 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostColor(builder, TsrHistoryColorTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
         DeclareLatePostColor(builder, TsrHistoryMetadataOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrHistoryMetadataTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
+        if (builder.Profile.Stereo)
+        {
+            // Edge stencil split of the stereo TSR resolve (see TsrResolveForm).
+            DeclareLatePostColor(builder, TsrEdgeMaskTextureName, internalSize, layers, EPixelInternalFormat.R8, EPixelFormat.Red, EPixelType.UnsignedByte, ESizedInternalFormat.R8);
+            DeclareTsrEdgeStencil(builder, windowSize, layers);
+        }
         builder.TextureView(DepthStencilTextureName, AdvancedVisibilityResourceNames.DepthStencil).Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent).Usage(RenderPipelineResourceUsage.DepthStencilAttachment | RenderPipelineResourceUsage.SampledTexture)
             .SizedFormat(ESizedInternalFormat.Depth32fStencil8).LayerRange(0u, layers).Target(array: Stereo, multisample: false)
@@ -475,10 +481,32 @@ public partial class AdvancedRenderPipeline
             DeclareLatePostColor(builder, VendorOutputTextureName, windowSize, 1u, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
             DeclareLatePostDestination(builder, VendorOutputFBOName, VendorOutputTextureName, windowSize, CreateVendorOutputFBO);
         }
-        builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName)
+        if (!builder.Profile.Stereo)
+        {
+            builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
+                .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName)
+                .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName)
+                .IncrementalFactory(CreateTsrUpscaleFBOIncrementally).Add();
+            return;
+        }
+
+        // Edge stencil split: the lean and the full resolve FBOs share the color targets and the
+        // edge stencil. The mask and classify quads write the mask and the stencil.
+        builder.QuadMaterial(TsrEdgeMaskQuadFBOName).Lifetime(RenderResourceLifetime.Persistent)
             .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName)
+            .Factory(CreateTsrEdgeMaskQuadFBO).Add();
+        DeclareLatePostDestination(builder, TsrEdgeMaskFBOName, TsrEdgeMaskTextureName, internalSize, CreateTsrEdgeMaskFBO);
+        builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName).Attachment(TsrEdgeStencilTextureName, TsrEdgeStencilAttachment)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, TsrEdgeStencilTextureName)
             .IncrementalFactory(CreateTsrUpscaleFBOIncrementally).Add();
+        builder.FrameBuffer(TsrUpscaleEdgeFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName).Attachment(TsrEdgeStencilTextureName, TsrEdgeStencilAttachment)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, TsrEdgeStencilTextureName)
+            .IncrementalFactory(CreateTsrUpscaleEdgeFBOIncrementally).Add();
+        builder.QuadMaterial(TsrEdgeClassifyQuadFBOName).Lifetime(RenderResourceLifetime.Persistent)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, TsrEdgeMaskTextureName)
+            .Factory(CreateTsrEdgeClassifyQuadFBO).Add();
 
     }
 
@@ -768,6 +796,26 @@ public partial class AdvancedRenderPipeline
             mono.MinFilter = ETexMinFilter.Nearest;
             mono.MagFilter = ETexMagFilter.Nearest;
         }
+    }
+
+    /// <summary>Declares the output-size TSR edge stencil (S8 where supported, else D24S8).</summary>
+    private void DeclareTsrEdgeStencil(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy size, uint layers)
+    {
+        RenderPipelineResourceProfile profile = builder.Profile;
+        uint width = ResolveLatePostExtent(size, profile.DisplayWidth, profile.InternalWidth, size.Width, size.ScaleX);
+        uint height = ResolveLatePostExtent(size, profile.DisplayHeight, profile.InternalHeight, size.Height, size.ScaleY);
+        // The texture, its descriptor and the FBO attachment point all use this one choice.
+        ESizedInternalFormat format = ResolveTsrEdgeStencilFormat();
+        _tsrEdgeStencilFormat = format;
+        bool stencilOnly = format == ESizedInternalFormat.StencilIndex8;
+        builder.Texture(TsrEdgeStencilTextureName).Lifetime(RenderResourceLifetime.Persistent).Size(size)
+            .Usage(RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Format(stencilOnly ? EPixelInternalFormat.StencilIndex8 : EPixelInternalFormat.Depth24Stencil8,
+                stencilOnly ? EPixelFormat.StencilIndex : EPixelFormat.DepthStencil,
+                stencilOnly ? EPixelType.UnsignedByte : EPixelType.UnsignedInt248)
+            .SizedFormat(stencilOnly ? ESizedInternalFormat.StencilIndex8 : ESizedInternalFormat.Depth24Stencil8)
+            .Factory(() => CreateTsrEdgeStencilTexture(width, height, layers, format))
+            .Layers(layers).StereoCompatible(layers > 1u).Add();
     }
 
     private static void DeclareLatePostDestination(RenderPipelineResourceLayoutBuilder builder, string fboName, string textureName,

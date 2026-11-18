@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering;
 
@@ -246,14 +247,38 @@ public partial class AdvancedRenderPipeline
         var tsrCommands = new ViewportRenderCommandContainer(this);
         if (!Shaders.Compilation.WebPipelineRasterProgram.IsActive)
         {
+            bool split = TsrResolveForm == EAdvancedTsrResolveForm.EdgeStencilSplit;
+            if (split)
+            {
+                // Edge stencil split. The mask pass classifies each internal pixel once. The
+                // classify pass clears the stencil through its load operation and marks the
+                // output pixels whose source center is an edge. The lean resolve (no coverage
+                // path) draws where the bit is clear, the full resolve where it is set. Both
+                // write the same TSR targets.
+                tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(TsrEdgeMaskQuadFBOName, TsrEdgeMaskFBOName, matchDestinationRenderArea: true)
+                    .SetRenderGraphResources(CreateAdvancedTsrEdgeMaskResources());
+                tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(TsrEdgeClassifyQuadFBOName, TsrUpscaleEdgeFBOName, matchDestinationRenderArea: true)
+                    .SetRenderGraphResources(CreateAdvancedTsrEdgeClassifyResources());
+            }
             tsrCommands.Add<VPRC_RenderQuadToFBO>()
                 .SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true)
-                .SetRenderGraphResources(CreateAdvancedTsrResources());
+                .SetRenderGraphResources(CreateAdvancedTsrResources(split));
+            if (split)
+            {
+                tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(TsrUpscaleEdgeFBOName, TsrUpscaleEdgeFBOName, matchDestinationRenderArea: true)
+                    .SetRenderGraphResources(CreateAdvancedTsrResources(split));
+            }
             var captureTsrHistory = tsrCommands.Add<VPRC_TemporalAccumulationPass>();
             captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
+            // The lean resolve (TsrUpscaleFBO) is the history producer. With the split, the full
+            // resolve also reads prior history and writes the same targets, so the copy follows it too.
             captureTsrHistory.ConfigureTsrHistoryTargets(
                 TsrAccumulationFBOName, TsrHistoryColorFBOName, TsrUpscaleFBOName,
-                TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName);
+                TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName,
+                leftHistoryReaderQuadFboName: split ? TsrUpscaleEdgeFBOName : null);
         }
         tsr.TrueCommands = tsrCommands;
         var postAaCommands = new ViewportRenderCommandContainer(this);
@@ -597,7 +622,37 @@ public partial class AdvancedRenderPipeline
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedFinalPostProcessResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor().SampleTexture(PostProcessOutputTextureName);
 
-    private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrResources()
+    /// <summary>Inputs of a TSR resolve pass. A split resolve also reads the destination edge stencil.</summary>
+    private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrResources(bool split)
+    {
+        var resources = new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+            .SampleTexture(FinalPostProcessOutputTextureName)
+            .SampleTexture(VelocityTextureName)
+            .SampleTexture(DepthViewTextureName)
+            .SampleTexture(HistoryDepthViewTextureName)
+            .SampleTexture(TsrHistoryColorTextureName)
+            .SampleTexture(StencilViewTextureName)
+            .SampleTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
+            .SampleTexture(TsrHistoryMetadataTextureName);
+        return split ? resources.UseDestinationStencilAttachment(ERenderGraphAccess.Read) : resources;
+    }
+
+    /// <summary>Inputs of the edge stencil classify pass; it clears and writes the destination stencil.</summary>
+    private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrEdgeClassifyResources()
+        => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+            .SampleTexture(FinalPostProcessOutputTextureName)
+            .SampleTexture(VelocityTextureName)
+            .SampleTexture(DepthViewTextureName)
+            .SampleTexture(HistoryDepthViewTextureName)
+            .SampleTexture(TsrHistoryColorTextureName)
+            .SampleTexture(StencilViewTextureName)
+            .SampleTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
+            .SampleTexture(TsrHistoryMetadataTextureName)
+            .SampleTexture(TsrEdgeMaskTextureName)
+            .UseDestinationStencilAttachment(ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Clear);
+
+    /// <summary>Sampled inputs of the TSR edge-mask pass: the resolve inputs without the mask.</summary>
+    private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrEdgeMaskResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(FinalPostProcessOutputTextureName)
             .SampleTexture(VelocityTextureName)

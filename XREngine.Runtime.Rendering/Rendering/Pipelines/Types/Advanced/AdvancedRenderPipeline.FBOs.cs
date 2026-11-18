@@ -476,15 +476,25 @@ public partial class AdvancedRenderPipeline
     /// the reconstructed full-resolution output to <see cref="TsrOutputTextureName"/>.
     /// </summary>
     private IIncrementalFrameBufferFactory CreateTsrUpscaleFBOIncrementally()
-        => new TsrUpscaleFrameBufferFactory(this);
+        => new TsrUpscaleFrameBufferFactory(this, edge: false);
 
-    private sealed class TsrUpscaleFrameBufferFactory(AdvancedRenderPipeline owner) : IIncrementalFrameBufferFactory
+    /// <summary>
+    /// Creates the full TSR resolve FBO of the edge split. It draws the full resolve (with the
+    /// coverage path) only where the edge stencil bit is set, into the same color attachments as
+    /// the lean resolve FBO.
+    /// </summary>
+    private IIncrementalFrameBufferFactory CreateTsrUpscaleEdgeFBOIncrementally()
+        => new TsrUpscaleFrameBufferFactory(this, edge: true);
+
+    private sealed class TsrUpscaleFrameBufferFactory(AdvancedRenderPipeline owner, bool edge) : IIncrementalFrameBufferFactory
     {
         private int _stage;
         private XRTexture[]? _textureReferences;
         private XRTexture? _outputTexture;
         private XRTexture? _metadataOutputTexture;
         private XRTexture? _accumulationTexture;
+        private XRTexture? _stencilTexture;
+        private bool _split;
         private XRShader? _shader;
         private XRMaterial? _material;
         private XRQuadFrameBuffer? _frameBuffer;
@@ -510,7 +520,7 @@ public partial class AdvancedRenderPipeline
                         useMultiview: owner.Stereo,
                         prepareForInitialRendering: false)
                     {
-                        Name = TsrUpscaleFBOName
+                        Name = edge ? TsrUpscaleEdgeFBOName : TsrUpscaleFBOName
                     };
                     _stage++;
                     return false;
@@ -528,6 +538,7 @@ public partial class AdvancedRenderPipeline
                     _outputTexture = null;
                     _metadataOutputTexture = null;
                     _accumulationTexture = null;
+                    _stencilTexture = null;
                     _transferred = true;
                     _stage++;
                     return true;
@@ -552,8 +563,12 @@ public partial class AdvancedRenderPipeline
             _outputTexture = GetTexture<XRTexture>(TsrOutputTextureName)!;
             _metadataOutputTexture = GetTexture<XRTexture>(TsrHistoryMetadataOutputTextureName)!;
             _accumulationTexture = GetTexture<XRTexture>(TsrAccumulationTextureName)!;
-            _shader = CreateAdvancedTsrShader(
-                owner.Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
+            _split = owner.TsrResolveForm == EAdvancedTsrResolveForm.EdgeStencilSplit;
+            _stencilTexture = _split ? GetTexture<XRTexture>(TsrEdgeStencilTextureName)! : null;
+            string fileName = owner.Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs";
+            _shader = !_split ? CreateAdvancedTsrShader(fileName)
+                : edge ? CreateAdvancedTsrSplitShader(fileName)
+                : CreateAdvancedTsrLeanShader(fileName);
         }
 
         private void CreateMaterial()
@@ -570,10 +585,12 @@ public partial class AdvancedRenderPipeline
                         Function = EComparison.Always,
                         UpdateDepth = false,
                     },
-                    StencilTest = new StencilTest
-                    {
-                        Enabled = ERenderParamUsage.Disabled,
-                    },
+                    // The lean resolve draws where the edge stencil bit is clear, the full resolve
+                    // where it is set. Neither writes stencil or depth, so early stencil tests reject
+                    // the other pixels before the fragment shader runs.
+                    StencilTest = _split
+                        ? CreateTsrEdgeStencilTest(edge ? TsrEdgeStencilBit : 0u)
+                        : new StencilTest { Enabled = ERenderParamUsage.Disabled },
                     BlendModeAllDrawBuffers = BlendMode.Disabled(),
                     RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy
                         | EUniformRequirements.ViewportDimensions,
@@ -593,10 +610,23 @@ public partial class AdvancedRenderPipeline
             if (_accumulationTexture is not IFrameBufferAttachement accumulationAttachment)
                 throw new InvalidOperationException("TSR accumulation texture is not an FBO-attachable texture.");
 
-            frameBuffer.SetRenderTargets(
-                (outputAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-                (metadataOutputAttachment, EFrameBufferAttachment.ColorAttachment1, 0, -1),
-                (accumulationAttachment, EFrameBufferAttachment.ColorAttachment2, 0, -1));
+            if (!_split)
+            {
+                frameBuffer.SetRenderTargets(
+                    (outputAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                    (metadataOutputAttachment, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                    (accumulationAttachment, EFrameBufferAttachment.ColorAttachment2, 0, -1));
+            }
+            else
+            {
+                if (_stencilTexture is not IFrameBufferAttachement stencilAttachment)
+                    throw new InvalidOperationException("TSR edge stencil texture is not an FBO-attachable texture.");
+                frameBuffer.SetRenderTargets(
+                    (outputAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                    (metadataOutputAttachment, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                    (accumulationAttachment, EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                    (stencilAttachment, owner.TsrEdgeStencilAttachment, 0, -1));
+            }
             frameBuffer.SettingUniforms += owner.ApplyTsrUpscaleProgramBindings;
         }
 
@@ -614,7 +644,182 @@ public partial class AdvancedRenderPipeline
             _outputTexture = null;
             _metadataOutputTexture = null;
             _accumulationTexture = null;
+            _stencilTexture = null;
         }
+    }
+
+    /// <summary>
+    /// Creates the TSR edge-mask quad. It samples the same textures as the TSR resolve (without the
+    /// mask) and uses the same program bindings, so the classification reads the same inputs.
+    /// </summary>
+    private XRFrameBuffer CreateTsrEdgeMaskQuadFBO()
+    {
+        XRTexture[] textures =
+        [
+            GetTexture<XRTexture>(FinalPostProcessOutputTextureName)!,
+            GetTexture<XRTexture>(VelocityTextureName)!,
+            GetTexture<XRTexture>(DepthViewTextureName)!,
+            GetTexture<XRTexture>(HistoryDepthViewTextureName)!,
+            GetTexture<XRTexture>(TsrHistoryColorTextureName)!,
+            GetTexture<XRTexture>(StencilViewTextureName)!,
+            GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!,
+            GetTexture<XRTexture>(TsrHistoryMetadataTextureName)!,
+        ];
+        XRShader shader = CreateAdvancedTsrEdgeMaskShader(
+            Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
+        XRMaterial material = new(textures, shader)
+        {
+            RenderOptions = new RenderingParameters
+            {
+                DepthTest = new DepthTest
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                StencilTest = new StencilTest
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy
+                    | EUniformRequirements.ViewportDimensions,
+            }
+        };
+        XRQuadFrameBuffer frameBuffer = new(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
+        {
+            Name = TsrEdgeMaskQuadFBOName
+        };
+        frameBuffer.SettingUniforms += ApplyTsrUpscaleProgramBindings;
+        return frameBuffer;
+    }
+
+    private XRFrameBuffer CreateTsrEdgeMaskFBO()
+        => CreateTsrColorViewFBO(TsrEdgeMaskTextureName, TsrEdgeMaskFBOName);
+
+    /// <summary>Stencil test that passes where the TSR edge bit equals <paramref name="reference"/> and writes nothing.</summary>
+    private static StencilTest CreateTsrEdgeStencilTest(uint reference)
+    {
+        StencilTestFace face = new()
+        {
+            Function = EComparison.Equal,
+            Reference = (int)reference,
+            ReadMask = TsrEdgeStencilBit,
+            WriteMask = 0u,
+            BothFailOp = EStencilOp.Keep,
+            StencilPassDepthFailOp = EStencilOp.Keep,
+            BothPassOp = EStencilOp.Keep,
+        };
+        return new StencilTest
+        {
+            Enabled = ERenderParamUsage.Enabled,
+            FrontFace = face,
+            BackFace = face,
+        };
+    }
+
+    /// <summary>
+    /// Attachment point of the TSR edge stencil in the declared format: stencil for S8,
+    /// depth-stencil for D24S8.
+    /// </summary>
+    private EFrameBufferAttachment TsrEdgeStencilAttachment
+        => _tsrEdgeStencilFormat == ESizedInternalFormat.StencilIndex8
+            ? EFrameBufferAttachment.StencilAttachment
+            : EFrameBufferAttachment.DepthStencilAttachment;
+
+    /// <summary>Creates the output-size TSR edge stencil texture (one layer per view) in <paramref name="format"/>.</summary>
+    private XRTexture CreateTsrEdgeStencilTexture(uint width, uint height, uint layers, ESizedInternalFormat format)
+    {
+        bool stencilOnly = format == ESizedInternalFormat.StencilIndex8;
+        EPixelInternalFormat internalFormat = stencilOnly ? EPixelInternalFormat.StencilIndex8 : EPixelInternalFormat.Depth24Stencil8;
+        EPixelFormat pixelFormat = stencilOnly ? EPixelFormat.StencilIndex : EPixelFormat.DepthStencil;
+        EPixelType pixelType = stencilOnly ? EPixelType.UnsignedByte : EPixelType.UnsignedInt248;
+        ESizedInternalFormat sizedFormat = stencilOnly ? ESizedInternalFormat.StencilIndex8 : ESizedInternalFormat.Depth24Stencil8;
+        EFrameBufferAttachment attachment = stencilOnly ? EFrameBufferAttachment.StencilAttachment : EFrameBufferAttachment.DepthStencilAttachment;
+        if (layers > 1u)
+        {
+            XRTexture2DArray array = XRTexture2DArray.CreateFrameBufferTexture(layers, width, height, internalFormat, pixelFormat, pixelType, attachment);
+            array.Resizable = false;
+            array.SizedInternalFormat = sizedFormat;
+            array.OVRMultiViewParameters = new(0, layers);
+            array.MinFilter = ETexMinFilter.Nearest;
+            array.MagFilter = ETexMagFilter.Nearest;
+            array.Name = TsrEdgeStencilTextureName;
+            array.SamplerName = TsrEdgeStencilTextureName;
+            return array;
+        }
+
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(width, height, internalFormat, pixelFormat, pixelType, attachment);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = sizedFormat;
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.Name = TsrEdgeStencilTextureName;
+        texture.SamplerName = TsrEdgeStencilTextureName;
+        return texture;
+    }
+
+    /// <summary>
+    /// Creates the edge stencil classify quad. It samples the TSR resolve inputs and the edge mask,
+    /// writes no color, and sets <see cref="TsrEdgeStencilBit"/> on the fragments that it keeps.
+    /// </summary>
+    private XRFrameBuffer CreateTsrEdgeClassifyQuadFBO()
+    {
+        XRTexture[] textures =
+        [
+            GetTexture<XRTexture>(FinalPostProcessOutputTextureName)!,
+            GetTexture<XRTexture>(VelocityTextureName)!,
+            GetTexture<XRTexture>(DepthViewTextureName)!,
+            GetTexture<XRTexture>(HistoryDepthViewTextureName)!,
+            GetTexture<XRTexture>(TsrHistoryColorTextureName)!,
+            GetTexture<XRTexture>(StencilViewTextureName)!,
+            GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!,
+            GetTexture<XRTexture>(TsrHistoryMetadataTextureName)!,
+            GetTexture<XRTexture>(TsrEdgeMaskTextureName)!,
+        ];
+        XRShader shader = CreateAdvancedTsrEdgeClassifyShader(
+            Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
+        StencilTestFace face = new()
+        {
+            Function = EComparison.Always,
+            Reference = (int)TsrEdgeStencilBit,
+            ReadMask = TsrEdgeStencilBit,
+            WriteMask = TsrEdgeStencilBit,
+            BothFailOp = EStencilOp.Keep,
+            StencilPassDepthFailOp = EStencilOp.Keep,
+            BothPassOp = EStencilOp.Replace,
+        };
+        XRMaterial material = new(textures, shader)
+        {
+            RenderOptions = new RenderingParameters
+            {
+                DepthTest = new DepthTest
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                StencilTest = new StencilTest
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    FrontFace = face,
+                    BackFace = face,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                WriteRed = false,
+                WriteGreen = false,
+                WriteBlue = false,
+                WriteAlpha = false,
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy
+                    | EUniformRequirements.ViewportDimensions,
+            }
+        };
+        XRQuadFrameBuffer frameBuffer = new(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
+        {
+            Name = TsrEdgeClassifyQuadFBOName
+        };
+        frameBuffer.SettingUniforms += ApplyTsrUpscaleProgramBindings;
+        return frameBuffer;
     }
 
     private XRFrameBuffer CreateTsrHistoryColorFBO()

@@ -1920,6 +1920,13 @@ namespace XREngine.Rendering
         /// </summary>
         public abstract bool SupportsIndirectCountDraw();
 
+        /// <summary>
+        /// True when the device can use <paramref name="format"/> as an optimally tiled depth-stencil
+        /// attachment. Pipelines use it to choose a stencil-only format where the device supports one.
+        /// The base renderer reports false.
+        /// </summary>
+        public virtual bool SupportsDepthStencilAttachmentFormat(ESizedInternalFormat format) => false;
+
         /// <inheritdoc />
         public virtual AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
             => AdvancedRenderPipelineCapabilities.UnsupportedBackend;

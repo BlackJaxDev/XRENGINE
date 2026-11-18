@@ -345,6 +345,58 @@ so the TSR, FXAA, bloom, ambient occlusion and post passes have their own rows:
 
 `VulkanRenderer.CommandBufferRecording.Primary.FullscreenPassTiming.cs` builds these paths.
 
+### TSR edge stencil split
+
+The Advanced TSR resolve has a coverage path (`TsrResolveCoverage` in
+`TemporalSuperResolutionCoverage.glsl`). It classifies the 3x3 source depth into two clusters
+and resolves edge pixels from the two coverage samples. The coverage path needs many registers.
+When one resolve shader contains it, every pixel runs at low occupancy, but only about 1 to 5 %
+of the warps contain an edge pixel.
+
+`AdvancedRenderPipeline.TsrResolveForm` (`EAdvancedTsrResolveForm`) selects the form of the
+resolve by view mode:
+
+- Single-pass stereo eyes on Vulkan use `EdgeStencilSplit`. The pipeline records the extra
+  passes once for both eyes, and the GPU limits the frame rate.
+- Mono views (per-eye eyes and the desktop) use `Single`: one resolve pass, as before. Per-eye
+  eyes are limited by render-thread recording. Two extra passes per eye cost more recording time
+  than the split saves on the GPU, so the frame rate falls.
+- Other backends use `Single`. The split is validated on Vulkan only.
+
+`get_advanced_profile_diagnostics` reports the active form as `tsrResolveForm`.
+
+The split records four fullscreen passes:
+
+1. Edge mask (`TsrEdgeMaskQuadFBO` into `TsrEdgeMask`, R8, internal size). The TSR shader with
+   `XR_TSR_EDGE_MASK_PASS` runs the current-frame coverage classification once per internal
+   pixel. It writes 1 where the pixel passes it as a 3x3 center.
+2. Classify (`TsrEdgeClassifyQuadFBO` into the stencil of `TsrUpscaleEdgeFBO`, output size). The
+   TSR shader with `XR_TSR_EDGE_CLASSIFY` maps each output pixel to its source UV as the resolve
+   does. It discards the pixel where the mask is clear. The material writes no color and sets
+   the stencil bit `TsrEdgeStencilBit` on the pixels that it keeps. The pass clears the stencil
+   through its render pass load operation, so all multiview layers clear together.
+3. Lean resolve (`TsrUpscaleFBO`). The TSR shader with `XR_TSR_STENCIL_SPLIT` and
+   `XR_TSR_LEAN_RESOLVE` draws where the stencil bit is clear. Its coverage resolve returns at
+   once with the result of a failed classification (`DebugMode` failure reason 2). The compiler
+   therefore removes the coverage path.
+4. Full resolve (`TsrUpscaleEdgeFBO`). The TSR shader with `XR_TSR_STENCIL_SPLIT` draws where
+   the stencil bit is set, with the full coverage path.
+
+Both resolves write the same color targets (output, history metadata, accumulation). Neither
+resolve discards or writes depth or stencil, so the stencil test rejects the pixels of the other
+resolve before the fragment shader runs. Only the classify pass discards. The lean resolve is
+the temporal history producer (`TsrUpscaleFBO`). The history capture also depends on the full
+resolve pass, because that pass writes the same targets.
+
+The edge stencil texture `TsrEdgeStencil` uses `StencilIndex8` (Vulkan `VK_FORMAT_S8_UINT`)
+when `AbstractRenderer.SupportsDepthStencilAttachmentFormat` reports it as a depth-stencil
+attachment format. Otherwise it uses `Depth24Stencil8`. The pipeline writes the chosen format
+to the rendering log. Vulkan views of an `S8_UINT` image use the stencil aspect alone. The
+Default pipeline does not use the split.
+
+All four passes use `TemporalSuperResolutionStereo.fs`, so the stereo GPU timing row
+`Stereo > Fullscreen > TemporalSuperResolutionStereo` holds their sum.
+
 ### Scene registration identity reuse
 
 Native Uber material reuse retains the result of strict shader validation.

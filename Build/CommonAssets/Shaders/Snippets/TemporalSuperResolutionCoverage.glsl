@@ -453,6 +453,12 @@ TsrCoverageResult TsrResolveCoverage(vec2 sourceUv, vec2 historyUv,
         return result;
     TsrCoveragePair current;
     result.failureReason = 2.0;
+#ifdef XR_TSR_LEAN_RESOLVE
+    // Lean resolve of the edge stencil split: it runs only on pixels whose edge mask is clear, where
+    // TsrBuildCoveragePair fails. Return that same result without compiling the coverage path, so
+    // this variant uses far fewer registers than the full resolve.
+    return result;
+#endif
     if (!TsrBuildCoveragePair(sourceUv, false, current))
         return result;
     result.currentCoverage = current.coverage;

@@ -109,7 +109,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// </summary>
     private static ImageAspectFlags NormalizeAspectMaskForFormat(Format format, ImageAspectFlags requested)
     {
-        bool isDepthStencil = format is Format.D16Unorm or Format.X8D24UnormPack32 or Format.D32Sfloat or Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+        // S8Uint is stencil-only: its views use the stencil aspect alone.
+        bool stencilOnly = format == Format.S8Uint;
+        bool isDepthStencil = stencilOnly || format is Format.D16Unorm or Format.X8D24UnormPack32 or Format.D32Sfloat or Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
         if (!isDepthStencil)
         {
             ImageAspectFlags colorMask = requested & ImageAspectFlags.ColorBit;
@@ -117,8 +119,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
 
         bool hasStencil = format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
-        ImageAspectFlags supported = hasStencil
-            ? (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)
+        ImageAspectFlags supported = stencilOnly ? ImageAspectFlags.StencilBit
+            : hasStencil ? (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)
             : ImageAspectFlags.DepthBit;
 
         ImageAspectFlags normalized = requested & supported;
