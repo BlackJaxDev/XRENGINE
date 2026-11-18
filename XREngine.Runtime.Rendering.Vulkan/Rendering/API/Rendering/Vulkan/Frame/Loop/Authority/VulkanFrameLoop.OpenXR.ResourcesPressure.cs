@@ -206,6 +206,36 @@ internal sealed partial class VulkanFrameLoop
             baseArrayLayer,
             layerCount);
 
+    /// <summary>
+    /// Runs the two cache-owner drains of the desktop retirement boundary that a desktop frame
+    /// skips while OpenXR owns the frame deadline. The first drain tells each material and mesh
+    /// renderer to drop the descriptor sets that still pin a retired image, view, sampler or
+    /// buffer generation; a later bind writes current sets. The second drain resets invalidated
+    /// command buffers and applies queued frame-data command invalidations. Without them, a
+    /// resource generation change during OpenXR keeps every retired image of the old generation
+    /// alive until OpenXR stops.
+    /// </summary>
+    /// <remarks>
+    /// The caller holds the desktop retirement gate and calls this before an eye or stereo
+    /// render records commands. Every OpenXR path prepares all of its views before any view
+    /// records, and parallel eye workers finish recording before the submit call returns, so no
+    /// OpenXR recording reads these caches now. A desktop attempt cannot enter while the gate
+    /// is held, but an attempt that entered before can still record on a render worker. In that
+    /// case both drains wait for a later boundary; the queues keep their entries.
+    /// </remarks>
+    private void DrainSupersededDescriptorOwnersAtOpenXrBoundary(
+        in DesktopFrameActivitySnapshot desktopActivity)
+    {
+        if (desktopActivity.IsActive)
+        {
+            ResourceRuntime.RecordSupersededDescriptorOwnerDrainDeferral();
+            return;
+        }
+
+        ResourceRuntime.DrainPendingSupersededDescriptorOwners();
+        _commandRuntime.DrainInvalidatedCommandBufferRecordings(Api!, ResourceRuntime);
+    }
+
     private void DrainRetiredResourcesFromCompletedSubmittedFrameSlots()
     {
         // Let the completion frontier follow the GPU before the eye frame reuses resources.
@@ -214,6 +244,10 @@ internal sealed partial class VulkanFrameLoop
         _commandRuntime.DrainRetiredSynchronousSubmissions();
         using VulkanDesktopFrameRetirementScope retirement =
             new(_commandRuntime, RetirementGate);
+        // The gate stops a desktop attempt from entering until this drain ends.
+        DesktopFrameActivitySnapshot desktopActivity =
+            CaptureDesktopFrameActivity();
+        DrainSupersededDescriptorOwnersAtOpenXrBoundary(in desktopActivity);
         ReadOnlySpan<ulong> timelineValues = retirement.TimelineValues;
         if (timelineValues.IsEmpty)
         {
@@ -225,8 +259,6 @@ internal sealed partial class VulkanFrameLoop
         int frameSlotCount = Math.Min(
             timelineValues.Length,
             FrameSlotCount);
-        DesktopFrameActivitySnapshot desktopActivity =
-            CaptureDesktopFrameActivity();
         bool[] rentedDrainableSlots = ArrayPool<bool>.Shared.Rent(frameSlotCount);
         Span<bool> drainableSlots = rentedDrainableSlots.AsSpan(0, frameSlotCount);
         drainableSlots.Clear();

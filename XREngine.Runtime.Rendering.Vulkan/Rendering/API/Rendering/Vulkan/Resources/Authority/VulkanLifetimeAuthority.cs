@@ -57,6 +57,10 @@ internal sealed class VulkanLifetimeAuthority(
             new VulkanSupersededResourceDescriptorOwner(resourceKey, generation));
     }
 
+    /// <summary>Retired resource generations that wait for the descriptor cache owner drain.</summary>
+    internal int PendingSupersededResourceDescriptorOwnerCount
+        => _supersededResourceDescriptorOwners.Count;
+
     internal bool TryDequeueSupersededResourceDescriptorOwner(
         out VulkanSupersededResourceDescriptorOwner owner)
         => _supersededResourceDescriptorOwners.TryDequeue(out owner);

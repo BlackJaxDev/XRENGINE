@@ -765,6 +765,10 @@ public sealed partial class VulkanRenderer :
             ["trackedDescriptorSetCount"] = diagnostic.TrackedDescriptorSetCount,
             ["pendingRetirementCount"] = diagnostic.PendingRetirementCount,
             ["oldestPendingRetirementAgeMilliseconds"] = diagnostic.OldestPendingRetirementAgeMilliseconds,
+            ["supersededResourceGenerationsDrained"] = diagnostic.SupersededResourceGenerationsDrained,
+            ["supersededDescriptorOwnersReleased"] = diagnostic.SupersededDescriptorOwnersReleased,
+            ["supersededDescriptorOwnerDrainDeferrals"] = diagnostic.SupersededDescriptorOwnerDrainDeferrals,
+            ["pendingSupersededResourceGenerations"] = diagnostic.PendingSupersededResourceGenerations,
         };
     }
     object? IRenderBackendDiagnosticsCapability.GetDiagnosticReadbackDiagnostics()
