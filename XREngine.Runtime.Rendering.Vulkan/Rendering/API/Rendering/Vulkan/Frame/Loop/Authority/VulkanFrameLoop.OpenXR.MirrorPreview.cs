@@ -659,10 +659,17 @@ internal sealed partial class VulkanFrameLoop
         uint alternateRecordImageIndex = strictSpsTemporalHistory
             ? ResolveOpenXrRecordImageIndex(1 - request.ResourcePlannerStateIndex, OutputRuntime.Desktop.Images?.Length ?? 0)
             : recordImageIndex;
+        // The quad-view inset pair records after the wide pair in the same frame. It uses
+        // its own two slots after the wide pair's slots, so the two pairs never wait on
+        // each other's in-flight frame-data slots.
+        int stereoPair = strictSpsTemporalHistory ? ResolveOpenXrStereoPairSlotIndex(request.ViewPair) : 0;
+        uint stereoPairSlotOffset = (uint)(stereoPair * OpenXrEyeResourcePlannerStateCount);
+        recordImageIndex += stereoPairSlotOffset;
+        alternateRecordImageIndex += stereoPairSlotOffset;
         // Single-pass stereo records both eyes as one frame, so the second eye
         // frame-data slot is otherwise idle. Alternate between the two slots so the
         // next stereo frame can record while the previous one is still on the GPU.
-        if (strictSpsTemporalHistory && _openXrStereoUsesAlternateFrameDataSlot)
+        if (strictSpsTemporalHistory && _openXrStereoUsesAlternateFrameDataSlot[stereoPair])
             (recordImageIndex, alternateRecordImageIndex) = (alternateRecordImageIndex, recordImageIndex);
 
         VulkanOpenXrFrameContext openXrFrameContext =
@@ -701,10 +708,10 @@ internal sealed partial class VulkanFrameLoop
             }
             if (strictSpsTemporalHistory)
             {
-                _openXrStereoUsesAlternateFrameDataSlot =
+                _openXrStereoUsesAlternateFrameDataSlot[stereoPair] =
                     recordImageIndex == ResolveOpenXrRecordImageIndex(
                         request.ResourcePlannerStateIndex,
-                        OutputRuntime.Desktop.Images?.Length ?? 0);
+                        OutputRuntime.Desktop.Images?.Length ?? 0) + stereoPairSlotOffset;
             }
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
@@ -1140,16 +1147,22 @@ internal sealed partial class VulkanFrameLoop
     }
 
     private static int ResolveOpenXrFrameDataSlotCount(int desktopSwapchainImageCount)
-        => ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount) + OpenXrEyeResourcePlannerStateCount;
+        => ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount) +
+            OpenXrEyeResourcePlannerStateCount * OpenXrMaxStereoPairCount;
 
     private static int ResolveOpenXrDesktopFrameDataSlotCount(int desktopSwapchainImageCount)
         => Math.Max(Math.Max(desktopSwapchainImageCount, DesktopFrameSlotCount), 1);
 
     /// <summary>
-    /// True when the next single-pass stereo record starts with the second eye
-    /// frame-data slot. Render-thread state; only the strict stereo record reads it.
+    /// Per stereo pair, true when the next single-pass stereo record starts with the
+    /// pair's second eye frame-data slot. Render-thread state; only the strict stereo
+    /// record reads it.
     /// </summary>
-    private bool _openXrStereoUsesAlternateFrameDataSlot;
+    private readonly bool[] _openXrStereoUsesAlternateFrameDataSlot = new bool[OpenXrMaxStereoPairCount];
+
+    /// <summary>Maps a request's view pair to its stereo pair slot group: 0 wide, 1 inset.</summary>
+    private static int ResolveOpenXrStereoPairSlotIndex(int viewPair)
+        => (uint)viewPair < OpenXrMaxStereoPairCount ? viewPair : 0;
 
     private static uint ResolveOpenXrRecordImageIndex(
         int resourcePlannerStateIndex,

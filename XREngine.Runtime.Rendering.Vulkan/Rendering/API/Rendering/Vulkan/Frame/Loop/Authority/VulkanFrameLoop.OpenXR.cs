@@ -15,6 +15,13 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanFrameLoop
 {
     private const int OpenXrEyeResourcePlannerStateCount = 2;
+
+    /// <summary>
+    /// Layered stereo pairs that can record in one OpenXR frame: the wide pair, and the
+    /// inset pair of the quad view. Each pair owns <see cref="OpenXrEyeResourcePlannerStateCount"/>
+    /// eye frame-data slots, so a pair can record while its previous frame is still on the GPU.
+    /// </summary>
+    private const int OpenXrMaxStereoPairCount = 2;
     private const uint OpenXrExternalSwapchainTargetImageIndex = 0;
     private const string OpenXrLeftExternalSwapchainTargetName = "<openxr-left-swapchain>";
     private const string OpenXrRightExternalSwapchainTargetName = "<openxr-right-swapchain>";
