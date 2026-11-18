@@ -200,6 +200,21 @@ on a runtime with four views), the eye path renders two layered stereo pairs:
 - The wide pair renders at `RvcQuadViewWideResolutionScale` (default 0.5)
   times the eye resolution, because the inset covers the center of each eye at
   full resolution. A change recreates the OpenXR swapchains.
+- With `RvcQuadViewSharedVisibilityEnabled` (default false), the inset uses the
+  wide pair's visibility. The inset pipeline instance has
+  `ConsumesVisibilityFrom` set to the wide instance. After the wide pair's late
+  visibility, its Vulkan bank publishes its persistent visibility state. In the
+  inset's visibility preparation, the recording copies those records after the
+  inset's own records, and `EarlyVisibility.comp` runs in shared mode (bit 31 of
+  the view index). A candidate is drawn when it is in the inset frustum and the
+  wide view of the same eye drew it. Nothing is deferred, so the inset's late
+  visibility has no work. If the wide pair did not publish in the same render
+  frame, or its candidate or view count differs, the inset runs its normal
+  visibility. With `XRE_VULKAN_RECORDING_DIAG=1`, the consumed and fallback
+  counts go to `openxr-pair-failures.log`. Set
+  `XRE_OPENXR_QUAD_SHARED_VISIBILITY=0` to turn it off for an A/B run.
+- GPU timing dumps label the quad-view stereo records `Advanced[xr-wide]` and
+  `Advanced[xr-inset]` (`Advanced[xr-stereo]` without quad view).
 - The inset copies the wide pair's post-process settings when the wide state
   changes.
 - The inset uses the wide pair's auto exposure. The wide instance publishes its

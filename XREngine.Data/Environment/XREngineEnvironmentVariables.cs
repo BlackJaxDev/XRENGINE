@@ -101,6 +101,8 @@ public static class XREngineEnvironmentVariables
 
     /// <summary>Set to 0 to stop collecting single-pass stereo commands for the next OpenXR frame while the current frame renders. On by default.</summary>
     public const string OpenXrSpeculativeCollect = "XRE_OPENXR_SPECULATIVE_COLLECT";
+    /// <summary>Set to 0 to make the OpenXR quad-view inset pair run its own visibility instead of the wide pair's, for an A/B run. On by default; the RvcQuadViewSharedVisibilityEnabled setting must also be on.</summary>
+    public const string OpenXrQuadSharedVisibility = "XRE_OPENXR_QUAD_SHARED_VISIBILITY";
     /// <summary>
     /// OpenXR eye mesh-operation reuse across frames (Vulkan). On by default. <c>0</c> materializes
     /// every eye mesh request each frame. <c>witness</c> materializes each reused request again,

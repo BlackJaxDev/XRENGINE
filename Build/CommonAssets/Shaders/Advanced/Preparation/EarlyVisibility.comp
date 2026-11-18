@@ -8,7 +8,10 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityPreparationPush
     uint rangeBase;
 } XR_ADV_VisibilityPush;
 
-#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityPush.viewIndex
+// Bit 31 of viewIndex selects the shared-visibility mode; the low bits are the view.
+const uint XR_ADV_SHARED_VISIBILITY_BIT = 0x80000000u;
+#define XR_ADV_VIEW_INDEX (XR_ADV_VisibilityPush.viewIndex & ~XR_ADV_SHARED_VISIBILITY_BIT)
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VIEW_INDEX
 // The Vulkan program preamble selects the backend before this canonical
 // interface is expanded. Set 1 is owned by the frame-slot visibility runtime.
 #include "../Visibility/VisibilityInterface.glslinc"
@@ -63,12 +66,12 @@ bool sphereInsidePlane(vec3 center, float radius, vec4 plane)
 bool sphereInsideFrustum(vec4 sphere)
 {
     if (any(isnan(sphere)) || any(isinf(sphere)) || sphere.w < 0.0 ||
-        XR_ADV_VisibilityPush.viewIndex >= uint(XR_ADV_Views.records.length()))
+        XR_ADV_VIEW_INDEX >= uint(XR_ADV_Views.records.length()))
     {
         return false;
     }
 
-    mat4 viewProjection = XR_ADV_LoadView(XR_ADV_VisibilityPush.viewIndex).viewProjectionUnjittered;
+    mat4 viewProjection = XR_ADV_LoadView(XR_ADV_VIEW_INDEX).viewProjectionUnjittered;
     vec4 clipX = viewProjection[0];
     vec4 clipY = viewProjection[1];
     vec4 clipZ = viewProjection[2];
@@ -83,7 +86,7 @@ bool sphereInsideFrustum(vec4 sphere)
 
 bool candidateIncludesSelectedView(uvec2 viewMask)
 {
-    uint viewId = XR_ADV_LoadView(XR_ADV_VisibilityPush.viewIndex).viewId;
+    uint viewId = XR_ADV_LoadView(XR_ADV_VIEW_INDEX).viewId;
     if (viewId < 32u)
         return (viewMask.x & (1u << viewId)) != 0u;
     if (viewId < 64u)
@@ -187,8 +190,8 @@ void main()
     state.Flags = XR_ADV_VisibilityPersistentState.records[persistentWord + 7u];
     if ((candidate.Flags & FLAG_BOUNDS_REJECTED) != 0u ||
         !candidateIncludesSelectedView(candidate.ViewMask) ||
-        XR_ADV_SelectedViewExcludesInstance(candidateIndex, XR_ADV_VisibilityPush.viewIndex) ||
-        XR_ADV_SelectedViewExcludesProjectiveMirror(candidateIndex, XR_ADV_VisibilityPush.viewIndex))
+        XR_ADV_SelectedViewExcludesInstance(candidateIndex, XR_ADV_VIEW_INDEX) ||
+        XR_ADV_SelectedViewExcludesProjectiveMirror(candidateIndex, XR_ADV_VIEW_INDEX))
     {
         state.Draw = candidate.Draw;
         state.LastTestedFrame = uvec2(0u);
@@ -203,6 +206,43 @@ void main()
 
     bool frustumVisible =
         sphereInsideFrustum(candidate.BoundsSphere);
+
+    // Shared-visibility mode (quad-view inset). The recording copied another pipeline
+    // instance's persistent state, for the same eye and the same candidate order, to
+    // the records after this bank's own records. That instance renders the same eye
+    // from the same position with a wider frustum, so a candidate it drew this frame
+    // is the only kind the inset can see. Draw the candidate when it is in this
+    // frustum and the source drew it; never defer, so no late visibility work remains.
+    if ((XR_ADV_VisibilityPush.viewIndex & XR_ADV_SHARED_VISIBILITY_BIT) != 0u)
+    {
+        uint sharedIndex = 2u * XR_ADV_VisibilityPush.payloadCapacity + persistentIndex;
+        bool sourceDrew = false;
+        if (sharedIndex < persistentStateCapacity)
+        {
+            uint sharedWord = sharedIndex * 8u;
+            uvec2 sourceDraw = uvec2(
+                XR_ADV_VisibilityPersistentState.records[sharedWord],
+                XR_ADV_VisibilityPersistentState.records[sharedWord + 1u]);
+            sourceDrew = all(equal(sourceDraw, candidate.Draw)) &&
+                (XR_ADV_VisibilityPersistentState.records[sharedWord + 7u] & FLAG_EARLY_VISIBLE) != 0u;
+        }
+        else
+        {
+            atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        }
+
+        state.Draw = candidate.Draw;
+        state.LastTestedFrame = uvec2(0u);
+        state.Flags = frustumVisible && sourceDrew && appendEarly(candidateIndex)
+            ? FLAG_EARLY_VISIBLE
+            : 0u;
+        XR_ADV_VisibilityPersistentState.records[persistentWord] = state.Draw.x;
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 1u] = state.Draw.y;
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 4u] = state.LastTestedFrame.x;
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 5u] = state.LastTestedFrame.y;
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 7u] = state.Flags;
+        return;
+    }
 
     bool sameDraw = all(equal(state.Draw, candidate.Draw));
     state.Draw = candidate.Draw;

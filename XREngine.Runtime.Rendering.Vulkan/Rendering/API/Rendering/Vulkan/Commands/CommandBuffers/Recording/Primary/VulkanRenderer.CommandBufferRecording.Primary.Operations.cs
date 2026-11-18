@@ -409,6 +409,9 @@ internal sealed partial class VulkanCommandRuntime
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
         }
 
+        uint sharedVisibilityBit = RecordAdvancedSharedVisibilityCopy(ref state, in payload)
+            ? AdvancedSharedVisibilityViewBit
+            : 0u;
         for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
         {
             if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
@@ -423,7 +426,7 @@ internal sealed partial class VulkanCommandRuntime
                 VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
                     DeviceContext), 0u,
                 new AdvancedVisibilityPreparationPushConstants(
-                    viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+                    viewIndex | sharedVisibilityBit, payloadBase, payload.State.PayloadCapacity, rangeBase));
             Api.CmdDispatch(state.CommandBuffer, groups, 1u, 1u);
             CmdEndLabel(state.CommandBuffer);
         }
@@ -620,7 +623,75 @@ internal sealed partial class VulkanCommandRuntime
                     AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
                     PipelineStageFlags.ComputeShaderBit,
                     allowUndefined: false);
+
+        // Late visibility has written this frame's final visibility into the persistent
+        // state. A shared-visibility consumer that records later in the frame copies it.
+        ResourceRuntime.PublishAdvancedVisibilitySharedSource(
+            payload.State.Reservation.ReservationId,
+            new VulkanResourceRuntime.AdvancedVisibilitySharedSource(
+                payload.State.PersistentStateBuffer,
+                payload.State.PersistentStateTopologyGeneration,
+                payload.State.PayloadCapacity,
+                payload.State.ViewCount,
+                payload.Request.RenderFrameId));
         return info.OperationIndex;
+    }
+
+    /// <summary>Bit 31 of the early-visibility view index selects the shared-visibility mode.</summary>
+    private const uint AdvancedSharedVisibilityViewBit = 0x80000000u;
+
+    /// <summary>
+    /// When this bank consumes another bank's visibility (the quad-view inset uses the
+    /// wide pair's), copies the producer's persistent records for all views to the records
+    /// after this bank's own records, then makes the copy visible to compute. Returns true
+    /// when early visibility should run in shared mode.
+    /// </summary>
+    private unsafe bool RecordAdvancedSharedVisibilityCopy(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload)
+    {
+        if (!ResourceRuntime.TryGetActiveAdvancedVisibilitySharedSource(
+                payload.State.Reservation.ReservationId,
+                payload.State.PayloadCapacity,
+                payload.State.ViewCount,
+                payload.State.PersistentStateByteLength,
+                payload.Request.RenderFrameId,
+                out VulkanResourceRuntime.AdvancedVisibilitySharedSource source))
+            return false;
+
+        ulong recordBytes = (ulong)payload.State.PayloadCapacity * payload.State.ViewCount * 32u;
+        CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.SharedCopy");
+        // The producer wrote the records in an earlier submission on this queue; its
+        // compute writes must be visible to the transfer read.
+        MemoryBarrier beforeCopy = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.ShaderReadBit | AccessFlags.TransferWriteBit,
+            DstAccessMask = AccessFlags.TransferReadBit | AccessFlags.TransferWriteBit,
+        };
+        CmdPipelineBarrierTracked(state.CommandBuffer,
+            PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
+            PipelineStageFlags.TransferBit,
+            DependencyFlags.None, 1, &beforeCopy, 0, null, 0, null);
+        BufferCopy region = new()
+        {
+            SrcOffset = 0u,
+            DstOffset = recordBytes,
+            Size = recordBytes,
+        };
+        Api.CmdCopyBuffer(state.CommandBuffer, source.PersistentStateBuffer, payload.State.PersistentStateBuffer, 1, &region);
+        MemoryBarrier afterCopy = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.TransferWriteBit,
+            DstAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+        };
+        CmdPipelineBarrierTracked(state.CommandBuffer,
+            PipelineStageFlags.TransferBit,
+            PipelineStageFlags.ComputeShaderBit,
+            DependencyFlags.None, 1, &afterCopy, 0, null, 0, null);
+        CmdEndLabel(state.CommandBuffer);
+        return true;
     }
 
     private int RecordAdvancedVisibilityLateRasterPayload(

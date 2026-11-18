@@ -151,6 +151,12 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     /// view is active. The inset pair keeps the full eye resolution.
     /// </summary>
     float RvcQuadViewWideResolutionScale => RuntimeRenderingHostServiceDefaults.RvcQuadViewWideResolutionScale;
+
+    /// <summary>
+    /// When true, the quad-view inset pair draws only the objects that the wide pair drew in
+    /// the same frame, inside the inset frustum, and runs no late visibility of its own.
+    /// </summary>
+    bool RvcQuadViewSharedVisibilityEnabled => RuntimeRenderingHostServiceDefaults.RvcQuadViewSharedVisibilityEnabled;
     bool RvcOpenXrVisibilityMaskEnabled => false;
     double ResolveRvcViewGpuMilliseconds(int runtimeViewIndex, int runtimeViewCount)
     {

@@ -18,6 +18,10 @@ public unsafe partial class OpenXRAPI
     private RenderPipeline? _openXrInsetStereoRenderPipeline;
     private RenderPipeline? _openXrInsetPostProcessCopiedPipeline;
     private ulong _openXrInsetPostProcessCopiedVersion;
+
+    /// <summary><c>XRE_OPENXR_QUAD_SHARED_VISIBILITY=0</c> turns off inset shared visibility for an A/B run.</summary>
+    private static readonly bool OpenXrQuadSharedVisibilityAllowed =
+        XREnvironment.IsEnabled(XREngineEnvironmentVariables.OpenXrQuadSharedVisibility, defaultValue: true);
     private SharedAutoExposureChannel? _openXrInsetAutoExposureChannel;
 
     /// <summary>True when the quad-view configuration is active with four views.</summary>
@@ -158,6 +162,14 @@ public unsafe partial class OpenXRAPI
         XRViewport viewport = _openXrInsetStereoViewport!;
         XRCamera left = _openXrLeftInsetEyeCamera!;
         XRCamera right = _openXrRightInsetEyeCamera!;
+        // The inset shares each eye's position with the wide pair and has a narrower
+        // frustum, so it can draw from the wide pair's final visibility. The link is
+        // refreshed on every collect, so a setting change applies on the next frame.
+        viewport.RenderPipelineInstance.ConsumesVisibilityFrom =
+            OpenXrQuadSharedVisibilityAllowed &&
+            RuntimeRenderingHostServices.Presentation.RvcQuadViewSharedVisibilityEnabled
+                ? _openXrStereoViewport?.RenderPipelineInstance
+                : null;
         UpdateOpenXrEyeCameraFromView(left, 2u);
         UpdateOpenXrEyeCameraFromView(right, 3u);
 

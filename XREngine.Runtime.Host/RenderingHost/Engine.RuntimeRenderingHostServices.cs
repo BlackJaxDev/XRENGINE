@@ -1912,6 +1912,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public ERvcPipelineMode RvcPipelineMode => RuntimeEngine.Rendering.Settings.RvcPipelineMode;
     public bool RvcQuadViewEnabled => RuntimeEngine.Rendering.Settings.RvcQuadViewEnabled;
     public float RvcQuadViewWideResolutionScale => RuntimeEngine.Rendering.Settings.RvcQuadViewWideResolutionScale;
+    public bool RvcQuadViewSharedVisibilityEnabled => RuntimeEngine.Rendering.Settings.RvcQuadViewSharedVisibilityEnabled;
     public bool RvcOpenXrVisibilityMaskEnabled
         => RuntimeEngine.VRState.IsOpenXRActive &&
            RuntimeEngine.VRState.OpenXRApi?.IsRvcOpenXrVisibilityMaskExtensionEnabled == true;

@@ -671,6 +671,7 @@ public static partial class RuntimeEngine
                 private ERvcPipelineMode _rvcPipelineMode = ERvcPipelineMode.Off;
                 private bool _rvcQuadViewEnabled = false;
                 private float _rvcQuadViewWideResolutionScale = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcQuadViewWideResolutionScale;
+                private bool _rvcQuadViewSharedVisibilityEnabled = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcQuadViewSharedVisibilityEnabled;
                 private bool _rvcStereoReuseEnabled = false;
                 private bool _rvcInsetWideReuseEnabled = true;
                 private bool _rvcTemporalReuseEnabled = false;
@@ -2746,6 +2747,18 @@ public static partial class RuntimeEngine
                 {
                     get => _rvcQuadViewWideResolutionScale;
                     set => SetField(ref _rvcQuadViewWideResolutionScale, Math.Clamp(value, 0.1f, 1.0f));
+                }
+
+                /// <summary>
+                /// If true, the quad-view inset pair draws only the objects that the wide pair drew in
+                /// the same frame, inside the inset frustum, and runs no late visibility of its own.
+                /// </summary>
+                [Category("RVC")]
+                [Description("If true, the quad-view inset pair reuses the wide pair's visibility and runs no late visibility of its own.")]
+                public bool RvcQuadViewSharedVisibilityEnabled
+                {
+                    get => _rvcQuadViewSharedVisibilityEnabled;
+                    set => SetField(ref _rvcQuadViewSharedVisibilityEnabled, value);
                 }
 
                 /// <summary>

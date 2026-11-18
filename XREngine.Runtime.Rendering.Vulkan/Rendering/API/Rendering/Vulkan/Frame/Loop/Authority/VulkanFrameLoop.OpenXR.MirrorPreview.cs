@@ -427,6 +427,16 @@ internal sealed partial class VulkanFrameLoop
                 1 => "xr-inset",
                 _ => "xr-stereo",
             };
+            // A pipeline that consumes another pipeline's visibility (the quad-view inset)
+            // copies that pipeline's final visibility during this synchronous recording.
+            ulong sharedVisibilityConsumer = 0u;
+            if (renderPipelineInstance?.ConsumesVisibilityFrom is { } visibilitySource)
+            {
+                sharedVisibilityConsumer = renderPipelineInstance!.AdvancedOutputBinding.Reservation.ReservationId;
+                ResourceRuntime.SetActiveAdvancedVisibilitySharing(
+                    sharedVisibilityConsumer,
+                    visibilitySource.AdvancedOutputBinding.Reservation.ReservationId);
+            }
             try
             {
                 hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(
@@ -436,6 +446,8 @@ internal sealed partial class VulkanFrameLoop
             finally
             {
                 _commandRuntime.FrameTelemetry.GpuProfilerRootLabel = previousProfilerLabel;
+                if (sharedVisibilityConsumer != 0u)
+                    ResourceRuntime.SetActiveAdvancedVisibilitySharing(0u, 0u);
             }
             if (!hasRecorded)
             {
