@@ -190,6 +190,30 @@ destroy events by resource name and reason. Steady-state frames should generally
 show no churn; repeated `Recreated` or `Resized` rows point to a resource
 lifetime or size-policy bug rather than normal render cost.
 
+#### OpenXR eye recording scopes
+
+The Vulkan OpenXR eye paths use the same scope names, so per-eye and stereo trees compare
+step by step. Per-eye eyes nest them under `OpenXR.Vulkan.Batch.Prepare*Eye` and
+`OpenXR.Vulkan.Batch.Record*Eye`. True single-pass stereo nests them under
+`OpenXR.Vulkan.TrueSinglePassStereo.RenderAndPublish`.
+
+| Scope | Work |
+|---|---|
+| `OpenXR.Vulkan.RecordEye.PrepareFrameSlot` | Selects and reopens the frame-data slot; runs the OpenXR retirement drain. |
+| `OpenXR.Vulkan.RecordEye.EmitFrameOps` | Runs the viewport render that emits the frame operations. Per-eye splits it into `CaptureFrameOps` (the viewport render and the capture) and `FreezeFrameOps` (the sealed copy of each operation). |
+| `OpenXR.Vulkan.RecordEye.PlanAndSchedule` | Resource planner scope, frame-operation resource refresh, prewarm and image layout reconcile. |
+| `OpenXR.Vulkan.RecordEye.BuildFramePlan` | Stereo only: builds and seals the frame plan. Per-eye eyes seal the paired plan outside the eye scopes. |
+| `OpenXR.Vulkan.RecordEye.FreezeInput` | Per-eye only: the immutable recording input for one eye; contains the next three scopes. |
+| `OpenXR.Vulkan.RecordEye.PrepareStorage` | Immutable storage authority for the operations. |
+| `OpenXR.Vulkan.RecordEye.PrepareCompute` | Compute operation preparation for recording. |
+| `OpenXR.Vulkan.RecordEye.BuildPrimaryPlan` | Command chain schedule, primary command buffer owner and primary plan build. |
+| `OpenXR.Vulkan.RecordEye.RecordCommands` | Native command recording (contains `Vulkan.RecordPrimary.*`). |
+| `OpenXR.Vulkan.Batch.Publish` | Stereo only: the layer blit plan and the publish command buffer. |
+| `OpenXR.Vulkan.Batch.SubmitAndWait` | Queue submission of the eye command buffers. |
+
+The scopes cost one flag read when profiling is off, and use pooled scope objects with constant
+names when it is on, so they do not allocate per frame.
+
 ### Connection States
 
 | State | Menu Bar | Overlay |

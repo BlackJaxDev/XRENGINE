@@ -520,11 +520,16 @@ internal sealed partial class VulkanFrameLoop
                         request.OpenXrViewIndex,
                         request.ResourcePlannerStateIndex,
                         request.PackageAuthority);
-                    ops = CloneFrameOpsForPreparedOpenXrEye(
-                        CaptureFrameOpsExcludingTextureUploads(
+                    FrameOp[] capturedOps;
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.CaptureFrameOps"))
+                    {
+                        capturedOps = CaptureFrameOpsExcludingTextureUploads(
                             request.FrameOpEmitter,
                             in emission,
-                            out _));
+                            out _);
+                    }
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.FreezeFrameOps"))
+                        ops = CloneFrameOpsForPreparedOpenXrEye(capturedOps);
                 }
                 retainedOps = ops;
                 drainedFrameOps = true;
@@ -680,10 +685,16 @@ internal sealed partial class VulkanFrameLoop
     {
         recorded = default;
         bool recordingPublished = false;
-        if (!TryFreezeOpenXrEyeRecordWorkerInput(
+        bool frozenInput;
+        OpenXrPreparedEyeRecordWorkerInput frozen;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.FreezeInput"))
+        {
+            frozenInput = TryFreezeOpenXrEyeRecordWorkerInput(
                 in prepared,
                 _commandRuntime.ResolveOpenXrEyeRenderLaneId(0),
-                out OpenXrPreparedEyeRecordWorkerInput frozen))
+                out frozen);
+        }
+        if (!frozenInput)
         {
             throw CreateOpenXrEyePresentNowFailure(
                 prepared.TargetContext.OpenXrViewIndex,
@@ -709,11 +720,17 @@ internal sealed partial class VulkanFrameLoop
             using VulkanLaneCommandFamilyArena.RecordingLease arenaLease =
                 VulkanLaneCommandFamilyArena.EnterRecording(
                     attachment.Graphics);
-            if (!recordingService.TryRecordPreparedEye(
+            bool recordedEye;
+            VulkanImportedTexturePendingUpload[] uploads;
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.RecordCommands"))
+            {
+                recordedEye = recordingService.TryRecordPreparedEye(
                     workerIndex: frozen.RenderLaneId,
                     in frozen,
                     out recorded,
-                    out VulkanImportedTexturePendingUpload[] uploads))
+                    out uploads);
+            }
+            if (!recordedEye)
                 return false;
 
             if (uploads.Length != 0)
@@ -814,19 +831,26 @@ internal sealed partial class VulkanFrameLoop
 
         FrameOperationSequence nativeOperations =
             framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId);
-        VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority =
-            PrepareOpenXrImmutableStorage(
+        VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareStorage"))
+        {
+            readOnlyStorageAuthority = PrepareOpenXrImmutableStorage(
                 nativeOperations.Stream,
                 targetContext.FrameDataSlotIndex,
                 targetContext.OpenXrViewIndex);
+        }
         // Keep the exact eye-slot authority through mesh prewarm and recording,
         // not just compute preparation: both consume immutable material banks.
         using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
             ResourceRuntime.EnterReadOnlyStorageRecordingScope(readOnlyStorageAuthority);
-        VulkanComputePreparationResult computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
+        VulkanComputePreparationResult computePreparation;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareCompute"))
+        {
+            computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
                 targetContext.FrameDataSlotIndex,
                 nativeOperations,
                 framePlan);
+        }
         if (!computePreparation.Succeeded)
         {
             throw new VulkanPresentNowReadinessException(
@@ -844,57 +868,63 @@ internal sealed partial class VulkanFrameLoop
         // this logical-view slice. Cache and pipeline identities must describe
         // the exact sliced ordinal space or one eye can reuse the other eye's
         // manifest with incompatible operation indices.
-        ulong frameOpsSignature =
-            VulkanFrameOperationSemantics.ComputeFrameOpsSignature(
-                nativeOperations);
-        CommandChainSchedule? commandChainSchedule =
-            RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync
-                ? null
-                : TryBuildOpenXrEyeCommandChainSchedule(
-                    targetContext.CommandChainImageKey,
-                    targetContext.OpenXrViewIndex,
-                    targetContext.OpenXrImageIndex,
-                    targetContext.Image,
-                    nativeOperations.Stream,
-                    frameOpsSignature,
-                    prepared.PlannerRevision);
-        _commandRuntime.PublishOpenXrExternalImageAcquireState(
-            targetContext.Image,
-            CreateOpenXrRuntimeColorSubresourceRange());
-        ImageSubresourceRange colorRange =
-            CreateOpenXrRuntimeColorSubresourceRange();
-        _commandRuntime.Synchronization.TryGetSubmittedImageLayout(
-            targetContext.Image,
-            in colorRange,
-            out ImageLayout trackedTargetLayout);
+        ulong frameOpsSignature;
+        CommandChainSchedule? commandChainSchedule;
+        ImageSubresourceRange colorRange;
+        ImageLayout trackedTargetLayout;
+        PrimaryCommandArtifactOwner owner;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.BuildPrimaryPlan"))
+        {
+            frameOpsSignature =
+                VulkanFrameOperationSemantics.ComputeFrameOpsSignature(
+                    nativeOperations);
+            commandChainSchedule =
+                RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync
+                    ? null
+                    : TryBuildOpenXrEyeCommandChainSchedule(
+                        targetContext.CommandChainImageKey,
+                        targetContext.OpenXrViewIndex,
+                        targetContext.OpenXrImageIndex,
+                        targetContext.Image,
+                        nativeOperations.Stream,
+                        frameOpsSignature,
+                        prepared.PlannerRevision);
+            _commandRuntime.PublishOpenXrExternalImageAcquireState(
+                targetContext.Image,
+                CreateOpenXrRuntimeColorSubresourceRange());
+            colorRange = CreateOpenXrRuntimeColorSubresourceRange();
+            _commandRuntime.Synchronization.TryGetSubmittedImageLayout(
+                targetContext.Image,
+                in colorRange,
+                out trackedTargetLayout);
 
-        ulong cacheKey = BuildOpenXrPrimaryCommandBufferCacheKey(
-            targetContext.CommandChainImageKey,
-            in targetContext);
-        FrameOpSignatureHasher laneCacheHash = new();
-        laneCacheHash.Add(cacheKey);
-        laneCacheHash.Add(renderLaneId);
-        laneCacheHash.Add(renderFrameSlot);
-        cacheKey = laneCacheHash.ToHash();
-        VulkanLaneCommandFamilyArena laneArena =
-            _commandRuntime.GetRenderLaneAttachment(
-                renderLaneId,
-                renderFrameSlot).Graphics;
-        PrimaryCommandArtifactOwner owner =
-            GetOrCreateOpenXrPrimaryCommandBufferOwner(
+            ulong cacheKey = BuildOpenXrPrimaryCommandBufferCacheKey(
+                targetContext.CommandChainImageKey,
+                in targetContext);
+            FrameOpSignatureHasher laneCacheHash = new();
+            laneCacheHash.Add(cacheKey);
+            laneCacheHash.Add(renderLaneId);
+            laneCacheHash.Add(renderFrameSlot);
+            cacheKey = laneCacheHash.ToHash();
+            VulkanLaneCommandFamilyArena laneArena =
+                _commandRuntime.GetRenderLaneAttachment(
+                    renderLaneId,
+                    renderFrameSlot).Graphics;
+            owner = GetOrCreateOpenXrPrimaryCommandBufferOwner(
                 cacheKey,
                 targetContext.FrameDataSlotIndex,
                 laneArena,
                 prepared.FrameDataSlotCompletionProven,
                 targetContext.OpenXrViewIndex);
-        owner.PrimaryCommandPlan.Build(
-            nativeOperations.Stream,
-            frameOpsSignature,
-            new VulkanPrimaryPlanTerminalContext(
-                PreserveSwapchainForOverlay: false,
-                TransitionSwapchainToPresent: false,
-                ReleaseExternalImageOwnership: true),
-            framePlan: framePlan);
+            owner.PrimaryCommandPlan.Build(
+                nativeOperations.Stream,
+                frameOpsSignature,
+                new VulkanPrimaryPlanTerminalContext(
+                    PreserveSwapchainForOverlay: false,
+                    TransitionSwapchainToPresent: false,
+                    ReleaseExternalImageOwnership: true),
+                framePlan: framePlan);
+        }
 
         SwapchainRecordingTarget recordingTarget = new(
             targetContext.Image,
