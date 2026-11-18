@@ -69,6 +69,7 @@ public unsafe partial class OpenXRAPI
 
         if (Volatile.Read(ref _frameSkipRender) != 0)
         {
+            MarkNoLayerReason((EOpenXrNoLayerReason)Volatile.Read(ref _frameSkipRenderReason));
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -86,6 +87,7 @@ public unsafe partial class OpenXRAPI
 
         if (!TryResolveOpenXrViewRenderModeForCurrentBackend(out _))
         {
+            MarkNoLayerReason(EOpenXrNoLayerReason.UnsupportedViewRenderMode);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -104,6 +106,7 @@ public unsafe partial class OpenXRAPI
         if (!TryValidateOpenXrEyePipelineSelection(out string pipelineDiagnostic, out bool pipelinePending))
         {
             ReportOpenXrEyePipelineSelectionRejected(pipelineDiagnostic, pipelinePending);
+            MarkNoLayerReason(EOpenXrNoLayerReason.PipelineSelectionRejected);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -182,6 +185,7 @@ public unsafe partial class OpenXRAPI
 
         if (!allEyesRendered)
         {
+            MarkNoLayerReason(EOpenXrNoLayerReason.EyeRenderFailed);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -832,6 +836,7 @@ public unsafe partial class OpenXRAPI
                 // A begun OpenXR frame must still reach xrEndFrame. Mark it as a deliberate
                 // no-layer frame so SwapBuffers publishes it to the render thread instead of
                 // leaving the runtime frame pending forever.
+                Volatile.Write(ref _frameSkipRenderReason, (int)EOpenXrNoLayerReason.CollectUnsupportedViewRenderMode);
                 Volatile.Write(ref _frameSkipRender, 1);
                 success = true;
                 return;
@@ -1752,6 +1757,7 @@ public unsafe partial class OpenXRAPI
 
             if (_frameState.ShouldRender == 0)
             {
+                Volatile.Write(ref _frameSkipRenderReason, (int)EOpenXrNoLayerReason.RuntimeShouldNotRender);
                 Volatile.Write(ref _frameSkipRender, 1);
                 Volatile.Write(ref _pendingXrFrame, 1);
 
@@ -1826,6 +1832,7 @@ public unsafe partial class OpenXRAPI
     {
         try
         {
+            MarkNoLayerReason(EOpenXrNoLayerReason.FrameAborted);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
