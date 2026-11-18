@@ -145,6 +145,12 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
 
     ERvcPipelineMode RvcPipelineMode => ERvcPipelineMode.Off;
     bool RvcQuadViewEnabled => false;
+
+    /// <summary>
+    /// Multiplies the eye resolution of the wide pair (views 0 and 1) when the OpenXR quad
+    /// view is active. The inset pair keeps the full eye resolution.
+    /// </summary>
+    float RvcQuadViewWideResolutionScale => RuntimeRenderingHostServiceDefaults.RvcQuadViewWideResolutionScale;
     bool RvcOpenXrVisibilityMaskEnabled => false;
     double ResolveRvcViewGpuMilliseconds(int runtimeViewIndex, int runtimeViewCount)
     {

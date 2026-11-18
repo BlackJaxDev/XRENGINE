@@ -528,6 +528,7 @@ public unsafe partial class OpenXRAPI
     private readonly uint[] _swapchainHeights = new uint[RenderFrameViewSet.MaxViewCount];
     private EOpenXrEyeResolutionPreset _appliedOpenXrEyeResolutionPreset = RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionPreset;
     private float _appliedOpenXrEyeResolutionScale = RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionScale;
+    private float _appliedOpenXrQuadWideResolutionScale = RuntimeRenderingHostServiceDefaults.RvcQuadViewWideResolutionScale;
     private uint _appliedOpenXrCustomEyeResolutionWidth = RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
     private uint _appliedOpenXrCustomEyeResolutionHeight = RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionHeight;
     private bool _renderSettingsChangedSubscribed;

@@ -12,10 +12,11 @@ public unsafe partial class OpenXRAPI
         EOpenXrEyeResolutionPreset Preset,
         float Scale,
         uint CustomWidth,
-        uint CustomHeight)
+        uint CustomHeight,
+        float QuadWideScale)
     {
         public override string ToString()
-            => $"{Preset} scale={Scale:F2} custom={CustomWidth}x{CustomHeight}";
+            => $"{Preset} scale={Scale:F2} custom={CustomWidth}x{CustomHeight} quadWideScale={QuadWideScale:F2}";
     }
 
     internal static OpenXrEyeSwapchainExtent ResolveOpenXrEyeSwapchainExtentForSettings(
@@ -113,9 +114,14 @@ public unsafe partial class OpenXRAPI
         int index = (int)Math.Min(viewIndex, (uint)_viewConfigViews.Length - 1u);
         var viewConfig = _viewConfigViews[index];
         IRuntimeRenderPresentationServices settings = RuntimeRenderingHostServices.Presentation;
+        // With quad view, the inset pair covers the center of each eye at full resolution,
+        // so the wide pair (views 0 and 1) renders at the quad-view wide scale.
+        float scale = settings.OpenXrEyeResolutionScale;
+        if (IsOpenXrQuadViewConfigurationActive && viewIndex < 2u)
+            scale = Math.Clamp(scale * NormalizeOpenXrQuadWideScale(settings.RvcQuadViewWideResolutionScale), 0.1f, 2.0f);
         return ResolveOpenXrEyeSwapchainExtentForSettings(
             settings.OpenXrEyeResolutionPreset,
-            settings.OpenXrEyeResolutionScale,
+            scale,
             settings.OpenXrCustomEyeResolutionWidth,
             settings.OpenXrCustomEyeResolutionHeight,
             viewConfig.RecommendedImageRectWidth,
@@ -416,6 +422,7 @@ public unsafe partial class OpenXRAPI
         _appliedOpenXrEyeResolutionScale = current.Scale;
         _appliedOpenXrCustomEyeResolutionWidth = current.CustomWidth;
         _appliedOpenXrCustomEyeResolutionHeight = current.CustomHeight;
+        _appliedOpenXrQuadWideResolutionScale = current.QuadWideScale;
     }
 
     private OpenXrEyeResolutionSettingsSnapshot CaptureCurrentOpenXrEyeResolutionSettings()
@@ -425,7 +432,8 @@ public unsafe partial class OpenXRAPI
             settings.OpenXrEyeResolutionPreset,
             NormalizeOpenXrEyeResolutionScale(settings.OpenXrEyeResolutionScale),
             settings.OpenXrCustomEyeResolutionWidth,
-            settings.OpenXrCustomEyeResolutionHeight);
+            settings.OpenXrCustomEyeResolutionHeight,
+            NormalizeOpenXrQuadWideScale(settings.RvcQuadViewWideResolutionScale));
     }
 
     private OpenXrEyeResolutionSettingsSnapshot CaptureAppliedOpenXrEyeResolutionSettings()
@@ -433,7 +441,8 @@ public unsafe partial class OpenXRAPI
             _appliedOpenXrEyeResolutionPreset,
             NormalizeOpenXrEyeResolutionScale(_appliedOpenXrEyeResolutionScale),
             _appliedOpenXrCustomEyeResolutionWidth,
-            _appliedOpenXrCustomEyeResolutionHeight);
+            _appliedOpenXrCustomEyeResolutionHeight,
+            _appliedOpenXrQuadWideResolutionScale);
 
     private static bool OpenXrEyeResolutionSettingsMatch(
         OpenXrEyeResolutionSettingsSnapshot left,
@@ -441,7 +450,12 @@ public unsafe partial class OpenXRAPI
         => left.Preset == right.Preset &&
            Math.Abs(left.Scale - right.Scale) <= 0.0001f &&
            left.CustomWidth == right.CustomWidth &&
-           left.CustomHeight == right.CustomHeight;
+           left.CustomHeight == right.CustomHeight &&
+           Math.Abs(left.QuadWideScale - right.QuadWideScale) <= 0.0001f;
+
+    /// <summary>Clamps the quad-view wide scale to its valid 0.1x to 1.0x range.</summary>
+    private static float NormalizeOpenXrQuadWideScale(float scale)
+        => float.IsFinite(scale) ? Math.Clamp(scale, 0.1f, 1.0f) : 1.0f;
 
     private static float NormalizeOpenXrEyeResolutionScale(float scale)
         => RequireOpenXrEyeResolutionScale(scale);

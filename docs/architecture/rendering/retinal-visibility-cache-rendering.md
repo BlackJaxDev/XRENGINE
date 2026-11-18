@@ -197,6 +197,9 @@ on a runtime with four views), the eye path renders two layered stereo pairs:
 - Both the full collect and the speculative next-frame collect
   (`OpenXRAPI.SpeculativeCollect.cs`) collect the inset pair. A collect path
   that skips it leaves the inset with no published frame package.
+- The wide pair renders at `RvcQuadViewWideResolutionScale` (default 0.5)
+  times the eye resolution, because the inset covers the center of each eye at
+  full resolution. A change recreates the OpenXR swapchains.
 - The inset copies the wide pair's post-process settings when the wide state
   changes.
 - The inset uses the wide pair's auto exposure. The wide instance publishes its

@@ -670,6 +670,7 @@ public static partial class RuntimeEngine
                 private EAdvancedRenderPipelineMode _advancedRenderPipelineMode = EAdvancedRenderPipelineMode.Available;
                 private ERvcPipelineMode _rvcPipelineMode = ERvcPipelineMode.Off;
                 private bool _rvcQuadViewEnabled = false;
+                private float _rvcQuadViewWideResolutionScale = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcQuadViewWideResolutionScale;
                 private bool _rvcStereoReuseEnabled = false;
                 private bool _rvcInsetWideReuseEnabled = true;
                 private bool _rvcTemporalReuseEnabled = false;
@@ -2732,6 +2733,19 @@ public static partial class RuntimeEngine
                 {
                     get => _rvcQuadViewEnabled;
                     set => SetField(ref _rvcQuadViewEnabled, value);
+                }
+
+                /// <summary>
+                /// Multiplies the eye resolution of the quad-view wide pair. The inset pair covers the
+                /// center of the view at full resolution, so the wide pair can render at a lower
+                /// resolution. Valid range is 0.1x to 1.0x. A change recreates the OpenXR swapchains.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Multiplies the eye resolution of the quad-view wide pair. The inset pair keeps full resolution. Valid range is 0.1x to 1.0x.")]
+                public float RvcQuadViewWideResolutionScale
+                {
+                    get => _rvcQuadViewWideResolutionScale;
+                    set => SetField(ref _rvcQuadViewWideResolutionScale, Math.Clamp(value, 0.1f, 1.0f));
                 }
 
                 /// <summary>
