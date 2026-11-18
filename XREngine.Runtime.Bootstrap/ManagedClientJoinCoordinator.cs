@@ -261,7 +261,7 @@ public sealed class ManagedClientJoinCoordinator : IDisposable
 
     private static ManagedClientJoinFailureKind ClassifyServerError(ServerErrorMessage error)
     {
-        if ((error.Title + " " + error.Detail).Contains("kick", StringComparison.OrdinalIgnoreCase)) return ManagedClientJoinFailureKind.Kicked;
+        if ($"{error.Title} {error.Detail}".Contains("kick", StringComparison.OrdinalIgnoreCase)) return ManagedClientJoinFailureKind.Kicked;
         return error.StatusCode switch { 400 => ManagedClientJoinFailureKind.WorldOrBuildMismatch, 401 or 403 => ManagedClientJoinFailureKind.InvalidOrExpiredTicket, 404 or 425 => ManagedClientJoinFailureKind.ServerUnready, 409 => ManagedClientJoinFailureKind.RoomFull, >= 500 => ManagedClientJoinFailureKind.ServerExited, _ => ManagedClientJoinFailureKind.Unknown };
     }
     private static string DescribeServerError(ServerErrorMessage error) => string.IsNullOrWhiteSpace(error.Title) ? "Managed server rejected the join." : error.Title;

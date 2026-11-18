@@ -13,7 +13,7 @@ public struct BVector4(float x, float y, float z, float w)
     public bfloat _w = w;
 
     public override readonly string ToString()
-        => string.Format("({0}, {1}, {2}, {3})", (float)_x, (float)_y, (float)_z, (float)_w);
+        => $"({(float)_x}, {(float)_y}, {(float)_z}, {(float)_w})";
 
     public static implicit operator Vector4(BVector4 v)
         => new(v._x, v._y, v._z, v._w);

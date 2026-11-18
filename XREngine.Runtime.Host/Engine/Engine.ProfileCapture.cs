@@ -517,7 +517,7 @@ public static partial class Engine
             string settingsIdentity = BuildSettingsIdentity(renderTargetModeEnv, renderTargetModeSetting);
             string sceneIdentityHash = ComputeStableIdentityHash(sceneIdentity);
             string settingsIdentityHash = ComputeStableIdentityHash(settingsIdentity);
-            string sceneSettingsHash = ComputeStableIdentityHash(sceneIdentity + "|" + settingsIdentity);
+            string sceneSettingsHash = ComputeStableIdentityHash($"{sceneIdentity}|{settingsIdentity}");
             RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest = RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest;
             string profileMode = ResolvePerformanceProfileMode();
             PerformanceObserverMetadata observers =
@@ -1764,7 +1764,7 @@ public static partial class Engine
 
                 string stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture);
                 string safeLabel = SanitizePathSegment(label);
-                string directoryName = string.IsNullOrWhiteSpace(safeLabel) ? stamp : stamp + "_" + safeLabel;
+                string directoryName = string.IsNullOrWhiteSpace(safeLabel) ? stamp : $"{stamp}_{safeLabel}";
                 outputDirectory = Path.Combine(profileRoot, directoryName);
                 output.EnsureProfileDirectory(outputDirectory);
                 EnforceRuntimeCaptureRetention(profileRoot, output);
@@ -2362,7 +2362,7 @@ public static partial class Engine
             }
             catch (Exception ex)
             {
-                return "<error:" + ex.GetType().Name + ">";
+                return $"<error:{ex.GetType().Name}>";
             }
         }
 
@@ -2449,7 +2449,7 @@ public static partial class Engine
                 return;
             }
 
-            errors.Add(name + " must be a boolean flag, got '" + value + "'");
+            errors.Add($"{name} must be a boolean flag, got '{value}'");
         }
 
         private static void ValidateEnvEnum(List<string> errors, string name, params string[] allowed)
@@ -2462,7 +2462,7 @@ public static partial class Engine
             if (allowed.Any(allowedValue => string.Equals(allowedValue, value, StringComparison.OrdinalIgnoreCase)))
                 return;
 
-            errors.Add(name + " must be one of [" + string.Join(", ", allowed) + "], got '" + value + "'");
+            errors.Add($"{name} must be one of [{string.Join(", ", allowed)}], got '{value}'");
         }
 
         private static void ValidateEnvPositiveDouble(List<string> errors, string name)
@@ -2474,7 +2474,7 @@ public static partial class Engine
             if (TryParsePositiveDouble(raw) is not null)
                 return;
 
-            errors.Add(name + " must be a positive number, got '" + raw.Trim() + "'");
+            errors.Add($"{name} must be a positive number, got '{raw.Trim()}'");
         }
 
         private static bool IsEnvFlagEnabled(string name)
@@ -2768,7 +2768,7 @@ public static partial class Engine
                     .OrderBy(static name => name, StringComparer.Ordinal)
                     .ToArray();
                 string configuredScene = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty;
-                return string.Join("|", worldNames) + "|profile=" + configuredScene;
+                return $"{string.Join("|", worldNames)}|profile={configuredScene}";
             }
             catch
             {

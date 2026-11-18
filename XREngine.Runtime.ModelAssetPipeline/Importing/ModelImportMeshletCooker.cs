@@ -202,8 +202,7 @@ public static class ModelImportMeshletCooker
         Debug.WriteAuxiliaryLog(
             "meshlet-cache.log",
             $"[MeshletCache] file={Path.GetFileName(cache.FilePath)} stored={cache.StoredCount} hits={cache.HitCount} " +
-            $"misses={cache.MissCount} rejected={cache.RejectedCount} written={written}" +
-            (failure is null ? string.Empty : $" writeFailure={failure}"));
+            $"misses={cache.MissCount} rejected={cache.RejectedCount} written={written}{(failure is null ? string.Empty : $" writeFailure={failure}")}");
     }
 
     private static void ApplyModelDefaultsWhenUnspecified(SubMesh subMesh, ModelCookSettings defaults)

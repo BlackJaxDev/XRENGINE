@@ -25,7 +25,7 @@ internal static class RealtimeWebSocketUpgrade
         if (count == bytes.Length)
             throw new InvalidDataException("Realtime upgrade headers exceed the limit.");
         string[] lines = Encoding.ASCII.GetString(bytes, 0, count).Split("\r\n", StringSplitOptions.None);
-        if (lines[0] != "GET " + RealtimeWebSocketProtocol.Path + " HTTP/1.1")
+        if (lines[0] != $"GET {RealtimeWebSocketProtocol.Path} HTTP/1.1")
             throw new InvalidDataException("Unsupported realtime upgrade route.");
         Dictionary<string, string> headers = new(StringComparer.OrdinalIgnoreCase);
         for (int index = 1; index < lines.Length - 2; index++)
@@ -53,8 +53,8 @@ internal static class RealtimeWebSocketUpgrade
             throw new InvalidDataException("Invalid realtime upgrade nonce.");
         // SHA-1 is mandated by the WebSocket handshake and is not used for authentication.
         string accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
-        byte[] response = Encoding.ASCII.GetBytes("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
-            + accept + "\r\nSec-WebSocket-Protocol: " + RealtimeWebSocketProtocol.Subprotocol + "\r\n\r\n");
+        byte[] response = Encoding.ASCII.GetBytes(
+            $"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Protocol: {RealtimeWebSocketProtocol.Subprotocol}\r\n\r\n");
         await stream.WriteAsync(response, cancellationToken).ConfigureAwait(false);
     }
 

@@ -1228,7 +1228,7 @@ public static partial class EditorImGuiUI
     }
 
     private static string BuildShaderProgramLinkTooltip(ShaderProgramLinkRow row)
-        => BuildShaderProgramLinkClipboard(row) +
+        => $"{BuildShaderProgramLinkClipboard(row)}" +
            $"{Environment.NewLine}Queues: {row.QueueText}" +
            $"{Environment.NewLine}Pending: {row.PendingText}";
 

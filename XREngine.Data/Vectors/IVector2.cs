@@ -88,7 +88,7 @@ public unsafe partial struct IVector2(int x, int y) : IBufferable, IUniformable
     private static string ListSeparator = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ListSeparator;
 
     public override readonly string ToString()
-        => string.Format("({0}{2} {1})", X, Y, ListSeparator);
+        => $"({X}{ListSeparator} {Y})";
 
     public override readonly int GetHashCode()
     {

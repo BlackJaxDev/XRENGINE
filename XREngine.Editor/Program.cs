@@ -356,8 +356,7 @@ internal partial class Program
             return true;
 
         EngineDebug.LogWarning(
-            $"Invalid {XREngineEnvironmentVariables.OpenXrRenderPacingMode} value '{raw}'. Expected one of: " +
-            string.Join(", ", Enum.GetNames<OpenXrRenderPacingMode>()) + ".");
+            $"Invalid {XREngineEnvironmentVariables.OpenXrRenderPacingMode} value '{raw}'. Expected one of: {string.Join(", ", Enum.GetNames<OpenXrRenderPacingMode>())}.");
         return false;
     }
 

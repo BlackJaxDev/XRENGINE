@@ -821,20 +821,8 @@ namespace XREngine.Maths
         public int SupportSize => supportSize;
 
         public override string ToString()
-        {
-            return "Quality [qrInconsistency="
-                + qrInconsistency
-                + ", minConvexCoefficient="
-                + minConvexCoefficient
-                + ", maxOverlength="
-                + maxOverlength
-                + ", maxUnderlength="
-                + maxUnderlength
-                + ", iterations="
-                + iterations
-                + ", supportSize="
-                + supportSize
-                + "]";
-        }
+            => $"Quality [qrInconsistency={qrInconsistency}, minConvexCoefficient={minConvexCoefficient}, " +
+               $"maxOverlength={maxOverlength}, maxUnderlength={maxUnderlength}, " +
+               $"iterations={iterations}, supportSize={supportSize}]";
     }
 }

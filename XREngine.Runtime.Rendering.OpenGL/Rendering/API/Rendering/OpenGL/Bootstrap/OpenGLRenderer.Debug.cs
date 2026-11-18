@@ -200,7 +200,7 @@ public partial class OpenGLRenderer
                 string? logsRoot = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs");
                 System.IO.Directory.CreateDirectory(logsRoot);
                 System.IO.File.AppendAllText(System.IO.Path.Combine(logsRoot, "gldebug-high.log"),
-                    "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] " + payload + Environment.NewLine);
+                    $"[{DateTime.Now:HH:mm:ss.fff}] {payload}{Environment.NewLine}");
             }
             catch { }
         }

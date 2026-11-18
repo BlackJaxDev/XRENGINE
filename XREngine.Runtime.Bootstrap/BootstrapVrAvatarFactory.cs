@@ -76,6 +76,6 @@ public static class BootstrapVrAvatarFactory
             instance.Destroy(true);
             return null;
         }
-        return ConfigureImportedAvatar(pawnRoot, humanoid, avatarIdentity: path + ":" + humanoid.AvatarDefinition.DefinitionContentSha256);
+        return ConfigureImportedAvatar(pawnRoot, humanoid, avatarIdentity: $"{path}:{humanoid.AvatarDefinition.DefinitionContentSha256}");
     }
 }

@@ -89,9 +89,7 @@ namespace XREngine
                 throw new YamlException(
                     $"Polymorphic YAML discriminator '__type: {typeName}' could not be resolved to a known CLR type " +
                     $"(expected base type: '{expectedType.FullName}'). Ensure the type is loaded and the name is correct." +
-                    (RuntimeAssemblyLoadingServices.Current is null && !XRRuntimeEnvironment.IsPublishedBuild
-                        ? " The host has not installed runtime assembly loading."
-                        : string.Empty));
+                    $"{(RuntimeAssemblyLoadingServices.Current is null && !XRRuntimeEnvironment.IsPublishedBuild ? " The host has not installed runtime assembly loading." : string.Empty)}");
             }
 
             // 2) Property-level default concrete type when __type is omitted.

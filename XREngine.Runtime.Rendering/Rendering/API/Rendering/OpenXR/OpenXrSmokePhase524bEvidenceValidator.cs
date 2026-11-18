@@ -94,8 +94,7 @@ public static class OpenXrSmokePhase524bEvidenceValidator
             {
                 failures.Add(
                     $"TSR cohort output {output.OutputId} has display={output.DisplayWidth}x{output.DisplayHeight}, " +
-                    $"internal={output.InternalWidth}x{output.InternalHeight}, expected " +
-                    (expectSubNative ? "sub-native" : "native") + ".");
+                    $"internal={output.InternalWidth}x{output.InternalHeight}, expected {(expectSubNative ? "sub-native" : "native")}.");
                 continue;
             }
 
@@ -145,8 +144,7 @@ public static class OpenXrSmokePhase524bEvidenceValidator
             !captureStages.SequenceEqual(s_temporalScenarioStages, StringComparer.Ordinal))
         {
             failures.Add(
-                "Temporal scenario stages must be exactly: " +
-                string.Join(", ", s_temporalScenarioStages) + ".");
+                $"Temporal scenario stages must be exactly: {string.Join(", ", s_temporalScenarioStages)}.");
         }
 
         var definitionsBySample = new Dictionary<string, OpenXrSmokeTemporalScenarioDefinition>(

@@ -641,8 +641,7 @@ internal sealed class FramePlanBuilder
                 throw new VulkanPlanPreconditionException(
                     $"Frame plan has no frozen render-graph publication for context " +
                     $"kind={key.ContextKind} pipe={key.PipelineIdentity} viewport={key.ViewportIdentity} " +
-                    $"resourceGeneration={key.ResourceGeneration}. Reason={failureReason} " +
-                    DescribeMissingPlannerPublication(slot, in key, in authority));
+                    $"resourceGeneration={key.ResourceGeneration}. Reason={failureReason} {DescribeMissingPlannerPublication(slot, in key, in authority)}");
             }
 
             slot.StaticPlannerContextPlans[keyIndex] = plan;

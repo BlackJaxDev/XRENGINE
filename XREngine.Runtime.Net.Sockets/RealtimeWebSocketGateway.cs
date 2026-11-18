@@ -163,8 +163,7 @@ public sealed class RealtimeWebSocketGateway : IDisposable
             {
                 if (!_stop.IsCancellationRequested)
                 {
-                    LastFailure = "Realtime WebSocket connection rejected or closed (required "
-                        + RealtimeWebSocketProtocol.Subprotocol + "): " + exception.GetType().Name;
+                    LastFailure = $"Realtime WebSocket connection rejected or closed (required {RealtimeWebSocketProtocol.Subprotocol}): {exception.GetType().Name}";
                     Interlocked.Increment(ref _rejected);
                 }
             }

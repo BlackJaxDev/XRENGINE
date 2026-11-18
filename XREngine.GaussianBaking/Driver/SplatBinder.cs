@@ -107,7 +107,7 @@ public static class SplatBinder
     }
 
     private static GaussianBakeException Failed(string detail)
-        => new(GaussianBakeFailureCodes.BudgetExceeded, BindingLimit + ": " + detail);
+        => new(GaussianBakeFailureCodes.BudgetExceeded, $"{BindingLimit}: {detail}");
 
     /// <summary>
     /// Finds u, v, and h such that p = a + u(b − a) + v(c − a) + h·n̂, where n̂ is the unit normal of the triangle.

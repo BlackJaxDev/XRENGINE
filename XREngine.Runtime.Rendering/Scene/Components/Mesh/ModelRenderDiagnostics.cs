@@ -180,12 +180,7 @@ internal static class ModelRenderDiagnostics
             return;
 
         ModelComponent? component = renderable.Component as ModelComponent;
-        string extra = string.Format(
-            "isShadow={0} collectMirrors={1} camera={2} distance={3:F3}",
-            commands.IsShadowPass,
-            collectMirrors,
-            camera?.GetHashCode().ToString() ?? "<null>",
-            CameraDistance(renderable, camera));
+        string extra = $"isShadow={commands.IsShadowPass} collectMirrors={collectMirrors} camera={camera?.GetHashCode().ToString() ?? "<null>"} distance={CameraDistance(renderable, camera):F3}";
 
         LogRenderableState(
             ELogCategory.Rendering,
@@ -354,33 +349,19 @@ internal static class ModelRenderDiagnostics
         if (component is not null && component.TryGetSourceSubMesh(renderable, out SubMesh? subMesh))
             subMeshName = subMesh.Name ?? "<unnamed>";
 
-        string message = string.Format(
-            "{0} component={1} index={2} subMesh='{3}' renderable={4} mesh='{5}' material='{6}' verts={7} tris={8} skin={9} bones={10} blendShapes={11} pass={12} cmdPass={13} layer={14} riVisible={15} shouldRender={16} worldReg={17} octree={18} local={19} world={20} rootBone='{21}' transparent={22} cull={23} {24}",
-            prefix,
-            component is null ? "<non-model>" : ComponentLabel(component),
-            index,
-            subMeshName,
-            RenderableLabel(renderable),
-            mesh?.Name ?? "<null>",
-            material?.Name ?? "<null>",
-            mesh?.VertexCount ?? 0,
-            mesh?.Triangles?.Count ?? 0,
-            renderable.IsSkinned,
-            mesh?.UtilizedBones.Length ?? 0,
-            mesh?.BlendshapeCount ?? 0,
-            material?.RenderPass ?? -1,
-            meshCommand?.RenderPass ?? -1,
-            renderInfo.Layer,
-            renderInfo.IsVisible,
-            renderInfo.ShouldRender,
-            renderInfo.WorldInstance is not null,
-            renderInfo.TreeNode is not null,
-            localBounds.HasValue ? FormatAabb(localBounds.Value) : "<null>",
-            worldBox.HasValue ? FormatBox(worldBox.Value) : "<null>",
-            renderable.RootBone?.Name ?? "<null>",
-            material is null ? "<null>" : material.GetEffectiveTransparencyMode().ToString(),
-            material?.RenderOptions.CullMode.ToString() ?? "<null>",
-            extra);
+        string componentLabel = component is null ? "<non-model>" : ComponentLabel(component);
+        string localLabel = localBounds.HasValue ? FormatAabb(localBounds.Value) : "<null>";
+        string worldLabel = worldBox.HasValue ? FormatBox(worldBox.Value) : "<null>";
+        string transparentLabel = material is null ? "<null>" : material.GetEffectiveTransparencyMode().ToString();
+        string message =
+            $"{prefix} component={componentLabel} index={index} subMesh='{subMeshName}' renderable={RenderableLabel(renderable)} " +
+            $"mesh='{mesh?.Name ?? "<null>"}' material='{material?.Name ?? "<null>"}' verts={mesh?.VertexCount ?? 0} " +
+            $"tris={mesh?.Triangles?.Count ?? 0} skin={renderable.IsSkinned} bones={mesh?.UtilizedBones.Length ?? 0} " +
+            $"blendShapes={mesh?.BlendshapeCount ?? 0} pass={material?.RenderPass ?? -1} cmdPass={meshCommand?.RenderPass ?? -1} " +
+            $"layer={renderInfo.Layer} riVisible={renderInfo.IsVisible} shouldRender={renderInfo.ShouldRender} " +
+            $"worldReg={renderInfo.WorldInstance is not null} octree={renderInfo.TreeNode is not null} " +
+            $"local={localLabel} world={worldLabel} rootBone='{renderable.RootBone?.Name ?? "<null>"}' " +
+            $"transparent={transparentLabel} cull={material?.RenderOptions.CullMode.ToString() ?? "<null>"} {extra}";
 
         Debug.Log(category, EOutputVerbosity.Normal, false, message);
     }

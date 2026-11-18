@@ -603,9 +603,7 @@ exception={ex}
         if (string.IsNullOrWhiteSpace(pattern))
             return true;
 
-        string regex = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
-            .Replace("\\*", ".*")
-            .Replace("\\?", ".") + "$";
+        string regex = $"^{System.Text.RegularExpressions.Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".")}$";
 
         return System.Text.RegularExpressions.Regex.IsMatch(fileName, regex, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }

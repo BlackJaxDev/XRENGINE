@@ -1020,8 +1020,8 @@ public static class ShaderHelper
                     : string.Empty;
 
                 return string.IsNullOrEmpty(body)
-                    ? header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine
-                    : header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine + Environment.NewLine + body;
+                    ? $"{header}{Environment.NewLine}#define {defineName}{Environment.NewLine}"
+                    : $"{header}{Environment.NewLine}#define {defineName}{Environment.NewLine}{Environment.NewLine}{body}";
             }
 
             if (lineEnd < 0)

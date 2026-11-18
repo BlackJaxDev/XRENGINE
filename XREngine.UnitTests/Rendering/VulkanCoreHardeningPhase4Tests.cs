@@ -424,7 +424,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
             {
                 Regex.IsMatch(
                         source,
-                        registrationPattern + @"\s*" + Regex.Escape(handle) + @"\s*,",
+                        $@"{registrationPattern}\s*{Regex.Escape(handle)}\s*,",
                         RegexOptions.CultureInvariant)
                     .ShouldBeTrue($"Pipeline handle '{handle}' created in {file} must register its native handle generation.");
             }

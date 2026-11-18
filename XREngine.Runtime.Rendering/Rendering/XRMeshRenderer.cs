@@ -3915,7 +3915,7 @@ namespace XREngine.Rendering
         {
             _skinningDiagnosticsEnabled = true;
             _skinningDiagLogCount = 0;
-            Debug.Out("[SkinDiag] Skinning diagnostics enabled. Will log next " + SkinningDiagMaxLogs + " dirty pushes.");
+            Debug.Out($"[SkinDiag] Skinning diagnostics enabled. Will log next {SkinningDiagMaxLogs} dirty pushes.");
         }
 
         private void LogDirtyBoneDiagnostics()

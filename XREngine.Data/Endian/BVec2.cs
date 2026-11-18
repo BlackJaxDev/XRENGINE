@@ -13,7 +13,7 @@ public struct BVector2(float x, float y)
     public bfloat _y = y;
 
     public override readonly string ToString()
-        => string.Format("({0}, {1})", (float)_x, (float)_y);
+        => $"({(float)_x}, {(float)_y})";
 
     public static implicit operator Vector2(BVector2 v)
         => new(v._x, v._y);

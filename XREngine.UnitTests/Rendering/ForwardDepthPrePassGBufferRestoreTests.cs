@@ -55,7 +55,7 @@ public sealed class ForwardDepthPrePassGBufferRestoreTests
         string textures = LoadPipelineFile($"{pipelineName}.Textures.cs").Replace("\r\n", "\n");
         string commandChain = LoadPipelineFile($"{pipelineName}.CommandChain.cs").Replace("\r\n", "\n");
         string resources = LoadPipelineFile($"{pipelineName}.Resources.cs").Replace("\r\n", "\n");
-        string pipelineSource = constants + "\n" + commandChain;
+        string pipelineSource = $"{constants}\n{commandChain}";
 
         constants.ShouldContain("public bool ForwardDepthPrePassEnabled");
         constants.ShouldContain("public bool ForwardPrePassSharesGBufferTargets");

@@ -462,7 +462,7 @@ Bottom left point of this rectangle is Position - LocalOrigin.")]
         }
 
         public override readonly string ToString()
-            => string.Format("[X:{0} Y:{1} W:{2} H:{3}]", OriginTranslation.X, OriginTranslation.Y, Width, Height);
+            => $"[X:{OriginTranslation.X} Y:{OriginTranslation.Y} W:{Width} H:{Height}]";
 
         public readonly Vector2 ClosestPoint(Vector2 point)
             => new(

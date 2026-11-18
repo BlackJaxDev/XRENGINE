@@ -177,8 +177,7 @@ public sealed class SelfIterationMeasurementRunner
             Console.Error.WriteLine(
                 $"Scenario '{scenario.Name}' " +
                 $"{(detailedCapture ? "detailed diagnostic" : "formal")} launch {attempt} " +
-                "failed validation; " +
-                (attempt < _configuration.Measurement.MaxLaunchAttempts ? "relaunching." : "no retries remain."));
+                $"failed validation; {(attempt < _configuration.Measurement.MaxLaunchAttempts ? "relaunching." : "no retries remain.")}");
         }
 
         return lastMeasurement
