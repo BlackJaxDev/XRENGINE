@@ -374,6 +374,11 @@ internal sealed partial class VulkanCommandRuntime
         if (groups == 0u)
             return info.OperationIndex;
 
+        // Times the bounds patch, early visibility, indirect build and group finalize dispatches
+        // and the barriers between them.
+        using VulkanGpuProfilerScope prepareScope = TryBeginWorkGpuProfilerScope(
+            state.CommandBuffer, AdvancedVisibilityPrepareGpuProfilerPath);
+
         if (payload.Input.BoundsPage.Token.IsValid)
         {
             if (payload.State.BoundsPageToken != payload.Input.BoundsPage.Token ||
@@ -580,6 +585,10 @@ internal sealed partial class VulkanCommandRuntime
             }
         }
 
+        // Times the late group finalize, the counter copies and the pyramid layout barriers. The
+        // HiZ build and test scopes above have closed, so this scope does not nest in them.
+        using VulkanGpuProfilerScope lateFinalizeScope = TryBeginWorkGpuProfilerScope(
+            state.CommandBuffer, AdvancedVisibilityLateFinalizeGpuProfilerPath);
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
         if (payload.State.IndexedInstanceGroupCount != 0u)
         {
@@ -1585,6 +1594,10 @@ internal sealed partial class VulkanCommandRuntime
                 info.PassIndex,
                 out _) ||
             info.PassIndex == VulkanBarrierPlanner.SwapchainPassIndex;
+        using VulkanGpuProfilerScope gpuScope =
+            header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect
+                ? TryBeginComputeSecondaryRangeGpuProfilerScope(state.CommandBuffer)
+                : default;
         if (!TryRecordSecondaryBucket(
                 primaryCommandBuffer: state.CommandBuffer,
                 state.FrameDataSlotIndex,
@@ -1679,6 +1692,7 @@ internal sealed partial class VulkanCommandRuntime
 
     private int RecordComputeDispatchPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
+        using VulkanGpuProfilerScope gpuScope = TryBeginComputeDispatchGpuProfilerScope(state.CommandBuffer, payload.Program);
         CmdBeginLabel(state.CommandBuffer, "ComputeDispatch");
         EnsureComputeSampledImageLayoutsForDispatch(
             state.CommandBuffer,
@@ -1704,6 +1718,7 @@ internal sealed partial class VulkanCommandRuntime
 
     private int RecordComputeDispatchIndirectPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchIndirectPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
+        using VulkanGpuProfilerScope gpuScope = TryBeginComputeDispatchGpuProfilerScope(state.CommandBuffer, payload.Program);
         CmdBeginLabel(state.CommandBuffer, payload.Label);
         EnsureComputeSampledImageLayoutsForDispatch(
             state.CommandBuffer,
@@ -2145,6 +2160,7 @@ internal sealed partial class VulkanCommandRuntime
         if (state.HasActiveContext && FrameOpContextCompatibility.AreRecordingCompatible(state.ActiveContext, context)) return true;
         bool preserve = state.RenderScope.ShouldPreserveForContextChange(target is null, target, passIndex, state.ActiveInlineQuery is not null, context.SchedulingIdentity, state.ActivePassIndex, state.ActiveSchedulingIdentity, FrameOpContextCompatibility.AreQueryScopeCompatible(state.ActiveContext, context));
         if (!preserve) EndActiveRenderPass(ref state);
+        if (!preserve) EndPassGpuProfilerScope(ref state);
         if (!preserve) EndSelectedGpuPass(ref state);
         if (!preserve && state.PassIndexLabelActive) { _deviceContext.CmdEndLabel(state.CommandBuffer); state.PassIndexLabelActive = false; }
         state.ActiveContext = context; state.HasActiveContext = true; ApplyPipelineOverride(ref state, state.ActiveContext);
@@ -2192,9 +2208,11 @@ internal sealed partial class VulkanCommandRuntime
         int schedulingIdentity = state.Ops.GetContext(operationIndex).SchedulingIdentity;
         if (!HasPrimaryPlanAction(node.Actions, EVulkanPrimaryPlanAction.BarrierBatch) || (passIndex == state.ActivePassIndex && schedulingIdentity == state.ActiveSchedulingIdentity)) return;
         EndActiveRenderPass(ref state);
+        EndPassGpuProfilerScope(ref state);
         EndSelectedGpuPass(ref state);
         if (state.PassIndexLabelActive) { _deviceContext.CmdEndLabel(state.CommandBuffer); state.PassIndexLabelActive = false; }
         if (_deviceContext.CanRecordCommandBufferDebugLabels) state.PassIndexLabelActive = _deviceContext.CmdBeginLabel(state.CommandBuffer, $"Pass={passIndex} Pipe={state.ActiveContext.PipelineIdentity} Vp={state.ActiveContext.ViewportIdentity}");
+        BeginPassGpuProfilerScope(ref state, passIndex);
         EmitPassBarriers(ref state, passIndex);
         state.ActivePassIndex = passIndex; state.ActiveSchedulingIdentity = schedulingIdentity;
         state.SelectedGpuPassStartQuery = VulkanSelectedGpuPassContext.Current?.BeginProductionPass(
@@ -2215,6 +2233,7 @@ internal sealed partial class VulkanCommandRuntime
     {
         RecordDroppedPrimaryOperation(ref state, header.OpCode, true);
         EndActiveRenderPass(ref state);
+        EndPassGpuProfilerScope(ref state);
         EndSelectedGpuPass(ref state);
         Debug.VulkanEvery($"Vulkan.FrameOpError.{GetHashCode()}", TimeSpan.FromSeconds(1), "[Vulkan] Frame op recording failed for {0}: {1}: {2}", header.OpCode, exception.GetType().Name, exception.Message);
     }

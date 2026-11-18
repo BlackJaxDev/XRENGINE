@@ -720,6 +720,30 @@ Match samples back to `render_frame_id`, profiler scope names, and the
 allocation-free names that match the engine profiler rows; marker creation in
 per-frame paths must not allocate.
 
+Vulkan dense timing also covers the primary-recorded work that the stage and
+fullscreen scopes do not time. Each root gets its own dump file:
+
+- `Compute > <shader>`: each generic compute dispatch in the primary, named by
+  the file of its compute shader (for example `SkinningPrepass`,
+  `AggregateDeformation`, `VulkanAutoExposure2DArray`). `Compute > SecondaryRange`
+  covers a planned range of compute operations that the primary executes as one
+  secondary command buffer.
+- `Advanced > Visibility > Prepare` and `Advanced > Visibility > LateFinalize`:
+  the visibility preparation dispatches and barriers before the early raster,
+  and the group finalize, counter copies and pyramid barriers after the HiZ test.
+- `Passes > <pipeline type> > <pass name>`: one scope per render-graph pass of a
+  primary, from its barrier batch to the end of its render pass. It includes the
+  pass barriers, load, clear, store and resolve work and the generic draws (for
+  example the nested viewport draws of the PreRender pass).
+  A pass that the plan enters without a barrier batch adds its time to the open
+  scope of the previous pass. This root overlaps the `Advanced`, `Stereo` and
+  `Fullscreen` roots; do not add it to them.
+
+Pass scopes write both timestamps outside a render pass. Inside a multiview
+render pass a timestamp also writes one extra query per extra view (as zero),
+which would overwrite the start of a scope that the pass scope contains. The
+dense query budget is 2048 scopes per primary recording.
+
 ### GPU Timestamp Policy
 
 GPU timestamp instrumentation is opt-in diagnostic work, not a hidden benchmark
