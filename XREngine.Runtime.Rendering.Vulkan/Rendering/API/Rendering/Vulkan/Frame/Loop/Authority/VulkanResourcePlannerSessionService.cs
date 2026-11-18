@@ -293,6 +293,42 @@ internal sealed partial class VulkanResourcePlannerSessionService(
     /// retired allocator and prepares its own. The published table is mutated only
     /// on the render thread, so other threads never read it here.
     /// </summary>
+    private static long s_plannedExtentRejections;
+
+    /// <summary>Planner states rejected because their images were sized for another internal size, since launch.</summary>
+    internal static long PlannedExtentRejections => Interlocked.Read(ref s_plannedExtentRejections);
+
+    /// <summary>
+    /// True when the allocator of <paramref name="state"/> sized its images for the internal size of
+    /// <paramref name="key"/>, or when the allocator records no plan yet. A mismatch means the state
+    /// mixes the images of one resource generation with the registry of another. The caller then
+    /// treats the state as missing, so the context plans again instead of reusing it every frame.
+    /// The rejection is counted and logged.
+    /// </summary>
+    internal static bool MatchesPlannedExtent(
+        in ResourcePlannerRuntimeState state,
+        in VulkanFrameOpPlannerStateKey key)
+    {
+        if (state.ResourceAllocator?.PlannedExtent is not { } planned ||
+            key.InternalWidth == 0u || key.InternalHeight == 0u ||
+            (planned.InternalWidth == key.InternalWidth && planned.InternalHeight == key.InternalHeight))
+            return true;
+
+        long rejections = Interlocked.Increment(ref s_plannedExtentRejections);
+        Debug.VulkanWarningEvery(
+            "Vulkan.PlannerState.PlannedExtentMismatch",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan] Planner state rejected: its images were planned at {0}x{1}, its key needs {2}x{3} (pipeline={4} generation={5}). The context plans again. Rejections={6}.",
+            planned.InternalWidth,
+            planned.InternalHeight,
+            key.InternalWidth,
+            key.InternalHeight,
+            key.PipelineIdentity,
+            key.ResourceGeneration,
+            rejections);
+        return false;
+    }
+
     internal bool TryFindCommittedGenerationState(
         FrameOpResourcePlannerSwitchingState activeSwitchingState,
         in FrameOpContext context,
@@ -320,6 +356,7 @@ internal sealed partial class VulkanResourcePlannerSessionService(
                         candidateKey,
                         candidate.LastActiveFrameOpContext?.PassMetadata) ||
                     !IsReusableState(candidate) ||
+                    !MatchesPlannedExtent(candidate, candidateKey) ||
                     !IsAllocatorExclusivelyOwnedByKey(published, candidateKey, candidate.ResourceAllocator))
                 {
                     continue;

@@ -357,10 +357,15 @@ internal sealed partial class VulkanFrameLoop
     {
         if (TryGetExternalSwapchainTargetRegion(out var region) && region.Width > 0 && region.Height > 0)
         {
+            // The context's internal size comes first. Contexts capture the live pipeline size,
+            // except the context that prepares a new resource generation: it carries the new
+            // generation's size while the live pipeline still reports the active (old) one. Sizing
+            // its images from the live value would publish a planner state whose images belong to
+            // the old generation and whose registry belongs to the new one.
             var dimensions = VulkanFramePlanner.ResolveExternalFrameOpResourceDimensions(
                 new Silk.NET.Vulkan.Extent2D((uint)region.Width, (uint)region.Height),
-                context.PipelineInstance?.ResourceInternalWidth,
-                context.PipelineInstance?.ResourceInternalHeight,
+                context.InternalWidth > 0u ? context.InternalWidth : context.PipelineInstance?.ResourceInternalWidth,
+                context.InternalHeight > 0u ? context.InternalHeight : context.PipelineInstance?.ResourceInternalHeight,
                 null,
                 null,
                 context.InternalWidth,
