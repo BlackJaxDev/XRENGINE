@@ -380,6 +380,13 @@ internal sealed partial class VulkanResourceRuntime
     internal ulong NativeBufferBindingRevision
         => Lifetime.Tracker.PublishedNativeBufferBindingRevision;
 
+    /// <summary>
+    /// Changes when any image, image view or sampler is registered, recycled, removed,
+    /// detached, or gets a new published generation.
+    /// </summary>
+    internal ulong ImageBindingRevision
+        => Lifetime.Tracker.PublishedImageBindingRevision;
+
     internal int FramebufferRetirementFrameSlot
         => Volatile.Read(ref _framebufferRetirementFrameSlot);
 

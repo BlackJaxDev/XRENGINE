@@ -381,6 +381,10 @@ public static class XREngineEnvironmentVariables
     public const string VulkanAutoUniformParity =
         "XRE_VULKAN_AUTO_UNIFORM_PARITY";
     public const string VulkanDescriptorFingerprintDiag = "XRE_VULKAN_DESCRIPTOR_FINGERPRINT_DIAG";
+    /// <summary>Set to <c>0</c> to turn off mesh descriptor proof stamps (default on).</summary>
+    public const string VulkanDescriptorProofStamp = "XRE_VULKAN_DESCRIPTOR_PROOF_STAMP";
+    /// <summary>Set to <c>1</c> to run the full descriptor proof on every stamp hit and count mismatches.</summary>
+    public const string VulkanDescriptorProofStampVerify = "XRE_VULKAN_DESCRIPTOR_PROOF_STAMP_VERIFY";
     public const string VulkanMaterialBindingDiag = "XRE_VULKAN_MATERIAL_BINDING_DIAG";
     public const string VulkanRecordingDiag = "XRE_VULKAN_RECORDING_DIAG";
 

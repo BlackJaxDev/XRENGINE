@@ -278,6 +278,44 @@ and merges consumer requests.
   uses preallocated arrays, an open-addressing lookup and an epoch instead of
   per-build clears.
 
+**Mesh descriptor proof stamps.** In a steady frame a mesh draw writes no
+descriptor, but it used to prove that again every frame: build its owner key,
+resolve published signatures, and resolve and hash each frame-source image. A
+`DescriptorProofStamp`
+([`DescriptorProofStamp`](../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Descriptors/DescriptorProofStamp.cs))
+records the inputs of that proof when it passes with no descriptor write
+(`VkMeshRenderer.EnsureDescriptorSets`, `TryRefreshFrameSourceDescriptorSetsForDraw`).
+A later frame with the same draw key (shared binding artifact, material,
+program, draw slot, frame slot) and an equal stamp reuses the allocation.
+
+- **Stamp fields.** The image binding revision, the native buffer binding
+  revision, the program link generation, the material binding layout and resource
+  versions, the descriptor view family, the render pipeline identity, the
+  descriptor pool handle, and the allocation topology and content generations. The
+  allocation path also checks `IsOwnerGenerationPublished` for the slot.
+- **Image binding revision.** `VulkanResourceLifetimeTracker.ImageBindingRevision`
+  advances for an image, image view or sampler at each lifetime-generation site:
+  `RegisterResource` (new handle), `GetOrRegisterResourceNoLock`,
+  `SetPublishedGenerationNoLock` (published generation changes),
+  `RecycleResourceGenerationNoLock`, `RemoveResourceNoLock` (also for a published
+  generation without a record), and `TryDetachExternalResourceIdentityNoLock`.
+  Texture streaming mip swaps, placeholder-to-ready views, resizes and
+  physical-plan publications create, publish or retire these handles, so they
+  reach the stamp through these sites.
+- **Kept per frame.** A stamp hit still runs the steps that can change
+  descriptors: draw-slot capacity, the shared material set refresh and the
+  global material texture-array payload. Any failure falls back to the full path.
+- **Not stamped.** Draws without a binding snapshot, frame-owned snapshots, and
+  snapshots with read-only storage bindings or a material-table publication (their
+  lowered buffer offsets can change every frame).
+- **Switches.** `XRE_VULKAN_DESCRIPTOR_PROOF_STAMP=0` turns stamps off.
+  `XRE_VULKAN_DESCRIPTOR_PROOF_STAMP_VERIFY=1` runs the full proof on every stamp
+  hit and counts a mismatch when the proof would write a descriptor or choose
+  another allocation. `VulkanDescriptorProofStamps.Describe()` (MCP
+  `invoke_method`) reports hits, misses, verify checks and mismatches;
+  `Set(enabled, verify)` changes the switches at run time. A verify run must
+  report 0 mismatches.
+
 ## Hot Paths Do Not Allocate
 
 Steady-state update, collect, swap, preparation, recording, submission and
