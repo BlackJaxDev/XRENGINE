@@ -52,6 +52,11 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
     private DescriptorImageInfo[] _cubeImageDescriptorScratch = [];
     private DescriptorImageInfo[] _samplerDescriptorScratch = [];
     private byte[] _samplerValidationScratch = [];
+    // One flag per canonical texture row of the publication that is being validated.
+    // A set flag means the row's live source changed after publication, so the row is
+    // published as not resident. Indexed by the physical (dense) texture row.
+    private byte[] _staleTextureRowScratch = [];
+    private int _staleTextureRowCount;
     private VulkanDeviceContext? _device;
     private DescriptorSetLayout _globalDescriptorSetLayout;
     private DescriptorSetLayout _resourceDescriptorSetLayout;
@@ -393,6 +398,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     frameSlot,
                     frameGeneration,
                     in slot.Entries[sharedEntryIndex].State,
+                    slot.Entries[sharedEntryIndex].RecordedStaleTextureRows,
                     snapshot,
                     views,
                     in frame,
@@ -490,8 +496,13 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 return false;
             }
 
+            // The frame build publishes stale rows as not resident, so admission
+            // accepts them. Rejecting them here would block every frame while a
+            // hidden or off-screen material keeps the old row.
             return TryValidatePublicationSources(
                 snapshot,
+                EVulkanStaleTextureRowPolicy.AllowAsLoading,
+                [],
                 out failure,
                 out reason);
         }
@@ -739,7 +750,12 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             reason = $"Frame-slot sampler table capacity {DescriptorCapacity} cannot append {samplerHighWater} rows at {samplerBase}.";
             return false;
         }
-        if (!TryValidatePublicationSources(snapshot, out failure, out reason))
+        if (!TryValidatePublicationSources(
+                snapshot,
+                EVulkanStaleTextureRowPolicy.AllowAsLoading,
+                [],
+                out failure,
+                out reason))
             return false;
 
         DescriptorImageInfo fallback =
@@ -775,6 +791,11 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         {
             return false;
         }
+
+        // The caller stores this build in the next entry. Record which rows were
+        // published as not resident, so outputs that share this publication can
+        // accept exactly those stale rows.
+        RecordStaleTextureRows(ref slot.Entries[slot.EntryCount], textureHighWater);
 
         if (diagnosticCount < 0 || frame.FrameGeneration == 0u)
         {
@@ -1179,8 +1200,21 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         return false;
     }
 
+    /// <summary>
+    /// Checks that each texture and sampler row of the publication still matches its retained
+    /// live source. A row whose source changed after publication (for example, streaming
+    /// replaced a loading placeholder) is handled by <paramref name="staleRowPolicy"/>. Each
+    /// accepted stale row is flagged in <see cref="_staleTextureRowScratch"/>, so the
+    /// texture-row preparation publishes it as not resident and its bindings sample their
+    /// fallback. The row refreshes when a material that binds the texture is planned again.
+    /// <paramref name="recordedStaleRows"/> holds the rows that the first output of this
+    /// publication published as not resident; only <see cref="EVulkanStaleTextureRowPolicy.AllowRecorded"/>
+    /// reads it.
+    /// </summary>
     private bool TryValidatePublicationSources(
         AdvancedGpuScenePublicationSnapshot snapshot,
+        EVulkanStaleTextureRowPolicy staleRowPolicy,
+        ReadOnlySpan<byte> recordedStaleRows,
         out EVulkanAdvancedSceneResourceFailure failure,
         out string reason)
     {
@@ -1203,6 +1237,14 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             snapshot.Textures.PhysicalHandles;
         ReadOnlySpan<byte> textureOccupancy =
             snapshot.Textures.PhysicalOccupancy;
+        if (textureRecords.Length > _staleTextureRowScratch.Length)
+        {
+            failure = EVulkanAdvancedSceneResourceFailure.TextureDescriptorCapacity;
+            reason = $"Publication texture high-water {textureRecords.Length} exceeds the stale-row scratch capacity {_staleTextureRowScratch.Length}.";
+            return false;
+        }
+        _staleTextureRowScratch.AsSpan(0, textureRecords.Length).Clear();
+        _staleTextureRowCount = 0;
         for (int denseIndex = 0; denseIndex < textureRecords.Length; ++denseIndex)
         {
             if (textureOccupancy[denseIndex] == 0)
@@ -1244,22 +1286,35 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} source revalidation failed: {encodeReason}";
                 return false;
             }
-            if (current.SourceContentGeneration != capturedSourceContentGeneration ||
-                !canonical.DefaultSampler.IsValid ||
+            if (!canonical.DefaultSampler.IsValid ||
                 !snapshot.Samplers.TryGet(canonical.DefaultSampler, out AdvancedSamplerRecord canonicalDefaultSampler) ||
-                !snapshot.Samplers.TryGetDenseIndex(canonical.DefaultSampler, out uint defaultSamplerDense) ||
-                !TextureMetadataStateEquals(current.TextureRecord, canonical) ||
-                !SamplerStateEquals(current.SamplerRecord, canonicalDefaultSampler))
+                !snapshot.Samplers.TryGetDenseIndex(canonical.DefaultSampler, out uint defaultSamplerDense))
             {
                 failure =
                     EVulkanAdvancedSceneResourceFailure.SourceMismatch;
-                reason = $"Canonical texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication: {DescribeTextureStateMismatch(current.TextureRecord, canonical)}";
+                reason = $"Canonical texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' has no retained default sampler row.";
                 return false;
+            }
+            if (current.SourceContentGeneration != capturedSourceContentGeneration ||
+                !TextureMetadataStateEquals(current.TextureRecord, canonical) ||
+                !SamplerStateEquals(current.SamplerRecord, canonicalDefaultSampler))
+            {
+                if (!IsStaleTextureRowAllowed(staleRowPolicy, recordedStaleRows, denseIndex))
+                {
+                    failure =
+                        EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+                    reason = $"Canonical texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication: {DescribeTextureStateMismatch(current.TextureRecord, canonical)}";
+                    return false;
+                }
+                _staleTextureRowScratch[denseIndex] = 1;
+                ++_staleTextureRowCount;
             }
             // Global textures (shadow atlases, environments, and GI resources)
             // retain their default sampler through the texture publication even
             // when no material row references it. The exact strong source and
             // sampler state were validated above, so this is an owning witness.
+            // A stale row is published as not resident, so no shader samples it
+            // through this sampler; the sampler row itself stays a valid sampler.
             _samplerValidationScratch[checked((int)defaultSamplerDense)] = 1;
         }
 
@@ -1280,6 +1335,22 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     EVulkanAdvancedSceneResourceFailure.SourceMismatch;
                 reason = $"Material texture binding {bindingIndex} does not resolve its retained texture/sampler publication.";
                 return false;
+            }
+            // A binding of a stale texture row samples its fallback, because the row
+            // is published as not resident. Its sampler row is still retained.
+            if (snapshot.Textures.TryGetDenseIndex(textureHandle, out uint bindingTextureDense) &&
+                bindingTextureDense < (uint)textureRecords.Length &&
+                _staleTextureRowScratch[(int)bindingTextureDense] != 0)
+            {
+                if (!snapshot.Samplers.TryGetDenseIndex(binding.Sampler.Handle, out uint staleSamplerDense))
+                {
+                    failure =
+                        EVulkanAdvancedSceneResourceFailure.SourceMismatch;
+                    reason = $"Material texture binding {bindingIndex} sampler handle is absent from the retained dense image.";
+                    return false;
+                }
+                _samplerValidationScratch[checked((int)staleSamplerDense)] = 1;
+                continue;
             }
             if (!AdvancedGpuResourceSourceEncoder.TryEncode(
                     source,
@@ -1336,6 +1407,39 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         return true;
     }
 
+    /// <summary>
+    /// Copies the stale-row flags of the last validation into <paramref name="entry"/>.
+    /// The entry's buffer is allocated once at descriptor capacity and then reused.
+    /// </summary>
+    private void RecordStaleTextureRows(ref VulkanAdvancedScenePublicationEntry entry, int textureHighWater)
+    {
+        if (_staleTextureRowCount == 0)
+        {
+            entry.StaleTextureRowCount = 0;
+            return;
+        }
+        if (entry.StaleTextureRows is null || entry.StaleTextureRows.Length < _staleTextureRowScratch.Length)
+            entry.StaleTextureRows = new byte[_staleTextureRowScratch.Length];
+        _staleTextureRowScratch.AsSpan(0, textureHighWater).CopyTo(entry.StaleTextureRows);
+        entry.StaleTextureRowCount = textureHighWater;
+    }
+
+    /// <summary>
+    /// Returns whether a texture row whose source changed after publication can pass
+    /// validation under <paramref name="policy"/>.
+    /// </summary>
+    private static bool IsStaleTextureRowAllowed(
+        EVulkanStaleTextureRowPolicy policy,
+        ReadOnlySpan<byte> recordedStaleRows,
+        int denseIndex)
+        => policy switch
+        {
+            EVulkanStaleTextureRowPolicy.AllowAsLoading => true,
+            EVulkanStaleTextureRowPolicy.AllowRecorded =>
+                (uint)denseIndex < (uint)recordedStaleRows.Length && recordedStaleRows[denseIndex] != 0,
+            _ => false,
+        };
+
     private bool TryPrepareTextureRows(
         AdvancedGpuScenePublicationSnapshot snapshot,
         AdvancedGpuRecordTablePublicationSnapshot<AdvancedTextureRecord> textures,
@@ -1352,6 +1456,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         records.CopyTo(_textureRecordScratch);
         _encodedTextureScratch[0] = CreateFallbackTextureReference();
         int loadingTextureCount = 0;
+        int staleTextureCount = 0;
         for (int denseIndex = 0; denseIndex < records.Length; ++denseIndex)
         {
             _imageDescriptorScratch[denseIndex] = new DescriptorImageInfo
@@ -1379,6 +1484,15 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     EVulkanAdvancedSceneResourceFailure.UnsupportedTextureShape;
                 reason = $"Canonical texture row {denseIndex} has an unsupported texture dimension or layer count.";
                 return false;
+            }
+            // The validation flagged this row because its source changed after
+            // publication. Keep encoded reference 0 (not resident), so each binding
+            // samples its fallback until a material that binds the texture is
+            // planned again and refreshes the row.
+            if (_staleTextureRowScratch[denseIndex] != 0)
+            {
+                ++staleTextureCount;
+                continue;
             }
             if (!snapshot.ResourcePayloads.TryGetTextureSource(
                     handle,
@@ -1505,6 +1619,14 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 TimeSpan.FromSeconds(2),
                 "[AdvancedScene] {0} canonical texture(s) are still loading and draw with their binding fallback this frame.",
                 loadingTextureCount);
+        }
+        if (staleTextureCount > 0)
+        {
+            Debug.VulkanEvery(
+                "Vulkan.AdvancedScene.StaleTextureFallback",
+                TimeSpan.FromSeconds(2),
+                "[AdvancedScene] {0} canonical texture row(s) changed source after publication and draw with their binding fallback until a material that binds them is planned again.",
+                staleTextureCount);
         }
 
         // Readiness is backend state outside the canonical generations. Advance the
@@ -2967,6 +3089,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         _samplerDescriptorScratch =
             new DescriptorImageInfo[descriptorCount];
         _samplerValidationScratch = new byte[descriptorCount];
+        _staleTextureRowScratch = new byte[descriptorCount];
     }
 
     private VulkanAdvancedScenePublicationAllocationPlan
