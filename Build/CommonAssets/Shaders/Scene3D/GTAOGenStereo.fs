@@ -27,6 +27,9 @@ uniform float VisibilityBitmaskThickness = 0.12f; // XRENGINE_FREQUENCY(View)
 // Largest step radius in pixels of the depth input. Half-resolution inputs pass 96, so the
 // largest radius on screen matches 192 full-resolution pixels.
 uniform float MaxRadiusPixels = 192.0f; // XRENGINE_FREQUENCY(View)
+// True when DepthView holds positive linear view depth (0 marks the far plane), written once at
+// GTAO resolution by GTAOPrepareHalfStereo.fs. False when it holds the raw depth buffer value.
+uniform bool DepthViewIsLinear = false; // XRENGINE_FREQUENCY(View)
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
@@ -39,6 +42,57 @@ uniform mat4 RightEyeProjMatrix;
 
 const uint VISIBILITY_BITMASK_SECTOR_COUNT = 32u;
 
+// Reconstruction terms of the inverse projection of this eye. For a perspective projection (also
+// off-axis or jittered), view position = vec3(clipXY * scale + bias, -1) * linearDepth. The terms
+// come from the same matrix as the raw-depth path, so the jitter does not change.
+struct GtaoReconstruction
+{
+    vec2 scale;
+    vec2 bias;
+    bool perspective;
+};
+
+GtaoReconstruction GtaoBuildReconstruction(mat4 inverseProjMatrix)
+{
+    GtaoReconstruction r;
+    r.scale = vec2(inverseProjMatrix[0][0], inverseProjMatrix[1][1]);
+    r.bias = vec2(inverseProjMatrix[3][0], inverseProjMatrix[3][1]);
+    // The short form needs view z = -1 / w and x, y, w that do not mix the other clip terms.
+    // The inverse comes from float math, so the zero terms and the -1 get a small tolerance; the
+    // error that the short form then ignores stays within float precision.
+    const float tolerance = 1e-6f;
+    r.perspective =
+        abs(inverseProjMatrix[1][0]) <= tolerance && abs(inverseProjMatrix[2][0]) <= tolerance &&
+        abs(inverseProjMatrix[0][1]) <= tolerance && abs(inverseProjMatrix[2][1]) <= tolerance &&
+        abs(inverseProjMatrix[0][2]) <= tolerance && abs(inverseProjMatrix[1][2]) <= tolerance &&
+        abs(inverseProjMatrix[2][2]) <= tolerance && abs(inverseProjMatrix[3][2] + 1.0f) <= tolerance &&
+        abs(inverseProjMatrix[0][3]) <= tolerance && abs(inverseProjMatrix[1][3]) <= tolerance;
+    return r;
+}
+
+bool GtaoIsFarInput(float depthInput)
+{
+    return DepthViewIsLinear ? !(depthInput > 0.0f) : AOIsFarDepth(depthInput);
+}
+
+// View position of one DepthView sample.
+vec3 GtaoViewPosition(float depthInput, vec2 uv, GtaoReconstruction r, mat4 inverseProjMatrix)
+{
+    if (!DepthViewIsLinear)
+        return AOViewPosFromDepth(depthInput, uv, inverseProjMatrix);
+
+    vec2 clipXY = AOClipXYFromTextureUV(uv);
+    if (r.perspective)
+        return vec3(clipXY * r.scale + r.bias, -1.0f) * depthInput;
+
+    // Any other projection: solve the clip depth that gives this view depth, then use the matrix.
+    vec4 fixedTerms = inverseProjMatrix[0] * clipXY.x + inverseProjMatrix[1] * clipXY.y + inverseProjMatrix[3];
+    vec4 depthTerms = inverseProjMatrix[2];
+    float clipZ = -(fixedTerms.z + depthInput * fixedTerms.w) / (depthTerms.z + depthInput * depthTerms.w);
+    vec4 viewPosition = fixedTerms + depthTerms * clipZ;
+    return viewPosition.xyz / max(viewPosition.w, 1e-5f);
+}
+
 // Fast polynomial acos approximation (max error ~0.02 rad)
 float FastAcos(float x)
 {
@@ -48,7 +102,7 @@ float FastAcos(float x)
     return x < 0.0f ? PI - r : r;
 }
 
-vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, mat4 inverseProjMatrix)
+vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, mat4 inverseProjMatrix, GtaoReconstruction reconstruction)
 {
     if (UseInputNormals)
     {
@@ -61,10 +115,10 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, mat4 inverseProjMat
     vec2 uvY = clamp(uv + vec2(0.0f, texelSize.y), vec2(0.0f), vec2(1.0f));
     float depthX = texture(DepthView, vec3(uvX, gl_ViewID_OVR)).r;
     float depthY = texture(DepthView, vec3(uvY, gl_ViewID_OVR)).r;
-    if (AOIsFarDepth(depthX) || AOIsFarDepth(depthY))
+    if (GtaoIsFarInput(depthX) || GtaoIsFarInput(depthY))
         return vec3(0.0f, 0.0f, 1.0f);
-    vec3 posX = AOViewPosFromDepth(depthX, uvX, inverseProjMatrix);
-    vec3 posY = AOViewPosFromDepth(depthY, uvY, inverseProjMatrix);
+    vec3 posX = GtaoViewPosition(depthX, uvX, reconstruction, inverseProjMatrix);
+    vec3 posY = GtaoViewPosition(depthY, uvY, reconstruction, inverseProjMatrix);
     vec3 deltaY = posY - centerPos;
     if (FramebufferTextureYDirection == 1)
         deltaY = -deltaY;
@@ -167,14 +221,15 @@ void main()
     float invProjX = 1.0f / projMatrix[0][0];
     float invProjY = 1.0f / projMatrix[1][1];
 
+    GtaoReconstruction reconstruction = GtaoBuildReconstruction(inverseProjMatrix);
     float depth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
-    if (AOIsFarDepth(depth))
+    if (GtaoIsFarInput(depth))
     {
         OutIntensity = 1.0f;
         return;
     }
-    vec3 centerPos = AOViewPosFromDepth(depth, uv, inverseProjMatrix);
-    vec3 centerNormal = GetViewNormal(uv, centerPos, viewMatrix, inverseProjMatrix);
+    vec3 centerPos = GtaoViewPosition(depth, uv, reconstruction, inverseProjMatrix);
+    vec3 centerNormal = GetViewNormal(uv, centerPos, viewMatrix, inverseProjMatrix, reconstruction);
     vec3 viewDir = normalize(-centerPos);
 
     float radiusVS = max(Radius, 0.001f);
@@ -230,9 +285,9 @@ void main()
             if (fUV.x > 0.0f && fUV.x < 1.0f && fUV.y > 0.0f && fUV.y < 1.0f)
             {
                 float fDepth = texture(DepthView, vec3(fUV, gl_ViewID_OVR)).r;
-                if (!AOIsFarDepth(fDepth))
+                if (!GtaoIsFarInput(fDepth))
                 {
-                    vec3 fPos = AOViewPosFromDepth(fDepth, fUV, inverseProjMatrix);
+                    vec3 fPos = GtaoViewPosition(fDepth, fUV, reconstruction, inverseProjMatrix);
                     vec3 delta = fPos - centerPos;
                     float dist = length(delta);
 
@@ -274,9 +329,9 @@ void main()
             if (bUV.x > 0.0f && bUV.x < 1.0f && bUV.y > 0.0f && bUV.y < 1.0f)
             {
                 float bDepth = texture(DepthView, vec3(bUV, gl_ViewID_OVR)).r;
-                if (!AOIsFarDepth(bDepth))
+                if (!GtaoIsFarInput(bDepth))
                 {
-                    vec3 bPos = AOViewPosFromDepth(bDepth, bUV, inverseProjMatrix);
+                    vec3 bPos = GtaoViewPosition(bDepth, bUV, reconstruction, inverseProjMatrix);
                     vec3 delta = bPos - centerPos;
                     float dist = length(delta);
 
