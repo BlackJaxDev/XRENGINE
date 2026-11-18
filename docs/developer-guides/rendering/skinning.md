@@ -100,6 +100,49 @@ chain writes, blendshape weight changes, mesh rebuilds, LOD swaps, world matrix
 changes for non-pretransformed skinning paths, skin palette precision/layout
 switches, and shader variant changes.
 
+## Prepass Skip For Arena Consumers
+
+The skinning prepass (`SkinningPrepassDispatcher`) writes per-renderer skinned
+outputs. Only traditional draws read them: CPU-pass draws of the renderer or of
+a renderer that deforms from it (`DeformMeshRenderer`), traditional shadow
+views, captures, and the live skinned-bounds readers. The Advanced canonical
+path, its directional cascade lane and the Advanced visibility producers read
+the aggregate deformation arena (`AggregateDeformation.comp`), which prepares
+its own palette and morph inputs.
+
+The owner view's `RunVisible` therefore dispatches a renderer only when a
+consumer reads its output (`SkinningPrepassDemand`):
+
+1. One of its commands in the owner collection is not owned by the canonical
+   GPU path (`BackendReadyFramePackage.IsTraditionalGpuOwned` is false), so a
+   CPU pass of the owner view draws it in this frame.
+2. A traditional view or capture draw read its output in the current render
+   frame or in the last three frames, or a traditional shadow draw read it in
+   the last 120 frames. The shadow atlas renders a tile only when its schedule
+   and budget allow, so shadow reads can be several frames apart and need the
+   longer window. Every CPU draw registers this demand
+   (`XRMeshRenderer.NoteSkinningPrepassOutputRead`, called from
+   `BaseVersion.Render` and `BaseVersion.RenderIndexedIndirect`).
+3. `CalculateSkinnedBoundsInComputeShader` is on.
+
+Otherwise the renderer is skipped. Order: the owner collection is complete
+before the owner view renders, so rule 1 covers every same-frame draw of the
+owner view. Shadow views render before the views and always read the previous
+frame's output; the desktop view and captures render after the owner. When one
+of these consumers starts to draw a skipped renderer, its first draws read the
+last dispatched output. These reads are not hidden: they are counted, with a
+throttled `[SkinningPrepass]` warning that names the renderer and the consumer
+kind. A read counts when the latest owner decision for the renderer was a skip
+in the same frame or the frame before it. A renderer that the owner view does
+not see is neither run nor skipped there; its older output is not counted.
+Frame ids are compared in both directions, because shadow views can carry the
+next frame's id.
+
+Counters (cumulative): `SkinningPrepassDemand.SkippedDispatches`,
+`StaleViewReads` and `StaleShadowReads`. MCP `invoke_method` with type
+`XREngine.Rendering.Compute.SkinningPrepassDemand` and method `Describe`
+returns them as one line.
+
 ## Skinning LOD
 
 - Skinning LOD consumes avatar-optimizer outputs through a narrow runtime

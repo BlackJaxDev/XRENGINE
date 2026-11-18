@@ -245,6 +245,7 @@ namespace XREngine.Rendering
                 // skip rendering or broadcast a draw into another viewport's backend.
                 if (EnsureApiWrapperForOwnerFirstUse() is not IApiMeshRenderer renderer)
                     throw new InvalidOperationException("The active render owner does not provide mesh submission.");
+                Parent.NoteSkinningPrepassOutputRead();
                 if (RuntimeEngine.Rendering.State.RenderingPipelineState?.AdvancedMultisampleBackground == true)
                     renderOptionsOverride = (materialOverride ?? Parent?.Material)?.GetMultisampleBackgroundParameters()
                         ?? throw new InvalidOperationException("Advanced MSAA background requires an admitted material.");
@@ -259,6 +260,7 @@ namespace XREngine.Rendering
                 EMeshBillboardMode billboardMode, bool forceNoStereo,
                 IRenderResourceLeaseOwner? authoringLease, out string failureReason)
             {
+                Parent.NoteSkinningPrepassOutputRead();
                 if (EnsureApiWrapperForOwnerFirstUse() is not IApiMeshRenderer renderer)
                 {
                     failureReason = "The active render owner does not provide mesh submission.";

@@ -3233,6 +3233,43 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        /// <summary>
+        /// Adds the mesh renderer of each published mesh command to <paramref name="renderers"/>
+        /// once, and adds it to <paramref name="traditionalRenderers"/> when one of its commands is
+        /// not owned by the canonical GPU path. A CPU pass of this collection draws such a command
+        /// traditionally (the same test as <see cref="RenderCPU"/> and
+        /// <see cref="RenderCPUNonMeshAndExcluded"/>), so it reads the skinning prepass output.
+        /// The caller clears the three containers; this method allocates nothing.
+        /// </summary>
+        internal void CollectSkinningPrepassRenderers(
+            List<XRMeshRenderer> renderers,
+            HashSet<XRMeshRenderer> seen,
+            HashSet<XRMeshRenderer> traditionalRenderers)
+        {
+            _renderingBufferLock.EnterReadLock();
+            try
+            {
+                foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _renderingPasses)
+                {
+                    ICollection<RenderCommand> commands = pass.Value;
+                    for (int index = 0; index < commands.Count; index++)
+                    {
+                        if (GetCommandAt(commands, index) is not IRenderCommandMesh meshCommand ||
+                            meshCommand.Mesh is not XRMeshRenderer renderer)
+                            continue;
+                        if (seen.Add(renderer))
+                            renderers.Add(renderer);
+                        if (!_renderingBackendReadyPackage.IsTraditionalGpuOwned(pass.Key, meshCommand.StableQueryKey))
+                            traditionalRenderers.Add(renderer);
+                    }
+                }
+            }
+            finally
+            {
+                _renderingBufferLock.ExitReadLock();
+            }
+        }
+
         public bool TryGetPassMetadata(int passIndex, out RenderPassMetadata metadata)
             => _passMetadata.TryGetValue(passIndex, out metadata!);
 
