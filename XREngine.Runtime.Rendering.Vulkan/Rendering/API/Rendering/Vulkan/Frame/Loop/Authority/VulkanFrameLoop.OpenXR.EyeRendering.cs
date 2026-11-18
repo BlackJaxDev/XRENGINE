@@ -666,7 +666,7 @@ internal sealed partial class VulkanFrameLoop
                 "[OpenXR] Vulkan eye render failed. Target={0}. Error={1}",
                 targetContext.IsValid ? DescribeOpenXrEyeRenderTargetContext(in targetContext) : "<not prepared>",
                 ex.Message);
-            _openXrEyePreparationFailureReason = "Eye preparation threw " + ex.GetType().Name + ": " + ex.Message;
+            _openXrEyePreparationFailureReason = $"Eye preparation threw {ex.GetType().Name}: {ex.Message}";
             return false;
         }
         finally
