@@ -56,6 +56,17 @@ internal sealed class VulkanFrameTelemetry
     internal bool _vulkanGpuProfilerRecordingActive;
     internal bool _vulkanGpuProfilerBudgetWarningIssued;
     internal int _vulkanGpuProfilerRecordingFrameSlot = -1;
+
+    /// <summary>
+    /// Root label of the GPU profiler scopes that are recorded now, or null for the
+    /// unlabeled root. An OpenXR quad-view stereo record sets it to the view pair, so a
+    /// GPU timing dump shows the wide and inset pairs as separate trees. Render-thread
+    /// state; recordings on parallel workers can mix labels.
+    /// </summary>
+    internal string? GpuProfilerRootLabel;
+
+    /// <summary>Labeled copies of the static profiler paths, so labeling allocates once per path.</summary>
+    internal readonly System.Runtime.CompilerServices.ConditionalWeakTable<string[], Dictionary<string, string[]>> LabeledGpuProfilerPaths = new();
     internal uint _vulkanGpuProfilerNextQuery;
     internal readonly Dictionary<string, ulong> _gpuRenderStatsTraceHashes = [];
     internal readonly VulkanFinalPresentationLedgerState _finalPresentationLedger =

@@ -418,9 +418,25 @@ internal sealed partial class VulkanFrameLoop
                 renderRequest.ResourcePlannerStateIndex,
                 EVulkanOpenXrResourcePlannerPurpose.Mirror);
 
-            hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(
-                in renderRequest, out recorded, renderPipelineInstance,
-                strictSpsTemporalHistory: true);
+            // Label the GPU timing scopes by stereo pair, so quad-view dumps split the
+            // wide pair from the inset pair.
+            string? previousProfilerLabel = _commandRuntime.FrameTelemetry.GpuProfilerRootLabel;
+            _commandRuntime.FrameTelemetry.GpuProfilerRootLabel = renderRequest.ViewPair switch
+            {
+                0 => "xr-wide",
+                1 => "xr-inset",
+                _ => "xr-stereo",
+            };
+            try
+            {
+                hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(
+                    in renderRequest, out recorded, renderPipelineInstance,
+                    strictSpsTemporalHistory: true);
+            }
+            finally
+            {
+                _commandRuntime.FrameTelemetry.GpuProfilerRootLabel = previousProfilerLabel;
+            }
             if (!hasRecorded)
             {
                 if (renderRequest.RendersExternalSwapchainTarget)

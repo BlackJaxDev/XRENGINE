@@ -857,6 +857,7 @@ internal sealed partial class VulkanCommandRuntime
     private VulkanGpuProfilerScope BeginReservedVulkanGpuProfilerScope(
         CommandBuffer commandBuffer, QueryPool queryPool, uint startQuery, uint endQuery, string[] path)
     {
+        path = ApplyGpuProfilerRootLabel(path);
         Api.CmdWriteTimestamp(
             commandBuffer,
             PipelineStageFlags.TopOfPipeBit,
@@ -872,6 +873,28 @@ internal sealed partial class VulkanCommandRuntime
             FrameTelemetry._vulkanGpuProfilerRecordingFrameSlot,
             endQuery,
             path);
+    }
+
+    /// <summary>
+    /// Returns the path with its root segment renamed to "root[label]" while a root label
+    /// is set, for example "Advanced[inset]". The labeled path is cached per source path.
+    /// </summary>
+    private string[] ApplyGpuProfilerRootLabel(string[] path)
+    {
+        string? label = FrameTelemetry.GpuProfilerRootLabel;
+        if (label is null || path.Length == 0)
+            return path;
+
+        Dictionary<string, string[]> byLabel = FrameTelemetry.LabeledGpuProfilerPaths.GetOrCreateValue(path);
+        lock (byLabel)
+        {
+            if (byLabel.TryGetValue(label, out string[]? labeled))
+                return labeled;
+            labeled = (string[])path.Clone();
+            labeled[0] = $"{path[0]}[{label}]";
+            byLabel[label] = labeled;
+            return labeled;
+        }
     }
 
     private bool TryReserveVulkanGpuProfilerQueries(
