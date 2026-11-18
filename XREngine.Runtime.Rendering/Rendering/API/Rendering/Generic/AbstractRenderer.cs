@@ -1133,6 +1133,24 @@ namespace XREngine.Rendering
             float deltaTime, bool generateMipmapsNow, string? gpuProgramBinding)
             => UpdateAutoExposureGpu(sourceTex, exposureTex, settings, deltaTime, generateMipmapsNow);
 
+        /// <summary>
+        /// Copies the value of a 1x1 exposure texture into the one-float storage buffer of a
+        /// <see cref="SharedAutoExposureChannel"/>. The copy stays on the GPU. Returns true
+        /// when the copy is enqueued for the current frame.
+        /// </summary>
+        public virtual bool PublishAutoExposureGpu(XRTexture2D exposureTex, XRDataBuffer channelBuffer)
+            => false;
+
+        /// <summary>
+        /// Writes the exposure in a channel's storage buffer into a 1x1 exposure texture,
+        /// clamped to <paramref name="minExposure"/> and <paramref name="maxExposure"/>. A value
+        /// that is not a positive finite number writes <paramref name="fallbackExposure"/>.
+        /// Returns true when the copy is enqueued for the current frame.
+        /// </summary>
+        public virtual bool ConsumeAutoExposureGpu(XRDataBuffer channelBuffer, XRTexture2D exposureTex,
+            float minExposure, float maxExposure, float fallbackExposure)
+            => false;
+
         public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
             => CalcDotLuminanceFrontAsync(region, withTransparency, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);

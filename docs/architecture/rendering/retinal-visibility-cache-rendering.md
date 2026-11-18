@@ -183,6 +183,29 @@ The design keeps the OpenXR runtime in charge of view count and dimensions. That
 prevents the engine from inventing quad-view assumptions that disagree with the
 runtime.
 
+### Quad View Pairs
+
+With quad view active (`VR.RvcQuadView` or `XRE_UNIT_TEST_VR_RVC_QUAD_VIEW=true`
+on a runtime with four views), the eye path renders two layered stereo pairs:
+
+- The wide pair (views 0 and 1) uses the rig eye cameras and the wide stereo
+  viewport (`XRViewport.OpenXrViewPair` = 0).
+- The inset pair (views 2 and 3) uses inset cameras that share the eye
+  transforms, its own stereo viewport (`OpenXrViewPair` = 1) and its own RVC
+  pipeline instance at the inset extent. It renders after the wide pair in the
+  same frame.
+- Both the full collect and the speculative next-frame collect
+  (`OpenXRAPI.SpeculativeCollect.cs`) collect the inset pair. A collect path
+  that skips it leaves the inset with no published frame package.
+- The inset copies the wide pair's post-process settings when the wide state
+  changes.
+- The inset uses the wide pair's auto exposure. The wide instance publishes its
+  exposure to a `SharedAutoExposureChannel` (a one-float storage buffer), and
+  the inset's `VPRC_ExposureUpdate` copies that value instead of metering its
+  own image. Without this, the inset meters a different part of the scene and
+  shows a brightness step at its border. If no value was published in the same
+  render frame, the inset meters its own image and logs a warning.
+
 ### Visibility Masks
 
 OpenXR visibility masks are requested through `XR_KHR_visibility_mask` when the
@@ -607,6 +630,8 @@ a documented warm-cache policy.
 | `XREngine.Runtime.XR.OpenXR/OpenXRAPI.State.cs` | View, swapchain, image, visibility-mask, and diagnostic storage sized by `RenderFrameViewSet.MaxViewCount`. |
 | `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs` | OpenGL swapchain setup and per-view Forward+ rendering path. |
 | `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs` | Vulkan swapchain setup, per-view rendering path, and quad-safe storage/prewarm plumbing. |
+| `XREngine.Runtime.XR.OpenXR/OpenXRAPI.InsetPair.cs` | Quad-view inset pair: cameras, stereo viewport, pipeline, collect, swap, and the shared exposure link to the wide pair. |
+| `XREngine.Runtime.Rendering/Rendering/PostProcessing/SharedAutoExposureChannel.cs` and `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.AutoExposureSharing.cs` | Shared auto exposure buffer and the Vulkan publish and consume dispatches. |
 | `Build/CommonAssets/Shaders/Advanced/Rvc/RvcShadeletTelemetry.comp` | Shadelet telemetry kernel: intra-view unique keys and stereo reprojection key matches. |
 | `XREngine.Runtime.Core/Settings/RvcRuntimeContracts/Records/RvcShadeletTelemetryCounters.cs` | Telemetry counter record, GPU word layout, decode, and reuse ratios. |
 | `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.NativeShading.cs` | Records the telemetry dispatch after the last native shading view and its counter readback. |

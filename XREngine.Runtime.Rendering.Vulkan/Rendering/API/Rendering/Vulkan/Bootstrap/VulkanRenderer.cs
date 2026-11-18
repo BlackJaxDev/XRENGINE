@@ -394,6 +394,13 @@ public sealed partial class VulkanRenderer :
             deltaTime,
             generateMipmapsNow);
 
+    public override bool PublishAutoExposureGpu(XRTexture2D exposureTex, XRDataBuffer channelBuffer)
+        => _frameLoop.PublishAutoExposureGpu(exposureTex, channelBuffer);
+
+    public override bool ConsumeAutoExposureGpu(XRDataBuffer channelBuffer, XRTexture2D exposureTex,
+        float minExposure, float maxExposure, float fallbackExposure)
+        => _frameLoop.ConsumeAutoExposureGpu(channelBuffer, exposureTex, minExposure, maxExposure, fallbackExposure);
+
     bool IPhysicsChainComputeBackendFactoryCapability.TryCreatePhysicsChainComputeBackend(
         out IPhysicsChainComputeBackend? backend)
         => VulkanPhysicsChainComputeBackend.TryCreate(this, out backend);

@@ -5,6 +5,12 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Owns the auto-exposure shader programs for the active resource generation.</summary>
 internal sealed partial class VulkanResourceRuntime
 {
+    /// <summary>Copies a 1x1 exposure texture into a shared exposure storage buffer.</summary>
+    internal XRRenderProgram? AutoExposurePublishProgram;
+
+    /// <summary>Writes the exposure in a shared exposure storage buffer into a 1x1 exposure texture.</summary>
+    internal XRRenderProgram? AutoExposureConsumeProgram;
+
     internal bool EnsureAutoExposureComputeResources()
     {
         if (AutoExposureComputeInitialized)
@@ -36,10 +42,17 @@ internal sealed partial class VulkanResourceRuntime
                 AllowAsyncBackendCompile = true
             };
 
+            AutoExposurePublishProgram = CreateAutoExposureSharingProgram(
+                "VulkanAutoExposurePublish", AutoExposurePublishShaderSource);
+            AutoExposureConsumeProgram = CreateAutoExposureSharingProgram(
+                "VulkanAutoExposureConsume", AutoExposureConsumeShaderSource);
+
             // Binding updates are event-driven. Attach the native owners before
             // the first update, including hosts that have no desktop window.
             CreateAPIRenderObject(AutoExposureComputeProgram2D);
             CreateAPIRenderObject(AutoExposureComputeProgram2DArray);
+            CreateAPIRenderObject(AutoExposurePublishProgram);
+            CreateAPIRenderObject(AutoExposureConsumeProgram);
             AutoExposureComputeInitialized = true;
         }
         catch (Exception ex)
@@ -56,10 +69,64 @@ internal sealed partial class VulkanResourceRuntime
     {
         AutoExposureComputeProgram2D?.Destroy();
         AutoExposureComputeProgram2DArray?.Destroy();
+        AutoExposurePublishProgram?.Destroy();
+        AutoExposureConsumeProgram?.Destroy();
         AutoExposureComputeProgram2D = null;
         AutoExposureComputeProgram2DArray = null;
+        AutoExposurePublishProgram = null;
+        AutoExposureConsumeProgram = null;
         AutoExposureComputeInitialized = false;
     }
+
+    private static XRRenderProgram CreateAutoExposureSharingProgram(string name, string source)
+        => new(
+            linkNow: true,
+            separable: false,
+            new XRShader(EShaderType.Compute, source)
+            {
+                Name = name + ".comp"
+            })
+        {
+            Name = name,
+            AllowAsyncBackendCompile = true
+        };
+
+    private const string AutoExposurePublishShaderSource = @"#version 460
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(r32f, binding = 0) uniform image2D ExposureIn;
+layout(std430, binding = 1) buffer SharedExposureBuffer
+{
+    float SharedExposure;
+};
+
+void main()
+{
+    SharedExposure = imageLoad(ExposureIn, ivec2(0, 0)).r;
+}
+";
+
+    private const string AutoExposureConsumeShaderSource = @"#version 460
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(r32f, binding = 0) uniform image2D ExposureOut;
+layout(std430, binding = 1) readonly buffer SharedExposureBuffer
+{
+    float SharedExposure;
+};
+
+uniform float MinExposure;
+uniform float MaxExposure;
+uniform float FallbackExposure;
+
+void main()
+{
+    float exposure = SharedExposure;
+    if (isnan(exposure) || isinf(exposure) || !(exposure > 0.0))
+        exposure = FallbackExposure;
+    imageStore(ExposureOut, ivec2(0, 0), vec4(clamp(exposure, MinExposure, MaxExposure), 0.0, 0.0, 0.0));
+}
+";
 
     private const string AutoExposureComputeShaderSource2D = @"#version 460
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;

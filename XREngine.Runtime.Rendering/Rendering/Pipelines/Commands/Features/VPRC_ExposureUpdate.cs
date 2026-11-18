@@ -222,9 +222,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 var exposureTexture = ActivePipelineInstance.GetTexture<XRTexture2D>(AutoExposureTextureName);
                 if (exposureTexture is not null)
                 {
+                    if (TryConsumeSharedAutoExposure(renderer, grading, exposureTexture))
+                        return;
+
                     grading.UpdateExposureGpu(sourceTexture, exposureTexture, GenerateMipmapsHere);
                     if (grading.UseGpuAutoExposureThisFrame)
+                    {
+                        PublishSharedAutoExposure(renderer, exposureTexture);
                         return;
+                    }
 
                     Debug.Rendering("[ExposureUpdate] GPU exposure update not ready; using CPU exposure for this frame");
                 }
@@ -239,6 +245,68 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             grading.UpdateExposure(sourceTexture, GenerateMipmapsHere);
+        }
+
+        /// <summary>
+        /// Copies this pipeline instance's new exposure into its shared channel, so that
+        /// instances that render later in the frame (the quad-view inset pair) use the same
+        /// exposure. Does nothing when the instance publishes to no channel.
+        /// </summary>
+        private void PublishSharedAutoExposure(AbstractRenderer renderer, XRTexture2D exposureTexture)
+        {
+            if (ActivePipelineInstance.PublishesAutoExposureTo is not { } channel)
+                return;
+
+            if (renderer.PublishAutoExposureGpu(exposureTexture, channel.Buffer))
+            {
+                channel.MarkPublished(RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId);
+                return;
+            }
+
+            Debug.RenderingWarningEvery(
+                $"ExposureUpdate.SharedPublishFailed.{ActivePipelineInstance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[ExposureUpdate] Could not publish the shared auto exposure of pipeline instance {0}. Consumers meter their own scene this frame.",
+                ActivePipelineInstance.InstanceId);
+        }
+
+        /// <summary>
+        /// For an instance that consumes a shared channel, copies the exposure that the
+        /// publisher wrote this frame into this instance's exposure texture and skips metering.
+        /// Returns false when the instance consumes no channel, or when no value was published
+        /// this frame; the caller then meters this instance's own scene image.
+        /// </summary>
+        private bool TryConsumeSharedAutoExposure(AbstractRenderer renderer, ColorGradingSettings grading, XRTexture2D exposureTexture)
+        {
+            if (ActivePipelineInstance.ConsumesAutoExposureFrom is not { } channel)
+                return false;
+
+            ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+            if (channel.PublishedRenderFrameId == renderFrameId)
+            {
+                grading.GetResolvedExposureBounds(out float minExposure, out float maxExposure);
+                float fallbackExposure = grading.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
+                    ? grading.ComputePhysicalExposureMultiplier()
+                    : grading.Exposure;
+                bool consumed = renderer.ConsumeAutoExposureGpu(
+                    channel.Buffer,
+                    exposureTexture,
+                    minExposure,
+                    maxExposure,
+                    Math.Clamp(fallbackExposure, minExposure, maxExposure));
+                grading.MarkGpuAutoExposureReady(consumed);
+                if (consumed)
+                    return true;
+            }
+
+            Debug.RenderingWarningEvery(
+                $"ExposureUpdate.SharedConsumeUnavailable.{ActivePipelineInstance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[ExposureUpdate] Pipeline instance {0} has no shared auto exposure for render frame {1} (published frame {2}). It meters its own scene this frame.",
+                ActivePipelineInstance.InstanceId,
+                renderFrameId,
+                channel.PublishedRenderFrameId);
+            return false;
         }
 
         public void SetOptions(string hdrSceneTextureName, bool generateMipmapsHere)

@@ -17,6 +17,8 @@ public unsafe partial class OpenXRAPI
     private XRViewport? _openXrInsetStereoViewport;
     private RenderPipeline? _openXrInsetStereoRenderPipeline;
     private RenderPipeline? _openXrInsetPostProcessCopiedPipeline;
+    private ulong _openXrInsetPostProcessCopiedVersion;
+    private SharedAutoExposureChannel? _openXrInsetAutoExposureChannel;
 
     /// <summary>True when the quad-view configuration is active with four views.</summary>
     private bool IsOpenXrInsetPairActive
@@ -109,16 +111,21 @@ public unsafe partial class OpenXRAPI
             viewport.RenderPipeline = insetPipeline;
 
         // The inset shows the same scene as the wide pair, so it takes the wide eye
-        // cameras' post-process state. Copy it once per inset pipeline: a copy every
-        // frame can change the inset's resource settings between collect and render.
-        if (!ReferenceEquals(_openXrInsetPostProcessCopiedPipeline, insetPipeline))
+        // cameras' post-process state. Copy it only when the inset pipeline or the wide
+        // state changes: a copy every frame can change the inset's resource settings
+        // between collect and render, and a single copy misses later setting changes.
+        ulong wideStateVersion = _openXrLeftEyeCamera!.GetPostProcessState(widePipeline)?.ChangeVersion ?? 0UL;
+        if (!ReferenceEquals(_openXrInsetPostProcessCopiedPipeline, insetPipeline) ||
+            _openXrInsetPostProcessCopiedVersion != wideStateVersion)
         {
             CopyPostProcessState(widePipeline, insetPipeline, _openXrLeftEyeCamera!, left);
             CopyPostProcessState(widePipeline, insetPipeline, _openXrRightEyeCamera!, right);
             _openXrInsetPostProcessCopiedPipeline = insetPipeline;
+            _openXrInsetPostProcessCopiedVersion = wideStateVersion;
         }
         left.RenderPipeline = insetPipeline;
         right.RenderPipeline = insetPipeline;
+        LinkOpenXrInsetAutoExposure(viewport);
         return CollectPreparedOpenXrInsetPair(world, cullProjectionScale: 1.0f, out commandsAdded);
     }
 
@@ -183,10 +190,40 @@ public unsafe partial class OpenXRAPI
     /// Publishes the inset pair's collected commands with the wide pair's swap. An empty
     /// collect keeps the previous rendering commands, like the wide pair.
     /// </summary>
+    /// <summary>
+    /// Makes the inset pair use the wide pair's auto exposure. The wide stereo pipeline
+    /// instance publishes its exposure to a shared channel, and the inset instance copies it
+    /// instead of metering its own smaller image, so both pairs have the same brightness.
+    /// </summary>
+    private void LinkOpenXrInsetAutoExposure(XRViewport insetViewport)
+    {
+        if (_openXrStereoViewport is not { } wideViewport)
+            return;
+
+        SharedAutoExposureChannel channel =
+            _openXrInsetAutoExposureChannel ??= new SharedAutoExposureChannel("OpenXRQuadViewSharedExposure");
+        wideViewport.RenderPipelineInstance.PublishesAutoExposureTo = channel;
+        insetViewport.RenderPipelineInstance.ConsumesAutoExposureFrom = channel;
+    }
+
+    /// <summary>Stops the wide pair's exposure publish when the quad view is not active.</summary>
+    private void UnlinkOpenXrInsetAutoExposure()
+    {
+        if (_openXrInsetAutoExposureChannel is null ||
+            _openXrStereoViewport?.RenderPipelineInstance is not { } wideInstance ||
+            !ReferenceEquals(wideInstance.PublishesAutoExposureTo, _openXrInsetAutoExposureChannel))
+            return;
+
+        wideInstance.PublishesAutoExposureTo = null;
+    }
+
     private void SwapOpenXrInsetPairCommands()
     {
         if (!IsOpenXrInsetPairActive || _openXrInsetStereoViewport is not { } viewport)
+        {
+            UnlinkOpenXrInsetAutoExposure();
             return;
+        }
 
         RenderCommandCollection commands = viewport.RenderPipelineInstance.MeshRenderCommands;
         if (commands.GetUpdatingCommandCount() == 0 && commands.GetRenderingCommandCount() > 0)
