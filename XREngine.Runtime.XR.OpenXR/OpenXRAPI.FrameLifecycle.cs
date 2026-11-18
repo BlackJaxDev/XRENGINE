@@ -1284,7 +1284,10 @@ public unsafe partial class OpenXRAPI
         uint? msaaSampleCountOverride = antiAliasingOverride is EAntiAliasingMode.Msaa
             ? sourceCamera.MsaaSampleCountOverride ?? secondaryCamera.MsaaSampleCountOverride
             : null;
-        float? tsrRenderScaleOverride = antiAliasingOverride is EAntiAliasingMode.Tsr
+        // The TSR scale follows the resolved mode, not only an explicit AA override: with the
+        // default TSR mode the eye cameras carry no AA override, and clearing their scale here
+        // would undo an eye camera's scale one frame after the frame profile applied it.
+        float? tsrRenderScaleOverride = antiAliasingMode == EAntiAliasingMode.Tsr
             ? sourceCamera.TsrRenderScaleOverride ?? secondaryCamera.TsrRenderScaleOverride
             : null;
         float? phase524bTsrRenderScale = _phase524bTsrRenderScaleOverride;
@@ -1298,8 +1301,8 @@ public unsafe partial class OpenXRAPI
         try
         {
             _openXrEyeSettingsLink.BeginMirroringSuppression();
-            ApplyOpenXrEyeCameraRenderSettings(leftEyeCamera, antiAliasingOverride, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
-            ApplyOpenXrEyeCameraRenderSettings(rightEyeCamera, antiAliasingOverride, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
+            ApplyOpenXrEyeCameraRenderSettings(leftEyeCamera, antiAliasingOverride, antiAliasingMode, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
+            ApplyOpenXrEyeCameraRenderSettings(rightEyeCamera, antiAliasingOverride, antiAliasingMode, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
         }
         finally
         {
@@ -1307,19 +1310,26 @@ public unsafe partial class OpenXRAPI
         }
     }
 
+    /// <summary>
+    /// Writes the shared eye render settings to one eye camera. <paramref name="antiAliasingOverride"/>
+    /// is the camera's AA override (null keeps the global mode); <paramref name="resolvedAntiAliasingMode"/>
+    /// is the mode the eye renders with. The TSR scale is kept whenever the eye renders with TSR, so
+    /// the eye camera stays the single source of the eye's internal size.
+    /// </summary>
     private static void ApplyOpenXrEyeCameraRenderSettings(
         XRCamera eyeCamera,
-        EAntiAliasingMode? antiAliasingMode,
+        EAntiAliasingMode? antiAliasingOverride,
+        EAntiAliasingMode resolvedAntiAliasingMode,
         uint? msaaSampleCountOverride,
         bool? outputHdrOverride,
         float? tsrRenderScaleOverride)
     {
-        eyeCamera.AntiAliasingModeOverride = antiAliasingMode;
-        eyeCamera.MsaaSampleCountOverride = antiAliasingMode is EAntiAliasingMode.Msaa
+        eyeCamera.AntiAliasingModeOverride = antiAliasingOverride;
+        eyeCamera.MsaaSampleCountOverride = antiAliasingOverride is EAntiAliasingMode.Msaa
             ? msaaSampleCountOverride
             : null;
         eyeCamera.OutputHDROverride = outputHdrOverride;
-        eyeCamera.TsrRenderScaleOverride = antiAliasingMode is EAntiAliasingMode.Tsr
+        eyeCamera.TsrRenderScaleOverride = resolvedAntiAliasingMode == EAntiAliasingMode.Tsr
             ? tsrRenderScaleOverride
             : null;
     }
