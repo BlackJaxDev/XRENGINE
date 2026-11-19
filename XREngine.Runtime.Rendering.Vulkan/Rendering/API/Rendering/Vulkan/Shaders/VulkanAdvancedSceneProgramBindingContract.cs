@@ -77,6 +77,9 @@ internal static class VulkanAdvancedSceneProgramBindingContract
     internal const uint VisibilityIndexedInstanceGroupsBinding = 63u;
     internal const uint VisibilityEarlyIndexedGroupCountsBinding = 64u;
     internal const uint VisibilityLateIndexedGroupCountsBinding = 65u;
+    // Per-view previous/current meshlet visibility bit sets. The early task
+    // variant reads them and the late task variant sets bits for the next frame.
+    internal const uint VisibilityMeshletHistoryBinding = 71u;
     internal const uint VisibilityDepthPyramidSampledBinding = 42u;
 internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint VisibilityDeformationOverlayBinding = 46u;
@@ -344,6 +347,7 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
             VisibilityIndexedInstanceGroupsBinding or
             VisibilityEarlyIndexedGroupCountsBinding or
             VisibilityLateIndexedGroupCountsBinding or
+            VisibilityMeshletHistoryBinding or
             VisibilityDeformationOverlayBinding or
             VisibilityCanonicalIndicesBinding or
             VisibilityReconstructionCountersBinding or

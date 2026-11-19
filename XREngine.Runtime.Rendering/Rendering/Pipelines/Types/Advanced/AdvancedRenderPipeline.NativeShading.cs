@@ -16,11 +16,31 @@ public partial class AdvancedRenderPipeline
     private uint _froxelDepthSlices = AdvancedFroxelGridDimensions.DefaultDepthSlices;
 
     /// <summary>
-    /// Diagnostic visualization mode for native opaque shading and clustered lighting.
+    /// Process-wide shading debug view from <see cref="XREngineEnvironmentVariables.AdvancedShadingDebugView"/>,
+    /// or null when the variable is unset or invalid. Read once at type initialization.
+    /// </summary>
+    private static readonly EAdvancedShadingDebugView? s_shadingDebugViewOverride = ResolveShadingDebugViewOverride();
+
+    private static EAdvancedShadingDebugView? ResolveShadingDebugViewOverride()
+    {
+        string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedShadingDebugView);
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        return Enum.TryParse(value.Trim(), ignoreCase: true, out EAdvancedShadingDebugView view) &&
+               Enum.IsDefined(view)
+            ? view
+            : null;
+    }
+
+    /// <summary>
+    /// Diagnostic visualization mode for native opaque shading and clustered lighting. When
+    /// <see cref="XREngineEnvironmentVariables.AdvancedShadingDebugView"/> is set, every Advanced
+    /// stage family (desktop, per-eye, stereo and RVC) returns that view instead of its own value,
+    /// so one launch shows the same view in every output.
     /// </summary>
     public EAdvancedShadingDebugView ShadingDebugView
     {
-        get => _shadingDebugView;
+        get => s_shadingDebugViewOverride ?? _shadingDebugView;
         set
         {
             if (!SetField(ref _shadingDebugView, value))
@@ -260,7 +280,28 @@ public partial class AdvancedRenderPipeline
                 AdvancedVisibilityResourceNames.Identity,
                 AdvancedVisibilityResourceNames.Metadata,
                 AdvancedVisibilityResourceNames.DepthStencil)
+            .When(static profile => (profile.FeatureMask & ShadingDiagnosticsOmittedFeatureBit) == 0UL)
             .DebugLabel("Advanced native shading diagnostics")
+            .Add();
+
+        // 7b. Shading diagnostics placeholder. An output that omits the diagnostics image (OpenXR
+        // eyes without a shading debug view) still needs an image at the diagnostics binding. A
+        // dedicated 1x1 image, created with the resource generation, fills it. It has the same
+        // layer count, so each view gets its own layer view like the real image. The shading push
+        // flag stops every store to it, and no other binding refers to it, so sync validation sees
+        // no hazard against the visibility inputs.
+        ReconstructionTexture(
+                builder,
+                AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder,
+                RenderResourceSizePolicy.Absolute(1u, 1u),
+                EPixelInternalFormat.R32ui,
+                EPixelFormat.RedInteger,
+                EPixelType.UnsignedInt,
+                ESizedInternalFormat.R32ui)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .When(static profile => (profile.FeatureMask & ShadingDiagnosticsOmittedFeatureBit) != 0UL)
+            .DebugLabel("Advanced native shading diagnostics placeholder")
             .Add();
 
         // 8. Ambient Occlusion Output Texture

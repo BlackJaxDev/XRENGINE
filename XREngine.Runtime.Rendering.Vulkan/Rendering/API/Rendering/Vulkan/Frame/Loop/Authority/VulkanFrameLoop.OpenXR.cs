@@ -22,6 +22,12 @@ internal sealed partial class VulkanFrameLoop
     /// eye frame-data slots, so a pair can record while its previous frame is still on the GPU.
     /// </summary>
     private const int OpenXrMaxStereoPairCount = 2;
+    /// <summary>
+    /// Frame-data slots that each eye owns. Eye submissions are asynchronous, so the next frame of
+    /// an eye records into its second slot while the GPU still reads the first one. Must match
+    /// <see cref="VulkanOpenXrBackend.EyeFrameDataSlotCount"/>.
+    /// </summary>
+    private const int OpenXrEyeFrameDataSlotsPerEye = 2;
     private const uint OpenXrExternalSwapchainTargetImageIndex = 0;
     private const string OpenXrLeftExternalSwapchainTargetName = "<openxr-left-swapchain>";
     private const string OpenXrRightExternalSwapchainTargetName = "<openxr-right-swapchain>";

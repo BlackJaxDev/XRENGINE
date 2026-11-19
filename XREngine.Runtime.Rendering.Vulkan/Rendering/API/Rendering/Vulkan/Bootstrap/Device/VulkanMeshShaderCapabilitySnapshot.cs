@@ -26,7 +26,12 @@ internal readonly unsafe record struct VulkanMeshShaderCapabilitySnapshot(
     // so MaxMeshOutputComponents must cover 28 locations (112 components),
     // while the actual per-vertex storage is only 60 scalar components
     // (fourteen locations plus gl_Position).
-    private const uint PortableTaskPayloadBytes = 32u;
+    // The Advanced visibility task shader runs 32 invocations, keeps two
+    // 32-word shared arrays (256 bytes) and transfers a payload of one payload
+    // row plus 32 meshlet indices (132 bytes).
+    private const uint PortableTaskWorkGroupInvocations = 32u;
+    private const uint PortableTaskPayloadBytes = 132u;
+    private const uint PortableTaskSharedBytes = 256u;
     private const uint PortableMeshWorkGroupInvocations = 32u;
     private const uint PortableMeshOutputVertices = 64u;
     private const uint PortableMeshOutputPrimitives = 124u;
@@ -98,7 +103,7 @@ internal readonly unsafe record struct VulkanMeshShaderCapabilitySnapshot(
     }
 
     internal bool HasPortableMeshletProfile
-        // The task shader launches one invocation and transfers a 32-byte
+        // The task shader launches 32 invocations and transfers a 132-byte
         // payload. The mesh shader launches 32 invocations and emits the
         // portable cooked profile (64 vertices / 124 primitives). Preferred
         // workgroup counts are performance hints only; they never decide
@@ -106,10 +111,10 @@ internal readonly unsafe record struct VulkanMeshShaderCapabilitySnapshot(
         => HasCompatibleShaderArtifactTarget &&
            Properties.MaxTaskWorkGroupTotalCount >= 1u &&
            MaxTaskWorkGroupCountX >= 1u &&
-           Properties.MaxTaskWorkGroupInvocations >= 1u &&
-           MaxTaskWorkGroupSizeX >= 1u &&
+           Properties.MaxTaskWorkGroupInvocations >= PortableTaskWorkGroupInvocations &&
+           MaxTaskWorkGroupSizeX >= PortableTaskWorkGroupInvocations &&
            Properties.MaxTaskPayloadSize >= PortableTaskPayloadBytes &&
-           Properties.MaxTaskPayloadAndSharedMemorySize >= PortableTaskPayloadBytes &&
+           Properties.MaxTaskPayloadAndSharedMemorySize >= PortableTaskPayloadBytes + PortableTaskSharedBytes &&
            Properties.MaxMeshWorkGroupTotalCount >= 1u &&
            MaxMeshWorkGroupCountX >= 1u &&
            Properties.MaxMeshWorkGroupInvocations >= PortableMeshWorkGroupInvocations &&
@@ -139,7 +144,7 @@ internal readonly unsafe record struct VulkanMeshShaderCapabilitySnapshot(
         if (!HasCompatibleShaderArtifactTarget)
             return $"The negotiated Vulkan API version 0x{NegotiatedApiVersion:X8} is below Vulkan 1.3 required by the shipped task/mesh SPIR-V 1.6 artifacts.";
         if (!HasPortableMeshletProfile)
-            return $"VK_EXT_mesh_shader device limits cannot satisfy the portable task=1/payload=32-byte/mesh=32/64-vertex/124-primitive profile (taskTotal={Properties.MaxTaskWorkGroupTotalCount}, taskCountX={MaxTaskWorkGroupCountX}, taskInvocations={Properties.MaxTaskWorkGroupInvocations}, taskSizeX={MaxTaskWorkGroupSizeX}, preferredTaskInvocations={Properties.MaxPreferredTaskWorkGroupInvocations}, taskPayload={Properties.MaxTaskPayloadSize}, taskPayloadShared={Properties.MaxTaskPayloadAndSharedMemorySize}, meshTotal={Properties.MaxMeshWorkGroupTotalCount}, meshCountX={MaxMeshWorkGroupCountX}, meshInvocations={Properties.MaxMeshWorkGroupInvocations}, meshSizeX={MaxMeshWorkGroupSizeX}, preferredMeshInvocations={Properties.MaxPreferredMeshWorkGroupInvocations}, meshPayloadShared={Properties.MaxMeshPayloadAndSharedMemorySize}, outputComponents={Properties.MaxMeshOutputComponents}, requiredLocationComponents={PortableMeshOutputLocationSpaceComponents}, effectiveVertexScalars={PortableMeshEffectivePerVertexOutputScalars}, outputVertexGranularity={Properties.MeshOutputPerVertexGranularity}, requiredOutputMemory={RequiredMeshOutputMemoryBytes}, outputVertices={Properties.MaxMeshOutputVertices}, outputPrimitives={Properties.MaxMeshOutputPrimitives}, meshOutputMemory={Properties.MaxMeshOutputMemorySize}, meshPayloadOutputMemory={Properties.MaxMeshPayloadAndOutputMemorySize}).";
+            return $"VK_EXT_mesh_shader device limits cannot satisfy the portable task=32/payload=132-byte/mesh=32/64-vertex/124-primitive profile (taskTotal={Properties.MaxTaskWorkGroupTotalCount}, taskCountX={MaxTaskWorkGroupCountX}, taskInvocations={Properties.MaxTaskWorkGroupInvocations}, taskSizeX={MaxTaskWorkGroupSizeX}, preferredTaskInvocations={Properties.MaxPreferredTaskWorkGroupInvocations}, taskPayload={Properties.MaxTaskPayloadSize}, taskPayloadShared={Properties.MaxTaskPayloadAndSharedMemorySize}, meshTotal={Properties.MaxMeshWorkGroupTotalCount}, meshCountX={MaxMeshWorkGroupCountX}, meshInvocations={Properties.MaxMeshWorkGroupInvocations}, meshSizeX={MaxMeshWorkGroupSizeX}, preferredMeshInvocations={Properties.MaxPreferredMeshWorkGroupInvocations}, meshPayloadShared={Properties.MaxMeshPayloadAndSharedMemorySize}, outputComponents={Properties.MaxMeshOutputComponents}, requiredLocationComponents={PortableMeshOutputLocationSpaceComponents}, effectiveVertexScalars={PortableMeshEffectivePerVertexOutputScalars}, outputVertexGranularity={Properties.MeshOutputPerVertexGranularity}, requiredOutputMemory={RequiredMeshOutputMemoryBytes}, outputVertices={Properties.MaxMeshOutputVertices}, outputPrimitives={Properties.MaxMeshOutputPrimitives}, meshOutputMemory={Properties.MaxMeshOutputMemorySize}, meshPayloadOutputMemory={Properties.MaxMeshPayloadAndOutputMemorySize}).";
 
         return "VK_EXT_mesh_shader indirect-count dispatch is available.";
     }

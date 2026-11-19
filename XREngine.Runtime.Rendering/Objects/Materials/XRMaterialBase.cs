@@ -624,7 +624,10 @@ namespace XREngine.Rendering
 
             for (int index = 0; index < parameters.Length; index++)
                 if (parameters[index] is { } parameter)
+                {
                     parameter.ValueChanged += ParameterValueChanged;
+                    parameter.NameChanged += ParameterNameChanged;
+                }
         }
 
         private void DetachParameterHandlers(ShaderVar[]? parameters)
@@ -634,7 +637,10 @@ namespace XREngine.Rendering
 
             for (int index = 0; index < parameters.Length; index++)
                 if (parameters[index] is { } parameter)
+                {
                     parameter.ValueChanged -= ParameterValueChanged;
+                    parameter.NameChanged -= ParameterNameChanged;
+                }
         }
 
         /// <summary>Restores value subscriptions after a cooked reflection load suppressed property callbacks.</summary>
@@ -649,6 +655,20 @@ namespace XREngine.Rendering
 
         private void ParameterValueChanged(ShaderVar _)
             => IncrementBindingValueVersion();
+
+        /// <summary>
+        /// Reacts to a rename of one parameter. The cached name-to-index lookup is no longer
+        /// valid, and consumers that map uniform names to program slots or to encoded material
+        /// words (for example the Advanced scene publisher) must rebuild that map. A rename
+        /// therefore advances the layout version, and the value version with it, as a change
+        /// of the Parameters array does.
+        /// </summary>
+        private void ParameterNameChanged(ShaderVar _)
+        {
+            ResetNameIndexCache();
+            IncrementBindingLayoutVersion();
+            IncrementBindingValueVersion();
+        }
 
         protected void IncrementBindingValueVersion()
         {

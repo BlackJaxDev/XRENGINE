@@ -248,12 +248,13 @@ internal sealed partial class EngineMeshDiagnosticFixture
             pipelineDecline = instance.LastRenderDeclineReason,
             resourceFailure = instance.LastResourceGenerationFailure,
         });
-        return observed[..^1] + ",\"indexedCache\":" +
-            (_unlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
-                ? _renderer.GetAuthoredIndexedCacheDiagnostics() : "null") +
-            ",\"witness\":" + (_unlitProfile.SampleCount > 1
-                ? _unlitProfile.BlendedWitness ? UnlitBlendedWitnessMetadata : UnlitWitnessMetadata : "null") + "," +
-            UnlitCaseMetadata[index][1..];
+        string indexedCache = _unlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
+            ? _renderer.GetAuthoredIndexedCacheDiagnostics()
+            : "null";
+        string witness = _unlitProfile.SampleCount > 1
+            ? (_unlitProfile.BlendedWitness ? UnlitBlendedWitnessMetadata : UnlitWitnessMetadata)
+            : "null";
+        return $"""{observed[..^1]},"indexedCache":{indexedCache},"witness":{witness},{UnlitCaseMetadata[index][1..]}""";
     }
 
     private static object DescribeUnlitWitnessMaterial(XRMaterial material)

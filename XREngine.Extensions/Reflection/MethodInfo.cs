@@ -92,7 +92,7 @@ namespace XREngine.Extensions
                     friendlyName += "ref ";
 
                 string typeName = p.ParameterType.GetFriendlyName(openBracket, closeBracket);
-                friendlyName += typeName + " " + p.Name;
+                friendlyName += $"{typeName} {p.Name}";
                 if (p.HasDefaultValue)
                 {
                     friendlyName += " = ";
@@ -103,9 +103,9 @@ namespace XREngine.Extensions
                     else
                     {
                         if (p.ParameterType == typeof(string))
-                            friendlyName += "\"" + p.DefaultValue.ToString() + "\"";
+                            friendlyName += $"\"{p.DefaultValue}\"";
                         else if(p.ParameterType == typeof(char))
-                            friendlyName += "\'" + p.DefaultValue.ToString() + "\'";
+                            friendlyName += $"'{p.DefaultValue}'";
                         else
                             friendlyName += p.DefaultValue.ToString();
                     }

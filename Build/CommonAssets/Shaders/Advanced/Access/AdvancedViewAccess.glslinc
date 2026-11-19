@@ -7,6 +7,8 @@ const uint XR_ADV_VIEW_DEPTH_ZERO_TO_ONE = 1u << 0u;
 const uint XR_ADV_VIEW_FRAMEBUFFER_TEXTURE_Y_DOWN = 1u << 6u;
 const uint XR_ADV_VIEW_TEMPORAL_HISTORY_VALID = 1u << 7u;
 const uint XR_ADV_VIEW_EXCLUDE_PROJECTIVE_MIRRORS = 1u << 8u;
+// EAdvancedViewRecordFlags.GtaoMaterialNormals: GTAO normal-map micro-occlusion is on.
+const uint XR_ADV_VIEW_GTAO_MATERIAL_NORMALS = 1u << 9u;
 
 // Analytic reconstruction keeps full-rate visibility. Peripheral sampling only
 // widens the texture footprint; it never removes geometry or borrows another eye.

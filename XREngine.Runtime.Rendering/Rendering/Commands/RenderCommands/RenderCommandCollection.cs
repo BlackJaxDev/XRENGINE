@@ -918,7 +918,8 @@ namespace XREngine.Rendering.Commands
                 viewportHeight,
                 _updatingExcludeProjectiveMirrors,
                 _updatingMeshSubmissionStrategy,
-                submissionViewport?.OpenXrViewPair ?? RenderFrameViewSetPublication.AllViews);
+                submissionViewport?.OpenXrViewPair ?? RenderFrameViewSetPublication.AllViews,
+                pipeline?.ResolveCanonicalViewPolicyFlags(camera) ?? EAdvancedViewRecordFlags.None);
         }
 
         /// <summary>
@@ -956,7 +957,8 @@ namespace XREngine.Rendering.Commands
                     _updatingExcludeProjectiveMirrors,
                     _updatingMeshSubmissionStrategy,
                     (ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport)?.OpenXrViewPair
-                        ?? RenderFrameViewSetPublication.AllViews);
+                        ?? RenderFrameViewSetPublication.AllViews,
+                    ownerPipeline?.Pipeline?.ResolveCanonicalViewPolicyFlags(camera) ?? EAdvancedViewRecordFlags.None);
                 return _updatingBackendReadyPackage.TryGetCanonicalPublication(
                            out _, out _) &&
                        !_updatingBackendReadyPackage.CanonicalViews.IsEmpty;
@@ -3313,19 +3315,34 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        internal void VisitRenderingMeshCommands(Action<IRenderCommandMesh> visitor)
+        /// <summary>
+        /// Adds the mesh renderer of each published mesh command to <paramref name="renderers"/>
+        /// once, and adds it to <paramref name="traditionalRenderers"/> when one of its commands is
+        /// not owned by the canonical GPU path. A CPU pass of this collection draws such a command
+        /// traditionally (the same test as <see cref="RenderCPU"/> and
+        /// <see cref="RenderCPUNonMeshAndExcluded"/>), so it reads the skinning prepass output.
+        /// The caller clears the three containers; this method allocates nothing.
+        /// </summary>
+        internal void CollectSkinningPrepassRenderers(
+            List<XRMeshRenderer> renderers,
+            HashSet<XRMeshRenderer> seen,
+            HashSet<XRMeshRenderer> traditionalRenderers)
         {
-            ArgumentNullException.ThrowIfNull(visitor);
             _renderingBufferLock.EnterReadLock();
             try
             {
-                foreach (ICollection<RenderCommand> pass in _renderingPasses.Values)
+                foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _renderingPasses)
                 {
-                    int count = pass.Count;
-                    for (int index = 0; index < count; index++)
+                    ICollection<RenderCommand> commands = pass.Value;
+                    for (int index = 0; index < commands.Count; index++)
                     {
-                        if (GetCommandAt(pass, index) is IRenderCommandMesh meshCommand)
-                            visitor(meshCommand);
+                        if (GetCommandAt(commands, index) is not IRenderCommandMesh meshCommand ||
+                            meshCommand.Mesh is not XRMeshRenderer renderer)
+                            continue;
+                        if (seen.Add(renderer))
+                            renderers.Add(renderer);
+                        if (!_renderingBackendReadyPackage.IsTraditionalGpuOwned(pass.Key, meshCommand.StableQueryKey))
+                            traditionalRenderers.Add(renderer);
                     }
                 }
             }

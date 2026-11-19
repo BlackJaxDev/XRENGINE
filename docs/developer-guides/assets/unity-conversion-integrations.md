@@ -498,6 +498,11 @@ engine-authored Uber materials keep their existing cubemap composition.
 Source overlays run in this order: matcap, cubemap, then view rim. A replacing
 cubemap must not overwrite a rim that the source shader applies afterward.
 
+The native cubemap uses an sRGB format only for 8-bit sources whose Unity
+metadata enables sRGB. HDR sources (`.hdr`, `.exr`) decode to float faces and
+keep a linear float format, as in Unity, which ignores the sRGB flag for them.
+An 8-bit sRGB format for float faces makes the Vulkan upload reject every frame.
+
 Source matcap slots use linear texel filtering, trilinear mip filtering when
 mips are enabled, and repeat wrap, as required by the source shader's inline
 sampler. Their texture cache partition is separate from the default sampling

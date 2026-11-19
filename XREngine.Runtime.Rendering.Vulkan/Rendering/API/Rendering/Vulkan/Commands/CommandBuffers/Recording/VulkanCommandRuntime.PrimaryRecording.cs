@@ -544,7 +544,9 @@ internal sealed partial class VulkanCommandRuntime
         owner.CommandChainScheduleSignature =
             input.CommandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
         owner.PlannerRevision = input.ResourcePlanStamp.ResourcePlannerRevision;
-        owner.GpuProfilerActive = FrameTelemetry._vulkanGpuProfilerRecordingActive;
+        // Only render-thread recordings own the profiler cursor and record its queries.
+        owner.GpuProfilerActive = RuntimeEngine.IsRenderThread &&
+            FrameTelemetry._vulkanGpuProfilerRecordingActive;
         owner.GpuProfilerFrameSlot = owner.GpuProfilerActive
             ? FrameTelemetry._vulkanGpuProfilerRecordingFrameSlot
             : -1;

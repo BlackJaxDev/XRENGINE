@@ -39,7 +39,7 @@ namespace SimpleScene.Util.ssBVH
         public List<GO>? gobjects; // only populated in leaf nodes
 
         public override string ToString()
-            => string.Format("ssBVHNode<{0}>:{1}", typeof(GO), nodeNumber);
+            => $"ssBVHNode<{typeof(GO)}>:{nodeNumber}";
 
         private Axis PickSplitAxis()
         {

@@ -151,6 +151,17 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                 throw;
             }
             registered = true;
+            // A chunk that prefers device-local memory falls back to system memory when no such
+            // memory type exists or the heap is full. Report that placement loudly: the chunk
+            // works, but every GPU read of it crosses PCIe.
+            if (preferDeviceLocal && (properties & MemoryPropertyFlags.DeviceLocalBit) == 0)
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.MappedChunk.DeviceLocalFallback.{ownerLabel}",
+                    TimeSpan.FromSeconds(10),
+                    "[Vulkan] Mapped chunk '{0}' ({1} bytes) preferred device-local memory but got {2} memory. GPU reads of it cross PCIe.",
+                    ownerLabel,
+                    allocationLength,
+                    properties);
             if (preferDeviceLocal)
                 Debug.Vulkan($"[Vulkan] Mapped chunk owner={ownerLabel} buffer=0x{buffer.Handle:X} memory=0x{memory.Handle:X} bytes={allocationLength} memoryTypeIndex={memoryTypeIndex} propertyFlags=0x{(uint)properties:X} properties={properties} allocationRetried={allocationRetried}");
             return true;
@@ -195,7 +206,10 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
             out memory,
             out mappedPtr,
             out isHostCoherent,
-            out allocationLength);
+            out allocationLength,
+            // The CPU writes the per-draw uniforms and the GPU reads them every frame, so the
+            // chunks prefer device-local host-visible memory (resizable BAR).
+            preferDeviceLocal: true);
 
     /// <summary>
     /// Establishes the sole supported destruction proof: every submitted generation is complete

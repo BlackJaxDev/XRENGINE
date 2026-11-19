@@ -336,6 +336,23 @@ prevents a desktop attempt from entering between OpenXR's drainability check
 and destruction; an already-active desktop slot remains excluded by the
 snapshot.
 
+While OpenXR is active, the desktop frame skips its retirement block, and the
+OpenXR view boundary (`DrainRetiredResourcesFromCompletedSubmittedFrameSlots`,
+which runs before each eye or stereo render records) does that work. The
+boundary drains every frame-slot retirement queue. When no desktop attempt is
+active, it also runs the two cache-owner drains of the desktop block:
+`DrainPendingSupersededDescriptorOwners` makes materials and mesh renderers drop
+descriptor sets that still pin a retired resource generation, and
+`DrainInvalidatedCommandBufferRecordings` resets invalidated command buffers.
+When a desktop attempt is active, both drains wait for a later boundary. Without
+the first drain, each resource generation change during OpenXR (for example a
+TSR scale change) keeps every retired image of the old generation alive. The
+desktop frame still drains its own retired swapchain generations while OpenXR
+is active. The retirement diagnostics in `get_render_profiler_stats`
+(`retired_resources.metering`) report `supersededResourceGenerationsDrained`,
+`supersededDescriptorOwnersReleased`, `supersededDescriptorOwnerDrainDeferrals`
+and `pendingSupersededResourceGenerations`.
+
 The `XRWindow` circuit breaker is outside the backend coordinator. Viewport
 pipeline exceptions are isolated so Vulkan can still acquire, submit, and
 present a known frame. An exception that escapes the complete window callback

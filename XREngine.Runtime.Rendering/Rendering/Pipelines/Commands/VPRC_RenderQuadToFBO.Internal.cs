@@ -488,6 +488,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (resources?.DestinationDepthAccess is { } depthAccess)
                 builder.UseDepthAttachment(MakeFboDepthResource(destination), depthAccess,
                     ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+            else if (resources?.DestinationStencilAccess is { } stencilAccess)
+            {
+                builder.UseStencilAttachment(
+                    MakeFboStencilResource(destination),
+                    stencilAccess,
+                    resources.DestinationStencilLoad,
+                    ERenderPassStoreOp.Store);
+            }
             else if (resources?.UseDestinationDepthStencil == true)
             {
                 builder.UseDepthAttachment(

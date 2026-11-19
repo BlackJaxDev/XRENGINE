@@ -224,6 +224,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         _lastSourceGroupReuseCount = 0;
         _lastSourceGroupRebuildCount = 0;
         _lastUnchangedRowGateHitCount = 0;
+        // The moved-row list belongs to one gate walk. Clear it here, so a publication that
+        // passes the prepared verdict without a walk never patches rows of an earlier walk.
+        _lastMovedRowPatchCount = 0;
+        _movedRowCount = 0;
         _lastPublicationCommittedRetainedRows = false;
         _publicationStartMembershipGeneration = _registrationMembershipGeneration;
         _useRetainedIdentityGroups = false;
@@ -286,8 +290,20 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     out reusedStaticPlans,
                     out materialResolveAttempts);
                 if (!gateDecided)
+                {
                     rowsUnchanged = TryPassUnchangedRowGate(
-                        scene, frameId, out reusedStaticPlans, out materialResolveAttempts);
+                        scene, frameId, out reusedStaticPlans, out materialResolveAttempts,
+                        out EAdvancedPreparedGateOutcome swapGateMismatch);
+                    // Count the failure reason only in the world swap, the scope of the
+                    // row-gate pass and failure counts of the swap stage timers. A row
+                    // check that fails without a named reason counts as a registration
+                    // change, as in the prepared verdict.
+                    if (!rowsUnchanged && stageMark != 0L)
+                        AdvancedPreparedGateTelemetry.RecordSwapGateFailure(
+                            swapGateMismatch == EAdvancedPreparedGateOutcome.None
+                                ? EAdvancedPreparedGateOutcome.RegistrationChanged
+                                : swapGateMismatch);
+                }
             }
             CollectVisibleStageTimings.MarkAdvancedRowGate(ref stageMark, rowsUnchanged);
             if (rowsUnchanged && TryPublishUnchangedRows(
@@ -297,6 +313,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 return;
             }
         }
+
+        // The full publication splits into plan, apply, and seal stages. The mark
+        // is 0 outside the world swap section, so nothing records there.
+        long fullMark = stageMark != 0L ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
 
         // Plans and submission sources are scratch closures, not publication leases.
         // Release the prior frame's references even if this boundary rejects early.
@@ -341,8 +361,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         }
         bool hasGlobalResources;
         string globalResourceFailure;
+        long globalPreflightStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.GlobalPreflight"))
             hasGlobalResources = TryPreflightGlobalResources(in acceptedGlobalResources, out globalResourceFailure);
+        CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedGlobalPreflight, globalPreflightStart);
         if (!hasGlobalResources)
         {
             RejectPublication(globalResourceFailure);
@@ -351,6 +373,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         bool reusedPublication;
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.ReuseCheck"))
             reusedPublication = TryReuseUnchangedPublication(frameId);
+        // The plan stage also covers a plan that ends in a reuse of the current publication.
+        CollectVisibleStageTimings.Mark(ref fullMark, ECollectVisibleStage.SwapAdvancedPlan);
         if (reusedPublication)
         {
             ClearPublicationFailure();
@@ -504,11 +528,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     AdvanceNonZero(ref _lookupGeneration);
             }
 
+            CollectVisibleStageTimings.Mark(ref fullMark, ECollectVisibleStage.SwapAdvancedApply);
             SealAndDeliverPublication(
                 in transaction,
                 frameId,
                 ref provisional,
                 ref publicationCommitted);
+            CollectVisibleStageTimings.Mark(ref fullMark, ECollectVisibleStage.SwapAdvancedSeal);
             CaptureCommittedMaterialPlans();
             _identityDeliveryIncomplete = false;
             ClearPendingIdentityRecipients();
@@ -601,6 +627,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
         // Command snapshots become consumable only after the exact scene
         // publication has been accepted by the database.
+        long deliveryStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.IdentityDelivery"))
         {
             CaptureAndClearDirtyOwnerRanges();
@@ -610,6 +637,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 committed.Publication, frameId);
             PublishSourceDrawIdentities(in committed);
         }
+        CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedIdentityDelivery, deliveryStart);
     }
 
     /// <summary>
@@ -1650,7 +1678,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         => flags & ~((uint)GPUIndirectRenderFlags.EditorHighlightMask |
             (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
-            (uint)GPUIndirectRenderFlags.ReceiveShadows);
+            (uint)GPUIndirectRenderFlags.ReceiveShadows |
+            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic);
 
     private static ulong ComputeStructuralSignature(
         in DrawMetadata command,
@@ -1712,7 +1741,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         hash = Mix(hash, command.Flags & ((uint)GPUIndirectRenderFlags.EditorHighlightMask |
             (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
-            (uint)GPUIndirectRenderFlags.ReceiveShadows));
+            (uint)GPUIndirectRenderFlags.ReceiveShadows |
+            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic));
         hash = Mix(hash, command.LayerMask);
         hash = Mix(hash, gpuOwnedBounds ? 1u : 0u);
         hash = Mix(hash, sourceFlatDirectionOct);

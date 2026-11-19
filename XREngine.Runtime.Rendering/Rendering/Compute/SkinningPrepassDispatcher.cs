@@ -112,7 +112,6 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
     private readonly object _syncRoot = new();
     private readonly ConditionalWeakTable<XRMeshRenderer, RendererResources> _resources = new();
-    private readonly HashSet<XRMeshRenderer> _visibleRendererSet = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly List<XRMeshRenderer> _visibleRenderers = new();
     private readonly List<RendererResources> _visibleOutputResources = new();
     private readonly VulkanOutputReceipt[] _vulkanReceiptPool = CreateVulkanReceiptPool();
@@ -136,7 +135,6 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     private bool _directDispatchUpdateBounds;
     private bool _directDispatchReduceBounds;
     private readonly Func<bool> _dispatchDirectProducer;
-    private readonly Action<IRenderCommandMesh> _collectVisibleMeshCommand;
 
     private XRShader? _shader;
     private XRRenderProgram? _program;
@@ -158,7 +156,6 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     {
         _runVisibleProducer = RunVisibleProducer;
         _dispatchDirectProducer = DispatchDirectProducer;
-        _collectVisibleMeshCommand = CollectVisibleMeshCommand;
     }
 
     internal static ulong ActiveProducerAttemptId => _activeProducerAttemptId;
@@ -1441,11 +1438,41 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return;
         }
 
-        _visibleRendererSet.Clear();
-        _visibleRenderers.Clear();
-        commands.VisitRenderingMeshCommands(_collectVisibleMeshCommand);
+        // RunVisible runs on the render thread, one view at a time, so the scratch containers
+        // are reused from call to call. _visibleRenderers receives the renderers to dispatch.
+        List<XRMeshRenderer> visible = _runVisibleRenderers;
+        HashSet<XRMeshRenderer> seen = _runVisibleSeen;
+        HashSet<XRMeshRenderer> traditional = _runVisibleTraditional;
+        List<XRMeshRenderer> renderers = _visibleRenderers;
+        visible.Clear();
+        seen.Clear();
+        traditional.Clear();
+        renderers.Clear();
+        commands.CollectSkinningPrepassRenderers(visible, seen, traditional);
 
-        if (_visibleRenderers.Count == 0)
+        // Skip renderers whose prepass output no consumer reads (see SkinningPrepassDemand).
+        // The Advanced canonical path draws them from the aggregate deformation arena.
+        ulong frameId = State.RenderFrameId;
+        bool liveBoundsReaders = RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+        for (int index = 0; index < visible.Count; index++)
+        {
+            XRMeshRenderer renderer = visible[index];
+            if (liveBoundsReaders ||
+                traditional.Contains(renderer) ||
+                renderer.IsSkinningPrepassDemanded(frameId) ||
+                renderer.Mesh is not { } mesh ||
+                !(mesh.HasSkinning || mesh.HasBlendshapes))
+            {
+                renderer.MarkSkinningPrepassRun();
+                renderers.Add(renderer);
+                continue;
+            }
+
+            renderer.MarkSkinningPrepassSkipped(frameId);
+            SkinningPrepassDemand.RecordSkip();
+        }
+
+        if (renderers.Count == 0)
             return;
 
         // Optionally pre-pack all visible renderers into global buffers for this frame.
@@ -1499,17 +1526,6 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
 
         RunVisibleVulkan();
-    }
-
-    private void CollectVisibleMeshCommand(IRenderCommandMesh meshCommand)
-    {
-        if (meshCommand.Mesh is not XRMeshRenderer renderer ||
-            !_visibleRendererSet.Add(renderer))
-        {
-            return;
-        }
-
-        _visibleRenderers.Add(renderer);
     }
 
     private void RunVisibleVulkan()
@@ -1681,6 +1697,10 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
         throw new RenderResourcePreparationPendingException(reason);
     }
+
+    private readonly List<XRMeshRenderer> _runVisibleRenderers = [];
+    private readonly HashSet<XRMeshRenderer> _runVisibleSeen = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private readonly HashSet<XRMeshRenderer> _runVisibleTraditional = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     private void EnsureProgram()
     {

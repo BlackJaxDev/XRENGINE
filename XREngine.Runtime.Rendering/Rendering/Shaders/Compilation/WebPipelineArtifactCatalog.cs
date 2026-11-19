@@ -108,7 +108,7 @@ public sealed class WebPipelineArtifactCatalog
     {
         if (!IsValidComponent(pass) || scope is not null && !IsValidComponent(scope))
             throw new InvalidDataException("PipelineArtifact.BindingInvalid: scope and pass must be bounded lowercase identifiers.");
-        return scope is null ? pass : scope + "::" + pass;
+        return scope is null ? pass : $"{scope}::{pass}";
     }
 
     /// <summary>Recovers the optional scope and descriptor pass from a validated package key.</summary>

@@ -517,7 +517,7 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
             _referenceReport = null;
             _loadedReferenceKey = referenceKey;
             _referenceLoadFailed = true;
-            Debug.LogWarning("[HumanoidPoseAuditOverlay] Failed to load reference report '" + referenceKey + "': " + ex.Message, this);
+            Debug.LogWarning($"[HumanoidPoseAuditOverlay] Failed to load reference report '{referenceKey}': {ex.Message}", this);
         }
 
         return _referenceReport;
@@ -789,7 +789,7 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
     }
 
     private static string BuildMuscleDebugText(IReadOnlyList<(string Name, float Amount)> labels)
-        => string.Join("\n", labels.Select(static label => label.Name + ": " + label.Amount.ToString("+0.000;-0.000;0.000")));
+        => string.Join("\n", labels.Select(static label => $"{label.Name}: {label.Amount:+0.000;-0.000;0.000}"));
 
     private static string ResolveMuscleDebugBoneName(string muscleName)
     {

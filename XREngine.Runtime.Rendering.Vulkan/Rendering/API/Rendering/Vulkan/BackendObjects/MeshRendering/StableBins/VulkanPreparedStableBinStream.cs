@@ -65,6 +65,11 @@ internal sealed partial class VulkanPreparedStableBinStream
         new VulkanVisibilityRasterPipeline[RasterPipelineScratchCapacity];
     private readonly bool[] _rasterPipelineScratchValid =
         new bool[RasterPipelineScratchCapacity];
+    // Late task variants of the meshlet raster pipelines, with the same index.
+    private readonly VulkanVisibilityRasterPipeline[] _lateRasterPipelineScratch =
+        new VulkanVisibilityRasterPipeline[RasterPipelineScratchCapacity];
+    private readonly bool[] _lateRasterPipelineScratchValid =
+        new bool[RasterPipelineScratchCapacity];
     // Freeze ordering sorts these compact keys and applies the resulting
     // permutation to the records in place; both are record-indexed columns.
     private VulkanPreparedStableBinSortKey[] _freezeSortKeys;
@@ -593,7 +598,7 @@ internal sealed partial class VulkanPreparedStableBinStream
                 payload.PrimitiveTopology,
                 payload.Skinned,
                 producer,
-                producer == EAdvancedGeometryProducer.IndirectIndexed ? default : payload.Geometry,
+                AdvancedIndirectRangeKey.RangeGeometry(producer, payload.Geometry),
                 preparedVertices);
             if (!hasLastRecordInputs || recordInputs != lastRecordInputs)
             {
@@ -1712,6 +1717,7 @@ internal sealed partial class VulkanPreparedStableBinStream
         }
 
         _rasterPipelineScratchValid.AsSpan().Clear();
+        _lateRasterPipelineScratchValid.AsSpan().Clear();
         bool multiview = target.DynamicRenderingFormats.ViewMask != 0u;
         for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
         {
@@ -1852,6 +1858,23 @@ internal sealed partial class VulkanPreparedStableBinStream
                 }
             }
 
+            VulkanVisibilityRasterPipeline lateRaster = default;
+            if (meshlet)
+            {
+                VulkanAdvancedVisibilityPipelineReadiness lateReadiness = TryResolveLateMeshletRasterPipeline(
+                    visibilityPipelines,
+                    in header,
+                    coverage,
+                    cullMode,
+                    multiview,
+                    scratchIndex,
+                    in target,
+                    out lateRaster,
+                    out reason);
+                if (lateReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    return lateReadiness;
+            }
+
             if (!TryBindHeaderRasterPipeline(
                     in header,
                     payloads,
@@ -1868,11 +1891,16 @@ internal sealed partial class VulkanPreparedStableBinStream
                 return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
             if (reusePreparedRaster)
+            {
+                if (lateRaster != header.LateRasterPipeline)
+                    _headers[headerIndex] = header with { LateRasterPipeline = lateRaster };
                 continue;
+            }
             _headers[headerIndex] = header with
             {
                 RasterPipeline = raster,
                 NativeState = rasterNative,
+                LateRasterPipeline = lateRaster,
             };
         }
 
@@ -1884,9 +1912,12 @@ internal sealed partial class VulkanPreparedStableBinStream
     /// <summary>
     /// Prepares one depth-only directional shadow pipeline per sealed bin header
     /// for the directional shadow lane's atlas-page closure. The visibility
-    /// raster must already have sealed the bins and retained their templates;
-    /// only CPU-direct bins are admitted because the lane issues the frozen
-    /// indexed arguments itself.
+    /// raster must already have sealed the bins and retained their templates.
+    /// CPU-direct bins, strict indexed bins, and the static meshlet and indexed
+    /// bins of a meshlet frame are admitted. The lane issues the frozen indexed
+    /// arguments itself in CPU-direct and meshlet frames. A skinned meshlet bin of a
+    /// meshlet frame is drawn with the same frozen indexed arguments; its vertex stage
+    /// reads the vertices from the prepared deformation of the frame.
     /// </summary>
     internal VulkanAdvancedVisibilityPipelineReadiness TryPrepareDirectionalShadowRasterPipelines(
         VulkanAdvancedVisibilityPipelineRuntime visibilityPipelines,
@@ -1910,7 +1941,23 @@ internal sealed partial class VulkanPreparedStableBinStream
             ref readonly VulkanPreparedStableBinHeader header = ref _headers[headerIndex];
             if (!header.IsRasterReady)
                 continue;
-            if (header.SubmissionPlan!.ResolvedStrategy != strategy ||
+            if (strategy == EMeshSubmissionStrategy.GpuMeshletZeroReadback)
+            {
+                // A meshlet frame also seals indexed ranges (for example
+                // fragment-depth draws). The lane draws every bin with the frozen
+                // indexed arguments of its records, so both range kinds qualify.
+                EMeshSubmissionStrategy binStrategy = header.SubmissionPlan!.ResolvedStrategy;
+                EAdvancedGeometryProducer binProducer = header.IndirectRange.Key.Producer;
+                if (!(binStrategy == EMeshSubmissionStrategy.GpuMeshletZeroReadback &&
+                        binProducer is EAdvancedGeometryProducer.StaticMeshlet or EAdvancedGeometryProducer.SkinnedMeshlet) &&
+                    !(binStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+                        binProducer == EAdvancedGeometryProducer.IndirectIndexed))
+                {
+                    reason = "a meshlet-frame directional shadow bin is neither a static meshlet nor an indexed range";
+                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                }
+            }
+            else if (header.SubmissionPlan!.ResolvedStrategy != strategy ||
                 strategy is not (EMeshSubmissionStrategy.CpuDirect or
                     EMeshSubmissionStrategy.GpuIndirectZeroReadback))
             {
@@ -2212,6 +2259,67 @@ internal sealed partial class VulkanPreparedStableBinStream
     /// Maps a header's raster pipeline inputs to a per-call scratch slot, or -1
     /// for a coverage mode the visibility family does not prepare.
     /// </summary>
+    /// <summary>
+    /// Returns the late task variant of the meshlet raster pipeline for one
+    /// header. A retained pipeline is reused while its program link generation
+    /// and target are unchanged. A missing late program fails the family: the
+    /// late raster has no other program that writes the occlusion history.
+    /// </summary>
+    private VulkanAdvancedVisibilityPipelineReadiness TryResolveLateMeshletRasterPipeline(
+        VulkanAdvancedVisibilityPipelineRuntime visibilityPipelines,
+        in VulkanPreparedStableBinHeader header,
+        EAdvancedMaterialCoverageMode coverage,
+        uint cullMode,
+        bool multiview,
+        int scratchIndex,
+        in VulkanAdvancedVisibilityTargetClosure target,
+        out VulkanVisibilityRasterPipeline lateRaster,
+        out string reason)
+    {
+        VulkanVisibilityRasterPipeline retained = header.LateRasterPipeline;
+        if (retained.IsValid && retained.TargetClosure == target &&
+            retained.ProgramLinkGeneration == retained.Program.LinkGeneration)
+        {
+            lateRaster = retained;
+            reason = "Ready";
+            return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        }
+        if (scratchIndex >= 0 && _lateRasterPipelineScratchValid[scratchIndex])
+        {
+            lateRaster = _lateRasterPipelineScratch[scratchIndex];
+            reason = "Ready";
+            return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        }
+
+        lateRaster = default;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = visibilityPipelines.TryGetRasterProgram(
+            coverage,
+            meshlet: true,
+            out VkRenderProgram program,
+            out reason,
+            multiview,
+            lateMeshletTask: true);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        if (!VulkanCanonicalVisibilityPipelineFactory.TryPrepare(
+                program,
+                coverage,
+                meshlet: true,
+                cullMode,
+                in target,
+                out lateRaster,
+                out reason))
+        {
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        if (scratchIndex >= 0)
+        {
+            _lateRasterPipelineScratch[scratchIndex] = lateRaster;
+            _lateRasterPipelineScratchValid[scratchIndex] = true;
+        }
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
     private static int ResolveRasterPipelineScratchIndex(
         EAdvancedMaterialCoverageMode coverage,
         bool meshlet,

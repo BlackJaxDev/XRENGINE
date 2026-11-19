@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using XREngine.Execution;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -61,6 +62,8 @@ internal sealed class VulkanDesktopRecordWorkExecutor : IRenderWorkExecutor
 
     public void Execute(in RenderWorkItem item, ref RenderWorkerContext context)
     {
+        // The worker records the desktop primary, so its work belongs to the desktop domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Desktop);
         if (item.OperationKind != DesktopPrimaryOperationKind || context.LaneId != _laneId)
         {
             throw new InvalidOperationException(
@@ -83,6 +86,11 @@ internal sealed class VulkanDesktopRecordWorkExecutor : IRenderWorkExecutor
             using VulkanRenderLaneExecutionScope laneScope = new(attachment);
             using VulkanLaneCommandFamilyArena.RecordingLease arenaLease =
                 VulkanLaneCommandFamilyArena.EnterRecording(attachment.Graphics);
+            // Marks this thread as the owner of the desktop worker pools. Pools it
+            // allocates from become worker pools, and it may write them while other
+            // threads must wait for the join.
+            using VulkanCommandRuntime.DesktopWorkerRecordingThreadScope workerPoolScope =
+                VulkanCommandRuntime.EnterDesktopWorkerRecordingThread();
             using VulkanPreparedResourcePlannerThreadScope plannerScope = new(
                 runtime.ThreadWorkspace.Current,
                 runtime,

@@ -326,7 +326,7 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
             _ => "Give a clear visible final answer.",
         };
         payload["system"] = string.IsNullOrWhiteSpace(request.Run.SystemInstructions)
-            ? verbosity : request.Run.SystemInstructions + "\n\n" + verbosity;
+            ? verbosity : $"{request.Run.SystemInstructions}\n\n{verbosity}";
         if (request.Tools.Count > 0)
         {
             JsonArray tools = [];

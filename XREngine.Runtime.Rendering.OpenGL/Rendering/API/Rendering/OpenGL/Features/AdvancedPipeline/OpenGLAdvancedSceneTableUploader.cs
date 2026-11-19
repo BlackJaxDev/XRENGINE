@@ -119,13 +119,13 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
     }
 
     /// <summary>Writes the eleven sealed logical-handle lookup segments into
-    /// every 38-word visibility counter record.</summary>
+    /// every 40-word visibility counter record.</summary>
     internal bool TryInitializeVisibilityCounters(
         Span<uint> counters,
         uint viewCount,
         out string reason)
     {
-        const int counterWordsPerView = 38;
+        const int counterWordsPerView = (int)OpenGLAdvancedVisibilityInputStorage.CounterWordsPerView;
         const int segmentWordOffset = 16;
         if (!_lease.IsValid || viewCount == 0u ||
             counters.Length < checked((int)viewCount * counterWordsPerView))

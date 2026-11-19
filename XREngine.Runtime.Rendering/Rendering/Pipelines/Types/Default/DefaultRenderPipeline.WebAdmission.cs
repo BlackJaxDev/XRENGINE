@@ -99,6 +99,10 @@ public partial class DefaultRenderPipeline
         CommonPostProcessStages.AddStandardPipelineSchema(builder, defaultAutoExposure: false);
         PipelinePostProcessState state = new();
         state.BindToSchema(builder.Build());
+        // The cooked output route supports only Mobius. A desktop host can install another
+        // host default operator, so set the browser default here before the authored values.
+        state.GetStage(CommonPostProcessStages.TonemappingStageKey)?
+            .SetValue(PostProcessParameterNames.TonemappingOperator, (int)ETonemappingType.Mobius);
         if (authored is not null)
             foreach ((string key, PostProcessStageState source) in authored.Stages)
                 if (state.GetStage(key) is { } destination)

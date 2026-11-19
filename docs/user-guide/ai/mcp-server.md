@@ -197,6 +197,10 @@ parameter values, ranges and enum options. Select a desktop viewport with
 with `vr_eye` (`left`, `right`, or `stereo`).
 `set_camera_post_process_parameter` changes one declared `stage_key` and
 `parameter_name` through the existing backing settings, then returns its value.
+The VR eyes have one shared set of post-process settings, separate from the
+desktop camera: `vr_eye` `left`, `right` and `stereo` all read and edit the same
+eye settings, so the two eyes cannot differ. A desktop selector does not change
+the eyes.
 It requires mutation permission. Numeric ranges and enum values are validated;
 vectors use finite numeric `x`/`y`/`z`/`w` object members as appropriate.
 For reproducible captures, for example, set `colorGrading.AutoExposure` to
@@ -321,6 +325,8 @@ and accept `mip_level`; out-of-range faces fail explicitly.
 `AdvancedShading.ShadingDiagnostics` preserves reconstruction rejection in bit16
 and its `EAdvancedReconstructionInvalidReason` value in bits20–27. Capture it as
 a companion to HDR/identity when native shading produces the error color.
+OpenXR eye outputs allocate it only while a shading debug view or debug overlays
+are on; capture it from the desktop output, or set a shading debug view first.
 For a nonfinite rejection, bits28–30 identify the first affected attribute:
 1=world position, 2=normal, 3=tangent, 4=bitangent, 5=UV, 6=UV dx, 7=UV dy.
 After completion, `CompletedOutputTextureId` provides the GUID for an exported
@@ -418,8 +424,12 @@ error/warning totals, bounded message samples, overflow counts, and the effectiv
 standard/synchronization validation and debug-messenger flags. These totals
 survive frames with no messages and reset when the Vulkan device is recreated.
 The sibling `message_count` and `error_count` fields describe only the last
-frame. Check the enabled flags before interpreting zero errors as validation
-evidence; Release builds can omit ordinary debug-log calls.
+frame. Synchronization validation reports a hazard only a few times before its
+duplicate limit, so these per-frame fields are usually 0 even when a hazard
+occurred. `lifetime_error_count` counts every validation error since the process
+started; device recreation does not reset it. Check the enabled flags before
+interpreting zero errors as validation evidence; Release builds can omit
+ordinary debug-log calls.
 
 `get_render_profiler_stats.vulkan.descriptor_heap` exposes cumulative native
 sampler/resource heap binds, heap pushes, successful sampler/resource descriptor

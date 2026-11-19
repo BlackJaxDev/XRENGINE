@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
@@ -341,12 +342,107 @@ internal unsafe class VkFrameBuffer(
         => $"{VulkanFrameBufferAttachmentNotReadyException.DiagnosticPrefix} " +
            $"'{DescribeAttachment(attachment)}' {detail}.";
 
+    /// <summary>
+    /// One resolved attachment signature. The key is the pass index, the pass metadata and
+    /// synchronization objects of the compiled graph (compared by reference; both stay the
+    /// same until the graph is compiled again), the clear-preserve flag and a copy of the
+    /// tracked initial layouts. The result array is shared and is never written after it is
+    /// stored.
+    /// </summary>
+    private sealed class PlannedSignatureEntry(
+        int passIndex,
+        object? passMetadata,
+        object? synchronization,
+        bool preserveTrackedClearLoads,
+        ImageLayout[]? initialLayoutOverrides,
+        FrameBufferAttachmentSignature[] result)
+    {
+        public readonly int PassIndex = passIndex;
+        public readonly object? PassMetadata = passMetadata;
+        public readonly object? Synchronization = synchronization;
+        public readonly bool PreserveTrackedClearLoads = preserveTrackedClearLoads;
+        public readonly ImageLayout[]? InitialLayoutOverrides = initialLayoutOverrides;
+        public readonly FrameBufferAttachmentSignature[] Result = result;
+
+        public bool Matches(
+            int passIndex,
+            object? passMetadata,
+            object? synchronization,
+            bool preserveTrackedClearLoads,
+            ReadOnlySpan<ImageLayout> initialLayoutOverrides,
+            bool hasOverrides)
+            => PassIndex == passIndex &&
+               ReferenceEquals(PassMetadata, passMetadata) &&
+               ReferenceEquals(Synchronization, synchronization) &&
+               PreserveTrackedClearLoads == preserveTrackedClearLoads &&
+               (InitialLayoutOverrides is null
+                   ? !hasOverrides
+                   : hasOverrides && initialLayoutOverrides.SequenceEqual(InitialLayoutOverrides));
+    }
+
+    // Bounds the cache when tracked layouts vary; the cache is cleared when it is full.
+    private const int MaxPlannedSignatureEntries = 32;
+    private readonly object _plannedSignatureSync = new();
+    private readonly List<PlannedSignatureEntry> _plannedSignatures = [];
+    private FrameBufferAttachmentSignature[]? _plannedSignatureBase;
+
+    /// <summary>
+    /// Returns the attachment signature for one pass: the planned load and store operations,
+    /// layouts and roles of each attachment. Recording asks for it for every pass of every
+    /// frame, and the result only changes with the pass, the compiled graph, the clear-preserve
+    /// flag and the tracked initial layouts. Repeated requests return the stored array, so the
+    /// recording path does not allocate. The returned array must not be written.
+    /// </summary>
     internal FrameBufferAttachmentSignature[] ResolveAttachmentSignatureForPass(
         int passIndex,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         ImageLayout[]? initialLayoutOverrides = null,
         RenderGraphSynchronizationInfo? synchronization = null,
         bool preserveTrackedClearLoads = false)
+    {
+        FrameBufferAttachmentSignature[]? baseSignature = _attachmentSignature;
+        if (baseSignature is null || baseSignature.Length == 0)
+            return [];
+
+        bool hasOverrides = initialLayoutOverrides is not null;
+        ReadOnlySpan<ImageLayout> overrides = initialLayoutOverrides;
+        lock (_plannedSignatureSync)
+        {
+            if (!ReferenceEquals(_plannedSignatureBase, baseSignature))
+            {
+                _plannedSignatures.Clear();
+                _plannedSignatureBase = baseSignature;
+            }
+            for (int i = 0; i < _plannedSignatures.Count; i++)
+            {
+                PlannedSignatureEntry entry = _plannedSignatures[i];
+                if (entry.Matches(passIndex, passMetadata, synchronization, preserveTrackedClearLoads, overrides, hasOverrides))
+                    return entry.Result;
+            }
+        }
+
+        FrameBufferAttachmentSignature[] result = ComputeAttachmentSignatureForPass(
+            passIndex, passMetadata, initialLayoutOverrides, synchronization, preserveTrackedClearLoads);
+        lock (_plannedSignatureSync)
+        {
+            if (ReferenceEquals(_plannedSignatureBase, baseSignature))
+            {
+                if (_plannedSignatures.Count >= MaxPlannedSignatureEntries)
+                    _plannedSignatures.Clear();
+                _plannedSignatures.Add(new PlannedSignatureEntry(
+                    passIndex, passMetadata, synchronization, preserveTrackedClearLoads,
+                    hasOverrides ? (ImageLayout[])initialLayoutOverrides!.Clone() : null, result));
+            }
+        }
+        return result;
+    }
+
+    private FrameBufferAttachmentSignature[] ComputeAttachmentSignatureForPass(
+        int passIndex,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        ImageLayout[]? initialLayoutOverrides,
+        RenderGraphSynchronizationInfo? synchronization,
+        bool preserveTrackedClearLoads)
     {
         if (_attachmentSignature is null || _attachmentSignature.Length == 0)
             return [];

@@ -1341,11 +1341,13 @@ namespace XREngine
                 TextureType.Metalness => EMaterialTextureSemantic.Metallic,
                 TextureType.Roughness => EMaterialTextureSemantic.Roughness,
                 TextureType.Emissive or TextureType.EmissionColor => EMaterialTextureSemantic.Emissive,
+                TextureType.AmbientOcclusion => EMaterialTextureSemantic.Occlusion,
                 _ => default,
             };
             return textureType is TextureType.Diffuse or TextureType.BaseColor or TextureType.Opacity
                 or TextureType.NormalCamera or TextureType.Normals or TextureType.Metalness
-                or TextureType.Roughness or TextureType.Emissive or TextureType.EmissionColor;
+                or TextureType.Roughness or TextureType.Emissive or TextureType.EmissionColor
+                or TextureType.AmbientOcclusion;
         }
 
         public static void MakeMaterialDeferred(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)

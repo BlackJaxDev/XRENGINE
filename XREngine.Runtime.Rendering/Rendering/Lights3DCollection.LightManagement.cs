@@ -14,8 +14,8 @@ namespace XREngine.Scene
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.Clear");
 
-            _forwardDirectionalShadowRecordPublication?.Dispose();
-            _forwardDirectionalShadowRecordPublication = null;
+            // The source slots own the record buffers. The current buffer only points to one of them.
+            ReleaseForwardDirectionalShadowRecordBuffers();
             ReleaseForwardLightBuffers();
 
             DynamicSpotLights.Clear();

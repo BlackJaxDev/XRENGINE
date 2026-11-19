@@ -128,6 +128,9 @@ namespace XREngine.Rendering.Vulkan
         public bool HasPlannerContext;
         public bool PassIndexLabelActive;
         public int SelectedGpuPassStartQuery;
+        /// <summary>Open GPU timing scope of the current render-graph pass ("Passes" root).</summary>
+        public VulkanGpuProfilerScope PassGpuProfilerScope;
+        public bool PassGpuProfilerScopeActive;
         public PrimaryCommandBufferRecordingMetrics Metrics;
     }
 

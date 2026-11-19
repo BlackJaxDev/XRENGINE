@@ -148,6 +148,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _maskedMultiviewRasterProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _opaqueMultiviewMeshRasterProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _maskedMultiviewMeshRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _opaqueLateMeshRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _maskedLateMeshRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _opaqueMultiviewLateMeshRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _maskedMultiviewLateMeshRasterProgram);
         for (int index = 0; index < _nativeComputePrograms.Length; index++)
             AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _nativeComputePrograms[index]);
 
@@ -553,25 +557,31 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Masked, out reason);
     }
 
+    /// <summary>
+    /// Prepares the opaque and masked raster programs of one family. A meshlet
+    /// family also prepares the late task variants. The late raster requires
+    /// them: no other program writes the meshlet occlusion history.
+    /// </summary>
     private VulkanAdvancedVisibilityPipelineReadiness PrepareRasterFamily(
         bool meshlet,
         bool multiview,
         out string reason)
     {
-        VulkanAdvancedVisibilityPipelineReadiness readiness = PrepareRasterProgram(
-            EAdvancedMaterialCoverageMode.Opaque,
-            meshlet,
-            out _,
-            out reason,
-            multiview);
-        return readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready
-            ? readiness
-            : PrepareRasterProgram(
-                EAdvancedMaterialCoverageMode.Masked,
-                meshlet,
-                out _,
-                out reason,
-                multiview);
+        int variantCount = meshlet ? 2 : 1;
+        for (int variant = 0; variant < variantCount; variant++)
+        {
+            bool late = variant == 1;
+            VulkanAdvancedVisibilityPipelineReadiness readiness = PrepareRasterProgram(
+                EAdvancedMaterialCoverageMode.Opaque, meshlet, out _, out reason, multiview, late);
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return readiness;
+            readiness = PrepareRasterProgram(
+                EAdvancedMaterialCoverageMode.Masked, meshlet, out _, out reason, multiview, late);
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return readiness;
+        }
+        reason = "Ready";
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
     private void PublishPreparationState(
@@ -599,6 +609,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         WaitForPendingShaderCompiles(_maskedMultiviewRasterProgram);
         WaitForPendingShaderCompiles(_opaqueMultiviewMeshRasterProgram);
         WaitForPendingShaderCompiles(_maskedMultiviewMeshRasterProgram);
+        WaitForPendingShaderCompiles(_opaqueLateMeshRasterProgram);
+        WaitForPendingShaderCompiles(_maskedLateMeshRasterProgram);
+        WaitForPendingShaderCompiles(_opaqueMultiviewLateMeshRasterProgram);
+        WaitForPendingShaderCompiles(_maskedMultiviewLateMeshRasterProgram);
         WaitForPendingShaderCompiles(_directionalShadowOpaqueProgram);
         WaitForPendingShaderCompiles(_directionalShadowMaskedProgram);
         WaitForPendingShaderCompiles(_directionalShadowCullProgram);
@@ -637,10 +651,14 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         AddProgramIdentity(ref hash, _maskedMultiviewRasterProgram);
         AddProgramIdentity(ref hash, _opaqueMultiviewMeshRasterProgram);
         AddProgramIdentity(ref hash, _maskedMultiviewMeshRasterProgram);
+        AddProgramIdentity(ref hash, _opaqueLateMeshRasterProgram);
+        AddProgramIdentity(ref hash, _maskedLateMeshRasterProgram);
+        AddProgramIdentity(ref hash, _opaqueMultiviewLateMeshRasterProgram);
+        AddProgramIdentity(ref hash, _maskedMultiviewLateMeshRasterProgram);
         // Uber kernels stay outside global standard-family readiness. A sealed
         // scene that uses Uber materials checks its selected kernel at admission.
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
-            if (!IsOptionalNativeShadingProgram(i) && i != ShadeStandardMultisampleProgramIndex)
+            if (!IsOptionalNativeProgram(i) && i != ShadeStandardMultisampleProgramIndex)
                 AddProgramIdentity(ref hash, _nativeComputePrograms[i]);
         return hash.ToHashCode();
     }
@@ -684,7 +702,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             return false;
         }
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
-            if (!IsOptionalNativeShadingProgram(i) && i != ShadeStandardMultisampleProgramIndex &&
+            if (!IsOptionalNativeProgram(i) && i != ShadeStandardMultisampleProgramIndex &&
                 !IsProgramCurrent(_nativeComputePrograms[i], compute: true))
                 return false;
         if (!IsProgramCurrent(_opaqueRasterProgram, compute: false) ||
@@ -697,7 +715,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             _resources.BackendObjectContext?.DeviceContext.SupportsMeshTaskIndirectCount == true;
         if (supportsMeshlets &&
             (!IsProgramCurrent(_opaqueMeshRasterProgram, compute: false) ||
-             !IsProgramCurrent(_maskedMeshRasterProgram, compute: false)))
+             !IsProgramCurrent(_maskedMeshRasterProgram, compute: false) ||
+             !IsProgramCurrent(_opaqueLateMeshRasterProgram, compute: false) ||
+             !IsProgramCurrent(_maskedLateMeshRasterProgram, compute: false)))
         {
             return false;
         }
@@ -718,7 +738,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return !supportsMeshlets || !supportsMultiview ||
             !_resources.AdvancedVisibilityResources.SupportsMultiviewMeshRaster ||
             (IsProgramCurrent(_opaqueMultiviewMeshRasterProgram, compute: false) &&
-             IsProgramCurrent(_maskedMultiviewMeshRasterProgram, compute: false));
+             IsProgramCurrent(_maskedMultiviewMeshRasterProgram, compute: false) &&
+             IsProgramCurrent(_opaqueMultiviewLateMeshRasterProgram, compute: false) &&
+             IsProgramCurrent(_maskedMultiviewLateMeshRasterProgram, compute: false));
     }
 
     private bool IsProgramCurrent(XRRenderProgram? source, bool compute)

@@ -541,7 +541,7 @@ namespace XREngine.Rendering.Commands
             IRuntimeDiagnosticTextFileOutput output = RuntimeDiagnosticCaptureFileOutput.RequireTextOutput();
             // No GPU sync: WaitForGpu may itself stall or throw on a corrupted context,
             // hiding the breadcrumb we are trying to capture.
-            string line = "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] [CRUMB] " + label + Environment.NewLine;
+            string line = $"[{DateTime.Now:HH:mm:ss.fff}] [CRUMB] {label}{Environment.NewLine}";
             lock (_crumbFileLock)
             {
                 try { output.AppendDiagnosticLogText(GetCrumbFilePath(output), line); } catch { }

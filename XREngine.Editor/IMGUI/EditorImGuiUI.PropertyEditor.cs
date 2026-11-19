@@ -1581,7 +1581,7 @@ public static partial class EditorImGuiUI
                         else if (entryValue is not null)
                         {
                             string childLabel = $"{label}[{FormatDictionaryKey(key)}]";
-                            DrawSettingsObject(GetInspectorTargets(entryValue!), childLabel, description, visited, false, property.Name + "_" + i.ToString(CultureInfo.InvariantCulture));
+                            DrawSettingsObject(GetInspectorTargets(entryValue!), childLabel, description, visited, false, string.Create(CultureInfo.InvariantCulture, $"{property.Name}_{i}"));
                         }
                         else
                         {
@@ -4462,8 +4462,7 @@ public static partial class EditorImGuiUI
                         "Unset uses the subsystem default.";
                     ImGui.SetTooltip(
                         $"Launch: {state.LaunchValue ?? "<unset>"}\n" +
-                        $"Effective: {state.EffectiveValue ?? "<unset>"}\n" +
-                        defaultBehavior);
+                        $"Effective: {state.EffectiveValue ?? "<unset>"}\n{defaultBehavior}");
                 }
 
                 string? valueToSet = null;

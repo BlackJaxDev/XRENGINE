@@ -678,7 +678,9 @@ internal sealed partial class VulkanCommandRuntime
                 sequence,
                 timelineSemaphoreHandle,
                 timelineValue,
-                unchecked((ulong)fence.Handle));
+                unchecked((ulong)fence.Handle),
+                KindId: VulkanLifetimeSubmissionKinds.GetId(diagnosticContext.SubmissionKind),
+                SubmitTimestamp: System.Diagnostics.Stopwatch.GetTimestamp());
             tracker.LifetimeSubmissions.Add(submission);
             RecordAdvancedVisibilitySubmissionWatermarksNoLock(submitInfo, domain, sequence);
 
@@ -1578,7 +1580,9 @@ internal sealed partial class VulkanCommandRuntime
                 sequence,
                 timelineSemaphoreHandle,
                 timelineValue,
-                unchecked((ulong)fence.Handle));
+                unchecked((ulong)fence.Handle),
+                KindId: VulkanLifetimeSubmissionKinds.GetId(diagnosticContext.SubmissionKind),
+                SubmitTimestamp: System.Diagnostics.Stopwatch.GetTimestamp());
             tracker.LifetimeSubmissions.Add(submission);
             RecordAdvancedVisibilitySubmissionWatermarksNoLock(submitInfo, domain, sequence);
 

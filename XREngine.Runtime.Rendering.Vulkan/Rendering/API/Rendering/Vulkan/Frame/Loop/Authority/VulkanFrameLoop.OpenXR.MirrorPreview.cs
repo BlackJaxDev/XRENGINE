@@ -11,6 +11,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan.RenderGraph;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -38,6 +39,8 @@ internal sealed partial class VulkanFrameLoop
     internal bool TryRenderOpenXrEyeMirrorFrameBuffer(
         in OpenXrEyeMirrorRenderRequest request)
     {
+        // The eye mirror preview is part of the XR output domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
             return false;
@@ -123,6 +126,7 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeMirrorRenderRequest firstEye,
         in OpenXrEyeMirrorRenderRequest secondEye)
     {
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
             return false;
@@ -480,49 +484,57 @@ internal sealed partial class VulkanFrameLoop
                 return false;
             }
 
-            if (!TryPrepareStereoLayerBlit(
-                    sourceTexture,
-                    recorded.CommandBuffer,
-                    leftDestinationImage,
-                    leftDestinationFormat,
-                    leftDestinationExtent,
-                    leftDestinationLabel,
-                    rightDestinationImage,
-                    rightDestinationFormat,
-                    rightDestinationExtent,
-                    rightDestinationLabel,
-                    flipY,
-                    leftPreviewTexture,
-                    rightPreviewTexture,
-                    out OpenXrStereoLayerBlitPlan plan))
+            OpenXrStereoLayerBlitPlan plan;
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.Publish"))
             {
-                RecordOpenXrRenderFailure(in renderRequest, "stereo-blit-plan");
-                return false;
-            }
-
-            hasPublish = TryRecordStereoLayerBlitCommandBuffer(
-                in plan,
-                recorded.CommandBuffer,
-                out publishCommandBuffer);
-            if (!hasPublish)
-            {
-                RecordOpenXrRenderFailure(in renderRequest, "stereo-blit-record");
-                return false;
-            }
-
-            VulkanOpenXrSubmissionResult submission = SubmitTrackedOpenXrMirrorSubmission(
-                admissionTicket!.Value, ref trackerOwnsSubmission, renderRequest.SubmissionMetadata, in recorded, hasFirst: true, secondRecorded: default,
-                hasSecond: false, publishCommandBuffer,
-                _commandRuntime.CreateOpenXrPublishBatchSubmissionDiagnosticContext(
-                    AcceptedAttemptCount,
-                    "OpenXrStereoLayerRenderPublishSubmit",
-                    "OpenXrStereoLayerRenderPublish",
-                    in recorded,
-                    leftDestinationExtent,
-                    leftDestinationLabel) with
+                if (!TryPrepareStereoLayerBlit(
+                        sourceTexture,
+                        recorded.CommandBuffer,
+                        leftDestinationImage,
+                        leftDestinationFormat,
+                        leftDestinationExtent,
+                        leftDestinationLabel,
+                        rightDestinationImage,
+                        rightDestinationFormat,
+                        rightDestinationExtent,
+                        rightDestinationLabel,
+                        flipY,
+                        leftPreviewTexture,
+                        rightPreviewTexture,
+                        out plan))
                 {
-                    OpenXrStrictSpsFaultInjectionStage = faultInjectionStage,
-                });
+                    RecordOpenXrRenderFailure(in renderRequest, "stereo-blit-plan");
+                    return false;
+                }
+
+                hasPublish = TryRecordStereoLayerBlitCommandBuffer(
+                    in plan,
+                    recorded.CommandBuffer,
+                    out publishCommandBuffer);
+                if (!hasPublish)
+                {
+                    RecordOpenXrRenderFailure(in renderRequest, "stereo-blit-record");
+                    return false;
+                }
+            }
+
+            VulkanOpenXrSubmissionResult submission;
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.SubmitAndWait"))
+            {
+                submission = SubmitTrackedOpenXrMirrorSubmission(
+                    admissionTicket!.Value, ref trackerOwnsSubmission, renderRequest.SubmissionMetadata, in recorded, hasFirst: true, secondRecorded: default,
+                    hasSecond: false, publishCommandBuffer,
+                    _commandRuntime.CreateOpenXrPublishBatchSubmissionDiagnosticContext(
+                        AcceptedAttemptCount,
+                        "OpenXrStereoLayerRenderPublishSubmit",
+                        "OpenXrStereoLayerRenderPublish",
+                        in recorded,
+                        leftDestinationExtent,
+                        leftDestinationLabel) with
+                    {
+                        OpenXrStrictSpsFaultInjectionStage = faultInjectionStage,
+                    });
+            }
             submitted = submission.Succeeded;
             commandBuffersCompleted = submission.CommandBuffersCompleted;
             submissionDisposition = submission.SubmissionDisposition;
@@ -688,8 +700,8 @@ internal sealed partial class VulkanFrameLoop
             ? ResolveOpenXrRecordImageIndex(1 - request.ResourcePlannerStateIndex, OutputRuntime.Desktop.Images?.Length ?? 0)
             : recordImageIndex;
         // The quad-view inset pair records after the wide pair in the same frame. It uses
-        // its own two slots after the wide pair's slots, so the two pairs never wait on
-        // each other's in-flight frame-data slots.
+        // its own two slots after the wide pair's slots (the parity 1 eye slots), so the two
+        // pairs never wait on each other's in-flight frame-data slots.
         int stereoPair = strictSpsTemporalHistory ? ResolveOpenXrStereoPairSlotIndex(request.ViewPair) : 0;
         uint stereoPairSlotOffset = (uint)(stereoPair * OpenXrEyeResourcePlannerStateCount);
         recordImageIndex += stereoPairSlotOffset;
@@ -712,41 +724,48 @@ internal sealed partial class VulkanFrameLoop
             ? EnterOpenXrExternalSwapchainRenderScope(in openXrFrameContext)
             : null;
 
+        // The planning scope cannot be a using block: the planner readback scope and the plan
+        // values it covers must stay alive for the rest of the recording. The finally block ends
+        // it on every early exit.
+        IDisposable? planAndScheduleProfileScope = null;
         try
         {
-            EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
-            _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(
-                openXrFrameDataSlotCount);
-            bool frameDataSlotCompletionProven;
-            if (!TryPrepareOpenXrFrameDataSlot(
-                    recordImageIndex,
-                    "eye mirror render",
-                    out frameDataSlotCompletionProven))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareFrameSlot"))
             {
-                if (alternateRecordImageIndex == recordImageIndex ||
-                    !TryPrepareOpenXrFrameDataSlot(
-                        alternateRecordImageIndex,
+                EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
+                _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(
+                    openXrFrameDataSlotCount);
+                bool frameDataSlotCompletionProven;
+                if (!TryPrepareOpenXrFrameDataSlot(
+                        recordImageIndex,
                         "eye mirror render",
                         out frameDataSlotCompletionProven))
                 {
-                    RecordOpenXrRenderFailure(in request, "frame-data-slot");
-                    return false;
+                    if (alternateRecordImageIndex == recordImageIndex ||
+                        !TryPrepareOpenXrFrameDataSlot(
+                            alternateRecordImageIndex,
+                            "eye mirror render",
+                            out frameDataSlotCompletionProven))
+                    {
+                        RecordOpenXrRenderFailure(in request, "frame-data-slot");
+                        return false;
+                    }
+                    recordImageIndex = alternateRecordImageIndex;
                 }
-                recordImageIndex = alternateRecordImageIndex;
-            }
-            if (strictSpsTemporalHistory)
-            {
-                _openXrStereoUsesAlternateFrameDataSlot[stereoPair] =
-                    recordImageIndex == ResolveOpenXrRecordImageIndex(
-                        request.ResourcePlannerStateIndex,
-                        OutputRuntime.Desktop.Images?.Length ?? 0) + stereoPairSlotOffset;
-            }
-            DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
-            ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
-                Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
+                if (strictSpsTemporalHistory)
+                {
+                    _openXrStereoUsesAlternateFrameDataSlot[stereoPair] =
+                        recordImageIndex == ResolveOpenXrRecordImageIndex(
+                            request.ResourcePlannerStateIndex,
+                            OutputRuntime.Desktop.Images?.Length ?? 0) + stereoPairSlotOffset;
+                }
+                DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
+                ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
+                    Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
 
-            ReopenOpenXrFrameDataSlot(recordImageIndex, frameDataSlotCompletionProven);
-            ownsFrameDataSlot = true;
+                ReopenOpenXrFrameDataSlot(recordImageIndex, frameDataSlotCompletionProven);
+                ownsFrameDataSlot = true;
+            }
 
             using VulkanOpenXrThreadRenderStateScope renderStateScope =
                 _commandRuntime.OpenXrRecording.EnterThreadRenderStateScope(
@@ -761,7 +780,8 @@ internal sealed partial class VulkanFrameLoop
                 using TemporalHistoryCaptureScope temporalCapture = strictTemporalCapture
                     ? VPRC_TemporalAccumulationPass.EnterStrictSpsCapture(renderPipelineInstance!)
                     : default;
-                capturedOps = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.EmitFrameOps"))
+                    capturedOps = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
                 drainedFrameOps = true;
                 if (strictTemporalCapture &&
                     !VPRC_TemporalAccumulationPass.TryGetStagedCandidate(
@@ -807,6 +827,8 @@ internal sealed partial class VulkanFrameLoop
                         "eye mirror render");
                 }
 
+                planAndScheduleProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                    "OpenXR.Vulkan.RecordEye.PlanAndSchedule");
                 FrameOpContext plannerContext = VulkanFramePlanner.SelectPrimaryPlannerContext(ops);
                 ResourcePlannerRuntimeState plannerState;
                 using PooledExternalResourcePlannerReadbackScope plannerScope =
@@ -854,6 +876,8 @@ internal sealed partial class VulkanFrameLoop
                 _commandRuntime.ReconcileResourcePlannerImageLayouts(
                     CaptureResourcePlannerRuntimeState().ResourceAllocator);
                 plannerState = CaptureResourcePlannerRuntimeState();
+                planAndScheduleProfileScope?.Dispose();
+                planAndScheduleProfileScope = null;
                 ulong plannerRevision = plannerState.ResourcePlannerRevision;
                 ulong frameOpsSignature = 0UL;
                 uint mirrorCommandChainImageIndex = recordImageIndex;
@@ -867,25 +891,29 @@ internal sealed partial class VulkanFrameLoop
                     {
                         RenderGraphPlan = plannerState.RenderGraphPlan,
                     };
-                FramePlan framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
-                    checked((int)recordImageIndex),
-                    plannerRevision,
-                    frameOpsSignature,
-                    dynamicOverlaySignature: 0,
-                    ops,
-                    Array.Empty<FrameOp>(),
-                    new VulkanFramePlanRenderGraphAuthority(
-                        planningSnapshot.RenderGraphPlan,
-                        plannerState.FrameOpResourcePlannerSwitchingState,
-                        _framePlanner,
-                        _resourceRuntime.BackendObjectContext),
-                    openXrViewIndex: request.OpenXrViewIndex,
-                    // A quad-view pair plans against its own two located views.
-                    publicationSnapshot: request.ViewPair == RenderFrameViewSetPublication.AllViews
-                        ? null
-                        : RenderFrameViewSetPublication.CaptureLatest(request.ViewPair),
-                    logicalFrameSlot: 0);
-                framePlan.PrepareRecordingPlannerGenerations(in plannerState);
+                FramePlan framePlan;
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.BuildFramePlan"))
+                {
+                    framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
+                        checked((int)recordImageIndex),
+                        plannerRevision,
+                        frameOpsSignature,
+                        dynamicOverlaySignature: 0,
+                        ops,
+                        Array.Empty<FrameOp>(),
+                        new VulkanFramePlanRenderGraphAuthority(
+                            planningSnapshot.RenderGraphPlan,
+                            plannerState.FrameOpResourcePlannerSwitchingState,
+                            _framePlanner,
+                            _resourceRuntime.BackendObjectContext),
+                        openXrViewIndex: request.OpenXrViewIndex,
+                        // A quad-view pair plans against its own two located views.
+                        publicationSnapshot: request.ViewPair == RenderFrameViewSetPublication.AllViews
+                            ? null
+                            : RenderFrameViewSetPublication.CaptureLatest(request.ViewPair),
+                        logicalFrameSlot: 0);
+                    framePlan.PrepareRecordingPlannerGenerations(in plannerState);
+                }
                 VulkanFrameOpPlannerStateKey recordingPlannerKey =
                     VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(plannerContext);
                 VulkanPreparedResourcePlanStamp originalResourceStamp = new(
@@ -978,18 +1006,24 @@ internal sealed partial class VulkanFrameLoop
                 frameOpsSignature = framePlan.StaticOperationSignature;
                 FrameOperationSequence recordingOperations =
                     framePlan.GetNativeStaticOperationsForRecording();
-                VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority =
-                    PrepareOpenXrImmutableStorage(
+                VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority;
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareStorage"))
+                {
+                    readOnlyStorageAuthority = PrepareOpenXrImmutableStorage(
                         recordingOperations.Stream,
                         recordImageIndex,
                         request.OpenXrViewIndex);
+                }
                 using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
                     ResourceRuntime.EnterReadOnlyStorageRecordingScope(readOnlyStorageAuthority);
-                VulkanComputePreparationResult computePreparation =
-                    _commandRuntime.PrepareComputeFrameOpsForRecording(
+                VulkanComputePreparationResult computePreparation;
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareCompute"))
+                {
+                    computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
                         recordImageIndex,
                         recordingOperations,
                         framePlan);
+                }
                 if (!computePreparation.Succeeded)
                 {
                     throw new VulkanPresentNowReadinessException(
@@ -1002,31 +1036,35 @@ internal sealed partial class VulkanFrameLoop
                         "XR deadline missed with no declared resident GPU fallback. " +
                         computePreparation.FormatFailure());
                 }
-                CommandChainSchedule? commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
-                    mirrorCommandChainImageIndex,
-                    request.OpenXrViewIndex,
-                    request.OpenXrImageIndex,
-                    default,
-                    framePlan.StaticOperations,
-                    frameOpsSignature,
-                    plannerRevision);
-                ulong cacheKey = BuildOpenXrMirrorPrimaryCommandBufferCacheKey(
-                    mirrorCommandChainImageIndex,
-                    request);
-                PrimaryCommandArtifactOwner owner =
-                    _commandRuntime.GetOrCreateOpenXrPrimaryCommandBufferOwner(
+                CommandChainSchedule? commandChainSchedule;
+                PrimaryCommandArtifactOwner owner;
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.BuildPrimaryPlan"))
+                {
+                    commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
+                        mirrorCommandChainImageIndex,
+                        request.OpenXrViewIndex,
+                        request.OpenXrImageIndex,
+                        default,
+                        framePlan.StaticOperations,
+                        frameOpsSignature,
+                        plannerRevision);
+                    ulong cacheKey = BuildOpenXrMirrorPrimaryCommandBufferCacheKey(
+                        mirrorCommandChainImageIndex,
+                        request);
+                    owner = _commandRuntime.GetOrCreateOpenXrPrimaryCommandBufferOwner(
                         cacheKey,
                         recordImageIndex,
                         _commandRuntime.Pools.PrimaryGraphics,
                         $"OpenXR mirror primary eye={request.OpenXrViewIndex}");
-                owner.PrimaryCommandPlan.Build(
-                    recordingOperations.Stream,
-                    framePlan.StaticOperationSignature,
-                    new VulkanPrimaryPlanTerminalContext(
-                        PreserveSwapchainForOverlay: false,
-                        TransitionSwapchainToPresent: false,
-                        ReleaseExternalImageOwnership: false),
-                    framePlan: framePlan);
+                    owner.PrimaryCommandPlan.Build(
+                        recordingOperations.Stream,
+                        framePlan.StaticOperationSignature,
+                        new VulkanPrimaryPlanTerminalContext(
+                            PreserveSwapchainForOverlay: false,
+                            TransitionSwapchainToPresent: false,
+                            ReleaseExternalImageOwnership: false),
+                        framePlan: framePlan);
+                }
                 VulkanStateTracker clearState =
                     CreateOpenXrPrewarmRenderStateTracker(request.Extent);
                 VulkanPreparedPrimaryCommandInput commandInput = new(
@@ -1081,6 +1119,8 @@ internal sealed partial class VulkanFrameLoop
                 _commandRuntime.BeginTemporalHistoryRecording(in sealedTemporalCoverage);
                 try
                 {
+                    using IDisposable? recordProfileScope =
+                        RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.RecordCommands");
                     primaryRecorded = _commandRuntime.TryRecordPreparedOpenXrMirror(
                         in commandInput,
                         CreateOpenXrMirrorFrameContext(in request),
@@ -1155,6 +1195,7 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            planAndScheduleProfileScope?.Dispose();
             if (!recordingPublished)
                 VPRC_TemporalAccumulationPass.DiscardCandidate(in temporalCandidate);
             if (capturedOps is not null)
@@ -1174,9 +1215,16 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    /// <summary>
+    /// Returns the desktop frame-data slots plus the eye slots. The eye slots follow the desktop
+    /// slots: first one slot for each eye (parity 0), then the second slot for each eye (parity 1).
+    /// The quad-view inset pair of single-pass stereo records into the parity 1 slots. Per-eye
+    /// rendering also uses those slots, but a frame uses only one of the two modes, and each
+    /// acquisition proves that the slot's previous submission completed.
+    /// </summary>
     private static int ResolveOpenXrFrameDataSlotCount(int desktopSwapchainImageCount)
         => ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount) +
-            OpenXrEyeResourcePlannerStateCount * OpenXrMaxStereoPairCount;
+            OpenXrEyeResourcePlannerStateCount * Math.Max(OpenXrEyeFrameDataSlotsPerEye, OpenXrMaxStereoPairCount);
 
     private static int ResolveOpenXrDesktopFrameDataSlotCount(int desktopSwapchainImageCount)
         => Math.Max(Math.Max(desktopSwapchainImageCount, DesktopFrameSlotCount), 1);
@@ -1192,13 +1240,20 @@ internal sealed partial class VulkanFrameLoop
     private static int ResolveOpenXrStereoPairSlotIndex(int viewPair)
         => (uint)viewPair < OpenXrMaxStereoPairCount ? viewPair : 0;
 
+    /// <summary>
+    /// Returns the frame-data slot of one eye. Parity 0 is the slot that single-pass stereo, the
+    /// mirror and prewarm also use; parity 1 is the second slot of the eye, which only per-eye
+    /// rendering uses (see <see cref="TryAcquireOpenXrEyeFrameDataSlot"/>).
+    /// </summary>
     private static uint ResolveOpenXrRecordImageIndex(
         int resourcePlannerStateIndex,
-        int desktopSwapchainImageCount)
+        int desktopSwapchainImageCount,
+        int slotParity = 0)
     {
         int eyeIndex = NormalizeOpenXrResourcePlannerStateIndex(resourcePlannerStateIndex);
         int desktopFrameDataSlotCount = ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount);
-        return (uint)(desktopFrameDataSlotCount + eyeIndex);
+        int parityOffset = (slotParity & 1) * OpenXrEyeResourcePlannerStateCount;
+        return (uint)(desktopFrameDataSlotCount + eyeIndex + parityOffset);
     }
 
     private void EnsureOpenXrFrameDataSlotCapacity(int frameDataSlotCount)

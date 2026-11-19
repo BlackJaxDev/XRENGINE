@@ -775,7 +775,10 @@ public static partial class SerializedMaterialImporter
             CubeMipmap[] mipmaps = CreateCubemapMipChain(
                 baseMipmap,
                 settings?.GenerateMipMaps is not false);
-            bool isSrgb = !mirroredBall && settings?.IsSrgb is true;
+            // Unity imports HDR sources (.hdr, .exr) as linear float data and ignores the sRGB
+            // flag. The faces then hold float texels, so an 8-bit sRGB format would not match them.
+            bool floatSource = baseMipmap.Sides[0].PixelType is EPixelType.Float or EPixelType.HalfFloat;
+            bool isSrgb = !mirroredBall && !floatSource && settings?.IsSrgb is true;
             var cubemap = new XRTextureCube(mipmaps)
             {
                 Name = Path.GetFileNameWithoutExtension(texturePath),

@@ -797,6 +797,14 @@
           ],
           "description": "Generated from CustomRenderPipelineScriptPath on UnitTestingRenderSettings."
         },
+        "VirtualGeometry": {
+          "type": "boolean",
+          "description": "Enables or disables VirtualGeometry."
+        },
+        "VirtualGeometryPixelThreshold": {
+          "type": "number",
+          "description": "Generated from VirtualGeometryPixelThreshold on UnitTestingRenderSettings."
+        },
         "OpenGL": {
           "$ref": "#/definitions/UnitTestingOpenGLRenderSettings",
           "description": "Generated from OpenGL on UnitTestingRenderSettings."
@@ -968,6 +976,22 @@
           "description": "Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.",
           "markdownDescription": "Supported values: `Off`, `ForwardPlusOracle`, `VisibilityOnlyDebug`, `MaterialCache`, `SharedLighting`, `Full`."
         },
+        "AdvancedEdgeHalfRateShading": {
+          "type": "boolean",
+          "description": "Advanced eyes shade one pixel for each 2x2 block of the same triangle outside AdvancedEdgeHalfRateRadius and copy it to the rest of the block. Vulkan eyes without MSAA only; the desktop view is never affected."
+        },
+        "AdvancedEdgeHalfRateRadius": {
+          "type": "number",
+          "description": "Full-rate radius around the lens center of each eye, as a fraction of the half extent of the eye image, in steps of 0.05."
+        },
+        "AdvancedEdgeHalfRateDebugTint": {
+          "type": "boolean",
+          "description": "Diagnostic: tints the 2x2 blocks that Advanced edge half-rate shading shades at half rate."
+        },
+        "AdvancedShadowFilterTaps": {
+          "type": "integer",
+          "description": "Filter tap count of the headset shadow cascades of the primary directional light in Advanced native shading. 0 uses the values of the light. The desktop view is never affected."
+        },
         "PreviewStereoViews": {
           "type": "boolean",
           "description": "Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active."
@@ -984,6 +1008,10 @@
         "Foveation": {
           "$ref": "#/definitions/UnitTestingVrFoveationSettings",
           "description": "Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback."
+        },
+        "EyeFeatures": {
+          "$ref": "#/definitions/UnitTestingVrEyeFeatureSettings",
+          "description": "Optional rendering features of every VR eye frame (single-pass stereo and per-eye, all VR pipelines). Shared by both eyes; the desktop is never affected."
         },
         "OpenXrEyeResolution": {
           "$ref": "#/definitions/UnitTestingOpenXrEyeResolutionSettings",
@@ -1087,6 +1115,40 @@
         "Aggressive"
       ],
       "markdownDescription": "Supported values: `Conservative`, `Balanced`, `Aggressive`."
+    },
+    "UnitTestingVrEyeFeatureSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "AmbientOcclusion": {
+          "type": "boolean",
+          "description": "Enables or disables AmbientOcclusion."
+        },
+        "FogAndAerialPerspective": {
+          "type": "boolean",
+          "description": "Enables or disables FogAndAerialPerspective."
+        },
+        "OrderIndependentTransparency": {
+          "type": "boolean",
+          "description": "Enables or disables OrderIndependentTransparency."
+        },
+        "DepthOfField": {
+          "type": "boolean",
+          "description": "Enables or disables DepthOfField."
+        },
+        "MotionBlur": {
+          "type": "boolean",
+          "description": "Enables or disables MotionBlur."
+        },
+        "DeferredMsaa": {
+          "type": "boolean",
+          "description": "Enables or disables DeferredMsaa."
+        },
+        "ForwardPlusLightCulling": {
+          "type": "boolean",
+          "description": "Enables or disables ForwardPlusLightCulling."
+        }
+      }
     },
     "UnitTestingOpenXrEyeResolutionSettings": {
       "type": "object",
@@ -1289,6 +1351,10 @@
         "MeshletAdditionalLodCount": {
           "type": "integer",
           "description": "Additional LOD levels requested when  is enabled."
+        },
+        "GenerateClusterHierarchy": {
+          "type": "boolean",
+          "description": "Cooks a cluster level-of-detail hierarchy for the meshlets of this model (level-0 meshlets plus coarser cluster levels with crack-free group borders). Off by default; the cook takes longer and the meshlet data is about twice the size. Renderers without cut selection draw only the level-0 meshlets."
         },
         "PostImportFlags": {
           "type": "string",

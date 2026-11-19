@@ -126,7 +126,7 @@ internal partial class CodeManager
             string name = reader.GetString(type.Name);
             if (name.StartsWith('<')) continue;
             string ns = reader.GetString(type.Namespace);
-            string candidate = string.IsNullOrEmpty(ns) ? name : ns + "." + name;
+            string candidate = string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
             if (anchor is null || string.CompareOrdinal(candidate, anchor) < 0) anchor = candidate;
         }
         // Use the desktop publisher's validated concrete type so inherited and public

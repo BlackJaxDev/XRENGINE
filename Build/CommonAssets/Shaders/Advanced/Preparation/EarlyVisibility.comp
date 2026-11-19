@@ -8,13 +8,17 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityPreparationPush
     uint rangeBase;
 } XR_ADV_VisibilityPush;
 
-// Bit 31 of viewIndex selects the shared-visibility mode; the low bits are the view.
+// Bit 31 of viewIndex selects the shared-visibility mode (quad-view inset); the low
+// bits are the base view. gl_WorkGroupID.y selects the view of a multi-view dispatch
+// as an offset from that base view (VisibilityPreparationViews.glslinc).
 const uint XR_ADV_SHARED_VISIBILITY_BIT = 0x80000000u;
-#define XR_ADV_VIEW_INDEX (XR_ADV_VisibilityPush.viewIndex & ~XR_ADV_SHARED_VISIBILITY_BIT)
-#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VIEW_INDEX
+#define XR_ADV_PREP_VIEW_OFFSET gl_WorkGroupID.y
+#define XR_ADV_PREP_VIEW_INDEX ((XR_ADV_VisibilityPush.viewIndex & ~XR_ADV_SHARED_VISIBILITY_BIT) + XR_ADV_PREP_VIEW_OFFSET)
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_PREP_VIEW_INDEX
 // The Vulkan program preamble selects the backend before this canonical
 // interface is expanded. Set 1 is owned by the frame-slot visibility runtime.
 #include "../Visibility/VisibilityInterface.glslinc"
+#include "VisibilityPreparationViews.glslinc"
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -66,12 +70,12 @@ bool sphereInsidePlane(vec3 center, float radius, vec4 plane)
 bool sphereInsideFrustum(vec4 sphere)
 {
     if (any(isnan(sphere)) || any(isinf(sphere)) || sphere.w < 0.0 ||
-        XR_ADV_VIEW_INDEX >= uint(XR_ADV_Views.records.length()))
+        XR_ADV_PREP_VIEW_INDEX >= uint(XR_ADV_Views.records.length()))
     {
         return false;
     }
 
-    mat4 viewProjection = XR_ADV_LoadView(XR_ADV_VIEW_INDEX).viewProjectionUnjittered;
+    mat4 viewProjection = XR_ADV_LoadView(XR_ADV_PREP_VIEW_INDEX).viewProjectionUnjittered;
     vec4 clipX = viewProjection[0];
     vec4 clipY = viewProjection[1];
     vec4 clipZ = viewProjection[2];
@@ -86,7 +90,7 @@ bool sphereInsideFrustum(vec4 sphere)
 
 bool candidateIncludesSelectedView(uvec2 viewMask)
 {
-    uint viewId = XR_ADV_LoadView(XR_ADV_VIEW_INDEX).viewId;
+    uint viewId = XR_ADV_LoadView(XR_ADV_PREP_VIEW_INDEX).viewId;
     if (viewId < 32u)
         return (viewMask.x & (1u << viewId)) != 0u;
     if (viewId < 64u)
@@ -106,7 +110,7 @@ bool appendEarly(uint candidateIndex)
         return false;
     }
     XR_ADV_VisibilityVisibleIndices.records[
-        XR_ADV_VisibilityPush.payloadBase + outputIndex] = candidateIndex;
+        XR_ADV_PREP_PAYLOAD_BASE + outputIndex] = candidateIndex;
     return true;
 }
 
@@ -120,13 +124,25 @@ bool appendDeferred(uint candidateIndex)
         return false;
     }
     XR_ADV_VisibilityDeferredIndices.records[
-        XR_ADV_VisibilityPush.payloadBase + outputIndex] = candidateIndex;
+        XR_ADV_PREP_PAYLOAD_BASE + outputIndex] = candidateIndex;
     return true;
 }
 
 void main()
 {
     uint candidateIndex = gl_GlobalInvocationID.x;
+#if defined(XR_ADV_BACKEND_VULKAN)
+    // Start a new meshlet history frame for this view: the set that the last
+    // late raster wrote becomes the previous-frame set. Each Y row of this
+    // dispatch is one view, and the dispatch runs once per frame before the
+    // early raster. Only invocation 0 of the row writes the view's parity word,
+    // so the flip has one writer.
+    if (candidateIndex == 0u &&
+        XR_ADV_MeshletHistoryAvailable(XR_ADV_PREP_VIEW_INDEX))
+    {
+        XR_ADV_VisibilityMeshletHistory.words[XR_ADV_PREP_VIEW_INDEX] ^= 1u;
+    }
+#endif
     uint candidateCount =
         uint(XR_ADV_VisibilityCandidates.records.length()) / 20u;
     if (candidateIndex >= candidateCount ||
@@ -166,7 +182,7 @@ void main()
     // History is dense per candidate, not indexed by the stable draw handle.
     // Stable handles may contain tombstone gaps and would let one view's
     // history overlap the next view's segment.
-    uint persistentIndex = XR_ADV_VisibilityPush.payloadBase + candidateIndex;
+    uint persistentIndex = XR_ADV_PREP_PAYLOAD_BASE + candidateIndex;
     uint persistentStateCapacity =
         uint(XR_ADV_VisibilityPersistentState.records.length()) / 8u;
     if (persistentIndex >= persistentStateCapacity)
@@ -190,8 +206,8 @@ void main()
     state.Flags = XR_ADV_VisibilityPersistentState.records[persistentWord + 7u];
     if ((candidate.Flags & FLAG_BOUNDS_REJECTED) != 0u ||
         !candidateIncludesSelectedView(candidate.ViewMask) ||
-        XR_ADV_SelectedViewExcludesInstance(candidateIndex, XR_ADV_VIEW_INDEX) ||
-        XR_ADV_SelectedViewExcludesProjectiveMirror(candidateIndex, XR_ADV_VIEW_INDEX))
+        XR_ADV_SelectedViewExcludesInstance(candidateIndex, XR_ADV_PREP_VIEW_INDEX) ||
+        XR_ADV_SelectedViewExcludesProjectiveMirror(candidateIndex, XR_ADV_PREP_VIEW_INDEX))
     {
         state.Draw = candidate.Draw;
         state.LastTestedFrame = uvec2(0u);
@@ -252,12 +268,25 @@ void main()
     uint retestAge = (state.Flags & RETEST_AGE_MASK) >> RETEST_AGE_SHIFT;
     bool conservativeVisible =
         (candidate.Flags & FLAG_CONSERVATIVE) != 0u;
+    uint producer = XR_ADV_VisibilityProducers.records[candidateIndex];
+    // An early-visible draw is sent to the deferred list every few frames, so
+    // the late Hi-Z test can find it occluded. Static meshlet draws on Vulkan do
+    // not need that: LateVisibility tests every early static meshlet draw in each
+    // frame when it sends the draw back for the meshlet recheck. Taking a large
+    // occluder out of the early raster would also leave a hole in this frame's
+    // depth pyramid, so the meshlets behind it would pass the late test, be drawn,
+    // and be drawn early again in the next frame for no visible result.
+#if defined(XR_ADV_BACKEND_VULKAN)
+    bool ageRetest = retestAge >= RETEST_AGE_LIMIT &&
+        producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET;
+#else
+    bool ageRetest = retestAge >= RETEST_AGE_LIMIT;
+#endif
     bool forceRetest = !conservativeVisible &&
         (!wasEarlyVisible ||
          (candidate.Flags & (FLAG_NEW | FLAG_RESIZED |
              FLAG_INVALID_HISTORY | FLAG_UNCERTAIN)) != 0u ||
-         retestAge >= RETEST_AGE_LIMIT);
-    uint producer = XR_ADV_VisibilityProducers.records[candidateIndex];
+         ageRetest);
     bool cpuDirect = producer == PRODUCER_CPU_DIRECT_STATIC_INDEXED ||
         producer == PRODUCER_CPU_DIRECT_PRE_SKINNED;
     if (cpuDirect)

@@ -181,7 +181,7 @@ public sealed class AdvancedGpuMaterialPublisher
         uint missingLayoutMemberCount = 0u;
         Span<byte> missingLayouts = stackalloc byte[6];
         missingLayouts.Clear();
-        Span<byte> missingKernels = stackalloc byte[42];
+        Span<byte> missingKernels = stackalloc byte[MaxCanonicalKernelKeys];
         missingKernels.Clear();
         int maximumMemberCount = GetMaximumSupportedLayoutMemberCount();
         Span<AdvancedMaterialLayoutMember> memberScratch =
@@ -270,7 +270,7 @@ public sealed class AdvancedGpuMaterialPublisher
                 missingLayoutMemberCount = checked(missingLayoutMemberCount + (uint)memberCount);
             }
 
-            int kernelIndex = checked(layoutIndex * 7 + (int)request.State);
+            int kernelIndex = checked(layoutIndex * RenderStateSlotCount + (int)request.State);
             if (missingKernels[kernelIndex] != 0)
                 continue;
 
@@ -681,6 +681,16 @@ public sealed class AdvancedGpuMaterialPublisher
             _ => throw new NotSupportedException(
                 $"GLSL material member type '{glslType}' has no canonical value-kind translation."),
         };
+
+    private const int SupportedLayoutCount = 6;
+    private const int RenderStateSlotCount = 7;
+
+    /// <summary>
+    /// The number of distinct shading kernel keys this publisher can create: one per supported
+    /// layout and render state class. The kernel table finds and reuses an existing kernel for
+    /// a key, so at most this many kernels are live at the same time.
+    /// </summary>
+    public const int MaxCanonicalKernelKeys = SupportedLayoutCount * RenderStateSlotCount;
 
     private static int GetSupportedLayoutIndex(MaterialBindingLayout layout)
     {

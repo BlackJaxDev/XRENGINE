@@ -37,23 +37,29 @@ layout(std430, binding = 77) readonly buffer XRAdvancedStereoViewMasks { uint ma
 layout(location = 0) in vec3 Position;
 layout(location = 1) in vec2 TexCoord0;
 
+// Opaque visibility programs define XR_ADV_VISIBILITY_IDENTITY_ONLY. Their
+// fragment stage reads only the flat identity values, so this stage does not
+// write the interpolated coverage attributes. Masked, fragment-depth and decal
+// programs keep all outputs.
 layout(location = 0) flat out uint VisibilityDrawIndex;
 layout(location = 1) flat out uint VisibilitySelectionId;
 layout(location = 2) flat out uint VisibilityProducer;
 layout(location = 3) flat out uint VisibilityViewIndex;
 layout(location = 4) flat out uint VisibilityOrigin;
 layout(location = 5) flat out uint VisibilityVelocityValid;
-layout(location = 6) out vec2 VisibilityCoverageUv;
 layout(location = 7) flat out uint VisibilityPrimitiveBase;
 layout(location = 8) flat out uint VisibilityMeshletIndex;
 layout(location = 9) flat out uint VisibilityMaterialDenseIndex;
 layout(location = 10) flat out uint VisibilityEditorFlags;
+#if !defined(XR_ADV_VISIBILITY_IDENTITY_ONLY)
+layout(location = 6) out vec2 VisibilityCoverageUv;
 layout(location = 11) out vec2 VisibilityCoverageUv1;
 layout(location = 12) out vec4 VisibilityCoverageColor;
 layout(location = 13) out vec3 VisibilityCoverageWorldPosition;
 layout(location = 14) out vec3 VisibilityCoverageLocalPosition;
 layout(location = 15) out vec2 VisibilityCoverageUv2;
 layout(location = 16) out vec2 VisibilityCoverageUv3;
+#endif
 
 uint XR_ADV_VisibilityPayloadIndex()
 {
@@ -94,15 +100,17 @@ void XR_ADV_RejectVisibilityVertex()
     VisibilityViewIndex = 0u;
     VisibilityOrigin = 0u;
     VisibilityVelocityValid = 0u;
-    VisibilityCoverageUv = vec2(0.0);
     VisibilityPrimitiveBase = 0u;
     VisibilityMeshletIndex = XR_ADV_VIS_INVALID;
     VisibilityMaterialDenseIndex = XR_ADV_INVALID_DENSE_INDEX;
     VisibilityEditorFlags = 0u;
+#if !defined(XR_ADV_VISIBILITY_IDENTITY_ONLY)
+    VisibilityCoverageUv = vec2(0.0);
     VisibilityCoverageUv1 = vec2(0.0);
     VisibilityCoverageColor = vec4(1.0);
     VisibilityCoverageWorldPosition = vec3(0.0);
     VisibilityCoverageLocalPosition = vec3(0.0);
+#endif
 }
 
 void main()
@@ -333,6 +341,7 @@ void main()
     VisibilityProducer = producer;
     VisibilityViewIndex = XR_ADV_RASTER_VIEW_INDEX;
     VisibilityOrigin = (XR_ADV_VisibilityRasterPush.producerAndOrigin >> XR_ADV_VIS_ORIGIN_SHIFT) & 1u;
+#if !defined(XR_ADV_VISIBILITY_IDENTITY_ONLY)
     VisibilityCoverageUv = localTexCoord0;
     VisibilityCoverageUv1 = localTexCoord1;
     VisibilityCoverageUv2 = localTexCoord2;
@@ -340,6 +349,7 @@ void main()
     VisibilityCoverageColor = localColor;
     VisibilityCoverageWorldPosition = worldPosition.xyz;
     VisibilityCoverageLocalPosition = localPosition;
+#endif
     VisibilityPrimitiveBase = payload.firstIndex / 3u;
     VisibilityMeshletIndex = XR_ADV_VIS_INVALID;
     VisibilityMaterialDenseIndex = materialDense;

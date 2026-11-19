@@ -907,7 +907,7 @@ namespace XREngine.Editor.Mcp
                 @"^(.+?)\((\d+),(\d+)\)\s*:\s*(error|warning)\s+(\w+)\s*:\s*(.+)$",
                 System.Text.RegularExpressions.RegexOptions.Multiline);
 
-            string combined = output + "\n" + errors;
+            string combined = $"{output}\n{errors}";
             foreach (System.Text.RegularExpressions.Match match in diagRegex.Matches(combined))
             {
                 diagnostics.Add((

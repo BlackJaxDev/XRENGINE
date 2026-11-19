@@ -10,7 +10,7 @@ public partial class GPUMaterialTable
         {
             // XR_MaterialRecord contains vec4 fields, so std430 rounds its array
             // stride up to four words. Keep this CPU upload struct at that stride.
-            public const int WordCount = 36;
+            public const int WordCount = 40;
 
             public uint AlbedoHandleIndex;
             public uint NormalHandleIndex;
@@ -49,6 +49,11 @@ public partial class GPUMaterialTable
             public uint AlphaCutoff;
             public uint SurfaceDetailHeightScale;
             public uint ParallaxScale;
+            // The occlusion words follow the original row, so earlier offsets do not move.
+            public uint OcclusionStrength;
+            public uint OcclusionControls;
+            public uint OcclusionHandleIndex;
+            public uint OcclusionPadding;
         }
     }
 }

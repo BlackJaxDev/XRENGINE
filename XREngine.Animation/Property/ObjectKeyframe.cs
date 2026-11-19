@@ -21,6 +21,6 @@
             Second = float.Parse(str[..spaceIndex]);
             Value = str[(spaceIndex + 1)..];
         }
-        public override string WriteToString() => string.Format("{0} {1}", Second, Value);
+        public override string WriteToString() => $"{Second} {Value}";
     }
 }

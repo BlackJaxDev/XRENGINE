@@ -71,11 +71,11 @@ internal static class SlangVulkanShaderCache
     {
         string directory = GetRootPath();
         Directory.CreateDirectory(directory);
-        string binaryPath = Path.Combine(directory, lookupKey + ".spv");
-        string metadataPath = Path.Combine(directory, lookupKey + ".json");
+        string binaryPath = Path.Combine(directory, $"{lookupKey}.spv");
+        string metadataPath = Path.Combine(directory, $"{lookupKey}.json");
         string token = Guid.NewGuid().ToString("N");
-        string binaryTemporaryPath = binaryPath + "." + token + ".tmp";
-        string metadataTemporaryPath = metadataPath + "." + token + ".tmp";
+        string binaryTemporaryPath = $"{binaryPath}.{token}.tmp";
+        string metadataTemporaryPath = $"{metadataPath}.{token}.tmp";
 
         Metadata metadata = new()
         {

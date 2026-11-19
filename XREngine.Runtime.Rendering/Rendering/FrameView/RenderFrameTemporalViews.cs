@@ -24,7 +24,9 @@ internal static class RenderFrameTemporalViews
         for (int i = 0; i < source.ViewCount; i++)
         {
             RenderFrameViewDescriptor view = source.GetView(i);
-            bool right = view.IsRightEyeFamily;
+            // The right-eye temporal fields exist only in a stereo pass. A per-eye right eye is a
+            // mono pass of its own, so its single view uses the mono jitter and history.
+            bool right = view.IsRightEyeFamily && source.ViewCount > 1;
             Vector2 jitter = right ? temporal.RightEyeCurrentJitter : temporal.CurrentJitter;
             Vector2 previousJitter = right ? temporal.RightEyePreviousJitter : temporal.PreviousJitter;
             Matrix4x4 unjittered = view.ProjectionMatrixUnjittered == default

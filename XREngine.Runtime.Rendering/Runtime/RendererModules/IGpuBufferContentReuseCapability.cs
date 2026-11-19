@@ -16,4 +16,11 @@ public interface IGpuBufferContentReuseCapability
         identity = default;
         return false;
     }
+
+    /// <summary>
+    /// Diagnostics only: a one-line description of why <paramref name="buffer"/> is or is not
+    /// reusable (for example the completion frontier that still holds it), or null when the
+    /// backend has none. Allocates.
+    /// </summary>
+    string? DescribeBufferContentReuse(XRDataBuffer buffer) => null;
 }

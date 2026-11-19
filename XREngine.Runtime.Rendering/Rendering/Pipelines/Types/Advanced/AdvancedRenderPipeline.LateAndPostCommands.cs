@@ -4,6 +4,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering;
 
@@ -187,6 +188,9 @@ public partial class AdvancedRenderPipeline
             var bloomCommands = new ViewportRenderCommandContainer(this);
             _advancedBloomProvider = bloomCommands.Add<VPRC_BloomPass>();
             _advancedBloomProvider.SetTargetFBONames(ForwardPassFBOName, BloomBlurTextureName, Stereo);
+            // Native renderers read the HDR scene directly in the first downsample, with no
+            // full-resolution copy. The WebGPU bloom programs keep the mip 0 copy.
+            _advancedBloomProvider.FirstDownsampleReadsInput = !Shaders.Compilation.WebPipelineRasterProgram.IsActive;
             bloom.TrueCommands = bloomCommands;
 
             AppendAdvancedPostBloomPass(commands);
@@ -275,14 +279,38 @@ public partial class AdvancedRenderPipeline
         var tsrCommands = new ViewportRenderCommandContainer(this);
         if (!Shaders.Compilation.WebPipelineRasterProgram.IsActive)
         {
+            bool split = TsrResolveForm == EAdvancedTsrResolveForm.EdgeStencilSplit;
+            if (split)
+            {
+                // Edge stencil split. The mask pass classifies each internal pixel once. The
+                // classify pass clears the stencil through its load operation and marks the
+                // output pixels whose source center is an edge. The lean resolve (no coverage
+                // path) draws where the bit is clear, the full resolve where it is set. Both
+                // write the same TSR targets.
+                tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(TsrEdgeMaskQuadFBOName, TsrEdgeMaskFBOName, matchDestinationRenderArea: true)
+                    .SetRenderGraphResources(CreateAdvancedTsrEdgeMaskResources());
+                tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(TsrEdgeClassifyQuadFBOName, TsrUpscaleEdgeFBOName, matchDestinationRenderArea: true)
+                    .SetRenderGraphResources(CreateAdvancedTsrEdgeClassifyResources());
+            }
             tsrCommands.Add<VPRC_RenderQuadToFBO>()
                 .SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true)
-                .SetRenderGraphResources(CreateAdvancedTsrResources());
+                .SetRenderGraphResources(CreateAdvancedTsrResources(split));
+            if (split)
+            {
+                tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(TsrUpscaleEdgeFBOName, TsrUpscaleEdgeFBOName, matchDestinationRenderArea: true)
+                    .SetRenderGraphResources(CreateAdvancedTsrResources(split));
+            }
             var captureTsrHistory = tsrCommands.Add<VPRC_TemporalAccumulationPass>();
             captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
+            // The lean resolve (TsrUpscaleFBO) is the history producer. With the split, the full
+            // resolve also reads prior history and writes the same targets, so the copy follows it too.
             captureTsrHistory.ConfigureTsrHistoryTargets(
                 TsrAccumulationFBOName, TsrHistoryColorFBOName, TsrUpscaleFBOName,
-                TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName);
+                TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName,
+                leftHistoryReaderQuadFboName: split ? TsrUpscaleEdgeFBOName : null);
         }
         tsr.TrueCommands = tsrCommands;
         var postAaCommands = new ViewportRenderCommandContainer(this);
@@ -408,7 +436,7 @@ public partial class AdvancedRenderPipeline
 
     private bool ShouldRunAdvancedAtmosphericScattering()
     {
-        if (!AllowsBloomAndDepthOfField || Stereo || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!AllowsBloomAndDepthOfField || Stereo || !VrEyeFrameRules.AllowsFogAndAerialPerspective())
             return false;
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var settings = GetSettings<AtmosphericScatteringSettings>(state) ?? AtmosphericScatteringSettings.Default;
@@ -418,7 +446,7 @@ public partial class AdvancedRenderPipeline
 
     private bool ShouldRunAdvancedVolumetricFog()
     {
-        if (!AllowsBloomAndDepthOfField || Stereo || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!AllowsBloomAndDepthOfField || Stereo || !VrEyeFrameRules.AllowsFogAndAerialPerspective())
             return false;
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var settings = GetSettings<VolumetricFogSettings>(state);
@@ -549,7 +577,21 @@ public partial class AdvancedRenderPipeline
         vendor.MotionTextureName = VelocityTextureName;
         vendor.MotionFrameBufferName = VelocityFBOName;
         vendor.AutoExposureTextureName = AutoExposureTextureName;
-        vendor.FlipSourceYOnVulkanFallback = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
+        if (Stereo)
+        {
+            // Vendor upscalers do not run on stereo views; the command presents its fallback.
+            vendor.FlipSourceYOnVulkanFallback = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
+        }
+        else
+        {
+            // The vendor output goes into a pipeline framebuffer, and the same window present
+            // as the other output branches shows it. Capture, Y flip, sRGB encoding and the
+            // window target are then the same for every branch. The fallback copy into the
+            // framebuffer needs no flip; the present applies it.
+            vendor.DestinationFBOName = VendorOutputFBOName;
+            vendor.FlipSourceYOnVulkanFallback = false;
+            AppendAdvancedWindowPresent(vendorCommands, VendorOutputFBOName);
+        }
         vendorOutput.TrueCommands = vendorCommands;
         vendorOutput.FalseCommands = CreateAdvancedPresentCommands(sourceFboName);
     }
@@ -633,7 +675,11 @@ public partial class AdvancedRenderPipeline
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedFinalPostProcessResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor().SampleTexture(PostProcessOutputTextureName);
 
-    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrResources()
+    /// <summary>
+    /// Sampled inputs of every pass built from the TSR shader. The Advanced TSR shader reads the
+    /// editor highlight mask instead of the scene stencil view, so the stencil view is not an input.
+    /// </summary>
+    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrSampledResources()
     {
         var resources = new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(FinalPostProcessOutputTextureName)
@@ -647,6 +693,23 @@ public partial class AdvancedRenderPipeline
             resources.SampleTexture(EditorHighlightMaskTextureName);
         return resources;
     }
+
+    /// <summary>Inputs of a TSR resolve pass. A split resolve also reads the destination edge stencil.</summary>
+    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrResources(bool split)
+    {
+        var resources = CreateAdvancedTsrSampledResources();
+        return split ? resources.UseDestinationStencilAttachment(ERenderGraphAccess.Read) : resources;
+    }
+
+    /// <summary>Inputs of the edge stencil classify pass; it clears and writes the destination stencil.</summary>
+    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrEdgeClassifyResources()
+        => CreateAdvancedTsrSampledResources()
+            .SampleTexture(TsrEdgeMaskTextureName)
+            .UseDestinationStencilAttachment(ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Clear);
+
+    /// <summary>Sampled inputs of the TSR edge-mask pass: the resolve inputs without the mask.</summary>
+    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrEdgeMaskResources()
+        => CreateAdvancedTsrSampledResources();
 
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedMotionBlurResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor().SampleTexture(MotionBlurTextureName).SampleTexture(VelocityTextureName).SampleTexture(DepthViewTextureName);

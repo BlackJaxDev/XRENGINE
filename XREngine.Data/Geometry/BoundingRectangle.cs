@@ -374,7 +374,7 @@ namespace XREngine.Data.Geometry
         }
 
         public override readonly string ToString()
-            => string.Format("[X:{0} Y:{1} W:{2} H:{3}]", OriginTranslation.X, OriginTranslation.Y, Width, Height);
+            => $"[X:{OriginTranslation.X} Y:{OriginTranslation.Y} W:{Width} H:{Height}]";
 
         public readonly bool Equals(BoundingRectangle other)
             => _translation.X == other._translation.X &&

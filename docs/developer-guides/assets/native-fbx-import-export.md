@@ -67,6 +67,21 @@ when tangent seams require extra vertices. Finite zero normals remain valid
 degenerate input. Non-finite normals fail import. The pinned meshoptimizer
 generator provides Mikk compatibility; bit equality with Unity is not guaranteed.
 
+The importer adds one vertex for each polygon corner. Before it builds each mesh
+chunk, it merges the corners whose attributes are bit-equal: position, normal,
+tangent, every UV set, and every color set
+(`XRMeshPackedSource.WeldExactDuplicates`). The merge runs after tangent
+generation, so generated tangents are part of the comparison. Only identical
+corners merge, so the triangles and the rendered image do not change. Chunks
+with skin influences or blendshape deltas are not merged, because the comparison
+does not cover those streams. Without the merge, every meshlet stopped at its
+64-vertex limit with about 28 triangles, and the mesh simplifier could not
+remove triangles across the unshared corners. On the Intel New Sponza scene the
+merge removes about three quarters of the vertices and about two thirds of the
+meshlets. A Native FBX cache version bump marks this change. Existing imported
+assets, including saved prefab meshes, keep their unmerged vertices until the
+model is imported again.
+
 Authored tangent layers use the FBX binormal layer to set the tangent sign.
 The sign uses the transformed normal, tangent, and binormal, and follows
 `FlipUVs`. If a binormal layer is absent, the importer reconstructs a

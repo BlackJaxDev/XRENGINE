@@ -383,7 +383,7 @@ public sealed class OpenXrTimingPipelineContractTests
         defaultPipelineMain.ShouldContain("private static bool RuntimeEnableDeclaredSmaa");
         defaultPipelineMain.ShouldContain("=> RuntimeEnableSmaa;");
         defaultPipelineMain.ShouldContain("internal static bool RuntimeEnableMsaaDeferred");
-        defaultPipelineMain.ShouldContain("&& !UseOpenXrVulkanDesktopStartupSafePath\n        && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
+        defaultPipelineMain.ShouldContain("&& VrEyeFrameRules.AllowsDeferredMsaa()\n        && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
 
         string defaultPipelineResources = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.Resources.cs").Replace("\r\n", "\n");
         defaultPipelineResources.ShouldContain("profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;");
@@ -393,9 +393,10 @@ public sealed class OpenXrTimingPipelineContractTests
         defaultPipelineResources.ShouldContain("Texture(builder, SmaaOutputTextureName");
         defaultPipelineResources.ShouldContain("builder.FrameBuffer(SmaaFBOName)");
         defaultPipelineResources.ShouldNotContain("!UsesOpenXrVulkanDesktopSafePath(profile) && profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;");
-        defaultPipelineResources.ShouldContain("bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);");
-        defaultPipelineResources.ShouldContain("if (EnableDeferredMsaa && !useOpenXrVulkanSafePath &&");
-        defaultPipelineResources.ShouldContain("&& !UsesOpenXrVulkanDesktopSafePath(profile)\n        && profile.AntiAliasingMode == EAntiAliasingMode.Msaa");
+        defaultPipelineResources.ShouldContain("bool externalEyeTarget = VrEyeFrameRules.IsExternalEyeTargetFrame(viewport, Stereo);");
+        defaultPipelineResources.ShouldContain("if (EnableDeferredMsaa && allowsDeferredMsaa && msaaSelected)");
+        defaultPipelineResources.ShouldContain("&& (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.EyeDeferredMsaaDisabled) == 0\n        && profile.AntiAliasingMode == EAntiAliasingMode.Msaa");
+        defaultPipelineResources.ShouldNotContain("OpenXrVulkanDesktopSafePath");
 
         unitTestUi.ShouldContain("ShouldFlipOpenXrVulkanStereoPreviewUv");
         unitTestUi.ShouldContain("RuntimeEngine.VRState.IsOpenXRActive");
@@ -406,7 +407,7 @@ public sealed class OpenXrTimingPipelineContractTests
             vulkanRendererOpenXr,
             "private bool TryRecordOpenXrEyeSwapchainCommandBuffer",
             "private bool TryRecordPreparedOpenXrEyeSwapchainCommandBuffer");
-        int directPrepare = directEyeRecord.IndexOf("TryPrepareOpenXrFrameDataSlot(", StringComparison.Ordinal);
+        int directPrepare = directEyeRecord.IndexOf("TryAcquireOpenXrEyeFrameDataSlot(", StringComparison.Ordinal);
         directPrepare.ShouldBeGreaterThanOrEqualTo(0);
         directPrepare.ShouldBeLessThan(directEyeRecord.IndexOf(
             "ReopenOpenXrFrameDataSlot(recordImageIndex, frameDataSlotCompletionProven);",
@@ -473,6 +474,38 @@ public sealed class OpenXrTimingPipelineContractTests
     }
 
     [Test]
+    public void VulkanOpenXr_EyeImageReleaseAfterRuntimeLossEndsFrameWithoutOwnershipThrow()
+    {
+        string implementation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
+        string binding = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.cs");
+        string host = ReadWorkspaceFile(
+            "XREngine.Runtime.XR.OpenXR/OpenXRAPI.GraphicsBindingHost.cs");
+
+        // A lost runtime is not an ownership failure: the release path checks the pending loss
+        // before it throws, and the batch entry then ends the frame without layers.
+        int lossCheck = implementation.IndexOf("if (Host.IsRuntimeLossPending)", StringComparison.Ordinal);
+        int ownershipThrow = implementation.IndexOf(
+            "OpenXR batched eye image ownership remains with the runtime", StringComparison.Ordinal);
+        lossCheck.ShouldBeGreaterThanOrEqualTo(0);
+        ownershipThrow.ShouldBeGreaterThan(lossCheck);
+        implementation.ShouldContain("_eyeImageReleaseRuntimeLost = true;");
+
+        string batchEntry = SliceMethod(
+            binding,
+            "public unsafe bool TryRenderViewsBatch(",
+            "public bool TryRenderEye(");
+        batchEntry.ShouldContain("_eyeImageReleaseRuntimeLost = false;");
+        batchEntry.ShouldContain("if (!_eyeImageReleaseRuntimeLost)");
+        batchEntry.ShouldContain("handled = true;");
+        batchEntry.ShouldContain("return false;");
+
+        host.ShouldContain("public bool IsRuntimeLossPending");
+        host.ShouldContain("=> owner.IsOpenXrRuntimeLossPending();");
+    }
+
+    [Test]
     public void VulkanOpenXr_EyeRenderingGateDoesNotInheritDesktopAllocationBackoff()
     {
         string resourcePressure = ReadWorkspaceFile(
@@ -485,7 +518,11 @@ public sealed class OpenXrTimingPipelineContractTests
             "internal bool ShouldDeferOpenXrEyeRenderingWork",
             "internal bool ShouldDeferTextureUploadPreparationForOpenXrPriority");
 
-        eyeRenderingGate.ShouldContain("TryDescribeBlockingOpenXrEyeTextureWork");
+        // The eye defers for descriptor publications and allocator pressure, not for texture
+        // transfers in flight or active upload preparation.
+        eyeRenderingGate.ShouldContain("VulkanTextureUploadService.TryDescribePendingDescriptorPublications");
+        eyeRenderingGate.ShouldContain("TryDescribeOpenXrVulkanAllocatorPressure");
+        eyeRenderingGate.ShouldNotContain("TryDescribeBlockingOpenXrEyeTextureWork");
         eyeRenderingGate.ShouldNotContain("TryDescribeRecentResourceAllocationFailure");
 
         string directEyePrepare = SliceMethod(
@@ -512,7 +549,7 @@ public sealed class OpenXrTimingPipelineContractTests
     }
 
     [Test]
-    public void VulkanOpenXr_SafeEyePassDoesNotReplacePostProcessFallbacksWithAtmosphereFogOutputs()
+    public void VrEyeFogProfileGatesAtmosphereAndFogBeforeReadingPostProcessState()
     {
         string commandChain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
         string resources = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.Resources.cs");
@@ -521,16 +558,16 @@ public sealed class OpenXrTimingPipelineContractTests
             commandChain,
             "private static bool ShouldRunAtmosphericScattering()",
             "private static bool ShouldRunVolumetricFog()");
-        atmosphereGate.ShouldContain("if (UseOpenXrVulkanDesktopStartupSafePath)\n            return false;");
-        atmosphereGate.IndexOf("UseOpenXrVulkanDesktopStartupSafePath", StringComparison.Ordinal)
+        atmosphereGate.ShouldContain("if (!VrEyeFrameRules.AllowsFogAndAerialPerspective())\n            return false;");
+        atmosphereGate.IndexOf("VrEyeFrameRules.AllowsFogAndAerialPerspective", StringComparison.Ordinal)
             .ShouldBeLessThan(atmosphereGate.IndexOf("GetActivePostProcessState", StringComparison.Ordinal));
 
         string fogGate = SliceMethod(
             commandChain,
             "private static bool ShouldRunVolumetricFog()",
             "private void AppendAmbientOcclusionSwitch");
-        fogGate.ShouldContain("if (UseOpenXrVulkanDesktopStartupSafePath)\n            return false;");
-        fogGate.IndexOf("UseOpenXrVulkanDesktopStartupSafePath", StringComparison.Ordinal)
+        fogGate.ShouldContain("if (!VrEyeFrameRules.AllowsFogAndAerialPerspective())\n            return false;");
+        fogGate.IndexOf("VrEyeFrameRules.AllowsFogAndAerialPerspective", StringComparison.Ordinal)
             .ShouldBeLessThan(fogGate.IndexOf("GetActivePostProcessState", StringComparison.Ordinal));
 
         resources.ShouldContain("DeclareColorTexture(builder, AtmosphereColorTextureName, full");

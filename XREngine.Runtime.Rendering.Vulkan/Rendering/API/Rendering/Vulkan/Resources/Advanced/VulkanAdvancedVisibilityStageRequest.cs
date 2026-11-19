@@ -49,11 +49,35 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// </summary>
     internal bool RecordRvcShadeletTelemetry { get; init; }
 
+    /// <summary>
+    /// Draws the occlusion-culled bounds overlay after native opaque shading.
+    /// It is a per-frame diagnostic and is not part of the family identity.
+    /// </summary>
+    internal bool ShowOcclusionCulledBounds { get; init; }
+
     /// <summary>Shades one pixel per peripheral block of the same primitive, then fills the rest.</summary>
     internal bool RvcFoveatedQuadShading { get; init; }
 
+    /// <summary>Shades one pixel per 2x2 block of the same primitive outside the edge radius of an Advanced eye, then fills the rest.</summary>
+    internal bool AdvancedEdgeHalfRateShading { get; init; }
+
+    /// <summary>Full-rate radius around the lens center, as a fraction of the half extent of the eye image.</summary>
+    internal float AdvancedEdgeHalfRateRadius { get; init; }
+
+    /// <summary>Diagnostic tint of the half-rate blocks.</summary>
+    internal bool AdvancedEdgeHalfRateDebugTint { get; init; }
+
+    /// <summary>Conservative visible ellipses of the OpenXR eye views; a view without one keeps every tile.</summary>
+    internal AdvancedHiddenAreaEllipses HiddenAreaEllipses { get; init; }
+
     /// <summary>True when the family records the decal buffer phase and native shading reads the decal buffer.</summary>
     internal bool DecalBufferEnabled { get; init; }
+
+    /// <summary>
+    /// True when the native AO stage records no neutral-fill dispatch, because the AO passes
+    /// overwrite the native AO image before shading. The transitions still run.
+    /// </summary>
+    internal bool SkipNeutralAmbientOcclusionFill { get; init; }
 
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
     internal bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
@@ -109,7 +133,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            Target.Height != 0u &&
            !string.IsNullOrWhiteSpace(IdentityTargetName) &&
            !string.IsNullOrWhiteSpace(MetadataTargetName) &&
-           !string.IsNullOrWhiteSpace(SelectionTargetName) &&
+           (MsaaSampleCount <= 1u || !string.IsNullOrWhiteSpace(SelectionTargetName)) &&
            !string.IsNullOrWhiteSpace(DepthTargetName) &&
            !string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName) &&
            (!RequiresNativeComputeClosure ||
@@ -241,9 +265,17 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
             Phase is not (EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
                 EAdvancedVisibilityStageBackendPhase.DecalBuffer));
 
+    /// <summary>
+    /// True when this single-sample visibility target has no selection image (identity,
+    /// metadata and depth-stencil only), as declared for single-sample OpenXR eyes.
+    /// </summary>
+    internal bool OmitsSelectionTarget
+        => MsaaSampleCount <= 1u && string.IsNullOrEmpty(SelectionTargetName);
+
     private bool HasExpectedVisibilityTargetNames(bool raw)
         => string.Equals(IdentityTargetName, raw ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity, StringComparison.Ordinal) &&
            string.Equals(MetadataTargetName, raw ? AdvancedVisibilityResourceNames.MetadataMultisample : AdvancedVisibilityResourceNames.Metadata, StringComparison.Ordinal) &&
-           string.Equals(SelectionTargetName, raw ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection, StringComparison.Ordinal) &&
+           (string.Equals(SelectionTargetName, raw ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection, StringComparison.Ordinal) ||
+            !raw && SelectionTargetName.Length == 0) &&
            string.Equals(DepthTargetName, raw ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil, StringComparison.Ordinal);
 }

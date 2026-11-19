@@ -209,6 +209,11 @@ namespace XREngine.Rendering.Commands
         FragmentDepth = 1u << 26,
         /// <summary>The material is a mesh surface decal. Advanced visibility routes it to the decal buffer pass.</summary>
         SurfaceDecal = 1u << 27,
+        /// <summary>
+        /// The owner is a dynamic shadow caster (RenderInfo3D.IsShadowCasterDynamic): a cached
+        /// directional cascade draws it in the dynamic overlay, not in its static caster tile.
+        /// </summary>
+        ShadowCasterDynamic = 1u << 28,
     }
 
     public enum GPUSortAlgorithm

@@ -122,6 +122,8 @@ public static class BootstrapRenderSettings
             renderSettings.Vulkan.Startup.FallbackPolicy = settings.Rendering.BackendFallbackPolicy;
             renderSettings.VulkanPresentationProfile = settings.Rendering.Vulkan.PresentationProfile;
             renderSettings.VulkanPresentationTargetRefreshHz = settings.Rendering.Vulkan.TargetRefreshHz;
+            renderSettings.AdvancedVirtualGeometry = settings.Rendering.VirtualGeometry;
+            renderSettings.AdvancedVirtualGeometryPixelThreshold = settings.Rendering.VirtualGeometryPixelThreshold;
             Engine.GameSettings.VulkanPresentationProfileOverride = new(
                 settings.Rendering.Vulkan.PresentationProfile,
                 true);
@@ -142,6 +144,11 @@ public static class BootstrapRenderSettings
             renderSettings.VrRenderPipeline = settings.VR.RenderPipeline;
             renderSettings.RvcPipelineMode = settings.VR.RvcPipelineMode;
             renderSettings.RvcQuadViewEnabled = settings.VR.RvcQuadView;
+            renderSettings.VrAdvancedEdgeHalfRateShading = settings.VR.AdvancedEdgeHalfRateShading;
+            renderSettings.VrAdvancedEdgeHalfRateRadius = settings.VR.AdvancedEdgeHalfRateRadius;
+            renderSettings.VrAdvancedEdgeHalfRateDebugTint = settings.VR.AdvancedEdgeHalfRateDebugTint;
+            renderSettings.VrAdvancedShadowFilterTaps = settings.VR.AdvancedShadowFilterTaps;
+            settings.VR.EyeFeatures.ApplyTo(renderSettings.VrEyeFeatures);
             renderSettings.VrFoveationMode = settings.VR.Foveation.Mode;
             renderSettings.VrFoveationQualityPreset = settings.VR.Foveation.QualityPreset;
             renderSettings.VrFoveationRequireRequested = settings.VR.Foveation.RequireRequested;

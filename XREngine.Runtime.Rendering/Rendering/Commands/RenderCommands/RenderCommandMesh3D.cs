@@ -632,6 +632,20 @@ namespace XREngine.Rendering.Commands
             get => _worldMatrixIsModelMatrix;
             set => SetField(ref _worldMatrixIsModelMatrix, value);
         }
+        /// <summary>
+        /// Reports a change of the cast shadow to the owning renderable when the drawn mesh
+        /// (also a LOD switch), the material override, the instance count or the enabled state
+        /// changes. The box of the caster does not move then, so the move tracking of
+        /// <see cref="RenderInfo3D"/> does not see it. Edits inside a material object (for
+        /// example its alpha cutoff) are not reported.
+        /// </summary>
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            if (propName is nameof(Mesh) or nameof(MaterialOverride) or nameof(Instances) or nameof(Enabled))
+                (OwnerRenderInfo as RenderInfo3D)?.ReportShadowCasterContentChange();
+        }
+
         public XRMaterial? MaterialOverride
         {
             get => _materialOverride;
@@ -1062,6 +1076,43 @@ namespace XREngine.Rendering.Commands
 
             // The full fence keeps the matrix writes above before this advance.
             System.Threading.Interlocked.Increment(ref s_lateRenderWorldWriteEpoch);
+
+            if (AdvancedGpuScenePublisher.ScenePublicationDiagnosticsEnabled)
+                ReportLateRenderWorldWrite();
+        }
+
+        // Late render-thread world writes seen by the diagnostics sampler.
+        private static long s_lateRenderWorldWriteDiagnosticSamples;
+
+        /// <summary>
+        /// Writes a sampled line for a late render-thread world write to
+        /// advanced-scene-publication-diagnostics.log: the command type, the owner type, the
+        /// mesh name, the stable query key and the methods that called the
+        /// <see cref="WorldMatrix"/> setter. Each such write advances
+        /// <see cref="LateRenderWorldWriteEpoch"/> and makes the Advanced prepared publication
+        /// gate fail, so the line names the code that causes the failure. The sampler writes the
+        /// first 12 writes, then 1 in 128. Only XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS=1 runs
+        /// this method; the stack walk and the strings allocate only on a sampled write.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private void ReportLateRenderWorldWrite()
+        {
+            long sample = System.Threading.Interlocked.Increment(ref s_lateRenderWorldWriteDiagnosticSamples);
+            if (sample > 12 && (sample & 127) != 0)
+                return;
+
+            // Frame 0 is this method, frame 1 is ApplyLateRenderThreadWorldMatrix, and frame 2
+            // is the WorldMatrix setter. The frames after it are the callers to report. The text
+            // form of the trace names them without reflection, which the portability analyzer
+            // does not allow here.
+            string[] frames = new System.Diagnostics.StackTrace(3, false).ToString()
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            string callers = string.Join(" < ", frames, 0, Math.Min(frames.Length, 5));
+
+            Debug.WriteAuxiliaryLog("advanced-scene-publication-diagnostics.log",
+                $"late-world-write={sample} epoch={LateRenderWorldWriteEpoch} command={GetType().Name} " +
+                $"sourceKey={StableQueryKey} owner={OwnerRenderInfo?.Owner?.GetType().Name} " +
+                $"mesh={Mesh?.Mesh?.Name} callers={callers}");
         }
 
         private Matrix4x4 GetModelMatrix()

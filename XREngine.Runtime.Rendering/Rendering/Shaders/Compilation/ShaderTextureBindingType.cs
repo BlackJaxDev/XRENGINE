@@ -25,12 +25,12 @@ public readonly record struct ShaderTextureBindingType(
         foreach (string dimension in new[] { "2d-array", "2d", "cube" })
         {
             string token = dimension.Replace('-', '_');
-            if (bindingType == "texture-depth-" + dimension && dimension is "2d" or "2d-array")
+            if (bindingType == $"texture-depth-{dimension}" && dimension is "2d" or "2d-array")
             {
-                shape = new(false, dimension, "depth", null, null, "texture_depth_" + token);
+                shape = new(false, dimension, "depth", null, null, $"texture_depth_{token}");
                 return true;
             }
-            string prefix = "texture-" + dimension + "-";
+            string prefix = $"texture-{dimension}-";
             if (bindingType.StartsWith(prefix, StringComparison.Ordinal))
             {
                 string sample = bindingType[prefix.Length..];
@@ -40,7 +40,7 @@ public readonly record struct ShaderTextureBindingType(
                 return true;
             }
             if (dimension == "cube") continue;
-            prefix = "storage-texture-" + dimension + "-";
+            prefix = $"storage-texture-{dimension}-";
             if (!bindingType.StartsWith(prefix, StringComparison.Ordinal)) continue;
             string suffix = bindingType[prefix.Length..];
             foreach (string access in new[] { "read-write", "write", "read" })

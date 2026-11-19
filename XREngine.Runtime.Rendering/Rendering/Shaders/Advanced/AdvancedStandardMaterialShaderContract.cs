@@ -24,8 +24,15 @@ internal static class AdvancedStandardMaterialShaderContract
         AppendMember(source, layout, "Flags", "XR_ADV_STANDARD_FLAGS_WORD");
         AppendMember(source, layout, "SurfaceDetailHeightScale", "XR_ADV_STANDARD_SURFACE_DETAIL_HEIGHT_SCALE_WORD");
         AppendMember(source, layout, "ParallaxScale", "XR_ADV_STANDARD_PARALLAX_SCALE_WORD");
+        AppendMember(source, layout, "OcclusionStrength", "XR_ADV_STANDARD_OCCLUSION_STRENGTH_WORD");
+        AppendMember(source, layout, "OcclusionControls", "XR_ADV_STANDARD_OCCLUSION_CONTROLS_WORD");
         Append(source, "XR_ADV_STANDARD_OPACITY_TEXTURE_FLAG", GPUMaterialEntry.OpacityTextureFlag);
         Append(source, "XR_ADV_STANDARD_OPACITY_TEXTURE_SLOT", ResolveTextureSlot(layout, "opacity"));
+        Append(source, "XR_ADV_STANDARD_OCCLUSION_TEXTURE_FLAG", GPUMaterialEntry.OcclusionTextureFlag);
+        Append(source, "XR_ADV_STANDARD_PACKED_METALLIC_ROUGHNESS_FLAG", GPUMaterialEntry.PackedMetallicRoughnessFlag);
+        Append(source, "XR_ADV_STANDARD_OCCLUSION_CHANNEL_MASK", GPUMaterialEntry.OcclusionChannelMask);
+        Append(source, "XR_ADV_STANDARD_OCCLUSION_UV1_FLAG", GPUMaterialEntry.OcclusionUv1Flag);
+        Append(source, "XR_ADV_STANDARD_OCCLUSION_TEXTURE_SLOT", ResolveTextureSlot(layout, "occlusion"));
         Append(source, "XR_ADV_STANDARD_HEIGHT_MAP_FLAG", GPUMaterialEntry.HeightMapFlag);
         Append(source, "XR_ADV_STANDARD_PARALLAX_FLAG", GPUMaterialEntry.ParallaxFlag);
         Append(source, "XR_ADV_STANDARD_PARALLAX_SILHOUETTE_FLAG", GPUMaterialEntry.ParallaxSilhouetteFlag);

@@ -17,6 +17,7 @@ using XREngine.Rendering.Vulkan;
 using XREngine.Scene.Transforms;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.OutputDomains;
 using McpCapability = XREngine.Runtime.Automation.Mcp.McpCapability;
 using GpuDrivenStats = XREngine.RuntimeEngine.Rendering.Stats.GpuDriven;
 using GpuPipelineStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
@@ -566,8 +567,11 @@ namespace XREngine.Editor.Mcp
                         required_collect_generation = RuntimeEngine.Rendering.Stats.FrameLifecycle.RequiredCollectGeneration,
                         collect_wait_for_render_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs,
                         render_wait_for_collect_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs,
+                        render_wait_for_xr_frame_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitForXrFrameMs,
                         render_wait_reason = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitReason,
                         stale_collect_reuse_frames = RuntimeEngine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames,
+                        render_circuit_breaker_trips = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderCircuitBreakerTrips,
+                        desktop_second_half_busy_stops = RuntimeEngine.Rendering.Stats.FrameLifecycle.DesktopSecondHalfBusyStops,
                         frame_package_production_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageProductionMs,
                         frame_package_publication_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackagePublicationMs,
                         frame_package_validation_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageValidationMs,
@@ -887,6 +891,12 @@ namespace XREngine.Editor.Mcp
                         process_openxr_eye_primary_record_samples = VrStats.VrProcessOpenXrEyePrimaryRecordSamples,
                         process_openxr_eye_primary_record_span_ms = JsonFinite(VrStats.VrProcessOpenXrEyePrimaryRecordSpanMs),
                         process_openxr_eye_primary_record_overlap_ms = JsonFinite(VrStats.VrProcessOpenXrEyePrimaryRecordOverlapMs),
+                        process_openxr_parallel_eye_record_serialized_frames = VrStats.VrProcessOpenXrParallelEyeRecordSerializedFrames,
+                        process_openxr_parallel_eye_record_failed_batches = VrStats.VrProcessOpenXrParallelEyeRecordFailedBatches,
+                        process_openxr_no_layer_frames = BuildOpenXrNoLayerFrameTelemetry(),
+                        process_openxr_eye_frame_data_slot_alternates = VrStats.VrProcessOpenXrEyeFrameDataSlotAlternates,
+                        process_openxr_eye_frame_data_slot_waits = VrStats.VrProcessOpenXrEyeFrameDataSlotWaits,
+                        process_openxr_eye_frame_data_slot_busy_failures = VrStats.VrProcessOpenXrEyeFrameDataSlotBusyFailures,
                         render_submit_ms = JsonFinite(VrStats.VrRenderSubmitTimeMs),
                         xr_wait_frame_block_ms = JsonFinite(VrStats.VrXrWaitFrameBlockTimeMs),
                         xr_end_frame_submit_ms = JsonFinite(VrStats.VrXrEndFrameSubmitTimeMs),
@@ -903,6 +913,7 @@ namespace XREngine.Editor.Mcp
                     },
                     vulkan = new
                     {
+                        lock_contention = BuildVulkanLockContentionTelemetry(),
                         descriptor_heap = new
                         {
                             sampler_binds_total = VulkanStats.DescriptorHeapSamplerBinds,
@@ -1154,6 +1165,23 @@ namespace XREngine.Editor.Mcp
                             primary_operation_preparation = VulkanCpuStage(EVulkanCpuStage.PrimaryOperationPreparation),
                             primary_mesh_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryMeshOperation),
                             primary_non_mesh_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryNonMeshOperation),
+                            primary_advanced_visibility_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedVisibilityOperation),
+                            primary_compute_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryComputeOperation),
+                            primary_blit_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryBlitOperation),
+                            primary_clear_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryClearOperation),
+                            primary_other_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryOtherOperation),
+                            primary_advanced_preparation_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedPreparationOperation),
+                            primary_advanced_raster_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedRasterOperation),
+                            primary_advanced_late_compute_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedLateComputeOperation),
+                            primary_advanced_late_raster_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedLateRasterOperation),
+                            primary_advanced_classification_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedClassificationOperation),
+                            primary_advanced_ambient_occlusion_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedAmbientOcclusionOperation),
+                            primary_advanced_native_shading_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedNativeShadingOperation),
+                            primary_advanced_directional_shadow_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedDirectionalShadowOperation),
+                            primary_advanced_cpu_direct_draw_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedCpuDirectDrawOperation),
+                            primary_advanced_raster_lowering_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedRasterLoweringOperation),
+                            primary_advanced_raster_validation_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation),
+                            primary_advanced_raster_binding_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryAdvancedRasterBindingOperation),
                             primary_finalization = VulkanCpuStage(EVulkanCpuStage.PrimaryFinalization),
                             primary_end_command_buffer = VulkanCpuStage(EVulkanCpuStage.PrimaryEndCommandBuffer),
                             primary_frame_data_manifest = VulkanCpuStage(EVulkanCpuStage.PrimaryFrameDataManifest),
@@ -1587,11 +1615,45 @@ namespace XREngine.Editor.Mcp
                             mesh_descriptor_pool_high_water = VulkanStats.VulkanMeshDescriptorPoolHighWater,
                             mesh_descriptor_set_high_water = VulkanStats.VulkanMeshDescriptorSetHighWater,
                         },
+                        // Per output domain (desktop, XR, none): cumulative counts of the work that
+                        // rebuilds state, such as plan builds, mesh cohort misses and artifact replacements.
+                        output_domains = BuildRenderOutputDomainTelemetry(),
+                        // VR with an independent desktop window: collects that render or retain the
+                        // desktop shadow source, cascade requests and grants per source, and the two
+                        // mismatch directions between the collect decision and the desktop render.
+                        desktop_output_schedule = BuildDesktopOutputScheduleTelemetry(),
+                        // OpenXR collect pacing (one collect for each XR frame): paced and
+                        // render-paced collects, the submit and frame waits with their time-outs
+                        // (fallbacks to render pacing), deactivations, and publications with and
+                        // without an XR frame.
+                        xr_collect_pacing = BuildXrCollectPacingTelemetry(),
+                        // Angle between the head view of a speculative stereo collect and the predicted
+                        // view of the frame that receives its commands: cumulative counts per 0.1 degree
+                        // bucket (the last bucket also counts larger angles).
+                        speculative_view_angle_buckets = SpeculativeViewAngleTelemetry.Capture(),
+                        // Time from the first collect that finds a directional cascade stale (sun or
+                        // camera move) to the recorded draw of that cascade, per source. Cumulative;
+                        // max_us is the largest single value since start.
+                        directional_cascade_refresh_latency = new
+                        {
+                            desktop = BuildCascadeRefreshLatency(XREngine.Rendering.Shadows.ShadowRequestSource.Desktop),
+                            hmd = BuildCascadeRefreshLatency(XREngine.Rendering.Shadows.ShadowRequestSource.Hmd),
+                        },
+                        // Desktop attempts that retried, or failed past the limit, because a changed
+                        // output's planner publication was not there yet (pass or generation change).
+                        planner_publication_pending = new
+                        {
+                            retries_total = VulkanStats.VulkanPlannerPublicationPendingRetriesTotal,
+                            failures_total = VulkanStats.VulkanPlannerPublicationPendingFailuresTotal,
+                        },
                         retired_resources = new
                         {
                             metering = vulkanDiagnostics?.GetRetirementDiagnostics(),
                             pending_count = VulkanStats.VulkanLifetimePendingRetirementCount,
                             oldest_pending_age_ms = VulkanStats.VulkanLifetimeOldestPendingRetirementAgeMilliseconds,
+                            command_buffer_count = VulkanStats.VulkanRetiredCommandBufferCount,
+                            command_buffer_pending_count = VulkanStats.VulkanPendingRetiredCommandBufferCount,
+                            command_buffer_worker_owned_deferrals_total = VulkanStats.VulkanRetiredCommandBufferWorkerOwnedDeferralsTotal,
                             plan_replacements = VulkanStats.VulkanRetiredResourcePlanReplacements,
                             plan_images = VulkanStats.VulkanRetiredResourcePlanImages,
                             plan_buffers = VulkanStats.VulkanRetiredResourcePlanBuffers,
@@ -1615,9 +1677,14 @@ namespace XREngine.Editor.Mcp
                         {
                             message_count = VulkanStats.VulkanValidationMessageCount,
                             error_count = VulkanStats.VulkanValidationErrorCount,
+                            lifetime_error_count = VulkanStats.VulkanValidationLifetimeErrorCount,
                             last_message = VulkanStats.VulkanLastValidationMessage,
                             cumulative = vulkanDiagnostics?.GetValidationDiagnostics(),
                         },
+                        // Delayed GPU diagnostic readback ring: slots by state, the oldest reservation,
+                        // and the dropped and completed reservations. Stuck reserved slots stop the
+                        // Advanced counter receipts.
+                        diagnostic_readback = vulkanDiagnostics?.GetDiagnosticReadbackDiagnostics(),
                         diagnostics = new
                         {
                             dropped_frame_ops = VulkanStats.VulkanDroppedFrameOps,
@@ -1645,6 +1712,9 @@ namespace XREngine.Editor.Mcp
                 render = BuildFrameLifecyclePhaseTotal(totals.Render),
                 collect_wait_for_render = BuildFrameLifecyclePhaseTotal(totals.CollectWaitForRender),
                 render_wait_for_collect = BuildFrameLifecyclePhaseTotal(totals.RenderWaitForCollect),
+                render_wait_for_xr_frame = BuildFrameLifecyclePhaseTotal(totals.RenderWaitForXrFrame),
+                collect_wait_for_xr_submit = BuildFrameLifecyclePhaseTotal(totals.CollectWaitForXrSubmit),
+                publication_age = BuildFrameLifecyclePhaseTotal(totals.PublicationAge),
             };
 
         private static object BuildFrameLifecyclePhaseTotal(FrameLifecyclePhaseTotal total)
@@ -1731,9 +1801,18 @@ namespace XREngine.Editor.Mcp
                         unchanged_row_publications = advancedPublication.UnchangedRowPublications,
                         commit_calls = advancedPublication.CommitCalls,
                         commit_ms = advancedPublication.CommitMilliseconds,
+                        // Parts of commit_ms for the full publications only.
+                        plan_ms = advancedPublication.PlanMilliseconds,
+                        apply_ms = advancedPublication.ApplyMilliseconds,
+                        seal_ms = advancedPublication.SealMilliseconds,
+                        // global_preflight_ms covers every publication path; identity_delivery_ms is part of seal_ms.
+                        global_preflight_ms = advancedPublication.GlobalPreflightMilliseconds,
+                        identity_delivery_ms = advancedPublication.IdentityDeliveryMilliseconds,
                         // The collect thread prepares the gate decision in prepare_swap_publication_event_ms. A hit
                         // replaces the row walk in row_gate_ms; a miss runs the swap-time row walk.
                         prepared_gate = BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetry.Capture()),
+                        // Publications that patched moved dynamic rows instead of running the whole-scene plan.
+                        moved_row_patch = BuildAdvancedMovedRowPatchTelemetry(),
                     },
                     viewports_ms = swap.ViewportsMilliseconds,
                     main_view_swap_calls = swap.MainViewSwapCalls,
@@ -1764,11 +1843,138 @@ namespace XREngine.Editor.Mcp
         /// as row_gate_passes and row_gate_failures. The last_exception values identify the most recent prepare
         /// exception in all builds, because Release builds write no warning log.
         /// </summary>
+        /// <summary>
+        /// Formats the cumulative desktop output schedule counters as one map keyed by the
+        /// snake-case counter name. Callers subtract two snapshots to get a measurement window.
+        /// </summary>
+        private static object BuildCascadeRefreshLatency(XREngine.Rendering.Shadows.ShadowRequestSource source)
+            => new
+            {
+                samples = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetSamples(source),
+                total_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetTotalMicroseconds(source),
+                max_us = XREngine.Rendering.Shadows.DirectionalCascadeRefreshLatencyTelemetry.GetMaxMicroseconds(source),
+            };
+
+        /// <summary>
+        /// Builds one entry for each counted Vulkan lock (snake-case site name), with the contended
+        /// wait count, total wait in milliseconds and longest wait in microseconds, split into the
+        /// render thread and all other threads. The values are process totals since start.
+        /// </summary>
+        private static object BuildVulkanLockContentionTelemetry()
+        {
+            Dictionary<string, object> sites = [];
+            for (XREngine.Rendering.Vulkan.EVulkanLockContentionSite site = XREngine.Rendering.Vulkan.EVulkanLockContentionSite.BindState;
+                site < XREngine.Rendering.Vulkan.EVulkanLockContentionSite.Count;
+                ++site)
+            {
+                sites[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(site.ToString())] = new
+                {
+                    render_thread = BuildVulkanLockContentionThreadClass(site, renderThread: true),
+                    other_threads = BuildVulkanLockContentionThreadClass(site, renderThread: false),
+                };
+            }
+            return sites;
+        }
+
+        private static object BuildVulkanLockContentionThreadClass(
+            XREngine.Rendering.Vulkan.EVulkanLockContentionSite site,
+            bool renderThread)
+            => new
+            {
+                count = XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetCount(site, renderThread),
+                wait_ms = JsonFinite(XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetWaitMilliseconds(site, renderThread)),
+                max_us = JsonFinite(XREngine.Rendering.Vulkan.VulkanLockContentionTelemetry.GetMaxWaitMicroseconds(site, renderThread)),
+            };
+
+        private static object BuildOpenXrNoLayerFrameTelemetry()
+        {
+            Dictionary<string, long> counters = [];
+            for (XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason reason = 0;
+                reason < XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.Count;
+                ++reason)
+            {
+                counters[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(reason.ToString())] =
+                    VrStats.GetVrProcessOpenXrNoLayerFrames(reason);
+            }
+            return counters;
+        }
+
+        private static object BuildXrCollectPacingTelemetry()
+        {
+            long[] captured = XrCollectPacingTelemetry.Capture();
+            Dictionary<string, long> counters = [];
+            for (EXrCollectPacingCounter counter = EXrCollectPacingCounter.PacedCollects;
+                counter < EXrCollectPacingCounter.Count;
+                ++counter)
+            {
+                counters[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(counter.ToString())] =
+                    captured[(int)counter];
+            }
+            return counters;
+        }
+
+        private static object BuildDesktopOutputScheduleTelemetry()
+        {
+            long[] captured = DesktopOutputScheduleTelemetry.Capture();
+            Dictionary<string, long> counters = [];
+            for (EDesktopOutputScheduleCounter counter = EDesktopOutputScheduleCounter.DesktopSceneDueCollects;
+                counter < EDesktopOutputScheduleCounter.Count;
+                ++counter)
+            {
+                counters[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(counter.ToString())] =
+                    captured[(int)counter];
+            }
+            return counters;
+        }
+
+        /// <summary>
+        /// Formats the cumulative output domain counters as one map per domain, keyed by the
+        /// snake-case counter name. Callers subtract two snapshots to get a measurement window.
+        /// </summary>
+        private static object BuildRenderOutputDomainTelemetry()
+        {
+            long[] captured = RenderOutputDomainTelemetry.Capture();
+            Dictionary<string, Dictionary<string, long>> domains = [];
+            for (ERenderOutputDomain domain = ERenderOutputDomain.None; domain < ERenderOutputDomain.Count; ++domain)
+            {
+                Dictionary<string, long> counters = [];
+                for (ERenderOutputDomainCounter counter = ERenderOutputDomainCounter.Frames;
+                    counter < ERenderOutputDomainCounter.Count;
+                    ++counter)
+                {
+                    counters[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(counter.ToString())] =
+                        RenderOutputDomainTelemetry.Read(captured, domain, counter);
+                }
+                domains[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(domain.ToString())] = counters;
+            }
+            return domains;
+        }
+
+        private static object BuildAdvancedMovedRowPatchTelemetry()
+        {
+            Dictionary<string, long> fallbacks = [];
+            for (EAdvancedMovedRowPatchFallback reason = 0;
+                reason < EAdvancedMovedRowPatchFallback.Count;
+                ++reason)
+            {
+                fallbacks[System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(reason.ToString())] =
+                    AdvancedMovedRowPatchTelemetry.GetFallbacks(reason);
+            }
+
+            return new
+            {
+                moved_row_patches = AdvancedMovedRowPatchTelemetry.Patches,
+                moved_rows_patched = AdvancedMovedRowPatchTelemetry.RowsPatched,
+                moved_row_fallbacks = fallbacks,
+            };
+        }
+
         private static object BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetrySnapshot snapshot)
         {
             Dictionary<string, long> refusals = [];
             Dictionary<string, long> misses = [];
             Dictionary<string, long> verifyDisagreements = [];
+            Dictionary<string, long> swapGateFailures = [];
             for (EAdvancedPreparedGateOutcome reason = EAdvancedPreparedGateOutcome.None;
                 reason < EAdvancedPreparedGateOutcome.Count;
                 ++reason)
@@ -1782,6 +1988,7 @@ namespace XREngine.Editor.Mcp
                 refusals[name] = snapshot.GetRefusals(reason);
                 misses[name] = snapshot.GetMisses(reason);
                 verifyDisagreements[name] = snapshot.GetVerifyDisagreements(reason);
+                swapGateFailures[name] = snapshot.GetSwapGateFailures(reason);
             }
 
             return new
@@ -1801,10 +2008,13 @@ namespace XREngine.Editor.Mcp
                 // The rows that the consumes evaluated again at the swap. They keep the swap-time row walk cost.
                 reevaluated_rows = snapshot.ReevaluatedRows,
                 verify_disagreements_total = snapshot.VerifyDisagreementTotal,
-                // Each map holds the count of each reason. The reason names are the same in the three maps.
+                // Swap-time gate failures: each one planned and committed the whole scene.
+                swap_gate_failures_total = snapshot.SwapGateFailureTotal,
+                // Each map holds the count of each reason. The reason names are the same in the four maps.
                 refusals,
                 misses,
                 verify_disagreements = verifyDisagreements,
+                swap_gate_failures = swapGateFailures,
             };
         }
 

@@ -369,8 +369,7 @@ public static partial class EditorUnitTests
                 {
                     Debug.MeshesWarning(
                         $"[UnityPrefab] Source toon material '{report.MaterialName}' in '{prefabPath}' did not convert to the " +
-                        $"native Uber shader and uses a fallback (outcome: {report.Outcome}). " +
-                        string.Join(" ", report.Failures.Count > 0 ? report.Failures : report.Warnings));
+                        $"native Uber shader and uses a fallback (outcome: {report.Outcome}). {string.Join(" ", report.Failures.Count > 0 ? report.Failures : report.Warnings)}");
                     continue;
                 }
 

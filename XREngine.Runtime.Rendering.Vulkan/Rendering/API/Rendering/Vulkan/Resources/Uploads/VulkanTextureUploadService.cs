@@ -435,6 +435,25 @@ internal sealed partial class VulkanTextureUploadService
         return true;
     }
 
+    /// <summary>
+    /// True while a completed texture upload still waits to publish its descriptor. A publication
+    /// changes the texture descriptors that a recording captures, so OpenXR eye preparation waits
+    /// for it. Transfers in flight and active preparation do not change what an eye binds until
+    /// their publication, so this check ignores them.
+    /// </summary>
+    internal static bool TryDescribePendingDescriptorPublications(out string reason)
+    {
+        int pendingPublications = Volatile.Read(ref s_pendingDescriptorPublications);
+        if (pendingPublications <= 0)
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        reason = $"Vulkan texture uploads have pending descriptor publications ({pendingPublications})";
+        return true;
+    }
+
     internal static bool TryDescribeBlockingOpenXrEyeUploadWork(out string reason)
     {
         int activePrep = Volatile.Read(ref s_activePrepPackages);

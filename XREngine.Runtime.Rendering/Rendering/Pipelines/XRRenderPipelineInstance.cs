@@ -44,6 +44,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private ResourceGenerationKey? _lastSuccessfulLayoutlessResourceKey;
     private readonly object _resourceSettingsSnapshotLock = new();
     private readonly Dictionary<RenderPipelineExternalTargetKind, ResourceGenerationSettingsSnapshot> _lastResourceSettingsSnapshotByOutput = [];
+    // Number of recent distinct settings snapshots kept per output kind.
+    private const int ResourceSettingsSnapshotHistoryLength = 4;
+    // Recent distinct settings snapshots per output kind, newest first. Revision 0 marks an empty
+    // slot (published revisions start at 1). A candidate that equals one of them, apart from the
+    // revision, reuses its revision; see CaptureResourceGenerationSettingsSnapshot.
+    private readonly Dictionary<RenderPipelineExternalTargetKind, ResourceGenerationSettingsSnapshot[]> _resourceSettingsSnapshotHistoryByOutput = [];
     private ulong _nextResourceSettingsRevision;
     private const int MaxResourceGenerationDiagnostics = 32;
     private readonly Dictionary<ResourceGenerationDeterminismIdentity, ResourceGenerationRequestDiagnostic> _resourceGenerationDiagnostics = [];
@@ -254,6 +260,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             // offscreen shadow viewports otherwise lose their ShadowRenderPipeline to any early read.
             if (EffectiveRequestedPipeline is { } requested)
                 return requested;
+
+            // An instance that its owner released on purpose stays without a pipeline.
+            if (IsPipelineReleasedByOwner)
+                return null;
 
             return RequestDefaultPipelineIfUnassigned(CreateDefaultRenderPipeline());
         }
@@ -702,7 +712,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return DeclineRender("The play-mode transition suspended pipeline execution.");
         }
 
-        ApplyCurrentFrameProfile(camera, stereoRightEyeCamera, viewport);
+        ApplyCurrentFrameProfile(camera, stereoRightEyeCamera, viewport, stereoPass);
 
         using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))
         {
@@ -2013,13 +2023,62 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 return previous;
             }
 
-            ResourceGenerationSettingsSnapshot published = candidate with
+            // Equal content must keep one revision. Without this, a value that changes and changes
+            // back (A, B, A) got a new revision for the second A. An external swapchain generation
+            // compares the revision, so its active generation (first A) never matched the required
+            // key (second A) again, and every eye frame was declined.
+            ResourceGenerationSettingsSnapshot[] history = GetResourceSettingsSnapshotHistory(externalTargetKind);
+            ResourceGenerationSettingsSnapshot published = default;
+            bool reused = false;
+            for (int i = 0; i < history.Length; ++i)
             {
-                Revision = ++_nextResourceSettingsRevision
-            };
+                if (history[i].Revision != 0UL && (history[i] with { Revision = 0UL }) == candidate)
+                {
+                    published = history[i];
+                    reused = true;
+                    break;
+                }
+            }
+            if (!reused)
+                published = candidate with { Revision = ++_nextResourceSettingsRevision };
+
+            PromoteResourceSettingsSnapshot(history, published);
             _lastResourceSettingsSnapshotByOutput[externalTargetKind] = published;
             return published;
         }
+    }
+
+    /// <summary>Returns the recent-snapshot array of one output kind, created on first use.</summary>
+    private ResourceGenerationSettingsSnapshot[] GetResourceSettingsSnapshotHistory(RenderPipelineExternalTargetKind kind)
+    {
+        if (!_resourceSettingsSnapshotHistoryByOutput.TryGetValue(kind, out ResourceGenerationSettingsSnapshot[]? history))
+        {
+            history = new ResourceGenerationSettingsSnapshot[ResourceSettingsSnapshotHistoryLength];
+            _resourceSettingsSnapshotHistoryByOutput[kind] = history;
+        }
+        return history;
+    }
+
+    /// <summary>
+    /// Moves <paramref name="snapshot"/> to the front of the recent-snapshot array. An entry with
+    /// the same revision is removed first; when the array is full, the oldest entry drops out.
+    /// </summary>
+    private static void PromoteResourceSettingsSnapshot(
+        ResourceGenerationSettingsSnapshot[] history,
+        ResourceGenerationSettingsSnapshot snapshot)
+    {
+        int end = history.Length - 1;
+        for (int i = 0; i < history.Length; ++i)
+        {
+            if (history[i].Revision == snapshot.Revision)
+            {
+                end = i;
+                break;
+            }
+        }
+        for (int i = end; i > 0; --i)
+            history[i] = history[i - 1];
+        history[0] = snapshot;
     }
 
     /// <summary>
@@ -2191,6 +2250,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         _failedGenerationRetryAfterTimestamp = System.Diagnostics.Stopwatch.GetTimestamp()
             + StopwatchTicksFromMilliseconds(FailedGenerationRetryBackoffMilliseconds);
         SetField(ref _lastResourceGenerationFailure, reason, nameof(LastResourceGenerationFailure));
+        RenderReadinessFailureLog.Report("ResourceGeneration", ProfilerKey, key.ToString(), reason);
 
         Debug.RenderingWarning(
             "[RenderResources] Generation retry backoff armed. Pipeline={0} Reason={1} Target={2} RetryAfterMs={3:F0}",
@@ -3681,7 +3741,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             FrameBufferAttachmentDescriptor attachment = attachments[i];
             parts[i] = $"{attachment.Attachment}:{attachment.ResourceName}:mip{attachment.MipLevel}:layer{attachment.LayerIndex}";
         }
-        return "[" + string.Join(",", parts) + "]";
+        return $"[{string.Join(",", parts)}]";
     }
 
     /// <summary>

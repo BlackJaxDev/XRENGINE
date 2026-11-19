@@ -110,6 +110,8 @@ namespace XREngine.Rendering.Commands
                     flags |= GPUIndirectRenderFlags.CastShadow;
                 if (snapshot.Owner.ReceivesShadows)
                     flags |= GPUIndirectRenderFlags.ReceiveShadows;
+                if (snapshot.Owner.ShadowCasterDynamic)
+                    flags |= GPUIndirectRenderFlags.ShadowCasterDynamic;
             }
             if (snapshot.SharedOpaqueShadow)
             {

@@ -1,16 +1,25 @@
 #ifndef XR_ADVANCED_FOVEATED_QUAD_SHADING_GLSLINC
 #define XR_ADVANCED_FOVEATED_QUAD_SHADING_GLSLINC
 
-// Foveated quad shading for RVC eyes. In the periphery one pixel shades a whole
-// 2x2 or 4x4 block of pixels that show the same draw and primitive; the other
-// pixels of the block (followers) skip shading, and a fill pass copies the
-// representative's outputs to them. The rule below is a pure function of the
-// visibility identity and the view record, so the shading kernel and the fill
-// pass always agree on who is a follower.
+// Foveated quad shading for RVC eyes and edge half-rate shading for Advanced
+// eyes. In the periphery one pixel shades a whole 2x2 or 4x4 block of pixels that
+// show the same draw and primitive; the other pixels of the block (followers)
+// skip shading, and a fill pass copies the representative's outputs to them. The
+// rule below is a pure function of the visibility identity, the view record and
+// the push flags, so the shading kernel and the fill pass always agree on who is
+// a follower.
 //
 // The including kernel declares VisibilityIdentity and XR_ADV_PIXEL.
 
 const uint XR_ADV_SHADING_FOVEATED_QUADS = 1u << 28u;
+// Edge half-rate mode (Advanced eyes). It is set together with
+// XR_ADV_SHADING_FOVEATED_QUADS and replaces the RVC radii: 2x2 blocks outside
+// one radius around the lens center, and no 4x4 blocks. The radius is in bits
+// 19-23 in steps of 0.05. Bit 18 tints the half-rate blocks for diagnostics.
+const uint XR_ADV_SHADING_EDGE_HALF_RATE = 1u << 17u;
+const uint XR_ADV_SHADING_EDGE_HALF_RATE_TINT = 1u << 18u;
+const uint XR_ADV_EDGE_HALF_RATE_RADIUS_SHIFT = 19u;
+const float XR_ADV_EDGE_HALF_RATE_RADIUS_STEP = 0.05;
 
 // Eccentricity radii used when the view record carries no foveation data
 // (foveationCenterAndBias.w == 0). Eccentricity is the distance from the
@@ -23,10 +32,37 @@ bool XR_ADV_FoveatedQuadsEnabled()
     return (u_Push.flags & XR_ADV_SHADING_FOVEATED_QUADS) != 0u;
 }
 
+// Lens center of the eye in clip NDC: the point where the view direction meets
+// the image. Asymmetric eye frusta move it away from the texture center. The
+// projection maps any view-space point on the view axis (0, 0, z) to the same
+// NDC point, so the third row of the row-vector projection gives it directly.
+vec2 XR_ADV_LensCenterNdc(XRAdvancedViewRecord view)
+{
+    mat4 projection = view.projectionUnjittered;
+    float w = projection[3][2];
+    return abs(w) > 1e-6 ? vec2(projection[0][2], projection[1][2]) / w : vec2(0.0);
+}
+
+// Block edge (1 or 2) for the 2x2 pixel block that holds pixel in edge half-rate
+// mode. The distance from the lens center is in clip NDC, where 1 is the half
+// extent of the image on each axis. The whole 2x2 block uses its center, so
+// every pixel of it gets the same answer.
+uint XR_ADV_EdgeHalfRateBlockSize(uvec2 pixel, XRAdvancedViewRecord view)
+{
+    vec2 blockCenter = vec2((pixel & ~uvec2(1u)) + uvec2(1u));
+    vec2 uv = blockCenter / vec2(max(u_Push.screenExtent, uvec2(1u)));
+    vec2 ndc = XR_ADV_FramebufferUvToClipNdc(view, uv);
+    float radius = float((u_Push.flags >> XR_ADV_EDGE_HALF_RATE_RADIUS_SHIFT) & 31u) *
+        XR_ADV_EDGE_HALF_RATE_RADIUS_STEP;
+    return length(ndc - XR_ADV_LensCenterNdc(view)) >= radius ? 2u : 1u;
+}
+
 // Block edge (1, 2 or 4) for the 4x4 pixel block that holds pixel. The whole
 // 4x4 block uses its center, so every pixel of it gets the same answer.
 uint XR_ADV_FoveatedQuadBlockSize(uvec2 pixel, XRAdvancedViewRecord view)
 {
+    if ((u_Push.flags & XR_ADV_SHADING_EDGE_HALF_RATE) != 0u)
+        return XR_ADV_EdgeHalfRateBlockSize(pixel, view);
     vec2 blockCenter = vec2((pixel & ~uvec2(3u)) + uvec2(2u));
     vec2 uv = blockCenter / vec2(max(u_Push.screenExtent, uvec2(1u)));
     bool hasFoveation = view.foveationCenterAndBias.w != 0.0;
@@ -57,6 +93,30 @@ bool XR_ADV_TryGetFoveatedRepresentative(
     uvec2 representativeIdentity =
         texelFetch(VisibilityIdentity, XR_ADV_PIXEL(representative, viewIndex), 0).rg;
     return all(equal(representativeIdentity, identity));
+}
+
+// Diagnostic tint test for edge half-rate mode. True when pixel is the
+// representative of a half-rate 2x2 block and at least one follower of the
+// block copies its result. The followers then copy the tinted color, so the
+// tint marks exactly the pixels that shade at half rate.
+bool XR_ADV_IsTintedEdgeHalfRateRepresentative(uvec2 pixel, uint viewIndex, uvec2 identity)
+{
+    if ((u_Push.flags & (XR_ADV_SHADING_EDGE_HALF_RATE | XR_ADV_SHADING_EDGE_HALF_RATE_TINT)) !=
+        (XR_ADV_SHADING_EDGE_HALF_RATE | XR_ADV_SHADING_EDGE_HALF_RATE_TINT))
+        return false;
+    if (any(notEqual(pixel & uvec2(1u), uvec2(0u))))
+        return false;
+    if (XR_ADV_EdgeHalfRateBlockSize(pixel, XR_ADV_LoadView(viewIndex)) != 2u)
+        return false;
+    for (uint i = 1u; i < 4u; ++i)
+    {
+        uvec2 follower = pixel + uvec2(i & 1u, i >> 1u);
+        if (any(greaterThanEqual(follower, u_Push.screenExtent)))
+            continue;
+        if (all(equal(texelFetch(VisibilityIdentity, XR_ADV_PIXEL(follower, viewIndex), 0).rg, identity)))
+            return true;
+    }
+    return false;
 }
 
 #endif

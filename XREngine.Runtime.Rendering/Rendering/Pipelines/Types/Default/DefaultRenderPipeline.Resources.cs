@@ -25,7 +25,11 @@ public partial class DefaultRenderPipeline
         ExactTransparencyEnabled = 1UL << 9,
         MotionBlurEnabled = 1UL << 10,
         DepthOfFieldEnabled = 1UL << 11,
-        OpenXrVulkanDesktopSafePath = 1UL << 12,
+        /// <summary>
+        /// A VR eye frame whose eye feature profile turns deferred MSAA off: the generation keeps
+        /// the forward MSAA targets but declares no deferred MSAA resources.
+        /// </summary>
+        EyeDeferredMsaaDisabled = 1UL << 12,
         AmbientOcclusionResourcesEnabled = 1UL << 13,
         BloomResourcesEnabled = 1UL << 14,
         TemporalResourcesEnabled = 1UL << 15,
@@ -104,7 +108,10 @@ public partial class DefaultRenderPipeline
         if (viewport?.CapturePolicy.UsesMinimalDirectFboPath == true)
             return (ulong)DefaultPipelineResourceFeature.MinimalDirectCapture;
 
-        bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);
+        // The VR eye feature profile and the external eye target rule read the explicit viewport
+        // and this pipeline's stereo flag, so a key built inside the eye render and one built
+        // outside it get the same mask.
+        bool externalEyeTarget = VrEyeFrameRules.IsExternalEyeTargetFrame(viewport, Stereo);
         bool usesStereoResources = UsesStereoResources(instance, viewport);
         AmbientOcclusionSettings? generationAoSettings = ResolveAmbientOcclusionSettings(instance, viewport);
         bool cameraUnavailable = instance.RenderState.SceneCamera is null
@@ -121,76 +128,75 @@ public partial class DefaultRenderPipeline
                 ((ulong)DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled | AoModeFieldMask))
             : DefaultPipelineResourceFeature.None;
 
-        if (EnableDeferredMsaa && !useOpenXrVulkanSafePath &&
-            ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
+        bool allowsAmbientOcclusion = VrEyeFrameRules.AllowsAmbientOcclusion(viewport, Stereo);
+        bool msaaSelected = ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa;
+        bool allowsDeferredMsaa = VrEyeFrameRules.AllowsDeferredMsaa(viewport, Stereo);
+        if (EnableDeferredMsaa && allowsDeferredMsaa && msaaSelected)
             mask |= DefaultPipelineResourceFeature.DeferredMsaaEnabled;
-        if (!useOpenXrVulkanSafePath && ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
+        if (msaaSelected && !allowsDeferredMsaa)
+            mask |= DefaultPipelineResourceFeature.EyeDeferredMsaaDisabled;
+        if (msaaSelected)
             mask |= DefaultPipelineResourceFeature.MsaaTargetsEnabled;
-        bool useForwardPrePassResources = !useOpenXrVulkanSafePath
-            && (ForwardDepthPrePassEnabled || generationAoSettings?.Enabled == true
-                || (previousAoFeatures & DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled) != 0);
+        bool useForwardPrePassResources = ForwardDepthPrePassEnabled
+            || (allowsAmbientOcclusion && generationAoSettings?.Enabled == true)
+            || (previousAoFeatures & DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled) != 0;
         if (useForwardPrePassResources)
             mask |= DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled;
-        bool useVendorUpscale = !useOpenXrVulkanSafePath && RuntimeEnableVendorUpscale;
+        // The final output of an external eye target goes straight to the runtime image, so a
+        // vendor upscaler (which owns its own output target) does not run there.
+        bool useVendorUpscale = !externalEyeTarget && RuntimeEnableVendorUpscale;
         if (useVendorUpscale)
             mask |= DefaultPipelineResourceFeature.VendorUpscalePreferred;
-        if (!useOpenXrVulkanSafePath && EnableWeightedBlendedOitPasses)
+        bool allowsOrderIndependentTransparency = VrEyeFrameRules.AllowsOrderIndependentTransparency(viewport, Stereo);
+        if (allowsOrderIndependentTransparency && EnableWeightedBlendedOitPasses)
             mask |= DefaultPipelineResourceFeature.WeightedBlendedOitEnabled;
-        if (!useOpenXrVulkanSafePath && ExactTransparencyEnabled)
+        if (allowsOrderIndependentTransparency && ExactTransparencyEnabled)
             mask |= DefaultPipelineResourceFeature.ExactTransparencyEnabled;
-        bool useMotionBlur = !useOpenXrVulkanSafePath && ShouldUseMotionBlur();
+        bool useMotionBlur = VrEyeFrameRules.AllowsMotionBlur(viewport, Stereo) && ShouldUseMotionBlur();
         if (useMotionBlur)
             mask |= DefaultPipelineResourceFeature.MotionBlurEnabled;
-        if (!useOpenXrVulkanSafePath && ShouldUseDepthOfField())
+        if (VrEyeFrameRules.AllowsDepthOfField(viewport, Stereo) && ShouldUseDepthOfField())
             mask |= DefaultPipelineResourceFeature.DepthOfFieldEnabled;
 
-        if (useOpenXrVulkanSafePath)
+        if (allowsAmbientOcclusion && generationAoSettings is { Enabled: true } activeAoSettings)
         {
-            // This path renders directly into external per-eye OpenXR Vulkan swapchains,
-            // where the command graph disables history-based temporal effects.
-            mask |= DefaultPipelineResourceFeature.OpenXrVulkanDesktopSafePath;
+            mask |= DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled;
+            // Encode the effective mode so changes replace the immutable resource generation.
+            int encodedMode = (int)AmbientOcclusionSettings.NormalizeType(activeAoSettings.Type) + 1;
+            mask |= (DefaultPipelineResourceFeature)((ulong)encodedMode << AoModeFieldShift);
         }
-        else
+        else if (usePreviousAoFeatures)
         {
-            if (generationAoSettings is { Enabled: true } activeAoSettings)
-            {
-                mask |= DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled;
-                // Encode the effective mode so changes replace the immutable resource generation.
-                int encodedMode = (int)AmbientOcclusionSettings.NormalizeType(activeAoSettings.Type) + 1;
-                mask |= (DefaultPipelineResourceFeature)((ulong)encodedMode << AoModeFieldShift);
-            }
-            else if (usePreviousAoFeatures)
-            {
-                // A resize callback can arrive while its viewport camera is unavailable.
-                // Keep the last camera-owned AO layout until that camera can be resolved again.
-                mask |= previousAoFeatures;
-            }
-
-            if (ShouldUseBloomForGeneration(instance, viewport))
-                mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
-
-            EAntiAliasingMode antiAliasingMode = ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport);
-            bool useTemporalResources = !DisableHistoryBasedVrEffects()
-                && (((RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
-                        || VendorUpscaleRuntime.IsDlssFrameGenerationRequested
-                        || antiAliasingMode == EAntiAliasingMode.Dlaa) && useVendorUpscale)
-                    || (!RuntimeSuppressOwnAntiAliasing
-                        && antiAliasingMode is (EAntiAliasingMode.Taa or EAntiAliasingMode.Tsr or EAntiAliasingMode.Dlaa)));
-            if (useTemporalResources)
-                mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
-            if (useVendorUpscale || useTemporalResources || useMotionBlur)
-                mask |= DefaultPipelineResourceFeature.VelocityResourcesEnabled;
-            if (!usesStereoResources)
-            {
-                if (ShouldRunAtmosphericScattering())
-                    mask |= DefaultPipelineResourceFeature.AtmosphereResourcesEnabled;
-                if (ShouldRunVolumetricFog())
-                    mask |= DefaultPipelineResourceFeature.VolumetricFogResourcesEnabled;
-                if (HasFullPipelineDebugVisualization())
-                    mask |= DefaultPipelineResourceFeature.DebugVisualizationResourcesEnabled;
-            }
-
+            // A resize callback can arrive while its viewport camera is unavailable.
+            // Keep the last camera-owned AO layout until that camera can be resolved again.
+            mask |= previousAoFeatures;
         }
+
+        if (ShouldUseBloomForGeneration(instance, viewport))
+            mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
+
+        EAntiAliasingMode antiAliasingMode = ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport);
+        bool useTemporalResources = !DisableHistoryBasedVrEffects()
+            && (((RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+                    || VendorUpscaleRuntime.IsDlssFrameGenerationRequested
+                    || antiAliasingMode == EAntiAliasingMode.Dlaa) && useVendorUpscale)
+                || (!RuntimeSuppressOwnAntiAliasing
+                    && antiAliasingMode is (EAntiAliasingMode.Taa or EAntiAliasingMode.Tsr or EAntiAliasingMode.Dlaa)));
+        if (useTemporalResources)
+            mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
+        if (useVendorUpscale || useTemporalResources || useMotionBlur)
+            mask |= DefaultPipelineResourceFeature.VelocityResourcesEnabled;
+        if (!usesStereoResources)
+        {
+            bool allowsFog = VrEyeFrameRules.AllowsFogAndAerialPerspective(viewport, Stereo);
+            if (allowsFog && ShouldRunAtmosphericScattering())
+                mask |= DefaultPipelineResourceFeature.AtmosphereResourcesEnabled;
+            if (allowsFog && ShouldRunVolumetricFog())
+                mask |= DefaultPipelineResourceFeature.VolumetricFogResourcesEnabled;
+            if (HasFullPipelineDebugVisualization())
+                mask |= DefaultPipelineResourceFeature.DebugVisualizationResourcesEnabled;
+        }
+
 
         GroundTruthAmbientOcclusionSettings.EResolution gtaoResolution = generationAoSettings?.GroundTruth.Resolution
             ?? (instance.TryGetLastResourceFeatureMask(viewport, out ulong previousResolutionMask)
@@ -2386,14 +2392,13 @@ public partial class DefaultRenderPipeline
     private bool UsesDeferredMsaa(RenderPipelineResourceProfile profile)
         => EnableDeferredMsaa
         && !profile.Stereo
-        && !UsesOpenXrVulkanDesktopSafePath(profile)
+        && (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.EyeDeferredMsaaDisabled) == 0
         && profile.AntiAliasingMode == EAntiAliasingMode.Msaa
         && profile.MsaaSampleCount > 1u;
 
     private static bool UsesMsaaTargets(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.MsaaTargetsEnabled) != 0
         && !profile.Stereo
-        && !UsesOpenXrVulkanDesktopSafePath(profile)
         && profile.AntiAliasingMode == EAntiAliasingMode.Msaa
         && profile.MsaaSampleCount > 1u;
 
@@ -2401,8 +2406,7 @@ public partial class DefaultRenderPipeline
         => UsesMsaaTargets(profile) && !UsesDeferredMsaa(profile);
 
     private bool UsesForwardPrePass(RenderPipelineResourceProfile profile)
-        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled) != 0
-        && !UsesOpenXrVulkanDesktopSafePath(profile);
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled) != 0;
 
     private bool UsesForwardSceneSurface(RenderPipelineResourceProfile profile)
         => UsesForwardPrePass(profile) || UsesAmbientOcclusionResources(profile);
@@ -2416,13 +2420,8 @@ public partial class DefaultRenderPipeline
     private static bool UsesTransparencySceneCopyResources(RenderPipelineResourceProfile profile)
         => UsesWeightedBlendedOitResources(profile) || UsesExactTransparencyResources(profile);
 
-    private static bool UsesOpenXrVulkanDesktopSafePath(RenderPipelineResourceProfile profile)
-        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.OpenXrVulkanDesktopSafePath) != 0;
-
     private static uint ResolveBrdfLutSize(RenderPipelineResourceProfile profile)
-        => UsesOpenXrVulkanDesktopSafePath(profile)
-            ? OpenXrVulkanSafePathBrdfLutSize
-            : DefaultBrdfLutSize;
+        => DefaultBrdfLutSize;
 
     private static bool UsesAmbientOcclusionResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled) != 0;

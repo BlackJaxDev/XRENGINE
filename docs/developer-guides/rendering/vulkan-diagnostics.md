@@ -11,7 +11,8 @@ The constants for all variables are in `XREngine.Data/Environment/XREngineEnviro
 | Variable | Purpose |
 |---|---|
 | `XRE_VULKAN_VALIDATION=1` | Enables `VK_LAYER_KHRONOS_validation`. It is off by default because it increases primary recording cost. |
-| `XRE_VULKAN_SYNC_VALIDATION=1` | Enables synchronization validation. Use it with `XRE_VULKAN_VALIDATION=1`. |
+| `XRE_VULKAN_SYNC_VALIDATION=1` | Enables synchronization validation. Use it with `XRE_VULKAN_VALIDATION=1`. The engine also sets the layer setting `syncval_shader_accesses_heuristic`; see [Synchronization Validation Coverage](#synchronization-validation-coverage). |
+| `XRE_VULKAN_SYNC_SHADER_ACCESSES=0` | Does not set `syncval_shader_accesses_heuristic`. Synchronization validation then checks only transfer, attachment and layout-transition accesses. |
 | `XRE_VULKAN_GPU_ASSISTED_VALIDATION`, `XRE_VULKAN_BEST_PRACTICES` | Enable the GPU-assisted and best-practices validation layers. |
 | `XRE_VULKAN_DIAGNOSTIC_PRESET`, `XRE_VULKAN_DIAGNOSTIC_FLAGS` | Select a diagnostic preset or explicit diagnostic flags. |
 | `XRE_VULKAN_CRASH_BREADCRUMBS`, `XRE_VULKAN_DEVICE_FAULT` | Enable crash breadcrumbs and `VK_EXT_device_fault`/`VK_KHR_device_fault` reports on device loss. |
@@ -36,6 +37,18 @@ The constants for all variables are in `XREngine.Data/Environment/XREngineEnviro
 | `XRE_OPENXR_MESH_COHORT=0\|1\|witness` | OpenXR eye mesh-operation reuse. `1` (default) keeps the materialized mesh operations of each eye capture and, when the next frame's requests match, rebuilds them from the kept recipes with the current per-frame values. Each reuse reacquires the persistent binding artifact and requires the same object. `0` materializes every eye request each frame. `witness` materializes each reused request again, draws the fresh operation, and writes structural differences to `openxr-mesh-cohort-witness.log`. |
 | `XRE_ADVANCED_TYPED_POSTPROCESS_PUBLISHERS=0` | Publishes the Advanced pipeline AO finalize, post-process and final post-process values with uniform callbacks instead of typed binding publishers. For A/B checks only. |
 | `XRE_VULKAN_BINDLESS_MATERIAL_MODE` | Selects the bindless material mode. |
+
+## Synchronization Validation Coverage
+
+- The validation layer records the buffers and images that shaders access through descriptors only when its setting `syncval_shader_accesses_heuristic` is on. The layer default is off. When `XRE_VULKAN_SYNC_VALIDATION=1`, the engine turns the setting on through `VkLayerSettingsCreateInfoEXT` at instance creation. Without it, a run with no errors proves nothing about storage-buffer or storage-image barriers between draws and dispatches.
+- The layer finds the accessed bindings by static analysis of the SPIR-V. It treats a binding that the shader can write as written in every dispatch, also when a runtime branch skips the write. Read such a report against the shader before you add a barrier.
+- The layer does not check bindings that are arrays (descriptor count greater than 1), also with the setting on.
+- The layer tracks whole image subresources and buffer ranges. It cannot see that dispatches write disjoint pixels or disjoint records. These reports in the Advanced native shading pass are known false positives:
+  - `SYNC-HAZARD-WRITE-AFTER-WRITE` between the per-kernel indirect shading dispatches, on the HDR, velocity, reactive, shading diagnostics and DDGI output bindings. Each pixel belongs to one kernel, so the dispatches have no barrier between them. The DDGI bindings hold the HDR image when DDGI outputs are off, and a runtime flag stops the stores.
+  - `SYNC-HAZARD-WRITE-AFTER-WRITE` between the overflow repair dispatch and the main kernels. The classification overflow flag lets only one of them write in a frame.
+  - On OpenXR eye outputs without a shading debug view, the shading diagnostics binding (18) holds a dedicated 1x1 placeholder image (`AdvancedShading.ShadingDiagnosticsPlaceholder`), and the push flag `ShadingDiagnosticsDisabledFlag` stops every store to it. Earlier builds bound the metadata image there, which produced a `SYNC-HAZARD-READ-AFTER-WRITE` and a `SYNC-HAZARD-WRITE-AFTER-READ` (0x376BC9DF) on bindings 1 and 18. Those two reports must not appear any more; if they do, check that the placeholder was declared.
+- The layer stops a message ID after `duplicate_message_limit` reports (default 10). The known false positive above uses up the limit for `SYNC-HAZARD-WRITE-AFTER-WRITE` in the first frame. To list every hazard site, raise the limit with `VK_KHRONOS_VALIDATION_DUPLICATE_MESSAGE_LIMIT` and group the messages by site.
+- MCP `get_render_profiler_stats.vulkan.validation.lifetime_error_count` counts all validation errors of the process. `error_count` counts only the last frame.
 
 ## Swapchain And Overlay Isolation Flags
 

@@ -34,10 +34,11 @@ public readonly record struct GpuDiagnosticReadbackPlanNode(
         EGpuDiagnosticReadbackDecoder.IndirectDrawCount => "IndirectDrawCount",
         EGpuDiagnosticReadbackDecoder.MeshletVisibility => "MeshletVisibility",
         EGpuDiagnosticReadbackDecoder.SubmissionValidation => "SubmissionValidation",
-        // Vulkan's 152-byte per-view allocation contains the sixteen visibility
-        // counter words followed by packed lookup segments. Keep the receipt
-        // explicitly raw so consumers do not interpret all 38 words as counters.
-        EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters => "AdvancedVisibilityCounters.Raw38WordsPerView",
+        // Vulkan's 160-byte per-view allocation contains the sixteen visibility
+        // counter words, 22 words of packed lookup segments, and two more early
+        // meshlet counters. Keep the receipt explicitly raw so consumers do not
+        // interpret all 40 words as counters.
+        EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters => "AdvancedVisibilityCounters.Raw40WordsPerView",
         EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters => "AdvancedClassificationCounters.AggregateViews",
         EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters => "AdvancedLightingCounters.PerView",
         EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry => "RvcShadeletTelemetry.AggregateViews",

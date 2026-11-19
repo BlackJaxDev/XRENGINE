@@ -114,6 +114,34 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
         return false;
     }
 
+    /// <summary>
+    /// True when no published switching state holds <paramref name="key"/> but one holds a key
+    /// for the same output (context kind, pipeline and viewport). The output then exists, and
+    /// only the planner state of its newest passes or resource generation is not published yet.
+    /// Runs only on the failure path, so its enumeration cost does not matter.
+    /// </summary>
+    internal bool IsPublicationPendingForSameOutput(in VulkanFrameOpPlannerStateKey key)
+    {
+        if ((SwitchingState?.States.ContainsKey(key) ?? false) ||
+            (SecondarySwitchingState?.States.ContainsKey(key) ?? false))
+            return false;
+        return HasSameOutput(SwitchingState, in key) || HasSameOutput(SecondarySwitchingState, in key);
+
+        static bool HasSameOutput(FrameOpResourcePlannerSwitchingState? state, in VulkanFrameOpPlannerStateKey key)
+        {
+            if (state is null)
+                return false;
+            foreach (VulkanFrameOpPlannerStateKey published in state.States.Keys)
+            {
+                if (published.ContextKind == key.ContextKind &&
+                    published.PipelineIdentity == key.PipelineIdentity &&
+                    published.ViewportIdentity == key.ViewportIdentity)
+                    return true;
+            }
+            return false;
+        }
+    }
+
     private static string DescribeNonRecordablePlan(in ResourcePlannerRuntimeState state)
     {
         VulkanRenderGraphPlan? plan = state.RenderGraphPlan;

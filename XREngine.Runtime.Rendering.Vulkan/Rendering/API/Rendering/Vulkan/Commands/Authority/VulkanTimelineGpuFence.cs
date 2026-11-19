@@ -158,6 +158,21 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
         _firstFailure = failure;
         runtime.Synchronization.RecordFenceFailureNoLock(in failure);
     }
+    public override bool TryGetTimelineDiagnostic(out ulong targetValue, out ulong completedValue)
+    {
+        targetValue = _value;
+        completedValue = 0UL;
+        if (_semaphore == 0 || _value == 0)
+            return true;
+        if (_api is not { } api || _device is not { } device || _runtime is not { } runtime ||
+            _resources is not { } resources || !device.StateMachine.IsOperational)
+            return false;
+        Result result = runtime.Synchronization.QueryTimelineCompletion(
+            api, device, resources.Lifetime.Tracker, new Semaphore(_semaphore), _value,
+            out _, out completedValue);
+        return result == Result.Success;
+    }
+
     protected override unsafe EGpuFenceStatus PollCore()
     {
         if (Volatile.Read(ref _state) == 2) return EGpuFenceStatus.Failed;

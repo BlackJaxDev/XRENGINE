@@ -15,6 +15,16 @@ public partial class XRTexture2D
     // consumes that change at its next SwapCommandBuffers boundary.
     private long _canonicalSourceContentGeneration = 1L;
 
+    // The content generation of the last mutation that was not a dense streaming resident
+    // commit. long.MaxValue while such a mutation is being published. The Vulkan Advanced
+    // source check reads it to accept a publication whose texture only changed residency.
+    private long _lastNonResidencyContentGeneration = 1L;
+
+    // The content generation of the resident commit that ended the loading placeholder state,
+    // or 0 when the texture never was a placeholder (or still is one). A publication from an
+    // older generation described the placeholder, which never drew.
+    private long _firstResidentContentGeneration;
+
     // Imported-streaming metadata is written as one logical transaction. This is
     // deliberately separate from CanonicalSourceContentGeneration: capture outputs
     // also advance that generation, but their values do not carry seqlock parity.
@@ -82,6 +92,10 @@ public partial class XRTexture2D
     internal void CommitImportedResidentPublication(in ImportedTextureResidentPublicationPlan plan)
     {
         Mipmap2D[] mipmaps = plan.ResidentData.Mipmaps;
+        // Sparse samplers clamp relative to the resident base. A change away from sparse
+        // residency is therefore not a residency-only change for the published sampler.
+        bool hadSparseResidency = HasSparseResidencyState;
+        bool wasPlaceholder = IsAwaitingFirstResidency;
         SetField(ref _streamingLockMipLevel, plan.LockMipLevel, publishNotifications: false);
         SetField(ref _mipmaps, mipmaps, publishNotifications: false);
         TrackStreamingResidentMipmaps(mipmaps);
@@ -100,7 +114,11 @@ public partial class XRTexture2D
         // Clear the placeholder state before the source generation advances, so a publisher
         // that sees the new generation also sees real resident data.
         ClearAwaitingFirstResidency();
-        PublishCanonicalSourceContentMutation();
+        long generation = hadSparseResidency
+            ? PublishCanonicalSourceContentMutation()
+            : PublishCanonicalResidencyMutation();
+        if (wasPlaceholder)
+            Volatile.Write(ref _firstResidentContentGeneration, generation);
     }
 
     internal ulong CanonicalSourceContentGeneration
@@ -113,11 +131,66 @@ public partial class XRTexture2D
     internal ulong ImportedSourceMetadataEpoch
         => unchecked((ulong)Volatile.Read(ref _importedSourceMetadataEpoch));
 
-    private void PublishCanonicalSourceContentMutation()
+    /// <summary>
+    /// True when every content change after <paramref name="capturedGeneration"/> was a dense
+    /// streaming resident commit: the texture got another resident mip chain (other mip count
+    /// or extent), but no capture output, sparse commit or other mutation changed it. A
+    /// published record from that generation then has the same shape as the current image; only
+    /// its width, height, mip count and sampler LOD clamps can be stale.
+    /// </summary>
+    internal bool IsCanonicalResidencyOnlyChangeSince(ulong capturedGeneration)
+    {
+        long lastNonResidency = Volatile.Read(ref _lastNonResidencyContentGeneration);
+        return capturedGeneration != 0UL &&
+            lastNonResidency != long.MaxValue &&
+            unchecked((ulong)lastNonResidency) <= capturedGeneration;
+    }
+
+    /// <summary>
+    /// True when <paramref name="capturedGeneration"/> is from before the resident commit that
+    /// ended the loading placeholder state, and every change after that commit was also a dense
+    /// resident commit. A publication from that generation described the placeholder, which
+    /// the renderers never drew (they used the binding fallback instead).
+    /// </summary>
+    internal bool WasCanonicalPlaceholderAt(ulong capturedGeneration)
+    {
+        long firstResident = Volatile.Read(ref _firstResidentContentGeneration);
+        long lastNonResidency = Volatile.Read(ref _lastNonResidencyContentGeneration);
+        return firstResident != 0L &&
+            capturedGeneration != 0UL &&
+            capturedGeneration < unchecked((ulong)firstResident) &&
+            lastNonResidency != long.MaxValue &&
+            lastNonResidency <= firstResident;
+    }
+
+    private bool HasSparseResidencyState
+        => SparseTextureStreamingEnabled ||
+           SparseTextureStreamingResidentBaseMipLevel != int.MaxValue ||
+           SparseTextureStreamingCommittedBaseMipLevel != int.MaxValue ||
+           SparseTextureStreamingCommittedBytes > 0L;
+
+    /// <summary>
+    /// Advances the content generation for any change that is not a dense resident commit.
+    /// The marker is set to long.MaxValue first, so a reader that sees the new generation
+    /// never sees this change as residency-only.
+    /// </summary>
+    private long PublishCanonicalSourceContentMutation()
+    {
+        Volatile.Write(ref _lastNonResidencyContentGeneration, long.MaxValue);
+        long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        if (generation == 0L)
+            generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        Volatile.Write(ref _lastNonResidencyContentGeneration, generation);
+        return generation;
+    }
+
+    /// <summary>Advances the content generation for a dense streaming resident commit and returns it.</summary>
+    private long PublishCanonicalResidencyMutation()
     {
         long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
         if (generation == 0L)
-            _ = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+            generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        return generation;
     }
 
     private void BeginImportedSourceMetadataWrite()
@@ -474,6 +547,7 @@ public partial class XRTexture2D
                 residentData.Mipmaps.Length);
         }
 
+        bool hadSparseResidency = texture.HasSparseResidencyState;
         texture.ClearSparseTextureStreamingState();
 
         texture.Mipmaps = residentData.Mipmaps;
@@ -485,7 +559,10 @@ public partial class XRTexture2D
         texture.SmallestAllowedMipmapLevel = includeMipChain && residentData.Mipmaps.Length > 0
             ? residentData.Mipmaps.Length - 1
             : 0;
-        texture.PublishCanonicalSourceContentMutation();
+        if (hadSparseResidency)
+            texture.PublishCanonicalSourceContentMutation();
+        else
+            texture.PublishCanonicalResidencyMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;
@@ -541,6 +618,7 @@ public partial class XRTexture2D
                 residentData.Mipmaps.Length);
         }
 
+        bool hadSparseResidency = texture.HasSparseResidencyState;
         texture.ClearSparseTextureStreamingState();
         texture.StreamingLockMipLevel = lockMipLevel;
         texture.Mipmaps = residentData.Mipmaps;
@@ -553,7 +631,10 @@ public partial class XRTexture2D
             smallestAllowedMipmapLevel: includeMipChain && residentData.Mipmaps.Length > 0
                 ? residentData.Mipmaps.Length - 1
                 : 0);
-        texture.PublishCanonicalSourceContentMutation();
+        if (hadSparseResidency)
+            texture.PublishCanonicalSourceContentMutation();
+        else
+            texture.PublishCanonicalResidencyMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;

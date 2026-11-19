@@ -116,7 +116,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const string PlayModeStateName = "Stopped";
     public const uint DefaultMsaaSampleCount = 1u;
     public const bool DefaultOutputHDR = false;
-    public const float DefaultTsrRenderScale = 1.0f;
+    public const float DefaultTsrRenderScale = 0.75f;
     public const bool EnableRenderStatisticsTracking = true;
     public const bool EnableGpuRenderPipelineProfiling = false;
     public const bool GpuRenderPipelineTimingsReady = false;

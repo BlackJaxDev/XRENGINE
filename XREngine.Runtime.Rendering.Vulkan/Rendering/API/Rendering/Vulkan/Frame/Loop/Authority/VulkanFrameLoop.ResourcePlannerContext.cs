@@ -236,13 +236,12 @@ internal sealed partial class VulkanFrameLoop
             ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport))
         {
             throw new InvalidOperationException(
-                "The XR eye viewport has no matching rendered Vulkan resource-planner generation." + mismatch);
+                $"The XR eye viewport has no matching rendered Vulkan resource-planner generation.{mismatch}");
         }
 
         throw new InvalidOperationException(
             "The requested viewport has no matching submitted Vulkan resource-planner generation. " +
-            "Capture again after its current resource generation has rendered; readback cannot create unwritten images." +
-            mismatch);
+            $"Capture again after its current resource generation has rendered; readback cannot create unwritten images.{mismatch}");
     }
 
     internal bool TryEnterPipelineResourcePlannerReadbackScope(

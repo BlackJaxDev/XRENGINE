@@ -74,10 +74,20 @@ bool XR_ADV_TryPrimitiveVertices(
         XR_ADV_ReconstructionMeshlets.records[meshletIndex];
     if (localPrimitive >= descriptor.triangleCount)
         return false;
-    if (descriptor.triangleByteOffset > 0xfffffffdu ||
-        localPrimitive > (0xfffffffdu - descriptor.triangleByteOffset) / 3u)
+    // The cooked descriptor offsets are relative to this geometry's own slices
+    // of the shared meshlet-vertex and triangle-word arenas. Add the slice bases,
+    // as VisibilityRaster.mesh does, so that shading reads the same triangle that
+    // the raster drew.
+    uint triangleWordBase = geometry.meshletTriangleWords.elementOffset;
+    if (triangleWordBase > 0x3fffffffu)
         return false;
-    uint triangleByte = descriptor.triangleByteOffset + localPrimitive * 3u;
+    uint triangleByteBase = triangleWordBase * 4u;
+    if (descriptor.triangleByteOffset > 0xfffffffdu - triangleByteBase)
+        return false;
+    uint meshletTriangleByte = triangleByteBase + descriptor.triangleByteOffset;
+    if (localPrimitive > (0xfffffffdu - meshletTriangleByte) / 3u)
+        return false;
+    uint triangleByte = meshletTriangleByte + localPrimitive * 3u;
     if ((triangleByte + 2u) >> 2u >=
         uint(XR_ADV_ReconstructionMeshletTriangles.records.length()))
         return false;
@@ -87,10 +97,14 @@ bool XR_ADV_TryPrimitiveVertices(
         XR_ADV_ReconstructionTriangleByte(triangleByte + 2u));
     if (any(greaterThanEqual(localVertices, uvec3(descriptor.vertexCount))))
         return false;
-    if (any(greaterThan(localVertices,
-            uvec3(0xffffffffu - descriptor.vertexOffset))))
+    uint vertexIndexBase = geometry.meshletVertexIndices.elementOffset;
+    if (descriptor.vertexOffset > 0xffffffffu - vertexIndexBase)
         return false;
-    uvec3 remapIndices = uvec3(descriptor.vertexOffset) + localVertices;
+    uint meshletVertexOffset = vertexIndexBase + descriptor.vertexOffset;
+    if (any(greaterThan(localVertices,
+            uvec3(0xffffffffu - meshletVertexOffset))))
+        return false;
+    uvec3 remapIndices = uvec3(meshletVertexOffset) + localVertices;
     uint remapCount = uint(XR_ADV_ReconstructionMeshletVertices.records.length());
     if (any(greaterThanEqual(remapIndices, uvec3(remapCount))))
         return false;

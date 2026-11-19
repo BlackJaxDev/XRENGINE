@@ -85,7 +85,7 @@ public partial class AdvancedRenderPipeline
                 ESizedInternalFormat.Rgba16f)
             .Layers(layers)
             .StereoCompatible(layers > 1u)
-            .When(static profile => ((profile.FeatureMask >> 48) & 1u) != 0)
+            .When(static profile => (profile.FeatureMask & LatePassDebugOutputFeatureBit) != 0UL)
             .DependsOn(
                 AdvancedVisibilityResourceNames.Identity,
                 AdvancedVisibilityResourceNames.Metadata)

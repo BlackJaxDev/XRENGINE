@@ -99,14 +99,14 @@ public static class WebGpuAdvancedSceneAdmission
         }
         // The standard legacy slots come first, then the six engine-surface roles.
         const int legacyCount = MaterialBindingLayouts.StandardTextureCount;
-        XRTexture?[] textures = [snapshot.Albedo, snapshot.Normal, snapshot.RM, snapshot.Emissive, snapshot.Opacity,
+        XRTexture?[] textures = [snapshot.Albedo, snapshot.Normal, snapshot.RM, snapshot.Emissive, snapshot.Opacity, snapshot.Occlusion,
             companionSources[0].Texture, companionSources[1].Texture, companionSources[2].Texture, companionSources[3].Texture,
             companionSources[4].Texture, companionSources[5].Texture];
         EAdvancedResourceFallback[] fallbacks = [EAdvancedResourceFallback.White, EAdvancedResourceFallback.FlatNormal,
-            EAdvancedResourceFallback.White, EAdvancedResourceFallback.Black, EAdvancedResourceFallback.White,
+            EAdvancedResourceFallback.White, EAdvancedResourceFallback.Black, EAdvancedResourceFallback.White, EAdvancedResourceFallback.White,
             EAdvancedResourceFallback.White, EAdvancedResourceFallback.FlatNormal, EAdvancedResourceFallback.White, EAdvancedResourceFallback.White,
             EAdvancedResourceFallback.White, EAdvancedResourceFallback.White];
-        string[] names = ["Albedo", "Normal", "RM", "Emissive", "Opacity", "EngineBaseColor", "EngineNormal", "EngineMetallic", "EngineRoughness", "EngineOpacity", "EngineSpecular"];
+        string[] names = ["Albedo", "Normal", "RM", "Emissive", "Opacity", "Occlusion", "EngineBaseColor", "EngineNormal", "EngineMetallic", "EngineRoughness", "EngineOpacity", "EngineSpecular"];
         List<AdvancedGpuResourceBindingSource> pairs = [];
         for (int index = 0; index < textures.Length; index++)
         {

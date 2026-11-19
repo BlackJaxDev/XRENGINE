@@ -22,6 +22,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -74,8 +75,8 @@ internal unsafe partial class VkMeshRenderer
 		ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
 		(ComputeDispatchSnapshot, XRMaterial, VkRenderProgram, int, int) key =
 			(bindingSnapshot, material, _program, drawUniformSlot, frameIndex);
-		if (_frameDescriptorAllocations.TryGetValue(key, out (DescriptorAllocation Allocation, ulong RenderFrameId) entry) &&
-			entry.RenderFrameId == renderFrameId &&
+		bool stampHit = false;
+		if (_frameDescriptorAllocations.TryGetValue(key, out var entry) &&
 			DescriptorAllocationMatchesProgram(entry.Allocation) &&
 			entry.Allocation.MaterialBindingLayoutVersion == material.BindingLayoutVersion &&
 			IsDescriptorAllocationValid(
@@ -83,20 +84,120 @@ internal unsafe partial class VkMeshRenderer
 				BackendContext.Resources.Descriptors.FrameSlotCount,
 				_program.DescriptorSetLayouts.Count))
 		{
-			ActivateDescriptorAllocation(entry.Allocation, drawUniformSlot, bindingSnapshot);
-			_descriptorDirty = false;
-			return true;
+			if (entry.RenderFrameId == renderFrameId)
+			{
+				// The first request of this frame registered the allocation under its owner key,
+				// so a repeat only makes it active. Building the owner key again costs a resource
+				// signature resolve and a buffer fingerprint for every repeat.
+				ActivateDescriptorAllocation(entry.Allocation, drawUniformSlot, bindingSnapshot,
+					registerOwner: false);
+				_descriptorDirty = false;
+				return true;
+			}
+
+			if (entry.StampValid && VulkanDescriptorProofStamps.Enabled)
+			{
+				stampHit = entry.Stamp == CaptureDescriptorProofStamp(entry.Allocation, material) &&
+					entry.Allocation.IsOwnerGenerationPublished(
+						ResolveDescriptorFrameIndex(frameIndex, entry.Allocation.Sets.Length),
+						material.BindingResourceVersion);
+				if (!stampHit)
+					VulkanDescriptorProofStamps.RecordAllocationMiss();
+				else if (!VulkanDescriptorProofStamps.Verify &&
+					TryReuseStampedDescriptorAllocation(entry.Allocation, material, drawUniformSlot, frameIndex, bindingSnapshot))
+				{
+					VulkanDescriptorProofStamps.RecordAllocationHit();
+					_frameDescriptorAllocations[key] = entry with { RenderFrameId = renderFrameId };
+					return true;
+				}
+			}
 		}
 
+		ulong writesBefore = _descriptorPreparationWrites;
 		if (!EnsureDescriptorSetsCore(material, drawUniformSlot, frameIndex, bindingSnapshot))
 			return false;
 
 		if (_activeDescriptorAllocation is { } allocation)
 		{
+			bool unchanged = writesBefore == _descriptorPreparationWrites;
+			if (stampHit)
+			{
+				// Verify mode: the stamp claimed that the full proof would reuse the same
+				// allocation and write nothing.
+				VulkanDescriptorProofStamps.RecordVerify(
+					!unchanged || !ReferenceEquals(allocation, entry.Allocation));
+			}
+
 			if (_frameDescriptorAllocations.Count >= MaxFrameDescriptorAllocations)
 				_frameDescriptorAllocations.Clear();
-			_frameDescriptorAllocations[key] = (allocation, renderFrameId);
+			bool stampable = unchanged && IsDescriptorProofStampable(bindingSnapshot);
+			_frameDescriptorAllocations[key] = (
+				allocation,
+				renderFrameId,
+				stampable ? CaptureDescriptorProofStamp(allocation, material) : default,
+				stampable);
 		}
+		return true;
+	}
+
+	/// <summary>
+	/// A shared binding artifact keeps its reference across frames, so the draw key can find the
+	/// previous frame's stamp. A snapshot with read-only storage bindings or a material-table
+	/// publication can move its lowered buffer offsets every frame, which no stamp field covers.
+	/// </summary>
+	private static bool IsDescriptorProofStampable(ComputeDispatchSnapshot snapshot)
+		=> snapshot.IsImmutableBindingArtifact &&
+			!snapshot.HasReadOnlyStorageBindings &&
+			snapshot.MaterialTablePublication is null;
+
+	private DescriptorProofStamp CaptureDescriptorProofStamp(DescriptorAllocation allocation, XRMaterial material)
+		=> new(
+			BackendContext.Resources.ImageBindingRevision,
+			BackendContext.Resources.NativeBufferBindingRevision,
+			_program?.LinkGeneration ?? 0UL,
+			material.BindingLayoutVersion,
+			material.BindingResourceVersion,
+			MaterializationSnapshot.DescriptorViewFamilyIdentity,
+			System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(RuntimeEngine.Rendering.State.CurrentRenderingPipeline),
+			allocation.Pool.Handle,
+			allocation.TopologyGeneration,
+			allocation.ContentGeneration);
+
+	/// <summary>
+	/// Reuses a stamped allocation in a new frame. It skips only the proof steps (owner key,
+	/// owner lookup, published signature resolve). It still runs the steps that can change
+	/// descriptors: draw-slot capacity, the shared material set refresh, and the global
+	/// material texture-array payload. Any failure returns false, and the caller runs the full path.
+	/// </summary>
+	private bool TryReuseStampedDescriptorAllocation(
+		DescriptorAllocation allocation,
+		XRMaterial material,
+		int drawUniformSlot,
+		int frameIndex,
+		ComputeDispatchSnapshot bindingSnapshot)
+	{
+		EnsureUniformDrawSlotCapacity(drawUniformSlot + 1);
+		ActivateDescriptorAllocation(allocation, drawUniformSlot, bindingSnapshot, registerOwner: false);
+		if (allocation.UsesSharedMaterialTier)
+		{
+			if (allocation.SharedMaterial is not { } sharedMaterial ||
+				!sharedMaterial.TryGetMaterialDescriptorSet(_program!, frameIndex, out DescriptorSet sharedMaterialSet, out _) ||
+				!TryRefreshSharedMaterialDescriptorSetForReusableFrame(
+					material,
+					frameIndex,
+					capturedResourcesValidated: true,
+					sharedMaterial,
+					sharedMaterialSet,
+					out _))
+			{
+				return false;
+			}
+		}
+
+		if (!TryRefreshGlobalMaterialTextureArrayHeapPayload(allocation, frameIndex, bindingSnapshot))
+			return false;
+
+		_descriptorDirty = false;
 		return true;
 	}
 
@@ -494,6 +595,7 @@ internal unsafe partial class VkMeshRenderer
 		DescriptorSet[] frameSets = allocation.Sets[descriptorSlotIndex];
 		if (frameSets.Length == 0)
 		{
+			_descriptorPreparationWrites++;
 			frameSets = new DescriptorSet[allocation.SetCount];
 			for (int setIndex = 0; setIndex < allocation.SetCount; setIndex++)
 			{
@@ -588,6 +690,7 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
+		_descriptorPreparationWrites++;
 		if (!WriteDescriptorSets(
 			frameSets,
 			bindings,
@@ -821,6 +924,7 @@ internal unsafe partial class VkMeshRenderer
 					ownerLookupMiss: true,
 					ownerGenerationMiss: false,
 					frameSourceGenerationMiss: false);
+			RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.DescriptorOwnerMisses);
             return false;
         }
 
@@ -1571,15 +1675,21 @@ internal unsafe partial class VkMeshRenderer
 		return builder.ToString();
 	}
 
+    /// <summary>
+    /// Makes <paramref name="allocation"/> the active descriptor allocation for this draw
+    /// slot. With <paramref name="registerOwner"/>, it also stores the allocation under its
+    /// owner key, which the published fast path of a later frame looks up.
+    /// </summary>
     private void ActivateDescriptorAllocation(
 		DescriptorAllocation allocation,
 		int drawUniformSlot,
-		ComputeDispatchSnapshot? bindingSnapshot = null)
+		ComputeDispatchSnapshot? bindingSnapshot = null,
+		bool registerOwner = true)
     {
         allocation.LastUsedSerial = ++_descriptorAllocationUsageSerial;
         allocation.LastUsedTimestamp = Stopwatch.GetTimestamp();
         _descriptorAllocationsByDrawSlot[drawUniformSlot] = allocation;
-		if (allocation.Material is { } material)
+		if (registerOwner && allocation.Material is { } material)
 		{
 			if (TryCreateDescriptorOwnerLookupKey(
 					allocation.LayoutFingerprint,

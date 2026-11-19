@@ -80,7 +80,7 @@ internal sealed class BrowserCapabilityReport(string worldAssetPath, string inte
         string directory = Path.Combine(intermediateDirectory, "Build");
         Directory.CreateDirectory(directory);
         string destination = Path.Combine(directory, "BrowserCapabilityReport.json");
-        string temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        string temporary = $"{destination}.{Guid.NewGuid():N}.tmp";
         try
         {
             byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new

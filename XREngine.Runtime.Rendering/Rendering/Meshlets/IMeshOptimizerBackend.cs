@@ -45,4 +45,16 @@ public interface IMeshOptimizerBackend
     void SpatialClusterPoints(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride, int clusterSize);
     void GeneratePositionRemap(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride);
     int FilterIndexBuffer(Span<uint> destination, ReadOnlySpan<uint> indices, ReadOnlySpan<float> vertices, int vertexCount, int vertexSize, int vertexStride);
+
+    // Cluster hierarchy. A backend without these functions keeps the default bodies, which
+    // throw, so a cluster hierarchy cook fails with a clear message instead of a wrong result.
+    /// <summary>Groups clusters that share vertices or lie close together; returns the group count and writes each cluster's group id.</summary>
+    int PartitionClusters(Span<uint> destination, ReadOnlySpan<uint> clusterIndices, ReadOnlySpan<uint> clusterIndexCounts, ReadOnlySpan<float> positions, int vertexCount, int positionsStride, int targetPartitionSize)
+        => throw new NotSupportedException($"{GetType().Name} does not implement cluster partitioning.");
+    /// <summary>Returns a sphere around points, or around spheres when radii are given.</summary>
+    MeshOptimizerBounds ComputeSphereBounds(ReadOnlySpan<float> positions, int count, int positionsStride, ReadOnlySpan<float> radii, int radiiStride)
+        => throw new NotSupportedException($"{GetType().Name} does not implement sphere bounds.");
+    /// <summary>Returns the sphere and normal cone of a cluster given as a triangle index list.</summary>
+    MeshOptimizerBounds ComputeClusterBounds(ReadOnlySpan<uint> indices, ReadOnlySpan<float> positions, int vertexCount, int positionsStride)
+        => throw new NotSupportedException($"{GetType().Name} does not implement cluster bounds.");
 }

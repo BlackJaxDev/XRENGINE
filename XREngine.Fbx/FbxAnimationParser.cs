@@ -3,9 +3,11 @@ namespace XREngine.Fbx;
 public static class FbxAnimationParser
 {
     /// <summary>
-    /// Parse animation bindings. Require one default layer and linear curves when lossless linear animation is required.
+    /// Parse animation bindings. Strict parsing requires one default layer and curves whose
+    /// interpolation the engine evaluates without loss (constant, linear and weighted cubic
+    /// segments), and rejects other data instead of approximating it.
     /// </summary>
-    public static FbxAnimationDocument Parse(FbxStructuralDocument structural, FbxSemanticDocument semantic, FbxDeformerDocument deformers, bool requireLosslessLinearAnimation = false)
+    public static FbxAnimationDocument Parse(FbxStructuralDocument structural, FbxSemanticDocument semantic, FbxDeformerDocument deformers, bool requireStrictAnimation = false)
     {
         ArgumentNullException.ThrowIfNull(structural);
         ArgumentNullException.ThrowIfNull(semantic);
@@ -19,14 +21,14 @@ public static class FbxAnimationParser
             () =>
             {
                 FbxStructuralValueReader reader = new(structural);
-                Dictionary<long, FbxScalarCurve> curvesByObjectId = ParseCurves(reader, semantic, requireLosslessLinearAnimation);
-                if (requireLosslessLinearAnimation)
+                Dictionary<long, FbxScalarCurve> curvesByObjectId = ParseCurves(reader, semantic, requireStrictAnimation);
+                if (requireStrictAnimation)
                     ValidateBlendShapeChannels(reader, semantic);
 
                 List<FbxAnimationStackBinding> stacks = [];
                 foreach (FbxSceneObject stackObject in semantic.Objects.Where(static sceneObject => sceneObject.Category == FbxObjectCategory.AnimationStack))
                 {
-                    if (requireLosslessLinearAnimation)
+                    if (requireStrictAnimation)
                         ValidateStackLayer(semantic, stackObject);
 
                     HashSet<long> curveNodeIds = CollectCurveNodeIdsForStack(semantic, stackObject.Id);
@@ -35,7 +37,7 @@ public static class FbxAnimationParser
 
                     Dictionary<long, NodeAnimationAccumulator> nodeAnimations = [];
                     Dictionary<long, BlendShapeAnimationAccumulator> blendShapeAnimations = [];
-                    Dictionary<(long targetId, CurveNodeTargetKind targetKind, string component), FbxScalarCurve>? assignedChannels = requireLosslessLinearAnimation ? [] : null;
+                    Dictionary<(long targetId, CurveNodeTargetKind targetKind, string component), FbxScalarCurve>? assignedChannels = requireStrictAnimation ? [] : null;
 
                     foreach (long curveNodeId in curveNodeIds)
                         AccumulateCurveNodeBindings(semantic, deformers, curvesByObjectId, curveNodeId, nodeAnimations, blendShapeAnimations, assignedChannels);
@@ -47,7 +49,7 @@ public static class FbxAnimationParser
                         .OrderBy(static animation => animation.ChannelObjectId)
                         .Select(static animation => animation.ToBinding())];
 
-                    if (requireLosslessLinearAnimation)
+                    if (requireStrictAnimation)
                         ValidateStackTimeSpan(stackObject, frozenNodeAnimations, frozenBlendShapeAnimations);
 
                     if (frozenNodeAnimations.Length == 0 && frozenBlendShapeAnimations.Length == 0)
@@ -72,7 +74,7 @@ public static class FbxAnimationParser
             });
     }
 
-    private static Dictionary<long, FbxScalarCurve> ParseCurves(FbxStructuralValueReader reader, FbxSemanticDocument semantic, bool requireLosslessLinearAnimation)
+    private static Dictionary<long, FbxScalarCurve> ParseCurves(FbxStructuralValueReader reader, FbxSemanticDocument semantic, bool requireStrictAnimation)
     {
         using IDisposable? profilerScope = FbxTrace.StartProfilerScope("AnimationParser");
         Dictionary<long, FbxScalarCurve> curvesByObjectId = new();
@@ -82,12 +84,14 @@ public static class FbxAnimationParser
             double[] keyValues = reader.TryReadDoubleArrayChild(curveObject.NodeIndex, "KeyValueFloat")
                 ?? reader.TryReadDoubleArrayChild(curveObject.NodeIndex, "KeyValueDouble")
                 ?? [];
-            if (requireLosslessLinearAnimation)
+            if (requireStrictAnimation)
                 ValidateCurve(reader, curveObject, keyTimes, keyValues);
 
             int keyCount = Math.Min(keyTimes.Length, keyValues.Length);
             if (keyCount == 0)
                 continue;
+
+            FbxCurveSegment[]? segments = ReadSegments(reader, curveObject, keyCount, requireStrictAnimation);
 
             long[] trimmedTimes = new long[keyCount];
             float[] trimmedValues = new float[keyCount];
@@ -97,7 +101,7 @@ public static class FbxAnimationParser
                 trimmedValues[index] = (float)keyValues[index];
             }
 
-            curvesByObjectId[curveObject.Id] = new FbxScalarCurve(trimmedTimes, trimmedValues);
+            curvesByObjectId[curveObject.Id] = new FbxScalarCurve(trimmedTimes, trimmedValues, segments);
         }
 
         return curvesByObjectId;
@@ -125,26 +129,113 @@ public static class FbxAnimationParser
             if ((double)(float)keyValues[index] != keyValues[index])
                 throw new InvalidDataException($"FBX {curveName} loses key value precision when stored as a float at key {index}.");
         }
+    }
 
+    // KeyAttrFlags bits. One attribute run covers KeyAttrRefCount consecutive keys.
+    private const int KeyInterpolationConstant = 0x00000002;
+    private const int KeyInterpolationLinear = 0x00000004;
+    private const int KeyInterpolationCubic = 0x00000008;
+    private const int KeyInterpolationMask = 0x0000000E;
+    private const int KeyConstantNext = 0x00000100;
+    private const int KeyTangentTcb = 0x00000200;
+    private const int KeyRightWeighted = 0x01000000;
+    private const int KeyNextLeftWeighted = 0x02000000;
+    private const int KeyVelocityMask = 0x30000000;
+    private const double TangentWeightScale = 9999.0;
+
+    /// <summary>
+    /// Reads the interpolation of each key from KeyAttrFlags, KeyAttrRefCount and
+    /// KeyAttrDataFloat. Each attribute run has four data values: the right slope, the next-left
+    /// slope, the two tangent weights packed as 16-bit integers (right weight in the low half,
+    /// next-left weight in the high half, both scaled by 9999), and the velocities.
+    /// Strict parsing throws for missing, inconsistent or unsupported data (TCB tangents and
+    /// tangent velocity). Other parsing returns null in that case, and the curve is linear.
+    /// Returns null when all segments are linear.
+    /// </summary>
+    private static FbxCurveSegment[]? ReadSegments(FbxStructuralValueReader reader, FbxSceneObject curveObject, int keyCount, bool strict)
+    {
+        string curveName = $"animation curve '{curveObject.DisplayName}' (objectId={curveObject.Id})";
         int[]? flags = reader.TryReadInt32ArrayChild(curveObject.NodeIndex, "KeyAttrFlags");
         int[]? referenceCounts = reader.TryReadInt32ArrayChild(curveObject.NodeIndex, "KeyAttrRefCount");
         if (flags is null || referenceCounts is null || flags.Length == 0 || flags.Length != referenceCounts.Length)
-            throw new InvalidDataException($"FBX {curveName} has missing or mismatched KeyAttrFlags and KeyAttrRefCount arrays.");
+            return Reject($"FBX {curveName} has missing or mismatched KeyAttrFlags and KeyAttrRefCount arrays.");
 
+        double[]? data = reader.TryReadDoubleArrayChild(curveObject.NodeIndex, "KeyAttrDataFloat");
+        FbxCurveSegment[] segments = new FbxCurveSegment[keyCount];
+        bool nonLinear = false;
         long coveredKeys = 0;
-        for (int index = 0; index < flags.Length; index++)
+        for (int run = 0; run < flags.Length; run++)
         {
-            if ((flags[index] & 0x0F) != 0x04)
-                throw new InvalidDataException($"FBX {curveName} uses unsupported KeyAttrFlags 0x{flags[index]:X8} at attribute run {index}; strict animation supports linear interpolation only.");
-            if (referenceCounts[index] <= 0)
-                throw new InvalidDataException($"FBX {curveName} has an invalid KeyAttrRefCount at attribute run {index}.");
-            coveredKeys += referenceCounts[index];
-            if (coveredKeys > keyTimes.Length)
-                throw new InvalidDataException($"FBX {curveName} has KeyAttrRefCount coverage beyond its {keyTimes.Length} keys.");
+            int flag = flags[run];
+            if (referenceCounts[run] <= 0)
+                return Reject($"FBX {curveName} has an invalid KeyAttrRefCount at attribute run {run}.");
+            if (coveredKeys + referenceCounts[run] > keyCount)
+                return Reject($"FBX {curveName} has KeyAttrRefCount coverage beyond its {keyCount} keys.");
+
+            FbxCurveSegment segment;
+            switch (flag & KeyInterpolationMask)
+            {
+                case KeyInterpolationLinear:
+                    segment = FbxCurveSegment.Linear;
+                    break;
+                case KeyInterpolationConstant:
+                    segment = new FbxCurveSegment((flag & KeyConstantNext) != 0 ? EFbxCurveInterpolation.ConstantNext : EFbxCurveInterpolation.Constant);
+                    break;
+                case KeyInterpolationCubic:
+                    if ((flag & KeyTangentTcb) != 0)
+                        return Reject($"FBX {curveName} uses TCB tangents (KeyAttrFlags 0x{flag:X8}) at attribute run {run}; strict animation supports constant, linear and weighted cubic keys only.");
+                    if ((flag & KeyVelocityMask) != 0)
+                        return Reject($"FBX {curveName} uses tangent velocity (KeyAttrFlags 0x{flag:X8}) at attribute run {run}; strict animation supports constant, linear and weighted cubic keys only.");
+                    if (data is null || data.Length < (run + 1) * 4)
+                        return Reject($"FBX {curveName} has cubic keys at attribute run {run} without KeyAttrDataFloat values.");
+                    double rightSlope = data[run * 4];
+                    double nextLeftSlope = data[(run * 4) + 1];
+                    if (!double.IsFinite(rightSlope) || !double.IsFinite(nextLeftSlope))
+                        return Reject($"FBX {curveName} has a non-finite tangent slope at attribute run {run}.");
+                    int packedWeights = ReadPackedWeights(data[(run * 4) + 2]);
+                    float rightWeight = (flag & KeyRightWeighted) != 0
+                        ? (float)((packedWeights & 0xFFFF) / TangentWeightScale)
+                        : FbxCurveSegment.DefaultWeight;
+                    float nextLeftWeight = (flag & KeyNextLeftWeighted) != 0
+                        ? (float)(((packedWeights >> 16) & 0xFFFF) / TangentWeightScale)
+                        : FbxCurveSegment.DefaultWeight;
+                    if (rightWeight is < 0.0f or > 1.0f || nextLeftWeight is < 0.0f or > 1.0f)
+                        return Reject($"FBX {curveName} has a tangent weight outside [0, 1] at attribute run {run}.");
+                    segment = new FbxCurveSegment(EFbxCurveInterpolation.Cubic, (float)rightSlope, (float)nextLeftSlope, rightWeight, nextLeftWeight);
+                    break;
+                default:
+                    return Reject($"FBX {curveName} uses unsupported KeyAttrFlags 0x{flag:X8} at attribute run {run}; strict animation supports constant, linear and weighted cubic keys only.");
+            }
+
+            for (int key = 0; key < referenceCounts[run]; key++)
+                segments[coveredKeys + key] = segment;
+            // The segment of the last key has no next key, so its interpolation has no effect.
+            if (segment.Interpolation != EFbxCurveInterpolation.Linear && coveredKeys < keyCount - 1)
+                nonLinear = true;
+            coveredKeys += referenceCounts[run];
         }
 
-        if (coveredKeys != keyTimes.Length)
-            throw new InvalidDataException($"FBX {curveName} has KeyAttrRefCount coverage for {coveredKeys} of {keyTimes.Length} keys.");
+        if (coveredKeys != keyCount)
+            return Reject($"FBX {curveName} has KeyAttrRefCount coverage for {coveredKeys} of {keyCount} keys.");
+
+        return nonLinear ? segments : null;
+
+        FbxCurveSegment[]? Reject(string message)
+            => strict ? throw new InvalidDataException(message) : null;
+    }
+
+    /// <summary>
+    /// Gets the packed tangent weights from the third data value of an attribute run. Binary
+    /// files store the 32-bit integer in the bits of a float. ASCII files write the integer
+    /// itself. A packed weight float from a binary file is always below 1 (both halves are at
+    /// most 9999, so the float exponent stays small), so an integral value of 1 or more is the
+    /// ASCII integer.
+    /// </summary>
+    private static int ReadPackedWeights(double value)
+    {
+        if (value >= 1.0 && value <= uint.MaxValue && Math.Floor(value) == value)
+            return unchecked((int)(uint)value);
+        return BitConverter.SingleToInt32Bits((float)value);
     }
 
     private static void ValidateBlendShapeChannels(FbxStructuralValueReader reader, FbxSemanticDocument semantic)

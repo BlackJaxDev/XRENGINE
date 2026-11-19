@@ -213,13 +213,13 @@ public static class EngineMemoryPolicy
 
         GCMemoryInfo memoryInfo = GC.GetGCMemoryInfo();
         log(
-            "[MemoryPolicy] profile=" + snapshot.Profile +
-            "; latency=" + snapshot.EffectiveLatencyMode +
-            "; serverGC=" + snapshot.IsServerGc +
-            "; backgroundGC=" + snapshot.BackgroundGcConfigured +
-            "; heapSize=" + memoryInfo.HeapSizeBytes +
-            "; highMemoryThreshold=" + memoryInfo.HighMemoryLoadThresholdBytes +
-            "; totalAvailable=" + memoryInfo.TotalAvailableMemoryBytes);
+            $"[MemoryPolicy] profile={snapshot.Profile}" +
+            $"; latency={snapshot.EffectiveLatencyMode}" +
+            $"; serverGC={snapshot.IsServerGc}" +
+            $"; backgroundGC={snapshot.BackgroundGcConfigured}" +
+            $"; heapSize={memoryInfo.HeapSizeBytes}" +
+            $"; highMemoryThreshold={memoryInfo.HighMemoryLoadThresholdBytes}" +
+            $"; totalAvailable={memoryInfo.TotalAvailableMemoryBytes}");
 
         LogConfigValue(snapshot, log, "System.GC.Server");
         LogConfigValue(snapshot, log, "System.GC.Concurrent");
@@ -237,6 +237,6 @@ public static class EngineMemoryPolicy
         string key)
     {
         if (snapshot.GcConfigurationVariables.TryGetValue(key, out object? value))
-            log("[MemoryPolicy] " + key + "=" + value);
+            log($"[MemoryPolicy] {key}={value}");
     }
 }

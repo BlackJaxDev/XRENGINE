@@ -424,15 +424,17 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private string BuildPreparationDetail(GLMaterial material, bool buffersBound, bool buffersReady)
-                => "bufferData=" + (buffersReady ? "Ready" : "Pending") +
-                   "; shaderProgram=" + ((_combinedProgram?.IsLinked == true || _separatedVertexProgram?.IsLinked == true) ? "Ready" : "Pending") +
-                   "; materialTextureBindings=" + material.Data.Textures.Count +
-                   "; renderState=" + (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.DebugName ?? "<none>") +
-                   "; pipelineStateKey=" + ComputeOpenGLPipelineStateKey(material).ToString("X16") +
-                   "; textureResidency=DeferredToMaterial" +
-                   "; passMetadata=" + (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true ? "Shadow" : "Standard") +
-                   "; buffersBound=" + buffersBound +
-                   "; layout=" + _geometryLayoutSignature.DebugSummary;
+            {
+                string bufferDataState = buffersReady ? "Ready" : "Pending";
+                string programState = (_combinedProgram?.IsLinked == true || _separatedVertexProgram?.IsLinked == true) ? "Ready" : "Pending";
+                string renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.DebugName ?? "<none>";
+                ulong pipelineStateKey = ComputeOpenGLPipelineStateKey(material);
+                string passMetadata = RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true ? "Shadow" : "Standard";
+                return $"bufferData={bufferDataState}; shaderProgram={programState}; " +
+                       $"materialTextureBindings={material.Data.Textures.Count}; renderState={renderState}; " +
+                       $"pipelineStateKey={pipelineStateKey:X16}; textureResidency=DeferredToMaterial; " +
+                       $"passMetadata={passMetadata}; buffersBound={buffersBound}; layout={_geometryLayoutSignature.DebugSummary}";
+            }
 
             private ulong ComputePreparationDetailStateKey(GLMaterial material, bool buffersBound, bool buffersReady)
             {

@@ -21,8 +21,10 @@ internal static class RenderFrameViewMatch
         for (int index = 0; index < views.ViewCount; index++)
         {
             RenderFrameViewDescriptor view = views.GetView(index);
+            // A single-view set is the camera's own mono render, also when that view is a
+            // per-eye right eye, so only a multi-view set checks the eye side.
             if (view.SourceCameraIdentity != camera.RenderIdentity ||
-                view.IsRightEyeFamily != rightEye)
+                (views.ViewCount > 1 && view.IsRightEyeFamily != rightEye))
                 continue;
 
             if (found)

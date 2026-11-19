@@ -80,6 +80,10 @@ internal unsafe partial class VkMeshRenderer
 	/// <summary>
 	/// Compares packed bytes with legacy bytes when validation is enabled.
 	/// </summary>
+	/// <remarks>
+	/// The packed bytes can be in device-local host-visible memory, where CPU reads are uncached
+	/// and slow. Do not enable this validation during a timing run.
+	/// </remarks>
 	private bool ValidateAutoUniformPayloadParity(
 		Span<byte> packed,
 		AutoUniformBlockInfo block,
@@ -216,6 +220,8 @@ internal unsafe partial class VkMeshRenderer
 		return false;
 	}
 
+	// Reads the mapped uniform data, which can be in device-local host-visible memory where CPU
+	// reads are uncached and slow. Do not enable this diagnostic during a timing run.
 	private void CaptureDeferredLightingObjectWrite(
 		AutoUniformBlockInfo block,
 		AutoUniformBuffer buffer,

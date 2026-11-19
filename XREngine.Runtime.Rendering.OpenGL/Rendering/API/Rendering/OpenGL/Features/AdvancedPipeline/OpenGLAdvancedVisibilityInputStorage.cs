@@ -12,7 +12,7 @@ namespace XREngine.Rendering.OpenGL;
 /// </summary>
 internal sealed class OpenGLAdvancedVisibilityInputStorage
 {
-    internal const uint CounterWordsPerView = 38u;
+    internal const uint CounterWordsPerView = 40u;
     private const uint PersistentStateRecordByteLength = 32u;
     private readonly AdvancedVisibilityPayload[] _payloads;
     private readonly AdvancedVisibilityCandidate[] _candidates;

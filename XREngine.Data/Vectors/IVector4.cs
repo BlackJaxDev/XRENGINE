@@ -68,13 +68,13 @@ public unsafe struct IVector4(int x, int y, int z, int w)// : IBufferable
         set
         {
             if (index < 0 || index > 3)
-                throw new IndexOutOfRangeException("Cannot access vector at index " + index);
+                throw new IndexOutOfRangeException($"Cannot access vector at index {index}");
             Data[index] = value;
         }
     }
 
     public override readonly string ToString()
-        => string.Format("({0}, {1}, {2}, {3})", X, Y, Z, W);
+        => $"({X}, {Y}, {Z}, {W})";
 
     public static explicit operator IVector4(Vector4 v) => new((int)v.X, (int)v.Y, (int)v.Z, (int)v.W);
     public static implicit operator Vector4(IVector4 v) => new(v.X, v.Y, v.Z, v.W);

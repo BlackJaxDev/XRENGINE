@@ -113,9 +113,17 @@ namespace XREngine.Rendering.Vulkan
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             if (attempt.InteractiveResize || xrOwnsFrameDeadline)
             {
-                // The modal callback must remain bounded. Completed retirement
-                // work is left for the next ordinary frame instead of turning a
-                // repaint callback into an unbounded destruction drain.
+                // An interactive-resize repaint must stay bounded, so completed
+                // retirement work waits for the first frame after the resize.
+                // While OpenXR is active, the desktop frame does not own this
+                // work: the OpenXR view boundary drains the descriptor cache
+                // owners, the invalidated recordings and every frame-slot
+                // retirement queue (DrainRetiredResourcesFromCompletedSubmittedFrameSlots).
+                // Only the retired desktop swapchain generations belong to the
+                // desktop frame. The drain polls their completion proofs and
+                // never waits, so it also runs while OpenXR is active.
+                if (!attempt.InteractiveResize)
+                    DrainRetiredDesktopSwapchainGenerations();
                 RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                     new FrameOutputWorkTelemetry(PlannerEvictionDeferrals: 1));
             }

@@ -289,6 +289,10 @@ internal sealed partial class VulkanFrameLoop
         return receipt;
     }
 
+    /// <summary>Returns the diagnostic staging ring's slot counts, or null before the ring exists.</summary>
+    internal VulkanGpuDiagnosticReadbackSidecarDiagnostic? CaptureDiagnosticReadbackSidecar()
+        => _gpuDiagnosticReadbackSidecar?.CaptureDiagnostic();
+
     private VulkanGpuDiagnosticReadbackSidecar? GetOrCreateGpuDiagnosticReadbackSidecar()
     {
         if (_gpuDiagnosticReadbackSidecar is not null)

@@ -612,14 +612,40 @@ internal unsafe partial class VkMeshRenderer
 		(DescriptorAllocation, int, ComputeDispatchSnapshot) refreshKey = canSkipRepeat
 			? (_activeDescriptorAllocation!, descriptorSlotIndex, snapshot!)
 			: default;
+		// A shared binding artifact keeps its reference across frames. When the previous
+		// refresh of this key left a stamp and nothing in the stamp changed (no image, view or
+		// sampler generation event, same pipeline, view family and allocation state), the
+		// resolved native image payloads are the ones already written.
+		bool stampable = canSkipRepeat && snapshot!.IsImmutableBindingArtifact;
+		DescriptorProofStamp stamp = stampable ? CaptureDescriptorProofStamp(_activeDescriptorAllocation!, material) : default;
+		bool stampHit = false;
 		if (canSkipRepeat &&
-			_frameSourceDescriptorRefreshes.TryGetValue(refreshKey, out ulong refreshedFrameId) &&
-			refreshedFrameId == renderFrameId)
+			_frameSourceDescriptorRefreshes.TryGetValue(refreshKey, out (ulong RenderFrameId, DescriptorProofStamp Stamp) refreshed))
 		{
-			reason = "frame-source sampler descriptors already refreshed this frame";
-			return true;
+			if (refreshed.RenderFrameId == renderFrameId)
+			{
+				reason = "frame-source sampler descriptors already refreshed this frame";
+				return true;
+			}
+
+			if (stampable && VulkanDescriptorProofStamps.Enabled)
+			{
+				stampHit = refreshed.Stamp == stamp;
+				if (!stampHit)
+				{
+					VulkanDescriptorProofStamps.RecordFrameSourceMiss();
+				}
+				else if (!VulkanDescriptorProofStamps.Verify)
+				{
+					VulkanDescriptorProofStamps.RecordFrameSourceHit();
+					_frameSourceDescriptorRefreshes[refreshKey] = (renderFrameId, stamp);
+					reason = "frame-source sampler descriptors unchanged since the stamped refresh";
+					return true;
+				}
+			}
 		}
 
+		ulong writesBefore = _descriptorPreparationWrites;
 		if (!TryRefreshFrameSourceSamplerDescriptors(
 			_activeDescriptorAllocation,
 			descriptorSlotIndex,
@@ -634,11 +660,20 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
+		if (stampHit)
+		{
+			// Verify mode: the stamp claimed that the refresh would write nothing.
+			VulkanDescriptorProofStamps.RecordVerify(writesBefore != _descriptorPreparationWrites);
+		}
+
 		if (canSkipRepeat)
 		{
 			if (_frameSourceDescriptorRefreshes.Count >= MaxFrameDescriptorAllocations)
 				_frameSourceDescriptorRefreshes.Clear();
-			_frameSourceDescriptorRefreshes[refreshKey] = renderFrameId;
+			// Capture the stamp after the refresh: its writes are part of the stamped state.
+			_frameSourceDescriptorRefreshes[refreshKey] = (
+				renderFrameId,
+				stampable ? CaptureDescriptorProofStamp(_activeDescriptorAllocation!, material) : default);
 		}
 
 		return true;
@@ -840,6 +875,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 
+			_descriptorPreparationWrites++;
 			RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);
 			ObserveFinalPresentationDescriptor(
 				descriptorSlotIndex,

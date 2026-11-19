@@ -141,7 +141,7 @@ public static class NativeUberMaterialSchema
         for (int index = 0; index < 4; ++index)
         {
             for (int column = 0; column < 4; ++column)
-                Add("_UDIMDiscardRow" + index + "_" + column);
+                Add($"_UDIMDiscardRow{index}_{column}");
             Add("_GlobalThemeColor" + index);
             Add("_GlobalThemeAdjust" + index);
             Add("_DecalUvMode" + index);
@@ -215,7 +215,7 @@ public static class NativeUberMaterialSchema
         string[] names = new string[16];
         for (int row = 0; row < 4; ++row)
             for (int column = 0; column < 4; ++column)
-                names[row * 4 + column] = "_UDIMDiscardRow" + row + "_" + column;
+                names[row * 4 + column] = $"_UDIMDiscardRow{row}_{column}";
         return names;
     }
 

@@ -14,6 +14,7 @@ public partial class XRMaterial
     private float _transmission;
     private Vector3 _transmissionColor = Vector3.One;
     private float _normalScale = 1.0f;
+    private float _occlusionStrength = 1.0f;
     private static XRTexture2D? s_surfaceEmissionNeutralTexture;
 
     private static XRTexture2D SurfaceEmissionNeutralTexture
@@ -106,6 +107,21 @@ public partial class XRMaterial
             if (SetField(ref _emissionStrength, value))
                 IncrementBindingValueVersion();
             EnsureSurfaceEmissionPublisher();
+        }
+    }
+
+    /// <summary>
+    /// Strength of the <see cref="EMaterialTextureSemantic.Occlusion"/> texture, as in glTF:
+    /// occlusion = 1 + strength * (texel - 1). 0 turns the texture off; 1 uses it fully.
+    /// </summary>
+    [DefaultValue(1.0f)]
+    public float OcclusionStrength
+    {
+        get => _occlusionStrength;
+        set
+        {
+            if (SetField(ref _occlusionStrength, value))
+                IncrementBindingValueVersion();
         }
     }
 

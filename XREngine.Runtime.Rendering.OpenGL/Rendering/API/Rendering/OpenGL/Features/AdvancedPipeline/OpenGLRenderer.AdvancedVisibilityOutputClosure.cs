@@ -40,12 +40,24 @@ public partial class OpenGLRenderer
         uint ambientOcclusionId = 0u, hdrId = 0u, velocityId = 0u, reactiveId = 0u, diagnosticsId = 0u;
         uint emissionColorId = 0u, albedoOpacityId = 0u, normalId = 0u, rmseId = 0u;
         uint aoLayers = 0u, hdrLayers = 0u, velocityLayers = 0u, reactiveLayers = 0u, diagnosticsLayers = 0u;
+        // OpenXR eye outputs without a shading debug view do not declare the diagnostics image.
+        // Its image unit then holds the metadata texture (also R32UI), and the shading push flag
+        // for disabled diagnostics stops every store to it.
+        bool diagnosticsAliased = requireNative &&
+            !pipeline.Resources.TryGetTexture(AdvancedShadingResourceNames.ShadingDiagnostics, out _);
+        if (diagnosticsAliased)
+        {
+            diagnostics = metadata;
+            diagnosticsId = metadataId;
+            diagnosticsLayers = metadataLayers;
+        }
         if (requireNative &&
             (!TryGetLayeredTexture(pipeline, request.AmbientOcclusionTargetName, ESizedInternalFormat.R8, generation, aliases, out ambientOcclusion, out ambientOcclusionId, out aoLayers, out reason) ||
              !TryGetLayeredTexture(pipeline, AdvancedRenderPipeline.HDRSceneTextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out hdr, out hdrId, out hdrLayers, out reason) ||
              !TryGetLayeredTexture(pipeline, AdvancedRenderPipeline.VelocityTextureName, ESizedInternalFormat.Rg16f, generation, aliases, out velocity, out velocityId, out velocityLayers, out reason) ||
              !TryGetLayeredTexture(pipeline, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, ESizedInternalFormat.R8, generation, aliases, out reactive, out reactiveId, out reactiveLayers, out reason) ||
-             !TryGetLayeredTexture(pipeline, AdvancedShadingResourceNames.ShadingDiagnostics, ESizedInternalFormat.R32ui, generation, aliases, out diagnostics, out diagnosticsId, out diagnosticsLayers, out reason) ||
+             (!diagnosticsAliased &&
+              !TryGetLayeredTexture(pipeline, AdvancedShadingResourceNames.ShadingDiagnostics, ESizedInternalFormat.R32ui, generation, aliases, out diagnostics, out diagnosticsId, out diagnosticsLayers, out reason)) ||
              !ValidateNativeCoreOutputExtents(identity!, layers, ambientOcclusion!, aoLayers, hdr!, hdrLayers, velocity!, velocityLayers,
                  reactive!, reactiveLayers, diagnostics!, diagnosticsLayers, out reason)))
             return false;
@@ -76,7 +88,10 @@ public partial class OpenGLRenderer
         closure = new(identity!, identityId, metadata!, metadataId, selection!, selectionId, depth!, depthId, depthPyramid!, depthPyramidId,
             ambientOcclusion, ambientOcclusionId, hdr, hdrId, velocity, velocityId, reactive, reactiveId, diagnostics, diagnosticsId,
             emissionColor, emissionColorId, albedoOpacity, albedoOpacityId, normal, normalId, rmse, rmseId,
-            GetWidth(identity!), GetHeight(identity!), layers, request.NativeViewIndex);
+            GetWidth(identity!), GetHeight(identity!), layers, request.NativeViewIndex)
+        {
+            ShadingDiagnosticsAliased = diagnosticsAliased,
+        };
         if (!closure.IsValid || (requireNative && !closure.HasNativeComputeOutputs))
         {
             closure = default;

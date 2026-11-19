@@ -14,6 +14,10 @@ internal sealed partial class VulkanCommandRuntime
 
         lock (Pools.Gate)
         {
+            // The desktop worker owns every pool it allocates from until its batch
+            // joins. Register the pool before the buffer exists, so that render-thread
+            // maintenance defers its writes to this pool from the start.
+            RegisterDesktopWorkerPoolIfWorkerThread(allocateInfo.CommandPool.Handle);
             Result result = Api.AllocateCommandBuffers(
                 DeviceContext.Device,
                 ref allocateInfo,

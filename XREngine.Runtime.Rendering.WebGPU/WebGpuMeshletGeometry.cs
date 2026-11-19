@@ -39,13 +39,13 @@ internal sealed class WebGpuMeshletGeometry : IDisposable
         _geometryRevision = mesh.GeometryRevision;
         _validationRevision = payload.ValidationRevision;
         _ownerToken = payload.OwnerValidationToken;
-        MeshletCount = checked((uint)payload.Meshlets.Length);
+        MeshletCount = checked((uint)payload.Level0MeshletCount);
         SourceTriangleCount = checked((uint)payload.SourceTriangleCount);
         VertexCount = checked((uint)payload.SourceVertexCount);
         RemapWordOffset = checked(MeshletCount * 20);
-        RemapCount = checked((uint)payload.VertexIndices.Length);
+        RemapCount = checked((uint)payload.Level0VertexIndices.Length);
         TriangleWordOffset = checked(RemapWordOffset + RemapCount);
-        TriangleByteCount = checked((uint)payload.TriangleIndices.Length);
+        TriangleByteCount = checked((uint)payload.Level0TriangleIndices.Length);
         PrimitiveWordOffset = checked(TriangleWordOffset + (TriangleByteCount + 3) / 4);
         PrimitiveCount = checked(MeshletCount * MeshletPayload.PortableMaxTriangles);
         ulong byteCount = ((ulong)PrimitiveWordOffset + PrimitiveCount) * 4;
@@ -53,7 +53,7 @@ internal sealed class WebGpuMeshletGeometry : IDisposable
             throw Rejected("GeometryCapacity", "the immutable meshlet arena exceeds the device storage range");
         byte[] bytes = new byte[checked((int)byteCount)];
         Span<byte> image = bytes;
-        for (int index = 0; index < payload.Meshlets.Length; index++)
+        for (int index = 0; index < payload.Level0MeshletCount; index++)
         {
             CpuMeshletDescriptor descriptor = payload.Meshlets[index];
             Span<byte> target = image.Slice(index * 80, 80);
@@ -66,8 +66,8 @@ internal sealed class WebGpuMeshletGeometry : IDisposable
             WriteVector(target[48..], descriptor.ConeApex);
             Write(target, 16, descriptor.PackedCone);
         }
-        MemoryMarshal.AsBytes(payload.VertexIndices.AsSpan()).CopyTo(image[(int)(RemapWordOffset * 4)..]);
-        payload.TriangleIndices.AsSpan().CopyTo(image[(int)(TriangleWordOffset * 4)..]);
+        MemoryMarshal.AsBytes(payload.Level0VertexIndices).CopyTo(image[(int)(RemapWordOffset * 4)..]);
+        payload.Level0TriangleIndices.CopyTo(image[(int)(TriangleWordOffset * 4)..]);
         BuildSourcePrimitiveMap(mesh, payload, image[(int)(PrimitiveWordOffset * 4)..]);
         Arena = new(renderer, "Immutable authored meshlet geometry");
         _initialImage = bytes;
@@ -104,7 +104,7 @@ internal sealed class WebGpuMeshletGeometry : IDisposable
         }
         output.Fill(0xff);
         uint matched = 0;
-        for (int meshlet = 0; meshlet < payload.Meshlets.Length; meshlet++)
+        for (int meshlet = 0; meshlet < payload.Level0MeshletCount; meshlet++)
         {
             CpuMeshletDescriptor descriptor = payload.Meshlets[meshlet];
             for (uint triangle = 0; triangle < descriptor.TriangleCount; triangle++)

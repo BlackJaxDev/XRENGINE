@@ -64,7 +64,7 @@ public class McpAssistantWindowContextTests
         IList history = (IList)(HistoryField.GetValue(window) ?? throw new InvalidOperationException("History list missing."));
 
         string droppedPayloadMarker = "RAW_OLDEST_PAYLOAD_SHOULD_NOT_SURVIVE_RAW_CONTEXT";
-        string oldRequest = "Older request " + new string('a', 512) + droppedPayloadMarker + new string('a', 90_000);
+        string oldRequest = $"Older request {new string('a', 512)}{droppedPayloadMarker}{new string('a', 90_000)}";
         string oldResponse = "Older response " + new string('b', 90_000);
         string recentUser = "Recent user KEEP_RECENT_USER_CONTEXT " + new string('c', 90_000);
         string recentAssistant = "Recent assistant KEEP_RECENT_ASSISTANT_CONTEXT " + new string('d', 90_000);

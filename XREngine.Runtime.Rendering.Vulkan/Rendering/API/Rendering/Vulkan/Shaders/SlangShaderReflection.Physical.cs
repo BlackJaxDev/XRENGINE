@@ -263,10 +263,10 @@ internal static partial class SlangShaderReflection
             {
                 TypeKind.Float when type.Width == 32 => "float",
                 TypeKind.Int when type.Width == 32 => type.Signed ? "int" : "uint",
-                TypeKind.Vector => DescribeType(type.ElementTypeId ?? 0) + type.Count,
-                TypeKind.Matrix when _types[type.ElementTypeId!.Value].Count == type.Count => DescribeType(type.ElementTypeId.Value) + "x" + type.Count,
+                TypeKind.Vector => $"{DescribeType(type.ElementTypeId ?? 0)}{type.Count}",
+                TypeKind.Matrix when _types[type.ElementTypeId!.Value].Count == type.Count => $"{DescribeType(type.ElementTypeId.Value)}x{type.Count}",
                 TypeKind.Pointer when type.StorageClass == 5349 && _physicalAddressCapability && _physicalAddressModel =>
-                    "PhysicalStorageBuffer<" + DescribeType(type.ElementTypeId!.Value) + ">",
+                    $"PhysicalStorageBuffer<{DescribeType(type.ElementTypeId!.Value)}>",
                 _ => throw new NotSupportedException($"Native ABI type {type.Kind}/{type.Width} is not supported by this frontend contract."),
             };
         }

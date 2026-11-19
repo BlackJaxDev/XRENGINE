@@ -7,6 +7,7 @@ using XREngine.Data.Colors;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Vulkan.RenderGraph;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -1235,6 +1236,9 @@ internal sealed partial class VulkanFrameLoop
                 in materializationSnapshot,
                 out preparedCohortMatched,
                 out deferredReason);
+            RenderOutputDomainTelemetry.Count(preparedCohortMatched
+                ? ERenderOutputDomainCounter.MeshCohortMatches
+                : ERenderOutputDomainCounter.MeshCohortMisses);
         }
         if (stagedPreparedCohort)
         {
@@ -2365,6 +2369,7 @@ internal sealed partial class VulkanFrameLoop
         out VulkanMeshOperationRequest operationRequest,
         out string plannerGenerationDetail)
     {
+        RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.MeshRequestsMaterialized);
         ref readonly FrameOpContext requestContext =
             ref VulkanMeshRenderRequest.GetContextReference(in request);
         ref readonly VulkanMeshProducerSnapshot producer =
