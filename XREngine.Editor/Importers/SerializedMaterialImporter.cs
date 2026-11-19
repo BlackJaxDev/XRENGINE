@@ -96,7 +96,7 @@ public static partial class SerializedMaterialImporter
         diagnostics.AddRange(sourceToonMatch.Diagnostics);
         bool requiresSourceBasicOutline = RequiresSourceBasicOutline(document, sourceToonMatch);
         SourceOrderedSurfacePlan orderedSurface = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
-            ? ClassifySourceOrderedSurface(document, shaderPath, sourceToonMatch.IsLocked)
+            ? ClassifySourceOrderedSurface(document, shaderPath)
             : default;
         SerializedMaterialDocument conversionDocument;
         if (sourceToonMatch.IsDowngradeSource)
@@ -180,28 +180,11 @@ public static partial class SerializedMaterialImporter
                 ConversionReport = conversionReport,
             };
         }
-        catch (Exception ex) when ((requiresSourceBasicOutline ||
-              orderedSurface.UnsupportedReason is not null ||
-              orderedSurface.Contract != EAdvancedSourceSurfaceContract.None) &&
-             ex is not OperationCanceledException)
+        catch (Exception ex) when ((isSourceToonConversion || isLilToon || requiresSourceBasicOutline) &&
+            ex is not OperationCanceledException)
         {
-            string message = $"Source material conversion failed for '{document.Name}': {ex.Message}";
-            warnings.Add(message);
-            context?.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Failed);
-            if (context is { AllowPartialImport: true })
-                context.ReportPartialImport("UNITYMAT0004", message, normalizedPath);
-            return new SerializedMaterialImportResult
-            {
-                ShaderPath = shaderPath,
-                SourceDocument = document,
-                ShaderAsset = shaderAsset,
-                Warnings = [.. warnings],
-                Diagnostics = [.. diagnostics],
-                ConversionReport = MaterialConversionReportBuilder.CreateFailure(normalizedPath, message),
-            };
-        }
-        catch (Exception ex) when ((isSourceToonConversion || isLilToon) && ex is not OperationCanceledException)
-        {
+            // A failed shader-specific conversion must not remove the material from the import.
+            // The generic importer keeps the main texture and color, and the report records the failure.
             string shaderFamily = isLilToon
                 ? "lilToon"
                 : isSourceToonFeatureLoss ? "Poiyomi Pro downgrade" : "Poiyomi Toon";
@@ -224,11 +207,10 @@ public static partial class SerializedMaterialImporter
                     sourceToonMatch);
                 MaterialConversionReportRegistry.Instance.Set(material, conversionReport);
                 context?.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Failed);
-                if (context is { AllowPartialImport: true })
-                    context.ReportPartialImport(
-                        "UNITYMAT0003",
-                        $"Unity material '{document.Name}' used generic fallback after {shaderFamily} conversion failed: {ex.Message}",
-                        normalizedPath);
+                context?.ReportPartialImport(
+                    "UNITYMAT0003",
+                    $"Unity material '{document.Name}' used generic fallback after {shaderFamily} conversion failed: {ex.Message}",
+                    normalizedPath);
                 CopyDiagnosticsToContext(context, normalizedPath, diagnostics);
                 return new SerializedMaterialImportResult
                 {

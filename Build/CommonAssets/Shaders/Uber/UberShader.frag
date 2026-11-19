@@ -2098,6 +2098,80 @@ vec3 calculateSourceClearCoat(ToonMesh mesh, vec3 normal,
 #endif
 }
 
+#if !defined(XRENGINE_UBER_DISABLE_SOURCE_SCENE_COLOR) && !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING)
+// Returns the screen-UV offset of the source toon GrabPass refraction for this fragment.
+// The source shader moves the scene-color sample by the view-space surface normal.
+// It scales the offset by (index - 1), by the facing term (1 - N.V), by the vertical
+// projection scale, and by the inverse camera distance (at least 1). The horizontal offset
+// uses the scene-color aspect ratio. View-space up becomes framebuffer-texture up through
+// the projection sign and FramebufferTextureYDirection, so OpenGL and Vulkan agree.
+vec2 uberSourceRefractionUvOffset(ToonMesh mesh, vec2 sceneExtent) {
+    vec3 normalWS = normalize(mesh.worldNormal);
+    vec3 toCamera = XRENGINE_GetForwardResolvedCameraPosition() - mesh.worldPos;
+    float cameraDistance = length(toCamera);
+    vec3 viewDirWS = toCamera / max(cameraDistance, 1e-5);
+    float nDotV = dot(normalWS, viewDirWS);
+    vec3 normalVS = (XRENGINE_GetForwardResolvedViewMatrix() * vec4(normalWS, 0.0)).xyz;
+    vec2 offset = (_SourceRefractionIndex - 1.0) * normalVS.xy * (1.0 - nDotV);
+    mat4 projection = XRENGINE_GetForwardProjMatrixForIndex(XRENGINE_GetForwardResolvedViewIndex());
+    offset *= abs(projection[1][1]) * 0.5 / max(cameraDistance, 1.0);
+    if (_SourceRefractionFresnelPower > 0.0)
+        offset *= pow(saturate(1.0 - saturate(nDotV)), _SourceRefractionFresnelPower);
+    offset.x *= sceneExtent.y / max(sceneExtent.x, 1.0);
+    float clipYSign = projection[1][1] < 0.0 ? -1.0 : 1.0;
+    float textureYSign = FramebufferTextureYDirection == 1 ? -1.0 : 1.0;
+    offset.y *= clipYSign * textureYSign;
+    return offset;
+}
+
+// Samples the opaque scene color behind the fragment. With refraction on, the sample
+// moves by the refraction offset. With chromatic aberration, green uses
+// offset * (1 - aberration) and blue uses offset * (1 + aberration), as in the source shader.
+vec3 uberSampleSourceSceneColor(ToonMesh mesh) {
+    vec2 sceneExtent = vec2(textureSize(_SourceSceneColor, 0).xy);
+    vec2 sceneUv = gl_FragCoord.xy / sceneExtent;
+    float layer = float(XRENGINE_GetForwardResolvedViewIndex());
+    if (_SourceRefractionEnabled <= 0.5)
+        return texture(_SourceSceneColor, vec3(sceneUv, layer)).rgb;
+
+    vec2 offset = uberSourceRefractionUvOffset(mesh, sceneExtent);
+    vec3 sceneColor = texture(_SourceSceneColor, vec3(clamp(sceneUv + offset, 0.0, 1.0), layer)).rgb;
+    if (_SourceRefractionChromaticAberration > 0.0) {
+        sceneColor.g = texture(_SourceSceneColor, vec3(clamp(
+            sceneUv + offset * (1.0 - _SourceRefractionChromaticAberration), 0.0, 1.0), layer)).g;
+        sceneColor.b = texture(_SourceSceneColor, vec3(clamp(
+            sceneUv + offset * (1.0 + _SourceRefractionChromaticAberration), 0.0, 1.0), layer)).b;
+    }
+    return sceneColor;
+}
+
+// Returns one entry of the source shader blend factor table. "source" is the surface color
+// with its alpha, "destination" is the unlit scene color, and "blend" is the GrabPass
+// blend factor. Indices 5 and 7 give (1 - blend). Indices 8 and 10 give blend.
+vec3 uberSourceGrabBlendFactor(int factor, vec3 source, float sourceAlpha, vec3 destination, float blend) {
+    switch (factor) {
+        case 0: return vec3(0.0);
+        case 1: return vec3(1.0);
+        case 2: return destination;
+        case 3: return source;
+        case 4: return vec3(1.0) - destination;
+        case 6: return vec3(1.0) - source;
+        case 9: return vec3(saturate(sourceAlpha));
+        case 8:
+        case 10: return vec3(blend);
+        default: return vec3(1.0 - blend);
+    }
+}
+
+// Blends the surface color with the unlit scene color as the source poiBlend does:
+// mix(srcFactor * source + dstFactor * destination, source, 1 - blend).
+vec3 uberSourceGrabBlend(vec3 source, float sourceAlpha, vec3 destination, float blend) {
+    vec3 sourceFactor = uberSourceGrabBlendFactor(int(_SourceGrabSrcBlend + 0.5), source, sourceAlpha, destination, blend);
+    vec3 destinationFactor = uberSourceGrabBlendFactor(int(_SourceGrabDstBlend + 0.5), source, sourceAlpha, destination, blend);
+    return mix(sourceFactor * source + destinationFactor * destination, source, 1.0 - blend);
+}
+#endif
+
 // High-level flow:
 //   1. Assemble ToonMesh (positions, normal, TBN, UVs, face orientation).
 //   2. Depth-peel early-discard if we're on a hidden peel layer.
@@ -2325,17 +2399,14 @@ void main() {
         vec3 sourceLighting = max(applySourcePrimaryShading(vec3(1.0),
             sourceGrabLight, mesh, mesh.worldNormal, 1.0, vec3(1.0)),
             vec3(0.0001));
-        vec2 sourceExtent = vec2(textureSize(_SourceSceneColor, 0).xy);
-        vec3 sourceGrab = texture(_SourceSceneColor,
-            vec3(gl_FragCoord.xy / sourceExtent,
-                float(XRENGINE_GetForwardResolvedViewIndex()))).rgb;
+        vec3 sourceGrab = uberSampleSourceSceneColor(mesh);
         sourceGrab = _SourceGrabColor.rgb *
             (sourceGrab * _SourceGrabBrightness + vec3(_SourceGrabAddBrightness));
         float sourceBlend = _SourceGrabBlendFactor;
         if (_SourceGrabUseAlpha != 0.0)
             sourceBlend *= 1.0 - fragData.alpha;
-        fragData.baseColor = (1.0 - sourceBlend) * fragData.baseColor +
-            sourceBlend * sourceBlend * sourceGrab / sourceLighting;
+        fragData.baseColor = clamp(uberSourceGrabBlend(fragData.baseColor, fragData.alpha,
+            sourceGrab / sourceLighting, sourceBlend), vec3(0.0), vec3(1024.0));
         uberApplyDecals(fragData, mesh);
     }
 #endif

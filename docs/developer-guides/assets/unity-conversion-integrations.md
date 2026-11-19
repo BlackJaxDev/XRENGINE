@@ -219,6 +219,14 @@ Diagnostics keep the source GUID and
 property, and the manifest reports `PartialVisual` instead of complete visual
 conversion. The default is `false` for strict imports.
 
+A material that is present but cannot be converted never stops an import, in strict
+or partial mode. When a shader-specific conversion (source toon, lilToon)
+fails, the importer uses the generic Unity material conversion. When that also fails,
+the importer puts a lit magenta fallback in the same renderer slot. The manifest
+records a `UNITYMAT0003` or `UNITYPARTIAL0003` warning and reports `PartialVisual`.
+The unit-testing world logs each source toon material that uses a fallback. An animated
+strict import still fails when an avatar component reports an error.
+
 Poiyomi Pro materials use the existing lossy Uber conversion when source shader
 or serialized `OriginalShader` evidence identifies Pro. Partial imports can also
 use consistent GUID/name evidence from other materials in the same project.

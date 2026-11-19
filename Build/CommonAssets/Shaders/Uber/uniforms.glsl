@@ -163,6 +163,15 @@ uniform float _SourceGrabBrightness;
 uniform float _SourceGrabAddBrightness;
 uniform float _SourceGrabBlendFactor;
 uniform float _SourceGrabUseAlpha;
+// Source shader blend factor-table indices (0 to 10) for the surface and scene-color terms.
+uniform float _SourceGrabSrcBlend;
+uniform float _SourceGrabDstBlend;
+// Source toon GrabPass refraction: on/off, index of refraction (0 to 3), chromatic
+// aberration (0 to 1), and the facing falloff power (0 disables the falloff).
+uniform float _SourceRefractionEnabled;
+uniform float _SourceRefractionIndex;
+uniform float _SourceRefractionChromaticAberration;
+uniform float _SourceRefractionFresnelPower;
 #endif
 
 // ============================================
