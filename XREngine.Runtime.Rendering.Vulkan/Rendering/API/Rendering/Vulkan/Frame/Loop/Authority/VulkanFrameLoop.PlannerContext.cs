@@ -224,6 +224,54 @@ internal sealed partial class VulkanFrameLoop
             $"rejected={capacityFailure.OverflowCount}.");
     }
 
+    // Required material textures of the captured OpenXR eye mesh requests and their upload
+    // manifest. Both are reused every eye frame, so the readiness check does not allocate.
+    private readonly VulkanRequiredTextureReferenceSet _openXrEyeRequiredTextures =
+        new(VulkanAcceptedFramePlan.UploadCapacity);
+    private readonly VulkanTextureUploadManifest _openXrEyeRequiredUploads = new();
+
+    /// <summary>
+    /// Declares the material textures of the captured eye mesh requests as required uploads, the
+    /// same way the desktop PresentNow path does. The upload ledger then requests the restoration
+    /// of a texture whose published generation the current device has never uploaded. That happens
+    /// after a live switch to OpenXR restarts the renderer: the streaming manager still reports
+    /// the texture as resident, but the new device has no image for it. The eye path records under
+    /// a synchronous-upload block, so this only requests the work; the normal upload pump prepares
+    /// and transfers it. Returns false, with a reason, while a required texture is not ready.
+    /// The eye frame then fails as a retry instead of failing later in mesh materialization.
+    /// </summary>
+    private bool TryRequestOpenXrEyeTextureResidency(int requestCount, out string detail)
+    {
+        _openXrEyeRequiredTextures.Clear();
+        CaptureRequiredMeshTextureUploads(
+            _openXrEyeRequiredTextures,
+            _openXrEyeRequiredUploads,
+            _meshOperationRequestScratch.AsSpan(0, requestCount));
+        if (_resourceRuntime.Uploads.RequestRequiredTextureUploads(
+                CreatePresentNowUploadContext(),
+                _openXrEyeRequiredUploads))
+        {
+            detail = string.Empty;
+            return true;
+        }
+
+        if (_openXrEyeRequiredUploads.TryGetTerminalFailure(
+                out _,
+                out string failureDetail,
+                out EVulkanPresentNowFailureDisposition disposition))
+        {
+            detail = disposition == EVulkanPresentNowFailureDisposition.RetryFrame
+                ? $"A required eye material texture is being restored or registered: {failureDetail}"
+                : $"A required eye material texture failed: {failureDetail}";
+            return false;
+        }
+
+        detail =
+            $"Required eye material textures are not ready yet " +
+            $"(textures={_openXrEyeRequiredTextures.Count}, unresolved={_openXrEyeRequiredUploads.UnresolvedCount}).";
+        return false;
+    }
+
     private void MaterializeCapturedOpenXrMeshRequests(int requestCount)
     {
         if (requestCount == 0)
@@ -252,6 +300,19 @@ internal sealed partial class VulkanFrameLoop
 
         try
         {
+            if (!TryRequestOpenXrEyeTextureResidency(requestCount, out string textureDetail))
+            {
+                TimeSpan textureElapsed = Stopwatch.GetElapsedTime(readinessStart);
+                throw new VulkanPresentNowReadinessException(
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                    "openxr-eye-material-textures",
+                    "OpenXREyeSubmit -> visible material textures",
+                    textureElapsed,
+                    textureElapsed,
+                    $"XR deadline missed with no declared resident GPU fallback. {textureDetail}");
+            }
+
             if (MaterializeQueuedMeshRenderRequests(
                     requestCount,
                     allowPreparedCohort: false,
