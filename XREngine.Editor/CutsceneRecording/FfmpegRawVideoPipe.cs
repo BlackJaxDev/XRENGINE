@@ -4,7 +4,7 @@ using System.Globalization;
 using XREngine.Editor.Mcp;
 using XREngine.Imaging;
 
-namespace XREngine.Editor.GaussianBake;
+namespace XREngine.Editor.CutsceneRecording;
 
 /// <summary>
 /// Sends captured cutscene frames as raw pixels to the standard input of one ffmpeg process, which encodes the master

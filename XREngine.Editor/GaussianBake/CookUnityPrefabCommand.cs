@@ -792,7 +792,8 @@ public static class CookUnityPrefabCommand
         prefabPath = null;
         sceneRootName = null;
         outputPakPath = null;
-        assetPath = "Avatars/avatar.asset";
+        string? explicitAssetPath = null;
+        assetPath = string.Empty;
         maxTextureSize = DefaultMaxTextureSize;
         animFilePath = null;
         error = null;
@@ -863,7 +864,7 @@ public static class CookUnityPrefabCommand
                     return false;
                 }
 
-                assetPath = args[++i];
+                explicitAssetPath = args[++i];
                 continue;
             }
 
@@ -908,6 +909,9 @@ public static class CookUnityPrefabCommand
             error = "Required argument --output-pak was not provided.";
             return false;
         }
+
+        // Without --asset, the archive entry takes the prefab file name, so two cooks write different entries.
+        assetPath = explicitAssetPath ?? $"Avatars/{Path.GetFileNameWithoutExtension(prefabPath)}.asset";
 
         return true;
     }

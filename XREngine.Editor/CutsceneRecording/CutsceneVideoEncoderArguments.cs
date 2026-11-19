@@ -1,10 +1,10 @@
 using System.Globalization;
 
-namespace XREngine.Editor.GaussianBake;
+namespace XREngine.Editor.CutsceneRecording;
 
 /// <summary>
 /// Builds the ffmpeg encoder arguments for the cutscene videos. The master video keeps high quality for review. The
-/// remote video uses a fixed bit rate so that its file stays below the Remote Control transfer limit.
+/// optimized file size copy uses a fixed bit rate so that its file stays below a size limit.
 /// </summary>
 internal static class CutsceneVideoEncoderArguments
 {
