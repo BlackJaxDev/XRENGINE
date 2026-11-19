@@ -81,7 +81,7 @@ namespace XREngine.Editor.Mcp
             XRWorld world = new(name, scene);
             RetargetWorld(context.World, world);
             Selection.Clear();
-            return Task.FromResult(new McpToolResponse($"Created world '{name}'.", new { id = world.ID, sceneId = scene.ID }));
+            return Task.FromResult(new McpToolResponse($"Created world '{name}'.", new { id = world.ID, sceneId = scene.ID, settingsId = world.Settings.ID }));
         }
 
         /// <summary>

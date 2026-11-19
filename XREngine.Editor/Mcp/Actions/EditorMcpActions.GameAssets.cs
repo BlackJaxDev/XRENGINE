@@ -459,7 +459,9 @@ namespace XREngine.Editor.Mcp
             [McpName("unity_project_root"), Description("Optional Unity project or Assets folder override used when importing an external .prefab.")]
             string? sourceProjectRoot = null,
             [McpName("overwrite"), Description("Allow an existing generated Unity prefab output to be replaced transactionally.")]
-            bool overwrite = false)
+            bool overwrite = false,
+            [McpName("allow_partial_import"), Description("For an external .prefab: keep importing when the source project is missing required textures or materials. The import uses fallback materials and reports each missing asset.")]
+            bool allowPartialImport = false)
         {
             if (!TryGetGameAssetsPath(out string assetsPath, out McpToolResponse? error))
                 return error!;
@@ -498,6 +500,7 @@ namespace XREngine.Editor.Mcp
                 var importOptions = new ModelImportOptions
                 {
                     SourceProjectRootOverride = sourceProjectRoot,
+                    AllowPartialSourceImport = allowPartialImport,
                     ProcessMeshesAsynchronously = false,
                     GenerateMeshRenderersAsync = false,
                 };

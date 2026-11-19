@@ -74,7 +74,8 @@ internal sealed class EditorSerializedPrefabAssetLoadingServices(
             options.SourceProjectRootOverride,
             context.CancellationToken,
             progress: (progress, _) => options.ProgressCallback?.Invoke(progress),
-            fbxBackend: ResolvePrefabFbxBackend(options.FbxBackend));
+            fbxBackend: ResolvePrefabFbxBackend(options.FbxBackend),
+            allowPartialImport: options.AllowPartialSourceImport);
         context.CancellationToken.ThrowIfCancellationRequested();
 
         if (conversion.RootNode is null)

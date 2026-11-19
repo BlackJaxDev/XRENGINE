@@ -59,6 +59,13 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public string? SourceProjectRootOverride { get; set; }
 
     /// <summary>
+    /// True to keep importing an external .prefab when the source project is missing required visual assets, for
+    /// example a texture or a material. The import uses fallback materials and reports each missing asset. The default
+    /// stops the import, because the result does not match the source look. Model importers ignore this value.
+    /// </summary>
+    public bool AllowPartialSourceImport { get; set; }
+
+    /// <summary>
     /// Backwards-compatibility: older cached YAML stored the combined flags under "PostProcessSteps".
     /// This setter-only property allows deserialization without re-serializing it.
     /// </summary>
