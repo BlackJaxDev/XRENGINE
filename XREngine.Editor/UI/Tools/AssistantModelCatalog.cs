@@ -104,7 +104,7 @@ internal static class AssistantModelCatalog
         if (cursor is not null)
         {
             string parameter = provider == AssistantCatalogProvider.Claude ? "after_id" : "pageToken";
-            url += "&" + parameter + "=" + Uri.EscapeDataString(cursor);
+            url += $"&{parameter}={Uri.EscapeDataString(cursor)}";
         }
 
         var request = new HttpRequestMessage(HttpMethod.Get, url);

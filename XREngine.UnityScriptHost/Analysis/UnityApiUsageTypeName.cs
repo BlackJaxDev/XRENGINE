@@ -4,5 +4,5 @@ namespace XREngine.UnityScriptHost.Analysis;
 internal readonly record struct UnityApiUsageTypeName(string Assembly, string Name,
     bool Resolved = true, bool IsLocal = false)
 {
-    internal string QualifiedName => "[" + Assembly + "]" + Name;
+    internal string QualifiedName => $"[{Assembly}]{Name}";
 }

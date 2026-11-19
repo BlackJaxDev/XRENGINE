@@ -72,11 +72,10 @@ public sealed class UnityApiUsageAnalyzer
                     MethodSignature<UnityApiUsageTypeName> method = member.DecodeMethodSignature(provider, null);
                     if (method.ParameterTypes.Length > 1024)
                         throw new InvalidDataException("A method signature has too many parameters.");
-                    signature = "#" + method.Header.RawValue.ToString("x2", CultureInfo.InvariantCulture) + "/" +
-                        method.GenericParameterCount.ToString(CultureInfo.InvariantCulture) + "/" +
-                        method.RequiredParameterCount.ToString(CultureInfo.InvariantCulture) +
-                        "(" + string.Join(",", method.ParameterTypes.Select(
-                        static type => type.QualifiedName)) + ")->" + method.ReturnType.QualifiedName;
+                    string parameterTypes = string.Join(",", method.ParameterTypes.Select(
+                        static type => type.QualifiedName));
+                    signature = string.Create(CultureInfo.InvariantCulture,
+                        $"#{method.Header.RawValue:x2}/{method.GenericParameterCount}/{method.RequiredParameterCount}({parameterTypes})->{method.ReturnType.QualifiedName}");
                     signatureResolved = method.ReturnType.Resolved && method.ParameterTypes.All(
                         static type => type.Resolved);
                     kind = "Method";
@@ -93,8 +92,7 @@ public sealed class UnityApiUsageAnalyzer
 
                 if (signature.Length > MaxSignatureLength)
                     throw new InvalidDataException("A member signature exceeds the report text limit.");
-                string key = owner.Assembly + "::" + owner.Name + "::" +
-                    UnityApiUsageTypeProvider.EncodeToken(name) + signature;
+                string key = $"{owner.Assembly}::{owner.Name}::{UnityApiUsageTypeProvider.EncodeToken(name)}{signature}";
                 if (key.Length > MaxSignatureLength)
                     throw new InvalidDataException("A member key exceeds the report text limit.");
                 if (distinct.ContainsKey(key))

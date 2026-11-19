@@ -108,8 +108,7 @@ public static partial class EditorHighlightFragmentSourceAdapter
             failureReason = "Editor picking requires a direct layout(location = 0) out vec4 scene color declaration.";
             return false;
         }
-        finalizedSource = preprocessedSource + "\nvec4 " + PickingColorFunctionName +
-            "()\n{\n    return " + colorName + ";\n}\n";
+        finalizedSource = $"{preprocessedSource}\nvec4 {PickingColorFunctionName}()\n{{\n    return {colorName};\n}}\n";
         return true;
     }
 

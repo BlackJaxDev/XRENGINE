@@ -223,10 +223,9 @@ public sealed partial class McpAssistantWindow
             _ => null,
         });
         usage.Result = runResult.Status.ToString();
-        usage.Note = $"requested_model={runResult.RequestedModel}; actual_model={runResult.ActualModel}; "
-            + $"turns={(runResult.TurnCountReported ? runResult.TurnCount.ToString() : "unreported")}; "
-            + $"tool_calls={runResult.ToolCallCount}; "
-            + (useSubscription ? "token usage may be unreported" : $"tokens={runResult.Usage.TotalTokens}");
+        string turns = runResult.TurnCountReported ? runResult.TurnCount.ToString() : "unreported";
+        string tokens = useSubscription ? "token usage may be unreported" : $"tokens={runResult.Usage.TotalTokens}";
+        usage.Note = $"requested_model={runResult.RequestedModel}; actual_model={runResult.ActualModel}; turns={turns}; tool_calls={runResult.ToolCallCount}; {tokens}";
     }
 
     private List<AgentToolDefinition> ConvertAssistantFunctionTools(

@@ -95,10 +95,11 @@ internal sealed class UnityApiUsageTypeProvider(MetadataReader metadata, string 
     {
         if (shape.Rank < 1 || shape.Rank > MaxDepth)
             throw new InvalidDataException("Array rank exceeds the metadata limit.");
-        string suffix = "[rank=" + shape.Rank.ToString(CultureInfo.InvariantCulture) +
-            ";sizes=" + string.Join(",", shape.Sizes.Select(static size => size.ToString(CultureInfo.InvariantCulture))) +
-            ";lowerbounds=" + string.Join(",", shape.LowerBounds.Select(
-                static lowerBound => lowerBound.ToString(CultureInfo.InvariantCulture))) + "]";
+        string sizes = string.Join(",", shape.Sizes.Select(static size => size.ToString(CultureInfo.InvariantCulture)));
+        string lowerBounds = string.Join(",", shape.LowerBounds.Select(
+            static lowerBound => lowerBound.ToString(CultureInfo.InvariantCulture)));
+        string suffix = string.Create(CultureInfo.InvariantCulture,
+            $"[rank={shape.Rank};sizes={sizes};lowerbounds={lowerBounds}]");
         return elementType with { Name = Bound(elementType.Name + suffix) };
     }
 
@@ -106,19 +107,15 @@ internal sealed class UnityApiUsageTypeProvider(MetadataReader metadata, string 
         => elementType with { Name = Bound(elementType.Name + "&") };
 
     public UnityApiUsageTypeName GetFunctionPointerType(MethodSignature<UnityApiUsageTypeName> signature)
-        => new("<signature>", Bound("fnptr#" + signature.Header.RawValue.ToString("x2", CultureInfo.InvariantCulture) + "/" +
-            signature.GenericParameterCount.ToString(CultureInfo.InvariantCulture) + "/" +
-            signature.RequiredParameterCount.ToString(CultureInfo.InvariantCulture) + "(" +
-            string.Join(",", signature.ParameterTypes.Select(static type => type.QualifiedName)) + ")->" +
-            signature.ReturnType.QualifiedName), signature.ReturnType.Resolved &&
-            signature.ParameterTypes.All(static type => type.Resolved));
+        => new("<signature>", Bound(string.Create(CultureInfo.InvariantCulture,
+            $"fnptr#{signature.Header.RawValue:x2}/{signature.GenericParameterCount}/{signature.RequiredParameterCount}({string.Join(",", signature.ParameterTypes.Select(static type => type.QualifiedName))})->{signature.ReturnType.QualifiedName}")),
+            signature.ReturnType.Resolved && signature.ParameterTypes.All(static type => type.Resolved));
 
     public UnityApiUsageTypeName GetGenericInstantiation(UnityApiUsageTypeName genericType,
         ImmutableArray<UnityApiUsageTypeName> typeArguments)
         => genericType with
         {
-            Name = Bound(genericType.Name + "<" + string.Join(",",
-                typeArguments.Select(static type => type.QualifiedName)) + ">"),
+            Name = Bound($"{genericType.Name}<{string.Join(",", typeArguments.Select(static type => type.QualifiedName))}>"),
             Resolved = genericType.Resolved && typeArguments.All(static type => type.Resolved)
         };
 
@@ -132,8 +129,7 @@ internal sealed class UnityApiUsageTypeProvider(MetadataReader metadata, string 
         UnityApiUsageTypeName unmodifiedType, bool isRequired)
         => unmodifiedType with
         {
-            Name = Bound(unmodifiedType.Name + (isRequired ? " modreq(" : " modopt(") +
-                modifier.QualifiedName + ")"),
+            Name = Bound($"{unmodifiedType.Name} {(isRequired ? "modreq" : "modopt")}({modifier.QualifiedName})"),
             Resolved = unmodifiedType.Resolved && modifier.Resolved
         };
 

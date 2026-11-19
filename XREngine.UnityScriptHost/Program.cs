@@ -136,7 +136,7 @@ internal static partial class Program
 
     private static void WriteReport<T>(string output, T report, CancellationToken cancellationToken)
     {
-        string temporary = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        string temporary = $"{output}.{Guid.NewGuid():N}.tmp";
         try
         {
             UnitySourceInventoryBuilder.EnsureNoReparsePoints(Path.GetDirectoryName(output)!);

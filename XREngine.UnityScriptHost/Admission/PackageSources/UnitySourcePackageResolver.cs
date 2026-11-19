@@ -76,7 +76,7 @@ public sealed class UnitySourcePackageResolver
             totalBytes += inventory.TotalFileBytes;
             entryCount += inventory.Entries.Length + 1;
             foreach (UnitySourceEntry entry in inventory.Entries)
-                if (("Packages/" + inventory.Name + "/" + entry.Path).Length > 2048)
+                if ($"Packages/{inventory.Name}/{entry.Path}".Length > 2048)
                     throw new InvalidDataException("A composed package path exceeds the source path limit.");
             pinned.Add((packageRoot, inventory));
         }
