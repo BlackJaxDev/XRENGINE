@@ -63,6 +63,13 @@
 // #pragma snippet pulls in engine-managed GLSL fragments that provide
 // implementations for direct/indirect lighting, AO sampling, and normal
 // encoding for the prepass.
+// The unconditional snippets come first. The snippet resolver includes each snippet once,
+// and ForwardLighting and AmbientOcclusionSampling include some of them again inside their
+// #ifndef blocks. A pass that disables those blocks (for example the shadow caster) would
+// otherwise lose the only copy of the shadow moment and normal encoding functions.
+#pragma snippet "NormalEncoding"
+#pragma snippet "ShadowMomentEncoding"
+#pragma snippet "ScreenSpaceUtils"
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
 #pragma snippet "ForwardLighting"
 #endif
@@ -82,9 +89,6 @@ vec3 XRENGINE_GetOutlineCameraPosition()
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_AMBIENT_OCCLUSION
 #pragma snippet "AmbientOcclusionSampling"
 #endif
-#pragma snippet "NormalEncoding"
-#pragma snippet "ShadowMomentEncoding"
-#pragma snippet "ScreenSpaceUtils"
 
 // Transparency algorithm snippets. These are mutually exclusive with each
 // other and with the weighted-blended path which is inlined below.
