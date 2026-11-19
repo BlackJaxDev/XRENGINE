@@ -116,6 +116,13 @@ public partial class OpenGLRenderer : IAdvancedVisibilityStageBackendCapability
         }
         try
         {
+            // Preparation binds the scene tables. GL SSBO bindings are context state, and other
+            // draws can change them between two stages of one family: mesh deformation sets
+            // bindings 39 and 40 (also the reconstruction vertex and index tables) to its own
+            // buffers or to 0. Without this bind, native shading read an empty index table and
+            // rejected every pixel. Bind the reconstruction tables again before each later stage.
+            if (ordinal != 0)
+                _advancedSceneUploader?.BindReconstructionTables();
             bool accepted = request.Stage switch
             {
                 EAdvancedRenderStage.VisibilityPreparation => TryPrepareAdvancedVisibility(in request, out failureReason),

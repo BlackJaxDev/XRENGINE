@@ -118,6 +118,23 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
         _sceneArena?.TryBind(out _);
     }
 
+    /// <summary>
+    /// Binds the reconstruction vertex and index tables (bindings
+    /// <see cref="AdvancedReconstructionShaderBindings.StaticVertices"/> to
+    /// <see cref="AdvancedReconstructionShaderBindings.Indices"/>) again. Mesh deformation
+    /// (<see cref="MeshDeformationBindingLayout"/>) uses bindings 39 and 40 for its own buffers
+    /// and sets them to 0 after a draw. A stage after preparation that reconstructs surfaces calls
+    /// this first, so that it reads the scene tables and not a deformation buffer or no buffer.
+    /// </summary>
+    internal void BindReconstructionTables()
+    {
+        for (uint binding = AdvancedReconstructionShaderBindings.StaticVertices;
+             binding <= AdvancedReconstructionShaderBindings.Indices;
+             ++binding)
+            _renderer.RawGL.BindBufferBase(
+                GLEnum.ShaderStorageBuffer, binding, _buffers[binding]);
+    }
+
     /// <summary>Writes the eleven sealed logical-handle lookup segments into
     /// every 40-word visibility counter record.</summary>
     internal bool TryInitializeVisibilityCounters(
