@@ -33,37 +33,40 @@ internal sealed class VulkanVideoFrameUploadContext : IVulkanVideoFrameUploadCon
     internal const string OpenXrAllocationPressureReason =
         "OpenXR image allocation pressure blocks synchronous resource uploads, so the video frame was not uploaded.";
 
-    private const string DeviceNotOperationalReason = "The Vulkan device is not operational.";
+    /// <summary>The failure reason when the generation's device is not operational.</summary>
+    internal const string DeviceNotOperationalReason = "The Vulkan device is not operational.";
 
-    private readonly VulkanResourceRuntime _resources;
+    private readonly IVulkanVideoFrameUploadResources _resources;
     private VulkanVideoFrameTextureHandle? _cachedHandle;
 
     public VulkanVideoFrameUploadContext(VulkanResourceRuntime resources)
+        : this(new VulkanVideoFrameUploadResources(resources))
+    {
+    }
+
+    /// <summary>Creates a context that reads the gate inputs and the wrappers from <paramref name="resources"/>.</summary>
+    internal VulkanVideoFrameUploadContext(IVulkanVideoFrameUploadResources resources)
         => _resources = resources ?? throw new ArgumentNullException(nameof(resources));
 
     /// <inheritdoc />
     public IVulkanVideoFrameTextureHandle? ResolveTexture(XRTexture2D texture, out string? failureReason)
     {
-        if (_resources.BackendObjectContext is not { IsDeviceOperational: true } context)
+        if (!_resources.IsDeviceOperational)
         {
             failureReason = DeviceNotOperationalReason;
             return null;
         }
 
+        // Apply the gate before any wrapper lookup, so a blocked upload creates no wrapper.
         bool allowSynchronousUploads = _resources.AllowSynchronousResourceUploads;
         bool avoidImageAllocationForOpenXr =
             allowSynchronousUploads &&
-            _resources.ShouldAvoidSynchronousImageAllocationForOpenXr(
-                context.Api,
-                context.DeviceContext,
-                RuntimeRenderingHostServices.Presentation,
-                RuntimeRenderingHostServices.FrameTiming,
-                out _);
+            _resources.ShouldAvoidSynchronousImageAllocationForOpenXr();
         failureReason = GetSynchronousUploadBlockReason(allowSynchronousUploads, avoidImageAllocationForOpenXr);
         if (failureReason is not null)
             return null;
 
-        AbstractRenderAPIObject? apiObject = _resources.BackendObjects.Get(texture) ?? _resources.CreateAPIRenderObject(texture);
+        AbstractRenderAPIObject? apiObject = _resources.GetPublishedWrapper(texture) ?? _resources.CreateWrapper(texture);
         if (apiObject is not VkTexture2D wrapper)
         {
             failureReason = $"The video texture resolved to '{apiObject?.GetType().Name ?? "<null>"}', not a Vulkan 2D texture wrapper.";

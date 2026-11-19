@@ -16,7 +16,8 @@ namespace XREngine.UnitTests.Rendering;
 /// Covers uploader selection for streaming video, the RGB24 staging layout of the Vulkan
 /// uploader, the error handling of the Vulkan uploader, and the rate limit of upload failure
 /// logs. A Vulkan renderer needs a device, so selection uses a renderer host proxy that offers
-/// the capability, and the Vulkan uploader uses fake upload contexts and texture handles.
+/// the capability, and the Vulkan uploader uses fake upload contexts and texture handles. The
+/// synchronous upload gate of the real upload context uses fake gate inputs and wrapper lookups.
 /// </summary>
 [TestFixture]
 public sealed class VideoFrameGpuActionsTests
@@ -130,25 +131,81 @@ public sealed class VideoFrameGpuActionsTests
         error.ShouldBe("The texture is not ready.");
     }
 
-    [Test]
-    public void VulkanUpload_SynchronousUploadsBlocked_ForwardsGateReason()
+    [TestCase(false, false, VulkanVideoFrameUploadContext.SynchronousUploadsBlockedReason)]
+    [TestCase(false, true, VulkanVideoFrameUploadContext.SynchronousUploadsBlockedReason)]
+    [TestCase(true, true, VulkanVideoFrameUploadContext.OpenXrAllocationPressureReason)]
+    public void VulkanUpload_GateBlocked_ReturnsReasonWithoutWrapperLookup(
+        bool allowSynchronousUploads,
+        bool openXrAllocationPressure,
+        string expectedReason)
     {
-        string? blockReason = VulkanVideoFrameUploadContext.GetSynchronousUploadBlockReason(
-            allowSynchronousUploads: false,
-            avoidImageAllocationForOpenXr: false);
-        FakeVulkanUploadContext context = new() { Handle = null, FailureReason = blockReason };
-        VulkanVideoFrameGpuActions actions = new(context);
+        FakeVulkanUploadResources resources = new()
+        {
+            AllowSynchronousResourceUploads = allowSynchronousUploads,
+            OpenXrAllocationPressure = openXrAllocationPressure,
+        };
+        VulkanVideoFrameGpuActions actions = new(new VulkanVideoFrameUploadContext(resources));
 
         actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out string? error).ShouldBeFalse();
 
-        error.ShouldBe(VulkanVideoFrameUploadContext.SynchronousUploadsBlockedReason);
+        error.ShouldBe(expectedReason);
+        // The policy decides first, so a blocked policy skips the pressure check.
+        resources.PressureCheckCount.ShouldBe(allowSynchronousUploads ? 1 : 0);
+        resources.PublishedLookupCount.ShouldBe(0);
+        resources.CreatingLookupCount.ShouldBe(0);
+    }
+
+    [Test]
+    public void VulkanUpload_DeviceNotOperational_ReturnsReasonWithoutGateOrWrapperLookup()
+    {
+        FakeVulkanUploadResources resources = new()
+        {
+            IsDeviceOperational = false,
+            AllowSynchronousResourceUploads = true,
+        };
+        VulkanVideoFrameGpuActions actions = new(new VulkanVideoFrameUploadContext(resources));
+
+        actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out string? error).ShouldBeFalse();
+
+        error.ShouldBe(VulkanVideoFrameUploadContext.DeviceNotOperationalReason);
+        resources.PressureCheckCount.ShouldBe(0);
+        resources.PublishedLookupCount.ShouldBe(0);
+        resources.CreatingLookupCount.ShouldBe(0);
+    }
+
+    [Test]
+    public void VulkanUpload_GateOpen_CreatesWrapperOnlyAfterRegistryMiss()
+    {
+        FakeVulkanUploadResources resources = new() { AllowSynchronousResourceUploads = true };
+        VulkanVideoFrameGpuActions actions = new(new VulkanVideoFrameUploadContext(resources));
+
+        // The fake creating lookup returns no wrapper, so the upload fails after both lookups.
+        actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out string? error).ShouldBeFalse();
+
+        error.ShouldNotBeNull();
+        error.ShouldContain("not a Vulkan 2D texture wrapper");
+        resources.PressureCheckCount.ShouldBe(1);
+        resources.PublishedLookupCount.ShouldBe(1);
+        resources.CreatingLookupCount.ShouldBe(1);
+
+        // A published wrapper of another type stops the lookup before the creating lookup.
+        VkShader publishedWrapper = (VkShader)RuntimeHelpers.GetUninitializedObject(typeof(VkShader));
+        GC.SuppressFinalize(publishedWrapper);
+        resources.PublishedWrapper = publishedWrapper;
+
+        actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out error).ShouldBeFalse();
+
+        error.ShouldNotBeNull();
+        error.ShouldContain(nameof(VkShader));
+        resources.PublishedLookupCount.ShouldBe(2);
+        resources.CreatingLookupCount.ShouldBe(1);
     }
 
     [TestCase(true, false, null)]
     [TestCase(false, false, VulkanVideoFrameUploadContext.SynchronousUploadsBlockedReason)]
     [TestCase(false, true, VulkanVideoFrameUploadContext.SynchronousUploadsBlockedReason)]
     [TestCase(true, true, VulkanVideoFrameUploadContext.OpenXrAllocationPressureReason)]
-    public void SynchronousUploadBlockReason_MatchesDescriptorUploadGate(
+    public void SynchronousUploadBlockReason_ReportsPolicyFirstThenOpenXrPressure(
         bool allowSynchronousUploads,
         bool avoidImageAllocationForOpenXr,
         string? expectedReason)
@@ -318,6 +375,39 @@ public sealed class VideoFrameGpuActionsTests
 
             failureReason = Handle is null ? FailureReason : null;
             return Handle;
+        }
+    }
+
+    /// <summary>
+    /// Returns the configured device state, gate inputs, and published wrapper. The creating
+    /// lookup returns no wrapper. Each method counts its calls.
+    /// </summary>
+    private sealed class FakeVulkanUploadResources : IVulkanVideoFrameUploadResources
+    {
+        public bool IsDeviceOperational { get; set; } = true;
+        public bool AllowSynchronousResourceUploads { get; set; }
+        public bool OpenXrAllocationPressure { get; set; }
+        public AbstractRenderAPIObject? PublishedWrapper { get; set; }
+        public int PressureCheckCount { get; private set; }
+        public int PublishedLookupCount { get; private set; }
+        public int CreatingLookupCount { get; private set; }
+
+        public bool ShouldAvoidSynchronousImageAllocationForOpenXr()
+        {
+            PressureCheckCount++;
+            return OpenXrAllocationPressure;
+        }
+
+        public AbstractRenderAPIObject? GetPublishedWrapper(XRTexture2D texture)
+        {
+            PublishedLookupCount++;
+            return PublishedWrapper;
+        }
+
+        public AbstractRenderAPIObject? CreateWrapper(XRTexture2D texture)
+        {
+            CreatingLookupCount++;
+            return null;
         }
     }
 
