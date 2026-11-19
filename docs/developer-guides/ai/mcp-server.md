@@ -123,7 +123,7 @@ long app-thread job runs (for example a benchmark spawn). Call the static
 and the longest deferral.
 
 Set `XRE_MCP_REQUEST_TRACE=1` before editor startup to trace single-request
-`invoke_method` calls. The trace records the JSON-RPC ID, tool and target
+`invoke_method` calls, or `XRE_MCP_REQUEST_TRACE=all` to trace every tool call. The trace records the JSON-RPC ID, tool and target
 type/method names, request milestones, elapsed time, and managed thread ID. It
 does not record method arguments, object data, headers, or credentials. The
 server keeps the latest 512 milestones and writes each milestone to the MCP
@@ -294,7 +294,7 @@ Authorization: Bearer <McpServerAuthToken>
 
 - Browser-origin requests are checked against `McpServerCorsAllowlist`.
 - Payloads larger than `McpServerMaxRequestBytes` are rejected.
-- Requests that exceed `McpServerRequestTimeoutMs` are canceled.
+- Requests that exceed `McpServerRequestTimeoutMs` are canceled. A synchronous tool, for example `import_third_party_asset`, does not observe the timeout and can finish after it. The server then still sends the result, and the request log line shows `after_timeout_ms`.
 - If `McpServerReadOnly` is enabled, mutating tools are blocked.
 - `McpServerAllowedTools` and `McpServerDeniedTools` can be used to enforce per-tool policy.
 - If `McpServerRateLimitEnabled` is enabled, per-client requests above quota return `429` with `Retry-After`.
