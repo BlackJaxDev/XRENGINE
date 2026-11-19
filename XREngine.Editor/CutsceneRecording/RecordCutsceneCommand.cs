@@ -33,6 +33,9 @@ public static class RecordCutsceneCommand
     private const string ContactSheetFlag = "--contact-sheet";
     private const string PosterTimeFlag = "--poster-time";
     private const string SubstepsFlag = "--physics-substeps";
+    private const string MaxRenderFpsFlag = "--max-render-fps";
+    private const string GpuPriorityFlag = "--gpu-priority";
+    private const string MaxGpuBusyFlag = "--max-gpu-busy";
 
 #if DEBUG
     private const string BuildConfigurationName = "Debug";
@@ -103,6 +106,7 @@ public static class RecordCutsceneCommand
 
         Engine.SetSessionSetting((UserSettings userSettings) => userSettings.PreferredRenderBackend, options.Backend);
         Engine.SetSessionSetting((UserSettings userSettings) => userSettings.VSync, EVSyncMode.Off);
+        ApplyGpuLoadLimits(options.Settings);
         Engine.AfterCreateWindows += AfterWindowsCreated;
         try
         {
@@ -113,6 +117,9 @@ public static class RecordCutsceneCommand
             Engine.AfterCreateWindows -= AfterWindowsCreated;
             cts.Cancel();
         }
+
+        if (exitCode != 0 && Engine.Time.Timer.FirstTerminalFault is { } fault)
+            Console.Error.WriteLine($"Cutscene recording failed: the engine stopped after a fault in {fault.Loop}/{fault.Phase}: {fault.ExceptionDetail}");
 
         Environment.ExitCode = exitCode;
         return exitCode;
@@ -125,6 +132,7 @@ public static class RecordCutsceneCommand
 
         XRWindow window = RuntimeEngine.Windows[0];
         XRViewport viewport = window.Viewports[0];
+        using CutsceneGpuDrainHook? gpuDrain = options.Settings.MaxGpuBusyFraction < 1.0f ? new CutsceneGpuDrainHook(window) : null;
 
         if (options.ProjectPath is { } projectPath && !Engine.LoadProject(projectPath))
             throw new InvalidOperationException($"The project '{projectPath}' did not load.");
@@ -284,6 +292,39 @@ public static class RecordCutsceneCommand
             NetworkingType = ENetworkingType.Local,
         };
 
+    /// <summary>
+    /// Limits the GPU load of the recording, so the PC stays responsive. The recorder renders as fast as the engine
+    /// timer lets it, and its window is hidden, so the normal desktop limits do not apply in a useful way. This method
+    /// sets the render frame limit for the focused and the unfocused state to
+    /// <see cref="CutsceneRecordSettings.MaxRenderFramesPerSecond"/>, sets the render busy limit of the engine timer to
+    /// <see cref="CutsceneRecordSettings.MaxGpuBusyFraction"/>, and moves the process to the BelowNormal Windows
+    /// GPU scheduling class unless <see cref="CutsceneRecordSettings.NormalGpuPriority"/> is true.
+    /// </summary>
+    private static void ApplyGpuLoadLimits(CutsceneRecordSettings settings)
+    {
+        float maxRenderFps = settings.MaxRenderFramesPerSecond;
+        if (maxRenderFps >= 1.0f)
+        {
+            Engine.SetSessionSetting((UserSettings userSettings) => userSettings.TargetFramesPerSecond, maxRenderFps);
+            Engine.SetSessionSetting((UserSettings userSettings) => userSettings.UnfocusedTargetFramesPerSecond, maxRenderFps);
+        }
+        else
+        {
+            // No limit was requested. The engine applies a display-rate limit and an unfocused limit by default, and
+            // this variable removes both for this process.
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.DesktopRenderUncapped, "1");
+        }
+
+        Engine.Time.Timer.MaxRenderBusyFraction = settings.MaxGpuBusyFraction;
+
+        bool belowNormal = !settings.NormalGpuPriority;
+        XREngine.Runtime.Platform.Desktop.WindowsGpuSchedulingPriority.TrySetForCurrentProcess(belowNormal, out string priorityMessage);
+        Console.WriteLine(
+            $"GPU load limits: maxRenderFps={(maxRenderFps >= 1.0f ? maxRenderFps.ToString("0.##", CultureInfo.InvariantCulture) : "none")}, " +
+            $"maxGpuBusy={settings.MaxGpuBusyFraction.ToString("0.##", CultureInfo.InvariantCulture)}, " +
+            $"gpuPriority={(belowNormal ? "BelowNormal" : "Normal")} ({priorityMessage}).");
+    }
+
     private static bool TryParseOptions(IReadOnlyList<string> args, out RecordOptions? options, out string? error)
     {
         options = null;
@@ -382,6 +423,35 @@ public static class RecordCutsceneCommand
                         return false;
                     }
                     settings.OptimizedFileSizeMaxBytes = maxBytes;
+                    break;
+                case MaxRenderFpsFlag:
+                    if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float maxRenderFps)
+                        || !float.IsFinite(maxRenderFps) || maxRenderFps < 0.0f)
+                    {
+                        error = $"The {MaxRenderFpsFlag} value '{value}' must be 0 (no limit) or a positive frame rate.";
+                        return false;
+                    }
+                    settings.MaxRenderFramesPerSecond = maxRenderFps;
+                    break;
+                case MaxGpuBusyFlag:
+                    if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float maxGpuBusy)
+                        || !float.IsFinite(maxGpuBusy) || maxGpuBusy < 0.05f || maxGpuBusy > 1.0f)
+                    {
+                        error = $"The {MaxGpuBusyFlag} value '{value}' must be a fraction from 0.05 to 1.";
+                        return false;
+                    }
+                    settings.MaxGpuBusyFraction = maxGpuBusy;
+                    break;
+                case GpuPriorityFlag:
+                    if (string.Equals(value, "below-normal", StringComparison.OrdinalIgnoreCase))
+                        settings.NormalGpuPriority = false;
+                    else if (string.Equals(value, "normal", StringComparison.OrdinalIgnoreCase))
+                        settings.NormalGpuPriority = true;
+                    else
+                    {
+                        error = $"The {GpuPriorityFlag} value '{value}' must be 'below-normal' or 'normal'.";
+                        return false;
+                    }
                     break;
                 case ContactSheetFlag:
                     if (!bool.TryParse(value, out bool contactSheet))

@@ -21,7 +21,7 @@ dotnet run --no-build -c Release --project XREngine.Editor/XREngine.Editor.cspro
   --output-pak "<output>/avatar.pak"
 ```
 
-Without `--asset`, the archive entry is `Avatars/<prefab-file-name>.asset`. Add `--asset "Avatars/<name>.asset"` to
+Without `--asset`, the archive entry is `Avatars/<scene-root-name>.asset` with `--scene-root`, or `Avatars/<prefab-file-name>.asset` without it. Add `--asset "Avatars/<name>.asset"` to
 choose another entry.
 
 The cook stops when the Unity project is missing a required material or texture. Add `--allow-partial-import` to keep
@@ -98,6 +98,9 @@ dotnet run --no-build -c Release --project XREngine.Editor/XREngine.Editor.cspro
 | `--contact-sheet` | `true` | `false` writes no contact sheet. |
 | `--physics-substeps` | 2 | The number of steps between two frames. Each step advances the cutscene and ticks the physics chains once. |
 | `--ffmpeg` | `ffmpeg` | The ffmpeg executable. |
+| `--max-render-fps` | 30 | The highest number of render frames per second. 0 removes the limit. |
+| `--max-gpu-busy` | 0.5 | The highest fraction of time that the recorder keeps the GPU busy, from 0.05 to 1. 1 removes the limit. |
+| `--gpu-priority` | `below-normal` | The Windows GPU scheduling class: `below-normal` or `normal`. |
 
 `CutsceneRecordSettings` holds the same values, and also the file names, the warm-up frame counts, the settle steps, and
 the capture render overrides.
@@ -116,6 +119,12 @@ The recorder writes these files to `--output-dir`:
 
 The recorder changes only capture settings. It does not add content.
 
+- It limits its GPU load, so the PC stays responsive. The recorder does not run in real time, so without limits it
+  would keep the GPU busy all the time. It caps the render rate at `--max-render-fps`, runs at the BelowNormal GPU
+  scheduling class, and waits for the GPU at the end of each render. The engine timer then measures the GPU time of
+  each frame and waits after it, so the GPU is busy for at most `--max-gpu-busy` of the time. These limits do not
+  make one long frame shorter: a frame that takes 200 ms of GPU time still blocks the desktop compositor for that
+  time.
 - It pauses the world. Between two frames, it advances the cutscene in `--physics-substeps` equal steps and ticks the
   physics chains after each step.
 - At a jump (the first frame) and at each camera cut, it resets the physics chains to the current pose and runs
@@ -169,10 +178,22 @@ The editor MCP server has tools that build a cutscene asset from a script:
 | `cutscene_create_asset` | Creates an empty cutscene asset and assigns it to the director of a node. |
 | `cutscene_add_track` | Adds a track with its clips and curves: transform, camera cut, camera property, property, animation clip, or simulation control. |
 | `cutscene_save_asset` | Saves the cutscene asset of a director. |
-| `get_node_bounds` | Returns the world bounds of the static meshes under a node, or of its skeleton with `source = transforms`, so a script can place cameras relative to an object. |
+| `setup_humanoid_avatar` | Adds a `HumanoidComponent` to an imported avatar, maps its bones, and returns the node that holds it. Animation clip tracks and humanoid bounds use that node. |
+| `get_node_bounds` | Returns the world bounds of the static meshes under a node, or of its humanoid skeleton with `source = humanoid`, so a script can place cameras relative to an object. |
 
 The scene tools (`create_scene_node`, `add_component_to_node`, `set_component_properties`, `set_node_transform`, and
 `save_world`) build the rest of the world. `Tools/Cutscenes/New-SplatShowcaseCutscene.ps1` uses these tools in an
-isolated editor session. It computes orbit camera paths around the avatar bounds, writes the camera, clip time, and
+isolated editor session. It computes orbit camera paths around the avatar bounds, writes the camera, animation clip, and
 overlay tracks, saves the world, and then calls `--record-cutscene`. All values of the video are parameters or data in
 the script.
+
+`import_third_party_asset` imports the avatar. For an avatar that exists only as a prefab instance in a `.unity` scene,
+pass the scene file and `scene_root` with the name of the top-level avatar object; the script has `-SceneRoot` for this.
+Select the plain avatar object, not a variant that adds locomotion, face tracking, or other sample systems. Add
+`allow_partial_import` (script: `-AllowPartialImport`) when the Unity project is missing some textures or materials.
+
+The Unity import creates the bones of an avatar, but no humanoid. Call `setup_humanoid_avatar` after
+`instantiate_prefab`. It finds the source FBX file in the import record of the prefab, reads the humanoid bone names
+from the Unity settings of that file (`.fbx.meta`), and stores the file hash to identify the skeleton. The tool fails
+when it finds no FBX file; pass `source_model_path` (script: `-SourceModel`) in that case. The cook command does the
+same setup in its `attach-humanoid-clip` stage.

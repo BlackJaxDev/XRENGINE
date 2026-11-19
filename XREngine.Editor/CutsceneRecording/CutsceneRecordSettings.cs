@@ -34,6 +34,9 @@ public class CutsceneRecordSettings : XRAsset
     private bool _disableAntiAliasing = true;
     private bool _disableBloom = true;
     private float? _manualExposure = 1.0f;
+    private float _maxRenderFramesPerSecond = 30.0f;
+    private bool _normalGpuPriority;
+    private float _maxGpuBusyFraction = 0.5f;
 
     /// <summary>The width of the recorded frames, in pixels.</summary>
     public int Width
@@ -203,6 +206,44 @@ public class CutsceneRecordSettings : XRAsset
     {
         get => _disableBloom;
         set => SetField(ref _disableBloom, value);
+    }
+
+    /// <summary>
+    /// The highest number of render frames per second while the recorder runs. 0 removes the limit.
+    /// </summary>
+    /// <remarks>
+    /// The recorder does not run in real time, so without a limit it renders as fast as the GPU can and takes all of
+    /// the GPU. Each captured frame needs a few render frames, so a recording of <c>n</c> frames takes about
+    /// <c>3 * n / MaxRenderFramesPerSecond</c> seconds. Remove the limit only when the PC has no other work.
+    /// </remarks>
+    public float MaxRenderFramesPerSecond
+    {
+        get => _maxRenderFramesPerSecond;
+        set => SetField(ref _maxRenderFramesPerSecond, float.IsFinite(value) ? Math.Clamp(value, 0.0f, 1000.0f) : 30.0f);
+    }
+
+    /// <summary>
+    /// The highest fraction of time that the render loop may keep the GPU busy, from 0.05 to 1. 1 removes the limit.
+    /// </summary>
+    /// <remarks>
+    /// A frame-rate limit alone does not help when one frame takes longer than the limit period, for example with
+    /// millions of splats. The recorder sets <c>EngineTimer.MaxRenderBusyFraction</c> to this value, so the engine
+    /// waits after each render for a time that matches the render time.
+    /// </remarks>
+    public float MaxGpuBusyFraction
+    {
+        get => _maxGpuBusyFraction;
+        set => SetField(ref _maxGpuBusyFraction, float.IsFinite(value) ? Math.Clamp(value, 0.05f, 1.0f) : 0.5f);
+    }
+
+    /// <summary>
+    /// True to run the recorder at the Normal Windows GPU scheduling class. False (the default) uses BelowNormal, so
+    /// other applications get the GPU first and the PC stays responsive during a recording.
+    /// </summary>
+    public bool NormalGpuPriority
+    {
+        get => _normalGpuPriority;
+        set => SetField(ref _normalGpuPriority, value);
     }
 
     /// <summary>A fixed exposure for every camera, or null to keep the automatic exposure of each camera.</summary>
