@@ -25,7 +25,7 @@ namespace XREngine.Components.Scene.Mesh;
 /// submesh's authored <c>NativeUber</c> or <c>Standard</c> material.
 /// </summary>
 [Serializable]
-public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
+public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable, IRenderCaptureReadiness
 {
     /// <summary>Compute shader that emits live world-space splats and surface records from avatar submeshes.</summary>
     public const string LiveSurfaceSplatsShaderPath = "Gaussian/GaussianLiveSurfaceSplats.comp";
@@ -39,6 +39,11 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
     private const uint ComputeLocalSize = 256u;
     private const int MaxSceneLights = 16;
     private const float DepthOcclusionBiasMeters = 0.0035f;
+
+    /// <summary>The default value of <see cref="TargetSplatCount"/>.</summary>
+    public const int DefaultTargetSplatCount = 2_400_000;
+
+    private static readonly RenderInfo.DelAddRenderCommandsCallback RejectAllRenderPassesCallback = static (_, _, _) => false;
     private static readonly uint SurfaceStrideBytes = (uint)Unsafe.SizeOf<GaussianSplatGpuSurface>();
 
     private readonly RenderInfo3D _renderInfo;
@@ -63,7 +68,11 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
     private bool _hasPreparedSplats;
     private bool _hasSubmittedDraw;
     private float _splatScale = 1.0f;
-    private float _playbackTimeSeconds;
+    private int _targetSplatCount = DefaultTargetSplatCount;
+    private bool _sampleOnActivate = true;
+    private bool _hideSourceMeshes = true;
+    private bool _sampleRequested;
+    private readonly List<(RenderableComponent Component, bool? CastsShadows)> _hiddenSourceComponents = [];
 
     public GaussianAvatarSplatComponent()
     {
@@ -137,6 +146,16 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
         _splatRenderer is { HasOrder: true } &&
         (_materialTable?.AreStreamedTexturesReady ?? true);
 
+    /// <inheritdoc />
+    [Browsable(false)]
+    [YamlIgnore]
+    public bool IsReadyForCapture => IsGpuDataReady;
+
+    /// <inheritdoc />
+    public string DescribeCaptureReadiness()
+        => $"avatarSplats(splats={_totalSplats}, sampleRequested={_sampleRequested}, prepared={_hasPreparedSplats}, " +
+           $"drawSubmitted={_hasSubmittedDraw}, texturesReady={_materialTable?.AreStreamedTexturesReady ?? true})";
+
     /// <summary>Uniform scale factor applied to every splat standard deviation.</summary>
     [Category("Rendering")]
     public float SplatScale
@@ -145,12 +164,37 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
         set => SetField(ref _splatScale, float.IsFinite(value) && value > 0.0f ? value : 1.0f);
     }
 
-    /// <summary>Animation clip sample time in seconds driven by a cutscene or host controller.</summary>
-    [Category("Playback")]
-    public float PlaybackTimeSeconds
+    /// <summary>
+    /// The number of surface splats that <see cref="SampleOwnHierarchy"/> spreads over the triangle meshes under this node.
+    /// A new value takes effect at the next sample.
+    /// </summary>
+    [Category("Sampling")]
+    public int TargetSplatCount
     {
-        get => _playbackTimeSeconds;
-        set => SetField(ref _playbackTimeSeconds, float.IsFinite(value) ? value : 0.0f);
+        get => _targetSplatCount;
+        set => SetField(ref _targetSplatCount, Math.Clamp(value, 1_000, GaussianSplatRenderer.MaxCapacity));
+    }
+
+    /// <summary>
+    /// True to sample the meshes under this node when the component activates. The sample runs in a later app-thread task,
+    /// so the model components under the node have built their runtime meshes first.
+    /// </summary>
+    [Category("Sampling")]
+    public bool SampleOnActivate
+    {
+        get => _sampleOnActivate;
+        set => SetField(ref _sampleOnActivate, value);
+    }
+
+    /// <summary>
+    /// True to stop the sampled triangle meshes from drawing and casting shadows, so only the splats show.
+    /// Deactivating the component draws the triangle meshes again.
+    /// </summary>
+    [Category("Sampling")]
+    public bool HideSourceMeshes
+    {
+        get => _hideSourceMeshes;
+        set => SetField(ref _hideSourceMeshes, value);
     }
 
     /// <summary>
@@ -176,6 +220,77 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
         _hasSubmittedDraw = false;
     }
 
+    /// <summary>
+    /// Samples <see cref="TargetSplatCount"/> splats over the active triangle meshes under this node, then hides those meshes
+    /// when <see cref="HideSourceMeshes"/> is true. Put the component on the root node of the avatar. The splats follow the
+    /// skinned pose of the meshes in each frame, so an animation or a cutscene that moves the bones moves the splats.
+    /// </summary>
+    public void SampleOwnHierarchy()
+    {
+        if (IsDestroyed || SceneNode is not { } root)
+            return;
+
+        RestoreSourceMeshes();
+        InitializeFromAvatar(root, _targetSplatCount);
+        if (_hideSourceMeshes)
+            HideSourceMeshesUnder(root);
+    }
+
+    protected override void OnComponentActivated()
+    {
+        base.OnComponentActivated();
+        if (!_sampleOnActivate || _sampleRequested || _totalSplats > 0)
+            return;
+
+        // The model components under this node can activate after this component. A later app-thread task samples
+        // them after all of them have built their runtime meshes.
+        _sampleRequested = true;
+        RuntimeEngine.EnqueueAppThreadTask(
+            () =>
+            {
+                _sampleRequested = false;
+                if (IsActive && _totalSplats == 0)
+                    SampleOwnHierarchy();
+            },
+            "GaussianAvatarSplatComponent.SampleOwnHierarchy");
+    }
+
+    protected override void OnComponentDeactivated()
+    {
+        RestoreSourceMeshes();
+        base.OnComponentDeactivated();
+    }
+
+    private void HideSourceMeshesUnder(SceneNode root)
+    {
+        root.IterateComponents<RenderableComponent>(component =>
+        {
+            if (!component.IsActive)
+                return;
+
+            _hiddenSourceComponents.Add((component, component.MeshCastsShadows));
+            component.MeshCastsShadows = false;
+            foreach (RenderableMesh mesh in component.Meshes)
+                mesh.RenderInfo.SetCameraIndependentPreCollectCommandsCallback(RejectAllRenderPassesCallback);
+        }, iterateChildHierarchy: true);
+    }
+
+    private void RestoreSourceMeshes()
+    {
+        for (int i = 0; i < _hiddenSourceComponents.Count; i++)
+        {
+            (RenderableComponent component, bool? castsShadows) = _hiddenSourceComponents[i];
+            if (component.IsDestroyed)
+                continue;
+
+            component.MeshCastsShadows = castsShadows;
+            foreach (RenderableMesh mesh in component.Meshes)
+                mesh.RenderInfo.SetCameraIndependentPreCollectCommandsCallback(null);
+        }
+
+        _hiddenSourceComponents.Clear();
+    }
+
     protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
     {
         base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
@@ -184,6 +299,7 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable
 
     protected override void OnDestroying()
     {
+        RestoreSourceMeshes();
         ReleaseGpuResources();
         base.OnDestroying();
     }
