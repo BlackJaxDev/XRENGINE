@@ -16,7 +16,9 @@ namespace XREngine.Scene.Importers;
 /// property default. Numeric values use the Unity enums: <c>CullMode</c>, <c>CompareFunction</c>,
 /// <c>BlendMode</c>, <c>BlendOp</c>, and <c>ColorWriteMask</c>. The render queue selects the engine pass:
 /// below 2450 is opaque, 2450 to 2500 is masked, and above 2500 is transparent.
-/// <c>Stencil</c> blocks and per-target blend state are not mapped yet; they cause a warning.
+/// <c>AlphaToMask On</c> selects alpha to coverage; the importer also adds a fragment discard below half alpha
+/// (see <see cref="IsAlphaToMaskEnabled"/>). The legacy <c>AlphaTest</c> command has no effect on Unity programmable
+/// passes, so the mapper ignores it. <c>Stencil</c> blocks and per-target blend state are not mapped yet; they cause a warning.
 /// </remarks>
 public static class ShaderLabRenderStateMapper
 {
@@ -105,6 +107,24 @@ public static class ShaderLabRenderStateMapper
 
         if (reader.TryReadProperty("_Cutoff", out float cutoff))
             material.AlphaCutoff = Math.Clamp(cutoff, 0.0f, 1.0f);
+    }
+
+    /// <summary>
+    /// Returns true when the pass sets <c>AlphaToMask On</c>. A property reference takes the material value, then the property default.
+    /// </summary>
+    /// <remarks>
+    /// The translated fragment stage of such a pass needs a discard below half alpha, because alpha to coverage
+    /// does nothing on a target with one sample. <see cref="Apply"/> reports an argument that is not valid, so this
+    /// method adds no warnings.
+    /// </remarks>
+    public static bool IsAlphaToMaskEnabled(TranslatedPass pass, ShaderLabDocument shader, SerializedMaterialDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(pass);
+        ArgumentNullException.ThrowIfNull(shader);
+        ArgumentNullException.ThrowIfNull(document);
+
+        ShaderLabCommand? alphaToMask = FindLast(pass.Commands, "AlphaToMask");
+        return alphaToMask is not null && new StateReader(shader, document, []).ReadToggle(alphaToMask, false);
     }
 
     /// <summary>

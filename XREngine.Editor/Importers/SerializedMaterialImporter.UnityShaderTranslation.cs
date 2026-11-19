@@ -7,6 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Importers.SourceToon;
+using XREngine.ShaderTranslation.Compilation;
 using XREngine.ShaderTranslation.Diagnostics;
 using XREngine.ShaderTranslation.ShaderLab;
 using XREngine.ShaderTranslation.Translation;
@@ -67,9 +68,16 @@ public static partial class SerializedMaterialImporter
         }
 
         ShaderLabDocument shader = result.Document;
+        bool alphaToMask = ShaderLabRenderStateMapper.IsAlphaToMaskEnabled(pass, shader, document);
         List<XRShader> stages = new(pass.Stages.Count);
         foreach (TranslatedStage stage in pass.Stages)
-            stages.Add(new XRShader(MapShaderType(stage.Stage), stage.Glsl) { Name = $"{shader.Name} {pass.Label} {stage.Stage}" });
+        {
+            string glsl = stage.Glsl;
+            if (alphaToMask && stage.Stage == ShaderProgramStage.Fragment && !GlslPostProcessor.TryAddAlphaToMaskDiscard(glsl, out glsl))
+                warnings.Add($"Shader '{shader.Name}' pass {pass.Label}: AlphaToMask has no alpha discard, because the fragment stage has no single main function with a vec4 output at location 0.");
+
+            stages.Add(new XRShader(MapShaderType(stage.Stage), glsl) { Name = $"{shader.Name} {pass.Label} {stage.Stage}" });
+        }
 
         XRTexture?[] textures = ResolveTranslatedTextures(document, resolver, warnings, shader, pass);
         material = new XRMaterial(textures, stages)
