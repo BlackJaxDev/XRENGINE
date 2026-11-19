@@ -6,6 +6,20 @@
 #include "UnityCG.cginc"
 #include "UnityStandardConfig.cginc"
 
+// Unity defines these in UnityStandardUtils.cginc, not in UnityCG.cginc. Shaders that define their own copies
+// test UNITY_STANDARD_UTILS_INCLUDED, so the definitions must stay in this file.
+float3 UnpackScaleNormalDXT5nm(float4 packedNormal, float scale)
+{
+    float3 normal;
+    normal.xy = (packedNormal.wy * 2.0 - 1.0) * scale;
+    normal.z = sqrt(1.0 - saturate(dot(normal.xy, normal.xy)));
+    return normal;
+}
+
+float3 UnpackScaleNormalRGorAG(float4 packedNormal, float scale) { return UnpackNormalWithScale(packedNormal, scale); }
+
+float3 UnpackScaleNormal(float4 packedNormal, float scale) { return UnpackScaleNormalRGorAG(packedNormal, scale); }
+
 float SpecularStrength(float3 specular) { return max(max(specular.r, specular.g), specular.b); }
 
 float3 EnergyConservationBetweenDiffuseAndSpecular(float3 albedo, float3 specColor, out float oneMinusReflectivity)

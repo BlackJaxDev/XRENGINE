@@ -222,8 +222,6 @@ float3 UnpackNormalWithScale(float4 packedNormal, float scale)
     return normal;
 }
 
-float3 UnpackScaleNormal(float4 packedNormal, float scale) { return UnpackNormalWithScale(packedNormal, scale); }
-
 // Packing.
 float4 EncodeFloatRGBA(float value)
 {

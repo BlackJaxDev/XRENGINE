@@ -15,7 +15,7 @@ The translator is in an early state. It is a library, a command-line tool, and a
 3. `ShaderVariantSelector` selects one keyword from each `multi_compile` and `shader_feature` set. The first enabled keyword wins. If no keyword in a set is enabled, the selector uses the empty option, or the first keyword when the set has no empty option.
 4. `ShaderPassAssembler` writes one HLSL unit for each stage. The unit has the Unity defines, the selected keywords, the legacy conversion include, the `CGINCLUDE` or `HLSLINCLUDE` blocks, and the pass program. `#line` directives keep compiler messages on the source lines of the `.shader` file.
 5. `ShaderIncludeExpander` replaces each `#include` with the file text, so that the next step can see all declarations. `#line` directives keep the original file names and line numbers. When a file includes a guarded file that is still being expanded higher in the include chain, the expander leaves that include out, because the guard is already defined.
-6. `SwitchSelectorRewriter` converts each `switch` selector to `int`. `StaticConstRewriter` removes `const` from a `static const` variable whose initializer calls a function. `GlobalWriteRewriter` gives each global variable that the code writes to a private copy, and removes initializers of shader parameters. See [Legacy HLSL Rules](#legacy-hlsl-rules).
+6. `SwitchSelectorRewriter` converts each `switch` selector to `int`. `MatrixConstructorRewriter` converts matrix constructors that mix scalars and vectors. `StaticConstRewriter` removes `const` from a `static const` variable whose initializer calls a function. `GlobalWriteRewriter` gives each global variable that the code writes to a private copy, and removes initializers of shader parameters. See [Legacy HLSL Rules](#legacy-hlsl-rules).
 7. `SlangSpirvCompiler` runs `slangc` with row-major matrix layout and writes SPIR-V and reflection JSON. It turns off the warnings for code that FXC accepts without a warning. If the compile fails, the errors come before the warnings in the diagnostic text.
 8. `SpirvCrossGlslEmitter` runs `spirv-cross` and writes desktop GLSL 4.60.
 9. `GlslPostProcessor` changes the GLSL for the engine:
@@ -33,6 +33,7 @@ Unity compiles HLSL with the legacy FXC rules. Slang is stricter, so the transla
 - **Implicit truncation.** FXC converts a larger vector or matrix to a smaller one without a cast, for example `float2 uv = worldPos;` or `float x = tex2D(...);`. FXC also accepts mixed sizes in operators, for example `float2 + float4`, and uses the leading components. `UnityCompat/HLSLLegacyConversions.cginc` declares these conversions and operators for Slang. The assembler includes it in every program.
 - **Mixed sizes in functions and products.** The built-in functions such as `min`, `max`, `pow`, `dot`, and `distance` are generic over one vector type, so the conversions do not apply to them. The same file declares overloads for arguments of different sizes, and for one vector and one scalar argument. The overloads are generic over the component type, as the built-in functions are, and have a low overload rank, so that the built-in function wins when it also matches. It also declares `lerp` with end points of different sizes, and `mul` for a matrix and a smaller or larger vector.
 - **Component type conversions.** The file declares implicit constructors between vectors with the same size and a different component type, for example `int2(uv)`. Without them, the scalar truncations make Slang resolve `int2(uv)` in a generic call to an invalid vector of vectors.
+- **Mixed matrix constructors.** FXC builds a matrix from any mix of scalars and vectors with the correct component count, for example `float4x4(red, 0, green, 0, blue, 0, 0, 0, 0, 1)` with `float3` rows. Slang accepts one argument, one vector for each row, or one scalar for each component. `MatrixConstructorRewriter` changes a constructor with another argument count to `float4x4(XrMatrixComponentsStart().add(red).add(0)...toFloat4x4())`. The `XrMatrixComponents` type in `HLSLLegacyConversions.cginc` collects the components in row order, and Slang selects the `add` overload from each argument type.
 - **Float switch selectors.** FXC accepts `switch (_Mode)` on a `float`. Slang requires an integer, so `SwitchSelectorRewriter` changes the selector to `int(_Mode)`.
 - **Writes to globals.** FXC lets a function write to a global variable, for example `_Time.y += 10;`. The write changes a private copy for the current invocation. `GlobalWriteRewriter` renames the shader parameter to `name_xrUniform` and declares `static T name = name_xrUniform;`. The post-processor gives the parameter its original name in the GLSL, so material binding does not change. The engine values in the compatibility includes, such as `_Time` and `_ScreenParams`, are static copies for the same reason.
 
@@ -101,7 +102,7 @@ Unity gives every mesh tangents, and many Unity shaders normalize the tangent. A
 - `UnityStandardShadow.cginc` gives `vertShadowCaster` and `fragShadowCaster`. The blended modes clip at an alpha of 0.5, because the engine shadow pass has no dither pattern.
 - `UnityUI.cginc` gives the UI clipping helpers. `UnityMetaPass.cginc` gives declarations only, because the engine skips `Meta` passes.
 
-Shadow attenuation is 1 for now. Add a missing Unity name to the correct include file, not to the translator.
+Shadow attenuation is 1 for now. Add a missing Unity name to the correct include file, not to the translator. Use the same file as Unity: many shaders define their own copy of a Unity function and test the include guard of the Unity file, for example `UNITY_STANDARD_UTILS_INCLUDED` for `UnpackScaleNormal`. A definition in another file then gives a duplicate function.
 
 ## Command-Line Tool
 
@@ -170,6 +171,7 @@ The Vulkan SDK contains both tools. If a tool is missing, the translator reports
 - `XREngine.ShaderTranslation/Preprocessing/ShaderIncludeExpander.cs`
 - `XREngine.ShaderTranslation/Preprocessing/GlobalWriteRewriter.cs`
 - `XREngine.ShaderTranslation/Preprocessing/SwitchSelectorRewriter.cs`
+- `XREngine.ShaderTranslation/Preprocessing/MatrixConstructorRewriter.cs`
 - `XREngine.ShaderTranslation/Preprocessing/StaticConstRewriter.cs`
 - `XREngine.ShaderTranslation/Translation/ShaderVariantSelector.cs`
 - `XREngine.ShaderTranslation/Compilation/SlangSpirvCompiler.cs`

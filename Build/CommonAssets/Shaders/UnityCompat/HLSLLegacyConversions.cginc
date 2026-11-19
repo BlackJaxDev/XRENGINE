@@ -225,4 +225,56 @@ float3 mul(float2 v, float3x3 m) { return v.x * m[0] + v.y * m[1]; }
 float3 mul(float3x3 m, float4 v) { return mul(m, v.xyz); }
 float3 mul(float4 v, float3x3 m) { return mul(v.xyz, m); }
 
+// FXC builds a matrix from any mix of scalars and vectors with the correct component count, for example
+// float4x4(red, 0, green, 0, blue, 0, 0, 0, 0, 1) with float3 rows. Slang accepts only all scalars or one
+// vector for each row. MatrixConstructorRewriter changes such a constructor to a chain of add calls on this
+// type, which collects the components in row order. Slang selects the add overload from the argument type.
+struct XrMatrixComponents
+{
+    float values[16];
+    int count;
+
+    XrMatrixComponents add(float value)
+    {
+        XrMatrixComponents result = this;
+        result.values[result.count] = value;
+        result.count = result.count + 1;
+        return result;
+    }
+
+    XrMatrixComponents add(float2 value) { return add(value.x).add(value.y); }
+    XrMatrixComponents add(float3 value) { return add(value.x).add(value.y).add(value.z); }
+    XrMatrixComponents add(float4 value) { return add(value.x).add(value.y).add(value.z).add(value.w); }
+
+#define XR_MATRIX_COMPONENTS_TO(R, C) \
+    float##R##x##C toFloat##R##x##C() \
+    { \
+        float##R##x##C result; \
+        for (int row = 0; row < R; row++) \
+            for (int column = 0; column < C; column++) \
+                result[row][column] = values[row * C + column]; \
+        return result; \
+    }
+
+    XR_MATRIX_COMPONENTS_TO(2, 2)
+    XR_MATRIX_COMPONENTS_TO(2, 3)
+    XR_MATRIX_COMPONENTS_TO(2, 4)
+    XR_MATRIX_COMPONENTS_TO(3, 2)
+    XR_MATRIX_COMPONENTS_TO(3, 3)
+    XR_MATRIX_COMPONENTS_TO(3, 4)
+    XR_MATRIX_COMPONENTS_TO(4, 2)
+    XR_MATRIX_COMPONENTS_TO(4, 3)
+    XR_MATRIX_COMPONENTS_TO(4, 4)
+#undef XR_MATRIX_COMPONENTS_TO
+};
+
+XrMatrixComponents XrMatrixComponentsStart()
+{
+    XrMatrixComponents result;
+    for (int index = 0; index < 16; index++)
+        result.values[index] = 0.0;
+    result.count = 0;
+    return result;
+}
+
 #endif
