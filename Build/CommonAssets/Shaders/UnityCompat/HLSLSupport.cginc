@@ -17,6 +17,7 @@
 #define UNITY_NO_DXT5nm 0
 #define UNITY_SUPPORT_DEPTH_FETCH 1
 #define UNITY_INITIALIZE_OUTPUT(type, name) name = (type)0
+#define UNITY_PROJ_COORD(a) a
 #define UNITY_BRANCH [branch]
 #define UNITY_FLATTEN [flatten]
 #define UNITY_UNROLL [unroll]
@@ -70,6 +71,7 @@
 float4 tex2D(Sampler2D s, float2 uv) { return s.Sample(uv); }
 float4 tex2D(Sampler2D s, float2 uv, float2 ddxUv, float2 ddyUv) { return s.SampleGrad(uv, ddxUv, ddyUv); }
 float4 tex2D(Sampler2D s, float3 uvCompare) { return s.Sample(uvCompare.xy); }
+float4 tex2D(Sampler2D s, float4 uv) { return s.Sample(uv.xy); }
 float4 tex2Dlod(Sampler2D s, float4 uvLod) { return s.SampleLevel(uvLod.xy, uvLod.w); }
 float4 tex2Dbias(Sampler2D s, float4 uvBias) { return s.SampleBias(uvBias.xy, uvBias.w); }
 float4 tex2Dgrad(Sampler2D s, float2 uv, float2 ddxUv, float2 ddyUv) { return s.SampleGrad(uv, ddxUv, ddyUv); }
@@ -137,6 +139,8 @@ float4 texCUBEbias(SamplerCube s, float4 directionBias) { return s.SampleBias(di
 #define UNITY_DECLARE_SCREENSPACE_SHADOWMAP(tex) Sampler2D tex
 #define UNITY_SAMPLE_SCREENSPACE_TEXTURE(tex, uv) tex2D(tex, uv)
 #define UNITY_SAMPLE_SCREEN_SHADOW(tex, uv) tex2Dproj(tex, uv).r
+// The engine stores one-channel textures in the red channel.
+#define UNITY_SAMPLE_1CHANNEL(x, y) (tex2D(x, y).r)
 #define UNITY_DECLARE_FRAMEBUFFER_INPUT_FLOAT(idx) Sampler2D _UnityFBInput##idx
 #define UNITY_READ_FRAMEBUFFER_INPUT(idx, pos) tex2D(_UnityFBInput##idx, (pos).xy)
 

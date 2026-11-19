@@ -77,9 +77,15 @@ public sealed class SlangStageReflection
 
         if (element.TryGetProperty("semanticName", out JsonElement semanticName))
         {
+            string semantic = (semanticName.GetString() ?? string.Empty).ToUpperInvariant();
+            // System values such as SV_VertexID come from the pipeline, not from a vertex buffer.
+            // Unity accepts SV_POSITION as the vertex position, so it stays an input.
+            if (semantic.StartsWith("SV_", StringComparison.Ordinal) && semantic != "SV_POSITION")
+                return;
+
             int semanticIndex = element.TryGetProperty("semanticIndex", out JsonElement indexElement) ? indexElement.GetInt32() : 0;
             inputs.Add(new VertexInputReflection(
-                (semanticName.GetString() ?? string.Empty).ToUpperInvariant(),
+                semantic,
                 semanticIndex,
                 location,
                 GetComponentCount(element)));

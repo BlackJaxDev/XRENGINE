@@ -52,8 +52,10 @@ public sealed class SlangSpirvCompiler(ExternalTool slangc)
             "-entry", entryPoint,
             "-stage", ToSlangStage(stage),
             "-matrix-layout-row-major",
-            // Unity programs declare material properties as plain globals.
-            "-warnings-disable", "39019",
+            // These warnings are about code that FXC accepts without a warning, so Unity programs cause many of them:
+            // 39019 material properties as plain globals, 15205 an undefined identifier in #if (FXC also uses zero),
+            // 30081 implicit conversions, and 30056 a vector ?: operator, which FXC also evaluates per component.
+            "-warnings-disable", "39019,15205,30081,30056",
             "-o", spirvPath,
             "-reflection-json", reflectionPath,
         ];
@@ -65,7 +67,7 @@ public sealed class SlangSpirvCompiler(ExternalTool slangc)
 
         ExternalToolResult result = await Tool.RunAsync(arguments, workDirectory, cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0 || !File.Exists(spirvPath))
-            throw new ShaderCompileException("slangc", result.FailureText);
+            throw new ShaderCompileException("slangc", SlangDiagnosticText.OrderErrorsFirst(result.FailureText));
 
         byte[] spirv = await File.ReadAllBytesAsync(spirvPath, cancellationToken).ConfigureAwait(false);
         string reflectionJson = await File.ReadAllTextAsync(reflectionPath, cancellationToken).ConfigureAwait(false);

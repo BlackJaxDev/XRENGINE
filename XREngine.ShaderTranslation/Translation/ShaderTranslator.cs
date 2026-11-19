@@ -193,7 +193,8 @@ public sealed class ShaderTranslator(SlangSpirvCompiler compiler, SpirvCrossGlsl
             try
             {
                 string assembled = ShaderPassAssembler.Assemble(document, includeBlocks, pass.Program, stage, entryPoint, kind.Value, pragmas.Target, keywords);
-                globals = GlobalWriteRewriter.Rewrite(includeExpander.Expand(assembled, shaderDirectory, document.SourcePath.Replace('\\', '/')));
+                string expanded = includeExpander.Expand(assembled, shaderDirectory, document.SourcePath.Replace('\\', '/'));
+                globals = GlobalWriteRewriter.Rewrite(StaticConstRewriter.Rewrite(SwitchSelectorRewriter.Rewrite(expanded)));
                 hlsl = globals.Text;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)

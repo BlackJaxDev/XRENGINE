@@ -9,6 +9,9 @@
 #ifndef UNITY_SHADER_VARIABLES_INCLUDED
 #define UNITY_SHADER_VARIABLES_INCLUDED
 
+// HLSLPROGRAM blocks get no implicit includes, so the Unity includes that need the platform macros include them.
+#include "HLSLSupport.cginc"
+
 uniform float4x4 ModelMatrix;
 uniform float3 CameraPosition;
 uniform float RenderTime;
@@ -89,6 +92,18 @@ float4x4 XR_Inverse(float4x4 m)
 #define UNITY_MATRIX_T_MV transpose(UNITY_MATRIX_MV)
 #define UNITY_MATRIX_IT_MV transpose(mul(UNITY_MATRIX_I_M, UNITY_MATRIX_I_V))
 #define UNITY_MATRIX_MVP mul(UNITY_MATRIX_VP, UNITY_MATRIX_M)
+
+// Unity camera space looks along +Z. Engine view space looks along -Z, so the Z axis changes sign.
+#define XR_FLIP_Z float4x4(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+#define unity_CameraToWorld mul(UNITY_MATRIX_I_V, XR_FLIP_Z)
+#define unity_WorldToCamera mul(XR_FLIP_Z, UNITY_MATRIX_V)
+
+// Fixed-function texture matrices. The engine has none, so they are identity.
+#define XR_IDENTITY_4X4 float4x4(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+#define UNITY_MATRIX_TEXTURE0 XR_IDENTITY_4X4
+#define UNITY_MATRIX_TEXTURE1 XR_IDENTITY_4X4
+#define UNITY_MATRIX_TEXTURE2 XR_IDENTITY_4X4
+#define UNITY_MATRIX_TEXTURE3 XR_IDENTITY_4X4
 
 // Camera and screen.
 // Unity shaders can write to these globals, because Unity compiles in a legacy mode that allows it.
@@ -172,9 +187,14 @@ float4 XR_MainLightColor()
 #define unity_4LightPosY0 float4(0.0, 0.0, 0.0, 0.0)
 #define unity_4LightPosZ0 float4(0.0, 0.0, 0.0, 0.0)
 #define unity_4LightAtten0 float4(0.0, 0.0, 0.0, 0.0)
-#define unity_LightColor XR_Unsupported_unity_LightColor
+// Vertex lights are not supplied. The colors are zero, so Shade4PointLights adds nothing.
+static float4 unity_LightColor[8];
 #define unity_OcclusionMaskSelector float4(1.0, 0.0, 0.0, 0.0)
 #define unity_ProbesOcclusion float4(1.0, 1.0, 1.0, 1.0)
+
+// Lightmaps. Translated passes have no lightmap, so the scale and offset are identity.
+#define unity_LightmapST float4(1.0, 1.0, 0.0, 0.0)
+#define unity_DynamicLightmapST float4(1.0, 1.0, 0.0, 0.0)
 
 // Reflection probe. The binding mapper binds the engine environment cubemap.
 TextureCube unity_SpecCube0;
@@ -192,5 +212,8 @@ SamplerState samplerunity_SpecCube0;
 
 // VRChat globals (_VRChatMirrorMode and others) are not defined here. Shaders declare
 // them as plain uniforms, which keep their zero default outside VRChat.
+
+// Unity programs can call UnityObjectToClipPos without an include, because the implicit includes supply it.
+#include "UnityShaderUtilities.cginc"
 
 #endif // UNITY_SHADER_VARIABLES_INCLUDED

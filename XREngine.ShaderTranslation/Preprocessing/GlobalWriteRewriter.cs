@@ -23,6 +23,11 @@ namespace XREngine.ShaderTranslation.Preprocessing;
 /// the private copy has the same value as the parameter until code writes to it.
 /// </para>
 /// <para>
+/// FXC also accepts an initializer on a shader parameter, for example <c>uniform float x = 0.0;</c>, and
+/// stores it as a default value that Unity does not use. Slang rejects it. The rewriter removes the
+/// initializer of every numeric shader parameter.
+/// </para>
+/// <para>
 /// The rewriter keeps the line count, so <c>#line</c> directives stay correct.
 /// </para>
 /// </remarks>
@@ -55,7 +60,14 @@ public static partial class GlobalWriteRewriter
         Initializer,
     }
 
-    private sealed record GlobalDeclaration(string Name, string TypeText, string ArrayText, HlslToken NameToken, int InsertionPosition, int BufferId);
+    private sealed record GlobalDeclaration(string Name, string TypeText, string ArrayText, HlslToken NameToken, int InsertionPosition, int BufferId)
+    {
+        /// <summary>Gets or sets the text position of the initializer, from the <c>=</c> token, or -1.</summary>
+        public int InitializerStart { get; set; } = -1;
+
+        /// <summary>Gets or sets the text position after the last initializer token.</summary>
+        public int InitializerEnd { get; set; } = -1;
+    }
 
     /// <summary>Rewrites the written globals of a translation unit.</summary>
     public static GlobalWriteRewriteResult Rewrite(string text)
@@ -69,10 +81,18 @@ public static partial class GlobalWriteRewriter
         Collect(tokens, declarations, written, bufferEnds);
 
         List<GlobalDeclaration> rewritten = declarations.FindAll(declaration => written.Contains(declaration.Name));
-        if (rewritten.Count == 0)
+        List<(int Position, int Sequence, int Length, string Replacement)> edits = [];
+        foreach (GlobalDeclaration declaration in declarations)
+        {
+            if (declaration.InitializerStart < 0)
+                continue;
+            int length = declaration.InitializerEnd - declaration.InitializerStart;
+            edits.Add((declaration.InitializerStart, edits.Count, length, BlankKeepingLines(text.AsSpan(declaration.InitializerStart, length))));
+        }
+
+        if (edits.Count == 0 && rewritten.Count == 0)
             return new GlobalWriteRewriteResult(text, []);
 
-        List<(int Position, int Sequence, int Length, string Replacement)> edits = [];
         foreach (GlobalDeclaration declaration in rewritten)
         {
             edits.Add((declaration.NameToken.Start, edits.Count, declaration.NameToken.Text.Length, declaration.Name + UniformSuffix));
@@ -242,7 +262,8 @@ public static partial class GlobalWriteRewriter
                 index = close + 1;
             }
 
-            declarations.Add(new GlobalDeclaration(name.Text, type.ToString(), array.ToString(), name, insertion, bufferId));
+            GlobalDeclaration declaration = new(name.Text, type.ToString(), array.ToString(), name, insertion, bufferId);
+            declarations.Add(declaration);
 
             // Skip a semantic, a register binding, or an initializer up to the next declarator.
             int depth = 0;
@@ -255,11 +276,23 @@ public static partial class GlobalWriteRewriter
                     depth--;
                 else if (depth == 0 && token.IsSymbol(","))
                     break;
+                else if (depth == 0 && token.IsSymbol("=") && declaration.InitializerStart < 0)
+                    declaration.InitializerStart = token.Start;
+                if (declaration.InitializerStart >= 0)
+                    declaration.InitializerEnd = token.End;
                 index++;
             }
 
             index++;
         }
+    }
+
+    private static string BlankKeepingLines(ReadOnlySpan<char> text)
+    {
+        StringBuilder builder = new(text.Length);
+        foreach (char character in text)
+            builder.Append(character is '\n' or '\r' ? character : ' ');
+        return builder.ToString();
     }
 
     private static bool IsWrite(List<HlslToken> tokens, int index)

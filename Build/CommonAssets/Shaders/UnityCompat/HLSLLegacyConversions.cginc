@@ -10,6 +10,10 @@
 
 // A high cost makes overload resolution prefer every exact or widening match.
 #define XR_TRUNCATION_COST 900
+// Costs of component type conversions. Integer to float is preferred over float to integer.
+#define XR_INTEGER_TO_FLOAT_COST 400
+#define XR_FLOAT_TO_INTEGER_COST 800
+#define XR_UNSIGNED_TO_SIGNED_COST 300
 
 // Vector to smaller vector. The extensions name concrete element types, because a generic
 // element type would also match vector types and make constructors such as int2(0, x) ambiguous.
@@ -47,6 +51,21 @@ XR_SCALAR_TRUNCATION(int, float)
 XR_SCALAR_TRUNCATION(int, uint)
 XR_SCALAR_TRUNCATION(uint, uint)
 XR_SCALAR_TRUNCATION(uint, float)
+
+// Explicit constructors between vectors of the same size and a different component type, for example int2(uv).
+// The built-in constructor does the same. Without an exact constructor, the scalar truncations above let Slang
+// resolve int2(uv) in a generic call as a splat of int(uv), which gives an invalid vector of vectors.
+// The constructors are also implicit, because an explicit constructor hides the built-in implicit conversion.
+#define XR_VECTOR_COMPONENT_CAST(TYPE, SOURCE, COST) \
+    extension vector<TYPE, 2> { __implicit_conversion(COST) __init(vector<SOURCE, 2> v) { this = vector<TYPE, 2>(TYPE(v.x), TYPE(v.y)); } } \
+    extension vector<TYPE, 3> { __implicit_conversion(COST) __init(vector<SOURCE, 3> v) { this = vector<TYPE, 3>(TYPE(v.x), TYPE(v.y), TYPE(v.z)); } } \
+    extension vector<TYPE, 4> { __implicit_conversion(COST) __init(vector<SOURCE, 4> v) { this = vector<TYPE, 4>(TYPE(v.x), TYPE(v.y), TYPE(v.z), TYPE(v.w)); } }
+
+XR_VECTOR_COMPONENT_CAST(float, int, XR_INTEGER_TO_FLOAT_COST)
+XR_VECTOR_COMPONENT_CAST(float, uint, XR_INTEGER_TO_FLOAT_COST)
+XR_VECTOR_COMPONENT_CAST(int, float, XR_FLOAT_TO_INTEGER_COST)
+XR_VECTOR_COMPONENT_CAST(uint, float, XR_FLOAT_TO_INTEGER_COST)
+XR_VECTOR_COMPONENT_CAST(int, uint, XR_UNSIGNED_TO_SIGNED_COST)
 
 // Matrix to smaller square matrix.
 extension matrix<float, 3, 3>
@@ -116,5 +135,94 @@ XR_SCALAR_TRUNCATING_ASSIGNMENT(+)
 XR_SCALAR_TRUNCATING_ASSIGNMENT(-)
 XR_SCALAR_TRUNCATING_ASSIGNMENT(*)
 XR_SCALAR_TRUNCATING_ASSIGNMENT(/)
+
+// Intrinsic functions with vector arguments of different sizes. The built-in functions are generic
+// over one vector type, so the implicit conversions above do not apply to them. The overloads are generic
+// over the component type, as the built-in functions are. A non-generic overload would win over every
+// built-in function and make calls such as pow(2, 3) ambiguous. A low overload rank makes the built-in
+// function win when it also matches.
+#define XR_MIXED_FUNCTION_RANK [OverloadRank(-100)]
+
+#define XR_MIXED_BINARY_FUNCTION(NAME, SIZE_A, SIZE_B, SIZE, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_FUNCTION_RANK __generic<T : __BuiltinFloatingPointType> \
+    vector<T, SIZE> NAME(vector<T, SIZE_A> a, vector<T, SIZE_B> b) { return NAME(a SWIZZLE_A, b SWIZZLE_B); }
+
+#define XR_MIXED_SCALAR_FUNCTION(NAME, SIZE_A, SIZE_B, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_FUNCTION_RANK __generic<T : __BuiltinFloatingPointType> \
+    T NAME(vector<T, SIZE_A> a, vector<T, SIZE_B> b) { return NAME(a SWIZZLE_A, b SWIZZLE_B); }
+
+#define XR_MIXED_FUNCTIONS(SIZE_A, SIZE_B, SIZE, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_BINARY_FUNCTION(min, SIZE_A, SIZE_B, SIZE, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_BINARY_FUNCTION(max, SIZE_A, SIZE_B, SIZE, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_BINARY_FUNCTION(pow, SIZE_A, SIZE_B, SIZE, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_BINARY_FUNCTION(step, SIZE_A, SIZE_B, SIZE, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_BINARY_FUNCTION(atan2, SIZE_A, SIZE_B, SIZE, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_BINARY_FUNCTION(fmod, SIZE_A, SIZE_B, SIZE, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_SCALAR_FUNCTION(dot, SIZE_A, SIZE_B, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_SCALAR_FUNCTION(distance, SIZE_A, SIZE_B, SWIZZLE_A, SWIZZLE_B)
+
+XR_MIXED_FUNCTIONS(2, 3, 2, , .xy)
+XR_MIXED_FUNCTIONS(2, 4, 2, , .xy)
+XR_MIXED_FUNCTIONS(3, 4, 3, , .xyz)
+XR_MIXED_FUNCTIONS(3, 2, 2, .xy, )
+XR_MIXED_FUNCTIONS(4, 2, 2, .xy, )
+XR_MIXED_FUNCTIONS(4, 3, 3, .xyz, )
+
+// lerp with end points of different sizes and a scalar weight.
+#define XR_MIXED_LERP(SIZE_A, SIZE_B, SIZE, SWIZZLE_A, SWIZZLE_B) \
+    XR_MIXED_FUNCTION_RANK __generic<T : __BuiltinFloatingPointType> \
+    vector<T, SIZE> lerp(vector<T, SIZE_A> a, vector<T, SIZE_B> b, T t) { return lerp(a SWIZZLE_A, b SWIZZLE_B, vector<T, SIZE>(t)); }
+
+XR_MIXED_LERP(2, 3, 2, , .xy)
+XR_MIXED_LERP(2, 4, 2, , .xy)
+XR_MIXED_LERP(3, 4, 3, , .xyz)
+XR_MIXED_LERP(3, 2, 2, .xy, )
+XR_MIXED_LERP(4, 2, 2, .xy, )
+XR_MIXED_LERP(4, 3, 3, .xyz, )
+
+// lerp with one scalar end point. Without these exact overloads, the scalar would match several of the overloads above.
+#define XR_SCALAR_ARGUMENT_LERP(SIZE) \
+    __generic<T : __BuiltinFloatingPointType> vector<T, SIZE> lerp(vector<T, SIZE> a, T b, T t) { return lerp(a, vector<T, SIZE>(b), vector<T, SIZE>(t)); } \
+    __generic<T : __BuiltinFloatingPointType> vector<T, SIZE> lerp(T a, vector<T, SIZE> b, T t) { return lerp(vector<T, SIZE>(a), b, vector<T, SIZE>(t)); }
+
+XR_SCALAR_ARGUMENT_LERP(2)
+XR_SCALAR_ARGUMENT_LERP(3)
+XR_SCALAR_ARGUMENT_LERP(4)
+
+// A scalar argument would match several mixed-size overloads through promotion. These exact overloads
+// remove that ambiguity. They give the same result as the built-in functions.
+#define XR_SCALAR_ARGUMENT_FUNCTION_SIZE(NAME, SIZE) \
+    __generic<T : __BuiltinFloatingPointType> vector<T, SIZE> NAME(vector<T, SIZE> a, T b) { return NAME(a, vector<T, SIZE>(b)); } \
+    __generic<T : __BuiltinFloatingPointType> vector<T, SIZE> NAME(T a, vector<T, SIZE> b) { return NAME(vector<T, SIZE>(a), b); }
+
+#define XR_SCALAR_ARGUMENT_DOT(SIZE) \
+    __generic<T : __BuiltinFloatingPointType> T dot(vector<T, SIZE> a, T b) { return dot(a, vector<T, SIZE>(b)); } \
+    __generic<T : __BuiltinFloatingPointType> T dot(T a, vector<T, SIZE> b) { return dot(vector<T, SIZE>(a), b); }
+
+#define XR_SCALAR_ARGUMENT_FUNCTIONS(SIZE) \
+    XR_SCALAR_ARGUMENT_FUNCTION_SIZE(min, SIZE) \
+    XR_SCALAR_ARGUMENT_FUNCTION_SIZE(max, SIZE) \
+    XR_SCALAR_ARGUMENT_FUNCTION_SIZE(pow, SIZE) \
+    XR_SCALAR_ARGUMENT_FUNCTION_SIZE(step, SIZE) \
+    XR_SCALAR_ARGUMENT_FUNCTION_SIZE(atan2, SIZE) \
+    XR_SCALAR_ARGUMENT_FUNCTION_SIZE(fmod, SIZE) \
+    XR_SCALAR_ARGUMENT_DOT(SIZE)
+
+XR_SCALAR_ARGUMENT_FUNCTIONS(2)
+XR_SCALAR_ARGUMENT_FUNCTIONS(3)
+XR_SCALAR_ARGUMENT_FUNCTIONS(4)
+
+// Matrix and vector products where the vector is smaller than the matrix. FXC uses the leading
+// rows or columns of the matrix. The result has the full matrix size, so that code can truncate it further.
+float4 mul(float4x4 m, float3 v) { return float4(dot(m[0].xyz, v), dot(m[1].xyz, v), dot(m[2].xyz, v), dot(m[3].xyz, v)); }
+float4 mul(float4x4 m, float2 v) { return float4(dot(m[0].xy, v), dot(m[1].xy, v), dot(m[2].xy, v), dot(m[3].xy, v)); }
+float3 mul(float3x3 m, float2 v) { return float3(dot(m[0].xy, v), dot(m[1].xy, v), dot(m[2].xy, v)); }
+float4 mul(float3 v, float4x4 m) { return v.x * m[0] + v.y * m[1] + v.z * m[2]; }
+float4 mul(float2 v, float4x4 m) { return v.x * m[0] + v.y * m[1]; }
+float3 mul(float2 v, float3x3 m) { return v.x * m[0] + v.y * m[1]; }
+
+// Matrix and vector products where the vector is larger than the matrix. FXC uses the leading vector components.
+float3 mul(float3x3 m, float4 v) { return mul(m, v.xyz); }
+float3 mul(float4 v, float3x3 m) { return mul(v.xyz, m); }
 
 #endif

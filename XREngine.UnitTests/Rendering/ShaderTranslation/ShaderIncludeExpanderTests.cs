@@ -54,6 +54,20 @@ public sealed class ShaderIncludeExpanderTests
     }
 
     [Test]
+    public void Expand_MutualGuardedIncludes_ExpandEachFileOnce()
+    {
+        File.WriteAllText(Path.Combine(_root, "Shaders", "First.cginc"), "// First file.\n#ifndef FIRST_INCLUDED\n#define FIRST_INCLUDED\n#include \"Second.cginc\"\nfloat first;\n#endif\n");
+        File.WriteAllText(Path.Combine(_root, "Shaders", "Second.cginc"), "#if !defined(SECOND_INCLUDED)\n#define SECOND_INCLUDED\n#include \"First.cginc\"\nfloat second;\n#endif\n");
+        ShaderIncludeExpander expander = new([]);
+
+        string expanded = expander.Expand("#include \"First.cginc\"\n", Path.Combine(_root, "Shaders"), "Unit.shader");
+
+        expander.IncludedFiles.Count.ShouldBe(2);
+        expanded.Split("float first;").Length.ShouldBe(2);
+        expanded.Split("float second;").Length.ShouldBe(2);
+    }
+
+    [Test]
     public void Expand_IncludeInBlockComment_IsKept()
     {
         ShaderIncludeExpander expander = new([Path.Combine(_root, "Project")]);

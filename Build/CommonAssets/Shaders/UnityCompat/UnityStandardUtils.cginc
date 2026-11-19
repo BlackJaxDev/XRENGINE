@@ -54,7 +54,7 @@ float3 BoxProjectedCubemapDirection(float3 worldRefl, float3 worldPos, float4 cu
     float3 direction = normalize(worldRefl);
     float3 maxDistance = (boxMax.xyz - worldPos) / direction;
     float3 minDistance = (boxMin.xyz - worldPos) / direction;
-    float3 far = (direction > 0.0) ? maxDistance : minDistance;
+    float3 far = select(direction > 0.0, maxDistance, minDistance);
     float distance = min(min(far.x, far.y), far.z);
     return worldPos - cubemapCenter.xyz + direction * distance;
 }

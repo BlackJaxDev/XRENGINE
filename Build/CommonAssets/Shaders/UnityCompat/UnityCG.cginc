@@ -30,6 +30,13 @@
 #define unity_ColorSpaceLuminance float4(0.0396819152, 0.458021790, 0.00609653955, 1.0)
 #endif
 
+// A macro, not a function, so that static const initializers that use it stay compile-time constants.
+#ifdef UNITY_COLORSPACE_GAMMA
+#define IsGammaSpace() true
+#else
+#define IsGammaSpace() false
+#endif
+
 struct appdata_base
 {
     float4 vertex : POSITION;
@@ -77,11 +84,35 @@ struct v2f_img
 
 #define TRANSFORM_TEX(tex, name) ((tex).xy * name##_ST.xy + name##_ST.zw)
 
+float2 MultiplyUV(float4x4 textureMatrix, float2 uv) { return mul(textureMatrix, float4(uv, 0.0, 0.0)).xy; }
+
+// Full-screen image effect vertex stage.
+v2f_img vert_img(appdata_img v)
+{
+    v2f_img o = (v2f_img)0;
+    o.pos = UnityObjectToClipPos(v.vertex);
+    o.uv = v.texcoord;
+    return o;
+}
+
 // Space transforms.
 float3 UnityObjectToViewPos(float3 position) { return mul(UNITY_MATRIX_V, mul(unity_ObjectToWorld, float4(position, 1.0))).xyz; }
 float3 UnityObjectToViewPos(float4 position) { return UnityObjectToViewPos(position.xyz); }
 float4 UnityWorldToClipPos(float3 position) { return mul(UNITY_MATRIX_VP, float4(position, 1.0)); }
 float4 UnityViewToClipPos(float3 position) { return mul(UNITY_MATRIX_P, float4(position, 1.0)); }
+
+// Projects a view-space direction. Only the upper-left part of the projection matrix applies.
+float2 TransformViewToProjection(float2 direction)
+{
+    float4x4 projection = UNITY_MATRIX_P;
+    return float2(dot(projection[0].xy, direction), dot(projection[1].xy, direction));
+}
+
+float3 TransformViewToProjection(float3 direction)
+{
+    float4x4 projection = UNITY_MATRIX_P;
+    return float3(dot(projection[0].xyz, direction), dot(projection[1].xyz, direction), dot(projection[2].xyz, direction));
+}
 float3 UnityWorldToViewPos(float3 position) { return mul(UNITY_MATRIX_V, float4(position, 1.0)).xyz; }
 float3 UnityObjectToWorldDir(float3 direction) { return normalize(mul((float3x3)unity_ObjectToWorld, direction)); }
 float3 UnityWorldToObjectDir(float3 direction) { return normalize(mul((float3x3)unity_WorldToObject, direction)); }
@@ -125,6 +156,7 @@ float2 UnityStereoTransformScreenSpaceTex(float2 uv) { return uv; }
 float4 UnityStereoTransformScreenSpaceTex(float4 uv) { return uv; }
 float2 UnityStereoScreenSpaceUVAdjust(float2 uv, float4 scaleAndOffset) { return uv * scaleAndOffset.xy + scaleAndOffset.zw; }
 #define UnityStereoClamp(uv) (uv)
+#define TransformStereoScreenSpaceTex(uv, w) (uv)
 #define COMPUTE_EYEDEPTH(o) o = -UnityObjectToViewPos(v.vertex).z
 #define COMPUTE_VIEW_NORMAL normalize(mul((float3x3)UNITY_MATRIX_IT_MV, v.normal))
 
@@ -219,6 +251,31 @@ float3 DecodeHDR(float4 data, float4 decodeInstructions)
 
 float3 DecodeLightmap(float4 color) { return color.rgb; }
 
+// View-space normals packed in two channels with a stereographic projection.
+float2 EncodeViewNormalStereo(float3 normal)
+{
+    const float scale = 1.7777;
+    float2 encoded = normal.xy / (normal.z + 1.0);
+    encoded /= scale;
+    return encoded * 0.5 + 0.5;
+}
+
+float3 DecodeViewNormalStereo(float4 encoded)
+{
+    const float scale = 1.7777;
+    float3 projected = float3(encoded.xy * (2.0 * scale) - scale, 1.0);
+    float g = 2.0 / dot(projected.xyz, projected.xyz);
+    return float3(g * projected.xy, g - 1.0);
+}
+
+float4 EncodeDepthNormal(float depth, float3 normal) { return float4(EncodeViewNormalStereo(normal), EncodeFloatRG(depth)); }
+
+void DecodeDepthNormal(float4 encoded, out float depth, out float3 normal)
+{
+    depth = DecodeFloatRG(encoded.zw);
+    normal = DecodeViewNormalStereo(encoded);
+}
+
 // Ambient spherical harmonics. The engine supplies only the constant band.
 float3 SHEvalLinearL0L1(float4 normal)
 {
@@ -269,6 +326,7 @@ float4 UnityApplyLinearShadowBias(float4 clipPosition) { return clipPosition; }
 #define SHADOW_CASTER_FRAGMENT(i) return 0;
 
 // Miscellaneous.
+#define UNITY_OPAQUE_ALPHA(outputAlpha) outputAlpha = 1.0
 #define UNITY_OUTPUT_DEPTH(i) return 0
 #define UNITY_TRANSFER_DEPTH(oo)
 #define UNITY_EXTRACT_TBN_0(name)

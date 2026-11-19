@@ -58,12 +58,23 @@ public sealed class GlobalWriteRewriterTests
     [Test]
     public void Rewrite_IgnoresFunctionsInitializersAndDirectives()
     {
-        const string code = "#define SET(x) gValue = x\nfloat gValue;\nfloat table[2] = { 1, 2 };\nfloat Helper(float a);\nfloat Helper(float a) { float gValue = a; return gValue; }\n";
+        const string code = "#define SET(x) gValue = x\nfloat gValue;\nstatic const float table[2] = { 1, 2 };\nfloat Helper(float a);\nfloat Helper(float a) { float gValue = a; return gValue; }\n";
 
         GlobalWriteRewriteResult result = GlobalWriteRewriter.Rewrite(code);
 
         // The local declaration looks like a write. The private copy keeps the same value, so the rewrite is safe.
         result.RewrittenGlobals.ShouldBe(["gValue"]);
-        result.Text.ShouldStartWith("#define SET(x) gValue = x\nfloat gValue_xrUniform; static float gValue = gValue_xrUniform;\nfloat table[2] = { 1, 2 };\n");
+        result.Text.ShouldStartWith("#define SET(x) gValue = x\nfloat gValue_xrUniform; static float gValue = gValue_xrUniform;\nstatic const float table[2] = { 1, 2 };\n");
+    }
+
+    [Test]
+    public void Rewrite_ParameterInitializer_IsRemovedAndKeepsLines()
+    {
+        const string code = "uniform float gScale = 0.0f;\nfloat4 gTint = float4(1,\n2, 3, 4), gOther;\nstatic float gKept = 1;\n";
+
+        GlobalWriteRewriteResult result = GlobalWriteRewriter.Rewrite(code);
+
+        result.RewrittenGlobals.ShouldBeEmpty();
+        result.Text.ShouldBe("uniform float gScale       ;\nfloat4 gTint            \n        , gOther;\nstatic float gKept = 1;\n");
     }
 }

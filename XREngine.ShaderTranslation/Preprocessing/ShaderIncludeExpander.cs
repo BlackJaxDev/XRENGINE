@@ -20,6 +20,13 @@ namespace XREngine.ShaderTranslation.Preprocessing;
 /// reports it only when the branch is active.
 /// </para>
 /// <para>
+/// Include files can include each other, for example <c>UnityShaderVariables.cginc</c> and
+/// <c>UnityShaderUtilities.cginc</c>. When a file includes a file that is still being expanded higher in the
+/// include chain, and that file has an include guard or <c>#pragma once</c>, the expander leaves the include out.
+/// The guard is defined at that point, so the preprocessor would skip the text too. A recursive include of
+/// a file with no guard is an error.
+/// </para>
+/// <para>
 /// A file resolves from the directory of the including file first, then from the include directories in order.
 /// Unity resolves project paths such as <c>Assets/...</c> and <c>Packages/...</c> from the project root,
 /// so callers put the project root in the include directories.
@@ -35,6 +42,7 @@ public sealed partial class ShaderIncludeExpander(IReadOnlyList<string> includeD
 
     private readonly IReadOnlyList<string> _includeDirectories = includeDirectories ?? throw new ArgumentNullException(nameof(includeDirectories));
     private readonly Dictionary<string, string> _fileCache = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _activeFiles = new(StringComparer.Ordinal);
 
     /// <summary>Gets the files that the last expansion inserted, in first-use order.</summary>
     public List<string> IncludedFiles { get; } = [];
@@ -47,6 +55,7 @@ public sealed partial class ShaderIncludeExpander(IReadOnlyList<string> includeD
     {
         ArgumentNullException.ThrowIfNull(text);
         IncludedFiles.Clear();
+        _activeFiles.Clear();
         StringBuilder builder = new(text.Length * 2);
         Append(builder, text, sourceDirectory, sourcePath, 0);
         return builder.ToString();
@@ -93,17 +102,28 @@ public sealed partial class ShaderIncludeExpander(IReadOnlyList<string> includeD
                 throw new InvalidOperationException($"Include depth is more than {MaxDepth} at '{resolved}'. The includes are probably recursive.");
 
             string content = ReadFile(resolved);
+            bool once = PragmaOncePattern().IsMatch(content);
+            if (_activeFiles.Contains(resolved) && (once || IncludeGuardPattern().IsMatch(content)))
+            {
+                // The guard of the file is already defined here. Keep the line count.
+                builder.Append('\n');
+                logicalLine++;
+                continue;
+            }
+
             if (!IncludedFiles.Contains(resolved))
                 IncludedFiles.Add(resolved);
 
             string displayPath = resolved.Replace('\\', '/');
-            bool once = PragmaOncePattern().IsMatch(content);
             string guard = once ? "XR_INCLUDE_ONCE_" + StableHash(resolved) : string.Empty;
             if (once)
                 builder.Append("#ifndef ").Append(guard).Append("\n#define ").Append(guard).Append('\n');
 
             builder.Append("#line 1 \"").Append(displayPath).Append("\"\n");
+            bool added = _activeFiles.Add(resolved);
             Append(builder, content, Path.GetDirectoryName(resolved)!, displayPath, depth + 1);
+            if (added)
+                _activeFiles.Remove(resolved);
             if (once)
                 builder.Append("#endif\n");
 
@@ -190,4 +210,8 @@ public sealed partial class ShaderIncludeExpander(IReadOnlyList<string> includeD
 
     [GeneratedRegex(@"^\s*#\s*pragma\s+once\b", RegexOptions.CultureInvariant | RegexOptions.Multiline)]
     private static partial Regex PragmaOncePattern();
+
+    // The first directive of the file, after comments and blank lines, is #ifndef NAME or #if !defined(NAME), and the next one is #define NAME.
+    [GeneratedRegex(@"\A(?:\s+|//[^\n]*|/\*.*?\*/)*#\s*(?:ifndef\s+(?<name>\w+)|if\s+!\s*defined\s*\(\s*(?<name>\w+)\s*\))\s*\n\s*#\s*define\s+\k<name>\b", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex IncludeGuardPattern();
 }

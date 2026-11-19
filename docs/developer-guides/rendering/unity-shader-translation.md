@@ -1,6 +1,6 @@
 # Unity Shader Translation
 
-Last updated: 2026-11-18
+Last updated: 2026-11-19
 
 The Unity shader translator converts Unity built-in pipeline `.shader` files into engine GLSL. It parses ShaderLab, assembles each pass as HLSL, compiles the HLSL to SPIR-V with Slang, and converts the SPIR-V to GLSL 4.60 with SPIRV-Cross. A post-processor then changes the GLSL to use engine uniform names, sampler names, storage buffers, and vertex attribute locations.
 
@@ -14,9 +14,9 @@ The translator is in an early state. It is a library and a command-line tool. It
 2. `ShaderTranslator` selects the first subshader that has a normal pass with a program. It reads the `#pragma` lines of each pass with `ShaderProgramPragmas`.
 3. `ShaderVariantSelector` selects one keyword from each `multi_compile` and `shader_feature` set. The first enabled keyword wins. If no keyword in a set is enabled, the selector uses the empty option, or the first keyword when the set has no empty option.
 4. `ShaderPassAssembler` writes one HLSL unit for each stage. The unit has the Unity defines, the selected keywords, the legacy conversion include, the `CGINCLUDE` or `HLSLINCLUDE` blocks, and the pass program. `#line` directives keep compiler messages on the source lines of the `.shader` file.
-5. `ShaderIncludeExpander` replaces each `#include` with the file text, so that the next step can see all declarations. `#line` directives keep the original file names and line numbers.
-6. `GlobalWriteRewriter` gives each global variable that the code writes to a private copy. See [Legacy HLSL Rules](#legacy-hlsl-rules).
-7. `SlangSpirvCompiler` runs `slangc` with row-major matrix layout and writes SPIR-V and reflection JSON.
+5. `ShaderIncludeExpander` replaces each `#include` with the file text, so that the next step can see all declarations. `#line` directives keep the original file names and line numbers. When a file includes a guarded file that is still being expanded higher in the include chain, the expander leaves that include out, because the guard is already defined.
+6. `SwitchSelectorRewriter` converts each `switch` selector to `int`. `StaticConstRewriter` removes `const` from a `static const` variable whose initializer calls a function. `GlobalWriteRewriter` gives each global variable that the code writes to a private copy, and removes initializers of shader parameters. See [Legacy HLSL Rules](#legacy-hlsl-rules).
+7. `SlangSpirvCompiler` runs `slangc` with row-major matrix layout and writes SPIR-V and reflection JSON. It turns off the warnings for code that FXC accepts without a warning. If the compile fails, the errors come before the warnings in the diagnostic text.
 8. `SpirvCrossGlslEmitter` runs `spirv-cross` and writes desktop GLSL 4.60.
 9. `GlslPostProcessor` changes the GLSL for the engine:
    - It changes the default uniform block into loose uniforms.
@@ -31,9 +31,16 @@ The translator is in an early state. It is a library and a command-line tool. It
 Unity compiles HLSL with the legacy FXC rules. Slang is stricter, so the translator adds two compatibility steps:
 
 - **Implicit truncation.** FXC converts a larger vector or matrix to a smaller one without a cast, for example `float2 uv = worldPos;` or `float x = tex2D(...);`. FXC also accepts mixed sizes in operators, for example `float2 + float4`, and uses the leading components. `UnityCompat/HLSLLegacyConversions.cginc` declares these conversions and operators for Slang. The assembler includes it in every program.
+- **Mixed sizes in functions and products.** The built-in functions such as `min`, `max`, `pow`, `dot`, and `distance` are generic over one vector type, so the conversions do not apply to them. The same file declares overloads for arguments of different sizes, and for one vector and one scalar argument. The overloads are generic over the component type, as the built-in functions are, and have a low overload rank, so that the built-in function wins when it also matches. It also declares `lerp` with end points of different sizes, and `mul` for a matrix and a smaller or larger vector.
+- **Component type conversions.** The file declares implicit constructors between vectors with the same size and a different component type, for example `int2(uv)`. Without them, the scalar truncations make Slang resolve `int2(uv)` in a generic call to an invalid vector of vectors.
+- **Float switch selectors.** FXC accepts `switch (_Mode)` on a `float`. Slang requires an integer, so `SwitchSelectorRewriter` changes the selector to `int(_Mode)`.
 - **Writes to globals.** FXC lets a function write to a global variable, for example `_Time.y += 10;`. The write changes a private copy for the current invocation. `GlobalWriteRewriter` renames the shader parameter to `name_xrUniform` and declares `static T name = name_xrUniform;`. The post-processor gives the parameter its original name in the GLSL, so material binding does not change. The engine values in the compatibility includes, such as `_Time` and `_ScreenParams`, are static copies for the same reason.
 
-The file has no conversion from an `int` vector to a `uint` scalar. With that conversion, Slang resolves `uint2 + int2` to an invalid type.
+- **Initializers of shader parameters.** FXC accepts `uniform float x = 0.0;` and stores the value as a default that Unity does not use. Slang rejects it. `GlobalWriteRewriter` removes the initializer of each numeric shader parameter. Use `static const` for a constant.
+
+The file has no conversion from an `int` vector to a `uint` scalar or vector. With that conversion, Slang resolves `uint2 + int2` to an invalid type. `IsGammaSpace()` is a macro, so that `static const` initializers that use it stay compile-time constants.
+
+FXC also evaluates function calls in `static const` initializers at compile time, for example `GammaToLinearSpace(float3(0.5, 0.5, 0.5))`. Slang requires a constant expression, so `StaticConstRewriter` removes `const` from these variables. Each invocation then computes the same value.
 
 ## Pass Mapping
 
@@ -68,6 +75,10 @@ Other vertex inputs cause a `UNITYSHADER0007` error.
 - `_WorldSpaceLightPos0` and `_LightColor0` use the first engine directional light.
 - Spherical harmonics use `GlobalAmbient`.
 - `VFACE` becomes `SV_IsFrontFace`. The assembler changes a `VFACE` parameter of the fragment entry point into a signed float, as Unity does.
+- `unity_CameraToWorld` and `unity_WorldToCamera` use the engine view matrices with the Z axis changed, because Unity camera space looks along +Z.
+- `UnityShaderVariables.cginc` includes `HLSLSupport.cginc` and `UnityShaderUtilities.cginc`, so that `HLSLPROGRAM` blocks and programs with no includes get the same names as in Unity.
+- `UnityStandardShadow.cginc` gives `vertShadowCaster` and `fragShadowCaster`. The blended modes clip at an alpha of 0.5, because the engine shadow pass has no dither pattern.
+- `UnityUI.cginc` gives the UI clipping helpers. `UnityMetaPass.cginc` gives declarations only, because the engine skips `Meta` passes.
 
 Shadow attenuation is 1 for now. Add a missing Unity name to the correct include file, not to the translator.
 
@@ -122,11 +133,13 @@ The Vulkan SDK contains both tools. If a tool is missing, the translator reports
 - The forward add light loop and received shadows are not complete.
 - Stereo rendering and compute skinning of translated vertex stages are not supported.
 - Include files from `Library/PackageCache` are not mapped.
+- `UnityStandardCoreForward.cginc`, `Tessellation.cginc`, and the URP shader library have no compatibility version yet.
+- A `Category` block is supported. Fixed-function passes and `UsePass` are not.
 - Matrix properties of a shader need a transposed upload.
 
 ## Tests
 
-`XREngine.UnitTests/Rendering/ShaderTranslation/` tests the parser, the pragma reader, the variant selector, the assembler, the include expander, the global-write rewriter, and the post-processor. `ShaderTranslatorToolTests` runs the full path on the shaders in `XREngine.UnitTests/TestData/UnityShaders/`. These tests are ignored when `slangc` or `spirv-cross` is not available.
+`XREngine.UnitTests/Rendering/ShaderTranslation/` tests the parser, the pragma reader, the variant selector, the assembler, the include expander, the switch, static const, and global-write rewriters, the diagnostic ordering, and the post-processor. `ShaderTranslatorToolTests` runs the full path on the shaders in `XREngine.UnitTests/TestData/UnityShaders/`. These tests are ignored when `slangc` or `spirv-cross` is not available.
 
 ## Key Files
 
@@ -135,6 +148,8 @@ The Vulkan SDK contains both tools. If a tool is missing, the translator reports
 - `XREngine.ShaderTranslation/Translation/ShaderPassAssembler.cs`
 - `XREngine.ShaderTranslation/Preprocessing/ShaderIncludeExpander.cs`
 - `XREngine.ShaderTranslation/Preprocessing/GlobalWriteRewriter.cs`
+- `XREngine.ShaderTranslation/Preprocessing/SwitchSelectorRewriter.cs`
+- `XREngine.ShaderTranslation/Preprocessing/StaticConstRewriter.cs`
 - `XREngine.ShaderTranslation/Translation/ShaderVariantSelector.cs`
 - `XREngine.ShaderTranslation/Compilation/SlangSpirvCompiler.cs`
 - `XREngine.ShaderTranslation/Compilation/SpirvCrossGlslEmitter.cs`

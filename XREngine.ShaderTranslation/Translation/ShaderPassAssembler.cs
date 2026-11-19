@@ -56,9 +56,15 @@ public static partial class ShaderPassAssembler
         builder.Append("#define SHADER_TARGET ").Append(target).Append('\n');
         builder.Append("#define UNITY_VERSION ").Append(UnityVersion).Append('\n');
         builder.Append("#define ").Append(GetStageDefine(stage)).Append(" 1\n");
-        builder.Append("#define ").Append(GetPassDefine(passKind)).Append(" 1\n");
+        string passDefine = GetPassDefine(passKind);
+        builder.Append("#define ").Append(passDefine).Append(" 1\n");
+        HashSet<string> defined = new(StringComparer.Ordinal) { passDefine };
         foreach (string keyword in keywords)
-            builder.Append("#define ").Append(keyword).Append(" 1\n");
+        {
+            // A shader can declare a pass define as a keyword. Define each name one time only.
+            if (defined.Add(keyword))
+                builder.Append("#define ").Append(keyword).Append(" 1\n");
+        }
 
         // Unity compiles every program with the legacy FXC rules, which allow implicit truncation.
         builder.Append("#include \"HLSLLegacyConversions.cginc\"\n");

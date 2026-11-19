@@ -14,6 +14,8 @@ public sealed class ShaderLabParser
 {
     private const int MaxNestingDepth = 32;
 
+    private static readonly Dictionary<string, string> EmptyTags = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly List<ShaderLabToken> _tokens;
     private readonly string _text;
     private readonly string _sourcePath;
@@ -51,7 +53,7 @@ public sealed class ShaderLabParser
         List<ShaderLabSubShader> subShaders = [];
         string? fallback = null;
         string? customEditor = null;
-        ParseShaderBody(properties, includes, subShaders, [], ref fallback, ref customEditor);
+        ParseShaderBody(properties, includes, subShaders, [], EmptyTags, ref fallback, ref customEditor);
         ExpectSymbol('}');
 
         return new ShaderLabDocument
@@ -71,6 +73,7 @@ public sealed class ShaderLabParser
         List<ShaderLabProgramBlock> includes,
         List<ShaderLabSubShader> subShaders,
         List<ShaderLabCommand> inheritedCommands,
+        IReadOnlyDictionary<string, string> inheritedTags,
         ref string? fallback,
         ref string? customEditor)
     {
@@ -97,15 +100,16 @@ public sealed class ShaderLabParser
             else if (token.IsKeyword("SubShader"))
             {
                 _index++;
-                subShaders.Add(ParseSubShader(token.Line, inheritedCommands));
+                subShaders.Add(ParseSubShader(token.Line, inheritedCommands, inheritedTags));
             }
             else if (token.IsKeyword("Category"))
             {
-                // A category applies its render state to the subshaders inside it.
+                // A category applies its render state and tags to the subshaders inside it.
                 _index++;
                 EnterBlock(token);
                 List<ShaderLabCommand> categoryCommands = [.. inheritedCommands];
-                ParseCategoryBody(properties, includes, subShaders, categoryCommands, ref fallback, ref customEditor);
+                Dictionary<string, string> categoryTags = new(inheritedTags, StringComparer.OrdinalIgnoreCase);
+                ParseCategoryBody(properties, includes, subShaders, categoryCommands, categoryTags, ref fallback, ref customEditor);
                 LeaveBlock();
             }
             else if (token.IsKeyword("Fallback"))
@@ -148,6 +152,7 @@ public sealed class ShaderLabParser
         List<ShaderLabProgramBlock> includes,
         List<ShaderLabSubShader> subShaders,
         List<ShaderLabCommand> categoryCommands,
+        Dictionary<string, string> categoryTags,
         ref string? fallback,
         ref string? customEditor)
     {
@@ -156,6 +161,13 @@ public sealed class ShaderLabParser
             ShaderLabToken token = Current;
             if (token.Kind == ShaderLabTokenKind.End)
                 throw Error(token, "The category has no closing brace.");
+
+            if (token.IsKeyword("Tags"))
+            {
+                _index++;
+                ParseTags(categoryTags);
+                continue;
+            }
 
             if (token.Kind == ShaderLabTokenKind.Identifier &&
                 !token.IsKeyword("SubShader") && !token.IsKeyword("Properties") && !token.IsKeyword("Fallback") &&
@@ -167,7 +179,7 @@ public sealed class ShaderLabParser
 
             // Parse exactly one shader-level item with the category state.
             int before = _index;
-            ParseOneShaderItem(properties, includes, subShaders, categoryCommands, ref fallback, ref customEditor);
+            ParseOneShaderItem(properties, includes, subShaders, categoryCommands, categoryTags, ref fallback, ref customEditor);
             if (_index == before)
                 throw Error(token, $"Unexpected '{token.Text}' in a category.");
         }
@@ -178,6 +190,7 @@ public sealed class ShaderLabParser
         List<ShaderLabProgramBlock> includes,
         List<ShaderLabSubShader> subShaders,
         List<ShaderLabCommand> inheritedCommands,
+        IReadOnlyDictionary<string, string> inheritedTags,
         ref string? fallback,
         ref string? customEditor)
     {
@@ -190,7 +203,7 @@ public sealed class ShaderLabParser
         else if (token.IsKeyword("SubShader"))
         {
             _index++;
-            subShaders.Add(ParseSubShader(token.Line, inheritedCommands));
+            subShaders.Add(ParseSubShader(token.Line, inheritedCommands, inheritedTags));
         }
         else if (token.IsKeyword("Properties"))
         {
@@ -215,7 +228,8 @@ public sealed class ShaderLabParser
             _index++;
             EnterBlock(token);
             List<ShaderLabCommand> nested = [.. inheritedCommands];
-            ParseCategoryBody(properties, includes, subShaders, nested, ref fallback, ref customEditor);
+            Dictionary<string, string> nestedTags = new(inheritedTags, StringComparer.OrdinalIgnoreCase);
+            ParseCategoryBody(properties, includes, subShaders, nested, nestedTags, ref fallback, ref customEditor);
             LeaveBlock();
         }
     }
@@ -321,10 +335,11 @@ public sealed class ShaderLabParser
         };
     }
 
-    private ShaderLabSubShader ParseSubShader(int line, List<ShaderLabCommand> inheritedCommands)
+    private ShaderLabSubShader ParseSubShader(int line, List<ShaderLabCommand> inheritedCommands, IReadOnlyDictionary<string, string> inheritedTags)
     {
         EnterBlock(Current);
-        Dictionary<string, string> tags = new(StringComparer.OrdinalIgnoreCase);
+        // Tags of the subshader replace category tags with the same name.
+        Dictionary<string, string> tags = new(inheritedTags, StringComparer.OrdinalIgnoreCase);
         List<ShaderLabCommand> commands = [.. inheritedCommands];
         List<ShaderLabProgramBlock> includes = [];
         List<ShaderLabPass> passes = [];

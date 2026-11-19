@@ -88,4 +88,16 @@ public sealed class ShaderLabParserTests
             command => command.Name.ShouldBe("ZWrite"),
             command => command.Arguments.ShouldBe(["Off"]));
     }
+
+    [Test]
+    public void Parse_CategoryTags_SubShaderTagsWin()
+    {
+        const string source = "Shader \"C\" { Category { Tags { \"Queue\" = \"Transparent\" \"RenderType\" = \"Transparent\" }\n SubShader { Tags { \"RenderType\" = \"Opaque\" } Pass { } } } }";
+
+        ShaderLabDocument document = ShaderLabParser.Parse(source, "C.shader");
+
+        ShaderLabSubShader subShader = document.SubShaders.Single();
+        subShader.Tags["Queue"].ShouldBe("Transparent");
+        subShader.Tags["RenderType"].ShouldBe("Opaque");
+    }
 }
