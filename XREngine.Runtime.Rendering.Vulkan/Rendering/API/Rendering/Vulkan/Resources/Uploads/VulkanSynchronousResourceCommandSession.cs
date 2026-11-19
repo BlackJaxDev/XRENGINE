@@ -68,6 +68,12 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
     internal CommandBuffer CommandBuffer { get; }
     internal VulkanTrackedCommandEncoder Encoder { get; }
 
+    /// <summary>
+    /// Gets whether the graphics queue accepted the submission. After that, the GPU runs the
+    /// recorded commands even if the fence wait or the completion bookkeeping then fails.
+    /// </summary>
+    internal bool NativeSubmissionAccepted => _nativeSubmissionAccepted;
+
     internal void CompleteAndWait()
         => CompleteAndWait(null, default);
 

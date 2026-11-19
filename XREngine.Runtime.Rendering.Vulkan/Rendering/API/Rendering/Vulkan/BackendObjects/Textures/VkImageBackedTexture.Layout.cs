@@ -49,7 +49,11 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// <remarks>
     /// The tracked layout does not change. After the session completes, call
     /// <see cref="PublishWholeImageLayout"/> with the returned layout. If the session fails
-    /// before that call, the tracked layout stays correct, because the GPU did not run the barrier.
+    /// before the queue accepts the submission, do not publish: the GPU did not run the barrier,
+    /// so the tracked layout stays correct. If the session fails after the queue accepted it
+    /// (<see cref="VulkanSynchronousResourceCommandSession.NativeSubmissionAccepted"/>), for
+    /// example because the fence wait failed, the GPU still runs the barrier. Publish the
+    /// returned layout in that case too, while the device is operational.
     /// </remarks>
     /// <returns>The coerced layout that the image has after the barrier runs.</returns>
     protected ImageLayout RecordWholeImageLayoutTransition(

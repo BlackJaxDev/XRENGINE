@@ -423,12 +423,12 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
     /// synchronous command session, waits for it, and then publishes the shader-read layout.
     /// </summary>
     /// <remarks>
-    /// The tracked layout changes only after the session completes. If the session throws
-    /// before the submission, the GPU ran no barrier, so the earlier tracked layout is correct.
-    /// If the wait fails after an accepted submission, the image ends in the shader-read layout,
-    /// and the tracked layout keeps its earlier value: <c>ShaderReadOnlyOptimal</c> after an
-    /// earlier upload, or <c>Undefined</c> for a new image. A barrier from <c>Undefined</c> is
-    /// valid for any current layout, so the next upload stays valid.
+    /// If the session throws before the queue accepts the submission, the GPU runs no barrier,
+    /// so the tracked layout keeps its earlier value. After the queue accepts the submission, the
+    /// GPU runs the three commands even if the wait or its bookkeeping then fails. So the method
+    /// also publishes the shader-read layout on that failure, before the exception continues.
+    /// It does not publish the layout after a device loss, because the GPU possibly did not run
+    /// the barriers, and the images of a lost device are not used again.
     /// </remarks>
     private void SubmitVideoFrameCopy(VulkanFrameDataArena arena, in VulkanFrameDataSlice slice, Extent3D extent)
     {
@@ -437,8 +437,17 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
         RecordCopyBufferToImage(session, slice, 0, 0, 1, extent);
         ImageLayout sampledLayout = RecordWholeImageLayoutTransition(session, ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
 
-        // The wait proves completion and reopens the staging slot for the next upload.
-        session.CompleteAndWait(arena, slice);
+        try
+        {
+            // The wait proves completion and reopens the staging slot for the next upload.
+            session.CompleteAndWait(arena, slice);
+        }
+        catch when (session.NativeSubmissionAccepted && BackendContext.IsDeviceOperational)
+        {
+            PublishWholeImageLayout(sampledLayout);
+            throw;
+        }
+
         PublishWholeImageLayout(sampledLayout);
     }
 }
