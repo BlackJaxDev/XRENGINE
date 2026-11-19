@@ -18,6 +18,10 @@ The script does these steps:
 The shots move across the walking avatar from the feet up to the face, and end on a full-body push-in shot that reveals
 the title and the subtitle on the left side.
 
+.PARAMETER AllowPartialImport
+Keeps importing the prefab when the Unity project is missing textures or materials. The missing parts use fallback
+materials, so they do not match the Unity look.
+
 .EXAMPLE
 powershell -NoProfile -File Tools/Cutscenes/New-SplatShowcaseCutscene.ps1 `
   -ProjectPath "<project>/<name>.xrproj" -UnityPrefab "<unity-project>/Assets/<path>/Avatar.prefab" `
@@ -45,7 +49,10 @@ param(
     [long]$OptimizedMaxBytes = 0,
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')][string]$SessionName = 'splat-showcase',
-    [switch]$SkipRecording
+    [switch]$SkipRecording,
+    [switch]$NoSessionBuild,
+    [switch]$AllowPartialImport,
+    [hashtable]$SessionEnvironment = @{}
 )
 
 Set-StrictMode -Version Latest
@@ -140,7 +147,8 @@ function Deg([double]$degrees) { return $degrees * [Math]::PI / 180.0 }
 # MCP helpers.
 # ---------------------------------------------------------------------------------------------------------------------
 function Invoke-Tool([string]$Name, [hashtable]$Arguments) {
-    $raw = & (Join-Path $repoRoot 'Tools\Invoke-Mcp.ps1') -Session $SessionName -Method 'tools/call' -Params @{ name = $Name; arguments = $Arguments } -TimeoutSec 600 -OutputDepth 30
+    Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $Name)
+    $raw = & (Join-Path $repoRoot 'Tools\Invoke-Mcp.ps1') -Session $SessionName -Method 'tools/call' -Params @{ name = $Name; arguments = $Arguments } -TimeoutSec 1800 -OutputDepth 30
     $response = ($raw -join "`n") | ConvertFrom-Json
     if ($null -ne $response.PSObject.Properties['error'] -and $null -ne $response.error) {
         throw "MCP tool '$Name' failed: $($response.error.message)"
@@ -181,13 +189,30 @@ function Curve([double[]]$Times, [double[]]$Values) { return @{ times = $Times; 
 # ---------------------------------------------------------------------------------------------------------------------
 $sessionScript = Join-Path $repoRoot 'Tools\Manage-McpEditorSession.ps1'
 Write-Host "Starting the editor session '$SessionName'."
-& $sessionScript Start -Name $SessionName -Configuration $Configuration -NoUnitTesting | Out-Host
+# MCP tools need an active world, so the session starts with the unit testing world and create_world replaces it.
+# Imported assets go to the Assets folder of the project, not to the repository.
+$projectAssets = Join-Path (Split-Path -Parent ([System.IO.Path]::GetFullPath($ProjectPath))) 'Assets'
+$environment = @{ XRE_GAME_ASSETS_PATH = $projectAssets }
+foreach ($key in $SessionEnvironment.Keys) { $environment[$key] = [string]$SessionEnvironment[$key] }
+$startArguments = @{ Name = $SessionName; Configuration = $Configuration; SessionEnvironment = $environment }
+if ($NoSessionBuild) { $startArguments.NoBuild = $true }
+& $sessionScript Start @startArguments | Out-Host
 $worldPath = $null
 try {
+    # The MCP server answers before the startup world exists. Tools that need a world fail until it loads.
+    $worldWait = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        try { [void](Invoke-Tool 'list_scenes' @{}); break }
+        catch {
+            if ($worldWait.Elapsed.TotalSeconds -gt 300) { throw }
+            Start-Sleep -Seconds 2
+        }
+    }
+
     [void](Invoke-Tool 'load_game_project' @{ project_path = [System.IO.Path]::GetFullPath($ProjectPath) })
     $world = Invoke-Tool 'create_world' @{ name = $WorldName }
-    Set-ObjectProperty ([string]$world.id) 'Settings' 'AmbientLightColor' @{ R = 1.0; G = 1.0; B = 1.0 }
-    Set-ObjectProperty ([string]$world.id) 'Settings' 'AmbientLightIntensity' $AmbientIntensity
+    Set-ObjectProperty ([string]$world.settingsId) $null 'AmbientLightColor' @{ R = 1.0; G = 1.0; B = 1.0 }
+    Set-ObjectProperty ([string]$world.settingsId) $null 'AmbientLightIntensity' $AmbientIntensity
 
     # The stage faces the avatar front, which is +Z after the 180 degree turn.
     $stageId = New-Node 'Stage' $null
@@ -199,7 +224,7 @@ try {
         [void](Add-Component $lightId 'DirectionalLightComponent' @{ Color = (Color3 @(1.0, 1.0, 1.0)); DiffuseIntensity = $light.Intensity; CastsShadows = $false })
     }
 
-    $prefabImport = Invoke-Tool 'import_third_party_asset' @{ source_path = [System.IO.Path]::GetFullPath($UnityPrefab); dest_folder = $AssetFolder; overwrite = $true }
+    $prefabImport = Invoke-Tool 'import_third_party_asset' @{ source_path = [System.IO.Path]::GetFullPath($UnityPrefab); dest_folder = $AssetFolder; overwrite = $true; allow_partial_import = [bool]$AllowPartialImport }
     $clipImport = Invoke-Tool 'import_third_party_asset' @{ source_path = [System.IO.Path]::GetFullPath($AnimationFile); dest_folder = $AssetFolder; overwrite = $true }
     $avatar = Invoke-Tool 'instantiate_prefab' @{ prefab_path = [string]$prefabImport.path }
     $avatarId = [string]$avatar.instanceId
