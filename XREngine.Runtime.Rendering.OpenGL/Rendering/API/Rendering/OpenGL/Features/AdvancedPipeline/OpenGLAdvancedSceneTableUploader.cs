@@ -119,20 +119,21 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
     }
 
     /// <summary>
-    /// Binds the reconstruction vertex and index tables (bindings
-    /// <see cref="AdvancedReconstructionShaderBindings.StaticVertices"/> to
-    /// <see cref="AdvancedReconstructionShaderBindings.Indices"/>) again. Mesh deformation
-    /// (<see cref="MeshDeformationBindingLayout"/>) uses bindings 39 and 40 for its own buffers
-    /// and sets them to 0 after a draw. A stage after preparation that reconstructs surfaces calls
-    /// this first, so that it reads the scene tables and not a deformation buffer or no buffer.
+    /// Sets every reconstruction counter to 0. The counter buffer at
+    /// <see cref="AdvancedReconstructionShaderBindings.Counters"/> holds one
+    /// <see cref="AdvancedReconstructionGpuCounters"/> record, and the reconstruction shaders add
+    /// to it with atomics. Visibility preparation calls this once per family, so the counters
+    /// describe one family only.
     /// </summary>
-    internal void BindReconstructionTables()
+    internal void ClearReconstructionCounters()
     {
-        for (uint binding = AdvancedReconstructionShaderBindings.StaticVertices;
-             binding <= AdvancedReconstructionShaderBindings.Indices;
-             ++binding)
-            _renderer.RawGL.BindBufferBase(
-                GLEnum.ShaderStorageBuffer, binding, _buffers[binding]);
+        uint zero = 0u;
+        _renderer.RawGL.ClearNamedBufferData(
+            _buffers[AdvancedReconstructionShaderBindings.Counters],
+            SizedInternalFormat.R32ui,
+            PixelFormat.RedInteger,
+            PixelType.UnsignedInt,
+            &zero);
     }
 
     /// <summary>Writes the eleven sealed logical-handle lookup segments into
@@ -273,6 +274,14 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
             uint zero = 0u;
             _renderer.RawGL.NamedBufferData(buffer, sizeof(uint), &zero, GLEnum.DynamicDraw);
         }
+        // The reconstruction counters are one fixed-size record that the shaders write with
+        // atomics. Give the buffer the full record size; the other buffers grow on upload.
+        AdvancedReconstructionGpuCounters counters = default;
+        _renderer.RawGL.NamedBufferData(
+            _buffers[AdvancedReconstructionShaderBindings.Counters],
+            (nuint)sizeof(AdvancedReconstructionGpuCounters),
+            &counters,
+            GLEnum.DynamicDraw);
         _maxBindings = checked((uint)maxBindings);
         _initialized = true;
         reason = "Ready";

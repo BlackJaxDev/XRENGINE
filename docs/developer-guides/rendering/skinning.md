@@ -46,6 +46,11 @@ must agree, or a draw reads compute outputs that the prepass never writes.
 - The compute output streams use SSBO bindings 39 to 45
   (`MeshDeformationBindingLayout`). Do not put other graphics-program SSBOs in
   that range.
+- On OpenGL, the Advanced reconstruction tables use SSBO bindings 30 to 34
+  (`AdvancedReconstructionShaderBindings`). OpenGL has one binding namespace, and
+  the Advanced pipeline binds these tables once per frame, at visibility
+  preparation. A draw that changes a binding in 30 to 34 makes native shading read
+  the wrong table. Do not use that range for other SSBOs.
 
 ## Payloads And Shader Variants
 
