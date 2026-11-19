@@ -21,7 +21,7 @@ public partial class OpenGLRenderer : IAdvancedVisibilityStageBackendCapability
         if (!_advancedLimitsLogged)
         {
             _advancedLimitsLogged = true;
-            Debug.Rendering($"[OpenGL Advanced] Storage block limits: compute={RawGL.GetInteger(GLEnum.MaxComputeShaderStorageBlocks)}, vertex={RawGL.GetInteger(GLEnum.MaxVertexShaderStorageBlocks)}, fragment={RawGL.GetInteger(GLEnum.MaxFragmentShaderStorageBlocks)}.");
+            Debug.Rendering($"[OpenGL Advanced] Storage block limits: compute={RawGL.GetInteger(GLEnum.MaxComputeShaderStorageBlocks)}, vertex={RawGL.GetInteger(GLEnum.MaxVertexShaderStorageBlocks)}, fragment={RawGL.GetInteger(GLEnum.MaxFragmentShaderStorageBlocks)}, bindings={RawGL.GetInteger(GLEnum.MaxShaderStorageBufferBindings)}.");
         }
         if (!SupportsIndirectCountDraw() || !SupportsBindlessTextureHandles)
             return new(EAdvancedProductionExecutionState.Unsupported, "OpenGL Advanced requires indirect-count submission and bindless texture/sampler handles.");
@@ -116,13 +116,6 @@ public partial class OpenGLRenderer : IAdvancedVisibilityStageBackendCapability
         }
         try
         {
-            // Preparation binds the scene tables. GL SSBO bindings are context state, and other
-            // draws can change them between two stages of one family: mesh deformation sets
-            // bindings 39 and 40 (also the reconstruction vertex and index tables) to its own
-            // buffers or to 0. Without this bind, native shading read an empty index table and
-            // rejected every pixel. Bind the reconstruction tables again before each later stage.
-            if (ordinal != 0)
-                _advancedSceneUploader?.BindReconstructionTables();
             bool accepted = request.Stage switch
             {
                 EAdvancedRenderStage.VisibilityPreparation => TryPrepareAdvancedVisibility(in request, out failureReason),

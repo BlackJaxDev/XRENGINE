@@ -18,8 +18,8 @@ public sealed class AdvancedAttributeReconstructionContractTests
     {
         AdvancedSurfaceContract.ContractVersion.ShouldBe(1u);
         Unsafe.SizeOf<AdvancedReconstructionGpuCounters>().ShouldBe(64);
-        AdvancedReconstructionShaderBindings.StaticVertices.ShouldBe(37u);
-        AdvancedReconstructionShaderBindings.Counters.ShouldBe(41u);
+        AdvancedReconstructionShaderBindings.StaticVertices.ShouldBe(30u);
+        AdvancedReconstructionShaderBindings.Counters.ShouldBe(34u);
         ((uint)EAdvancedMaterialRequiredAttributeMask.Custom0)
             .ShouldBe(1u << 8);
         ((uint)EAdvancedMaterialRequiredAttributeMask.AnalyticalDerivatives)

@@ -183,6 +183,7 @@ public partial class OpenGLRenderer
         if (!sceneUploader.TryUpload(sceneDatabase, in scenePublication, out reason) ||
             !sceneUploader.TryUploadViews(backendPackage, request.Views, request.RenderTimeSeconds, out reason))
             return false;
+        sceneUploader.ClearReconstructionCounters();
         if (!_advancedOutputRegistry.TryBindPersistentState(
                 in reservation,
                 inputStorage.PersistentStateByteLength,
